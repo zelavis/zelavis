@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+
+# Package managers
+.pnpm-store/
+.npm/
+.yarn/
+.yarn-cache/
+
+# Build output
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Tool caches
+.turbo/
+.cache/
+.parcel-cache/
+.eslintcache
+
+# Testing
+.nyc_output/
+
+# Editor directories and files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db

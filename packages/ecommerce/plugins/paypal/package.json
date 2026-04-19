@@ -1,0 +1,37 @@
+{
+  "name": "@zelavis/ecommerce-paypal",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PayPal payment provider plugin for @zelavis/ecommerce.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run typecheck"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@paypal/paypal-server-sdk": "^2.2.0",
+    "@zelavis/ecommerce": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  },
+  "keywords": [
+    "paypal",
+    "commerce",
+    "ecommerce",
+    "payments",
+    "plugin"
+  ]
+}

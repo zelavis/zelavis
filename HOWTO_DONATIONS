@@ -1,0 +1,55 @@
+1. Set Up zelavis as an Open-Source OrganizationTo make zelavis an "organization" (not just a personal repo), structure it for collaboration and longevity. This positions it as a community-owned project.Create a GitHub Organization: Go to github.com/new/organization and set up zelavis as an org (free tier is fine to start).  
+   Transfer your monorepo (e.g., the zelavis repo) to this org.  
+   Invite early contributors as members (start with friends or interested devs from your network).  
+   Add an org README/profile: Include your mission ("Universal JS libraries — community-driven, runtime-agnostic"), code of conduct (use Contributor Covenant template), contribution guidelines (e.g., "We welcome PRs for new packages, bug fixes, docs"), and a link to zelavis.dev.
+
+License Everything Properly: Use MIT or Apache 2.0 for all packages — permissive licenses encourage adoption and community contributions.  
+Add LICENSE files to the monorepo root and each package.
+
+Make It Truly Open: Set up issues/templates for bugs, features, discussions.  
+Enable GitHub Discussions for community Q&A/forums (better than issues for non-code talk).  
+Use GitHub Projects or Actions for transparent roadmaps/workflows.
+
+This setup makes zelavis feel like a collective effort from day one, attracting contributors who see it as "ours" not "yours."2. Build a Great Community Around zelavisCommunity is key to sustainability — it drives contributions, adoption, and donations. Aim for organic growth while being proactive.Core Strategies: Share Your Vision Early: Write a "Why zelavis?" blog post on zelavis.dev (or Medium/X/Dev.to) explaining the universal libs philosophy, how it differs from UnJS, and your donation-sustained model. Emphasize "community-first" — invite people to join discussions, propose packages, or co-maintain.  
+Engage on Social/Forums: Post on X (use #OpenSource #JavaScript #JSlibs) about milestones (e.g., "Just shipped @zelavis
+/core v1.0! Who's building with it?").  
+Share on Reddit (r/javascript, r/opensource, r/webdev) and Discord servers (JS-focused like The JS Foundation or create a zelavis Discord).  
+Use X Semantic Search or Keyword Search (if needed) to find related conversations and join them authentically.
+
+Host Events/Activities: Run "hackathons" or "contribathons" on GitHub (e.g., label easy issues as "good first issue").  
+Weekly X Spaces or YouTube streams: "Building with zelavis — Q&A and demos."  
+Create a newsletter (via Buttondown or Substack) for updates, contributor spotlights, and calls for donations.
+
+Contributor Onboarding: Make CONTRIBUTING.md welcoming: Step-by-step setup (pnpm install, build scripts), code style (ESLint/Prettier), and testing (Vitest/Jest).  
+Recognize contributors: Shoutouts in release notes, "Hall of Fame" on the site, or GitHub badges.
+
+Metrics to Track Growth: GitHub stars/forks/watchers.  
+npm downloads per package.  
+Community size: Discord members, X followers, newsletter subs.
+
+Start small — aim for 100 stars and 10 contributors in the first 3 months. Tools like Orbit.love or CommunityHealth can help track engagement later.3. Enable Donations and Sustain with ThemDonations are the backbone of self-sustaining OSS orgs. Focus on platforms that integrate with GitHub and handle org-level funding (e.g., for paying maintainers, hosting costs, bounties). As of 2026, GitHub Sponsors and Open Collective are the top choices for JS projects — they've distributed over $75M combined to OSS.Recommended PlatformsUse 1–2 to start (e.g., GitHub Sponsors as primary, Open Collective as secondary for transparency).Platform
+Why It's Great for zelavis
+Setup Steps
+Fees/Notes
+GitHub Sponsors
+Integrated with GitHub — easy for devs to sponsor your org/repos. Supports recurring/one-time donations, custom tiers (e.g., $5/month for "Supporter" badge, $100 for logo shoutout). Zero fees for individuals; orgs can invoice. Over $40M paid out by 2026.
+
+1. Go to github.com/sponsors and join as an org (link zelavis org). 2. Set up profile: Bio, tiers, bank/tax info (W-9 for US, etc.). 3. Add Sponsor button to repos/README. 4. Enable 2FA. Payouts via Stripe/PayPal.
+   No fees from GitHub; Stripe/PayPal take ~2-3%. Available in 103 regions. Use for "Sponsor this org" links.
+   Open Collective
+   Perfect for org-level transparency — shows budgets, expenses publicly. Great for community funds (e.g., pay contributors via bounties). Handles fiscal hosting (no need for your own nonprofit). $35M/year managed by 2026.
+1. Apply to a fiscal host like Open Source Collective (opencollective.com/apply) — they handle taxes/nonprofit status. 2. Create "zelavis" collective. 3. Set up donation buttons/tiers on your site. 4. Link to GitHub.
+   Host fee ~5-10%; platform fee 5%. Ideal for "donate to the community fund."
+   Patreon or Buy Me a Coffee
+   Simpler for recurring "memberships" with perks (e.g., early access to packages, private Discord). Good supplement if you want creative rewards.
+1. Create patreon.com/zelavis (or buymeacoffee.com/zelavis). 2. Set tiers ($3/month for updates, $10 for votes on features). 3. Link from GitHub/site.
+   5-12% fees. Less OSS-focused than above, but easy for non-dev donors.
+
+Activation Tips: Add donation links everywhere: GitHub README, zelavis.dev homepage, package docs, X bio.  
+Custom tiers: Offer badges, shoutouts, or "sponsor a feature" for bigger donors.  
+Promote: In release notes/X posts, say "Help sustain zelavis — donate here!" Tie it to impact (e.g., "Your donations fund new packages like auth!").  
+Legal/Taxes: If donations grow (> $10K/year), consult a tax pro. Open Collective handles a lot via fiscal hosts.
+
+Self-Sustainability Goal: Start with personal time; use early donations for domain/hosting (~$100/year). As community grows, allocate funds to bounties ($50-200 for issues) or part-time maintainers. Projects like Prettier or Babel sustain this way.
+
+This plan should get zelavis self-sustaining within 6–12 months if you ship consistently and engage. If you need templates (e.g., CONTRIBUTING.md, donation page copy), or help with specific setups, let me know!

@@ -1,0 +1,34 @@
+{
+  "name": "@zelavis/ecommerce",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Low-level ecommerce primitives for building custom commerce platforms, CMS integrations, and backend applications.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run typecheck"
+  },
+  "files": [
+    "dist"
+  ],
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  },
+  "keywords": [
+    "commerce",
+    "ecommerce",
+    "payments",
+    "plugins",
+    "stripe",
+    "paypal"
+  ]
+}

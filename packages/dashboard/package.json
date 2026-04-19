@@ -1,0 +1,35 @@
+{
+  "name": "@zelavis/dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Optional server-rendered dashboard primitives for zelavis stacks.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run typecheck"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@zelavis/server": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  },
+  "keywords": [
+    "dashboard",
+    "admin",
+    "html",
+    "server-rendered"
+  ]
+}
