@@ -7,11 +7,17 @@
   "scripts": {
     "build": "pnpm -r --if-present build",
     "check": "pnpm run typecheck",
+    "example:nodejs": "pnpm build && node --experimental-strip-types examples/nodejs.ts",
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck && pnpm --filter @zelavis/server exec tsc -p ../../examples/tsconfig.json"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs"
+  "type": "commonjs",
+  "devDependencies": {
+    "@zelavis/auth": "workspace:*",
+    "@zelavis/database": "workspace:*",
+    "@zelavis/server": "workspace:*"
+  }
 }

@@ -6,7 +6,17 @@ settings:
 
 importers:
 
-  .: {}
+  .:
+    devDependencies:
+      '@zelavis/auth':
+        specifier: workspace:*
+        version: link:packages/auth
+      '@zelavis/database':
+        specifier: workspace:*
+        version: link:packages/database
+      '@zelavis/server':
+        specifier: workspace:*
+        version: link:packages/server
 
   packages/auth:
     dependencies:

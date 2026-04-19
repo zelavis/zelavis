@@ -4,6 +4,7 @@ import { zelavisServer } from "@zelavis/server";
 import { nodeIntegration } from "@zelavis/server/integrations/node";
 
 async function main(): Promise<void> {
+  const port = Number(process.env.PORT ?? 3000);
   const database = await createDatabase({
     defaultTenantId: "demo",
   });
@@ -30,11 +31,14 @@ async function main(): Promise<void> {
   console.log("database nested service count", zelavisRuntime.services.database.services?.length ?? 0);
   console.log("auth service name", zelavisRuntime.services.auth.name);
   console.log("database driver", zelavisRuntime.services.database.service.driver.name);
-  console.log("list auth providers", "GET http://localhost:3000/api/v1/auth/methods");
-  console.log("list database collections", "GET http://localhost:3000/api/v1/database/documents/collections");
+  console.log("list auth providers", `GET http://localhost:${port}/api/v1/auth/methods`);
+  console.log(
+    "list database collections",
+    `GET http://localhost:${port}/api/v1/database/documents/collections`,
+  );
 
-  zelavisRuntime.server.listen(3000, () => {
-    console.log("zelavis Node.js example listening on http://localhost:3000");
+  zelavisRuntime.server.listen(port, () => {
+    console.log(`zelavis Node.js example listening on http://localhost:${port}`);
   });
 }
 
