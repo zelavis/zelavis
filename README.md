@@ -47,6 +47,17 @@ Current packages:
 
 The database package is a core Zelavis service, but it uses the same service contract as extension services. Applications should usually import from `zelavis`, where the database service is included by default. Use `@zelavis/database` directly when you need lower-level database primitives.
 
+Disable the built-in database service when you need a server without database routes:
+
+```ts
+await zelavisServer({
+  coreServices: {
+    database: false,
+  },
+  integration: nodeIntegration(),
+});
+```
+
 Current architecture includes:
 
 - Tenant-aware document collections.
