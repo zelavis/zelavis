@@ -69,6 +69,9 @@ pnpm install
 Run package scripts from the workspace root or target a specific package:
 
 ```bash
+pnpm typecheck
+pnpm test
+pnpm build
 pnpm --filter @zelavis/ecommerce typecheck
 pnpm --filter @zelavis/ecommerce build
 ```
