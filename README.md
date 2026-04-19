@@ -97,6 +97,7 @@ pnpm --filter @zelavis/ecommerce build
 For a unified recurring billing flow (Stripe + PayPal) through the ecommerce core, see:
 
 - [`examples/nodejs.ts`](/Users/ivanjeremicx/Projects/zelavis/examples/nodejs.ts)
+- [`examples/express.ts`](/Users/ivanjeremicx/Projects/zelavis/examples/express.ts)
 - [`examples/ecommerce-recurring-subscriptions.ts`](/Users/ivanjeremicx/Projects/zelavis/examples/ecommerce-recurring-subscriptions.ts)
 
 The recurring subscriptions example uses these environment variables:
