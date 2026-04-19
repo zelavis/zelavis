@@ -1,5 +1,5 @@
 import express from "express";
-import { authService, zelavisServer } from "zelavis";
+import { zelavisServer } from "zelavis";
 import { expressIntegration } from "zelavis/integrations/express";
 
 async function main(): Promise<void> {
@@ -13,7 +13,6 @@ async function main(): Promise<void> {
   app.use(express.json());
 
   const zelavisRuntime = await zelavisServer({
-    services: [authService()],
     integration: expressIntegration(router),
     version: "v1",
     prefix: "/api/v1",

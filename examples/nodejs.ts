@@ -1,11 +1,10 @@
-import { authService, zelavisServer } from "zelavis";
+import { zelavisServer } from "zelavis";
 import { nodeIntegration } from "zelavis/integrations/node";
 
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
 
   const zelavisRuntime = await zelavisServer({
-    services: [authService()],
     integration: nodeIntegration(),
     version: "v1",
     prefix: "/api/v1",

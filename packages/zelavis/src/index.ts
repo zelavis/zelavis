@@ -1,4 +1,8 @@
 import {
+  authService as createAuthService,
+  type AuthServiceOptions,
+} from "@zelavis/auth";
+import {
   createDatabase,
   createDatabaseServerService,
   type CreateDatabaseOptions,
@@ -10,12 +14,13 @@ import {
   type ZelavisServerIntegration,
   type ZelavisServerMountOptions,
   type ZelavisServerRuntime,
+  type ZelavisServerService,
 } from "@zelavis/server";
 
-export { authService } from "@zelavis/auth";
-export type { AuthServiceOptions } from "@zelavis/auth";
 export * from "@zelavis/database";
 export * from "@zelavis/server";
+
+export type ZelavisAuthCoreServiceOptions = boolean | AuthServiceOptions;
 
 export type ZelavisDatabaseCoreServiceOptions =
   | boolean
@@ -24,6 +29,7 @@ export type ZelavisDatabaseCoreServiceOptions =
   | Promise<DatabaseApi>;
 
 export interface ZelavisCoreServicesOptions {
+  auth?: ZelavisAuthCoreServiceOptions;
   database?: ZelavisDatabaseCoreServiceOptions;
 }
 
@@ -46,7 +52,7 @@ function isDatabaseApi(value: unknown): value is DatabaseApi {
 
 async function resolveDatabaseCoreService(
   option: ZelavisDatabaseCoreServiceOptions | undefined,
-): Promise<ZelavisAnyServiceInput | undefined> {
+): Promise<ZelavisServerService<any> | undefined> {
   const databaseOption = option ?? true;
 
   if (databaseOption === false) {
@@ -65,17 +71,36 @@ async function resolveDatabaseCoreService(
   return createDatabaseServerService(database);
 }
 
+async function resolveAuthCoreService(
+  option: ZelavisAuthCoreServiceOptions | undefined,
+): Promise<ZelavisServerService<any> | undefined> {
+  const authOption = option ?? true;
+
+  if (authOption === false) {
+    return undefined;
+  }
+
+  return createAuthService(authOption === true ? {} : authOption);
+}
+
 export async function zelavisServer<TResult = unknown>(
   options: ZelavisServerOptions<TResult>,
 ): Promise<ZelavisServerRuntime<unknown, TResult>> {
   const services = await Promise.all(options.services ?? []);
+  const hasAuthService = services.some((service) => service.name === "auth");
   const hasDatabaseService = services.some((service) => service.name === "database");
+  const authService = hasAuthService
+    ? undefined
+    : await resolveAuthCoreService(options.coreServices?.auth);
   const databaseService = hasDatabaseService
     ? undefined
     : await resolveDatabaseCoreService(options.coreServices?.database);
+  const coreServices = [databaseService, authService].filter(
+    (service): service is ZelavisServerService<any> => Boolean(service),
+  );
 
   return mountZelavisServer({
     ...options,
-    services: databaseService ? [databaseService, ...services] : services,
+    services: [...coreServices, ...services],
   });
 }

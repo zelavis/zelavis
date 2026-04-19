@@ -9,7 +9,7 @@ Use this package when building an application or service with Zelavis. Lower-lev
 Use `zelavis` for application and runtime code:
 
 ```ts
-import { authService, zelavisServer } from "zelavis";
+import { zelavisServer } from "zelavis";
 import { nodeIntegration } from "zelavis/integrations/node";
 ```
 
@@ -18,28 +18,50 @@ Use scoped packages when building lower-level primitives, integrations, plugins,
 ```ts
 import { createDatabase } from "@zelavis/database";
 import { defineServerService } from "@zelavis/server";
+import { authService } from "@zelavis/auth";
 ```
 
 ## Usage
 
 ```ts
-import { authService, zelavisServer } from "zelavis";
+import { zelavisServer } from "zelavis";
 import { nodeIntegration } from "zelavis/integrations/node";
 
 const runtime = await zelavisServer({
-  services: [authService()],
   integration: nodeIntegration(),
 });
 
 runtime.server.listen(3000);
 ```
 
-The database core service is included by default. Disable it when you need a server without database routes:
+The auth and database core services are included by default. Disable either one when you need a smaller server:
 
 ```ts
 await zelavisServer({
   coreServices: {
+    auth: false,
     database: false,
+  },
+  integration: nodeIntegration(),
+});
+```
+
+Configure the built-in auth service when the defaults are not enough:
+
+```ts
+import { emailPasswordPlugin } from "@zelavis/auth-email-password";
+
+await zelavisServer({
+  coreServices: {
+    auth: {
+      authOptions: {
+        plugins: [
+          emailPasswordPlugin({
+            verifyPasswordHash: async ({ password, passwordHash }) => password === passwordHash,
+          }),
+        ],
+      },
+    },
   },
   integration: nodeIntegration(),
 });
