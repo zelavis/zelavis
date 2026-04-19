@@ -1,16 +1,11 @@
 import express from "express";
-import { authService } from "@zelavis/auth";
-import { createDatabase, databaseService } from "@zelavis/database";
-import { zelavisServer } from "@zelavis/server";
-import { expressIntegration } from "@zelavis/server/integrations/express";
+import { authService, zelavisServer } from "zelavis";
+import { expressIntegration } from "zelavis/integrations/express";
 
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
   const app = express();
   const router = express.Router();
-  const database = await createDatabase({
-    defaultTenantId: "demo",
-  });
 
   app.get("/health", (_request, response) => {
     response.json({ ok: true });
@@ -18,7 +13,12 @@ async function main(): Promise<void> {
   app.use(express.json());
 
   const zelavisRuntime = await zelavisServer({
-    services: [databaseService(database), authService()],
+    services: [authService()],
+    coreServices: {
+      database: {
+        defaultTenantId: "demo",
+      },
+    },
     integration: expressIntegration(router),
     version: "v1",
     prefix: "/api/v1",

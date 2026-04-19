@@ -11,18 +11,12 @@ importers:
       '@types/express':
         specifier: ^5.0.6
         version: 5.0.6
-      '@zelavis/auth':
-        specifier: workspace:*
-        version: link:packages/auth
-      '@zelavis/database':
-        specifier: workspace:*
-        version: link:packages/database
-      '@zelavis/server':
-        specifier: workspace:*
-        version: link:packages/server
       express:
         specifier: ^5.2.1
         version: 5.2.1
+      zelavis:
+        specifier: workspace:*
+        version: link:packages/zelavis
 
   packages/auth:
     dependencies:
@@ -152,6 +146,22 @@ importers:
       hono:
         specifier: ^4.0.0
         version: 4.12.3
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+
+  packages/zelavis:
+    dependencies:
+      '@zelavis/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@zelavis/database':
+        specifier: workspace:*
+        version: link:../database
+      '@zelavis/server':
+        specifier: workspace:*
+        version: link:../server
+    devDependencies:
       typescript:
         specifier: ^5.9.0
         version: 5.9.3

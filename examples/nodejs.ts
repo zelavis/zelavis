@@ -1,16 +1,16 @@
-import { authService } from "@zelavis/auth";
-import { createDatabase, databaseService } from "@zelavis/database";
-import { zelavisServer } from "@zelavis/server";
-import { nodeIntegration } from "@zelavis/server/integrations/node";
+import { authService, zelavisServer } from "zelavis";
+import { nodeIntegration } from "zelavis/integrations/node";
 
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
-  const database = await createDatabase({
-    defaultTenantId: "demo",
-  });
 
   const zelavisRuntime = await zelavisServer({
-    services: [databaseService(database), authService()],
+    services: [authService()],
+    coreServices: {
+      database: {
+        defaultTenantId: "demo",
+      },
+    },
     integration: nodeIntegration(),
     version: "v1",
     prefix: "/api/v1",

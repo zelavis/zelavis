@@ -1,5 +1,5 @@
 {
-  "name": "zelavis",
+  "name": "zelavis-workspace",
   "version": "1.0.0",
   "private": true,
   "description": "A collection of low-level utilities and libraries for building modern applications.",
@@ -18,9 +18,7 @@
   "type": "commonjs",
   "devDependencies": {
     "@types/express": "^5.0.6",
-    "@zelavis/auth": "workspace:*",
-    "@zelavis/database": "workspace:*",
-    "@zelavis/server": "workspace:*",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "zelavis": "workspace:*"
   }
 }

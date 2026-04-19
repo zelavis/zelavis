@@ -1,0 +1,49 @@
+{
+  "name": "zelavis",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Composable Zelavis runtime with core services included by default.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./integrations/express": {
+      "types": "./dist/integrations/express.d.ts",
+      "import": "./dist/integrations/express.js"
+    },
+    "./integrations/hono": {
+      "types": "./dist/integrations/hono.d.ts",
+      "import": "./dist/integrations/hono.js"
+    },
+    "./integrations/node": {
+      "types": "./dist/integrations/node.d.ts",
+      "import": "./dist/integrations/node.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build && node --test test/*.test.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@zelavis/auth": "workspace:*",
+    "@zelavis/database": "workspace:*",
+    "@zelavis/server": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  },
+  "keywords": [
+    "zelavis",
+    "runtime",
+    "services",
+    "database"
+  ]
+}

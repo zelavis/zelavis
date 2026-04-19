@@ -20,6 +20,8 @@ Packages live in [`packages/`](/Users/ivanjeremicx/Projects/zelavis/packages).
 
 Current packages:
 
+- [`zelavis`](/Users/ivanjeremicx/Projects/zelavis/packages/zelavis)  
+  The high-level runtime package for applications. It composes core services such as database by default and re-exports server integrations.
 - [`@zelavis/database`](/Users/ivanjeremicx/Projects/zelavis/packages/database)  
   A document-first, multi-model-ready database core with tenant-aware contracts, an in-memory driver, optional SQL capability, and a mountable server service.
 - [`@zelavis/ecommerce`](/Users/ivanjeremicx/Projects/zelavis/packages/ecommerce)  
@@ -43,7 +45,7 @@ Current packages:
 
 ## `@zelavis/database`
 
-The database package is a core Zelavis service, but it uses the same service contract as extension services.
+The database package is a core Zelavis service, but it uses the same service contract as extension services. Applications should usually import from `zelavis`, where the database service is included by default. Use `@zelavis/database` directly when you need lower-level database primitives.
 
 Current architecture includes:
 
