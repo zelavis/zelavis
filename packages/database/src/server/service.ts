@@ -54,7 +54,7 @@ export function createDatabaseServerService(
           handler: ({ service }) => ({
             body: {
               status: "ok",
-              adapter: service.adapter.name,
+              driver: service.driver.name,
               capabilities: service.capabilities,
               defaultTenantId: service.context.defaultTenantId,
             },

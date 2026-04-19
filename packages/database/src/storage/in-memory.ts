@@ -1,7 +1,7 @@
 import type {
-  DatabaseAdapter,
-  DatabaseDocumentAdapter,
-} from "../contracts/adapter.js";
+  DatabaseDriver,
+  DatabaseDocumentDriver,
+} from "../contracts/driver.js";
 import type {
   CreateCollectionInput,
   DatabaseCollection,
@@ -16,7 +16,7 @@ import type {
   UpdateDocumentInput,
 } from "../contracts/documents.js";
 import type { DatabaseJson, DatabaseJsonObject } from "../contracts/json.js";
-import { defineDatabaseAdapter } from "../core/define-database-adapter.js";
+import { defineDatabaseDriver } from "../core/define-database-driver.js";
 
 interface StoredCollection {
   meta: DatabaseCollection;
@@ -132,7 +132,7 @@ function sortDocuments(
   });
 }
 
-export function createInMemoryDatabaseAdapter(): DatabaseAdapter {
+export function createInMemoryDatabaseDriver(): DatabaseDriver {
   const collections = new Map<string, StoredCollection>();
 
   function getCollection(tenantId: string, name: string): StoredCollection {
@@ -144,7 +144,7 @@ export function createInMemoryDatabaseAdapter(): DatabaseAdapter {
     return collection;
   }
 
-  const documents: DatabaseDocumentAdapter = {
+  const documents: DatabaseDocumentDriver = {
     async createCollection(input) {
       const key = collectionKey(input.tenantId, input.name);
       if (collections.has(key)) {
@@ -255,7 +255,7 @@ export function createInMemoryDatabaseAdapter(): DatabaseAdapter {
     },
   };
 
-  return defineDatabaseAdapter({
+  return defineDatabaseDriver({
     name: "in-memory",
     capabilities: {
       documents: true,

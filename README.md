@@ -21,7 +21,7 @@ Packages live in [`packages/`](/Users/ivanjeremicx/Projects/zelavis/packages).
 Current packages:
 
 - [`@zelavis/database`](/Users/ivanjeremicx/Projects/zelavis/packages/database)  
-  A document-first, multi-model-ready database core with tenant-aware contracts, an in-memory adapter, optional SQL capability, and a mountable server service.
+  A document-first, multi-model-ready database core with tenant-aware contracts, an in-memory driver, optional SQL capability, and a mountable server service.
 - [`@zelavis/ecommerce`](/Users/ivanjeremicx/Projects/zelavis/packages/ecommerce)  
   A low-level ecommerce core for building custom commerce platforms, CMS plugins, backend services, and embedded commerce workflows.
 - [`@zelavis/ecommerce-express`](/Users/ivanjeremicx/Projects/zelavis/packages/ecommerce/integrations/express)  
@@ -49,11 +49,11 @@ Current architecture includes:
 
 - Tenant-aware document collections.
 - A document API for create, read, query, update, and delete operations.
-- An in-memory adapter for development and tests.
-- An optional SQL capability contract for future SQLite-compatible adapters.
+- An in-memory driver for development and tests.
+- An optional SQL capability contract for future SQLite-compatible integrations.
 - `databaseService(database)` for mounting database routes through `@zelavis/server`, with documents exposed as a nested service.
 
-The first implementation is intentionally portable and does not depend on `unstorage` or native SQLite bindings. Durable adapters should live in focused packages such as a future `@zelavis/database-node`, `@zelavis/database-d1`, or `@zelavis/database-libsql`.
+The first implementation is intentionally portable and does not depend on `unstorage` or native SQLite bindings. Durable database drivers should be supplied by platform integrations such as future `@zelavis/integration-node`, `@zelavis/integration-cloudflare`, or `@zelavis/integration-turso` packages.
 
 ## `@zelavis/ecommerce`
 

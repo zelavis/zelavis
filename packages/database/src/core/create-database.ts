@@ -1,16 +1,16 @@
-import type { DatabaseAdapter } from "../contracts/adapter.js";
+import type { DatabaseDriver } from "../contracts/driver.js";
 import { DocumentService } from "../services/document-service.js";
-import { createInMemoryDatabaseAdapter } from "../storage/in-memory.js";
+import { createInMemoryDatabaseDriver } from "../storage/in-memory.js";
 import type { DatabaseApi } from "./types.js";
 
 export interface CreateDatabaseOptions {
-  adapter?: DatabaseAdapter;
+  driver?: DatabaseDriver;
   config?: Record<string, unknown>;
   defaultTenantId?: string;
 }
 
 export async function createDatabase(options: CreateDatabaseOptions = {}): Promise<DatabaseApi> {
-  const adapter = options.adapter ?? createInMemoryDatabaseAdapter();
+  const driver = options.driver ?? createInMemoryDatabaseDriver();
   const context = {
     config: options.config ?? {},
     defaultTenantId: options.defaultTenantId ?? "default",
@@ -18,9 +18,9 @@ export async function createDatabase(options: CreateDatabaseOptions = {}): Promi
 
   return {
     context,
-    adapter,
-    capabilities: adapter.capabilities,
-    documents: new DocumentService(adapter.documents, context.defaultTenantId),
-    sql: adapter.sql,
+    driver,
+    capabilities: driver.capabilities,
+    documents: new DocumentService(driver.documents, context.defaultTenantId),
+    sql: driver.sql,
   };
 }

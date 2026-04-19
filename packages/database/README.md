@@ -2,13 +2,13 @@
 
 `@zelavis/database` provides the core database contracts and document primitives for Zelavis.
 
-The package is intentionally document-first, but not document-only. SQL is represented as an optional adapter capability so SQLite-compatible adapters can expose raw SQL without forcing every runtime to support it.
+The package is intentionally document-first, but not document-only. SQL is represented as an optional driver capability so SQLite-compatible integrations can expose raw SQL without forcing every runtime to support it.
 
 ## Scope
 
 - Tenant-aware document collections.
-- In-memory adapter for local development and tests.
-- Optional SQL capability contract for SQLite-compatible adapters.
+- In-memory driver for local development and tests.
+- Optional SQL capability contract for SQLite-compatible integrations.
 - Server service routes through the existing `@zelavis/server` service contract, with documents exposed as a nested service.
 
 ## Non-goals for the first slice
@@ -18,11 +18,11 @@ The package is intentionally document-first, but not document-only. SQL is repre
 - No schema expression parser.
 - No replication, offline sync, or distributed transactions.
 
-Provider-specific packages should add durable adapters later, for example:
+Platform integrations should provide durable database drivers later, for example:
 
-- `@zelavis/database-node` for Node.js SQLite, likely using `better-sqlite3`.
-- `@zelavis/database-d1` for Cloudflare D1.
-- `@zelavis/database-libsql` for libSQL/Turso.
+- `@zelavis/integration-node` can supply a Node SQLite driver, likely using `better-sqlite3`.
+- `@zelavis/integration-cloudflare` can supply a D1 driver.
+- `@zelavis/integration-turso` can supply a libSQL/Turso driver.
 
 ## Usage
 

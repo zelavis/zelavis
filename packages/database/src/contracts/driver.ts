@@ -23,7 +23,7 @@ export interface DatabaseCapabilities {
   tenantRouting: boolean;
 }
 
-export interface DatabaseDocumentAdapter {
+export interface DatabaseDocumentDriver {
   createCollection(input: TenantScoped<CreateCollectionInput>): Promise<DatabaseCollection>;
   listCollections(input: TenantScoped<ListCollectionsInput>): Promise<DatabaseCollection[]>;
   collectionExists(input: TenantScoped<ListCollectionsInput> & { name: string }): Promise<boolean>;
@@ -47,9 +47,9 @@ export interface DatabaseDocumentAdapter {
   deleteDocument(input: TenantScoped<DeleteDocumentInput>): Promise<boolean>;
 }
 
-export interface DatabaseAdapter {
+export interface DatabaseDriver {
   name: string;
   capabilities: DatabaseCapabilities;
-  documents: DatabaseDocumentAdapter;
+  documents: DatabaseDocumentDriver;
   sql?: SqlDatabase;
 }

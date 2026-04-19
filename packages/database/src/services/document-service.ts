@@ -1,4 +1,4 @@
-import type { DatabaseDocumentAdapter } from "../contracts/adapter.js";
+import type { DatabaseDocumentDriver } from "../contracts/driver.js";
 import type {
   CreateCollectionInput,
   DatabaseCollection,
@@ -24,37 +24,37 @@ function withTenantId<TInput extends { tenantId?: string }>(
 
 export class DocumentService {
   constructor(
-    private readonly adapter: DatabaseDocumentAdapter,
+    private readonly driver: DatabaseDocumentDriver,
     private readonly defaultTenantId: string,
   ) {}
 
   createCollection(input: CreateCollectionInput): Promise<DatabaseCollection> {
-    return this.adapter.createCollection(withTenantId(input, this.defaultTenantId));
+    return this.driver.createCollection(withTenantId(input, this.defaultTenantId));
   }
 
   listCollections(input: ListCollectionsInput = {}): Promise<DatabaseCollection[]> {
-    return this.adapter.listCollections(withTenantId(input, this.defaultTenantId));
+    return this.driver.listCollections(withTenantId(input, this.defaultTenantId));
   }
 
   collectionExists(input: ListCollectionsInput & { name: string }): Promise<boolean> {
-    return this.adapter.collectionExists(withTenantId(input, this.defaultTenantId));
+    return this.driver.collectionExists(withTenantId(input, this.defaultTenantId));
   }
 
   insert<TData extends DatabaseJsonObject>(
     input: InsertDocumentInput<TData>,
   ): Promise<DatabaseDocument<TData>> {
-    return this.adapter.insertDocument({
+    return this.driver.insertDocument({
       ...withTenantId(input, this.defaultTenantId),
       id: input.id ?? "",
     });
   }
 
   findById(input: FindDocumentByIdInput): Promise<DatabaseDocument | null> {
-    return this.adapter.findDocumentById(withTenantId(input, this.defaultTenantId));
+    return this.driver.findDocumentById(withTenantId(input, this.defaultTenantId));
   }
 
   findMany(input: FindDocumentsInput): Promise<DatabaseDocument[]> {
-    return this.adapter.findDocuments({
+    return this.driver.findDocuments({
       ...withTenantId(input, this.defaultTenantId),
       where: input.where ?? [],
       orderBy: input.orderBy ?? [],
@@ -66,13 +66,13 @@ export class DocumentService {
   update<TData extends DatabaseJsonObject>(
     input: UpdateDocumentInput<TData>,
   ): Promise<DatabaseDocument<TData>> {
-    return this.adapter.updateDocument({
+    return this.driver.updateDocument({
       ...withTenantId(input, this.defaultTenantId),
       mode: input.mode ?? "merge",
     });
   }
 
   delete(input: DeleteDocumentInput): Promise<boolean> {
-    return this.adapter.deleteDocument(withTenantId(input, this.defaultTenantId));
+    return this.driver.deleteDocument(withTenantId(input, this.defaultTenantId));
   }
 }

@@ -1,4 +1,4 @@
-import type { DatabaseAdapter, DatabaseCapabilities } from "../contracts/adapter.js";
+import type { DatabaseDriver, DatabaseCapabilities } from "../contracts/driver.js";
 import type { SqlDatabase } from "../contracts/sql.js";
 import type { DocumentService } from "../services/document-service.js";
 
@@ -9,7 +9,7 @@ export interface DatabaseContext {
 
 export interface DatabaseApi {
   context: DatabaseContext;
-  adapter: DatabaseAdapter;
+  driver: DatabaseDriver;
   capabilities: DatabaseCapabilities;
   documents: DocumentService;
   sql?: SqlDatabase;
