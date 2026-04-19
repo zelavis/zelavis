@@ -47,6 +47,8 @@ Current packages:
 
 The database package is a core Zelavis service, but it uses the same service contract as extension services. Applications should usually import from `zelavis`, where the database service is included by default. Use `@zelavis/database` directly when you need lower-level database primitives.
 
+Use `zelavis` for application and runtime code. Use scoped packages such as `@zelavis/server`, `@zelavis/database`, and `@zelavis/auth` when building lower-level primitives, integrations, plugins, or tests that need direct package APIs.
+
 Disable the built-in database service when you need a server without database routes:
 
 ```ts

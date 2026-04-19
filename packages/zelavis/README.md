@@ -4,6 +4,22 @@
 
 Use this package when building an application or service with Zelavis. Lower-level packages such as `@zelavis/server`, `@zelavis/database`, and `@zelavis/auth` remain available when you need direct access to the primitives.
 
+## Import split
+
+Use `zelavis` for application and runtime code:
+
+```ts
+import { authService, zelavisServer } from "zelavis";
+import { nodeIntegration } from "zelavis/integrations/node";
+```
+
+Use scoped packages when building lower-level primitives, integrations, plugins, or tests that need direct package APIs:
+
+```ts
+import { createDatabase } from "@zelavis/database";
+import { defineServerService } from "@zelavis/server";
+```
+
 ## Usage
 
 ```ts
