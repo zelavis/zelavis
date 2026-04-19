@@ -18,8 +18,10 @@ This repository is intended for developers building custom software, internal pl
 
 Packages live in [`packages/`](/Users/ivanjeremicx/Projects/zelavis/packages).
 
-Current package:
+Current packages:
 
+- [`@zelavis/database`](/Users/ivanjeremicx/Projects/zelavis/packages/database)  
+  A document-first, multi-model-ready database core with tenant-aware contracts, an in-memory adapter, optional SQL capability, and a mountable server service.
 - [`@zelavis/ecommerce`](/Users/ivanjeremicx/Projects/zelavis/packages/ecommerce)  
   A low-level ecommerce core for building custom commerce platforms, CMS plugins, backend services, and embedded commerce workflows.
 - [`@zelavis/ecommerce-express`](/Users/ivanjeremicx/Projects/zelavis/packages/ecommerce/integrations/express)  
@@ -39,9 +41,23 @@ Current package:
 - [`@zelavis/server`](/Users/ivanjeremicx/Projects/zelavis/packages/server)  
   Shared endpoint contract and framework adapters that mount endpoint manifests from zelavis packages.
 
+## `@zelavis/database`
+
+The database package is a core Zelavis service, but it uses the same service contract as extension services.
+
+Current architecture includes:
+
+- Tenant-aware document collections.
+- A document API for create, read, query, update, and delete operations.
+- An in-memory adapter for development and tests.
+- An optional SQL capability contract for future SQLite-compatible adapters.
+- `databaseService(database)` for mounting database routes through `@zelavis/server`.
+
+The first implementation is intentionally portable and does not depend on `unstorage` or native SQLite bindings. Durable adapters should live in focused packages such as a future `@zelavis/database-node`, `@zelavis/database-d1`, or `@zelavis/database-libsql`.
+
 ## `@zelavis/ecommerce`
 
-The first package in this repo focuses on the primitives required to build larger commerce systems without prescribing the final product.
+The ecommerce package focuses on the primitives required to build larger commerce systems without prescribing the final product.
 
 Current architecture includes:
 
