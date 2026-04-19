@@ -9,7 +9,7 @@ The package is intentionally document-first, but not document-only. SQL is repre
 - Tenant-aware document collections.
 - In-memory adapter for local development and tests.
 - Optional SQL capability contract for SQLite-compatible adapters.
-- Server service routes through the existing `@zelavis/server` service contract.
+- Server service routes through the existing `@zelavis/server` service contract, with documents exposed as a nested service.
 
 ## Non-goals for the first slice
 

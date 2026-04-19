@@ -1,5 +1,6 @@
 import type {
   ZelavisResolvedRoute,
+  ZelavisServiceInput,
   ZelavisServerMountOptions,
   ZelavisServerService,
 } from "../contracts.js";
@@ -56,25 +57,44 @@ export function resolveMountedEndpoints<TContext = unknown>(
   const resolved: ZelavisResolvedRoute<TContext>[] = [];
   const version = options.version ?? "v1";
 
-  for (const service of services) {
+  function visitService(service: ZelavisServerService<TContext>, prefix: string | undefined): void {
     const routes = service.api[version];
-    if (!routes) {
-      continue;
+    const servicePrefix = options.servicePrefixes?.[service.name] ?? service.basePath ?? service.name;
+    const nextPrefix = joinPathParts(prefix, servicePrefix, "/");
+
+    if (routes) {
+      for (const route of routes) {
+        const overridePath = options.pathOverrides?.[route.id];
+        const routePath = normalizePath(overridePath ?? route.path);
+
+        resolved.push({
+          service,
+          route,
+          fullPath: joinPathParts(prefix, servicePrefix, routePath),
+        });
+      }
     }
 
-    const servicePrefix = options.servicePrefixes?.[service.name] ?? service.basePath ?? service.name;
+    for (const child of service.services ?? []) {
+      if (isPromiseLike(child)) {
+        throw new TypeError(
+          `Nested service "${service.name}" contains an unresolved promise. Resolve nested services before mounting.`,
+        );
+      }
 
-    for (const route of routes) {
-      const overridePath = options.pathOverrides?.[route.id];
-      const routePath = normalizePath(overridePath ?? route.path);
-
-      resolved.push({
-        service,
-        route,
-        fullPath: joinPathParts(options.prefix, servicePrefix, routePath),
-      });
+      visitService(child as ZelavisServerService<TContext>, nextPrefix);
     }
   }
 
+  for (const service of services) {
+    visitService(service, options.prefix);
+  }
+
   return resolved;
+}
+
+function isPromiseLike<TContext>(
+  value: ZelavisServiceInput<TContext>,
+): value is Promise<ZelavisServerService<TContext>> {
+  return Boolean(value && typeof (value as Promise<ZelavisServerService<TContext>>).then === "function");
 }

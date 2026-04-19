@@ -89,3 +89,53 @@ test("resolveMountedEndpoints skips services without routes for the selected ver
 
   assert.deepEqual(resolveMountedEndpoints([service]), []);
 });
+
+test("resolveMountedEndpoints recursively mounts nested services", () => {
+  const service = defineServerService({
+    name: "database",
+    basePath: "database",
+    service: {},
+    api: {
+      v1: [
+        {
+          id: "database.health",
+          method: "GET",
+          path: "/health",
+          handler: noopHandler,
+        },
+      ],
+    },
+    services: [
+      defineServerService({
+        name: "documents",
+        basePath: "documents",
+        service: {},
+        api: {
+          v1: [
+            {
+              id: "database.documents.list",
+              method: "GET",
+              path: "/:collection",
+              handler: noopHandler,
+            },
+          ],
+        },
+      }),
+    ],
+  });
+
+  const routes = resolveMountedEndpoints([service], {
+    prefix: "/api",
+    pathOverrides: {
+      "database.documents.list": "/collections/:collection",
+    },
+  });
+
+  assert.deepEqual(
+    routes.map((resolved) => [resolved.route.id, resolved.fullPath]),
+    [
+      ["database.health", "/api/database/health"],
+      ["database.documents.list", "/api/database/documents/collections/:collection"],
+    ],
+  );
+});

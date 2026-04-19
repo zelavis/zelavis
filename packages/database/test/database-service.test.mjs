@@ -19,13 +19,14 @@ test("databaseService exposes database routes through the existing service contr
   });
 
   assert.equal(runtime.services.database.service, database);
+  assert.equal(runtime.services.database.services[0].name, "documents");
   assert.equal(runtime.server.routeCount, 8);
   assert.deepEqual(
     mounted.routes.map((route) => route.fullPath),
     [
       "/api/database/health",
-      "/api/database/collections",
-      "/api/database/collections",
+      "/api/database/documents/collections",
+      "/api/database/documents/collections",
       "/api/database/documents/:collection",
       "/api/database/documents/:collection/:id",
       "/api/database/documents/:collection/query",

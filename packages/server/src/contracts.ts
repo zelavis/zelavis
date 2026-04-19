@@ -30,11 +30,16 @@ export interface ZelavisServerService<TService = unknown> {
   basePath?: string;
   api: Record<string, readonly ZelavisServerRoute<TService>[]>;
   service: TService;
+  services?: readonly ZelavisAnyServiceInput[];
 }
 
 export type ZelavisServiceInput<TService = unknown> =
   | ZelavisServerService<TService>
   | Promise<ZelavisServerService<TService>>;
+
+export type ZelavisAnyServiceInput =
+  | ZelavisServerService<any>
+  | Promise<ZelavisServerService<any>>;
 
 export interface ZelavisResolvedRoute<TService = unknown> {
   service: ZelavisServerService<TService>;

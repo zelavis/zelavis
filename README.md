@@ -51,7 +51,7 @@ Current architecture includes:
 - A document API for create, read, query, update, and delete operations.
 - An in-memory adapter for development and tests.
 - An optional SQL capability contract for future SQLite-compatible adapters.
-- `databaseService(database)` for mounting database routes through `@zelavis/server`.
+- `databaseService(database)` for mounting database routes through `@zelavis/server`, with documents exposed as a nested service.
 
 The first implementation is intentionally portable and does not depend on `unstorage` or native SQLite bindings. Durable adapters should live in focused packages such as a future `@zelavis/database-node`, `@zelavis/database-d1`, or `@zelavis/database-libsql`.
 

@@ -60,6 +60,21 @@ export function createDatabaseServerService(
             },
           }),
         },
+      ],
+    },
+    services: [createDatabaseDocumentsServerService(database)],
+  });
+}
+
+export function createDatabaseDocumentsServerService(
+  database: DatabaseApi,
+): ZelavisServerService<DatabaseApi> {
+  return defineServerService({
+    name: "documents",
+    basePath: "documents",
+    service: database,
+    api: {
+      v1: [
         {
           id: "database.collections.list",
           method: "GET",
@@ -104,7 +119,7 @@ export function createDatabaseServerService(
         {
           id: "database.documents.insert",
           method: "POST",
-          path: "/documents/:collection",
+          path: "/:collection",
           handler: async ({ service, params, body }) => {
             const input = readBodyObject(body);
             return {
@@ -121,7 +136,7 @@ export function createDatabaseServerService(
         {
           id: "database.documents.get",
           method: "GET",
-          path: "/documents/:collection/:id",
+          path: "/:collection/:id",
           handler: async ({ service, params, query }) => {
             const document = await service.documents.findById({
               collection: params.collection,
@@ -144,7 +159,7 @@ export function createDatabaseServerService(
         {
           id: "database.documents.query",
           method: "POST",
-          path: "/documents/:collection/query",
+          path: "/:collection/query",
           handler: async ({ service, params, body }) => {
             const input = readBodyObject(body);
             return {
@@ -164,7 +179,7 @@ export function createDatabaseServerService(
         {
           id: "database.documents.update",
           method: "PATCH",
-          path: "/documents/:collection/:id",
+          path: "/:collection/:id",
           handler: async ({ service, params, body }) => {
             const input = readBodyObject(body);
             return {
@@ -181,7 +196,7 @@ export function createDatabaseServerService(
         {
           id: "database.documents.delete",
           method: "DELETE",
-          path: "/documents/:collection/:id",
+          path: "/:collection/:id",
           handler: async ({ service, params, query }) => ({
             body: {
               deleted: await service.documents.delete({
