@@ -6,11 +6,6 @@ async function main(): Promise<void> {
 
   const zelavisRuntime = await zelavisServer({
     services: [authService()],
-    coreServices: {
-      database: {
-        defaultTenantId: "demo",
-      },
-    },
     integration: nodeIntegration(),
     version: "v1",
     prefix: "/api/v1",
