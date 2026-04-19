@@ -1,6 +1,6 @@
 # @zelavis/server
 
-`@zelavis/server` defines a shared server-service contract and adapters that mount service APIs on server frameworks.
+`@zelavis/server` defines a shared server-service contract and adapters that mount service APIs on Node.js and server frameworks.
 
 It is intended to be the common server integration layer for packages such as `@zelavis/auth` and `@zelavis/ecommerce`.
 
@@ -14,5 +14,8 @@ It is intended to be the common server integration layer for packages such as `@
 
 ## Integrations
 
+- `@zelavis/server/integrations/node`
 - `@zelavis/server/integrations/express`
 - `@zelavis/server/integrations/hono`
+
+Use the Node.js integration when Zelavis should own a standalone HTTP server. Use Express or Hono integrations when mounting Zelavis into an existing app.

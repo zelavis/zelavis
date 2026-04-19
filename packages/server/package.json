@@ -18,6 +18,10 @@
     "./integrations/hono": {
       "types": "./dist/integrations/hono.d.ts",
       "import": "./dist/integrations/hono.js"
+    },
+    "./integrations/node": {
+      "types": "./dist/integrations/node.d.ts",
+      "import": "./dist/integrations/node.js"
     }
   },
   "scripts": {
@@ -42,6 +46,7 @@
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
+    "@types/node": "^24.11.0",
     "express": "^5.0.0",
     "hono": "^4.0.0",
     "typescript": "^5.9.0"

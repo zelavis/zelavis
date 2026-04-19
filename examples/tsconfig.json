@@ -16,7 +16,8 @@
       "@zelavis/ecommerce-paypal": ["packages/ecommerce/plugins/paypal/src/index.ts"],
       "@zelavis/ecommerce-stripe": ["packages/ecommerce/plugins/stripe/src/index.ts"],
       "@zelavis/server": ["packages/server/src/index.ts"],
-      "@zelavis/server/integrations/express": ["packages/server/src/integrations/express.ts"]
+      "@zelavis/server/integrations/express": ["packages/server/src/integrations/express.ts"],
+      "@zelavis/server/integrations/node": ["packages/server/src/integrations/node.ts"]
     }
   },
   "include": ["*.ts"]

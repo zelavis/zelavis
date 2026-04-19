@@ -127,6 +127,9 @@ importers:
       '@types/express':
         specifier: ^5.0.0
         version: 5.0.6
+      '@types/node':
+        specifier: ^24.11.0
+        version: 24.11.0
       express:
         specifier: ^5.0.0
         version: 5.2.1
