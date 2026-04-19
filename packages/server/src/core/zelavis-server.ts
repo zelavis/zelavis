@@ -32,8 +32,8 @@ async function resolveServiceInput(
 
 function toServiceMap<TService = unknown>(
   services: readonly ZelavisServerService<TService>[],
-): Record<string, ZelavisServerService<TService>> {
-  const result: Record<string, ZelavisServerService<TService>> = {};
+): Record<string, ZelavisServerService<any>> {
+  const result: Record<string, ZelavisServerService<any>> = {};
 
   for (const service of services) {
     result[service.name] = service;

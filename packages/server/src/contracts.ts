@@ -73,11 +73,11 @@ export interface ZelavisServerIntegration<TService = unknown, TResult = unknown>
 
 export interface ZelavisServerOptions<TService = unknown, TResult = unknown>
   extends ZelavisServerMountOptions<TService> {
-  services: readonly ZelavisServiceInput<TService>[];
+  services: readonly ZelavisAnyServiceInput[];
   integration: ZelavisServerIntegration<TService, TResult>;
 }
 
 export interface ZelavisServerRuntime<TService = unknown, TResult = unknown> {
-  services: Record<string, ZelavisServerService<TService>>;
+  services: Record<string, ZelavisServerService<any>>;
   server: TResult;
 }

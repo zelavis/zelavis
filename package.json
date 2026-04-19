@@ -8,7 +8,7 @@
     "build": "pnpm -r --if-present build",
     "check": "pnpm run typecheck",
     "test": "pnpm -r --if-present test",
-    "typecheck": "pnpm -r --if-present typecheck"
+    "typecheck": "pnpm -r --if-present typecheck && pnpm --filter @zelavis/server exec tsc -p ../../examples/tsconfig.json"
   },
   "keywords": [],
   "author": "",
