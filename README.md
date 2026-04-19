@@ -58,6 +58,19 @@ await zelavisServer({
 });
 ```
 
+Configure the built-in database service when the defaults are not enough:
+
+```ts
+await zelavisServer({
+  coreServices: {
+    database: {
+      defaultTenantId: "acme",
+    },
+  },
+  integration: nodeIntegration(),
+});
+```
+
 Current architecture includes:
 
 - Tenant-aware document collections.
