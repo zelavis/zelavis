@@ -6,7 +6,6 @@ import {
   LayoutDashboard,
   MonitorCog,
   PanelsTopLeft,
-  Settings,
   ShieldCheck,
   Store,
 } from 'lucide-react'
@@ -19,7 +18,6 @@ export const dashboardNavItems = [
   { to: '/builder', label: 'Builder', icon: PanelsTopLeft },
   { to: '/content', label: 'Content', icon: MonitorCog },
   { to: '/commerce', label: 'Commerce', icon: Store },
-  { to: '/settings', label: 'Settings', icon: Settings },
 ] as const
 
 export const serviceRows = [

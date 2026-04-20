@@ -1,17 +1,15 @@
 import { expect, test } from '@playwright/test'
 
-test('desktop dashboard top bar does not overlap', async ({ page }, testInfo) => {
+test('desktop dashboard sidebar does not overlap', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
   await page.goto('/')
+  await expect(page.getByRole('complementary', { name: 'Dashboard navigation' })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Zelavis' })).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Services' })).toHaveCount(0)
   await expect(page.getByRole('link', { name: 'Settings' })).toBeVisible()
 
-  const header = page.locator('header')
-  const nav = header.locator('nav')
-  const links = header.locator('a')
-
+  const nav = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const links = nav.locator('a')
   await expect(nav).toBeVisible()
 
   const navOverflow = await nav.evaluate(
@@ -59,7 +57,7 @@ test('mobile dashboard captures a stable stacked header', async ({ page }, testI
   test.skip(testInfo.project.name !== 'mobile')
 
   await page.goto('/database')
-  await expect(page.getByRole('link', { name: 'Zelavis' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Toggle Sidebar' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Multi-model database' })).toBeVisible()
 
   const pageOverflow = await page.evaluate(
@@ -93,14 +91,15 @@ test('overview nav is only active on the overview route', async ({ page }, testI
   )
 })
 
-test('services are reachable from settings instead of the main menu', async ({
+test('services are reachable from the settings area', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
   await page.goto('/settings')
 
-  await expect(page.locator('header').getByRole('link', { name: 'Services' })).toHaveCount(0)
+  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  await expect(sidebar.getByRole('link', { name: 'Services' })).toBeVisible()
   await page.getByRole('link', { name: 'Open' }).click()
   await expect(page.getByRole('heading', { name: 'Runtime services' })).toBeVisible()
   await expect(page).toHaveURL(/\/services$/)
