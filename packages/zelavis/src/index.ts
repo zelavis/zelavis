@@ -1,3 +1,6 @@
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   authService as createAuthService,
   type AuthServiceOptions,
@@ -94,6 +97,105 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
+const dashboardDistPath = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "dashboard",
+);
+
+interface DashboardAsset {
+  path: string;
+  filePath: string;
+  contentType: string;
+  cacheControl: string;
+}
+
+function toDashboardRoutePath(filePath: string): string {
+  const relativePath = relative(dashboardDistPath, filePath).split(sep).join("/");
+  return `/${relativePath}`;
+}
+
+function getContentType(routePath: string): string {
+  if (routePath.endsWith(".html")) {
+    return "text/html; charset=utf-8";
+  }
+
+  if (routePath.endsWith(".css")) {
+    return "text/css; charset=utf-8";
+  }
+
+  if (routePath.endsWith(".js") || routePath.endsWith(".mjs")) {
+    return "text/javascript; charset=utf-8";
+  }
+
+  if (routePath.endsWith(".json") || routePath.endsWith(".webmanifest")) {
+    return "application/json; charset=utf-8";
+  }
+
+  if (routePath.endsWith(".ico")) {
+    return "image/x-icon";
+  }
+
+  if (routePath.endsWith(".png")) {
+    return "image/png";
+  }
+
+  if (routePath.endsWith(".svg")) {
+    return "image/svg+xml; charset=utf-8";
+  }
+
+  if (routePath.endsWith(".txt")) {
+    return "text/plain; charset=utf-8";
+  }
+
+  return "application/octet-stream";
+}
+
+function collectDashboardAssets(directory = dashboardDistPath): DashboardAsset[] {
+  if (!existsSync(directory)) {
+    return [];
+  }
+
+  return readdirSync(directory)
+    .flatMap((entry) => {
+      const filePath = join(directory, entry);
+      const stats = statSync(filePath);
+
+      if (stats.isDirectory()) {
+        return collectDashboardAssets(filePath);
+      }
+
+      const routePath = toDashboardRoutePath(filePath);
+      if (routePath === "/_shell.html") {
+        return [];
+      }
+
+      const isFingerprintedAsset = routePath.startsWith("/assets/");
+
+      return [
+        {
+          path: routePath,
+          filePath,
+          contentType: getContentType(routePath),
+          cacheControl: isFingerprintedAsset
+            ? "public, max-age=31536000, immutable"
+            : "public, max-age=300",
+        },
+      ];
+    })
+    .sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function prefixDashboardShellPaths(html: string, rootPath: string): string {
+  const prefix = rootPath === "/" ? "" : rootPath;
+
+  return html
+    .replace(/\b(href|src|action)="\/(?!\/)([^"]*)"/g, (_match, attribute, path) => {
+      return `${attribute}="${prefix}/${path}"`;
+    })
+    .replaceAll('"/assets/', `"${prefix}/assets/`)
+    .replaceAll("'/assets/", `'${prefix}/assets/`);
+}
+
 function isDatabaseApi(value: unknown): value is DatabaseApi {
   return Boolean(
     value &&
@@ -150,10 +252,11 @@ async function resolveDashboardCoreService(
   const options = dashboardOption === true ? {} : dashboardOption;
   const title = options.title ?? "zelavis";
   const subtitle = options.subtitle ?? "Backend, dashboard, and core services.";
-  const assetPath = options.assetPath ?? joinPathParts(rootPath, "assets/dashboard.css");
-  const escapedTitle = escapeHtml(title);
-  const escapedSubtitle = escapeHtml(subtitle);
-  const escapedAssetPath = escapeHtml(assetPath);
+  const shellPath = join(dashboardDistPath, "_shell.html");
+  const shell = existsSync(shellPath)
+    ? prefixDashboardShellPaths(readFileSync(shellPath, "utf8"), rootPath)
+    : undefined;
+  const assets = collectDashboardAssets();
 
   return defineServerService({
     name: "dashboard",
@@ -161,7 +264,7 @@ async function resolveDashboardCoreService(
     service: {
       title,
       subtitle,
-      assetPath,
+      assetRoot: joinPathParts(rootPath, "assets"),
     },
     api: {
       v1: [
@@ -169,86 +272,41 @@ async function resolveDashboardCoreService(
           id: "dashboard.view.overview",
           method: "GET",
           path: "/",
-          handler: ({ service }) => ({
-            status: 200,
-            headers: {
-              "content-type": "text/html; charset=utf-8",
-            },
-            body: `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${escapedTitle}</title>
-    <link rel="stylesheet" href="${escapedAssetPath}" />
-  </head>
-  <body>
-    <main class="zelavis-dashboard">
-      <p class="zelavis-eyebrow">zelavis</p>
-      <h1>${escapedTitle}</h1>
-      <p>${escapedSubtitle}</p>
-    </main>
-  </body>
-</html>`,
-          }),
+          handler: () => {
+            if (!shell) {
+              return {
+                status: 503,
+                headers: {
+                  "content-type": "text/html; charset=utf-8",
+                  "cache-control": "no-cache",
+                },
+                body: `<!doctype html><html lang="en"><head><meta charset="utf-8" /><title>${escapeHtml(title)}</title></head><body><h1>${escapeHtml(title)}</h1><p>${escapeHtml(subtitle)}</p><p>Dashboard assets have not been built yet.</p></body></html>`,
+              };
+            }
+
+            return {
+              status: 200,
+              headers: {
+                "content-type": "text/html; charset=utf-8",
+                "cache-control": "no-cache",
+              },
+              body: shell,
+            };
+          },
         },
-        {
-          id: "dashboard.assets.styles",
-          method: "GET",
-          path: "/assets/dashboard.css",
+        ...assets.map((asset) => ({
+          id: `dashboard.assets${asset.path.replaceAll("/", ".")}`,
+          method: "GET" as const,
+          path: asset.path,
           handler: () => ({
             status: 200,
             headers: {
-              "content-type": "text/css; charset=utf-8",
-              "cache-control": "public, max-age=300",
+              "content-type": asset.contentType,
+              "cache-control": asset.cacheControl,
             },
-            body: `
-:root {
-  color-scheme: light;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-
-body {
-  margin: 0;
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  background: #f8fafc;
-  color: #0f172a;
-}
-
-.zelavis-dashboard {
-  width: min(720px, calc(100vw - 48px));
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  background: #ffffff;
-  padding: 32px;
-  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.08);
-}
-
-.zelavis-eyebrow {
-  margin: 0 0 12px;
-  color: #2563eb;
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-h1 {
-  margin: 0 0 12px;
-  font-size: 2.5rem;
-  line-height: 1;
-}
-
-p {
-  margin: 0;
-  color: #475569;
-  line-height: 1.6;
-}
-`,
+            body: readFileSync(asset.filePath),
           }),
-        },
+        })),
       ],
     },
   });

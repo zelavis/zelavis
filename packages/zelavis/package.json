@@ -25,7 +25,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "pnpm --filter @zelavis/ui build && tsc -p tsconfig.json && node scripts/copy-dashboard.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm run build && node --test test/*.test.mjs"
   },
@@ -38,6 +38,7 @@
     "@zelavis/server": "workspace:*"
   },
   "devDependencies": {
+    "@zelavis/ui": "workspace:*",
     "typescript": "^5.9.0"
   },
   "keywords": [

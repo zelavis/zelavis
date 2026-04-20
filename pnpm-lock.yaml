@@ -252,6 +252,9 @@ importers:
         specifier: workspace:*
         version: link:../server
     devDependencies:
+      '@zelavis/ui':
+        specifier: workspace:*
+        version: link:../ui
       typescript:
         specifier: ^5.9.0
         version: 5.9.3

@@ -5,18 +5,18 @@ export default function Footer() {
     <footer className="mt-20 border-t border-[var(--line)] px-4 pb-14 pt-10 text-[var(--sea-ink-soft)]">
       <div className="page-wrap flex flex-col items-center justify-between gap-4 text-center sm:flex-row sm:text-left">
         <p className="m-0 text-sm">
-          &copy; {year} Your name here. All rights reserved.
+          &copy; {year} Zelavis. All rights reserved.
         </p>
-        <p className="island-kicker m-0">Built with TanStack Start</p>
+        <p className="island-kicker m-0">Zelavis dashboard shell</p>
       </div>
       <div className="mt-4 flex justify-center gap-4">
         <a
-          href="https://x.com/tan_stack"
+          href="https://github.com/zelavis"
           target="_blank"
           rel="noreferrer"
           className="rounded-xl p-2 text-[var(--sea-ink-soft)] transition hover:bg-[var(--link-bg-hover)] hover:text-[var(--sea-ink)]"
         >
-          <span className="sr-only">Follow TanStack on X</span>
+          <span className="sr-only">Open Zelavis on GitHub</span>
           <svg viewBox="0 0 16 16" aria-hidden="true" width="32" height="32">
             <path
               fill="currentColor"
@@ -25,12 +25,12 @@ export default function Footer() {
           </svg>
         </a>
         <a
-          href="https://github.com/TanStack"
+          href="https://github.com/zelavis/zelavis"
           target="_blank"
           rel="noreferrer"
           className="rounded-xl p-2 text-[var(--sea-ink-soft)] transition hover:bg-[var(--link-bg-hover)] hover:text-[var(--sea-ink)]"
         >
-          <span className="sr-only">Go to TanStack GitHub</span>
+          <span className="sr-only">Open the Zelavis repository</span>
           <svg viewBox="0 0 16 16" aria-hidden="true" width="32" height="32">
             <path
               fill="currentColor"
