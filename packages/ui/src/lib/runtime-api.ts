@@ -89,29 +89,52 @@ function inferRootPath(): string {
   return segment === 'zelavis' ? '/zelavis' : ''
 }
 
+function inferFallbackRootPath(rootPath: string): string {
+  if (rootPath || typeof window === 'undefined') {
+    return rootPath
+  }
+
+  return window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1'
+    ? '/zelavis'
+    : rootPath
+}
+
 async function readJson<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
   headers.set('accept', 'application/json')
   headers.set('content-type', 'application/json')
 
-  const response = await fetch(path, {
-    ...init,
-    headers,
-  })
+  let response: Response
+  try {
+    response = await fetch(path, {
+      ...init,
+      headers,
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`Request failed for ${path}: ${message}`)
+  }
 
   if (!response.ok) {
     let message = `Request failed: ${response.status}`
 
     try {
-      const body = (await response.json()) as { error?: unknown }
-      if (typeof body.error === 'string' && body.error.length > 0) {
-        message = body.error
+      const contentType = response.headers.get('content-type') ?? ''
+      if (contentType.includes('application/json')) {
+        const body = (await response.json()) as { error?: unknown }
+        if (typeof body.error === 'string' && body.error.length > 0) {
+          message = body.error
+        }
+      } else if (response.status === 404) {
+        message =
+          'Zelavis API route was not found. If you are using the UI dev server, start the Node.js example and restart the UI dev server.'
       }
     } catch {
       // Keep the status-only fallback when the response is not JSON.
     }
 
-    throw new Error(message)
+    throw new Error(`${message} (${path})`)
   }
 
   return response.json() as Promise<T>
@@ -123,6 +146,7 @@ export async function getRuntimeConfig(): Promise<RuntimeConfig> {
   }
 
   const rootPath = inferRootPath()
+  const fallbackRootPath = inferFallbackRootPath(rootPath)
 
   try {
     return await readJson<RuntimeConfig>(
@@ -131,17 +155,17 @@ export async function getRuntimeConfig(): Promise<RuntimeConfig> {
   } catch {
     return {
       ...fallbackConfig,
-      rootPath,
+      rootPath: fallbackRootPath,
       api: {
         ...fallbackConfig.api,
-        basePath: `${rootPath}/api/v1`,
+        basePath: `${fallbackRootPath}/api/v1`,
       },
       services: fallbackConfig.services.map((service) => ({
         ...service,
         apiPath:
           service.name === 'dashboard'
-            ? rootPath || '/'
-            : `${rootPath}/api/v1/${service.name}`,
+            ? fallbackRootPath || '/'
+            : `${fallbackRootPath}/api/v1/${service.name}`,
       })),
     }
   }
