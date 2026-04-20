@@ -7,6 +7,7 @@ export interface RuntimeService {
 export interface RuntimeConfig {
   name: string
   rootPath: string
+  configSource?: 'embedded' | 'endpoint' | 'fallback'
   api: {
     prefix: string
     version: string
@@ -142,19 +143,27 @@ async function readJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 export async function getRuntimeConfig(): Promise<RuntimeConfig> {
   if (typeof window !== 'undefined' && window.__ZELAVIS_RUNTIME_CONFIG__) {
-    return window.__ZELAVIS_RUNTIME_CONFIG__
+    return {
+      ...window.__ZELAVIS_RUNTIME_CONFIG__,
+      configSource: 'embedded',
+    }
   }
 
   const rootPath = inferRootPath()
   const fallbackRootPath = inferFallbackRootPath(rootPath)
 
   try {
-    return await readJson<RuntimeConfig>(
+    const config = await readJson<RuntimeConfig>(
       `${rootPath}/api/v1/dashboard/config`,
     )
+    return {
+      ...config,
+      configSource: 'endpoint',
+    }
   } catch {
     return {
       ...fallbackConfig,
+      configSource: 'fallback',
       rootPath: fallbackRootPath,
       api: {
         ...fallbackConfig.api,

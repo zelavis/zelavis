@@ -105,3 +105,34 @@ test('services are reachable from settings instead of the main menu', async ({
   await expect(page.getByRole('heading', { name: 'Runtime services' })).toBeVisible()
   await expect(page).toHaveURL(/\/services$/)
 })
+
+test('settings shows read-only root path controls', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await page.goto('/settings')
+
+  await expect(page.getByRole('heading', { name: 'Runtime Settings' })).toBeVisible()
+  await expect(page.getByLabel('Path')).toHaveValue('/zelavis')
+  await expect(page.getByRole('button', { name: 'Save' }).first()).toBeDisabled()
+})
+
+test('dashboard shows a not found page inside the shell', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await page.goto('/not-a-dashboard-route')
+
+  await expect(page.getByRole('link', { name: 'Zelavis' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Dashboard route not found' })).toBeVisible()
+  await expect(page.locator('main').getByRole('link', { name: 'Settings' })).toBeVisible()
+})
+
+test('footer shows the runtime config source', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await page.goto('/')
+
+  await expect(page.locator('footer')).toContainText('/zelavis/api/v1')
+  await expect(page.locator('footer')).toContainText(/embedded|endpoint|fallback/)
+})

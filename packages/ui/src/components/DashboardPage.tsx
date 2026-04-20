@@ -71,7 +71,11 @@ export function StatCard({ label, value, detail, icon: Icon }: StatCardProps) {
 
 export function StatusBadge({ state }: { state: string }) {
   const variant =
-    state === 'ready' ? 'success' : state === 'planned' ? 'warning' : 'outline'
+    state === 'ready' || state === 'embedded' || state === 'endpoint'
+      ? 'success'
+      : state === 'planned' || state === 'fallback' || state === 'checking'
+        ? 'warning'
+        : 'outline'
 
   return <Badge variant={variant}>{state}</Badge>
 }

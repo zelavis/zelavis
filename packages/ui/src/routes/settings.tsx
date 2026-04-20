@@ -20,7 +20,7 @@ function Settings() {
         title="Runtime Settings"
         description="Root path, API version, and enabled core services."
         actions={
-          <Button type="button" size="sm">
+          <Button type="button" size="sm" disabled>
             <Save className="size-4" />
             Save
           </Button>
@@ -35,6 +35,10 @@ function Settings() {
           <DataRow label="Root path" detail={config?.rootPath || '/'} />
           <DataRow label="API prefix" detail={config?.api.basePath ?? '/api/v1'} />
           <DataRow
+            label="Runtime config"
+            detail={config?.configSource ?? 'checking'}
+          />
+          <DataRow
             label="Core services"
             detail={
               config?.services
@@ -43,6 +47,33 @@ function Settings() {
                 .join(', ') ?? 'dashboard, auth, database'
             }
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Root Path</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-4 p-4">
+          <form className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+            <label className="grid gap-2 text-sm font-medium text-foreground">
+              Path
+              <input
+                value={config?.rootPath ?? '/zelavis'}
+                readOnly
+                className="min-w-0 rounded-md border bg-muted px-3 py-2 text-sm text-muted-foreground"
+              />
+            </label>
+            <Button
+              type="button"
+              size="sm"
+              disabled
+              className="self-end"
+            >
+              <Save className="size-4" />
+              Save
+            </Button>
+          </form>
         </CardContent>
       </Card>
 

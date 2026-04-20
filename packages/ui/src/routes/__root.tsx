@@ -1,9 +1,15 @@
 import type * as React from 'react'
-import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
+import {
+  HeadContent,
+  Link,
+  Scripts,
+  createRootRoute,
+} from '@tanstack/react-router'
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 import { TanStackDevtools } from '@tanstack/react-devtools'
 import Footer from '../components/Footer'
 import Header from '../components/Header'
+import { PageHeader } from '#/components/DashboardPage'
 
 import appCss from '../styles.css?url'
 
@@ -30,8 +36,37 @@ export const Route = createRootRoute({
       },
     ],
   }),
+  notFoundComponent: DashboardNotFound,
   shellComponent: RootDocument,
 })
+
+function DashboardNotFound() {
+  return (
+    <main className="mx-auto grid max-w-7xl gap-6 px-4 py-6">
+      <PageHeader
+        eyebrow="Not Found"
+        title="Dashboard route not found"
+        description="The requested dashboard path is not registered in this runtime."
+        actions={
+          <>
+            <Link
+              to="/"
+              className="inline-flex h-8 items-center justify-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground no-underline shadow transition-colors hover:bg-primary/90"
+            >
+              Overview
+            </Link>
+            <Link
+              to="/settings"
+              className="inline-flex h-8 items-center justify-center rounded-md border border-input bg-background px-3 text-xs font-medium text-foreground no-underline shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+            >
+              Settings
+            </Link>
+          </>
+        }
+      />
+    </main>
+  )
+}
 
 function RootDocument({ children }: { children: React.ReactNode }) {
   return (
