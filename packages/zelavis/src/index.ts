@@ -3,16 +3,13 @@ import {
   type AuthServiceOptions,
 } from "@zelavis/auth";
 import {
-  dashboardService as createDashboardService,
-  type DashboardServiceOptions,
-} from "@zelavis/dashboard";
-import {
   createDatabase,
   createDatabaseServerService,
   type CreateDatabaseOptions,
   type DatabaseApi,
 } from "@zelavis/database";
 import {
+  defineServerService,
   zelavisServer as mountZelavisServer,
   type ZelavisAnyServiceInput,
   type ZelavisServerIntegration,
@@ -25,7 +22,16 @@ export * from "@zelavis/database";
 export * from "@zelavis/server";
 
 export type ZelavisAuthCoreServiceOptions = boolean | AuthServiceOptions;
-export type ZelavisDashboardCoreServiceOptions = boolean | DashboardServiceOptions;
+
+export interface ZelavisDashboardCoreServiceOptions {
+  title?: string;
+  subtitle?: string;
+  assetPath?: string;
+}
+
+export type ZelavisDashboardCoreServiceInput =
+  | boolean
+  | ZelavisDashboardCoreServiceOptions;
 
 export type ZelavisDatabaseCoreServiceOptions =
   | boolean
@@ -35,7 +41,7 @@ export type ZelavisDatabaseCoreServiceOptions =
 
 export interface ZelavisCoreServicesOptions {
   auth?: ZelavisAuthCoreServiceOptions;
-  dashboard?: ZelavisDashboardCoreServiceOptions;
+  dashboard?: ZelavisDashboardCoreServiceInput;
   database?: ZelavisDatabaseCoreServiceOptions;
 }
 
@@ -77,6 +83,15 @@ function normalizePath(path: string | undefined, fallback: string): string {
 function joinPathParts(...parts: (string | undefined)[]): string {
   const normalized = parts.map(normalizePathPart).filter(Boolean);
   return normalized.length > 0 ? `/${normalized.join("/")}` : "/";
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function isDatabaseApi(value: unknown): value is DatabaseApi {
@@ -123,7 +138,7 @@ async function resolveAuthCoreService(
 }
 
 async function resolveDashboardCoreService(
-  option: ZelavisDashboardCoreServiceOptions | undefined,
+  option: ZelavisDashboardCoreServiceInput | undefined,
   rootPath: string,
 ): Promise<ZelavisServerService<any> | undefined> {
   const dashboardOption = option ?? true;
@@ -133,10 +148,109 @@ async function resolveDashboardCoreService(
   }
 
   const options = dashboardOption === true ? {} : dashboardOption;
-  return createDashboardService({
-    ...options,
+  const title = options.title ?? "zelavis";
+  const subtitle = options.subtitle ?? "Backend, dashboard, and core services.";
+  const assetPath = options.assetPath ?? joinPathParts(rootPath, "assets/dashboard.css");
+  const escapedTitle = escapeHtml(title);
+  const escapedSubtitle = escapeHtml(subtitle);
+  const escapedAssetPath = escapeHtml(assetPath);
+
+  return defineServerService({
+    name: "dashboard",
     basePath: "/",
-    assetPath: options.assetPath ?? joinPathParts(rootPath, "assets/dashboard.css"),
+    service: {
+      title,
+      subtitle,
+      assetPath,
+    },
+    api: {
+      v1: [
+        {
+          id: "dashboard.view.overview",
+          method: "GET",
+          path: "/",
+          handler: ({ service }) => ({
+            status: 200,
+            headers: {
+              "content-type": "text/html; charset=utf-8",
+            },
+            body: `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapedTitle}</title>
+    <link rel="stylesheet" href="${escapedAssetPath}" />
+  </head>
+  <body>
+    <main class="zelavis-dashboard">
+      <p class="zelavis-eyebrow">zelavis</p>
+      <h1>${escapedTitle}</h1>
+      <p>${escapedSubtitle}</p>
+    </main>
+  </body>
+</html>`,
+          }),
+        },
+        {
+          id: "dashboard.assets.styles",
+          method: "GET",
+          path: "/assets/dashboard.css",
+          handler: () => ({
+            status: 200,
+            headers: {
+              "content-type": "text/css; charset=utf-8",
+              "cache-control": "public, max-age=300",
+            },
+            body: `
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.zelavis-dashboard {
+  width: min(720px, calc(100vw - 48px));
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 32px;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.08);
+}
+
+.zelavis-eyebrow {
+  margin: 0 0 12px;
+  color: #2563eb;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0 0 12px;
+  font-size: 2.5rem;
+  line-height: 1;
+}
+
+p {
+  margin: 0;
+  color: #475569;
+  line-height: 1.6;
+}
+`,
+          }),
+        },
+      ],
+    },
   });
 }
 

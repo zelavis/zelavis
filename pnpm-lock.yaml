@@ -51,16 +51,6 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/dashboard:
-    dependencies:
-      '@zelavis/server':
-        specifier: workspace:*
-        version: link:../server
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
   packages/database:
     dependencies:
       '@zelavis/server':
@@ -155,9 +145,6 @@ importers:
       '@zelavis/auth':
         specifier: workspace:*
         version: link:../auth
-      '@zelavis/dashboard':
-        specifier: workspace:*
-        version: link:../dashboard
       '@zelavis/database':
         specifier: workspace:*
         version: link:../database

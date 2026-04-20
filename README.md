@@ -40,8 +40,6 @@ Current packages:
   An email/password auth plugin for `@zelavis/auth`.
 - [`@zelavis/auth-username-password`](/Users/ivanjeremicx/Projects/zelavis/packages/auth/plugins/username-password)  
   A username/password auth plugin for `@zelavis/auth`.
-- [`@zelavis/dashboard`](/Users/ivanjeremicx/Projects/zelavis/packages/dashboard)  
-  The server-rendered dashboard shell used by the high-level `zelavis` runtime.
 - [`@zelavis/server`](/Users/ivanjeremicx/Projects/zelavis/packages/server)  
   Shared endpoint contract and framework adapters that mount endpoint manifests from zelavis packages.
 
@@ -87,7 +85,7 @@ Use scoped packages such as `@zelavis/server`, `@zelavis/database`, and `@zelavi
 
 ## Core Services
 
-Core services use the same service contract as extension services. The high-level `zelavis` runtime includes dashboard, auth, and database by default.
+Core services use the same service contract as extension services. The high-level `zelavis` runtime includes dashboard, auth, and database by default. The current dashboard route is a minimal placeholder while `packages/dashboard` is reserved for the upcoming TanStack Start dashboard app.
 
 Disable built-in core services when you need a smaller server:
 
