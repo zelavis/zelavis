@@ -5,8 +5,8 @@ test('desktop dashboard sidebar does not overlap', async ({ page }, testInfo) =>
 
   await page.goto('/')
   await expect(page.getByRole('complementary', { name: 'Dashboard navigation' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Select workspace' })).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Settings' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Zelavis Runtime' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Settings' }).first()).toBeVisible()
 
   const nav = page.getByRole('complementary', { name: 'Dashboard navigation' })
   const links = nav.locator('a')
@@ -85,7 +85,12 @@ test('overview nav is only active on the overview route', async ({ page }, testI
     'aria-current',
     'page',
   )
-  await expect(page.getByRole('link', { name: 'Database' })).toHaveAttribute(
+  await expect(
+    page
+      .getByRole('complementary', { name: 'Dashboard navigation' })
+      .getByRole('link', { name: 'Database', exact: true })
+      .first(),
+  ).toHaveAttribute(
     'aria-current',
     'page',
   )
@@ -99,6 +104,7 @@ test('desktop sidebar collapses to a rail and expands content', async ({
   await page.goto('/')
 
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const sidebarState = page.locator('[data-slot="sidebar"]').first()
   const header = page.locator('body > div header').first()
   const expandedSidebar = await sidebar.boundingBox()
   const expandedHeader = await header.boundingBox()
@@ -107,7 +113,7 @@ test('desktop sidebar collapses to a rail and expands content', async ({
   expect(expandedHeader?.x).toBeGreaterThan(200)
 
   await page.getByRole('button', { name: 'Toggle Sidebar' }).click()
-  await expect(sidebar).toHaveAttribute('data-state', 'collapsed')
+  await expect(sidebarState).toHaveAttribute('data-state', 'collapsed')
   await page.waitForTimeout(250)
 
   const collapsedSidebar = await sidebar.boundingBox()
@@ -125,7 +131,7 @@ test('services are reachable from the settings area', async ({
   await page.goto('/settings')
 
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
-  await expect(sidebar.getByRole('link', { name: 'Services' })).toBeVisible()
+  await expect(sidebar.getByRole('link', { name: 'Services', exact: true })).toBeVisible()
   await page.getByRole('link', { name: 'Open' }).click()
   await expect(page.getByRole('heading', { name: 'Runtime services' })).toBeVisible()
   await expect(page).toHaveURL(/\/services$/)
@@ -148,7 +154,7 @@ test('dashboard shows a not found page inside the shell', async ({
 
   await page.goto('/not-a-dashboard-route')
 
-  await expect(page.getByRole('button', { name: 'Select workspace' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Zelavis Runtime' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Dashboard route not found' })).toBeVisible()
   await expect(page.locator('main').getByRole('link', { name: 'Settings' })).toBeVisible()
 })
