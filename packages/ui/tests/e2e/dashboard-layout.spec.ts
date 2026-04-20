@@ -5,7 +5,7 @@ test('desktop dashboard sidebar does not overlap', async ({ page }, testInfo) =>
 
   await page.goto('/')
   await expect(page.getByRole('complementary', { name: 'Dashboard navigation' })).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Zelavis' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Select workspace' })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Settings' })).toBeVisible()
 
   const nav = page.getByRole('complementary', { name: 'Dashboard navigation' })
@@ -91,6 +91,32 @@ test('overview nav is only active on the overview route', async ({ page }, testI
   )
 })
 
+test('desktop sidebar collapses to a rail and expands content', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await page.goto('/')
+
+  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const header = page.locator('body > div header').first()
+  const expandedSidebar = await sidebar.boundingBox()
+  const expandedHeader = await header.boundingBox()
+
+  expect(expandedSidebar?.width).toBeGreaterThan(200)
+  expect(expandedHeader?.x).toBeGreaterThan(200)
+
+  await page.getByRole('button', { name: 'Toggle Sidebar' }).click()
+  await expect(sidebar).toHaveAttribute('data-state', 'collapsed')
+  await page.waitForTimeout(250)
+
+  const collapsedSidebar = await sidebar.boundingBox()
+  const collapsedHeader = await header.boundingBox()
+
+  expect(collapsedSidebar?.width).toBeLessThan(100)
+  expect(collapsedHeader?.x).toBeLessThan(expandedHeader?.x ?? 0)
+})
+
 test('services are reachable from the settings area', async ({
   page,
 }, testInfo) => {
@@ -122,7 +148,7 @@ test('dashboard shows a not found page inside the shell', async ({
 
   await page.goto('/not-a-dashboard-route')
 
-  await expect(page.getByRole('link', { name: 'Zelavis' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Select workspace' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Dashboard route not found' })).toBeVisible()
   await expect(page.locator('main').getByRole('link', { name: 'Settings' })).toBeVisible()
 })
