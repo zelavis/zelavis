@@ -20,6 +20,7 @@ test("zelavisServer includes core services by default", async () => {
   assert.equal(runtime.server, mounted.routes.length);
   assert.ok(mounted.routes.some((route) => route.fullPath === "/zelavis"));
   assert.ok(mounted.routes.some((route) => route.fullPath === "/zelavis/settings"));
+  assert.ok(mounted.routes.some((route) => route.fullPath === "/zelavis/*path"));
   assert.ok(mounted.routes.some((route) => route.fullPath === "/zelavis/api/v1/dashboard/config"));
   assert.ok(mounted.routes.some((route) => route.fullPath.startsWith("/zelavis/assets/")));
   assert.ok(mounted.routes.some((route) => route.fullPath === "/zelavis/api/v1/auth/providers"));
@@ -58,6 +59,31 @@ test("zelavisServer includes core services by default", async () => {
 
   assert.equal(settingsResponse.status, 200);
   assert.match(settingsResponse.body, /\/zelavis\/assets\//);
+
+  const fallbackRoute = mounted.routes.find(
+    (route) => route.fullPath === "/zelavis/*path",
+  );
+  const fallbackResponse = await fallbackRoute.route.handler({
+    service: fallbackRoute.service.service,
+    params: { path: "unknown/deep/path" },
+    query: new URLSearchParams(),
+    body: undefined,
+    headers: {},
+    request: undefined,
+  });
+  const apiFallbackResponse = await fallbackRoute.route.handler({
+    service: fallbackRoute.service.service,
+    params: { path: "api/v1/unknown" },
+    query: new URLSearchParams(),
+    body: undefined,
+    headers: {},
+    request: undefined,
+  });
+
+  assert.equal(fallbackResponse.status, 200);
+  assert.match(fallbackResponse.body, /Zelavis Dashboard/);
+  assert.equal(apiFallbackResponse.status, 404);
+  assert.deepEqual(apiFallbackResponse.body, { error: "Not found" });
 
   const configRoute = mounted.routes.find(
     (route) => route.fullPath === "/zelavis/api/v1/dashboard/config",

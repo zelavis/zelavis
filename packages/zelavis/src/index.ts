@@ -335,6 +335,24 @@ async function resolveDashboardCoreService(
       body: shell,
     };
   };
+  const dashboardFallbackHandler = ({ params }: { params: Record<string, string> }) => {
+    const path = params.path ?? "";
+    if (
+      path === "api" ||
+      path.startsWith("api/") ||
+      path === "assets" ||
+      path.startsWith("assets/")
+    ) {
+      return {
+        status: 404,
+        body: {
+          error: "Not found",
+        },
+      };
+    }
+
+    return shellHandler();
+  };
 
   return defineServerService({
     name: "dashboard",
@@ -380,6 +398,12 @@ async function resolveDashboardCoreService(
             body: readFileSync(asset.filePath),
           }),
         })),
+        {
+          id: "dashboard.view.fallback",
+          method: "GET",
+          path: "/*path",
+          handler: dashboardFallbackHandler,
+        },
       ],
     },
   });
@@ -440,7 +464,7 @@ export async function zelavisServer<TResult = unknown>(
         rootPath,
         serviceNames,
       });
-  const finalServices = [dashboardService, ...coreServices, ...services].filter(
+  const finalServices = [...coreServices, ...services, dashboardService].filter(
     (service): service is ZelavisServerService<any> => Boolean(service),
   );
 

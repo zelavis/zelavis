@@ -43,7 +43,16 @@ function matchPath(
   const patternParts = splitPath(pattern);
   const pathParts = splitPath(pathname);
 
-  if (patternParts.length !== pathParts.length) {
+  const wildcardIndex = patternParts.findIndex((part) => part.startsWith("*"));
+  if (wildcardIndex >= 0) {
+    if (wildcardIndex !== patternParts.length - 1) {
+      return undefined;
+    }
+
+    if (pathParts.length < wildcardIndex) {
+      return undefined;
+    }
+  } else if (patternParts.length !== pathParts.length) {
     return undefined;
   }
 
@@ -52,6 +61,12 @@ function matchPath(
   for (let index = 0; index < patternParts.length; index += 1) {
     const patternPart = patternParts[index];
     const pathPart = pathParts[index];
+
+    if (patternPart.startsWith("*")) {
+      const name = patternPart.slice(1) || "*";
+      params[name] = pathParts.slice(index).map(decodeURIComponent).join("/");
+      return params;
+    }
 
     if (patternPart.startsWith(":")) {
       params[patternPart.slice(1)] = decodeURIComponent(pathPart);

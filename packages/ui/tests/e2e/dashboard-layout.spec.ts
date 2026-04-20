@@ -5,6 +5,7 @@ test('desktop dashboard top bar does not overlap', async ({ page }, testInfo) =>
 
   await page.goto('/')
   await expect(page.getByRole('link', { name: 'Zelavis' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Services' })).toHaveCount(0)
   await expect(page.getByRole('link', { name: 'Settings' })).toBeVisible()
 
   const header = page.locator('header')
@@ -74,4 +75,33 @@ test('mobile dashboard captures a stable stacked header', async ({ page }, testI
     body: screenshot,
     contentType: 'image/png',
   })
+})
+
+test('overview nav is only active on the overview route', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await page.goto('/database')
+
+  await expect(page.getByRole('heading', { name: 'Multi-model database' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Overview' })).not.toHaveAttribute(
+    'aria-current',
+    'page',
+  )
+  await expect(page.getByRole('link', { name: 'Database' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  )
+})
+
+test('services are reachable from settings instead of the main menu', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await page.goto('/settings')
+
+  await expect(page.locator('header').getByRole('link', { name: 'Services' })).toHaveCount(0)
+  await page.getByRole('link', { name: 'Open' }).click()
+  await expect(page.getByRole('heading', { name: 'Runtime services' })).toBeVisible()
+  await expect(page).toHaveURL(/\/services$/)
 })

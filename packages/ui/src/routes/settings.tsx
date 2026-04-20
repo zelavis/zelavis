@@ -1,5 +1,5 @@
-import { createFileRoute } from '@tanstack/react-router'
-import { Save } from 'lucide-react'
+import { Link, createFileRoute } from '@tanstack/react-router'
+import { Boxes, Save } from 'lucide-react'
 
 import { DataRow, PageHeader } from '#/components/DashboardPage'
 import { Button } from '#/components/ui/button'
@@ -41,6 +41,29 @@ function Settings() {
                 .filter((service) => service.core)
                 .map((service) => service.name)
                 .join(', ') ?? 'dashboard, auth, database'
+            }
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Boxes className="size-4" />
+            Runtime Services
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <DataRow
+            label="Mounted services"
+            detail="Inspect core and custom services registered in this runtime."
+            meta={
+              <Link
+                to="/services"
+                className="inline-flex h-8 items-center justify-center rounded-md border border-input bg-background px-3 text-xs font-medium text-foreground no-underline shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+              >
+                Open
+              </Link>
             }
           />
         </CardContent>

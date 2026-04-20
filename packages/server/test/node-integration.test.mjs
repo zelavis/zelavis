@@ -112,6 +112,44 @@ test("nodeIntegration returns 404 for unmatched routes", async () => {
   }
 });
 
+test("nodeIntegration supports trailing wildcard route params", async () => {
+  const runtime = await zelavisServer({
+    services: [
+      defineServerService({
+        name: "demo",
+        service: {},
+        api: {
+          v1: [
+            {
+              id: "demo.fallback",
+              method: "GET",
+              path: "/*path",
+              handler: ({ params }) => ({
+                body: {
+                  path: params.path,
+                },
+              }),
+            },
+          ],
+        },
+      }),
+    ],
+    prefix: "/api",
+    integration: nodeIntegration(),
+  });
+  const baseUrl = await listen(runtime.server);
+
+  try {
+    const response = await fetch(`${baseUrl}/api/demo/one/two/three`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      path: "one/two/three",
+    });
+  } finally {
+    await close(runtime.server);
+  }
+});
+
 test("nodeIntegration uses the configured error handler", async () => {
   const runtime = await zelavisServer({
     services: [

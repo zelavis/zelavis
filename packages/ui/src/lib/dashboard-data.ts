@@ -1,5 +1,4 @@
 import {
-  Boxes,
   Bot,
   CreditCard,
   Database,
@@ -14,7 +13,6 @@ import {
 
 export const dashboardNavItems = [
   { to: '/', label: 'Overview', icon: LayoutDashboard },
-  { to: '/services', label: 'Services', icon: Boxes },
   { to: '/auth', label: 'Auth', icon: Fingerprint },
   { to: '/database', label: 'Database', icon: Database },
   { to: '/agents', label: 'Agents', icon: Bot },

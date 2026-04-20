@@ -33,7 +33,7 @@ export default function Header() {
                   'bg-accent text-accent-foreground',
                 ),
               }}
-              activeOptions={{ exact: item.to === '/' }}
+              activeOptions={{ exact: true }}
             >
               <item.icon className="size-4" />
               {item.label}
