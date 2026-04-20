@@ -2,6 +2,7 @@ import type * as React from 'react'
 import {
   HeadContent,
   Link,
+  Outlet,
   Scripts,
   createRootRoute,
 } from '@tanstack/react-router'
@@ -36,9 +37,14 @@ export const Route = createRootRoute({
       },
     ],
   }),
+  component: RootOutlet,
   notFoundComponent: DashboardNotFound,
   shellComponent: RootDocument,
 })
+
+function RootOutlet() {
+  return <Outlet />
+}
 
 function DashboardNotFound() {
   return (

@@ -60,6 +60,26 @@ test("zelavisServer includes core services by default", async () => {
   assert.equal(settingsResponse.status, 200);
   assert.match(settingsResponse.body, /\/zelavis\/assets\//);
 
+  const scriptAssetRoute = mounted.routes.find(
+    (route) =>
+      route.fullPath.startsWith("/zelavis/assets/") &&
+      route.fullPath.includes("/index-") &&
+      route.fullPath.endsWith(".js"),
+  );
+  const scriptAssetResponse = await scriptAssetRoute.route.handler({
+    service: scriptAssetRoute.service.service,
+    params: {},
+    query: new URLSearchParams(),
+    body: undefined,
+    headers: {},
+    request: undefined,
+  });
+
+  assert.equal(scriptAssetResponse.status, 200);
+  assert.match(scriptAssetResponse.body, /\/zelavis\/assets\//);
+  assert.doesNotMatch(scriptAssetResponse.body, /[`"']\/assets\//);
+  assert.doesNotMatch(scriptAssetResponse.body, /[`"']assets\//);
+
   const fallbackRoute = mounted.routes.find(
     (route) => route.fullPath === "/zelavis/*path",
   );
@@ -202,6 +222,25 @@ test("zelavisServer uses a configurable root path for dashboard and APIs", async
 
   assert.match(dashboardResponse.body, /\/admin\/assets\//);
   assert.doesNotMatch(dashboardResponse.body, /"\/assets\//);
+
+  const scriptAssetRoute = mounted.routes.find(
+    (route) =>
+      route.fullPath.startsWith("/admin/assets/") &&
+      route.fullPath.includes("/index-") &&
+      route.fullPath.endsWith(".js"),
+  );
+  const scriptAssetResponse = await scriptAssetRoute.route.handler({
+    service: scriptAssetRoute.service.service,
+    params: {},
+    query: new URLSearchParams(),
+    body: undefined,
+    headers: {},
+    request: undefined,
+  });
+
+  assert.match(scriptAssetResponse.body, /\/admin\/assets\//);
+  assert.doesNotMatch(scriptAssetResponse.body, /[`"']\/assets\//);
+  assert.doesNotMatch(scriptAssetResponse.body, /[`"']assets\//);
 });
 
 test("zelavisServer can disable all core services", async () => {

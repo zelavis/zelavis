@@ -197,15 +197,36 @@ function collectDashboardAssets(directory = dashboardDistPath): DashboardAsset[]
     .sort((left, right) => left.path.localeCompare(right.path));
 }
 
-function prefixDashboardShellPaths(html: string, rootPath: string): string {
+function prefixDashboardAssetReferences(content: string, rootPath: string): string {
   const prefix = rootPath === "/" ? "" : rootPath;
 
-  return html
+  return content
     .replace(/\b(href|src|action)="\/(?!\/)([^"]*)"/g, (_match, attribute, path) => {
       return `${attribute}="${prefix}/${path}"`;
     })
     .replaceAll('"/assets/', `"${prefix}/assets/`)
-    .replaceAll("'/assets/", `'${prefix}/assets/`);
+    .replaceAll("'/assets/", `'${prefix}/assets/`)
+    .replaceAll("`/assets/", `\`${prefix}/assets/`)
+    .replaceAll('"assets/', `"${prefix}/assets/`)
+    .replaceAll("'assets/", `'${prefix}/assets/`)
+    .replaceAll("`assets/", `\`${prefix}/assets/`);
+}
+
+function shouldPrefixDashboardAsset(asset: DashboardAsset): boolean {
+  return (
+    asset.contentType.startsWith("text/") ||
+    asset.contentType.startsWith("application/json") ||
+    asset.path.endsWith(".js") ||
+    asset.path.endsWith(".mjs")
+  );
+}
+
+function readDashboardAsset(asset: DashboardAsset, rootPath: string): Buffer | string {
+  if (!shouldPrefixDashboardAsset(asset)) {
+    return readFileSync(asset.filePath);
+  }
+
+  return prefixDashboardAssetReferences(readFileSync(asset.filePath, "utf8"), rootPath);
 }
 
 function injectDashboardRuntimeConfig(html: string, config: unknown): string {
@@ -310,7 +331,7 @@ async function resolveDashboardCoreService(
   };
   const shell = existsSync(shellPath)
     ? injectDashboardRuntimeConfig(
-        prefixDashboardShellPaths(readFileSync(shellPath, "utf8"), rootPath),
+        prefixDashboardAssetReferences(readFileSync(shellPath, "utf8"), rootPath),
         config,
       )
     : undefined;
@@ -395,7 +416,7 @@ async function resolveDashboardCoreService(
               "content-type": asset.contentType,
               "cache-control": asset.cacheControl,
             },
-            body: readFileSync(asset.filePath),
+            body: readDashboardAsset(asset, rootPath),
           }),
         })),
         {
