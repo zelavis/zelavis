@@ -62,6 +62,19 @@ async function waitForJson(url, output) {
   );
 }
 
+async function requestJson(url, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json",
+      ...options.headers,
+    },
+  });
+  const body = await response.json();
+  return { body, response };
+}
+
 test("examples/nodejs.ts starts a native Node Zelavis server", async () => {
   const port = 3187;
   const { child, output } = startExample("examples/nodejs.ts", port);
@@ -97,6 +110,71 @@ test("examples/nodejs.ts starts a native Node Zelavis server", async () => {
     assert.equal(dashboardAsset?.status, 200);
     assert.equal(settings.status, 200);
     assert.equal(config.rootPath, "/zelavis");
+
+    const collection = await requestJson(
+      `http://localhost:${port}/zelavis/api/v1/database/documents/collections`,
+      {
+        method: "POST",
+        body: JSON.stringify({ name: "products" }),
+      },
+    );
+    const duplicateCollection = await requestJson(
+      `http://localhost:${port}/zelavis/api/v1/database/documents/collections`,
+      {
+        method: "POST",
+        body: JSON.stringify({ name: "products" }),
+      },
+    );
+    const createdDocument = await requestJson(
+      `http://localhost:${port}/zelavis/api/v1/database/documents/products`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          id: "example-product",
+          data: {
+            name: "Example Product",
+            status: "draft",
+          },
+        }),
+      },
+    );
+    const updatedDocument = await requestJson(
+      `http://localhost:${port}/zelavis/api/v1/database/documents/products/example-product`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          data: {
+            status: "active",
+          },
+        }),
+      },
+    );
+    const queriedDocuments = await requestJson(
+      `http://localhost:${port}/zelavis/api/v1/database/documents/products/query`,
+      {
+        method: "POST",
+        body: JSON.stringify({ limit: 10 }),
+      },
+    );
+    const deletedDocument = await requestJson(
+      `http://localhost:${port}/zelavis/api/v1/database/documents/products/example-product`,
+      {
+        method: "DELETE",
+      },
+    );
+
+    assert.equal(collection.response.status, 201);
+    assert.equal(collection.body.name, "products");
+    assert.equal(duplicateCollection.response.status, 409);
+    assert.match(duplicateCollection.body.error, /already exists/);
+    assert.equal(createdDocument.response.status, 201);
+    assert.equal(createdDocument.body.id, "example-product");
+    assert.equal(updatedDocument.response.status, 200);
+    assert.equal(updatedDocument.body.data.status, "active");
+    assert.equal(queriedDocuments.response.status, 200);
+    assert.equal(queriedDocuments.body.documents.length, 1);
+    assert.equal(deletedDocument.response.status, 200);
+    assert.equal(deletedDocument.body.deleted, true);
   } finally {
     await stopExample(child);
   }

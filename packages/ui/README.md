@@ -10,10 +10,28 @@ This package is the source app for the dashboard experience that will be served 
 pnpm --filter @zelavis/ui dev
 pnpm --filter @zelavis/ui typecheck
 pnpm --filter @zelavis/ui test
+pnpm --filter @zelavis/ui test:e2e
 pnpm --filter @zelavis/ui build
 ```
 
 The production build runs TanStack Start in SPA mode and writes browser assets to `dist/client`.
+
+## Local API Proxy
+
+When the UI runs through Vite, API calls to `/api/*` are proxied to a local
+Zelavis server at `http://127.0.0.1:3000/zelavis/api/*`.
+
+Start the backend in another terminal:
+
+```bash
+pnpm example:nodejs
+```
+
+Override the target with `ZELAVIS_DEV_SERVER` when the backend runs elsewhere:
+
+```bash
+ZELAVIS_DEV_SERVER=http://127.0.0.1:3333 pnpm --filter @zelavis/ui dev
+```
 
 ## Shipping Plan
 

@@ -35,3 +35,33 @@ test("databaseService exposes database routes through the existing service contr
     ],
   );
 });
+
+test("databaseService returns API errors for duplicate collections", async () => {
+  const database = await createDatabase();
+  const service = databaseService(database);
+  const documents = await service.services[0];
+  const createCollection = documents.api.v1.find(
+    (route) => route.id === "database.collections.create",
+  );
+
+  const first = await createCollection.handler({
+    service: database,
+    params: {},
+    query: new URLSearchParams(),
+    body: { name: "products" },
+    headers: {},
+    request: undefined,
+  });
+  const duplicate = await createCollection.handler({
+    service: database,
+    params: {},
+    query: new URLSearchParams(),
+    body: { name: "products" },
+    headers: {},
+    request: undefined,
+  });
+
+  assert.equal(first.status, 201);
+  assert.equal(duplicate.status, 409);
+  assert.match(duplicate.body.error, /already exists/);
+});

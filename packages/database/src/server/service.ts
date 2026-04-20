@@ -38,6 +38,15 @@ function readNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+function errorResponse(status: number, error: unknown) {
+  return {
+    status,
+    body: {
+      error: error instanceof Error ? error.message : String(error),
+    },
+  };
+}
+
 export function createDatabaseServerService(
   database: DatabaseApi,
 ): ZelavisServerService<DatabaseApi> {
@@ -103,17 +112,21 @@ export function createDatabaseDocumentsServerService(
               };
             }
 
-            return {
-              status: 201,
-              body: await service.documents.createCollection({
-                name,
-                tenantId: readString(input.tenantId),
-                metadata:
-                  input.metadata && typeof input.metadata === "object" && !Array.isArray(input.metadata)
-                    ? (input.metadata as Record<string, unknown>)
-                    : undefined,
-              }),
-            };
+            try {
+              return {
+                status: 201,
+                body: await service.documents.createCollection({
+                  name,
+                  tenantId: readString(input.tenantId),
+                  metadata:
+                    input.metadata && typeof input.metadata === "object" && !Array.isArray(input.metadata)
+                      ? (input.metadata as Record<string, unknown>)
+                      : undefined,
+                }),
+              };
+            } catch (error) {
+              return errorResponse(409, error);
+            }
           },
         },
         {
@@ -122,15 +135,19 @@ export function createDatabaseDocumentsServerService(
           path: "/:collection",
           handler: async ({ service, params, body }) => {
             const input = readBodyObject(body);
-            return {
-              status: 201,
-              body: await service.documents.insert({
-                collection: params.collection,
-                tenantId: readString(input.tenantId),
-                id: readString(input.id),
-                data: readJsonObject(input.data),
-              }),
-            };
+            try {
+              return {
+                status: 201,
+                body: await service.documents.insert({
+                  collection: params.collection,
+                  tenantId: readString(input.tenantId),
+                  id: readString(input.id),
+                  data: readJsonObject(input.data),
+                }),
+              };
+            } catch (error) {
+              return errorResponse(400, error);
+            }
           },
         },
         {
@@ -162,18 +179,22 @@ export function createDatabaseDocumentsServerService(
           path: "/:collection/query",
           handler: async ({ service, params, body }) => {
             const input = readBodyObject(body);
-            return {
-              body: {
-                documents: await service.documents.findMany({
-                  collection: params.collection,
-                  tenantId: readString(input.tenantId),
-                  where: readFilters(input.where),
-                  orderBy: readSort(input.orderBy),
-                  limit: readNumber(input.limit, 100),
-                  offset: readNumber(input.offset, 0),
-                }),
-              },
-            };
+            try {
+              return {
+                body: {
+                  documents: await service.documents.findMany({
+                    collection: params.collection,
+                    tenantId: readString(input.tenantId),
+                    where: readFilters(input.where),
+                    orderBy: readSort(input.orderBy),
+                    limit: readNumber(input.limit, 100),
+                    offset: readNumber(input.offset, 0),
+                  }),
+                },
+              };
+            } catch (error) {
+              return errorResponse(404, error);
+            }
           },
         },
         {
@@ -182,15 +203,19 @@ export function createDatabaseDocumentsServerService(
           path: "/:collection/:id",
           handler: async ({ service, params, body }) => {
             const input = readBodyObject(body);
-            return {
-              body: await service.documents.update({
-                collection: params.collection,
-                id: params.id,
-                tenantId: readString(input.tenantId),
-                data: readJsonObject(input.data),
-                mode: input.mode === "replace" ? "replace" : "merge",
-              }),
-            };
+            try {
+              return {
+                body: await service.documents.update({
+                  collection: params.collection,
+                  id: params.id,
+                  tenantId: readString(input.tenantId),
+                  data: readJsonObject(input.data),
+                  mode: input.mode === "replace" ? "replace" : "merge",
+                }),
+              };
+            } catch (error) {
+              return errorResponse(404, error);
+            }
           },
         },
         {

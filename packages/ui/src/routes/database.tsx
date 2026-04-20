@@ -15,11 +15,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '#/components/ui/card'
 import {
   getDatabaseHealth,
   getRuntimeConfig,
+  deleteDatabaseDocument,
   createDatabaseCollection,
   insertDatabaseDocument,
   listDatabaseCollections,
   queryDatabaseDocuments,
   seedDemoDatabase,
+  updateDatabaseDocument,
 } from '#/lib/runtime-api'
 import { useRuntimeResource } from '#/lib/use-runtime-resource'
 import { Button } from '#/components/ui/button'
@@ -31,6 +33,7 @@ function DatabaseRoute() {
   const [collectionName, setCollectionName] = useState('')
   const [documentId, setDocumentId] = useState('')
   const [documentJson, setDocumentJson] = useState('{\n  "name": "Draft item"\n}')
+  const [editingDocumentId, setEditingDocumentId] = useState<string>()
   const [actionMessage, setActionMessage] = useState<string>()
   const [actionError, setActionError] = useState<string>()
   const [saving, setSaving] = useState(false)
@@ -56,6 +59,9 @@ function DatabaseRoute() {
   const databaseHealth = health.data
   const collectionRows = collections.data ?? []
   const documentRows = documents.data ?? []
+  const editingDocument = documentRows.find(
+    (document) => document.id === editingDocumentId,
+  )
 
   async function runAction(action: () => Promise<void>) {
     setSaving(true)
@@ -103,6 +109,55 @@ function DatabaseRoute() {
       })
       setDocumentId('')
       setActionMessage(`Inserted ${document.id}`)
+    })
+  }
+
+  async function handleEditDocument(documentIdToEdit: string) {
+    const document = documentRows.find((item) => item.id === documentIdToEdit)
+    if (!document) {
+      return
+    }
+
+    setEditingDocumentId(document.id)
+    setDocumentId(document.id)
+    setDocumentJson(JSON.stringify(document.data, null, 2))
+  }
+
+  async function handleUpdateDocument(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!config || !selected || !editingDocumentId) {
+      return
+    }
+
+    await runAction(async () => {
+      const document = await updateDatabaseDocument(config, {
+        collection: selected,
+        id: editingDocumentId,
+        data: JSON.parse(documentJson) as Record<string, unknown>,
+      })
+      setActionMessage(`Updated ${document.id}`)
+      setEditingDocumentId(undefined)
+      setDocumentId('')
+      setDocumentJson('{\n  "name": "Draft item"\n}')
+    })
+  }
+
+  async function handleDeleteDocument(documentIdToDelete: string) {
+    if (!config || !selected) {
+      return
+    }
+
+    await runAction(async () => {
+      await deleteDatabaseDocument(config, {
+        collection: selected,
+        id: documentIdToDelete,
+      })
+      if (editingDocumentId === documentIdToDelete) {
+        setEditingDocumentId(undefined)
+        setDocumentId('')
+        setDocumentJson('{\n  "name": "Draft item"\n}')
+      }
+      setActionMessage(`Deleted ${documentIdToDelete}`)
     })
   }
 
@@ -236,21 +291,24 @@ function DatabaseRoute() {
             </CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4 p-4">
-            <form className="grid gap-3" onSubmit={handleInsertDocument}>
+            <form
+              className="grid gap-3"
+              onSubmit={editingDocument ? handleUpdateDocument : handleInsertDocument}
+            >
               <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
                 <input
                   value={documentId}
                   onChange={(event) => setDocumentId(event.target.value)}
                   placeholder="optional document id"
                   className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm"
-                  disabled={!selected}
+                  disabled={!selected || Boolean(editingDocument)}
                 />
                 <Button
                   type="submit"
                   size="sm"
                   disabled={!config || !selected || saving}
                 >
-                  Insert
+                  {editingDocument ? 'Update' : 'Insert'}
                 </Button>
               </div>
               <textarea
@@ -260,6 +318,20 @@ function DatabaseRoute() {
                 spellCheck={false}
                 disabled={!selected}
               />
+              {editingDocument ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setEditingDocumentId(undefined)
+                    setDocumentId('')
+                    setDocumentJson('{\n  "name": "Draft item"\n}')
+                  }}
+                >
+                  Cancel Edit
+                </Button>
+              ) : null}
             </form>
 
             <div className="overflow-hidden rounded-md border">
@@ -268,7 +340,27 @@ function DatabaseRoute() {
                 key={document.id}
                 label={document.id}
                 detail={JSON.stringify(document.data)}
-                meta={<Badge variant="secondary">v{document.version}</Badge>}
+                meta={
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary">v{document.version}</Badge>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleEditDocument(document.id)}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void handleDeleteDocument(document.id)}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                }
               />
             ))}
             {documentRows.length === 0 ? (

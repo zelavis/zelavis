@@ -100,7 +100,18 @@ async function readJson<T>(path: string, init?: RequestInit): Promise<T> {
   })
 
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`)
+    let message = `Request failed: ${response.status}`
+
+    try {
+      const body = (await response.json()) as { error?: unknown }
+      if (typeof body.error === 'string' && body.error.length > 0) {
+        message = body.error
+      }
+    } catch {
+      // Keep the status-only fallback when the response is not JSON.
+    }
+
+    throw new Error(message)
   }
 
   return response.json() as Promise<T>
@@ -204,6 +215,45 @@ export async function insertDatabaseDocument(
         id: input.id || undefined,
         tenantId: input.tenantId || undefined,
       }),
+    },
+  )
+}
+
+export async function updateDatabaseDocument(
+  config: RuntimeConfig,
+  input: {
+    collection: string
+    id: string
+    data: Record<string, unknown>
+    mode?: 'merge' | 'replace'
+    tenantId?: string
+  },
+) {
+  return readJson<DatabaseDocument>(
+    `${config.api.basePath}/database/documents/${encodeURIComponent(input.collection)}/${encodeURIComponent(input.id)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({
+        data: input.data,
+        mode: input.mode ?? 'merge',
+        tenantId: input.tenantId || undefined,
+      }),
+    },
+  )
+}
+
+export async function deleteDatabaseDocument(
+  config: RuntimeConfig,
+  input: {
+    collection: string
+    id: string
+    tenantId?: string
+  },
+) {
+  return readJson<{ deleted: boolean }>(
+    `${config.api.basePath}/database/documents/${encodeURIComponent(input.collection)}/${encodeURIComponent(input.id)}${input.tenantId ? `?tenantId=${encodeURIComponent(input.tenantId)}` : ''}`,
+    {
+      method: 'DELETE',
     },
   )
 }
