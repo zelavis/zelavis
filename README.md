@@ -40,14 +40,54 @@ Current packages:
   An email/password auth plugin for `@zelavis/auth`.
 - [`@zelavis/auth-username-password`](/Users/ivanjeremicx/Projects/zelavis/packages/auth/plugins/username-password)  
   A username/password auth plugin for `@zelavis/auth`.
+- [`@zelavis/dashboard`](/Users/ivanjeremicx/Projects/zelavis/packages/dashboard)  
+  The server-rendered dashboard shell used by the high-level `zelavis` runtime.
 - [`@zelavis/server`](/Users/ivanjeremicx/Projects/zelavis/packages/server)  
   Shared endpoint contract and framework adapters that mount endpoint manifests from zelavis packages.
 
-## `@zelavis/database`
+## Runtime Defaults
 
-The database package is a core Zelavis service, but it uses the same service contract as extension services. Applications should usually import from `zelavis`, where core services such as auth and database are included by default. Use `@zelavis/database` directly when you need lower-level database primitives.
+Applications should usually import from `zelavis`, where core services are included by default:
 
-Use `zelavis` for application and runtime code. Use scoped packages such as `@zelavis/server`, `@zelavis/database`, and `@zelavis/auth` when building lower-level primitives, integrations, plugins, or tests that need direct package APIs.
+```ts
+import { zelavisServer } from "zelavis";
+import { nodeIntegration } from "zelavis/integrations/node";
+
+await zelavisServer({
+  integration: nodeIntegration(),
+});
+```
+
+By default, Zelavis owns one safe namespace:
+
+```txt
+/zelavis
+/zelavis/api/v1/auth
+/zelavis/api/v1/database
+```
+
+Customize that namespace with `rootPath`:
+
+```ts
+await zelavisServer({
+  rootPath: "/admin",
+  integration: nodeIntegration(),
+});
+```
+
+That moves the dashboard and APIs together:
+
+```txt
+/admin
+/admin/api/v1/auth
+/admin/api/v1/database
+```
+
+Use scoped packages such as `@zelavis/server`, `@zelavis/database`, and `@zelavis/auth` when building lower-level primitives, integrations, plugins, or tests that need direct package APIs.
+
+## Core Services
+
+Core services use the same service contract as extension services. The high-level `zelavis` runtime includes dashboard, auth, and database by default.
 
 Disable built-in core services when you need a smaller server:
 
@@ -55,6 +95,7 @@ Disable built-in core services when you need a smaller server:
 await zelavisServer({
   coreServices: {
     auth: false,
+    dashboard: false,
     database: false,
   },
   integration: nodeIntegration(),

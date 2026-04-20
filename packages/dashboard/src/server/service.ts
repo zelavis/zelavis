@@ -10,6 +10,7 @@ function buildDefinition(options: DashboardServiceOptions = {}): DashboardDefini
   return {
     title: options.title ?? defaults.title,
     subtitle: options.subtitle ?? defaults.subtitle,
+    assetPath: options.assetPath ?? defaults.assetPath,
     views: options.views ?? defaults.views,
   };
 }
@@ -51,7 +52,7 @@ export function createDashboardService(
 
   return defineServerService({
     name: "dashboard",
-    basePath: "/dashboard",
+    basePath: options.basePath ?? "/dashboard",
     service: definition,
     api: {
       v1: [

@@ -68,18 +68,20 @@ test("examples/nodejs.ts starts a native Node Zelavis server", async () => {
 
   try {
     const databaseHealth = await waitForJson(
-      `http://localhost:${port}/api/v1/database/health`,
+      `http://localhost:${port}/zelavis/api/v1/database/health`,
       output,
     );
     const authMethods = await waitForJson(
-      `http://localhost:${port}/api/v1/auth/methods`,
+      `http://localhost:${port}/zelavis/api/v1/auth/providers`,
       output,
     );
+    const dashboard = await fetch(`http://localhost:${port}/zelavis`);
 
     assert.equal(databaseHealth.status, "ok");
     assert.equal(databaseHealth.driver, "in-memory");
     assert.equal(databaseHealth.defaultTenantId, "default");
     assert.deepEqual(authMethods, []);
+    assert.equal(dashboard.status, 200);
   } finally {
     await stopExample(child);
   }
@@ -92,14 +94,16 @@ test("examples/express.ts mounts Zelavis into an existing Express app", async ()
   try {
     const appHealth = await waitForJson(`http://localhost:${port}/health`, output);
     const databaseHealth = await waitForJson(
-      `http://localhost:${port}/api/v1/database/health`,
+      `http://localhost:${port}/zelavis/api/v1/database/health`,
       output,
     );
+    const dashboard = await fetch(`http://localhost:${port}/zelavis`);
 
     assert.deepEqual(appHealth, { ok: true });
     assert.equal(databaseHealth.status, "ok");
     assert.equal(databaseHealth.driver, "in-memory");
     assert.equal(databaseHealth.defaultTenantId, "default");
+    assert.equal(dashboard.status, 200);
   } finally {
     await stopExample(child);
   }

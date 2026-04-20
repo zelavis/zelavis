@@ -34,12 +34,38 @@ const runtime = await zelavisServer({
 runtime.server.listen(3000);
 ```
 
-The auth and database core services are included by default. Disable either one when you need a smaller server:
+By default, Zelavis owns one safe namespace:
+
+```txt
+/zelavis
+/zelavis/api/v1/auth
+/zelavis/api/v1/database
+```
+
+Customize that namespace with `rootPath`:
+
+```ts
+await zelavisServer({
+  rootPath: "/admin",
+  integration: nodeIntegration(),
+});
+```
+
+That moves the dashboard and APIs together:
+
+```txt
+/admin
+/admin/api/v1/auth
+/admin/api/v1/database
+```
+
+The dashboard, auth, and database core services are included by default. Disable any of them when you need a smaller server:
 
 ```ts
 await zelavisServer({
   coreServices: {
     auth: false,
+    dashboard: false,
     database: false,
   },
   integration: nodeIntegration(),

@@ -14,9 +14,14 @@ test("zelavisServer includes core services by default", async () => {
     },
   });
 
+  assert.equal(runtime.services.dashboard.name, "dashboard");
   assert.equal(runtime.services.auth.name, "auth");
   assert.equal(runtime.services.database.name, "database");
   assert.equal(runtime.server, mounted.routes.length);
+  assert.ok(mounted.routes.some((route) => route.fullPath === "/zelavis"));
+  assert.ok(mounted.routes.some((route) => route.fullPath === "/zelavis/assets/dashboard.css"));
+  assert.ok(mounted.routes.some((route) => route.fullPath === "/zelavis/api/v1/auth/providers"));
+  assert.ok(mounted.routes.some((route) => route.fullPath === "/zelavis/api/v1/database/health"));
   assert.ok(mounted.routes.some((route) => route.route.id === "auth.providers.list"));
   assert.ok(mounted.routes.some((route) => route.route.id === "database.health"));
   assert.ok(mounted.routes.some((route) => route.route.id === "database.collections.list"));
@@ -62,12 +67,56 @@ test("zelavisServer can disable the auth core service", async () => {
   assert.ok(mounted.routes.every((route) => !route.route.id.startsWith("auth.")));
 });
 
+test("zelavisServer can disable the dashboard core service", async () => {
+  const mounted = {};
+
+  const runtime = await zelavisServer({
+    coreServices: {
+      dashboard: false,
+    },
+    integration: {
+      mount(routes) {
+        mounted.routes = routes;
+        return routes.length;
+      },
+    },
+  });
+
+  assert.equal(runtime.services.dashboard, undefined);
+  assert.equal(runtime.services.auth.name, "auth");
+  assert.equal(runtime.services.database.name, "database");
+  assert.ok(mounted.routes.every((route) => !route.route.id.startsWith("dashboard.")));
+});
+
+test("zelavisServer uses a configurable root path for dashboard and APIs", async () => {
+  const mounted = {};
+
+  await zelavisServer({
+    rootPath: "/admin",
+    api: {
+      version: "v2",
+    },
+    integration: {
+      mount(routes) {
+        mounted.routes = routes;
+        return routes.length;
+      },
+    },
+  });
+
+  assert.ok(mounted.routes.some((route) => route.fullPath === "/admin"));
+  assert.ok(mounted.routes.some((route) => route.fullPath === "/admin/assets/dashboard.css"));
+  assert.ok(mounted.routes.some((route) => route.fullPath === "/admin/api/v2/auth/providers"));
+  assert.ok(mounted.routes.some((route) => route.fullPath === "/admin/api/v2/database/health"));
+});
+
 test("zelavisServer can disable all core services", async () => {
   const mounted = {};
 
   const runtime = await zelavisServer({
     coreServices: {
       auth: false,
+      dashboard: false,
       database: false,
     },
     integration: {
@@ -103,6 +152,7 @@ test("zelavisServer does not duplicate an explicitly provided database service",
   const runtime = await zelavisServer({
     coreServices: {
       auth: false,
+      dashboard: false,
     },
     services: [databaseService],
     integration: {
@@ -137,6 +187,7 @@ test("zelavisServer does not duplicate an explicitly provided auth service", asy
 
   const runtime = await zelavisServer({
     coreServices: {
+      dashboard: false,
       database: false,
     },
     services: [authService],

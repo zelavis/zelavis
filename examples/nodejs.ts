@@ -6,15 +6,6 @@ async function main(): Promise<void> {
 
   const zelavisRuntime = await zelavisServer({
     integration: nodeIntegration(),
-    version: "v1",
-    prefix: "/api/v1",
-    servicePrefixes: {
-      auth: "/auth",
-      database: "/database",
-    },
-    pathOverrides: {
-      "auth.providers.list": "/methods",
-    },
     onError: ({ error }) => ({
       status: 400,
       body: { error: error instanceof Error ? error.message : "Unknown error" },
@@ -25,10 +16,11 @@ async function main(): Promise<void> {
   console.log("database nested service count", zelavisRuntime.services.database.services?.length ?? 0);
   console.log("auth service name", zelavisRuntime.services.auth.name);
   console.log("database driver", zelavisRuntime.services.database.service.driver.name);
-  console.log("list auth providers", `GET http://localhost:${port}/api/v1/auth/methods`);
+  console.log("dashboard", `GET http://localhost:${port}/zelavis`);
+  console.log("list auth providers", `GET http://localhost:${port}/zelavis/api/v1/auth/providers`);
   console.log(
     "list database collections",
-    `GET http://localhost:${port}/api/v1/database/documents/collections`,
+    `GET http://localhost:${port}/zelavis/api/v1/database/documents/collections`,
   );
 
   zelavisRuntime.server.listen(port, () => {

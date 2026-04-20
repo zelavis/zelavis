@@ -4,6 +4,7 @@ export function createDefaultDashboardDefinition(): DashboardDefinition {
   return {
     title: "zelavis control",
     subtitle: "Composable admin surfaces for auth, commerce, and future infrastructure packages.",
+    assetPath: "/dashboard/assets/dashboard.css",
     views: [
       {
         slug: "",

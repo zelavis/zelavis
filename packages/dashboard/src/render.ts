@@ -75,7 +75,7 @@ export function renderDashboardDocument(
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>${escapeHtml(activeView.title)} | ${escapeHtml(definition.title)}</title>
-    <link rel="stylesheet" href="/dashboard/assets/dashboard.css" />
+    <link rel="stylesheet" href="${escapeHtml(definition.assetPath)}" />
   </head>
   <body>
     <div class="zelavis-shell">

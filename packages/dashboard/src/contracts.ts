@@ -23,11 +23,14 @@ export interface DashboardView {
 export interface DashboardDefinition {
   title: string;
   subtitle: string;
+  assetPath: string;
   views: readonly DashboardView[];
 }
 
 export interface DashboardServiceOptions {
   title?: string;
   subtitle?: string;
+  assetPath?: string;
+  basePath?: string;
   views?: readonly DashboardView[];
 }

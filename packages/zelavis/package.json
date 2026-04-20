@@ -34,6 +34,7 @@
   ],
   "dependencies": {
     "@zelavis/auth": "workspace:*",
+    "@zelavis/dashboard": "workspace:*",
     "@zelavis/database": "workspace:*",
     "@zelavis/server": "workspace:*"
   },
