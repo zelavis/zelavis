@@ -82,6 +82,10 @@ test("examples/nodejs.ts starts a native Node Zelavis server", async () => {
       ? await fetch(`http://localhost:${port}${assetPath}`)
       : undefined;
     const settings = await fetch(`http://localhost:${port}/zelavis/settings`);
+    const config = await waitForJson(
+      `http://localhost:${port}/zelavis/api/v1/dashboard/config`,
+      output,
+    );
 
     assert.equal(databaseHealth.status, "ok");
     assert.equal(databaseHealth.driver, "in-memory");
@@ -92,6 +96,7 @@ test("examples/nodejs.ts starts a native Node Zelavis server", async () => {
     assert.ok(assetPath);
     assert.equal(dashboardAsset?.status, 200);
     assert.equal(settings.status, 200);
+    assert.equal(config.rootPath, "/zelavis");
   } finally {
     await stopExample(child);
   }
@@ -114,6 +119,10 @@ test("examples/express.ts mounts Zelavis into an existing Express app", async ()
       ? await fetch(`http://localhost:${port}${assetPath}`)
       : undefined;
     const settings = await fetch(`http://localhost:${port}/zelavis/settings`);
+    const config = await waitForJson(
+      `http://localhost:${port}/zelavis/api/v1/dashboard/config`,
+      output,
+    );
 
     assert.deepEqual(appHealth, { ok: true });
     assert.equal(databaseHealth.status, "ok");
@@ -124,6 +133,7 @@ test("examples/express.ts mounts Zelavis into an existing Express app", async ()
     assert.ok(assetPath);
     assert.equal(dashboardAsset?.status, 200);
     assert.equal(settings.status, 200);
+    assert.equal(config.rootPath, "/zelavis");
   } finally {
     await stopExample(child);
   }

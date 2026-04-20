@@ -4,14 +4,19 @@ import { Boxes } from 'lucide-react'
 import {
   DataRow,
   PageHeader,
+  ResourceNotice,
   StatusBadge,
 } from '#/components/DashboardPage'
 import { Card, CardContent, CardHeader, CardTitle } from '#/components/ui/card'
-import { serviceRows } from '#/lib/dashboard-data'
+import { getRuntimeConfig } from '#/lib/runtime-api'
+import { useRuntimeResource } from '#/lib/use-runtime-resource'
 
 export const Route = createFileRoute('/services')({ component: Services })
 
 function Services() {
+  const runtime = useRuntimeResource(getRuntimeConfig)
+  const services = runtime.data?.services ?? []
+
   return (
     <main className="mx-auto grid max-w-7xl gap-6 px-4 py-6">
       <PageHeader
@@ -28,14 +33,22 @@ function Services() {
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          {serviceRows.map((service) => (
+          {services.map((service) => (
             <DataRow
               key={service.name}
               label={service.name}
-              detail={`${service.scope} · ${service.path}`}
-              meta={<StatusBadge state={service.state} />}
+              detail={`${service.core ? 'core' : 'custom'} · ${service.apiPath}`}
+              meta={<StatusBadge state="ready" />}
             />
           ))}
+          {services.length === 0 ? (
+            <div className="p-4">
+              <ResourceNotice
+                title="Runtime config unavailable"
+                description="The dashboard config endpoint could not be loaded."
+              />
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     </main>

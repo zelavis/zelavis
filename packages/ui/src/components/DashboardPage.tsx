@@ -113,3 +113,18 @@ export function EmptyPanel({ title, description }: EmptyPanelProps) {
     </Card>
   )
 }
+
+export function ResourceNotice({
+  title,
+  description,
+}: {
+  title: string
+  description: string
+}) {
+  return (
+    <div className="rounded-lg border border-dashed bg-muted/35 px-4 py-3 text-sm">
+      <p className="font-medium text-foreground">{title}</p>
+      <p className="mt-1 text-muted-foreground">{description}</p>
+    </div>
+  )
+}

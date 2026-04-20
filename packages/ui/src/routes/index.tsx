@@ -4,14 +4,19 @@ import { Activity, Boxes, Database, ShieldCheck } from 'lucide-react'
 import {
   DataRow,
   PageHeader,
+  ResourceNotice,
   StatCard,
   StatusBadge,
 } from '#/components/DashboardPage'
 import {
-  activityRows,
   capabilityCards,
-  serviceRows,
 } from '#/lib/dashboard-data'
+import {
+  getDatabaseHealth,
+  getRuntimeConfig,
+  listAuthProviders,
+} from '#/lib/runtime-api'
+import { useRuntimeResource } from '#/lib/use-runtime-resource'
 import {
   Card,
   CardContent,
@@ -22,6 +27,20 @@ import {
 export const Route = createFileRoute('/')({ component: Overview })
 
 function Overview() {
+  const runtime = useRuntimeResource(getRuntimeConfig)
+  const config = runtime.data
+  const database = useRuntimeResource(
+    async () => (config ? getDatabaseHealth(config) : undefined),
+    [config],
+  )
+  const providers = useRuntimeResource(
+    async () => (config ? listAuthProviders(config) : undefined),
+    [config],
+  )
+  const databaseHealth = database.data
+  const authProviders = providers.data ?? []
+  const services = config?.services ?? []
+
   return (
     <main className="mx-auto grid max-w-7xl gap-6 px-4 py-6">
       <PageHeader
@@ -33,20 +52,28 @@ function Overview() {
       <section className="grid gap-4 md:grid-cols-3">
         <StatCard
           label="Mounted core"
-          value="3 services"
-          detail="dashboard, auth, database"
+          value={`${services.length || 3} services`}
+          detail={services.map((service) => service.name).join(', ') || 'dashboard, auth, database'}
           icon={Boxes}
         />
         <StatCard
           label="Database"
-          value="document mode"
-          detail="SQL remains available as a capability"
+          value={databaseHealth?.driver ?? 'checking'}
+          detail={
+            databaseHealth
+              ? `documents ${databaseHealth.capabilities.documents ? 'on' : 'off'}, SQL ${databaseHealth.capabilities.sql ? 'on' : 'off'}`
+              : 'waiting for /database/health'
+          }
           icon={Database}
         />
         <StatCard
           label="Auth"
-          value="provider plugins"
-          detail="core service with installable methods"
+          value={`${authProviders.length} providers`}
+          detail={
+            authProviders.length > 0
+              ? authProviders.join(', ')
+              : 'no credential providers registered yet'
+          }
           icon={ShieldCheck}
         />
       </section>
@@ -57,14 +84,22 @@ function Overview() {
             <CardTitle>Service Map</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            {serviceRows.map((service) => (
+            {services.map((service) => (
               <DataRow
                 key={service.name}
                 label={service.name}
-                detail={`${service.scope} · ${service.path}`}
-                meta={<StatusBadge state={service.state} />}
+                detail={`${service.core ? 'core' : 'custom'} · ${service.apiPath}`}
+                meta={<StatusBadge state="ready" />}
               />
             ))}
+            {services.length === 0 ? (
+              <div className="p-4">
+                <ResourceNotice
+                  title="Runtime config unavailable"
+                  description="Start Zelavis through the Node or Express example to load live service metadata."
+                />
+              </div>
+            ) : null}
           </CardContent>
         </Card>
 
@@ -76,7 +111,28 @@ function Overview() {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            {activityRows.map((item) => (
+            {[
+              {
+                label: 'Runtime config',
+                detail: config?.api.basePath ?? '/api/v1/dashboard/config',
+                time: runtime.loading ? 'loading' : runtime.error ? 'offline' : 'ready',
+              },
+              {
+                label: 'Database health',
+                detail: databaseHealth
+                  ? `${databaseHealth.status} · ${databaseHealth.driver}`
+                  : '/database/health',
+                time: database.loading ? 'loading' : database.error ? 'offline' : 'ready',
+              },
+              {
+                label: 'Auth providers',
+                detail:
+                  authProviders.length > 0
+                    ? authProviders.join(', ')
+                    : '/auth/providers',
+                time: providers.loading ? 'loading' : providers.error ? 'offline' : 'ready',
+              },
+            ].map((item) => (
               <DataRow
                 key={item.label}
                 label={item.label}

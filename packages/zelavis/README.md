@@ -40,6 +40,7 @@ By default, Zelavis owns one safe namespace:
 /zelavis
 /zelavis/settings
 /zelavis/assets/*
+/zelavis/api/v1/dashboard/config
 /zelavis/api/v1/auth
 /zelavis/api/v1/database
 ```

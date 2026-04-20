@@ -208,6 +208,13 @@ function prefixDashboardShellPaths(html: string, rootPath: string): string {
     .replaceAll("'/assets/", `'${prefix}/assets/`);
 }
 
+function injectDashboardRuntimeConfig(html: string, config: unknown): string {
+  const script = `<script>window.__ZELAVIS_RUNTIME_CONFIG__=${JSON.stringify(config).replaceAll("<", "\\u003c")};</script>`;
+  return html.includes("</head>")
+    ? html.replace("</head>", `${script}</head>`)
+    : `${script}${html}`;
+}
+
 function isDatabaseApi(value: unknown): value is DatabaseApi {
   return Boolean(
     value &&
@@ -253,7 +260,12 @@ async function resolveAuthCoreService(
 
 async function resolveDashboardCoreService(
   option: ZelavisDashboardCoreServiceInput | undefined,
-  rootPath: string,
+  context: {
+    apiPrefix: string;
+    apiVersion: string;
+    rootPath: string;
+    serviceNames: readonly string[];
+  },
 ): Promise<ZelavisServerService<any> | undefined> {
   const dashboardOption = option ?? true;
 
@@ -264,10 +276,8 @@ async function resolveDashboardCoreService(
   const options = dashboardOption === true ? {} : dashboardOption;
   const title = options.title ?? "zelavis";
   const subtitle = options.subtitle ?? "Backend, dashboard, and core services.";
+  const rootPath = context.rootPath;
   const shellPath = join(dashboardDistPath, "_shell.html");
-  const shell = existsSync(shellPath)
-    ? prefixDashboardShellPaths(readFileSync(shellPath, "utf8"), rootPath)
-    : undefined;
   const assets = collectDashboardAssets();
   const clientRoutes = [
     ...new Set(
@@ -276,6 +286,34 @@ async function resolveDashboardCoreService(
         .filter((route) => route !== "/"),
     ),
   ];
+  const config = {
+    name: "zelavis",
+    rootPath,
+    api: {
+      prefix: context.apiPrefix,
+      version: context.apiVersion,
+      basePath: joinPathParts(rootPath, context.apiPrefix, context.apiVersion),
+    },
+    dashboard: {
+      title,
+      clientRoutes,
+      assetRoot: joinPathParts(rootPath, "assets"),
+    },
+    services: context.serviceNames.map((name) => ({
+      name,
+      core: name === "dashboard" || name === "auth" || name === "database",
+      apiPath:
+        name === "dashboard"
+          ? rootPath
+          : joinPathParts(rootPath, context.apiPrefix, context.apiVersion, name),
+    })),
+  };
+  const shell = existsSync(shellPath)
+    ? injectDashboardRuntimeConfig(
+        prefixDashboardShellPaths(readFileSync(shellPath, "utf8"), rootPath),
+        config,
+      )
+    : undefined;
   const shellHandler = () => {
     if (!shell) {
       return {
@@ -320,6 +358,15 @@ async function resolveDashboardCoreService(
           path: route,
           handler: shellHandler,
         })),
+        {
+          id: "dashboard.config",
+          method: "GET",
+          path: joinPathParts(context.apiPrefix, context.apiVersion, "dashboard/config"),
+          handler: () => ({
+            status: 200,
+            body: config,
+          }),
+        },
         ...assets.map((asset) => ({
           id: `dashboard.assets${asset.path.replaceAll("/", ".")}`,
           method: "GET" as const,
@@ -371,9 +418,6 @@ export async function zelavisServer<TResult = unknown>(
   const hasAuthService = services.some((service) => service.name === "auth");
   const hasDashboardService = services.some((service) => service.name === "dashboard");
   const hasDatabaseService = services.some((service) => service.name === "database");
-  const dashboardService = hasDashboardService
-    ? undefined
-    : await resolveDashboardCoreService(options.coreServices?.dashboard, rootPath);
   const authService = hasAuthService
     ? undefined
     : await resolveAuthCoreService(options.coreServices?.auth);
@@ -383,6 +427,19 @@ export async function zelavisServer<TResult = unknown>(
   const coreServices = [databaseService, authService].filter(
     (service): service is ZelavisServerService<any> => Boolean(service),
   );
+  const serviceNames = [
+    ...(hasDashboardService || options.coreServices?.dashboard === false ? [] : ["dashboard"]),
+    ...coreServices.map((service) => service.name),
+    ...services.map((service) => service.name),
+  ];
+  const dashboardService = hasDashboardService
+    ? undefined
+    : await resolveDashboardCoreService(options.coreServices?.dashboard, {
+        apiPrefix,
+        apiVersion,
+        rootPath,
+        serviceNames,
+      });
   const finalServices = [dashboardService, ...coreServices, ...services].filter(
     (service): service is ZelavisServerService<any> => Boolean(service),
   );

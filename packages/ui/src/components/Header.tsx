@@ -8,26 +8,20 @@ import { cn } from '#/lib/utils'
 export default function Header() {
   return (
     <header className="sticky top-0 z-50 border-b bg-background/90 px-4 backdrop-blur">
-      <nav className="mx-auto flex max-w-7xl flex-col gap-3 py-3 lg:flex-row lg:items-center">
-        <div className="flex items-center gap-3">
+      <nav className="mx-auto grid max-w-7xl gap-3 py-3 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center">
+        <div className="flex min-w-0 items-center gap-3">
           <Link
             to="/"
-            className="inline-flex items-center gap-2 rounded-md border bg-card px-3 py-2 text-sm font-semibold text-foreground no-underline shadow-sm"
+            className="inline-flex shrink-0 items-center gap-2 rounded-md border bg-card px-3 py-2 text-sm font-semibold text-foreground no-underline shadow-sm"
           >
             <span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground">
               <Server className="size-4" />
             </span>
             Zelavis
           </Link>
-
-          <div className="hidden h-8 border-l lg:block" />
-
-          <p className="hidden text-sm text-muted-foreground lg:block">
-            Runtime dashboard
-          </p>
         </div>
 
-        <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto lg:justify-center">
+        <div className="flex min-w-0 gap-1 overflow-x-auto lg:justify-start xl:justify-center">
           {dashboardNavItems.map((item) => (
             <Link
               key={item.to}
@@ -47,7 +41,7 @@ export default function Header() {
           ))}
         </div>
 
-        <div className="flex items-center gap-2 lg:justify-end">
+        <div className="flex shrink-0 items-center gap-2 lg:justify-end">
           <a
             href="https://github.com/zelavis/zelavis"
             target="_blank"

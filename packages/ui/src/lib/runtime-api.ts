@@ -1,0 +1,170 @@
+export interface RuntimeService {
+  name: string
+  core: boolean
+  apiPath: string
+}
+
+export interface RuntimeConfig {
+  name: string
+  rootPath: string
+  api: {
+    prefix: string
+    version: string
+    basePath: string
+  }
+  dashboard: {
+    title: string
+    clientRoutes: string[]
+    assetRoot: string
+  }
+  services: RuntimeService[]
+}
+
+declare global {
+  interface Window {
+    __ZELAVIS_RUNTIME_CONFIG__?: RuntimeConfig
+  }
+}
+
+export interface DatabaseHealth {
+  status: string
+  driver: string
+  capabilities: Record<string, boolean>
+  defaultTenantId: string
+}
+
+export interface DatabaseCollection {
+  name: string
+  tenantId: string
+  createdAt: string
+  documentCount: number
+  metadata?: Record<string, unknown>
+}
+
+export interface DatabaseDocument {
+  id: string
+  tenantId: string
+  collection: string
+  data: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+  version: number
+}
+
+const fallbackConfig: RuntimeConfig = {
+  name: 'zelavis',
+  rootPath: '',
+  api: {
+    prefix: '/api',
+    version: 'v1',
+    basePath: '/api/v1',
+  },
+  dashboard: {
+    title: 'zelavis',
+    clientRoutes: [
+      '/agents',
+      '/auth',
+      '/builder',
+      '/commerce',
+      '/content',
+      '/database',
+      '/services',
+      '/settings',
+    ],
+    assetRoot: '/assets',
+  },
+  services: [
+    { name: 'dashboard', core: true, apiPath: '/' },
+    { name: 'auth', core: true, apiPath: '/api/v1/auth' },
+    { name: 'database', core: true, apiPath: '/api/v1/database' },
+  ],
+}
+
+function inferRootPath(): string {
+  if (typeof window === 'undefined') {
+    return ''
+  }
+
+  const segment = window.location.pathname.split('/').filter(Boolean)[0]
+  return segment === 'zelavis' ? '/zelavis' : ''
+}
+
+async function readJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers)
+  headers.set('accept', 'application/json')
+  headers.set('content-type', 'application/json')
+
+  const response = await fetch(path, {
+    ...init,
+    headers,
+  })
+
+  if (!response.ok) {
+    throw new Error(`Request failed: ${response.status}`)
+  }
+
+  return response.json() as Promise<T>
+}
+
+export async function getRuntimeConfig(): Promise<RuntimeConfig> {
+  if (typeof window !== 'undefined' && window.__ZELAVIS_RUNTIME_CONFIG__) {
+    return window.__ZELAVIS_RUNTIME_CONFIG__
+  }
+
+  const rootPath = inferRootPath()
+
+  try {
+    return await readJson<RuntimeConfig>(
+      `${rootPath}/api/v1/dashboard/config`,
+    )
+  } catch {
+    return {
+      ...fallbackConfig,
+      rootPath,
+      api: {
+        ...fallbackConfig.api,
+        basePath: `${rootPath}/api/v1`,
+      },
+      services: fallbackConfig.services.map((service) => ({
+        ...service,
+        apiPath:
+          service.name === 'dashboard'
+            ? rootPath || '/'
+            : `${rootPath}/api/v1/${service.name}`,
+      })),
+    }
+  }
+}
+
+export async function getDatabaseHealth(config: RuntimeConfig) {
+  return readJson<DatabaseHealth>(`${config.api.basePath}/database/health`)
+}
+
+export async function listAuthProviders(config: RuntimeConfig) {
+  return readJson<string[]>(`${config.api.basePath}/auth/providers`)
+}
+
+export async function listDatabaseCollections(config: RuntimeConfig) {
+  const result = await readJson<{ collections: DatabaseCollection[] }>(
+    `${config.api.basePath}/database/documents/collections`,
+  )
+
+  return result.collections
+}
+
+export async function queryDatabaseDocuments(
+  config: RuntimeConfig,
+  collection: string,
+) {
+  const result = await readJson<{ documents: DatabaseDocument[] }>(
+    `${config.api.basePath}/database/documents/${encodeURIComponent(collection)}/query`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        limit: 25,
+      }),
+    },
+  )
+
+  return result.documents
+}

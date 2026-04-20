@@ -20,6 +20,7 @@ test("zelavisServer includes core services by default", async () => {
   assert.equal(runtime.server, mounted.routes.length);
   assert.ok(mounted.routes.some((route) => route.fullPath === "/zelavis"));
   assert.ok(mounted.routes.some((route) => route.fullPath === "/zelavis/settings"));
+  assert.ok(mounted.routes.some((route) => route.fullPath === "/zelavis/api/v1/dashboard/config"));
   assert.ok(mounted.routes.some((route) => route.fullPath.startsWith("/zelavis/assets/")));
   assert.ok(mounted.routes.some((route) => route.fullPath === "/zelavis/api/v1/auth/providers"));
   assert.ok(mounted.routes.some((route) => route.fullPath === "/zelavis/api/v1/database/health"));
@@ -39,6 +40,7 @@ test("zelavisServer includes core services by default", async () => {
 
   assert.equal(dashboardResponse.status, 200);
   assert.match(dashboardResponse.body, /Zelavis Dashboard/);
+  assert.match(dashboardResponse.body, /__ZELAVIS_RUNTIME_CONFIG__/);
   assert.match(dashboardResponse.body, /\/zelavis\/assets\//);
   assert.doesNotMatch(dashboardResponse.body, /"\/assets\//);
 
@@ -56,6 +58,26 @@ test("zelavisServer includes core services by default", async () => {
 
   assert.equal(settingsResponse.status, 200);
   assert.match(settingsResponse.body, /\/zelavis\/assets\//);
+
+  const configRoute = mounted.routes.find(
+    (route) => route.fullPath === "/zelavis/api/v1/dashboard/config",
+  );
+  const configResponse = await configRoute.route.handler({
+    service: configRoute.service.service,
+    params: {},
+    query: new URLSearchParams(),
+    body: undefined,
+    headers: {},
+    request: undefined,
+  });
+
+  assert.equal(configResponse.status, 200);
+  assert.equal(configResponse.body.rootPath, "/zelavis");
+  assert.equal(configResponse.body.api.basePath, "/zelavis/api/v1");
+  assert.deepEqual(
+    configResponse.body.services.map((service) => service.name),
+    ["dashboard", "database", "auth"],
+  );
 });
 
 test("zelavisServer can disable the database core service", async () => {
@@ -137,6 +159,7 @@ test("zelavisServer uses a configurable root path for dashboard and APIs", async
 
   assert.ok(mounted.routes.some((route) => route.fullPath === "/admin"));
   assert.ok(mounted.routes.some((route) => route.fullPath === "/admin/settings"));
+  assert.ok(mounted.routes.some((route) => route.fullPath === "/admin/api/v2/dashboard/config"));
   assert.ok(mounted.routes.some((route) => route.fullPath.startsWith("/admin/assets/")));
   assert.ok(mounted.routes.some((route) => route.fullPath === "/admin/api/v2/auth/providers"));
   assert.ok(mounted.routes.some((route) => route.fullPath === "/admin/api/v2/database/health"));
