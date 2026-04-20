@@ -30,6 +30,7 @@ export interface ZelavisDashboardCoreServiceOptions {
   title?: string;
   subtitle?: string;
   assetPath?: string;
+  clientRoutes?: readonly string[];
 }
 
 export type ZelavisDashboardCoreServiceInput =
@@ -101,6 +102,17 @@ const dashboardDistPath = join(
   dirname(fileURLToPath(import.meta.url)),
   "dashboard",
 );
+
+const defaultDashboardClientRoutes = [
+  "/agents",
+  "/auth",
+  "/builder",
+  "/commerce",
+  "/content",
+  "/database",
+  "/services",
+  "/settings",
+] as const;
 
 interface DashboardAsset {
   path: string;
@@ -257,6 +269,34 @@ async function resolveDashboardCoreService(
     ? prefixDashboardShellPaths(readFileSync(shellPath, "utf8"), rootPath)
     : undefined;
   const assets = collectDashboardAssets();
+  const clientRoutes = [
+    ...new Set(
+      (options.clientRoutes ?? defaultDashboardClientRoutes)
+        .map((route) => normalizePath(route, "/"))
+        .filter((route) => route !== "/"),
+    ),
+  ];
+  const shellHandler = () => {
+    if (!shell) {
+      return {
+        status: 503,
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": "no-cache",
+        },
+        body: `<!doctype html><html lang="en"><head><meta charset="utf-8" /><title>${escapeHtml(title)}</title></head><body><h1>${escapeHtml(title)}</h1><p>${escapeHtml(subtitle)}</p><p>Dashboard assets have not been built yet.</p></body></html>`,
+      };
+    }
+
+    return {
+      status: 200,
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-cache",
+      },
+      body: shell,
+    };
+  };
 
   return defineServerService({
     name: "dashboard",
@@ -272,28 +312,14 @@ async function resolveDashboardCoreService(
           id: "dashboard.view.overview",
           method: "GET",
           path: "/",
-          handler: () => {
-            if (!shell) {
-              return {
-                status: 503,
-                headers: {
-                  "content-type": "text/html; charset=utf-8",
-                  "cache-control": "no-cache",
-                },
-                body: `<!doctype html><html lang="en"><head><meta charset="utf-8" /><title>${escapeHtml(title)}</title></head><body><h1>${escapeHtml(title)}</h1><p>${escapeHtml(subtitle)}</p><p>Dashboard assets have not been built yet.</p></body></html>`,
-              };
-            }
-
-            return {
-              status: 200,
-              headers: {
-                "content-type": "text/html; charset=utf-8",
-                "cache-control": "no-cache",
-              },
-              body: shell,
-            };
-          },
+          handler: shellHandler,
         },
+        ...clientRoutes.map((route) => ({
+          id: `dashboard.view${route.replaceAll("/", ".")}`,
+          method: "GET" as const,
+          path: route,
+          handler: shellHandler,
+        })),
         ...assets.map((asset) => ({
           id: `dashboard.assets${asset.path.replaceAll("/", ".")}`,
           method: "GET" as const,

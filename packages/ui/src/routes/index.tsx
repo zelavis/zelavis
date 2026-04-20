@@ -1,84 +1,105 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { Activity, Boxes, Database, ShieldCheck } from 'lucide-react'
 
-export const Route = createFileRoute('/')({ component: App })
+import {
+  DataRow,
+  PageHeader,
+  StatCard,
+  StatusBadge,
+} from '#/components/DashboardPage'
+import {
+  activityRows,
+  capabilityCards,
+  serviceRows,
+} from '#/lib/dashboard-data'
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from '#/components/ui/card'
 
-function App() {
+export const Route = createFileRoute('/')({ component: Overview })
+
+function Overview() {
   return (
-    <main className="page-wrap px-4 pb-8 pt-14">
-      <section className="island-shell rise-in relative overflow-hidden rounded-[2rem] px-6 py-10 sm:px-10 sm:py-14">
-        <div className="pointer-events-none absolute -left-20 -top-24 h-56 w-56 rounded-full bg-[radial-gradient(circle,rgba(79,184,178,0.32),transparent_66%)]" />
-        <div className="pointer-events-none absolute -bottom-20 -right-20 h-56 w-56 rounded-full bg-[radial-gradient(circle,rgba(47,106,74,0.18),transparent_66%)]" />
-        <p className="island-kicker mb-3">Zelavis Dashboard</p>
-        <h1 className="display-title mb-5 max-w-3xl text-4xl leading-[1.02] font-bold tracking-tight text-[var(--sea-ink)] sm:text-6xl">
-          Your backend is alive.
-        </h1>
-        <p className="mb-8 max-w-2xl text-base text-[var(--sea-ink-soft)] sm:text-lg">
-          This is the first dashboard shell for the core Zelavis services. It is
-          served by the same root path as auth, database, and future services.
-        </p>
-        <div className="flex flex-wrap gap-3">
-          <a
-            href="/about"
-            className="rounded-full border border-[rgba(50,143,151,0.3)] bg-[rgba(79,184,178,0.14)] px-5 py-2.5 text-sm font-semibold text-[var(--lagoon-deep)] no-underline transition hover:-translate-y-0.5 hover:bg-[rgba(79,184,178,0.24)]"
-          >
-            About Zelavis
-          </a>
-          <a
-            href="https://github.com/zelavis/zelavis"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="rounded-full border border-[rgba(23,58,64,0.2)] bg-white/50 px-5 py-2.5 text-sm font-semibold text-[var(--sea-ink)] no-underline transition hover:-translate-y-0.5 hover:border-[rgba(23,58,64,0.35)]"
-          >
-            Repository
-          </a>
-        </div>
+    <main className="mx-auto grid max-w-7xl gap-6 px-4 py-6">
+      <PageHeader
+        eyebrow="Overview"
+        title="Zelavis runtime"
+        description="Core services, active paths, and package boundaries in one place."
+      />
+
+      <section className="grid gap-4 md:grid-cols-3">
+        <StatCard
+          label="Mounted core"
+          value="3 services"
+          detail="dashboard, auth, database"
+          icon={Boxes}
+        />
+        <StatCard
+          label="Database"
+          value="document mode"
+          detail="SQL remains available as a capability"
+          icon={Database}
+        />
+        <StatCard
+          label="Auth"
+          value="provider plugins"
+          detail="core service with installable methods"
+          icon={ShieldCheck}
+        />
       </section>
 
-      <section className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {[
-          [
-            'Core Services',
-            'Auth, database, and dashboard ship together by default.',
-          ],
-          [
-            'Clean API Prefix',
-            'Dashboard and APIs move together under one configurable root.',
-          ],
-          [
-            'Extensible Runtime',
-            'Official and custom services share the same service contract.',
-          ],
-          [
-            'UI Workspace',
-            'The dashboard builds separately and is served by the library.',
-          ],
-        ].map(([title, desc], index) => (
-          <article
-            key={title}
-            className="island-shell feature-card rise-in rounded-2xl p-5"
-            style={{ animationDelay: `${index * 90 + 80}ms` }}
-          >
-            <h2 className="mb-2 text-base font-semibold text-[var(--sea-ink)]">
-              {title}
-            </h2>
-            <p className="m-0 text-sm text-[var(--sea-ink-soft)]">{desc}</p>
-          </article>
+      <section className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
+        <Card>
+          <CardHeader>
+            <CardTitle>Service Map</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {serviceRows.map((service) => (
+              <DataRow
+                key={service.name}
+                label={service.name}
+                detail={`${service.scope} · ${service.path}`}
+                meta={<StatusBadge state={service.state} />}
+              />
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Activity className="size-4" />
+              Activity
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {activityRows.map((item) => (
+              <DataRow
+                key={item.label}
+                label={item.label}
+                detail={item.detail}
+                meta={
+                  <span className="text-xs text-muted-foreground">{item.time}</span>
+                }
+              />
+            ))}
+          </CardContent>
+        </Card>
+      </section>
+
+      <section className="grid gap-4 md:grid-cols-3">
+        {capabilityCards.map((card) => (
+          <StatCard
+            key={card.title}
+            label={card.title}
+            value={card.value}
+            detail={card.detail}
+            icon={card.icon}
+          />
         ))}
-      </section>
-
-      <section className="island-shell mt-8 rounded-2xl p-6">
-        <p className="island-kicker mb-2">Runtime Paths</p>
-        <ul className="m-0 list-disc space-y-2 pl-5 text-sm text-[var(--sea-ink-soft)]">
-          <li>
-            Dashboard root: <code>/zelavis</code>
-          </li>
-          <li>
-            Auth API: <code>/zelavis/api/v1/auth</code>
-          </li>
-          <li>
-            Database API: <code>/zelavis/api/v1/database</code>
-          </li>
-        </ul>
       </section>
     </main>
   )

@@ -19,6 +19,7 @@ test("zelavisServer includes core services by default", async () => {
   assert.equal(runtime.services.database.name, "database");
   assert.equal(runtime.server, mounted.routes.length);
   assert.ok(mounted.routes.some((route) => route.fullPath === "/zelavis"));
+  assert.ok(mounted.routes.some((route) => route.fullPath === "/zelavis/settings"));
   assert.ok(mounted.routes.some((route) => route.fullPath.startsWith("/zelavis/assets/")));
   assert.ok(mounted.routes.some((route) => route.fullPath === "/zelavis/api/v1/auth/providers"));
   assert.ok(mounted.routes.some((route) => route.fullPath === "/zelavis/api/v1/database/health"));
@@ -40,6 +41,21 @@ test("zelavisServer includes core services by default", async () => {
   assert.match(dashboardResponse.body, /Zelavis Dashboard/);
   assert.match(dashboardResponse.body, /\/zelavis\/assets\//);
   assert.doesNotMatch(dashboardResponse.body, /"\/assets\//);
+
+  const settingsRoute = mounted.routes.find(
+    (route) => route.fullPath === "/zelavis/settings",
+  );
+  const settingsResponse = await settingsRoute.route.handler({
+    service: settingsRoute.service.service,
+    params: {},
+    query: new URLSearchParams(),
+    body: undefined,
+    headers: {},
+    request: undefined,
+  });
+
+  assert.equal(settingsResponse.status, 200);
+  assert.match(settingsResponse.body, /\/zelavis\/assets\//);
 });
 
 test("zelavisServer can disable the database core service", async () => {
@@ -120,6 +136,7 @@ test("zelavisServer uses a configurable root path for dashboard and APIs", async
   });
 
   assert.ok(mounted.routes.some((route) => route.fullPath === "/admin"));
+  assert.ok(mounted.routes.some((route) => route.fullPath === "/admin/settings"));
   assert.ok(mounted.routes.some((route) => route.fullPath.startsWith("/admin/assets/")));
   assert.ok(mounted.routes.some((route) => route.fullPath === "/admin/api/v2/auth/providers"));
   assert.ok(mounted.routes.some((route) => route.fullPath === "/admin/api/v2/database/health"));

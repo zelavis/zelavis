@@ -38,6 +38,7 @@ By default, Zelavis owns one safe namespace:
 
 ```txt
 /zelavis
+/zelavis/settings
 /zelavis/assets/*
 /zelavis/api/v1/auth
 /zelavis/api/v1/database
@@ -56,6 +57,7 @@ That moves the dashboard and APIs together:
 
 ```txt
 /admin
+/admin/settings
 /admin/assets/*
 /admin/api/v1/auth
 /admin/api/v1/database
@@ -65,6 +67,9 @@ The dashboard UI is built from the `@zelavis/ui` workspace package and copied
 into this package during `pnpm --filter zelavis build`. Application users should
 serve it through `zelavisServer`; they do not need to import `@zelavis/ui`
 directly.
+
+Dashboard client routes are served as SPA shell routes by the dashboard core
+service, so direct visits such as `/zelavis/settings` work in Node and Express.
 
 The dashboard, auth, and database core services are included by default. Disable any of them when you need a smaller server:
 
