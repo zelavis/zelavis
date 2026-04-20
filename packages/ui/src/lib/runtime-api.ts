@@ -152,6 +152,23 @@ export async function listDatabaseCollections(config: RuntimeConfig) {
   return result.collections
 }
 
+export async function createDatabaseCollection(
+  config: RuntimeConfig,
+  input: {
+    name: string
+    metadata?: Record<string, unknown>
+    tenantId?: string
+  },
+) {
+  return readJson<DatabaseCollection>(
+    `${config.api.basePath}/database/documents/collections`,
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  )
+}
+
 export async function queryDatabaseDocuments(
   config: RuntimeConfig,
   collection: string,
@@ -167,4 +184,63 @@ export async function queryDatabaseDocuments(
   )
 
   return result.documents
+}
+
+export async function insertDatabaseDocument(
+  config: RuntimeConfig,
+  input: {
+    collection: string
+    data: Record<string, unknown>
+    id?: string
+    tenantId?: string
+  },
+) {
+  return readJson<DatabaseDocument>(
+    `${config.api.basePath}/database/documents/${encodeURIComponent(input.collection)}`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        data: input.data,
+        id: input.id || undefined,
+        tenantId: input.tenantId || undefined,
+      }),
+    },
+  )
+}
+
+export async function seedDemoDatabase(config: RuntimeConfig) {
+  const collections = await listDatabaseCollections(config)
+  if (!collections.some((collection) => collection.name === 'products')) {
+    await createDatabaseCollection(config, {
+      name: 'products',
+      metadata: {
+        seededBy: 'zelavis-dashboard',
+      },
+    })
+  }
+
+  const timestamp = Date.now()
+  await insertDatabaseDocument(config, {
+    collection: 'products',
+    id: `starter-product-${timestamp}`,
+    data: {
+      name: 'Starter Product',
+      slug: `starter-product-${timestamp}`,
+      price: 4900,
+      currency: 'EUR',
+      status: 'draft',
+    },
+  })
+
+  await insertDatabaseDocument(config, {
+    collection: 'products',
+    id: `service-plan-${timestamp}`,
+    data: {
+      name: 'Service Plan',
+      slug: `service-plan-${timestamp}`,
+      price: 9900,
+      currency: 'EUR',
+      status: 'active',
+    },
+  })
 }
