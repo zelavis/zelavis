@@ -20,5 +20,11 @@
     "@types/express": "^5.0.6",
     "express": "^5.2.1",
     "zelavis": "workspace:*"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "lightningcss"
+    ]
   }
 }
