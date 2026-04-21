@@ -197,22 +197,13 @@ export function NavMain({ items }: { items: readonly DashboardNavItem[] }) {
         dir={direction}
         aria-label="Platform navigation"
       >
-        <CarouselContent className="-ml-0">
+        <CarouselContent className="ml-0 w-full">
           {panels.map((panel, panelIndex) => (
             <CarouselItem
               key={`${panel.title}-${panelIndex}`}
-              className="min-w-0 basis-full ps-0"
+              className="min-w-0 basis-full px-0"
               aria-hidden={panelIndex !== currentIndex}
             >
-              <div className="mb-2 flex h-8 min-w-0 items-center gap-1 px-2 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
-                <span className="truncate">Platform</span>
-                {panels.slice(1, panelIndex + 1).map((crumb) => (
-                  <React.Fragment key={crumb.title}>
-                    <ChevronRight className="size-3 shrink-0 rtl:rotate-180" />
-                    <span className="truncate">{crumb.title}</span>
-                  </React.Fragment>
-                ))}
-              </div>
               <SidebarMenu>
                 {panelIndex > 0 ? (
                   <SidebarMenuItem>
