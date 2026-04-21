@@ -4,10 +4,13 @@ import * as React from "react"
 import {
   Bot,
   Database,
+  FileText,
+  Fingerprint,
   Github,
   LayoutDashboard,
   LifeBuoy,
   MonitorCog,
+  PanelsTopLeft,
   Send,
   Server,
   Settings2,
@@ -62,10 +65,12 @@ const data = {
         {
           title: "Auth",
           url: "/auth",
+          icon: Fingerprint,
         },
         {
           title: "Database",
           url: "/database",
+          icon: Database,
         },
       ],
     },
@@ -76,14 +81,17 @@ const data = {
         {
           title: "Agents",
           url: "/agents",
+          icon: Bot,
         },
         {
           title: "Builder",
           url: "/builder",
+          icon: PanelsTopLeft,
         },
         {
           title: "Content",
           url: "/content",
+          icon: FileText,
         },
       ],
     },
@@ -94,10 +102,12 @@ const data = {
         {
           title: "Runtime",
           url: "/settings",
+          icon: MonitorCog,
         },
         {
           title: "Services",
           url: "/services",
+          icon: Server,
         },
       ],
     },

@@ -81,10 +81,7 @@ test('overview nav is only active on the overview route', async ({ page }, testI
   await page.goto('/database')
 
   await expect(page.getByRole('heading', { name: 'Multi-model database' })).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Overview' })).not.toHaveAttribute(
-    'aria-current',
-    'page',
-  )
+  await expect(page.getByRole('button', { name: 'Core' })).toBeVisible()
   await expect(
     page
       .getByRole('complementary', { name: 'Dashboard navigation' })
@@ -94,6 +91,25 @@ test('overview nav is only active on the overview route', async ({ page }, testI
     'aria-current',
     'page',
   )
+})
+
+test('sidebar category rows drill down into sliding panels', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Core' }).click()
+
+  await expect(page.getByRole('link', { name: 'Database', exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Auth', exact: true })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Core' }).click()
+  await expect(
+    page
+      .getByRole('complementary', { name: 'Dashboard navigation' })
+      .getByRole('link', { name: 'Overview' }),
+  ).toBeVisible()
 })
 
 test('sidebar has one internal link per dashboard route', async ({
