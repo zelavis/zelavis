@@ -124,7 +124,7 @@ export function NavMain({ items }: { items: readonly DashboardNavItem[] }) {
   const direction = useDirection()
   const [api, setApi] = React.useState<CarouselApi>()
   const hasSyncedInitialSlideRef = React.useRef(false)
-  const backAnimationTimeoutRef = React.useRef<number | null>(null)
+  const backAnimationCleanupRef = React.useRef<(() => void) | null>(null)
   const [trail, setTrail] = React.useState<NavPanel[]>(() => {
     const routeTrail = findActiveTrail(items, pathname)
 
@@ -180,25 +180,23 @@ export function NavMain({ items }: { items: readonly DashboardNavItem[] }) {
 
   React.useEffect(() => {
     return () => {
-      if (backAnimationTimeoutRef.current) {
-        window.clearTimeout(backAnimationTimeoutRef.current)
-      }
+      clearBackAnimation()
     }
   }, [])
 
-  function clearBackAnimationTimeout() {
-    if (!backAnimationTimeoutRef.current) {
+  function clearBackAnimation() {
+    if (!backAnimationCleanupRef.current) {
       return
     }
 
-    window.clearTimeout(backAnimationTimeoutRef.current)
-    backAnimationTimeoutRef.current = null
+    backAnimationCleanupRef.current()
+    backAnimationCleanupRef.current = null
   }
 
   function openPanel(title: string, panelItems: readonly NavChildItem[]) {
     const nextTrail = [...trail, { title, items: panelItems }]
 
-    clearBackAnimationTimeout()
+    clearBackAnimation()
     setTrail(nextTrail)
     syncSidebarSearch(nextTrail, false)
   }
@@ -206,7 +204,7 @@ export function NavMain({ items }: { items: readonly DashboardNavItem[] }) {
   function goBack() {
     const nextTrail = trail.slice(0, -1)
 
-    clearBackAnimationTimeout()
+    clearBackAnimation()
 
     if (!api) {
       setTrail(nextTrail)
@@ -215,13 +213,27 @@ export function NavMain({ items }: { items: readonly DashboardNavItem[] }) {
     }
 
     api.reInit()
-    api.scrollTo(nextTrail.length)
+    let hasFinished = false
+    const finishBackAnimation = () => {
+      if (hasFinished) {
+        return
+      }
 
-    backAnimationTimeoutRef.current = window.setTimeout(() => {
+      hasFinished = true
+      cleanup()
       setTrail(nextTrail)
       syncSidebarSearch(nextTrail, false)
-      backAnimationTimeoutRef.current = null
-    }, 350)
+      backAnimationCleanupRef.current = null
+    }
+    const fallback = window.setTimeout(finishBackAnimation, 1500)
+    const cleanup = () => {
+      window.clearTimeout(fallback)
+      api.off("settle", finishBackAnimation)
+    }
+
+    api.on("settle", finishBackAnimation)
+    backAnimationCleanupRef.current = cleanup
+    api.scrollTo(nextTrail.length)
   }
 
   return (
