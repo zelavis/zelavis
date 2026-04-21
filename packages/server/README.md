@@ -2,7 +2,7 @@
 
 `@zelavis/server` defines a shared server-service contract and adapters that mount service APIs on Node.js and server frameworks.
 
-It is intended to be the common server integration layer for packages such as `@zelavis/auth` and `@zelavis/ecommerce`.
+It is intended to be the common integration layer for platform packages such as `@zelavis/auth`, `@zelavis/database`, and the high-level `zelavis` runtime, while remaining reusable for optional domain packages such as `@zelavis/ecommerce`.
 
 ## Core ideas
 

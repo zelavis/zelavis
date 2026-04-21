@@ -1,47 +1,65 @@
 # zelavis
 
-`zelavis` is a pnpm workspace for low-level Node.js and TypeScript libraries.
+`zelavis` is an early-stage Firebase/Supabase-style backend platform built as a pnpm workspace of composable TypeScript packages.
 
-The goal is to build a collection of composable packages that solve real backend and infrastructure problems without forcing a framework, app structure, or product opinion on the user. Think reusable primitives, adapters, contracts, and service layers that can power larger systems.
+The current goal is to provide self-hostable and embeddable building blocks for auth, database, API mounting, and admin tooling without forcing a single framework or hosted deployment model.
+
+Today, Zelavis is still foundation-first. It already has working packages for auth, database, server composition, and a runtime package with a dashboard shell. It is not yet trying to claim full Firebase or Supabase feature parity.
 
 ## Philosophy
 
+- Backend platform first.
+- Self-hostable and embeddable.
 - Low-level first.
 - Framework-agnostic by default.
 - Strong contracts over hidden magic.
 - Small, composable package surfaces.
 - Clear extension points for providers, adapters, and integrations.
 
-This repository is intended for developers building custom software, internal platforms, CMS integrations, backend services, plugins, and reusable infrastructure components.
+This repository is intended for developers building custom software, internal tools, multi-tenant backends, CMS integrations, platform services, plugins, and reusable infrastructure components.
+
+## Current shape
+
+Zelavis currently focuses on these platform layers:
+
+- Auth primitives and pluggable authentication methods.
+- A tenant-aware, document-first database core.
+- Shared server contracts and HTTP integrations.
+- A high-level runtime package that composes core services.
+- An admin UI package that powers the runtime dashboard shell.
+
+The repository also contains `@zelavis/ecommerce` as an optional domain package built with the same extensibility patterns.
 
 ## Workspace
 
-Packages live in [`packages/`](/Users/ivanjeremicx/Projects/zelavis/packages).
+Packages live in [packages/](packages).
 
 Current packages:
 
-- [`zelavis`](/Users/ivanjeremicx/Projects/zelavis/packages/zelavis)  
-  The high-level runtime package for applications. It composes core services such as database by default and re-exports server integrations.
-- [`@zelavis/database`](/Users/ivanjeremicx/Projects/zelavis/packages/database)  
-  A document-first, multi-model-ready database core with tenant-aware contracts, an in-memory driver, optional SQL capability, and a mountable server service.
-- [`@zelavis/ecommerce`](/Users/ivanjeremicx/Projects/zelavis/packages/ecommerce)  
-  A low-level ecommerce core for building custom commerce platforms, CMS plugins, backend services, and embedded commerce workflows.
-- [`@zelavis/ecommerce-express`](/Users/ivanjeremicx/Projects/zelavis/packages/ecommerce/integrations/express)  
-  An Express integration package for exposing the ecommerce core over HTTP.
-- [`@zelavis/ecommerce-hono`](/Users/ivanjeremicx/Projects/zelavis/packages/ecommerce/integrations/hono)  
-  A Hono integration package for exposing the ecommerce core over HTTP.
-- [`@zelavis/ecommerce-stripe`](/Users/ivanjeremicx/Projects/zelavis/packages/ecommerce/plugins/stripe)  
-  A Stripe payment provider plugin for `@zelavis/ecommerce`.
-- [`@zelavis/ecommerce-paypal`](/Users/ivanjeremicx/Projects/zelavis/packages/ecommerce/plugins/paypal)  
-  A PayPal payment provider plugin for `@zelavis/ecommerce`.
-- [`@zelavis/auth`](/Users/ivanjeremicx/Projects/zelavis/packages/auth)  
+- [packages/zelavis](packages/zelavis)  
+  The high-level runtime package. It composes core services such as auth, database, and dashboard delivery, and re-exports server integrations.
+- [packages/database](packages/database)  
+  A document-first, tenant-aware database core with an in-memory driver, optional SQL capability, and a mountable server service.
+- [packages/auth](packages/auth)  
   A low-level authentication core for accounts, credentials, sessions, and opt-in auth method plugins.
-- [`@zelavis/auth-email-password`](/Users/ivanjeremicx/Projects/zelavis/packages/auth/plugins/email-password)  
+- [packages/server](packages/server)  
+  Shared endpoint contracts and framework adapters that mount service APIs from Zelavis packages.
+- [packages/ui](packages/ui)  
+  The admin/dashboard frontend used by the high-level runtime.
+- [packages/ecommerce](packages/ecommerce)  
+  An optional low-level ecommerce core for building custom commerce platforms, CMS plugins, and embedded commerce workflows.
+- [packages/ecommerce/integrations/express](packages/ecommerce/integrations/express)  
+  An Express integration package for exposing the ecommerce core over HTTP.
+- [packages/ecommerce/integrations/hono](packages/ecommerce/integrations/hono)  
+  A Hono integration package for exposing the ecommerce core over HTTP.
+- [packages/ecommerce/plugins/stripe](packages/ecommerce/plugins/stripe)  
+  A Stripe payment provider plugin for `@zelavis/ecommerce`.
+- [packages/ecommerce/plugins/paypal](packages/ecommerce/plugins/paypal)  
+  A PayPal payment provider plugin for `@zelavis/ecommerce`.
+- [packages/auth/plugins/email-password](packages/auth/plugins/email-password)  
   An email/password auth plugin for `@zelavis/auth`.
-- [`@zelavis/auth-username-password`](/Users/ivanjeremicx/Projects/zelavis/packages/auth/plugins/username-password)  
+- [packages/auth/plugins/username-password](packages/auth/plugins/username-password)  
   A username/password auth plugin for `@zelavis/auth`.
-- [`@zelavis/server`](/Users/ivanjeremicx/Projects/zelavis/packages/server)  
-  Shared endpoint contract and framework adapters that mount endpoint manifests from zelavis packages.
 
 ## Runtime Defaults
 
@@ -85,7 +103,9 @@ Use scoped packages such as `@zelavis/server`, `@zelavis/database`, and `@zelavi
 
 ## Core Services
 
-Core services use the same service contract as extension services. The high-level `zelavis` runtime includes dashboard, auth, and database by default. The current dashboard route is a minimal placeholder while `packages/dashboard` is reserved for the upcoming TanStack Start dashboard app.
+Core services use the same service contract as extension services. The high-level `zelavis` runtime currently includes dashboard delivery, auth, and database by default.
+
+The dashboard and admin experience are still evolving. The runtime already serves the current UI package, but the overall product surface should be treated as early and subject to change.
 
 Disable built-in core services when you need a smaller server:
 
@@ -138,7 +158,7 @@ Current architecture includes:
 
 The first implementation is intentionally portable and does not depend on `unstorage` or native SQLite bindings. Durable database drivers should be supplied by platform integrations such as future `@zelavis/integration-node`, `@zelavis/integration-cloudflare`, or `@zelavis/integration-turso` packages.
 
-## `@zelavis/ecommerce`
+## Optional domain package: `@zelavis/ecommerce`
 
 The ecommerce package focuses on the primitives required to build larger commerce systems without prescribing the final product.
 
@@ -179,9 +199,9 @@ pnpm --filter @zelavis/ecommerce build
 
 For a unified recurring billing flow (Stripe + PayPal) through the ecommerce core, see:
 
-- [`examples/nodejs.ts`](/Users/ivanjeremicx/Projects/zelavis/examples/nodejs.ts)
-- [`examples/express.ts`](/Users/ivanjeremicx/Projects/zelavis/examples/express.ts)
-- [`examples/ecommerce-recurring-subscriptions.ts`](/Users/ivanjeremicx/Projects/zelavis/examples/ecommerce-recurring-subscriptions.ts)
+- [examples/nodejs.ts](examples/nodejs.ts)
+- [examples/express.ts](examples/express.ts)
+- [examples/ecommerce-recurring-subscriptions.ts](examples/ecommerce-recurring-subscriptions.ts)
 
 The recurring subscriptions example uses these environment variables:
 
@@ -195,12 +215,14 @@ The repo is intentionally early and focused on foundations.
 
 Near-term areas:
 
-- More core packages under `packages/*`.
+- More core platform packages under `packages/*`.
+- Better admin and developer experience around the runtime package.
 - Persistence adapters for tools like Prisma and Drizzle.
+- Durable database drivers for different runtimes.
 - Payment provider plugins for Stripe, PayPal, and similar gateways.
 - Auth method plugins and storage adapters for `@zelavis/auth`.
 - Better tests, fixtures, and package-level examples.
 
 ## Contributing
 
-Contributors and coding agents should follow the guidance in [`AGENTS.md`](/Users/ivanjeremicx/Projects/zelavis/AGENTS.md).
+Contributors and coding agents should follow the guidance in [AGENTS.md](AGENTS.md).

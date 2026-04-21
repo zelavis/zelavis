@@ -1,8 +1,10 @@
 # zelavis
 
-`zelavis` is the high-level runtime package that composes core services and server integrations.
+`zelavis` is the high-level runtime package for the Zelavis backend platform.
 
-Use this package when building an application or service with Zelavis. Lower-level packages such as `@zelavis/server`, `@zelavis/database`, and `@zelavis/auth` remain available when you need direct access to the primitives.
+Use this package when building an application or service with Zelavis and you want the default platform building blocks wired together for you. Lower-level packages such as `@zelavis/server`, `@zelavis/database`, and `@zelavis/auth` remain available when you need direct access to the primitives.
+
+Today, that mostly means auth, database, server integration, and dashboard delivery under one runtime entry point.
 
 ## Import split
 
@@ -72,7 +74,7 @@ directly.
 Dashboard client routes are served as SPA shell routes by the dashboard core
 service, so direct visits such as `/zelavis/settings` work in Node and Express.
 
-The dashboard, auth, and database core services are included by default. Disable any of them when you need a smaller server:
+The dashboard, auth, and database core services are included by default. Disable any of them when you need a smaller server or want to supply replacements:
 
 ```ts
 await zelavisServer({
@@ -96,7 +98,8 @@ await zelavisServer({
       authOptions: {
         plugins: [
           emailPasswordPlugin({
-            verifyPasswordHash: async ({ password, passwordHash }) => password === passwordHash,
+            verifyPasswordHash: async ({ password, passwordHash }) =>
+              password === passwordHash,
           }),
         ],
       },
