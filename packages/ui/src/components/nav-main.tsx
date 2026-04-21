@@ -245,7 +245,7 @@ export function NavMain({ items }: { items: readonly DashboardNavItem[] }) {
           align: "start",
           containScroll: false,
           direction,
-          duration: 28,
+          duration: 20,
           watchDrag: false,
         }}
         setApi={setApi}
