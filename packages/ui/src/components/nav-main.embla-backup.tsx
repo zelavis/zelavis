@@ -1,12 +1,18 @@
 "use client"
 
+// Backup of the Embla-based sidebar panel navigation kept while evaluating the
+// Swiper implementation in nav-main.tsx.
+
 import * as React from "react"
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router"
 import { ChevronLeft, ChevronRight, type LucideIcon } from "lucide-react"
-import type { Swiper as SwiperInstance } from "swiper"
-import { Swiper, SwiperSlide } from "swiper/react"
-import "swiper/css"
 
+import {
+  Carousel,
+  CarouselContent,
+  CarouselItem,
+  type CarouselApi,
+} from "#/components/ui/carousel"
 import { useDirection } from "#/components/ui/direction"
 import {
   SidebarGroup,
@@ -113,13 +119,17 @@ function parseSidebarSearch(value: unknown) {
   }
 }
 
-export function NavMain({ items }: { items: readonly DashboardNavItem[] }) {
+export function NavMainEmblaBackup({
+  items,
+}: {
+  items: readonly DashboardNavItem[]
+}) {
   const navigate = useNavigate({ from: "/" })
   const location = useRouterState({ select: (state) => state.location })
   const pathname = location.pathname
   const sidebarSearch = location.search.sidebar
   const direction = useDirection()
-  const [swiper, setSwiper] = React.useState<SwiperInstance>()
+  const [api, setApi] = React.useState<CarouselApi>()
   const hasSyncedInitialSlideRef = React.useRef(false)
   const backAnimationCleanupRef = React.useRef<(() => void) | null>(null)
   const [trail, setTrail] = React.useState<NavPanel[]>(() => {
@@ -151,8 +161,6 @@ export function NavMain({ items }: { items: readonly DashboardNavItem[] }) {
   )
 
   React.useEffect(() => {
-    clearBackAnimation()
-
     const routeTrail = findActiveTrail(items, pathname)
 
     if (routeTrail.length > 0) {
@@ -164,24 +172,18 @@ export function NavMain({ items }: { items: readonly DashboardNavItem[] }) {
   }, [items, pathname, sidebarSearch, syncSidebarSearch])
 
   React.useEffect(() => {
-    if (!swiper) {
+    if (!api) {
       return
     }
 
     const frame = window.requestAnimationFrame(() => {
-      swiper.update()
-
-      if (!hasSyncedInitialSlideRef.current) {
-        swiper.slideTo(currentIndex, 0)
-      } else {
-        swiper.slideTo(currentIndex)
-      }
-
+      api.reInit()
+      api.scrollTo(currentIndex, !hasSyncedInitialSlideRef.current)
       hasSyncedInitialSlideRef.current = true
     })
 
     return () => window.cancelAnimationFrame(frame)
-  }, [swiper, currentIndex, panels.length])
+  }, [api, currentIndex, panels.length])
 
   React.useEffect(() => {
     return () => {
@@ -211,13 +213,13 @@ export function NavMain({ items }: { items: readonly DashboardNavItem[] }) {
 
     clearBackAnimation()
 
-    if (!swiper) {
+    if (!api) {
       setTrail(nextTrail)
       syncSidebarSearch(nextTrail, false)
       return
     }
 
-    swiper.update()
+    api.reInit()
     let hasFinished = false
     const finishBackAnimation = () => {
       if (hasFinished) {
@@ -233,79 +235,84 @@ export function NavMain({ items }: { items: readonly DashboardNavItem[] }) {
     const fallback = window.setTimeout(finishBackAnimation, 1500)
     const cleanup = () => {
       window.clearTimeout(fallback)
-      swiper.off("slideChangeTransitionEnd", finishBackAnimation)
+      api.off("settle", finishBackAnimation)
     }
 
-    swiper.on("slideChangeTransitionEnd", finishBackAnimation)
+    api.on("settle", finishBackAnimation)
     backAnimationCleanupRef.current = cleanup
-    swiper.slideTo(nextTrail.length)
+    api.scrollTo(nextTrail.length)
   }
 
   return (
     <SidebarGroup>
       <SidebarGroupLabel>Platform</SidebarGroupLabel>
-      <Swiper
+      <Carousel
         className="w-full overflow-hidden"
+        opts={{
+          align: "start",
+          containScroll: false,
+          direction,
+          duration: 20,
+          watchDrag: false,
+        }}
+        setApi={setApi}
         dir={direction}
-        initialSlide={currentIndex}
-        allowTouchMove={false}
-        slidesPerView={1}
-        speed={300}
-        onSwiper={setSwiper}
         aria-label="Platform navigation"
       >
-        {panels.map((panel, panelIndex) => (
-          <SwiperSlide
-            key={`${panel.title}-${panelIndex}`}
-            className="min-w-0"
-            aria-hidden={panelIndex !== currentIndex}
-          >
-            <SidebarMenu>
-              {panelIndex > 0 ? (
-                <SidebarMenuItem>
-                  <SidebarMenuButton onClick={goBack} tooltip="Back">
-                    <ChevronLeft className="rtl:rotate-180" />
-                    <span>{panel.title}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ) : null}
+        <CarouselContent className="ml-0 w-full">
+          {panels.map((panel, panelIndex) => (
+            <CarouselItem
+              key={`${panel.title}-${panelIndex}`}
+              className="min-w-0 basis-full px-0"
+              aria-hidden={panelIndex !== currentIndex}
+            >
+              <SidebarMenu>
+                {panelIndex > 0 ? (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton onClick={goBack} tooltip="Back">
+                      <ChevronLeft className="rtl:rotate-180" />
+                      <span>{panel.title}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ) : null}
 
-              {panel.items.map((item) => {
-                const hasChildren = Boolean(item.items?.length)
-                const isActive = itemContainsPath(item, pathname)
-                const Icon = item.icon
+                {panel.items.map((item) => {
+                  const hasChildren = Boolean(item.items?.length)
+                  const isActive = itemContainsPath(item, pathname)
+                  const Icon = item.icon
 
-                return (
-                  <SidebarMenuItem key={item.title}>
-                    {hasChildren && item.items ? (
-                      <SidebarMenuButton
-                        isActive={isActive}
-                        tooltip={item.title}
-                        onClick={() => openPanel(item.title, item.items ?? [])}
-                      >
-                        {Icon ? <Icon /> : null}
-                        <span>{item.title}</span>
-                        <ChevronRight className="ms-auto rtl:rotate-180" />
-                      </SidebarMenuButton>
-                    ) : item.url ? (
-                      <SidebarMenuButton
-                        asChild
-                        isActive={isActive}
-                        tooltip={item.title}
-                      >
-                        <Link to={item.url}>
+                  return (
+                    <SidebarMenuItem key={item.title}>
+                      {hasChildren && item.items ? (
+                        <SidebarMenuButton
+                          isActive={isActive}
+                          tooltip={item.title}
+                          onClick={() => openPanel(item.title, item.items ?? [])}
+                        >
                           {Icon ? <Icon /> : null}
                           <span>{item.title}</span>
-                        </Link>
-                      </SidebarMenuButton>
-                    ) : null}
-                  </SidebarMenuItem>
-                )
-              })}
-            </SidebarMenu>
-          </SwiperSlide>
-        ))}
-      </Swiper>
+                          <ChevronRight className="ms-auto rtl:rotate-180" />
+                        </SidebarMenuButton>
+                      ) : item.url ? (
+                        <SidebarMenuButton
+                          asChild
+                          isActive={isActive}
+                          tooltip={item.title}
+                        >
+                          <Link to={item.url}>
+                            {Icon ? <Icon /> : null}
+                            <span>{item.title}</span>
+                          </Link>
+                        </SidebarMenuButton>
+                      ) : null}
+                    </SidebarMenuItem>
+                  )
+                })}
+              </SidebarMenu>
+            </CarouselItem>
+          ))}
+        </CarouselContent>
+      </Carousel>
     </SidebarGroup>
   )
 }

@@ -141,8 +141,8 @@ test('sidebar panels animate between slides', async ({ page }, testInfo) => {
   await page.goto('/')
 
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
-  const viewport = sidebar.locator('[data-slot="carousel-content"]')
-  const track = viewport.locator('> div')
+  const viewport = sidebar.locator('.swiper')
+  const track = sidebar.locator('.swiper-wrapper')
   const viewportWidth = await viewport.evaluate((element) => element.clientWidth)
 
   await sidebar.getByRole('button', { name: 'Core', exact: true }).click()
