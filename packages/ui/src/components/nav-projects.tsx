@@ -1,7 +1,7 @@
 "use client"
 
 import { Link, useRouterState } from "@tanstack/react-router"
-import { MoreHorizontal, type LucideIcon } from "lucide-react"
+import { type LucideIcon } from "lucide-react"
 
 import {
   SidebarGroup,
@@ -26,7 +26,7 @@ export function NavProjects({
     <SidebarGroup className="group-data-[collapsible=icon]:hidden">
       <SidebarGroupLabel>Packages</SidebarGroupLabel>
       <SidebarMenu>
-        {projects.slice(0, 5).map((item) => (
+        {projects.map((item) => (
           <SidebarMenuItem key={item.name}>
             <SidebarMenuButton asChild isActive={pathname === item.url}>
               <Link to={item.url}>
@@ -36,14 +36,6 @@ export function NavProjects({
             </SidebarMenuButton>
           </SidebarMenuItem>
         ))}
-        <SidebarMenuItem>
-          <SidebarMenuButton asChild isActive={pathname === "/services"}>
-            <Link to="/services">
-              <MoreHorizontal />
-              <span>More</span>
-            </Link>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
       </SidebarMenu>
     </SidebarGroup>
   )

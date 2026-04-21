@@ -4,13 +4,10 @@ import * as React from "react"
 import {
   Bot,
   Database,
-  FileText,
-  Fingerprint,
   Github,
   LayoutDashboard,
   LifeBuoy,
   MonitorCog,
-  PanelsTopLeft,
   Send,
   Server,
   Settings2,
@@ -60,7 +57,6 @@ const data = {
     },
     {
       title: "Core",
-      url: "/database",
       icon: Server,
       items: [
         {
@@ -75,7 +71,6 @@ const data = {
     },
     {
       title: "Workspace",
-      url: "/agents",
       icon: Bot,
       items: [
         {
@@ -93,13 +88,7 @@ const data = {
       ],
     },
     {
-      title: "Commerce",
-      url: "/commerce",
-      icon: Store,
-    },
-    {
       title: "Settings",
-      url: "/settings",
       icon: Settings2,
       items: [
         {
@@ -122,45 +111,22 @@ const data = {
     },
     {
       title: "Support",
-      url: "/settings",
+      url: "https://github.com/zelavis/zelavis/discussions",
       icon: LifeBuoy,
+      external: true,
     },
     {
       title: "Feedback",
-      url: "/settings",
+      url: "https://github.com/zelavis/zelavis/issues/new",
       icon: Send,
+      external: true,
     },
   ],
   projects: [
     {
-      name: "Auth",
-      url: "/auth",
-      icon: Fingerprint,
-    },
-    {
-      name: "Database",
-      url: "/database",
-      icon: Database,
-    },
-    {
-      name: "Content",
-      url: "/content",
-      icon: FileText,
-    },
-    {
-      name: "Builder",
-      url: "/builder",
-      icon: PanelsTopLeft,
-    },
-    {
-      name: "Commerce",
+      name: "Zelavis Ecommerce",
       url: "/commerce",
       icon: Store,
-    },
-    {
-      name: "Runtime",
-      url: "/settings",
-      icon: MonitorCog,
     },
   ],
 }

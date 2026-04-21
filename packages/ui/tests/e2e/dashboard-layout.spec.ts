@@ -6,7 +6,7 @@ test('desktop dashboard sidebar does not overlap', async ({ page }, testInfo) =>
   await page.goto('/')
   await expect(page.getByRole('complementary', { name: 'Dashboard navigation' })).toBeVisible()
   await expect(page.getByRole('button', { name: /Zelavis Runtime/ })).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Settings' }).first()).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Settings' })).toBeVisible()
 
   const nav = page.getByRole('complementary', { name: 'Dashboard navigation' })
   const links = nav.locator('a')
@@ -94,6 +94,23 @@ test('overview nav is only active on the overview route', async ({ page }, testI
     'aria-current',
     'page',
   )
+})
+
+test('sidebar has one internal link per dashboard route', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await page.goto('/')
+
+  const internalHrefs = await page
+    .getByRole('complementary', { name: 'Dashboard navigation' })
+    .locator('a[href^="/"]')
+    .evaluateAll((links) =>
+      links.map((link) => new URL(link.getAttribute('href') ?? '/', window.location.href).pathname),
+    )
+
+  expect(internalHrefs).toEqual(Array.from(new Set(internalHrefs)))
 })
 
 test('desktop sidebar collapses to a rail and expands content', async ({

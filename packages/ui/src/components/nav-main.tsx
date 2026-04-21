@@ -10,7 +10,6 @@ import {
   SidebarGroup,
   SidebarGroupLabel,
   SidebarMenu,
-  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSub,
@@ -23,7 +22,7 @@ export function NavMain({
 }: {
   items: {
     title: string
-    url: string
+    url?: string
     icon: LucideIcon
     isActive?: boolean
     items?: {
@@ -40,7 +39,7 @@ export function NavMain({
       <SidebarMenu>
         {items.map((item) => {
           const subItemActive = item.items?.some((subItem) => subItem.url === pathname)
-          const isActive = pathname === item.url || subItemActive
+          const isActive = Boolean(item.url && pathname === item.url) || subItemActive
 
           return (
             <Collapsible
@@ -49,20 +48,23 @@ export function NavMain({
               defaultOpen={item.isActive || isActive}
             >
               <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={isActive} tooltip={item.title}>
-                  <Link to={item.url}>
-                    <item.icon />
-                    <span>{item.title}</span>
-                  </Link>
-                </SidebarMenuButton>
-              {item.items?.length ? (
-                <>
+                {item.items?.length ? (
                   <CollapsibleTrigger asChild>
-                    <SidebarMenuAction className="data-[state=open]:rotate-90">
-                      <ChevronRight />
-                      <span className="sr-only">Toggle</span>
-                    </SidebarMenuAction>
+                    <SidebarMenuButton isActive={isActive} tooltip={item.title}>
+                      <item.icon />
+                      <span>{item.title}</span>
+                      <ChevronRight className="ms-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
+                    </SidebarMenuButton>
                   </CollapsibleTrigger>
+                ) : item.url ? (
+                  <SidebarMenuButton asChild isActive={isActive} tooltip={item.title}>
+                    <Link to={item.url}>
+                      <item.icon />
+                      <span>{item.title}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                ) : null}
+                {item.items?.length ? (
                   <CollapsibleContent>
                     <SidebarMenuSub>
                       {item.items?.map((subItem) => (
@@ -79,10 +81,9 @@ export function NavMain({
                       ))}
                     </SidebarMenuSub>
                   </CollapsibleContent>
-                </>
-              ) : null}
-            </SidebarMenuItem>
-          </Collapsible>
+                ) : null}
+              </SidebarMenuItem>
+            </Collapsible>
           )
         })}
       </SidebarMenu>
