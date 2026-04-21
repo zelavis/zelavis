@@ -123,6 +123,7 @@ export function NavMain({ items }: { items: readonly DashboardNavItem[] }) {
   const sidebarSearch = location.search.sidebar
   const direction = useDirection()
   const [api, setApi] = React.useState<CarouselApi>()
+  const hasSyncedInitialSlideRef = React.useRef(false)
   const [trail, setTrail] = React.useState<NavPanel[]>(() => {
     const routeTrail = findActiveTrail(items, pathname)
 
@@ -163,8 +164,18 @@ export function NavMain({ items }: { items: readonly DashboardNavItem[] }) {
   }, [items, pathname, sidebarSearch, syncSidebarSearch])
 
   React.useEffect(() => {
-    api?.scrollTo(currentIndex)
-  }, [api, currentIndex])
+    if (!api) {
+      return
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      api.reInit()
+      api.scrollTo(currentIndex, !hasSyncedInitialSlideRef.current)
+      hasSyncedInitialSlideRef.current = true
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [api, currentIndex, panels.length])
 
   function openPanel(title: string, panelItems: readonly NavChildItem[]) {
     const nextTrail = [...trail, { title, items: panelItems }]
@@ -189,8 +200,7 @@ export function NavMain({ items }: { items: readonly DashboardNavItem[] }) {
           align: "start",
           containScroll: false,
           direction,
-          duration: 18,
-          startIndex: currentIndex,
+          duration: 28,
           watchDrag: false,
         }}
         setApi={setApi}

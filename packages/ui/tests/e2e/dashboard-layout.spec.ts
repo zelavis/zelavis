@@ -112,6 +112,54 @@ test('sidebar category rows drill down into sliding panels', async ({
   ).toBeVisible()
 })
 
+test('sidebar shows a single platform label on the root panel', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await page.goto('/')
+
+  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  await expect(sidebar.getByText('Platform', { exact: true })).toHaveCount(1)
+})
+
+test('sidebar panels animate between slides', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await page.goto('/')
+
+  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const viewport = sidebar.locator('[data-slot="carousel-content"]')
+  const track = viewport.locator('> div')
+  const viewportWidth = await viewport.evaluate((element) => element.clientWidth)
+
+  await sidebar.getByRole('button', { name: 'Core', exact: true }).click()
+  await page.waitForTimeout(60)
+
+  const translateX = await track.evaluate((element) => {
+    const transform = getComputedStyle(element).transform
+
+    if (transform === 'none') {
+      return 0
+    }
+
+    return new DOMMatrixReadOnly(transform).m41
+  })
+
+  expect(translateX).toBeLessThan(-1)
+  expect(translateX).toBeGreaterThan(-viewportWidth + 1)
+
+  await expect.poll(async () => track.evaluate((element) => {
+    const transform = getComputedStyle(element).transform
+
+    if (transform === 'none') {
+      return 0
+    }
+
+    return new DOMMatrixReadOnly(transform).m41
+  })).toBeLessThanOrEqual(-viewportWidth + 10)
+})
+
 test('sidebar panel state survives refresh through the router', async ({
   page,
 }, testInfo) => {
