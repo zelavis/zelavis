@@ -18,25 +18,18 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "#/components/ui/sidebar"
-
-type NavItem = {
-  title: string
-  url?: string
-  icon: LucideIcon
-  isActive?: boolean
-  items?: NavChildItem[]
-}
+import type { DashboardNavItem } from "#/lib/dashboard-data"
 
 type NavChildItem = {
   title: string
   url?: string
   icon?: LucideIcon
-  items?: NavChildItem[]
+  items?: readonly NavChildItem[]
 }
 
 type NavPanel = {
   title: string
-  items: NavChildItem[]
+  items: readonly NavChildItem[]
 }
 
 function encodePanelTitle(title: string) {
@@ -51,11 +44,17 @@ function panelSearchValue(trail: NavPanel[]) {
   return trail.map((panel) => encodePanelTitle(panel.title)).join("/")
 }
 
-function itemContainsPath(item: NavItem | NavChildItem, pathname: string): boolean {
+function itemContainsPath(
+  item: DashboardNavItem | NavChildItem,
+  pathname: string,
+): boolean {
   return item.url === pathname || Boolean(item.items?.some((child) => itemContainsPath(child, pathname)))
 }
 
-function findActiveTrail(items: NavItem[], pathname: string): NavPanel[] {
+function findActiveTrail(
+  items: readonly DashboardNavItem[],
+  pathname: string,
+): NavPanel[] {
   for (const item of items) {
     if (!item.items?.length || !itemContainsPath(item, pathname)) {
       continue
@@ -79,9 +78,12 @@ function findActiveTrail(items: NavItem[], pathname: string): NavPanel[] {
   return []
 }
 
-function findTrailByTitles(items: NavItem[], titles: string[]): NavPanel[] {
+function findTrailByTitles(
+  items: readonly DashboardNavItem[],
+  titles: string[],
+): NavPanel[] {
   const panels: NavPanel[] = []
-  let currentItems: Array<NavItem | NavChildItem> = items
+  let currentItems: ReadonlyArray<DashboardNavItem | NavChildItem> = items
 
   for (const title of titles) {
     const match = currentItems.find(
@@ -114,7 +116,7 @@ function parseSidebarSearch(value: unknown) {
   }
 }
 
-export function NavMain({ items }: { items: NavItem[] }) {
+export function NavMain({ items }: { items: readonly DashboardNavItem[] }) {
   const navigate = useNavigate({ from: "/" })
   const location = useRouterState({ select: (state) => state.location })
   const pathname = location.pathname
@@ -164,7 +166,7 @@ export function NavMain({ items }: { items: NavItem[] }) {
     api?.scrollTo(currentIndex)
   }, [api, currentIndex])
 
-  function openPanel(title: string, panelItems: NavChildItem[]) {
+  function openPanel(title: string, panelItems: readonly NavChildItem[]) {
     const nextTrail = [...trail, { title, items: panelItems }]
 
     setTrail(nextTrail)

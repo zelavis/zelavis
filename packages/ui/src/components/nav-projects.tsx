@@ -1,7 +1,6 @@
 "use client"
 
 import { Link, useRouterState } from "@tanstack/react-router"
-import { type LucideIcon } from "lucide-react"
 
 import {
   SidebarGroup,
@@ -10,15 +9,12 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "#/components/ui/sidebar"
+import type { DashboardPackageItem } from "#/lib/dashboard-data"
 
 export function NavProjects({
   projects,
 }: {
-  projects: {
-    name: string
-    url: string
-    icon: LucideIcon
-  }[]
+  projects: readonly DashboardPackageItem[]
 }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
 

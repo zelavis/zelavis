@@ -2,23 +2,195 @@ import {
   Bot,
   CreditCard,
   Database,
+  FileText,
   Fingerprint,
+  Github,
   LayoutDashboard,
+  LifeBuoy,
   MonitorCog,
   PanelsTopLeft,
+  Send,
+  Server,
+  Settings2,
   ShieldCheck,
   Store,
+  type LucideIcon,
 } from 'lucide-react'
 
-export const dashboardNavItems = [
-  { to: '/', label: 'Overview', icon: LayoutDashboard },
-  { to: '/auth', label: 'Auth', icon: Fingerprint },
-  { to: '/database', label: 'Database', icon: Database },
-  { to: '/agents', label: 'Agents', icon: Bot },
-  { to: '/builder', label: 'Builder', icon: PanelsTopLeft },
-  { to: '/content', label: 'Content', icon: MonitorCog },
-  { to: '/commerce', label: 'Commerce', icon: Store },
+export type DashboardRoutePath =
+  | '/'
+  | '/agents'
+  | '/auth'
+  | '/builder'
+  | '/commerce'
+  | '/content'
+  | '/database'
+  | '/services'
+  | '/settings'
+
+export type DashboardNavItem = {
+  title: string
+  url?: DashboardRoutePath
+  icon: LucideIcon
+  pageLabel?: string
+  items?: readonly DashboardNavItem[]
+}
+
+export type DashboardPackageItem = {
+  name: string
+  url: DashboardRoutePath
+  icon: LucideIcon
+  pageLabel?: string
+}
+
+export type DashboardSecondaryItem = {
+  title: string
+  url: string
+  icon: LucideIcon
+  external?: boolean
+}
+
+export type DashboardTeamItem = {
+  name: string
+  logo: LucideIcon
+  plan: string
+}
+
+export const sidebarTeams: readonly DashboardTeamItem[] = [
+  {
+    name: 'Zelavis',
+    logo: Server,
+    plan: 'Runtime',
+  },
+  {
+    name: 'Local',
+    logo: MonitorCog,
+    plan: 'Development',
+  },
+  {
+    name: 'Core',
+    logo: Database,
+    plan: 'Services',
+  },
 ] as const
+
+export const platformNavItems: readonly DashboardNavItem[] = [
+  {
+    title: 'Overview',
+    url: '/',
+    icon: LayoutDashboard,
+  },
+  {
+    title: 'Core',
+    icon: Server,
+    items: [
+      {
+        title: 'Auth',
+        url: '/auth',
+        icon: Fingerprint,
+      },
+      {
+        title: 'Database',
+        url: '/database',
+        icon: Database,
+      },
+    ],
+  },
+  {
+    title: 'Workspace',
+    icon: Bot,
+    items: [
+      {
+        title: 'Agents',
+        url: '/agents',
+        icon: Bot,
+      },
+      {
+        title: 'Builder',
+        url: '/builder',
+        icon: PanelsTopLeft,
+      },
+      {
+        title: 'Content',
+        url: '/content',
+        icon: FileText,
+      },
+    ],
+  },
+  {
+    title: 'Settings',
+    icon: Settings2,
+    items: [
+      {
+        title: 'Runtime',
+        url: '/settings',
+        icon: MonitorCog,
+        pageLabel: 'Settings',
+      },
+      {
+        title: 'Services',
+        url: '/services',
+        icon: Server,
+      },
+    ],
+  },
+] as const
+
+export const packageNavItems: readonly DashboardPackageItem[] = [
+  {
+    name: 'Zelavis Ecommerce',
+    url: '/commerce',
+    icon: Store,
+    pageLabel: 'Commerce',
+  },
+] as const
+
+export const secondaryNavItems: readonly DashboardSecondaryItem[] = [
+  {
+    title: 'GitHub',
+    url: 'https://github.com/zelavis/zelavis',
+    icon: Github,
+    external: true,
+  },
+  {
+    title: 'Support',
+    url: 'https://github.com/zelavis/zelavis/discussions',
+    icon: LifeBuoy,
+    external: true,
+  },
+  {
+    title: 'Feedback',
+    url: 'https://github.com/zelavis/zelavis/issues/new',
+    icon: Send,
+    external: true,
+  },
+] as const
+
+function flattenPlatformItems(
+  items: readonly DashboardNavItem[],
+): Array<{ to: DashboardRoutePath; label: string; icon: LucideIcon }> {
+  return items.flatMap((item) => [
+    ...(item.url
+      ? [{ to: item.url, label: item.pageLabel ?? item.title, icon: item.icon }]
+      : []),
+    ...flattenPlatformItems(item.items ?? []),
+  ])
+}
+
+export const dashboardNavItems = [
+  ...flattenPlatformItems(platformNavItems),
+  ...packageNavItems.map((item) => ({
+    to: item.url,
+    label: item.pageLabel ?? item.name,
+    icon: item.icon,
+  })),
+] as const
+
+export function getDashboardPageLabel(pathname: string) {
+  return (
+    dashboardNavItems.find((item) => item.to === pathname)?.label ?? 'Not Found'
+  )
+}
 
 export const serviceRows = [
   {

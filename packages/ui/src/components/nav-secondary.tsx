@@ -1,6 +1,5 @@
 import * as React from "react"
 import { Link } from "@tanstack/react-router"
-import { type LucideIcon } from "lucide-react"
 
 import {
   SidebarGroup,
@@ -9,17 +8,13 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "#/components/ui/sidebar"
+import type { DashboardSecondaryItem } from "#/lib/dashboard-data"
 
 export function NavSecondary({
   items,
   ...props
 }: {
-  items: {
-    title: string
-    url: string
-    icon: LucideIcon
-    external?: boolean
-  }[]
+  items: readonly DashboardSecondaryItem[]
 } & React.ComponentPropsWithoutRef<typeof SidebarGroup>) {
   return (
     <SidebarGroup {...props}>

@@ -20,29 +20,11 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from '#/components/ui/sidebar'
-import { dashboardNavItems } from '#/lib/dashboard-data'
-
-function currentPageLabel(pathname: string) {
-  const current = dashboardNavItems.find((item) => item.to === pathname)
-
-  if (current) {
-    return current.label
-  }
-
-  if (pathname === '/settings') {
-    return 'Settings'
-  }
-
-  if (pathname === '/services') {
-    return 'Services'
-  }
-
-  return 'Not Found'
-}
+import { getDashboardPageLabel } from '#/lib/dashboard-data'
 
 function UtilityHeader() {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
-  const pageLabel = currentPageLabel(pathname)
+  const pageLabel = getDashboardPageLabel(pathname)
 
   return (
     <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">

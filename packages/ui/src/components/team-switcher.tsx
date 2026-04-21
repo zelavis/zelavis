@@ -18,15 +18,12 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "#/components/ui/sidebar"
+import type { DashboardTeamItem } from "#/lib/dashboard-data"
 
 export function TeamSwitcher({
   teams,
 }: {
-  teams: {
-    name: string
-    logo: React.ElementType
-    plan: string
-  }[]
+  teams: readonly DashboardTeamItem[]
 }) {
   const { isMobile } = useSidebar()
   const [activeTeam, setActiveTeam] = React.useState(teams[0])
