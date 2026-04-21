@@ -124,6 +124,7 @@ export function NavMain({ items }: { items: readonly DashboardNavItem[] }) {
   const direction = useDirection()
   const [api, setApi] = React.useState<CarouselApi>()
   const hasSyncedInitialSlideRef = React.useRef(false)
+  const backAnimationTimeoutRef = React.useRef<number | null>(null)
   const [trail, setTrail] = React.useState<NavPanel[]>(() => {
     const routeTrail = findActiveTrail(items, pathname)
 
@@ -177,9 +178,27 @@ export function NavMain({ items }: { items: readonly DashboardNavItem[] }) {
     return () => window.cancelAnimationFrame(frame)
   }, [api, currentIndex, panels.length])
 
+  React.useEffect(() => {
+    return () => {
+      if (backAnimationTimeoutRef.current) {
+        window.clearTimeout(backAnimationTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  function clearBackAnimationTimeout() {
+    if (!backAnimationTimeoutRef.current) {
+      return
+    }
+
+    window.clearTimeout(backAnimationTimeoutRef.current)
+    backAnimationTimeoutRef.current = null
+  }
+
   function openPanel(title: string, panelItems: readonly NavChildItem[]) {
     const nextTrail = [...trail, { title, items: panelItems }]
 
+    clearBackAnimationTimeout()
     setTrail(nextTrail)
     syncSidebarSearch(nextTrail, false)
   }
@@ -187,8 +206,22 @@ export function NavMain({ items }: { items: readonly DashboardNavItem[] }) {
   function goBack() {
     const nextTrail = trail.slice(0, -1)
 
-    setTrail(nextTrail)
-    syncSidebarSearch(nextTrail, false)
+    clearBackAnimationTimeout()
+
+    if (!api) {
+      setTrail(nextTrail)
+      syncSidebarSearch(nextTrail, false)
+      return
+    }
+
+    api.reInit()
+    api.scrollTo(nextTrail.length)
+
+    backAnimationTimeoutRef.current = window.setTimeout(() => {
+      setTrail(nextTrail)
+      syncSidebarSearch(nextTrail, false)
+      backAnimationTimeoutRef.current = null
+    }, 350)
   }
 
   return (

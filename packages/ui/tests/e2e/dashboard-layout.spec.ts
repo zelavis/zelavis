@@ -1,4 +1,16 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator } from '@playwright/test'
+
+async function getTranslateX(track: Locator) {
+  return track.evaluate((element) => {
+    const transform = getComputedStyle(element).transform
+
+    if (transform === 'none') {
+      return 0
+    }
+
+    return new DOMMatrixReadOnly(transform).m41
+  })
+}
 
 test('desktop dashboard sidebar does not overlap', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
@@ -136,28 +148,22 @@ test('sidebar panels animate between slides', async ({ page }, testInfo) => {
   await sidebar.getByRole('button', { name: 'Core', exact: true }).click()
   await page.waitForTimeout(60)
 
-  const translateX = await track.evaluate((element) => {
-    const transform = getComputedStyle(element).transform
-
-    if (transform === 'none') {
-      return 0
-    }
-
-    return new DOMMatrixReadOnly(transform).m41
-  })
+  const translateX = await getTranslateX(track)
 
   expect(translateX).toBeLessThan(-1)
   expect(translateX).toBeGreaterThan(-viewportWidth + 1)
 
-  await expect.poll(async () => track.evaluate((element) => {
-    const transform = getComputedStyle(element).transform
+  await expect.poll(() => getTranslateX(track)).toBeLessThanOrEqual(-viewportWidth + 10)
 
-    if (transform === 'none') {
-      return 0
-    }
+  await sidebar.getByRole('button', { name: 'Core', exact: true }).click()
+  await page.waitForTimeout(60)
 
-    return new DOMMatrixReadOnly(transform).m41
-  })).toBeLessThanOrEqual(-viewportWidth + 10)
+  const backTranslateX = await getTranslateX(track)
+
+  expect(backTranslateX).toBeLessThan(-1)
+  expect(backTranslateX).toBeGreaterThan(-viewportWidth + 1)
+
+  await expect.poll(() => getTranslateX(track)).toBeGreaterThanOrEqual(-10)
 })
 
 test('sidebar panel state survives refresh through the router', async ({
