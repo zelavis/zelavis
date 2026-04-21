@@ -16,20 +16,17 @@ import {
   Settings2,
   Store,
 } from "lucide-react"
-import { Link } from "@tanstack/react-router"
 
 import { NavMain } from "#/components/nav-main"
 import { NavProjects } from "#/components/nav-projects"
 import { NavSecondary } from "#/components/nav-secondary"
 import { NavUser } from "#/components/nav-user"
+import { TeamSwitcher } from "#/components/team-switcher"
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarHeader,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
 } from "#/components/ui/sidebar"
 
 const data = {
@@ -38,6 +35,23 @@ const data = {
     email: "local workspace",
     avatar: "",
   },
+  teams: [
+    {
+      name: "Zelavis",
+      logo: Server,
+      plan: "Runtime",
+    },
+    {
+      name: "Local",
+      logo: MonitorCog,
+      plan: "Development",
+    },
+    {
+      name: "Core",
+      logo: Database,
+      plan: "Services",
+    },
+  ],
   navMain: [
     {
       title: "Overview",
@@ -155,21 +169,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   return (
     <Sidebar variant="inset" collapsible="icon" {...props}>
       <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton size="lg" asChild>
-              <Link to="/">
-                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                  <Server className="size-4" />
-                </div>
-                <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-medium">Zelavis</span>
-                  <span className="truncate text-xs">Runtime</span>
-                </div>
-              </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+        <TeamSwitcher teams={data.teams} />
       </SidebarHeader>
       <SidebarContent>
         <NavMain items={data.navMain} />

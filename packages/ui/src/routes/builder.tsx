@@ -6,7 +6,7 @@ export const Route = createFileRoute('/builder')({ component: Builder })
 
 function Builder() {
   return (
-    <main className="mx-auto grid max-w-7xl gap-6 px-4 py-6">
+    <section className="mx-auto grid w-full max-w-7xl gap-6">
       <PageHeader
         eyebrow="Builder"
         title="Website Builder"
@@ -16,6 +16,6 @@ function Builder() {
         title="Canvas not mounted"
         description="This route is reserved for the builder service UI."
       />
-    </main>
+    </section>
   )
 }

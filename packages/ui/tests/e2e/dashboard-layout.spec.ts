@@ -5,7 +5,7 @@ test('desktop dashboard sidebar does not overlap', async ({ page }, testInfo) =>
 
   await page.goto('/')
   await expect(page.getByRole('complementary', { name: 'Dashboard navigation' })).toBeVisible()
-  await expect(page.getByRole('link', { name: 'Zelavis Runtime' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Zelavis Runtime/ })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Settings' }).first()).toBeVisible()
 
   const nav = page.getByRole('complementary', { name: 'Dashboard navigation' })
@@ -154,9 +154,20 @@ test('dashboard shows a not found page inside the shell', async ({
 
   await page.goto('/not-a-dashboard-route')
 
-  await expect(page.getByRole('link', { name: 'Zelavis Runtime' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Zelavis Runtime/ })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Dashboard route not found' })).toBeVisible()
   await expect(page.locator('main').getByRole('link', { name: 'Settings' })).toBeVisible()
+})
+
+test('team switcher opens runtime teams', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await page.goto('/')
+  await page.getByRole('button', { name: /Zelavis Runtime/ }).click()
+
+  await expect(page.getByRole('menuitem', { name: /Local/ })).toBeVisible()
+  await expect(page.getByRole('menuitem', { name: /Core/ })).toBeVisible()
+  await expect(page.getByRole('menuitem', { name: /Add team/ })).toBeVisible()
 })
 
 test('footer shows the runtime config source', async ({ page }, testInfo) => {

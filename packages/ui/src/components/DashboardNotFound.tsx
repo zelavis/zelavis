@@ -4,7 +4,7 @@ import { PageHeader } from '#/components/DashboardPage'
 
 export function DashboardNotFound() {
   return (
-    <main className="mx-auto grid max-w-7xl gap-6 px-4 py-6">
+    <section className="mx-auto grid w-full max-w-7xl gap-6">
       <PageHeader
         eyebrow="Not Found"
         title="Dashboard route not found"
@@ -26,6 +26,6 @@ export function DashboardNotFound() {
           </>
         }
       />
-    </main>
+    </section>
   )
 }

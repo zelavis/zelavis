@@ -42,7 +42,7 @@ function Overview() {
   const services = config?.services ?? []
 
   return (
-    <main className="mx-auto grid max-w-7xl gap-6 px-4 py-6">
+    <section className="mx-auto grid w-full max-w-7xl gap-6">
       <PageHeader
         eyebrow="Overview"
         title="Zelavis runtime"
@@ -157,6 +157,6 @@ function Overview() {
           />
         ))}
       </section>
-    </main>
+    </section>
   )
 }

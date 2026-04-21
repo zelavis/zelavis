@@ -174,7 +174,7 @@ function DatabaseRoute() {
   }
 
   return (
-    <main className="mx-auto grid max-w-7xl gap-6 px-4 py-6">
+    <section className="mx-auto grid w-full max-w-7xl gap-6">
       <PageHeader
         eyebrow="Database"
         title="Multi-model database"
@@ -383,6 +383,6 @@ function DatabaseRoute() {
           </CardContent>
         </Card>
       </section>
-    </main>
+    </section>
   )
 }

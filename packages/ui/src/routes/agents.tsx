@@ -6,7 +6,7 @@ export const Route = createFileRoute('/agents')({ component: Agents })
 
 function Agents() {
   return (
-    <main className="mx-auto grid max-w-7xl gap-6 px-4 py-6">
+    <section className="mx-auto grid w-full max-w-7xl gap-6">
       <PageHeader
         eyebrow="Agents"
         title="Agent Console"
@@ -16,6 +16,6 @@ function Agents() {
         title="No agents connected"
         description="The dashboard shell is ready for the agent service boundary."
       />
-    </main>
+    </section>
   )
 }

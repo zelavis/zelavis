@@ -6,7 +6,7 @@ export const Route = createFileRoute('/commerce')({ component: Commerce })
 
 function Commerce() {
   return (
-    <main className="mx-auto grid max-w-7xl gap-6 px-4 py-6">
+    <section className="mx-auto grid w-full max-w-7xl gap-6">
       <PageHeader
         eyebrow="Commerce"
         title="Commerce"
@@ -16,6 +16,6 @@ function Commerce() {
         title="Commerce package not installed"
         description="Zelavis Ecommerce remains an official installable service."
       />
-    </main>
+    </section>
   )
 }

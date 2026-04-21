@@ -18,7 +18,7 @@ function Services() {
   const services = runtime.data?.services ?? []
 
   return (
-    <main className="mx-auto grid max-w-7xl gap-6 px-4 py-6">
+    <section className="mx-auto grid w-full max-w-7xl gap-6">
       <PageHeader
         eyebrow="Services"
         title="Runtime services"
@@ -51,6 +51,6 @@ function Services() {
           ) : null}
         </CardContent>
       </Card>
-    </main>
+    </section>
   )
 }

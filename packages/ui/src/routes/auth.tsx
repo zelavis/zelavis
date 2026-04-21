@@ -22,7 +22,7 @@ function Auth() {
   const providerNames = providers.data ?? []
 
   return (
-    <main className="mx-auto grid max-w-7xl gap-6 px-4 py-6">
+    <section className="mx-auto grid w-full max-w-7xl gap-6">
       <PageHeader
         eyebrow="Auth"
         title="Authentication"
@@ -80,6 +80,6 @@ function Auth() {
           ) : null}
         </CardContent>
       </Card>
-    </main>
+    </section>
   )
 }
