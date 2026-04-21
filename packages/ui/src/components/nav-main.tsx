@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Link, useRouterState } from "@tanstack/react-router"
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router"
 import { ChevronLeft, ChevronRight, type LucideIcon } from "lucide-react"
 
 import {
@@ -39,6 +39,18 @@ type NavPanel = {
   items: NavChildItem[]
 }
 
+function encodePanelTitle(title: string) {
+  return encodeURIComponent(title)
+}
+
+function panelSearchValue(trail: NavPanel[]) {
+  if (trail.length === 0) {
+    return undefined
+  }
+
+  return trail.map((panel) => encodePanelTitle(panel.title)).join("/")
+}
+
 function itemContainsPath(item: NavItem | NavChildItem, pathname: string): boolean {
   return item.url === pathname || Boolean(item.items?.some((child) => itemContainsPath(child, pathname)))
 }
@@ -67,33 +79,103 @@ function findActiveTrail(items: NavItem[], pathname: string): NavPanel[] {
   return []
 }
 
+function findTrailByTitles(items: NavItem[], titles: string[]): NavPanel[] {
+  const panels: NavPanel[] = []
+  let currentItems: Array<NavItem | NavChildItem> = items
+
+  for (const title of titles) {
+    const match = currentItems.find(
+      (item) => item.title === title && item.items?.length,
+    )
+
+    if (!match?.items?.length) {
+      return []
+    }
+
+    panels.push({ title: match.title, items: match.items })
+    currentItems = match.items
+  }
+
+  return panels
+}
+
+function parseSidebarSearch(value: unknown) {
+  if (typeof value !== "string" || value.length === 0) {
+    return []
+  }
+
+  try {
+    return value
+      .split("/")
+      .map((segment) => decodeURIComponent(segment))
+      .filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
 export function NavMain({ items }: { items: NavItem[] }) {
-  const pathname = useRouterState({ select: (state) => state.location.pathname })
+  const navigate = useNavigate({ from: "/" })
+  const location = useRouterState({ select: (state) => state.location })
+  const pathname = location.pathname
+  const sidebarSearch = location.search.sidebar
   const direction = useDirection()
   const [api, setApi] = React.useState<CarouselApi>()
-  const [trail, setTrail] = React.useState<NavPanel[]>(() =>
-    findActiveTrail(items, pathname),
-  )
+  const [trail, setTrail] = React.useState<NavPanel[]>(() => {
+    const routeTrail = findActiveTrail(items, pathname)
+
+    if (routeTrail.length > 0) {
+      return routeTrail
+    }
+
+    return findTrailByTitles(items, parseSidebarSearch(sidebarSearch))
+  })
   const panels = React.useMemo<NavPanel[]>(
     () => [{ title: "Platform", items }, ...trail],
     [items, trail],
   )
   const currentIndex = trail.length
 
+  const syncSidebarSearch = React.useCallback(
+    (nextTrail: NavPanel[], replace = true) => {
+      void navigate({
+        replace,
+        search: (previous) => ({
+          ...previous,
+          sidebar: panelSearchValue(nextTrail),
+        }),
+      })
+    },
+    [navigate],
+  )
+
   React.useEffect(() => {
-    setTrail(findActiveTrail(items, pathname))
-  }, [items, pathname])
+    const routeTrail = findActiveTrail(items, pathname)
+
+    if (routeTrail.length > 0) {
+      setTrail(routeTrail)
+      return
+    }
+
+    setTrail(findTrailByTitles(items, parseSidebarSearch(sidebarSearch)))
+  }, [items, pathname, sidebarSearch, syncSidebarSearch])
 
   React.useEffect(() => {
     api?.scrollTo(currentIndex)
   }, [api, currentIndex])
 
   function openPanel(title: string, panelItems: NavChildItem[]) {
-    setTrail((current) => [...current, { title, items: panelItems }])
+    const nextTrail = [...trail, { title, items: panelItems }]
+
+    setTrail(nextTrail)
+    syncSidebarSearch(nextTrail, false)
   }
 
   function goBack() {
-    setTrail((current) => current.slice(0, -1))
+    const nextTrail = trail.slice(0, -1)
+
+    setTrail(nextTrail)
+    syncSidebarSearch(nextTrail, false)
   }
 
   return (
@@ -120,6 +202,15 @@ export function NavMain({ items }: { items: NavItem[] }) {
               className="min-w-0 basis-full ps-0"
               aria-hidden={panelIndex !== currentIndex}
             >
+              <div className="mb-2 flex h-8 min-w-0 items-center gap-1 px-2 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
+                <span className="truncate">Platform</span>
+                {panels.slice(1, panelIndex + 1).map((crumb) => (
+                  <React.Fragment key={crumb.title}>
+                    <ChevronRight className="size-3 shrink-0 rtl:rotate-180" />
+                    <span className="truncate">{crumb.title}</span>
+                  </React.Fragment>
+                ))}
+              </div>
               <SidebarMenu>
                 {panelIndex > 0 ? (
                   <SidebarMenuItem>

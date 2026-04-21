@@ -112,6 +112,43 @@ test('sidebar category rows drill down into sliding panels', async ({
   ).toBeVisible()
 })
 
+test('sidebar panel state survives refresh through the router', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await page.goto('/')
+  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+
+  await sidebar.getByRole('button', { name: 'Workspace', exact: true }).click()
+
+  await expect(page).toHaveURL(/sidebar=Workspace/)
+  await expect(page.getByRole('link', { name: 'Agents', exact: true })).toBeVisible()
+
+  await page.reload()
+
+  await expect(sidebar.getByRole('button', { name: 'Workspace', exact: true })).toBeVisible()
+  await expect(sidebar.getByRole('link', { name: 'Builder', exact: true })).toBeVisible()
+})
+
+test('sidebar route panels restore from the current route on refresh', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await page.goto('/database')
+
+  await page.reload()
+
+  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+
+  await expect(sidebar.getByRole('button', { name: 'Core' })).toBeVisible()
+  await expect(sidebar.getByRole('link', { name: 'Database', exact: true })).toHaveAttribute(
+    'aria-current',
+    'page',
+  )
+})
+
 test('sidebar has one internal link per dashboard route', async ({
   page,
 }, testInfo) => {

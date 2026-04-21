@@ -17,6 +17,13 @@ const THEME_INIT_SCRIPT = `(function(){try{var stored=window.localStorage.getIte
 const DEFAULT_DIRECTION: Direction = 'ltr'
 
 export const Route = createRootRoute({
+  validateSearch: (search: Record<string, unknown>): { sidebar?: string } => {
+    if (typeof search.sidebar === 'string') {
+      return { sidebar: search.sidebar }
+    }
+
+    return {}
+  },
   head: () => ({
     meta: [
       {
