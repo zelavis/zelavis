@@ -1,10 +1,8 @@
 import * as React from "react";
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Github } from "lucide-react";
 
 import { AppSidebar } from "#/components/app-sidebar";
 import Footer from "#/components/Footer";
-import ThemeToggle from "#/components/ThemeToggle";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -50,20 +48,6 @@ function UtilityHeader() {
             </BreadcrumbItem>
           </BreadcrumbList>
         </Breadcrumb>
-      </div>
-
-      <div className="flex shrink-0 items-center gap-2 px-4">
-        <a
-          href="https://github.com/zelavis/zelavis"
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex size-8 items-center justify-center rounded-md border bg-background text-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
-          aria-label="GitHub"
-          title="GitHub"
-        >
-          <Github className="size-4" />
-        </a>
-        <ThemeToggle />
       </div>
     </header>
   );

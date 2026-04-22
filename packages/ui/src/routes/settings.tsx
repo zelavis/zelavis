@@ -1,5 +1,5 @@
-import { Link, createFileRoute } from '@tanstack/react-router'
-import { Boxes, Save } from 'lucide-react'
+import { Link, Outlet, createFileRoute, useLocation } from '@tanstack/react-router'
+import { Boxes, Paintbrush, Save } from 'lucide-react'
 
 import { DataRow, PageHeader } from '#/components/DashboardPage'
 import { Button } from '#/components/ui/button'
@@ -10,8 +10,13 @@ import { useRuntimeResource } from '#/lib/use-runtime-resource'
 export const Route = createFileRoute('/settings')({ component: Settings })
 
 function Settings() {
+  const location = useLocation()
   const runtime = useRuntimeResource(getRuntimeConfig)
   const config = runtime.data
+
+  if (location.pathname.endsWith('/settings/appearance')) {
+    return <Outlet />
+  }
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
@@ -74,6 +79,29 @@ function Settings() {
               Save
             </Button>
           </form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Paintbrush className="size-4" />
+            Appearance
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <DataRow
+            label="Theme"
+            detail="Configure dashboard light, dark, or system mode."
+            meta={
+              <Link
+                to="/settings/appearance"
+                className="inline-flex h-8 items-center justify-center rounded-md border border-input bg-background px-3 text-xs font-medium text-foreground no-underline shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+              >
+                Open
+              </Link>
+            }
+          />
         </CardContent>
       </Card>
 

@@ -70,14 +70,18 @@ export function StatCard({ label, value, detail, icon: Icon }: StatCardProps) {
 }
 
 export function StatusBadge({ state }: { state: string }) {
-  const variant =
+  const className =
     state === 'ready' || state === 'embedded' || state === 'endpoint'
-      ? 'success'
+      ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
       : state === 'planned' || state === 'fallback' || state === 'checking'
-        ? 'warning'
-        : 'outline'
+        ? 'border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+        : undefined
 
-  return <Badge variant={variant}>{state}</Badge>
+  return (
+    <Badge variant="outline" className={className}>
+      {state}
+    </Badge>
+  )
 }
 
 export function DataRow({

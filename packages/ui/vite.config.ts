@@ -11,6 +11,35 @@ const zelavisDevServer =
 
 const config = defineConfig({
   resolve: { tsconfigPaths: true },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) {
+            return
+          }
+
+          if (id.includes('/@base-ui/')) {
+            return 'base-ui'
+          }
+
+          if (id.includes('/@tanstack/')) {
+            return 'tanstack'
+          }
+
+          if (id.includes('/react') || id.includes('/scheduler')) {
+            return 'react'
+          }
+
+          if (id.includes('/swiper/') || id.includes('/embla-carousel')) {
+            return 'interaction'
+          }
+
+          return 'vendor'
+        },
+      },
+    },
+  },
   server: {
     proxy: {
       '/api': {

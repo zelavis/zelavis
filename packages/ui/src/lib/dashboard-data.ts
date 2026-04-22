@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   LifeBuoy,
   MonitorCog,
+  Paintbrush,
   PanelsTopLeft,
   Package,
   Send,
@@ -29,7 +30,8 @@ export type DashboardRoutePath =
   | "/database"
   | "/marketplace"
   | "/services"
-  | "/settings";
+  | "/settings"
+  | "/settings/appearance";
 
 export type DashboardNavItem = {
   title: string;
@@ -134,6 +136,11 @@ export const platformNavItems: readonly DashboardNavItem[] = [
         title: "Services",
         url: "/services",
         icon: Server,
+      },
+      {
+        title: "Appearance",
+        url: "/settings/appearance",
+        icon: Paintbrush,
       },
     ],
   },

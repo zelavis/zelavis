@@ -29,6 +29,10 @@ test('desktop dashboard sidebar does not overlap', async ({ page }, testInfo) =>
   await expect(page.getByRole('button', { name: /Zelavis Runtime/ })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Settings' })).toBeVisible()
 
+  const appHeader = page.locator('[data-slot="sidebar-inset"] > header').first()
+  await expect(appHeader.getByRole('link', { name: 'GitHub' })).toHaveCount(0)
+  await expect(appHeader.getByRole('button', { name: /Theme mode/ })).toHaveCount(0)
+
   const nav = page.getByRole('complementary', { name: 'Dashboard navigation' })
   const links = nav.locator('a')
   await expect(nav).toBeVisible()
@@ -267,7 +271,11 @@ test('services are reachable from the settings area', async ({
 
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
   await expect(sidebar.getByRole('link', { name: 'Services', exact: true })).toBeVisible()
-  await page.getByRole('link', { name: 'Open' }).click()
+  await page
+    .locator('[data-slot="card"]')
+    .filter({ hasText: 'Runtime Services' })
+    .getByRole('link', { name: 'Open' })
+    .click()
   await expect(page.getByRole('heading', { name: 'Runtime services' })).toBeVisible()
   await expect(page).toHaveURL(/\/services$/)
 })
@@ -280,6 +288,32 @@ test('settings shows read-only root path controls', async ({ page }, testInfo) =
   await expect(page.getByRole('heading', { name: 'Runtime Settings' })).toBeVisible()
   await expect(page.getByLabel('Path')).toHaveValue('/zelavis')
   await expect(page.getByRole('button', { name: 'Save' }).first()).toBeDisabled()
+})
+
+test('appearance settings persist the dashboard theme', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await gotoDashboard(page, '/settings/appearance')
+
+  await expect(page.getByRole('heading', { name: 'Appearance' })).toBeVisible()
+  await expect(page.getByText('Dashboard theme preferences for this browser.')).toBeVisible()
+
+  const themeSelect = page.getByRole('combobox', { name: 'Theme' })
+  await themeSelect.click()
+  await page.getByRole('option', { name: 'Dark' }).click()
+
+  await expect(page.locator('html')).toHaveClass(/dark/)
+  await expect
+    .poll(() => page.evaluate(() => window.localStorage.getItem('theme')))
+    .toBe('dark')
+
+  await themeSelect.click()
+  await page.getByRole('option', { name: 'Light' }).click()
+
+  await expect(page.locator('html')).not.toHaveClass(/dark/)
+  await expect
+    .poll(() => page.evaluate(() => window.localStorage.getItem('theme')))
+    .toBe('light')
 })
 
 test('dashboard shows a not found page inside the shell', async ({
@@ -374,6 +408,48 @@ test('sidebar popovers use neutral shadcn hover states', async ({
 
   await testInfo.attach('runtime user popover', {
     body: userMenuScreenshot,
+    contentType: 'image/png',
+  })
+})
+
+test('sidebar popovers use neutral shadcn hover states in dark mode', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await page.addInitScript(() => window.localStorage.setItem('theme', 'dark'))
+  await gotoDashboard(page, '/')
+
+  await expect(page.locator('html')).toHaveClass(/dark/)
+
+  await page.getByRole('button', { name: /Zelavis Runtime/ }).click()
+
+  const teamItem = page.getByRole('menuitem', { name: /Zelavis/ }).first()
+  await expect(teamItem).toBeVisible()
+  await teamItem.hover()
+
+  const teamHover = await teamItem.evaluate((element) => {
+    const styles = getComputedStyle(element)
+
+    return {
+      backgroundColor: styles.backgroundColor,
+      color: styles.color,
+    }
+  })
+
+  expect(teamHover).toEqual({
+    backgroundColor: 'oklch(0.269 0 0)',
+    color: 'oklch(0.985 0 0)',
+  })
+
+  const teamMenuScreenshot = await page
+    .locator('[data-slot="dropdown-menu-content"]')
+    .screenshot({
+      path: testInfo.outputPath('team-switcher-popover-dark.png'),
+    })
+
+  await testInfo.attach('team switcher popover dark', {
+    body: teamMenuScreenshot,
     contentType: 'image/png',
   })
 })
