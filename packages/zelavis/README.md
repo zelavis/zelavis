@@ -11,7 +11,7 @@ Today, that mostly means auth, database, server integration, and dashboard deliv
 Use `zelavis` for application and runtime code:
 
 ```ts
-import { zelavisServer } from "zelavis";
+import { zelavis } from "zelavis";
 import { nodeIntegration } from "zelavis/integrations/node";
 ```
 
@@ -26,10 +26,10 @@ import { authService } from "@zelavis/auth";
 ## Usage
 
 ```ts
-import { zelavisServer } from "zelavis";
+import { zelavis } from "zelavis";
 import { nodeIntegration } from "zelavis/integrations/node";
 
-const runtime = await zelavisServer({
+const runtime = await zelavis({
   integration: nodeIntegration(),
 });
 
@@ -50,7 +50,7 @@ By default, Zelavis owns one safe namespace:
 Customize that namespace with `rootPath`:
 
 ```ts
-await zelavisServer({
+await zelavis({
   rootPath: "/admin",
   integration: nodeIntegration(),
 });
@@ -68,7 +68,7 @@ That moves the dashboard and APIs together:
 
 The dashboard UI is built from the `@zelavis/ui` workspace package and copied
 into this package during `pnpm --filter zelavis build`. Application users should
-serve it through `zelavisServer`; they do not need to import `@zelavis/ui`
+serve it through `zelavis`; they do not need to import `@zelavis/ui`
 directly.
 
 Dashboard client routes are served as SPA shell routes by the dashboard core
@@ -77,7 +77,7 @@ service, so direct visits such as `/zelavis/settings` work in Node and Express.
 The dashboard, auth, and database core services are included by default. Disable any of them when you need a smaller server or want to supply replacements:
 
 ```ts
-await zelavisServer({
+await zelavis({
   coreServices: {
     auth: false,
     dashboard: false,
@@ -92,7 +92,7 @@ Configure the built-in auth service when the defaults are not enough:
 ```ts
 import { emailPasswordPlugin } from "@zelavis/auth-email-password";
 
-await zelavisServer({
+await zelavis({
   coreServices: {
     auth: {
       authOptions: {
@@ -112,7 +112,7 @@ await zelavisServer({
 Configure the built-in database service when the defaults are not enough:
 
 ```ts
-await zelavisServer({
+await zelavis({
   coreServices: {
     database: {
       defaultTenantId: "acme",

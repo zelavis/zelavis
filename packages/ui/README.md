@@ -45,7 +45,7 @@ Planned flow:
 4. Serve dashboard assets below that same configured root, so custom roots such as `/admin` or `/backend` work without rebuilding the UI.
 5. Keep dashboard API calls relative to the configured Zelavis API prefix.
 
-Until that wiring exists, this package is build-ready but is not yet served by `zelavisServer`.
+Until that wiring exists, this package is build-ready but is not yet served by `zelavis()`.
 
 ## Notes
 

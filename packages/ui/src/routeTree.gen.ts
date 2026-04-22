@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ServicesRouteImport } from './routes/services'
+import { Route as MarketplaceRouteImport } from './routes/marketplace'
 import { Route as DatabaseRouteImport } from './routes/database'
 import { Route as ContentRouteImport } from './routes/content'
 import { Route as CommerceRouteImport } from './routes/commerce'
@@ -28,6 +29,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const ServicesRoute = ServicesRouteImport.update({
   id: '/services',
   path: '/services',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MarketplaceRoute = MarketplaceRouteImport.update({
+  id: '/marketplace',
+  path: '/marketplace',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DatabaseRoute = DatabaseRouteImport.update({
@@ -80,6 +86,7 @@ export interface FileRoutesByFullPath {
   '/commerce': typeof CommerceRoute
   '/content': typeof ContentRoute
   '/database': typeof DatabaseRoute
+  '/marketplace': typeof MarketplaceRoute
   '/services': typeof ServicesRoute
   '/settings': typeof SettingsRoute
 }
@@ -92,6 +99,7 @@ export interface FileRoutesByTo {
   '/commerce': typeof CommerceRoute
   '/content': typeof ContentRoute
   '/database': typeof DatabaseRoute
+  '/marketplace': typeof MarketplaceRoute
   '/services': typeof ServicesRoute
   '/settings': typeof SettingsRoute
 }
@@ -105,6 +113,7 @@ export interface FileRoutesById {
   '/commerce': typeof CommerceRoute
   '/content': typeof ContentRoute
   '/database': typeof DatabaseRoute
+  '/marketplace': typeof MarketplaceRoute
   '/services': typeof ServicesRoute
   '/settings': typeof SettingsRoute
 }
@@ -119,6 +128,7 @@ export interface FileRouteTypes {
     | '/commerce'
     | '/content'
     | '/database'
+    | '/marketplace'
     | '/services'
     | '/settings'
   fileRoutesByTo: FileRoutesByTo
@@ -131,6 +141,7 @@ export interface FileRouteTypes {
     | '/commerce'
     | '/content'
     | '/database'
+    | '/marketplace'
     | '/services'
     | '/settings'
   id:
@@ -143,6 +154,7 @@ export interface FileRouteTypes {
     | '/commerce'
     | '/content'
     | '/database'
+    | '/marketplace'
     | '/services'
     | '/settings'
   fileRoutesById: FileRoutesById
@@ -156,6 +168,7 @@ export interface RootRouteChildren {
   CommerceRoute: typeof CommerceRoute
   ContentRoute: typeof ContentRoute
   DatabaseRoute: typeof DatabaseRoute
+  MarketplaceRoute: typeof MarketplaceRoute
   ServicesRoute: typeof ServicesRoute
   SettingsRoute: typeof SettingsRoute
 }
@@ -174,6 +187,13 @@ declare module '@tanstack/react-router' {
       path: '/services'
       fullPath: '/services'
       preLoaderRoute: typeof ServicesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/marketplace': {
+      id: '/marketplace'
+      path: '/marketplace'
+      fullPath: '/marketplace'
+      preLoaderRoute: typeof MarketplaceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/database': {
@@ -244,6 +264,7 @@ const rootRouteChildren: RootRouteChildren = {
   CommerceRoute: CommerceRoute,
   ContentRoute: ContentRoute,
   DatabaseRoute: DatabaseRoute,
+  MarketplaceRoute: MarketplaceRoute,
   ServicesRoute: ServicesRoute,
   SettingsRoute: SettingsRoute,
 }

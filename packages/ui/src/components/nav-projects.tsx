@@ -1,6 +1,6 @@
-"use client"
+"use client";
 
-import { Link, useRouterState } from "@tanstack/react-router"
+import { Link, useRouterState } from "@tanstack/react-router";
 
 import {
   SidebarGroup,
@@ -8,31 +8,63 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-} from "#/components/ui/sidebar"
-import type { DashboardPackageItem } from "#/lib/dashboard-data"
+} from "#/components/ui/sidebar";
+import type { DashboardPackageItem } from "#/lib/dashboard-data";
 
 export function NavProjects({
   projects,
+  nested = false,
 }: {
-  projects: readonly DashboardPackageItem[]
+  projects: readonly DashboardPackageItem[];
+  nested?: boolean;
 }) {
-  const pathname = useRouterState({ select: (state) => state.location.pathname })
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
+
+  const content = (
+    <>
+      <SidebarGroupLabel>Community</SidebarGroupLabel>
+      <SidebarMenu>
+        {projects.map((item) => {
+          if (!item.url) {
+            return (
+              <SidebarMenuItem key={item.name}>
+                <SidebarMenuButton
+                  disabled
+                  className="cursor-default opacity-70"
+                >
+                  <item.icon />
+                  <span>{item.name}</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            );
+          }
+
+          return (
+            <SidebarMenuItem key={item.name}>
+              <SidebarMenuButton asChild isActive={pathname === item.url}>
+                <Link to={item.url}>
+                  <item.icon />
+                  <span>{item.name}</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          );
+        })}
+      </SidebarMenu>
+    </>
+  );
+
+  if (nested) {
+    return (
+      <div className="group-data-[collapsible=icon]:hidden">{content}</div>
+    );
+  }
 
   return (
     <SidebarGroup className="group-data-[collapsible=icon]:hidden">
-      <SidebarGroupLabel>Packages</SidebarGroupLabel>
-      <SidebarMenu>
-        {projects.map((item) => (
-          <SidebarMenuItem key={item.name}>
-            <SidebarMenuButton asChild isActive={pathname === item.url}>
-              <Link to={item.url}>
-                <item.icon />
-                <span>{item.name}</span>
-              </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        ))}
-      </SidebarMenu>
+      {content}
     </SidebarGroup>
-  )
+  );
 }

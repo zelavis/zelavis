@@ -1,10 +1,10 @@
-import type * as React from 'react'
-import { Link, useRouterState } from '@tanstack/react-router'
-import { Github } from 'lucide-react'
+import type * as React from "react";
+import { Link, useRouterState } from "@tanstack/react-router";
+import { Github } from "lucide-react";
 
-import { AppSidebar } from '#/components/app-sidebar'
-import Footer from '#/components/Footer'
-import ThemeToggle from '#/components/ThemeToggle'
+import { AppSidebar } from "#/components/app-sidebar";
+import Footer from "#/components/Footer";
+import ThemeToggle from "#/components/ThemeToggle";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -12,19 +12,21 @@ import {
   BreadcrumbList,
   BreadcrumbPage,
   BreadcrumbSeparator,
-} from '#/components/ui/breadcrumb'
-import { useDirection } from '#/components/ui/direction'
-import { Separator } from '#/components/ui/separator'
+} from "#/components/ui/breadcrumb";
+import { useDirection } from "#/components/ui/direction";
+import { Separator } from "#/components/ui/separator";
 import {
   SidebarInset,
   SidebarProvider,
   SidebarTrigger,
-} from '#/components/ui/sidebar'
-import { getDashboardPageLabel } from '#/lib/dashboard-data'
+} from "#/components/ui/sidebar";
+import { getDashboardPageLabel } from "#/lib/dashboard-data";
 
 function UtilityHeader() {
-  const pathname = useRouterState({ select: (state) => state.location.pathname })
-  const pageLabel = getDashboardPageLabel(pathname)
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
+  const pageLabel = getDashboardPageLabel(pathname);
 
   return (
     <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
@@ -63,26 +65,28 @@ function UtilityHeader() {
         <ThemeToggle />
       </div>
     </header>
-  )
+  );
 }
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
-  const direction = useDirection()
+  const direction = useDirection();
 
   return (
-    <SidebarProvider>
+    <SidebarProvider className="h-svh overflow-hidden">
       <AppSidebar
-        side={direction === 'rtl' ? 'right' : 'left'}
+        side={direction === "rtl" ? "right" : "left"}
         aria-label="Dashboard navigation"
         role="complementary"
       />
-      <SidebarInset>
+      <SidebarInset className="min-h-0 overflow-hidden">
         <UtilityHeader />
-        <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
-          {children}
-          <Footer />
+        <div className="flex min-h-0 flex-1 flex-col overflow-auto">
+          <div className="flex min-h-full flex-1 flex-col gap-4 p-4 pt-0">
+            {children}
+            <Footer />
+          </div>
         </div>
       </SidebarInset>
     </SidebarProvider>
-  )
+  );
 }

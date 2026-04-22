@@ -1,51 +1,58 @@
-"use client"
+"use client";
 
-import * as React from "react"
-import { Link, useNavigate, useRouterState } from "@tanstack/react-router"
-import { ChevronLeft, ChevronRight, type LucideIcon } from "lucide-react"
-import type { Swiper as SwiperInstance } from "swiper"
-import { Swiper, SwiperSlide } from "swiper/react"
-import "swiper/css"
+import * as React from "react";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
+import { ChevronLeft, ChevronRight, type LucideIcon } from "lucide-react";
+import type { Swiper as SwiperInstance } from "swiper";
+import { Swiper, SwiperSlide } from "swiper/react";
+import "swiper/css";
 
-import { useDirection } from "#/components/ui/direction"
+import { NavProjects } from "#/components/nav-projects";
+import { useDirection } from "#/components/ui/direction";
 import {
   SidebarGroup,
   SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-} from "#/components/ui/sidebar"
-import type { DashboardNavItem } from "#/lib/dashboard-data"
+} from "#/components/ui/sidebar";
+import type {
+  DashboardNavItem,
+  DashboardPackageItem,
+} from "#/lib/dashboard-data";
 
 type NavChildItem = {
-  title: string
-  url?: string
-  icon?: LucideIcon
-  items?: readonly NavChildItem[]
-}
+  title: string;
+  url?: string;
+  icon?: LucideIcon;
+  items?: readonly NavChildItem[];
+};
 
 type NavPanel = {
-  title: string
-  items: readonly NavChildItem[]
-}
+  title: string;
+  items: readonly NavChildItem[];
+};
 
 function encodePanelTitle(title: string) {
-  return encodeURIComponent(title)
+  return encodeURIComponent(title);
 }
 
 function panelSearchValue(trail: NavPanel[]) {
   if (trail.length === 0) {
-    return undefined
+    return undefined;
   }
 
-  return trail.map((panel) => encodePanelTitle(panel.title)).join("/")
+  return trail.map((panel) => encodePanelTitle(panel.title)).join("/");
 }
 
 function itemContainsPath(
   item: DashboardNavItem | NavChildItem,
   pathname: string,
 ): boolean {
-  return item.url === pathname || Boolean(item.items?.some((child) => itemContainsPath(child, pathname)))
+  return (
+    item.url === pathname ||
+    Boolean(item.items?.some((child) => itemContainsPath(child, pathname)))
+  );
 }
 
 function findActiveTrail(
@@ -54,88 +61,97 @@ function findActiveTrail(
 ): NavPanel[] {
   for (const item of items) {
     if (!item.items?.length || !itemContainsPath(item, pathname)) {
-      continue
+      continue;
     }
 
-    const panels: NavPanel[] = [{ title: item.title, items: item.items }]
+    const panels: NavPanel[] = [{ title: item.title, items: item.items }];
     let current: NavChildItem | undefined = item.items.find(
       (child) => child.items?.length && itemContainsPath(child, pathname),
-    )
+    );
 
     while (current?.items?.length) {
-      panels.push({ title: current.title, items: current.items })
+      panels.push({ title: current.title, items: current.items });
       current = current.items.find(
         (child) => child.items?.length && itemContainsPath(child, pathname),
-      )
+      );
     }
 
-    return panels
+    return panels;
   }
 
-  return []
+  return [];
 }
 
 function findTrailByTitles(
   items: readonly DashboardNavItem[],
   titles: string[],
 ): NavPanel[] {
-  const panels: NavPanel[] = []
-  let currentItems: ReadonlyArray<DashboardNavItem | NavChildItem> = items
+  const panels: NavPanel[] = [];
+  let currentItems: ReadonlyArray<DashboardNavItem | NavChildItem> = items;
 
   for (const title of titles) {
     const match = currentItems.find(
       (item) => item.title === title && item.items?.length,
-    )
+    );
 
     if (!match?.items?.length) {
-      return []
+      return [];
     }
 
-    panels.push({ title: match.title, items: match.items })
-    currentItems = match.items
+    panels.push({ title: match.title, items: match.items });
+    currentItems = match.items;
   }
 
-  return panels
+  return panels;
 }
 
 function parseSidebarSearch(value: unknown) {
   if (typeof value !== "string" || value.length === 0) {
-    return []
+    return [];
   }
 
   try {
     return value
       .split("/")
       .map((segment) => decodeURIComponent(segment))
-      .filter(Boolean)
+      .filter(Boolean);
   } catch {
-    return []
+    return [];
   }
 }
 
-export function NavMain({ items }: { items: readonly DashboardNavItem[] }) {
-  const navigate = useNavigate({ from: "/" })
-  const location = useRouterState({ select: (state) => state.location })
-  const pathname = location.pathname
-  const sidebarSearch = location.search.sidebar
-  const direction = useDirection()
-  const [swiper, setSwiper] = React.useState<SwiperInstance>()
-  const hasSyncedInitialSlideRef = React.useRef(false)
-  const backAnimationCleanupRef = React.useRef<(() => void) | null>(null)
+export function NavMain({
+  items,
+  communityProjects = [],
+}: {
+  items: readonly DashboardNavItem[];
+  communityProjects?: readonly DashboardPackageItem[];
+}) {
+  const navigate = useNavigate({ from: "/" });
+  const location = useRouterState({ select: (state) => state.location });
+  const pathname = location.pathname;
+  const sidebarSearch = location.search.sidebar;
+  const direction = useDirection();
+  const [swiper, setSwiper] = React.useState<SwiperInstance>();
+  const hasSyncedInitialSlideRef = React.useRef(false);
+  const backAnimationCleanupRef = React.useRef<(() => void) | null>(null);
+  const hideScrollbarsTimeoutRef = React.useRef<number | null>(null);
+  const panelContentRefs = React.useRef<Array<HTMLDivElement | null>>([]);
+  const [hideScrollbars, setHideScrollbars] = React.useState(false);
   const [trail, setTrail] = React.useState<NavPanel[]>(() => {
-    const routeTrail = findActiveTrail(items, pathname)
+    const routeTrail = findActiveTrail(items, pathname);
 
     if (routeTrail.length > 0) {
-      return routeTrail
+      return routeTrail;
     }
 
-    return findTrailByTitles(items, parseSidebarSearch(sidebarSearch))
-  })
+    return findTrailByTitles(items, parseSidebarSearch(sidebarSearch));
+  });
   const panels = React.useMemo<NavPanel[]>(
     () => [{ title: "Platform", items }, ...trail],
     [items, trail],
-  )
-  const currentIndex = trail.length
+  );
+  const currentIndex = trail.length;
 
   const syncSidebarSearch = React.useCallback(
     (nextTrail: NavPanel[], replace = true) => {
@@ -145,107 +161,147 @@ export function NavMain({ items }: { items: readonly DashboardNavItem[] }) {
           ...previous,
           sidebar: panelSearchValue(nextTrail),
         }),
-      })
+      });
     },
     [navigate],
-  )
+  );
 
   React.useEffect(() => {
-    clearBackAnimation()
+    clearBackAnimation();
 
-    const routeTrail = findActiveTrail(items, pathname)
+    const routeTrail = findActiveTrail(items, pathname);
 
     if (routeTrail.length > 0) {
-      setTrail(routeTrail)
-      return
+      setTrail(routeTrail);
+      return;
     }
 
-    setTrail(findTrailByTitles(items, parseSidebarSearch(sidebarSearch)))
-  }, [items, pathname, sidebarSearch, syncSidebarSearch])
+    setTrail(findTrailByTitles(items, parseSidebarSearch(sidebarSearch)));
+  }, [items, pathname, sidebarSearch, syncSidebarSearch]);
 
   React.useEffect(() => {
     if (!swiper) {
-      return
+      return;
     }
 
     const frame = window.requestAnimationFrame(() => {
-      swiper.update()
+      swiper.update();
 
       if (!hasSyncedInitialSlideRef.current) {
-        swiper.slideTo(currentIndex, 0)
+        swiper.slideTo(currentIndex, 0);
       } else {
-        swiper.slideTo(currentIndex)
+        swiper.slideTo(currentIndex);
       }
 
-      hasSyncedInitialSlideRef.current = true
-    })
+      hasSyncedInitialSlideRef.current = true;
+    });
 
-    return () => window.cancelAnimationFrame(frame)
-  }, [swiper, currentIndex, panels.length])
+    return () => window.cancelAnimationFrame(frame);
+  }, [swiper, currentIndex, panels.length]);
 
   React.useEffect(() => {
     return () => {
-      clearBackAnimation()
+      clearBackAnimation();
+      clearHideScrollbarsTimeout();
+    };
+  }, []);
+
+  React.useLayoutEffect(() => {
+    resetPanelScroll(currentIndex);
+  }, [currentIndex, panels.length]);
+
+  function resetPanelScroll(index: number) {
+    const panel = panelContentRefs.current[index];
+
+    if (!panel) {
+      return;
     }
-  }, [])
+
+    panel.scrollTop = 0;
+    panel.scrollLeft = 0;
+  }
 
   function clearBackAnimation() {
     if (!backAnimationCleanupRef.current) {
-      return
+      return;
     }
 
-    backAnimationCleanupRef.current()
-    backAnimationCleanupRef.current = null
+    backAnimationCleanupRef.current();
+    backAnimationCleanupRef.current = null;
+  }
+
+  function clearHideScrollbarsTimeout() {
+    if (hideScrollbarsTimeoutRef.current === null) {
+      return;
+    }
+
+    window.clearTimeout(hideScrollbarsTimeoutRef.current);
+    hideScrollbarsTimeoutRef.current = null;
+  }
+
+  function temporarilyHideScrollbars(duration = 400) {
+    clearHideScrollbarsTimeout();
+    setHideScrollbars(true);
+
+    hideScrollbarsTimeoutRef.current = window.setTimeout(() => {
+      setHideScrollbars(false);
+      hideScrollbarsTimeoutRef.current = null;
+    }, duration);
   }
 
   function openPanel(title: string, panelItems: readonly NavChildItem[]) {
-    const nextTrail = [...trail, { title, items: panelItems }]
+    const nextTrail = [...trail, { title, items: panelItems }];
+    const nextIndex = nextTrail.length;
 
-    clearBackAnimation()
-    setTrail(nextTrail)
-    syncSidebarSearch(nextTrail, false)
+    clearBackAnimation();
+    resetPanelScroll(nextIndex);
+    setTrail(nextTrail);
+    syncSidebarSearch(nextTrail, false);
   }
 
   function goBack() {
-    const nextTrail = trail.slice(0, -1)
+    const nextTrail = trail.slice(0, -1);
+    const nextIndex = nextTrail.length;
 
-    clearBackAnimation()
+    clearBackAnimation();
+    temporarilyHideScrollbars();
+    resetPanelScroll(nextIndex);
 
     if (!swiper) {
-      setTrail(nextTrail)
-      syncSidebarSearch(nextTrail, false)
-      return
+      setTrail(nextTrail);
+      syncSidebarSearch(nextTrail, false);
+      return;
     }
 
-    swiper.update()
-    let hasFinished = false
+    swiper.update();
+    let hasFinished = false;
     const finishBackAnimation = () => {
       if (hasFinished) {
-        return
+        return;
       }
 
-      hasFinished = true
-      cleanup()
-      setTrail(nextTrail)
-      syncSidebarSearch(nextTrail, false)
-      backAnimationCleanupRef.current = null
-    }
-    const fallback = window.setTimeout(finishBackAnimation, 1500)
+      hasFinished = true;
+      cleanup();
+      setTrail(nextTrail);
+      syncSidebarSearch(nextTrail, false);
+      backAnimationCleanupRef.current = null;
+    };
+    const fallback = window.setTimeout(finishBackAnimation, 1500);
     const cleanup = () => {
-      window.clearTimeout(fallback)
-      swiper.off("slideChangeTransitionEnd", finishBackAnimation)
-    }
+      window.clearTimeout(fallback);
+      swiper.off("slideChangeTransitionEnd", finishBackAnimation);
+    };
 
-    swiper.on("slideChangeTransitionEnd", finishBackAnimation)
-    backAnimationCleanupRef.current = cleanup
-    swiper.slideTo(nextTrail.length)
+    swiper.on("slideChangeTransitionEnd", finishBackAnimation);
+    backAnimationCleanupRef.current = cleanup;
+    swiper.slideTo(nextIndex);
   }
 
   return (
-    <SidebarGroup>
+    <SidebarGroup className="flex min-h-0 flex-1 flex-col">
       <SidebarGroupLabel>Platform</SidebarGroupLabel>
       <Swiper
-        className="w-full overflow-hidden"
+        className="min-h-0 w-full flex-1 overflow-hidden"
         dir={direction}
         initialSlide={currentIndex}
         allowTouchMove={false}
@@ -257,55 +313,73 @@ export function NavMain({ items }: { items: readonly DashboardNavItem[] }) {
         {panels.map((panel, panelIndex) => (
           <SwiperSlide
             key={`${panel.title}-${panelIndex}`}
-            className="min-w-0"
+            className="h-full min-w-0"
             aria-hidden={panelIndex !== currentIndex}
           >
-            <SidebarMenu>
-              {panelIndex > 0 ? (
-                <SidebarMenuItem>
-                  <SidebarMenuButton onClick={goBack} tooltip="Back">
-                    <ChevronLeft className="rtl:rotate-180" />
-                    <span>{panel.title}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ) : null}
+            <div
+              ref={(node) => {
+                panelContentRefs.current[panelIndex] = node;
+              }}
+              className={[
+                "flex h-full min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain pr-1",
+                hideScrollbars
+                  ? "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                  : "",
+              ].join(" ")}
+            >
+              <SidebarMenu>
+                {panelIndex > 0 ? (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton onClick={goBack} tooltip="Back">
+                      <ChevronLeft className="rtl:rotate-180" />
+                      <span>{panel.title}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ) : null}
 
-              {panel.items.map((item) => {
-                const hasChildren = Boolean(item.items?.length)
-                const isActive = itemContainsPath(item, pathname)
-                const Icon = item.icon
+                {panel.items.map((item) => {
+                  const hasChildren = Boolean(item.items?.length);
+                  const isActive = itemContainsPath(item, pathname);
+                  const Icon = item.icon;
 
-                return (
-                  <SidebarMenuItem key={item.title}>
-                    {hasChildren && item.items ? (
-                      <SidebarMenuButton
-                        isActive={isActive}
-                        tooltip={item.title}
-                        onClick={() => openPanel(item.title, item.items ?? [])}
-                      >
-                        {Icon ? <Icon /> : null}
-                        <span>{item.title}</span>
-                        <ChevronRight className="ms-auto rtl:rotate-180" />
-                      </SidebarMenuButton>
-                    ) : item.url ? (
-                      <SidebarMenuButton
-                        asChild
-                        isActive={isActive}
-                        tooltip={item.title}
-                      >
-                        <Link to={item.url}>
+                  return (
+                    <SidebarMenuItem key={item.title}>
+                      {hasChildren && item.items ? (
+                        <SidebarMenuButton
+                          isActive={isActive}
+                          tooltip={item.title}
+                          onClick={() =>
+                            openPanel(item.title, item.items ?? [])
+                          }
+                        >
                           {Icon ? <Icon /> : null}
                           <span>{item.title}</span>
-                        </Link>
-                      </SidebarMenuButton>
-                    ) : null}
-                  </SidebarMenuItem>
-                )
-              })}
-            </SidebarMenu>
+                          <ChevronRight className="ms-auto rtl:rotate-180" />
+                        </SidebarMenuButton>
+                      ) : item.url ? (
+                        <SidebarMenuButton
+                          asChild
+                          isActive={isActive}
+                          tooltip={item.title}
+                        >
+                          <Link to={item.url}>
+                            {Icon ? <Icon /> : null}
+                            <span>{item.title}</span>
+                          </Link>
+                        </SidebarMenuButton>
+                      ) : null}
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+
+              {panelIndex === 0 && communityProjects.length > 0 ? (
+                <NavProjects projects={communityProjects} nested />
+              ) : null}
+            </div>
           </SwiperSlide>
         ))}
       </Swiper>
     </SidebarGroup>
-  )
+  );
 }

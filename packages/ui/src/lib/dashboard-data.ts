@@ -1,5 +1,6 @@
 import {
   Bot,
+  Boxes,
   CreditCard,
   Database,
   FileText,
@@ -9,162 +10,229 @@ import {
   LifeBuoy,
   MonitorCog,
   PanelsTopLeft,
+  Package,
   Send,
   Server,
   Settings2,
   ShieldCheck,
   Store,
   type LucideIcon,
-} from 'lucide-react'
+} from "lucide-react";
 
 export type DashboardRoutePath =
-  | '/'
-  | '/agents'
-  | '/auth'
-  | '/builder'
-  | '/commerce'
-  | '/content'
-  | '/database'
-  | '/services'
-  | '/settings'
+  | "/"
+  | "/agents"
+  | "/auth"
+  | "/builder"
+  | "/commerce"
+  | "/content"
+  | "/database"
+  | "/marketplace"
+  | "/services"
+  | "/settings";
 
 export type DashboardNavItem = {
-  title: string
-  url?: DashboardRoutePath
-  icon: LucideIcon
-  pageLabel?: string
-  items?: readonly DashboardNavItem[]
-}
+  title: string;
+  url?: DashboardRoutePath;
+  icon: LucideIcon;
+  pageLabel?: string;
+  items?: readonly DashboardNavItem[];
+};
 
 export type DashboardPackageItem = {
-  name: string
-  url: DashboardRoutePath
-  icon: LucideIcon
-  pageLabel?: string
-}
+  name: string;
+  url?: DashboardRoutePath;
+  icon: LucideIcon;
+  pageLabel?: string;
+};
 
 export type DashboardSecondaryItem = {
-  title: string
-  url: string
-  icon: LucideIcon
-  external?: boolean
-}
+  title: string;
+  url: string;
+  icon: LucideIcon;
+  external?: boolean;
+};
 
 export type DashboardTeamItem = {
-  name: string
-  logo: LucideIcon
-  plan: string
-}
+  name: string;
+  logo: LucideIcon;
+  plan: string;
+};
 
 export const sidebarTeams: readonly DashboardTeamItem[] = [
   {
-    name: 'Zelavis',
+    name: "Zelavis",
     logo: Server,
-    plan: 'Runtime',
+    plan: "Runtime",
   },
   {
-    name: 'Local',
+    name: "Local",
     logo: MonitorCog,
-    plan: 'Development',
+    plan: "Development",
   },
   {
-    name: 'Core',
+    name: "Core",
     logo: Database,
-    plan: 'Services',
+    plan: "Services",
   },
-] as const
+] as const;
 
 export const platformNavItems: readonly DashboardNavItem[] = [
   {
-    title: 'Overview',
-    url: '/',
+    title: "Overview",
+    url: "/",
     icon: LayoutDashboard,
   },
   {
-    title: 'Core',
+    title: "Core",
     icon: Server,
     items: [
       {
-        title: 'Auth',
-        url: '/auth',
+        title: "Auth",
+        url: "/auth",
         icon: Fingerprint,
       },
       {
-        title: 'Database',
-        url: '/database',
+        title: "Database",
+        url: "/database",
         icon: Database,
       },
     ],
   },
   {
-    title: 'Workspace',
+    title: "Workspace",
     icon: Bot,
     items: [
       {
-        title: 'Agents',
-        url: '/agents',
+        title: "Agents",
+        url: "/agents",
         icon: Bot,
       },
       {
-        title: 'Builder',
-        url: '/builder',
+        title: "Builder",
+        url: "/builder",
         icon: PanelsTopLeft,
       },
       {
-        title: 'Content',
-        url: '/content',
+        title: "Content",
+        url: "/content",
         icon: FileText,
       },
     ],
   },
   {
-    title: 'Settings',
+    title: "Settings",
     icon: Settings2,
     items: [
       {
-        title: 'Runtime',
-        url: '/settings',
+        title: "Runtime",
+        url: "/settings",
         icon: MonitorCog,
-        pageLabel: 'Settings',
+        pageLabel: "Settings",
       },
       {
-        title: 'Services',
-        url: '/services',
+        title: "Services",
+        url: "/services",
         icon: Server,
       },
     ],
   },
-] as const
+] as const;
 
 export const packageNavItems: readonly DashboardPackageItem[] = [
   {
-    name: 'Zelavis Ecommerce',
-    url: '/commerce',
-    icon: Store,
-    pageLabel: 'Commerce',
+    name: "Marketplace",
+    url: "/marketplace",
+    icon: Boxes,
   },
-] as const
+  {
+    name: "Zelavis Ecommerce",
+    url: "/commerce",
+    icon: Store,
+    pageLabel: "Commerce",
+  },
+  {
+    name: "Placeholder 01",
+    icon: Package,
+  },
+  {
+    name: "Placeholder 02",
+    icon: Package,
+  },
+  {
+    name: "Placeholder 03",
+    icon: Package,
+  },
+  {
+    name: "Placeholder 04",
+    icon: Package,
+  },
+  {
+    name: "Placeholder 05",
+    icon: Package,
+  },
+  {
+    name: "Placeholder 06",
+    icon: Package,
+  },
+  {
+    name: "Placeholder 07",
+    icon: Package,
+  },
+  {
+    name: "Placeholder 08",
+    icon: Package,
+  },
+  {
+    name: "Placeholder 09",
+    icon: Package,
+  },
+  {
+    name: "Placeholder 10",
+    icon: Package,
+  },
+  {
+    name: "Placeholder 11",
+    icon: Package,
+  },
+  {
+    name: "Placeholder 12",
+    icon: Package,
+  },
+  {
+    name: "Placeholder 13",
+    icon: Package,
+  },
+  {
+    name: "Placeholder 14",
+    icon: Package,
+  },
+  {
+    name: "Placeholder 15",
+    icon: Package,
+  },
+] as const;
 
 export const secondaryNavItems: readonly DashboardSecondaryItem[] = [
   {
-    title: 'GitHub',
-    url: 'https://github.com/zelavis/zelavis',
+    title: "GitHub",
+    url: "https://github.com/zelavis/zelavis",
     icon: Github,
     external: true,
   },
   {
-    title: 'Support',
-    url: 'https://github.com/zelavis/zelavis/discussions',
+    title: "Support",
+    url: "https://github.com/zelavis/zelavis/discussions",
     icon: LifeBuoy,
     external: true,
   },
   {
-    title: 'Feedback',
-    url: 'https://github.com/zelavis/zelavis/issues/new',
+    title: "Feedback",
+    url: "https://github.com/zelavis/zelavis/issues/new",
     icon: Send,
     external: true,
   },
-] as const
+] as const;
 
 function flattenPlatformItems(
   items: readonly DashboardNavItem[],
@@ -174,86 +242,91 @@ function flattenPlatformItems(
       ? [{ to: item.url, label: item.pageLabel ?? item.title, icon: item.icon }]
       : []),
     ...flattenPlatformItems(item.items ?? []),
-  ])
+  ]);
 }
 
 export const dashboardNavItems = [
   ...flattenPlatformItems(platformNavItems),
-  ...packageNavItems.map((item) => ({
-    to: item.url,
-    label: item.pageLabel ?? item.name,
-    icon: item.icon,
-  })),
-] as const
+  ...packageNavItems
+    .filter(
+      (item): item is DashboardPackageItem & { url: DashboardRoutePath } =>
+        Boolean(item.url),
+    )
+    .map((item) => ({
+      to: item.url,
+      label: item.pageLabel ?? item.name,
+      icon: item.icon,
+    })),
+] as const;
 
 export function getDashboardPageLabel(pathname: string) {
   return (
-    dashboardNavItems.find((item) => item.to === pathname)?.label ?? 'Not Found'
-  )
+    dashboardNavItems.find((item) => item.to === pathname)?.label ?? "Not Found"
+  );
 }
 
 export const serviceRows = [
   {
-    name: 'dashboard',
-    path: '/zelavis',
-    state: 'ready',
-    scope: 'core',
+    name: "dashboard",
+    path: "/zelavis",
+    state: "ready",
+    scope: "core",
   },
   {
-    name: 'auth',
-    path: '/zelavis/api/v1/auth',
-    state: 'ready',
-    scope: 'core',
+    name: "auth",
+    path: "/zelavis/api/v1/auth",
+    state: "ready",
+    scope: "core",
   },
   {
-    name: 'database',
-    path: '/zelavis/api/v1/database',
-    state: 'ready',
-    scope: 'core',
+    name: "database",
+    path: "/zelavis/api/v1/database",
+    state: "ready",
+    scope: "core",
   },
   {
-    name: 'ecommerce',
-    path: 'marketplace package',
-    state: 'planned',
-    scope: 'official',
+    name: "ecommerce",
+    path: "marketplace package",
+    state: "planned",
+    scope: "official",
   },
-] as const
+] as const;
 
 export const activityRows = [
   {
-    label: 'Core services mounted',
-    detail: 'dashboard, auth, database',
-    time: 'now',
+    label: "Core services mounted",
+    detail: "dashboard, auth, database",
+    time: "now",
   },
   {
-    label: 'Document database online',
-    detail: 'in-memory development driver',
-    time: 'now',
+    label: "Document database online",
+    detail: "in-memory development driver",
+    time: "now",
   },
   {
-    label: 'Dashboard assets served',
-    detail: '/assets/* below the configured root',
-    time: 'build',
+    label: "Dashboard assets served",
+    detail: "/assets/* below the configured root",
+    time: "build",
   },
-] as const
+] as const;
 
 export const capabilityCards = [
   {
-    title: 'Auth',
-    value: '2 providers',
+    title: "Auth",
+    value: "2 providers",
     icon: ShieldCheck,
-    detail: 'email and username plugins ready for registration',
+    detail: "email and username plugins ready for registration",
   },
   {
-    title: 'Database',
-    value: 'document + sql',
+    title: "Database",
+    value: "document + sql",
     icon: Database,
-    detail: 'document operations with optional SQL capability',
+    detail: "document operations with optional SQL capability",
   },
   {
-    title: 'Payments',
-    value: 'provider plugins',
+    title: "Payments",
+    value: "provider plugins",
     icon: CreditCard,
-    detail: 'Stripe and PayPal boundaries are package-level plugins',
+    detail: "Stripe and PayPal boundaries are package-level plugins",
   },
-] as const
+] as const;

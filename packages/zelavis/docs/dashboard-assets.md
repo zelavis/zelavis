@@ -37,5 +37,5 @@ Workers Assets, or an integration-provided binding. Bun can use its native file
 APIs. The dashboard service should not know which storage mechanism is active;
 the runtime integration should provide the asset source.
 
-This keeps `zelavisServer` ergonomic while leaving room for Cloudflare D1,
+This keeps `zelavis()` ergonomic while leaving room for Cloudflare D1,
 Turso, Bun, and other deployment targets.

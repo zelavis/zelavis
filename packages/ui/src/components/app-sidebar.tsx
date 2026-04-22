@@ -1,24 +1,23 @@
-"use client"
+"use client";
 
-import * as React from "react"
+import * as React from "react";
 
-import { NavMain } from "#/components/nav-main"
-import { NavProjects } from "#/components/nav-projects"
-import { NavSecondary } from "#/components/nav-secondary"
-import { NavUser } from "#/components/nav-user"
-import { TeamSwitcher } from "#/components/team-switcher"
+import { NavMain } from "#/components/nav-main";
+import { NavSecondary } from "#/components/nav-secondary";
+import { NavUser } from "#/components/nav-user";
+import { TeamSwitcher } from "#/components/team-switcher";
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarHeader,
-} from "#/components/ui/sidebar"
+} from "#/components/ui/sidebar";
 import {
   packageNavItems,
   platformNavItems,
   secondaryNavItems,
   sidebarTeams,
-} from "#/lib/dashboard-data"
+} from "#/lib/dashboard-data";
 
 const data = {
   user: {
@@ -26,7 +25,7 @@ const data = {
     email: "local workspace",
     avatar: "",
   },
-}
+};
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   return (
@@ -34,14 +33,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       <SidebarHeader>
         <TeamSwitcher teams={sidebarTeams} />
       </SidebarHeader>
-      <SidebarContent>
-        <NavMain items={platformNavItems} />
-        <NavProjects projects={packageNavItems} />
+      <SidebarContent className="overflow-hidden">
+        <NavMain items={platformNavItems} communityProjects={packageNavItems} />
         <NavSecondary items={secondaryNavItems} className="mt-auto" />
       </SidebarContent>
       <SidebarFooter>
         <NavUser user={data.user} />
       </SidebarFooter>
     </Sidebar>
-  )
+  );
 }

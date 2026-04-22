@@ -54,8 +54,7 @@ export interface ZelavisApiOptions {
   version?: string;
 }
 
-export interface ZelavisServerOptions<TResult = unknown>
-  {
+export interface ZelavisServerOptions<TResult = unknown> {
   rootPath?: string;
   api?: ZelavisApiOptions;
   services?: readonly ZelavisAnyServiceInput[];
@@ -110,6 +109,7 @@ const defaultDashboardClientRoutes = [
   "/commerce",
   "/content",
   "/database",
+  "/marketplace",
   "/services",
   "/settings",
 ] as const;
@@ -122,7 +122,9 @@ interface DashboardAsset {
 }
 
 function toDashboardRoutePath(filePath: string): string {
-  const relativePath = relative(dashboardDistPath, filePath).split(sep).join("/");
+  const relativePath = relative(dashboardDistPath, filePath)
+    .split(sep)
+    .join("/");
   return `/${relativePath}`;
 }
 
@@ -162,7 +164,9 @@ function getContentType(routePath: string): string {
   return "application/octet-stream";
 }
 
-function collectDashboardAssets(directory = dashboardDistPath): DashboardAsset[] {
+function collectDashboardAssets(
+  directory = dashboardDistPath,
+): DashboardAsset[] {
   if (!existsSync(directory)) {
     return [];
   }
@@ -197,13 +201,19 @@ function collectDashboardAssets(directory = dashboardDistPath): DashboardAsset[]
     .sort((left, right) => left.path.localeCompare(right.path));
 }
 
-function prefixDashboardAssetReferences(content: string, rootPath: string): string {
+function prefixDashboardAssetReferences(
+  content: string,
+  rootPath: string,
+): string {
   const prefix = rootPath === "/" ? "" : rootPath;
 
   return content
-    .replace(/\b(href|src|action)="\/(?!\/)([^"]*)"/g, (_match, attribute, path) => {
-      return `${attribute}="${prefix}/${path}"`;
-    })
+    .replace(
+      /\b(href|src|action)="\/(?!\/)([^"]*)"/g,
+      (_match, attribute, path) => {
+        return `${attribute}="${prefix}/${path}"`;
+      },
+    )
     .replaceAll('"/assets/', `"${prefix}/assets/`)
     .replaceAll("'/assets/", `'${prefix}/assets/`)
     .replaceAll("`/assets/", `\`${prefix}/assets/`)
@@ -221,12 +231,18 @@ function shouldPrefixDashboardAsset(asset: DashboardAsset): boolean {
   );
 }
 
-function readDashboardAsset(asset: DashboardAsset, rootPath: string): Buffer | string {
+function readDashboardAsset(
+  asset: DashboardAsset,
+  rootPath: string,
+): Buffer | string {
   if (!shouldPrefixDashboardAsset(asset)) {
     return readFileSync(asset.filePath);
   }
 
-  return prefixDashboardAssetReferences(readFileSync(asset.filePath, "utf8"), rootPath);
+  return prefixDashboardAssetReferences(
+    readFileSync(asset.filePath, "utf8"),
+    rootPath,
+  );
 }
 
 function injectDashboardRuntimeConfig(html: string, config: unknown): string {
@@ -239,10 +255,10 @@ function injectDashboardRuntimeConfig(html: string, config: unknown): string {
 function isDatabaseApi(value: unknown): value is DatabaseApi {
   return Boolean(
     value &&
-      typeof value === "object" &&
-      "documents" in value &&
-      "driver" in value &&
-      "capabilities" in value,
+    typeof value === "object" &&
+    "documents" in value &&
+    "driver" in value &&
+    "capabilities" in value,
   );
 }
 
@@ -326,12 +342,20 @@ async function resolveDashboardCoreService(
       apiPath:
         name === "dashboard"
           ? rootPath
-          : joinPathParts(rootPath, context.apiPrefix, context.apiVersion, name),
+          : joinPathParts(
+              rootPath,
+              context.apiPrefix,
+              context.apiVersion,
+              name,
+            ),
     })),
   };
   const shell = existsSync(shellPath)
     ? injectDashboardRuntimeConfig(
-        prefixDashboardAssetReferences(readFileSync(shellPath, "utf8"), rootPath),
+        prefixDashboardAssetReferences(
+          readFileSync(shellPath, "utf8"),
+          rootPath,
+        ),
         config,
       )
     : undefined;
@@ -356,7 +380,11 @@ async function resolveDashboardCoreService(
       body: shell,
     };
   };
-  const dashboardFallbackHandler = ({ params }: { params: Record<string, string> }) => {
+  const dashboardFallbackHandler = ({
+    params,
+  }: {
+    params: Record<string, string>;
+  }) => {
     const path = params.path ?? "";
     if (
       path === "api" ||
@@ -400,7 +428,11 @@ async function resolveDashboardCoreService(
         {
           id: "dashboard.config",
           method: "GET",
-          path: joinPathParts(context.apiPrefix, context.apiVersion, "dashboard/config"),
+          path: joinPathParts(
+            context.apiPrefix,
+            context.apiVersion,
+            "dashboard/config",
+          ),
           handler: () => ({
             status: 200,
             body: config,
@@ -453,7 +485,7 @@ function createServicePrefixes(
   };
 }
 
-export async function zelavisServer<TResult = unknown>(
+export async function zelavis<TResult = unknown>(
   options: ZelavisServerOptions<TResult>,
 ): Promise<ZelavisServerRuntime<unknown, TResult>> {
   const rootPath = normalizePath(options.rootPath, "/zelavis");
@@ -461,8 +493,12 @@ export async function zelavisServer<TResult = unknown>(
   const apiVersion = normalizePathPart(options.api?.version ?? "v1");
   const services = await Promise.all(options.services ?? []);
   const hasAuthService = services.some((service) => service.name === "auth");
-  const hasDashboardService = services.some((service) => service.name === "dashboard");
-  const hasDatabaseService = services.some((service) => service.name === "database");
+  const hasDashboardService = services.some(
+    (service) => service.name === "dashboard",
+  );
+  const hasDatabaseService = services.some(
+    (service) => service.name === "database",
+  );
   const authService = hasAuthService
     ? undefined
     : await resolveAuthCoreService(options.coreServices?.auth);
@@ -473,7 +509,9 @@ export async function zelavisServer<TResult = unknown>(
     (service): service is ZelavisServerService<any> => Boolean(service),
   );
   const serviceNames = [
-    ...(hasDashboardService || options.coreServices?.dashboard === false ? [] : ["dashboard"]),
+    ...(hasDashboardService || options.coreServices?.dashboard === false
+      ? []
+      : ["dashboard"]),
     ...coreServices.map((service) => service.name),
     ...services.map((service) => service.name),
   ];

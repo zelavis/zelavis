@@ -66,10 +66,10 @@ Current packages:
 Applications should usually import from `zelavis`, where core services are included by default:
 
 ```ts
-import { zelavisServer } from "zelavis";
+import { zelavis } from "zelavis";
 import { nodeIntegration } from "zelavis/integrations/node";
 
-await zelavisServer({
+await zelavis({
   integration: nodeIntegration(),
 });
 ```
@@ -85,7 +85,7 @@ By default, Zelavis owns one safe namespace:
 Customize that namespace with `rootPath`:
 
 ```ts
-await zelavisServer({
+await zelavis({
   rootPath: "/admin",
   integration: nodeIntegration(),
 });
@@ -110,7 +110,7 @@ The dashboard and admin experience are still evolving. The runtime already serve
 Disable built-in core services when you need a smaller server:
 
 ```ts
-await zelavisServer({
+await zelavis({
   coreServices: {
     auth: false,
     dashboard: false,
@@ -123,7 +123,7 @@ await zelavisServer({
 Configure the built-in database service when the defaults are not enough:
 
 ```ts
-await zelavisServer({
+await zelavis({
   coreServices: {
     database: {
       defaultTenantId: "acme",
@@ -136,7 +136,7 @@ await zelavisServer({
 Configure the built-in auth service through `coreServices.auth`, including auth plugins and repositories:
 
 ```ts
-await zelavisServer({
+await zelavis({
   coreServices: {
     auth: {
       authOptions: {
