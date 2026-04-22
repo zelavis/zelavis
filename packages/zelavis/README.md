@@ -74,6 +74,22 @@ directly.
 Dashboard client routes are served as SPA shell routes by the dashboard core
 service, so direct visits such as `/zelavis/settings` work in Node and Express.
 
+For local dashboard work, point Zelavis at a running UI dev server:
+
+```ts
+await zelavis({
+  coreServices: {
+    dashboard: {
+      devServerUrl: "http://127.0.0.1:3001",
+    },
+  },
+  integration: nodeIntegration(),
+});
+```
+
+When `devServerUrl` is set, dashboard route requests redirect to the live UI dev
+server instead of reading built dashboard assets from `dist/dashboard`.
+
 The dashboard, auth, and database core services are included by default. Disable any of them when you need a smaller server or want to supply replacements:
 
 ```ts

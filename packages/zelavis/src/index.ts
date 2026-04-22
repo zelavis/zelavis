@@ -31,6 +31,7 @@ export interface ZelavisDashboardCoreServiceOptions {
   subtitle?: string;
   assetPath?: string;
   clientRoutes?: readonly string[];
+  devServerUrl?: string;
 }
 
 export type ZelavisDashboardCoreServiceInput =
@@ -95,6 +96,85 @@ function escapeHtml(value: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function normalizeExternalUrl(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  try {
+    return new URL(trimmed).toString().replace(/\/+$/, "");
+  } catch {
+    return undefined;
+  }
+}
+
+function readRequestUrl(request: unknown): string | undefined {
+  if (!request || typeof request !== "object") {
+    return undefined;
+  }
+
+  const candidate =
+    "originalUrl" in request && typeof request.originalUrl === "string"
+      ? request.originalUrl
+      : "url" in request && typeof request.url === "string"
+        ? request.url
+        : undefined;
+
+  return candidate && candidate.length > 0 ? candidate : undefined;
+}
+
+function stripRootPath(pathname: string, rootPath: string): string {
+  if (pathname === rootPath) {
+    return "/";
+  }
+
+  if (pathname.startsWith(`${rootPath}/`)) {
+    return pathname.slice(rootPath.length) || "/";
+  }
+
+  return pathname || "/";
+}
+
+function createDashboardDevRedirect(
+  context: {
+    query: URLSearchParams;
+    request: unknown;
+  },
+  options: {
+    devServerUrl: string;
+    rootPath: string;
+    fallbackPath: string;
+  },
+) {
+  const requestUrl = readRequestUrl(context.request);
+  const parsed = requestUrl
+    ? new URL(requestUrl, "http://127.0.0.1")
+    : undefined;
+  const pathname = stripRootPath(
+    parsed?.pathname ?? options.fallbackPath,
+    options.rootPath,
+  );
+  const search =
+    parsed?.search ??
+    (() => {
+      const query = context.query.toString();
+      return query ? `?${query}` : "";
+    })();
+
+  return {
+    status: 307,
+    headers: {
+      location: `${options.devServerUrl}${pathname}${search}`,
+      "cache-control": "no-cache",
+    },
+  };
 }
 
 const dashboardDistPath = join(
@@ -314,8 +394,11 @@ async function resolveDashboardCoreService(
   const title = options.title ?? "zelavis";
   const subtitle = options.subtitle ?? "Backend, dashboard, and core services.";
   const rootPath = context.rootPath;
+  const devServerUrl = normalizeExternalUrl(
+    options.devServerUrl ?? process.env.ZELAVIS_UI_DEV_SERVER,
+  );
   const shellPath = join(dashboardDistPath, "_shell.html");
-  const assets = collectDashboardAssets();
+  const assets = devServerUrl ? [] : collectDashboardAssets();
   const clientRoutes = [
     ...new Set(
       (options.clientRoutes ?? defaultDashboardClientRoutes)
@@ -359,7 +442,24 @@ async function resolveDashboardCoreService(
         config,
       )
     : undefined;
-  const shellHandler = () => {
+  const shellHandler = ({
+    query,
+    request,
+  }: {
+    query: URLSearchParams;
+    request: unknown;
+  }) => {
+    if (devServerUrl) {
+      return createDashboardDevRedirect(
+        { query, request },
+        {
+          devServerUrl,
+          rootPath,
+          fallbackPath: "/",
+        },
+      );
+    }
+
     if (!shell) {
       return {
         status: 503,
@@ -382,10 +482,26 @@ async function resolveDashboardCoreService(
   };
   const dashboardFallbackHandler = ({
     params,
+    query,
+    request,
   }: {
     params: Record<string, string>;
+    query: URLSearchParams;
+    request: unknown;
   }) => {
     const path = params.path ?? "";
+
+    if (devServerUrl) {
+      return createDashboardDevRedirect(
+        { query, request },
+        {
+          devServerUrl,
+          rootPath,
+          fallbackPath: path ? `/${path}` : "/",
+        },
+      );
+    }
+
     if (
       path === "api" ||
       path.startsWith("api/") ||
@@ -400,7 +516,7 @@ async function resolveDashboardCoreService(
       };
     }
 
-    return shellHandler();
+    return shellHandler({ query, request });
   };
 
   return defineServerService({
@@ -423,7 +539,23 @@ async function resolveDashboardCoreService(
           id: `dashboard.view${route.replaceAll("/", ".")}`,
           method: "GET" as const,
           path: route,
-          handler: shellHandler,
+          handler: ({
+            query,
+            request,
+          }: {
+            query: URLSearchParams;
+            request: unknown;
+          }) =>
+            devServerUrl
+              ? createDashboardDevRedirect(
+                  { query, request },
+                  {
+                    devServerUrl,
+                    rootPath,
+                    fallbackPath: route,
+                  },
+                )
+              : shellHandler({ query, request }),
         })),
         {
           id: "dashboard.config",

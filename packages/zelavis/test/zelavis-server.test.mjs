@@ -297,6 +297,65 @@ test("zelavis uses a configurable root path for dashboard and APIs", async () =>
   assert.doesNotMatch(scriptAssetResponse.body, /[`"']assets\//);
 });
 
+test("zelavis can redirect dashboard routes to a UI dev server", async () => {
+  const mounted = {};
+
+  await zelavis({
+    coreServices: {
+      dashboard: {
+        devServerUrl: "http://127.0.0.1:3001",
+      },
+    },
+    integration: {
+      mount(routes) {
+        mounted.routes = routes;
+        return routes.length;
+      },
+    },
+  });
+
+  const settingsRoute = mounted.routes.find(
+    (route) => route.fullPath === "/zelavis/settings",
+  );
+  const settingsResponse = await settingsRoute.route.handler({
+    service: settingsRoute.service.service,
+    params: {},
+    query: new URLSearchParams("tab=auth"),
+    body: undefined,
+    headers: {},
+    request: { url: "/zelavis/settings?tab=auth" },
+  });
+
+  assert.equal(settingsResponse.status, 307);
+  assert.equal(
+    settingsResponse.headers.location,
+    "http://127.0.0.1:3001/settings?tab=auth",
+  );
+
+  const fallbackRoute = mounted.routes.find(
+    (route) => route.fullPath === "/zelavis/*path",
+  );
+  const fallbackResponse = await fallbackRoute.route.handler({
+    service: fallbackRoute.service.service,
+    params: { path: "nested/panel" },
+    query: new URLSearchParams(),
+    body: undefined,
+    headers: {},
+    request: { url: "/zelavis/nested/panel" },
+  });
+
+  assert.equal(fallbackResponse.status, 307);
+  assert.equal(
+    fallbackResponse.headers.location,
+    "http://127.0.0.1:3001/nested/panel",
+  );
+  assert.ok(
+    mounted.routes.every(
+      (route) => !route.route.id.startsWith("dashboard.assets"),
+    ),
+  );
+});
+
 test("zelavis can disable all core services", async () => {
   const mounted = {};
 

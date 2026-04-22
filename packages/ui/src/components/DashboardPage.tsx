@@ -1,33 +1,33 @@
-import type * as React from 'react'
-import type { LucideIcon } from 'lucide-react'
+import type * as React from "react";
+import type { LucideIcon } from "lucide-react";
 
-import { Badge } from '#/components/ui/badge'
+import { Badge } from "#/components/ui/badge";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from '#/components/ui/card'
-import { cn } from '#/lib/utils'
+} from "#/components/ui/card";
+import { cn } from "#/lib/utils";
 
 interface PageHeaderProps {
-  eyebrow: string
-  title: string
-  description: string
-  actions?: React.ReactNode
+  eyebrow: string;
+  title: string;
+  description: string;
+  actions?: React.ReactNode;
 }
 
 interface StatCardProps {
-  label: string
-  value: string
-  detail: string
-  icon: LucideIcon
+  label: string;
+  value: string;
+  detail: string;
+  icon: LucideIcon;
 }
 
 interface EmptyPanelProps {
-  title: string
-  description: string
+  title: string;
+  description: string;
 }
 
 export function PageHeader({
@@ -47,17 +47,19 @@ export function PageHeader({
           {description}
         </p>
       </div>
-      {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
+      {actions ? (
+        <div className="flex items-center gap-2">{actions}</div>
+      ) : null}
     </header>
-  )
+  );
 }
 
 export function StatCard({ label, value, detail, icon: Icon }: StatCardProps) {
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
         <CardDescription>{label}</CardDescription>
-        <span className="rounded-md border bg-muted p-2 text-muted-foreground">
+        <span className="shrink-0 self-start rounded-md border bg-muted p-2 text-muted-foreground">
           <Icon className="size-4" />
         </span>
       </CardHeader>
@@ -66,22 +68,22 @@ export function StatCard({ label, value, detail, icon: Icon }: StatCardProps) {
         <p className="mt-1 text-sm text-muted-foreground">{detail}</p>
       </CardContent>
     </Card>
-  )
+  );
 }
 
 export function StatusBadge({ state }: { state: string }) {
   const className =
-    state === 'ready' || state === 'embedded' || state === 'endpoint'
-      ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-      : state === 'planned' || state === 'fallback' || state === 'checking'
-        ? 'border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300'
-        : undefined
+    state === "ready" || state === "embedded" || state === "endpoint"
+      ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+      : state === "planned" || state === "fallback" || state === "checking"
+        ? "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+        : undefined;
 
   return (
     <Badge variant="outline" className={className}>
       {state}
     </Badge>
-  )
+  );
 }
 
 export function DataRow({
@@ -90,15 +92,15 @@ export function DataRow({
   meta,
   className,
 }: {
-  label: string
-  detail: string
-  meta?: React.ReactNode
-  className?: string
+  label: string;
+  detail: string;
+  meta?: React.ReactNode;
+  className?: string;
 }) {
   return (
     <div
       className={cn(
-        'grid gap-3 border-b px-4 py-3 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_auto]',
+        "grid gap-3 border-b px-4 py-3 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_auto]",
         className,
       )}
     >
@@ -106,9 +108,11 @@ export function DataRow({
         <p className="truncate text-sm font-medium text-foreground">{label}</p>
         <p className="mt-1 truncate text-sm text-muted-foreground">{detail}</p>
       </div>
-      {meta ? <div className="flex items-center sm:justify-end">{meta}</div> : null}
+      {meta ? (
+        <div className="flex items-center sm:justify-end">{meta}</div>
+      ) : null}
     </div>
-  )
+  );
 }
 
 export function EmptyPanel({ title, description }: EmptyPanelProps) {
@@ -119,20 +123,20 @@ export function EmptyPanel({ title, description }: EmptyPanelProps) {
         <CardDescription>{description}</CardDescription>
       </CardHeader>
     </Card>
-  )
+  );
 }
 
 export function ResourceNotice({
   title,
   description,
 }: {
-  title: string
-  description: string
+  title: string;
+  description: string;
 }) {
   return (
     <div className="rounded-lg border border-dashed bg-muted/35 px-4 py-3 text-sm">
       <p className="font-medium text-foreground">{title}</p>
       <p className="mt-1 text-muted-foreground">{description}</p>
     </div>
-  )
+  );
 }
