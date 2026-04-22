@@ -39,8 +39,8 @@ function UtilityHeader() {
         <Breadcrumb>
           <BreadcrumbList>
             <BreadcrumbItem className="hidden md:block">
-              <BreadcrumbLink asChild>
-                <Link to="/">Zelavis</Link>
+              <BreadcrumbLink render={<Link to="/" />}>
+                Zelavis
               </BreadcrumbLink>
             </BreadcrumbItem>
             <BreadcrumbSeparator className="hidden md:block" />
