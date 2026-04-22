@@ -1,4 +1,13 @@
-import { expect, test, type Locator } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
+
+async function gotoDashboard(page: Page, path: string) {
+  await page.goto(path)
+  await waitForDashboardHydration(page)
+}
+
+async function waitForDashboardHydration(page: Page) {
+  await page.locator('html[data-zelavis-hydrated="true"]').waitFor()
+}
 
 async function getTranslateX(track: Locator) {
   return track.evaluate((element) => {
@@ -15,7 +24,7 @@ async function getTranslateX(track: Locator) {
 test('desktop dashboard sidebar does not overlap', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
-  await page.goto('/')
+  await gotoDashboard(page, '/')
   await expect(page.getByRole('complementary', { name: 'Dashboard navigation' })).toBeVisible()
   await expect(page.getByRole('button', { name: /Zelavis Runtime/ })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Settings' })).toBeVisible()
@@ -68,7 +77,7 @@ test('desktop dashboard sidebar does not overlap', async ({ page }, testInfo) =>
 test('mobile dashboard captures a stable stacked header', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'mobile')
 
-  await page.goto('/database')
+  await gotoDashboard(page, '/database')
   await expect(page.getByRole('button', { name: 'Toggle Sidebar' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Multi-model database' })).toBeVisible()
 
@@ -90,7 +99,7 @@ test('mobile dashboard captures a stable stacked header', async ({ page }, testI
 test('overview nav is only active on the overview route', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
-  await page.goto('/database')
+  await gotoDashboard(page, '/database')
 
   await expect(page.getByRole('heading', { name: 'Multi-model database' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Core' })).toBeVisible()
@@ -110,7 +119,7 @@ test('sidebar category rows drill down into sliding panels', async ({
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
-  await page.goto('/')
+  await gotoDashboard(page, '/')
   await page.getByRole('button', { name: 'Core' }).click()
 
   await expect(page.getByRole('link', { name: 'Database', exact: true })).toBeVisible()
@@ -129,7 +138,7 @@ test('sidebar shows a single platform label on the root panel', async ({
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
-  await page.goto('/')
+  await gotoDashboard(page, '/')
 
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
   await expect(sidebar.getByText('Platform', { exact: true })).toHaveCount(1)
@@ -138,7 +147,7 @@ test('sidebar shows a single platform label on the root panel', async ({
 test('sidebar panels animate between slides', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
-  await page.goto('/')
+  await gotoDashboard(page, '/')
 
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
   const viewport = sidebar.locator('.swiper')
@@ -171,7 +180,7 @@ test('sidebar panel state survives refresh through the router', async ({
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
-  await page.goto('/')
+  await gotoDashboard(page, '/')
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
 
   await sidebar.getByRole('button', { name: 'Workspace', exact: true }).click()
@@ -180,6 +189,7 @@ test('sidebar panel state survives refresh through the router', async ({
   await expect(page.getByRole('link', { name: 'Agents', exact: true })).toBeVisible()
 
   await page.reload()
+  await waitForDashboardHydration(page)
 
   await expect(sidebar.getByRole('button', { name: 'Workspace', exact: true })).toBeVisible()
   await expect(sidebar.getByRole('link', { name: 'Builder', exact: true })).toBeVisible()
@@ -190,9 +200,10 @@ test('sidebar route panels restore from the current route on refresh', async ({
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
-  await page.goto('/database')
+  await gotoDashboard(page, '/database')
 
   await page.reload()
+  await waitForDashboardHydration(page)
 
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
 
@@ -208,7 +219,7 @@ test('sidebar has one internal link per dashboard route', async ({
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
-  await page.goto('/')
+  await gotoDashboard(page, '/')
 
   const internalHrefs = await page
     .getByRole('complementary', { name: 'Dashboard navigation' })
@@ -225,7 +236,7 @@ test('desktop sidebar collapses to a rail and expands content', async ({
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
-  await page.goto('/')
+  await gotoDashboard(page, '/')
 
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
   const sidebarState = page.locator('[data-slot="sidebar"]').first()
@@ -252,7 +263,7 @@ test('services are reachable from the settings area', async ({
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
-  await page.goto('/settings')
+  await gotoDashboard(page, '/settings')
 
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
   await expect(sidebar.getByRole('link', { name: 'Services', exact: true })).toBeVisible()
@@ -264,7 +275,7 @@ test('services are reachable from the settings area', async ({
 test('settings shows read-only root path controls', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
-  await page.goto('/settings')
+  await gotoDashboard(page, '/settings')
 
   await expect(page.getByRole('heading', { name: 'Runtime Settings' })).toBeVisible()
   await expect(page.getByLabel('Path')).toHaveValue('/zelavis')
@@ -276,7 +287,7 @@ test('dashboard shows a not found page inside the shell', async ({
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
-  await page.goto('/not-a-dashboard-route')
+  await gotoDashboard(page, '/not-a-dashboard-route')
 
   await expect(page.getByRole('button', { name: /Zelavis Runtime/ })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Dashboard route not found' })).toBeVisible()
@@ -286,7 +297,7 @@ test('dashboard shows a not found page inside the shell', async ({
 test('team switcher opens runtime teams', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
-  await page.goto('/')
+  await gotoDashboard(page, '/')
   await page.getByRole('button', { name: /Zelavis Runtime/ }).click()
 
   await expect(page.getByRole('menuitem', { name: /Local/ })).toBeVisible()
@@ -294,10 +305,83 @@ test('team switcher opens runtime teams', async ({ page }, testInfo) => {
   await expect(page.getByRole('menuitem', { name: /Add team/ })).toBeVisible()
 })
 
+test('sidebar popovers use neutral shadcn hover states', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await gotoDashboard(page, '/')
+
+  const teamTrigger = page.getByRole('button', { name: /Zelavis Runtime/ })
+  await teamTrigger.click()
+
+  const teamItem = page.getByRole('menuitem', { name: /Zelavis/ }).first()
+  await expect(teamItem).toBeVisible()
+  await teamItem.hover()
+
+  const teamHover = await teamItem.evaluate((element) => {
+    const styles = getComputedStyle(element)
+
+    return {
+      backgroundColor: styles.backgroundColor,
+      color: styles.color,
+    }
+  })
+
+  expect(teamHover).toEqual({
+    backgroundColor: 'oklch(0.97 0 0)',
+    color: 'oklch(0.205 0 0)',
+  })
+
+  const teamMenuScreenshot = await page
+    .locator('[data-slot="dropdown-menu-content"]')
+    .screenshot({
+      path: testInfo.outputPath('team-switcher-popover.png'),
+    })
+
+  await testInfo.attach('team switcher popover', {
+    body: teamMenuScreenshot,
+    contentType: 'image/png',
+  })
+
+  await page.keyboard.press('Escape')
+
+  await page.getByRole('button', { name: /Runtime dashboard/ }).click()
+
+  const accountItem = page.getByRole('menuitem', { name: /Account/ })
+  await expect(accountItem).toBeVisible()
+  await accountItem.hover()
+
+  const userHover = await accountItem.evaluate((element) => {
+    const styles = getComputedStyle(element)
+
+    return {
+      backgroundColor: styles.backgroundColor,
+      color: styles.color,
+    }
+  })
+
+  expect(userHover).toEqual({
+    backgroundColor: 'oklch(0.97 0 0)',
+    color: 'oklch(0.205 0 0)',
+  })
+
+  const userMenuScreenshot = await page
+    .locator('[data-slot="dropdown-menu-content"]')
+    .screenshot({
+      path: testInfo.outputPath('runtime-user-popover.png'),
+    })
+
+  await testInfo.attach('runtime user popover', {
+    body: userMenuScreenshot,
+    contentType: 'image/png',
+  })
+})
+
 test('footer shows the runtime config source', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
-  await page.goto('/')
+  await gotoDashboard(page, '/')
 
   await expect(page.locator('footer')).toContainText('/zelavis/api/v1')
   await expect(page.locator('footer')).toContainText(/embedded|endpoint|fallback/)

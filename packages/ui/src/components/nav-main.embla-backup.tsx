@@ -295,14 +295,12 @@ export function NavMainEmblaBackup({
                         </SidebarMenuButton>
                       ) : item.url ? (
                         <SidebarMenuButton
-                          asChild
+                          render={<Link to={item.url} />}
                           isActive={isActive}
                           tooltip={item.title}
                         >
-                          <Link to={item.url}>
-                            {Icon ? <Icon /> : null}
-                            <span>{item.title}</span>
-                          </Link>
+                          {Icon ? <Icon /> : null}
+                          <span>{item.title}</span>
                         </SidebarMenuButton>
                       ) : null}
                     </SidebarMenuItem>

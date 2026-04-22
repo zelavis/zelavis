@@ -1,4 +1,4 @@
-import type * as React from "react";
+import * as React from "react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { Github } from "lucide-react";
 
@@ -20,6 +20,7 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "#/components/ui/sidebar";
+import { TooltipProvider } from "#/components/ui/tooltip";
 import { getDashboardPageLabel } from "#/lib/dashboard-data";
 
 function UtilityHeader() {
@@ -71,22 +72,32 @@ function UtilityHeader() {
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const direction = useDirection();
 
+  React.useEffect(() => {
+    document.documentElement.dataset.zelavisHydrated = "true";
+
+    return () => {
+      delete document.documentElement.dataset.zelavisHydrated;
+    };
+  }, []);
+
   return (
-    <SidebarProvider className="h-svh overflow-hidden">
-      <AppSidebar
-        side={direction === "rtl" ? "right" : "left"}
-        aria-label="Dashboard navigation"
-        role="complementary"
-      />
-      <SidebarInset className="min-h-0 overflow-hidden">
-        <UtilityHeader />
-        <div className="flex min-h-0 flex-1 flex-col overflow-auto">
-          <div className="flex min-h-full flex-1 flex-col gap-4 p-4 pt-0">
-            {children}
-            <Footer />
+    <TooltipProvider>
+      <SidebarProvider className="h-svh overflow-hidden">
+        <AppSidebar
+          side={direction === "rtl" ? "right" : "left"}
+          aria-label="Dashboard navigation"
+          role="complementary"
+        />
+        <SidebarInset className="min-h-0 overflow-hidden">
+          <UtilityHeader />
+          <div className="flex min-h-0 flex-1 flex-col overflow-auto">
+            <div className="flex min-h-full flex-1 flex-col gap-4 p-4 pt-0">
+              {children}
+              <Footer />
+            </div>
           </div>
-        </div>
-      </SidebarInset>
-    </SidebarProvider>
+        </SidebarInset>
+      </SidebarProvider>
+    </TooltipProvider>
   );
 }
