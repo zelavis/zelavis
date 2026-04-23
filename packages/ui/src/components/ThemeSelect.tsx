@@ -30,8 +30,15 @@ const themeOptions: Array<{
   },
 ]
 
-export function ThemeSelect() {
-  const [mode, setMode] = useThemeMode()
+interface ThemeSelectProps {
+  value?: ThemeMode
+  onValueChange?: (value: ThemeMode) => void
+}
+
+export function ThemeSelect({ value, onValueChange }: ThemeSelectProps) {
+  const [internalMode, setInternalMode] = useThemeMode()
+  const mode = value ?? internalMode
+  const setMode = onValueChange ?? setInternalMode
 
   return (
     <Select<ThemeMode>

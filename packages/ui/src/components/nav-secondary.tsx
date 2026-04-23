@@ -4,6 +4,7 @@ import { Link } from "@tanstack/react-router"
 import {
   SidebarGroup,
   SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -12,12 +13,15 @@ import type { DashboardSecondaryItem } from "#/lib/dashboard-data"
 
 export function NavSecondary({
   items,
+  title = "Help",
   ...props
 }: {
   items: readonly DashboardSecondaryItem[]
+  title?: string
 } & React.ComponentPropsWithoutRef<typeof SidebarGroup>) {
   return (
     <SidebarGroup {...props}>
+      <SidebarGroupLabel>{title}</SidebarGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
           {items.map((item) => (

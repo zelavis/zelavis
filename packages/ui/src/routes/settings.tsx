@@ -4,7 +4,9 @@ import { Boxes, Paintbrush, Save } from 'lucide-react'
 import { DataRow, PageHeader } from '#/components/DashboardPage'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '#/components/ui/card'
+import { createDashboardSettings } from '#/lib/dashboard-settings'
 import { getRuntimeConfig } from '#/lib/runtime-api'
+import { useThemeMode } from '#/lib/theme'
 import { useRuntimeResource } from '#/lib/use-runtime-resource'
 
 export const Route = createFileRoute('/settings')({ component: Settings })
@@ -13,6 +15,8 @@ function Settings() {
   const location = useLocation()
   const runtime = useRuntimeResource(getRuntimeConfig)
   const config = runtime.data
+  const [theme] = useThemeMode()
+  const settings = createDashboardSettings(config, theme)
 
   if (location.pathname.endsWith('/settings/appearance')) {
     return <Outlet />
@@ -37,8 +41,8 @@ function Settings() {
           <CardTitle>Configuration</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          <DataRow label="Root path" detail={config?.rootPath || '/'} />
-          <DataRow label="API prefix" detail={config?.api.basePath ?? '/api/v1'} />
+          <DataRow label="Root path" detail={settings.rootPath} />
+          <DataRow label="API prefix" detail={settings.apiBasePath} />
           <DataRow
             label="Runtime config"
             detail={config?.configSource ?? 'checking'}
@@ -64,7 +68,7 @@ function Settings() {
             <label className="grid gap-2 text-sm font-medium text-foreground">
               Path
               <input
-                value={config?.rootPath ?? '/zelavis'}
+                value={settings.rootPath}
                 readOnly
                 className="min-w-0 rounded-md border bg-muted px-3 py-2 text-sm text-muted-foreground"
               />
@@ -90,6 +94,14 @@ function Settings() {
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
+          <DataRow
+            label="Persistence"
+            detail={
+              settings.persistence === 'read-only'
+                ? 'Read-only until runtime settings storage is available.'
+                : 'Runtime settings storage is available.'
+            }
+          />
           <DataRow
             label="Theme"
             detail="Configure dashboard light, dark, or system mode."

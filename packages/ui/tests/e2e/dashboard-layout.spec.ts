@@ -146,6 +146,7 @@ test('sidebar shows a single platform label on the root panel', async ({
 
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
   await expect(sidebar.getByText('Platform', { exact: true })).toHaveCount(1)
+  await expect(sidebar.getByText('Help', { exact: true })).toBeVisible()
 })
 
 test('sidebar panels animate between slides', async ({ page }, testInfo) => {
@@ -287,6 +288,7 @@ test('settings shows read-only root path controls', async ({ page }, testInfo) =
 
   await expect(page.getByRole('heading', { name: 'Runtime Settings' })).toBeVisible()
   await expect(page.getByLabel('Path')).toHaveValue('/zelavis')
+  await expect(page.getByText('Read-only until runtime settings storage is available.')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Save' }).first()).toBeDisabled()
 })
 
@@ -297,12 +299,14 @@ test('appearance settings persist the dashboard theme', async ({ page }, testInf
 
   await expect(page.getByRole('heading', { name: 'Appearance' })).toBeVisible()
   await expect(page.getByText('Dashboard theme preferences for this browser.')).toBeVisible()
+  await expect(page.locator('[data-slot="card-title"]').getByText('Preview')).toBeVisible()
 
   const themeSelect = page.getByRole('combobox', { name: 'Theme' })
   await themeSelect.click()
   await page.getByRole('option', { name: 'Dark' }).click()
 
   await expect(page.locator('html')).toHaveClass(/dark/)
+  await expect(page.getByText('Current theme: dark')).toBeVisible()
   await expect
     .poll(() => page.evaluate(() => window.localStorage.getItem('theme')))
     .toBe('dark')
@@ -311,6 +315,7 @@ test('appearance settings persist the dashboard theme', async ({ page }, testInf
   await page.getByRole('option', { name: 'Light' }).click()
 
   await expect(page.locator('html')).not.toHaveClass(/dark/)
+  await expect(page.getByText('Current theme: light')).toBeVisible()
   await expect
     .poll(() => page.evaluate(() => window.localStorage.getItem('theme')))
     .toBe('light')

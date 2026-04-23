@@ -35,7 +35,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent className="overflow-hidden">
         <NavMain items={platformNavItems} communityProjects={packageNavItems} />
-        <NavSecondary items={secondaryNavItems} className="mt-auto" />
+        <NavSecondary
+          title="Help"
+          items={secondaryNavItems}
+          className="mt-auto"
+        />
       </SidebarContent>
       <SidebarFooter>
         <NavUser user={data.user} />
