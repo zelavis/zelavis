@@ -9,7 +9,7 @@
     "check": "pnpm run typecheck",
     "example:express": "pnpm build && node --experimental-strip-types examples/express.ts",
     "example:nodejs": "pnpm build && node --experimental-strip-types examples/nodejs.ts",
-    "example:nodejs:dev": "node scripts/dev-dashboard.mjs",
+    "ui:dev": "node scripts/ui-dev.mjs",
     "test": "pnpm -r --if-present test && pnpm build && node --test examples/*.test.mjs",
     "typecheck": "pnpm -r --if-present typecheck && pnpm --filter @zelavis/server exec tsc -p ../../examples/tsconfig.json"
   },

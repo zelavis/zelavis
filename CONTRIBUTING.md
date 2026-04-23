@@ -63,7 +63,7 @@ pnpm install
 For end-to-end dashboard work, use:
 
 ```bash
-pnpm run example:nodejs:dev
+pnpm run ui:dev
 ```
 
 That starts:

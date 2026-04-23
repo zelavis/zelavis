@@ -52,7 +52,7 @@ Each package should remain independently useful and focused.
 - The main public runtime entry point is `zelavis()`, not `zelavisServer()`.
 - The default dashboard root path is `/zelavis`.
 - The runtime now supports a dashboard dev-server mode via `coreServices.dashboard.devServerUrl` or `ZELAVIS_UI_DEV_SERVER`.
-- The main local dashboard workflow is `pnpm run example:nodejs:dev`.
+- The main local dashboard workflow is `pnpm run ui:dev`.
 - That dev flow starts:
   - the Zelavis runtime on `http://127.0.0.1:3000`
   - the UI dev server on `http://127.0.0.1:3001`
@@ -102,7 +102,7 @@ Use these boundaries consistently:
 
 When working on UI behavior:
 
-- Prefer `pnpm run example:nodejs:dev` for end-to-end dashboard iteration.
+- Prefer `pnpm run ui:dev` for end-to-end dashboard iteration.
 - Use `pnpm --filter ./packages/ui build` and `pnpm --filter ./packages/ui test` to validate UI-only changes.
 - Preserve the existing design language unless the task explicitly asks for redesign.
 

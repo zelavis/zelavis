@@ -34,7 +34,7 @@ Zelavis is an early-stage backend platform built as a pnpm workspace of composab
 
 ## Dev workflow
 
-- For dashboard end-to-end development, prefer `pnpm run example:nodejs:dev`.
+- For dashboard end-to-end development, prefer `pnpm run ui:dev`.
 - That starts the Zelavis runtime on port 3000 and the UI dev server on port 3001.
 - In that mode, dashboard requests under `/zelavis` redirect to the live UI dev server.
 

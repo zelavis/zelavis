@@ -31,7 +31,7 @@ For the local dashboard dev loop, start both the TanStack dev server and the
 Node runtime from the workspace root:
 
 ```bash
-pnpm example:nodejs:dev
+pnpm run ui:dev
 ```
 
 That starts the UI on `http://127.0.0.1:3001`, starts the Zelavis Node example

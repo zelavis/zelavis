@@ -21,7 +21,7 @@ This package is the Zelavis dashboard UI.
 
 ## Dev workflow
 
-- Prefer the workspace command `pnpm run example:nodejs:dev` for full dashboard iteration.
+- Prefer the workspace command `pnpm run ui:dev` for full dashboard iteration.
 - That runs Zelavis on port 3000 and the UI dev server on port 3001.
 - In that mode, `/zelavis` dashboard requests redirect to the live UI dev server.
 
