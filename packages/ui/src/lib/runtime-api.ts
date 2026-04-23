@@ -21,6 +21,26 @@ export interface RuntimeConfig {
   services: RuntimeService[]
 }
 
+export type DashboardThemeMode = 'light' | 'dark' | 'auto'
+
+export interface DashboardSettings {
+  rootPath: string
+  pendingRootPath?: string
+  apiBasePath: string
+  theme: DashboardThemeMode
+  persistence: 'runtime' | 'read-only'
+  editable: {
+    rootPath: boolean
+    theme: boolean
+  }
+  restartRequired: boolean
+}
+
+export interface DashboardSettingsUpdate {
+  rootPath?: string
+  theme?: DashboardThemeMode
+}
+
 declare global {
   interface Window {
     __ZELAVIS_RUNTIME_CONFIG__?: RuntimeConfig
@@ -178,6 +198,22 @@ export async function getRuntimeConfig(): Promise<RuntimeConfig> {
       })),
     }
   }
+}
+
+export async function getDashboardSettings(
+  config: RuntimeConfig,
+): Promise<DashboardSettings> {
+  return readJson<DashboardSettings>(`${config.api.basePath}/dashboard/settings`)
+}
+
+export async function updateDashboardSettings(
+  config: RuntimeConfig,
+  input: DashboardSettingsUpdate,
+): Promise<DashboardSettings> {
+  return readJson<DashboardSettings>(`${config.api.basePath}/dashboard/settings`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  })
 }
 
 export async function getDatabaseHealth(config: RuntimeConfig) {

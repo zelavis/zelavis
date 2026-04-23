@@ -99,6 +99,17 @@ test("examples/nodejs.ts starts a native Node Zelavis server", async () => {
       `http://localhost:${port}/zelavis/api/v1/dashboard/config`,
       output,
     );
+    const dashboardSettings = await waitForJson(
+      `http://localhost:${port}/zelavis/api/v1/dashboard/settings`,
+      output,
+    );
+    const dashboardSettingsUpdate = await requestJson(
+      `http://localhost:${port}/zelavis/api/v1/dashboard/settings`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ rootPath: "/admin" }),
+      },
+    );
 
     assert.equal(databaseHealth.status, "ok");
     assert.equal(databaseHealth.driver, "in-memory");
@@ -110,6 +121,10 @@ test("examples/nodejs.ts starts a native Node Zelavis server", async () => {
     assert.equal(dashboardAsset?.status, 200);
     assert.equal(settings.status, 200);
     assert.equal(config.rootPath, "/zelavis");
+    assert.equal(dashboardSettings.rootPath, "/zelavis");
+    assert.equal(dashboardSettings.persistence, "runtime");
+    assert.equal(dashboardSettingsUpdate.body.pendingRootPath, "/admin");
+    assert.equal(dashboardSettingsUpdate.body.restartRequired, true);
 
     const collection = await requestJson(
       `http://localhost:${port}/zelavis/api/v1/database/documents/collections`,

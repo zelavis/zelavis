@@ -19,6 +19,10 @@ export function getStoredThemeMode(): ThemeMode {
 }
 
 export function resolveThemeMode(mode: ThemeMode) {
+  if (typeof window === 'undefined') {
+    return 'light'
+  }
+
   if (mode !== 'auto') {
     return mode
   }
@@ -79,4 +83,29 @@ export function useThemeMode() {
   }, [])
 
   return [mode, updateMode] as const
+}
+
+export function useResolvedThemeMode(mode: ThemeMode) {
+  const [resolvedMode, setResolvedMode] = React.useState(() =>
+    resolveThemeMode(mode),
+  )
+
+  React.useEffect(() => {
+    setResolvedMode(resolveThemeMode(mode))
+
+    if (mode !== 'auto') {
+      return
+    }
+
+    const media = window.matchMedia('(prefers-color-scheme: dark)')
+    const onChange = () => setResolvedMode(resolveThemeMode('auto'))
+
+    media.addEventListener('change', onChange)
+
+    return () => {
+      media.removeEventListener('change', onChange)
+    }
+  }, [mode])
+
+  return resolvedMode
 }

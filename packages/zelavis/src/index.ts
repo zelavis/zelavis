@@ -32,6 +32,7 @@ export interface ZelavisDashboardCoreServiceOptions {
   assetPath?: string;
   clientRoutes?: readonly string[];
   devServerUrl?: string;
+  settingsStore?: ZelavisDashboardSettingsStore;
 }
 
 export type ZelavisDashboardCoreServiceInput =
@@ -53,6 +54,36 @@ export interface ZelavisCoreServicesOptions {
 export interface ZelavisApiOptions {
   prefix?: string;
   version?: string;
+}
+
+export type ZelavisDashboardThemeMode = "light" | "dark" | "auto";
+
+export interface ZelavisDashboardSettings {
+  rootPath: string;
+  pendingRootPath?: string;
+  apiBasePath: string;
+  theme: ZelavisDashboardThemeMode;
+  persistence: "runtime" | "read-only";
+  editable: {
+    rootPath: boolean;
+    theme: boolean;
+  };
+  restartRequired: boolean;
+}
+
+export interface ZelavisDashboardSettingsUpdate {
+  rootPath?: string;
+  theme?: ZelavisDashboardThemeMode;
+}
+
+export interface ZelavisDashboardSettingsStore {
+  read: () =>
+    | Promise<ZelavisDashboardSettingsUpdate | undefined>
+    | ZelavisDashboardSettingsUpdate
+    | undefined;
+  write: (
+    update: ZelavisDashboardSettingsUpdate,
+  ) => Promise<ZelavisDashboardSettingsUpdate> | ZelavisDashboardSettingsUpdate;
 }
 
 export interface ZelavisServerOptions<TResult = unknown> {
@@ -84,6 +115,14 @@ function normalizePath(path: string | undefined, fallback: string): string {
   return normalized ? `/${normalized}` : fallback;
 }
 
+function normalizeEditableRootPath(path: string | undefined): string | undefined {
+  if (path === undefined) {
+    return undefined;
+  }
+
+  return normalizePath(path, "/");
+}
+
 function joinPathParts(...parts: (string | undefined)[]): string {
   const normalized = parts.map(normalizePathPart).filter(Boolean);
   return normalized.length > 0 ? `/${normalized.join("/")}` : "/";
@@ -113,6 +152,51 @@ function normalizeExternalUrl(value: string | undefined): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function isDashboardThemeMode(
+  value: unknown,
+): value is ZelavisDashboardThemeMode {
+  return value === "light" || value === "dark" || value === "auto";
+}
+
+function readBodyObject(body: unknown): Record<string, unknown> {
+  return body && typeof body === "object" && !Array.isArray(body)
+    ? (body as Record<string, unknown>)
+    : {};
+}
+
+function createMemoryDashboardSettingsStore(): ZelavisDashboardSettingsStore {
+  let settings: ZelavisDashboardSettingsUpdate = {};
+
+  return {
+    read: () => settings,
+    write(update) {
+      settings = {
+        ...settings,
+        ...update,
+      };
+
+      return settings;
+    },
+  };
+}
+
+function readDashboardSettingsUpdate(
+  body: unknown,
+): ZelavisDashboardSettingsUpdate {
+  const input = readBodyObject(body);
+  const update: ZelavisDashboardSettingsUpdate = {};
+
+  if (typeof input.rootPath === "string") {
+    update.rootPath = normalizeEditableRootPath(input.rootPath);
+  }
+
+  if (isDashboardThemeMode(input.theme)) {
+    update.theme = input.theme;
+  }
+
+  return update;
 }
 
 function readRequestUrl(request: unknown): string | undefined {
@@ -394,6 +478,8 @@ async function resolveDashboardCoreService(
   const title = options.title ?? "zelavis";
   const subtitle = options.subtitle ?? "Backend, dashboard, and core services.";
   const rootPath = context.rootPath;
+  const settingsStore =
+    options.settingsStore ?? createMemoryDashboardSettingsStore();
   const devServerUrl = normalizeExternalUrl(
     options.devServerUrl ?? process.env.ZELAVIS_UI_DEV_SERVER,
   );
@@ -432,6 +518,26 @@ async function resolveDashboardCoreService(
               name,
             ),
     })),
+  };
+  const readDashboardSettings = async (): Promise<ZelavisDashboardSettings> => {
+    const stored = (await settingsStore.read()) ?? {};
+    const storedRootPath = normalizeEditableRootPath(stored.rootPath);
+    const pendingRootPath =
+      storedRootPath && storedRootPath !== rootPath ? storedRootPath : undefined;
+    const theme = isDashboardThemeMode(stored.theme) ? stored.theme : "auto";
+
+    return {
+      rootPath,
+      pendingRootPath,
+      apiBasePath: joinPathParts(rootPath, context.apiPrefix, context.apiVersion),
+      theme,
+      persistence: "runtime",
+      editable: {
+        rootPath: true,
+        theme: true,
+      },
+      restartRequired: Boolean(pendingRootPath),
+    };
   };
   const shell = existsSync(shellPath)
     ? injectDashboardRuntimeConfig(
@@ -569,6 +675,37 @@ async function resolveDashboardCoreService(
             status: 200,
             body: config,
           }),
+        },
+        {
+          id: "dashboard.settings.read",
+          method: "GET",
+          path: joinPathParts(
+            context.apiPrefix,
+            context.apiVersion,
+            "dashboard/settings",
+          ),
+          handler: async () => ({
+            status: 200,
+            body: await readDashboardSettings(),
+          }),
+        },
+        {
+          id: "dashboard.settings.update",
+          method: "PATCH",
+          path: joinPathParts(
+            context.apiPrefix,
+            context.apiVersion,
+            "dashboard/settings",
+          ),
+          handler: async ({ body }: { body: unknown }) => {
+            const update = readDashboardSettingsUpdate(body);
+            await settingsStore.write(update);
+
+            return {
+              status: 200,
+              body: await readDashboardSettings(),
+            };
+          },
         },
         ...assets.map((asset) => ({
           id: `dashboard.assets${asset.path.replaceAll("/", ".")}`,

@@ -154,6 +154,53 @@ test("zelavis includes core services by default", async () => {
     configResponse.body.services.map((service) => service.name),
     ["dashboard", "database", "auth"],
   );
+
+  const dashboardSettingsRoute = mounted.routes.find(
+    (route) =>
+      route.fullPath === "/zelavis/api/v1/dashboard/settings" &&
+      route.route.method === "GET",
+  );
+  const dashboardSettingsResponse = await dashboardSettingsRoute.route.handler({
+    service: dashboardSettingsRoute.service.service,
+    params: {},
+    query: new URLSearchParams(),
+    body: undefined,
+    headers: {},
+    request: undefined,
+  });
+
+  assert.equal(dashboardSettingsResponse.status, 200);
+  assert.equal(dashboardSettingsResponse.body.rootPath, "/zelavis");
+  assert.equal(dashboardSettingsResponse.body.apiBasePath, "/zelavis/api/v1");
+  assert.equal(dashboardSettingsResponse.body.persistence, "runtime");
+  assert.equal(dashboardSettingsResponse.body.restartRequired, false);
+  assert.deepEqual(dashboardSettingsResponse.body.editable, {
+    rootPath: true,
+    theme: true,
+  });
+
+  const updateRoute = mounted.routes.find(
+    (route) =>
+      route.fullPath === "/zelavis/api/v1/dashboard/settings" &&
+      route.route.method === "PATCH",
+  );
+  const updateResponse = await updateRoute.route.handler({
+    service: updateRoute.service.service,
+    params: {},
+    query: new URLSearchParams(),
+    body: {
+      rootPath: "/admin",
+      theme: "dark",
+    },
+    headers: {},
+    request: undefined,
+  });
+
+  assert.equal(updateResponse.status, 200);
+  assert.equal(updateResponse.body.rootPath, "/zelavis");
+  assert.equal(updateResponse.body.pendingRootPath, "/admin");
+  assert.equal(updateResponse.body.theme, "dark");
+  assert.equal(updateResponse.body.restartRequired, true);
 });
 
 test("zelavis can disable the database core service", async () => {

@@ -43,6 +43,7 @@ By default, Zelavis owns one safe namespace:
 /zelavis/settings
 /zelavis/assets/*
 /zelavis/api/v1/dashboard/config
+/zelavis/api/v1/dashboard/settings
 /zelavis/api/v1/auth
 /zelavis/api/v1/database
 ```
@@ -73,6 +74,18 @@ directly.
 
 Dashboard client routes are served as SPA shell routes by the dashboard core
 service, so direct visits such as `/zelavis/settings` work in Node and Express.
+
+The dashboard settings endpoint exposes runtime-editable dashboard preferences:
+
+```txt
+GET /zelavis/api/v1/dashboard/settings
+PATCH /zelavis/api/v1/dashboard/settings
+```
+
+Root path changes are saved as pending settings and report `restartRequired`
+because mounted routes cannot move safely while the runtime is already running.
+Pass `coreServices.dashboard.settingsStore` when you want to back these settings
+with your own storage.
 
 For local dashboard work, point Zelavis at a running UI dev server:
 

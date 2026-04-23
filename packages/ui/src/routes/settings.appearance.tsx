@@ -11,7 +11,7 @@ import {
   CardTitle,
 } from '#/components/ui/card'
 import { createDashboardSettings } from '#/lib/dashboard-settings'
-import { useThemeMode } from '#/lib/theme'
+import { useResolvedThemeMode, useThemeMode } from '#/lib/theme'
 
 export const Route = createFileRoute('/settings/appearance')({
   component: AppearanceSettings,
@@ -20,6 +20,11 @@ export const Route = createFileRoute('/settings/appearance')({
 function AppearanceSettings() {
   const [theme, setTheme] = useThemeMode()
   const settings = createDashboardSettings(undefined, theme)
+  const resolvedTheme = useResolvedThemeMode(settings.theme)
+  const themeLabel =
+    settings.theme === 'auto'
+      ? `System: ${resolvedTheme}`
+      : settings.theme
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
@@ -61,12 +66,12 @@ function AppearanceSettings() {
           <div className="grid gap-3 rounded-lg border bg-background p-4 sm:grid-cols-[1fr_auto] sm:items-center">
             <div className="grid gap-2">
               <div className="flex items-center gap-2 text-sm font-medium">
-                {settings.theme === 'dark' ? (
+                {resolvedTheme === 'dark' ? (
                   <Moon className="size-4" />
                 ) : (
                   <Sun className="size-4" />
                 )}
-                Current theme: {settings.theme}
+                Current theme: {themeLabel}
               </div>
               <p className="text-sm text-muted-foreground">
                 Surface, border, accent, and text colors should stay neutral in
