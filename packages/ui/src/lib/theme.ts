@@ -9,13 +9,17 @@ export function isThemeMode(value: unknown): value is ThemeMode {
 }
 
 export function getStoredThemeMode(): ThemeMode {
+  return getStoredThemeModeOverride() ?? 'auto'
+}
+
+export function getStoredThemeModeOverride(): ThemeMode | undefined {
   if (typeof window === 'undefined') {
-    return 'auto'
+    return undefined
   }
 
   const stored = window.localStorage.getItem(THEME_STORAGE_KEY)
 
-  return isThemeMode(stored) ? stored : 'auto'
+  return isThemeMode(stored) ? stored : undefined
 }
 
 export function resolveThemeMode(mode: ThemeMode) {
@@ -53,14 +57,16 @@ export function persistThemeMode(mode: ThemeMode) {
   applyThemeMode(mode)
 }
 
-export function useThemeMode() {
-  const [mode, setMode] = React.useState<ThemeMode>('auto')
+export function useThemeMode(defaultMode: ThemeMode = 'auto') {
+  const [mode, setMode] = React.useState<ThemeMode>(
+    () => getStoredThemeModeOverride() ?? defaultMode,
+  )
 
   React.useEffect(() => {
-    const storedMode = getStoredThemeMode()
-    setMode(storedMode)
-    applyThemeMode(storedMode)
-  }, [])
+    const nextMode = getStoredThemeModeOverride() ?? defaultMode
+    setMode(nextMode)
+    applyThemeMode(nextMode)
+  }, [defaultMode])
 
   React.useEffect(() => {
     if (mode !== 'auto') {

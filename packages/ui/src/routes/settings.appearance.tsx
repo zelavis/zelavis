@@ -11,20 +11,49 @@ import {
   CardTitle,
 } from '#/components/ui/card'
 import { createDashboardSettings } from '#/lib/dashboard-settings'
+import {
+  getDashboardSettings,
+  getRuntimeConfig,
+  updateDashboardSettings,
+} from '#/lib/runtime-api'
 import { useResolvedThemeMode, useThemeMode } from '#/lib/theme'
+import { useRuntimeResource } from '#/lib/use-runtime-resource'
 
 export const Route = createFileRoute('/settings/appearance')({
   component: AppearanceSettings,
 })
 
 function AppearanceSettings() {
-  const [theme, setTheme] = useThemeMode()
-  const settings = createDashboardSettings(undefined, theme)
+  const runtime = useRuntimeResource(getRuntimeConfig)
+  const config = runtime.data
+  const remoteSettings = useRuntimeResource(
+    async () => (config ? getDashboardSettings(config) : undefined),
+    [config],
+  )
+  const [theme, setTheme] = useThemeMode(remoteSettings.data?.theme ?? 'auto')
+  const settings = createDashboardSettings(config, theme, remoteSettings.data)
   const resolvedTheme = useResolvedThemeMode(settings.theme)
   const themeLabel =
     settings.theme === 'auto'
       ? `System: ${resolvedTheme}`
       : settings.theme
+  const themeDescription =
+    settings.persistence === 'runtime'
+      ? 'The workspace default comes from the runtime. This browser can still override it locally.'
+      : 'The setting is stored locally and can follow your system preference.'
+
+  async function handleThemeChange(nextTheme: typeof theme) {
+    setTheme(nextTheme)
+
+    if (!config || !settings.editable.theme) {
+      return
+    }
+
+    await updateDashboardSettings(config, {
+      theme: nextTheme,
+    })
+    remoteSettings.reload()
+  }
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
@@ -47,10 +76,10 @@ function AppearanceSettings() {
         <CardContent className="grid gap-3">
           <label className="grid gap-2 text-sm font-medium text-foreground">
             Mode
-            <ThemeSelect value={settings.theme} onValueChange={setTheme} />
+            <ThemeSelect value={settings.theme} onValueChange={handleThemeChange} />
           </label>
           <p className="text-sm text-muted-foreground">
-            The setting is stored locally and can follow your system preference.
+            {themeDescription}
           </p>
         </CardContent>
       </Card>

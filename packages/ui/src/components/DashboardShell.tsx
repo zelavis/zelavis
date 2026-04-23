@@ -20,6 +20,8 @@ import {
 } from "#/components/ui/sidebar";
 import { TooltipProvider } from "#/components/ui/tooltip";
 import { getDashboardPageLabel } from "#/lib/dashboard-data";
+import { getDashboardSettings, getRuntimeConfig } from "#/lib/runtime-api";
+import { useRuntimeResource } from "#/lib/use-runtime-resource";
 
 function UtilityHeader() {
   const pathname = useRouterState({
@@ -53,6 +55,40 @@ function UtilityHeader() {
   );
 }
 
+function RestartRequiredBanner() {
+  const runtime = useRuntimeResource(getRuntimeConfig);
+  const config = runtime.data;
+  const settings = useRuntimeResource(
+    async () => (config ? getDashboardSettings(config) : undefined),
+    [config],
+  );
+  const dashboardSettings = settings.data;
+
+  if (!dashboardSettings?.restartRequired) {
+    return null;
+  }
+
+  return (
+    <div
+      role="status"
+      className="rounded-md border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200"
+    >
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <span>
+          Restart required to apply pending root path{" "}
+          {dashboardSettings.pendingRootPath}.
+        </span>
+        <Link
+          to="/settings"
+          className="text-sm font-medium text-foreground underline-offset-4 hover:underline"
+        >
+          Review settings
+        </Link>
+      </div>
+    </div>
+  );
+}
+
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const direction = useDirection();
 
@@ -76,6 +112,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           <UtilityHeader />
           <div className="flex min-h-0 flex-1 flex-col overflow-auto">
             <div className="flex min-h-full flex-1 flex-col gap-4 p-4 pt-0">
+              <RestartRequiredBanner />
               {children}
               <Footer />
             </div>

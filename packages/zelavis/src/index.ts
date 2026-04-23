@@ -1,5 +1,13 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   authService as createAuthService,
@@ -179,6 +187,52 @@ function createMemoryDashboardSettingsStore(): ZelavisDashboardSettingsStore {
 
       return settings;
     },
+  };
+}
+
+export function createFileDashboardSettingsStore(
+  filePath = ".zelavis/dashboard-settings.json",
+): ZelavisDashboardSettingsStore {
+  const resolvedPath = resolve(filePath);
+
+  function read(): ZelavisDashboardSettingsUpdate {
+    if (!existsSync(resolvedPath)) {
+      return {};
+    }
+
+    const parsed = JSON.parse(
+      readFileSync(resolvedPath, "utf8"),
+    ) as Record<string, unknown>;
+    const settings: ZelavisDashboardSettingsUpdate = {};
+
+    if (typeof parsed.rootPath === "string") {
+      settings.rootPath = normalizeEditableRootPath(parsed.rootPath);
+    }
+
+    if (isDashboardThemeMode(parsed.theme)) {
+      settings.theme = parsed.theme;
+    }
+
+    return settings;
+  }
+
+  function write(update: ZelavisDashboardSettingsUpdate) {
+    const next = {
+      ...read(),
+      ...update,
+    };
+    const temporaryPath = `${resolvedPath}.tmp`;
+
+    mkdirSync(dirname(resolvedPath), { recursive: true });
+    writeFileSync(temporaryPath, `${JSON.stringify(next, null, 2)}\n`);
+    renameSync(temporaryPath, resolvedPath);
+
+    return next;
+  }
+
+  return {
+    read,
+    write,
   };
 }
 
