@@ -11,13 +11,25 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./integrations/elysia": {
+      "types": "./dist/integrations/elysia.d.ts",
+      "import": "./dist/integrations/elysia.js"
+    },
     "./integrations/express": {
       "types": "./dist/integrations/express.d.ts",
       "import": "./dist/integrations/express.js"
     },
+    "./integrations/fastify": {
+      "types": "./dist/integrations/fastify.d.ts",
+      "import": "./dist/integrations/fastify.js"
+    },
     "./integrations/hono": {
       "types": "./dist/integrations/hono.d.ts",
       "import": "./dist/integrations/hono.js"
+    },
+    "./integrations/h3": {
+      "types": "./dist/integrations/h3.d.ts",
+      "import": "./dist/integrations/h3.js"
     },
     "./integrations/node": {
       "types": "./dist/integrations/node.d.ts",
@@ -33,11 +45,23 @@
     "dist"
   ],
   "peerDependencies": {
+    "elysia": "^1.4.0",
     "express": "^4.18.0 || ^5.0.0",
+    "fastify": "^5.0.0",
+    "h3": "^2.0.0",
     "hono": "^4.0.0"
   },
   "peerDependenciesMeta": {
+    "elysia": {
+      "optional": true
+    },
     "express": {
+      "optional": true
+    },
+    "fastify": {
+      "optional": true
+    },
+    "h3": {
       "optional": true
     },
     "hono": {
@@ -47,14 +71,20 @@
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/node": "^24.11.0",
+    "elysia": "^1.4.28",
     "express": "^5.0.0",
+    "fastify": "^5.6.1",
+    "h3": "2.0.1-rc.20",
     "hono": "^4.0.0",
     "typescript": "^5.9.0"
   },
   "keywords": [
     "server",
     "endpoints",
+    "elysia",
     "express",
+    "fastify",
+    "h3",
     "hono",
     "integration"
   ]

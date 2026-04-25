@@ -39,7 +39,14 @@ test("nodeIntegration creates a native HTTP server and passes normalized request
               id: "demo.show",
               method: "POST",
               path: "/items/:id",
-              handler: ({ service, params, query, body, headers, request }) => ({
+              handler: ({
+                service,
+                params,
+                query,
+                body,
+                headers,
+                request,
+              }) => ({
                 status: 201,
                 headers: {
                   "x-route": "demo.show",
@@ -60,24 +67,30 @@ test("nodeIntegration creates a native HTTP server and passes normalized request
       }),
     ],
     prefix: "/api",
-    integration: nodeIntegration(),
   });
+  const server = nodeIntegration(runtime);
 
-  const baseUrl = await listen(runtime.server);
+  const baseUrl = await listen(server);
 
   try {
-    const response = await fetch(`${baseUrl}/api/demo/items/42?tag=one&tag=two`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-test-header": "present",
+    const response = await fetch(
+      `${baseUrl}/api/demo/items/42?tag=one&tag=two`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-test-header": "present",
+        },
+        body: JSON.stringify({ ok: true }),
       },
-      body: JSON.stringify({ ok: true }),
-    });
+    );
 
     assert.equal(response.status, 201);
     assert.equal(response.headers.get("x-route"), "demo.show");
-    assert.equal(response.headers.get("content-type"), "application/json; charset=utf-8");
+    assert.equal(
+      response.headers.get("content-type"),
+      "application/json; charset=utf-8",
+    );
 
     const payload = await response.json();
     assert.deepEqual(payload, {
@@ -87,19 +100,19 @@ test("nodeIntegration creates a native HTTP server and passes normalized request
       tags: ["one", "two"],
       body: { ok: true },
       header: "present",
-      requestUrl: "/api/demo/items/42?tag=one&tag=two",
+      requestUrl: `${baseUrl}/api/demo/items/42?tag=one&tag=two`,
     });
   } finally {
-    await close(runtime.server);
+    await close(server);
   }
 });
 
 test("nodeIntegration returns 404 for unmatched routes", async () => {
   const runtime = await zelavisServer({
     services: [],
-    integration: nodeIntegration(),
   });
-  const baseUrl = await listen(runtime.server);
+  const server = nodeIntegration(runtime);
+  const baseUrl = await listen(server);
 
   try {
     const response = await fetch(`${baseUrl}/missing`);
@@ -108,7 +121,96 @@ test("nodeIntegration returns 404 for unmatched routes", async () => {
       error: "Not found",
     });
   } finally {
-    await close(runtime.server);
+    await close(server);
+  }
+});
+
+test("nodeIntegration supports HEAD fallback, binary bodies, and repeated set-cookie headers", async () => {
+  const runtime = await zelavisServer({
+    services: [
+      defineServerService({
+        name: "demo",
+        service: {},
+        api: {
+          v1: [
+            {
+              id: "demo.binary",
+              method: "POST",
+              path: "/binary",
+              handler: ({ body }) => ({
+                status: 200,
+                headers: new Headers([
+                  ["content-type", "application/octet-stream"],
+                  ["set-cookie", "a=1; Path=/"],
+                  ["set-cookie", "b=2; Path=/"],
+                ]),
+                body,
+              }),
+            },
+            {
+              id: "demo.head",
+              method: "GET",
+              path: "/head",
+              handler: () => ({
+                headers: {
+                  "x-head": "ok",
+                },
+                body: "visible-on-get",
+              }),
+            },
+            {
+              id: "demo.empty",
+              method: "GET",
+              path: "/empty",
+              handler: () => ({
+                status: 204,
+                headers: {
+                  "content-type": "application/json",
+                },
+                body: { ignored: true },
+              }),
+            },
+          ],
+        },
+      }),
+    ],
+  });
+  const server = nodeIntegration(runtime);
+  const baseUrl = await listen(server);
+
+  try {
+    const binaryResponse = await fetch(`${baseUrl}/demo/binary`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/octet-stream",
+      },
+      body: new Uint8Array([1, 2, 3, 4]),
+    });
+
+    assert.equal(binaryResponse.status, 200);
+    assert.deepEqual(
+      new Uint8Array(await binaryResponse.arrayBuffer()),
+      new Uint8Array([1, 2, 3, 4]),
+    );
+    assert.deepEqual(binaryResponse.headers.getSetCookie(), [
+      "a=1; Path=/",
+      "b=2; Path=/",
+    ]);
+
+    const headResponse = await fetch(`${baseUrl}/demo/head`, {
+      method: "HEAD",
+    });
+
+    assert.equal(headResponse.status, 200);
+    assert.equal(headResponse.headers.get("x-head"), "ok");
+    assert.equal(await headResponse.text(), "");
+
+    const emptyResponse = await fetch(`${baseUrl}/demo/empty`);
+    assert.equal(emptyResponse.status, 204);
+    assert.equal(emptyResponse.headers.get("content-type"), null);
+    assert.equal(await emptyResponse.text(), "");
+  } finally {
+    await close(server);
   }
 });
 
@@ -135,9 +237,9 @@ test("nodeIntegration supports trailing wildcard route params", async () => {
       }),
     ],
     prefix: "/api",
-    integration: nodeIntegration(),
   });
-  const baseUrl = await listen(runtime.server);
+  const server = nodeIntegration(runtime);
+  const baseUrl = await listen(server);
 
   try {
     const response = await fetch(`${baseUrl}/api/demo/one/two/three`);
@@ -146,7 +248,7 @@ test("nodeIntegration supports trailing wildcard route params", async () => {
       path: "one/two/three",
     });
   } finally {
-    await close(runtime.server);
+    await close(server);
   }
 });
 
@@ -170,7 +272,6 @@ test("nodeIntegration uses the configured error handler", async () => {
         },
       }),
     ],
-    integration: nodeIntegration(),
     onError: ({ error, resolvedRoute }) => ({
       status: 418,
       body: {
@@ -179,7 +280,8 @@ test("nodeIntegration uses the configured error handler", async () => {
       },
     }),
   });
-  const baseUrl = await listen(runtime.server);
+  const server = nodeIntegration(runtime);
+  const baseUrl = await listen(server);
 
   try {
     const response = await fetch(`${baseUrl}/demo/error`);
@@ -189,6 +291,6 @@ test("nodeIntegration uses the configured error handler", async () => {
       message: "boom",
     });
   } finally {
-    await close(runtime.server);
+    await close(server);
   }
 });

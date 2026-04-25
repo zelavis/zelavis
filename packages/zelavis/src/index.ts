@@ -1,15 +1,4 @@
 import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
-import {
   authService as createAuthService,
   type AuthServiceOptions,
 } from "@zelavis/auth";
@@ -23,11 +12,15 @@ import {
   defineServerService,
   zelavisServer as mountZelavisServer,
   type ZelavisAnyServiceInput,
-  type ZelavisServerIntegration,
   type ZelavisServerErrorHandler,
   type ZelavisServerRuntime,
   type ZelavisServerService,
 } from "@zelavis/server";
+import {
+  embeddedDashboardAssets,
+  embeddedDashboardShell,
+  type EmbeddedDashboardAsset,
+} from "./generated/dashboard-assets.js";
 
 export * from "@zelavis/database";
 export * from "@zelavis/server";
@@ -94,15 +87,29 @@ export interface ZelavisDashboardSettingsStore {
   ) => Promise<ZelavisDashboardSettingsUpdate> | ZelavisDashboardSettingsUpdate;
 }
 
-export interface ZelavisServerOptions<TResult = unknown> {
+export interface ZelavisServerOptions {
   rootPath?: string;
   api?: ZelavisApiOptions;
   services?: readonly ZelavisAnyServiceInput[];
   coreServices?: ZelavisCoreServicesOptions;
-  integration: ZelavisServerIntegration<unknown, TResult>;
   servicePrefixes?: Record<string, string>;
   pathOverrides?: Record<string, string>;
   onError?: ZelavisServerErrorHandler;
+}
+
+function readOptionalProcessEnv(name: string): string | undefined {
+  const runtimeProcess = (
+    globalThis as typeof globalThis & {
+      process?: {
+        env?: Record<string, string | undefined>;
+        versions?: {
+          node?: string;
+        };
+      };
+    }
+  ).process;
+
+  return runtimeProcess?.env?.[name];
 }
 
 function normalizePathPart(part: string | undefined): string {
@@ -119,11 +126,26 @@ function normalizePathPart(part: string | undefined): string {
 }
 
 function normalizePath(path: string | undefined, fallback: string): string {
-  const normalized = normalizePathPart(path);
+  if (path === undefined) {
+    return fallback;
+  }
+
+  const trimmed = path.trim();
+  if (!trimmed) {
+    return fallback;
+  }
+
+  if (trimmed === "/") {
+    return "/";
+  }
+
+  const normalized = normalizePathPart(trimmed);
   return normalized ? `/${normalized}` : fallback;
 }
 
-function normalizeEditableRootPath(path: string | undefined): string | undefined {
+function normalizeEditableRootPath(
+  path: string | undefined,
+): string | undefined {
   if (path === undefined) {
     return undefined;
   }
@@ -187,52 +209,6 @@ function createMemoryDashboardSettingsStore(): ZelavisDashboardSettingsStore {
 
       return settings;
     },
-  };
-}
-
-export function createFileDashboardSettingsStore(
-  filePath = ".zelavis/dashboard-settings.json",
-): ZelavisDashboardSettingsStore {
-  const resolvedPath = resolve(filePath);
-
-  function read(): ZelavisDashboardSettingsUpdate {
-    if (!existsSync(resolvedPath)) {
-      return {};
-    }
-
-    const parsed = JSON.parse(
-      readFileSync(resolvedPath, "utf8"),
-    ) as Record<string, unknown>;
-    const settings: ZelavisDashboardSettingsUpdate = {};
-
-    if (typeof parsed.rootPath === "string") {
-      settings.rootPath = normalizeEditableRootPath(parsed.rootPath);
-    }
-
-    if (isDashboardThemeMode(parsed.theme)) {
-      settings.theme = parsed.theme;
-    }
-
-    return settings;
-  }
-
-  function write(update: ZelavisDashboardSettingsUpdate) {
-    const next = {
-      ...read(),
-      ...update,
-    };
-    const temporaryPath = `${resolvedPath}.tmp`;
-
-    mkdirSync(dirname(resolvedPath), { recursive: true });
-    writeFileSync(temporaryPath, `${JSON.stringify(next, null, 2)}\n`);
-    renameSync(temporaryPath, resolvedPath);
-
-    return next;
-  }
-
-  return {
-    read,
-    write,
   };
 }
 
@@ -315,11 +291,6 @@ function createDashboardDevRedirect(
   };
 }
 
-const dashboardDistPath = join(
-  dirname(fileURLToPath(import.meta.url)),
-  "dashboard",
-);
-
 const defaultDashboardClientRoutes = [
   "/agents",
   "/auth",
@@ -334,88 +305,21 @@ const defaultDashboardClientRoutes = [
 
 interface DashboardAsset {
   path: string;
-  filePath: string;
   contentType: string;
   cacheControl: string;
+  kind: "text" | "base64";
+  content: string;
 }
 
-function toDashboardRoutePath(filePath: string): string {
-  const relativePath = relative(dashboardDistPath, filePath)
-    .split(sep)
-    .join("/");
-  return `/${relativePath}`;
-}
-
-function getContentType(routePath: string): string {
-  if (routePath.endsWith(".html")) {
-    return "text/html; charset=utf-8";
-  }
-
-  if (routePath.endsWith(".css")) {
-    return "text/css; charset=utf-8";
-  }
-
-  if (routePath.endsWith(".js") || routePath.endsWith(".mjs")) {
-    return "text/javascript; charset=utf-8";
-  }
-
-  if (routePath.endsWith(".json") || routePath.endsWith(".webmanifest")) {
-    return "application/json; charset=utf-8";
-  }
-
-  if (routePath.endsWith(".ico")) {
-    return "image/x-icon";
-  }
-
-  if (routePath.endsWith(".png")) {
-    return "image/png";
-  }
-
-  if (routePath.endsWith(".svg")) {
-    return "image/svg+xml; charset=utf-8";
-  }
-
-  if (routePath.endsWith(".txt")) {
-    return "text/plain; charset=utf-8";
-  }
-
-  return "application/octet-stream";
-}
-
-function collectDashboardAssets(
-  directory = dashboardDistPath,
-): DashboardAsset[] {
-  if (!existsSync(directory)) {
-    return [];
-  }
-
-  return readdirSync(directory)
-    .flatMap((entry) => {
-      const filePath = join(directory, entry);
-      const stats = statSync(filePath);
-
-      if (stats.isDirectory()) {
-        return collectDashboardAssets(filePath);
-      }
-
-      const routePath = toDashboardRoutePath(filePath);
-      if (routePath === "/_shell.html") {
-        return [];
-      }
-
-      const isFingerprintedAsset = routePath.startsWith("/assets/");
-
-      return [
-        {
-          path: routePath,
-          filePath,
-          contentType: getContentType(routePath),
-          cacheControl: isFingerprintedAsset
-            ? "public, max-age=31536000, immutable"
-            : "public, max-age=300",
-        },
-      ];
-    })
+function collectDashboardAssets(): DashboardAsset[] {
+  return [...embeddedDashboardAssets]
+    .map((asset: EmbeddedDashboardAsset) => ({
+      path: asset.path,
+      contentType: asset.contentType,
+      cacheControl: asset.cacheControl,
+      kind: asset.kind,
+      content: asset.content,
+    }))
     .sort((left, right) => left.path.localeCompare(right.path));
 }
 
@@ -452,15 +356,37 @@ function shouldPrefixDashboardAsset(asset: DashboardAsset): boolean {
 function readDashboardAsset(
   asset: DashboardAsset,
   rootPath: string,
-): Buffer | string {
-  if (!shouldPrefixDashboardAsset(asset)) {
-    return readFileSync(asset.filePath);
+): Uint8Array | string {
+  function decodeBase64(base64: string): Uint8Array {
+    const alphabet =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const sanitized = base64.replace(/=+$/, "");
+    const output: number[] = [];
+
+    for (let index = 0; index < sanitized.length; index += 4) {
+      const c1 = alphabet.indexOf(sanitized[index] ?? "A");
+      const c2 = alphabet.indexOf(sanitized[index + 1] ?? "A");
+      const c3 = alphabet.indexOf(sanitized[index + 2] ?? "A");
+      const c4 = alphabet.indexOf(sanitized[index + 3] ?? "A");
+      const value = (c1 << 18) | (c2 << 12) | ((c3 & 63) << 6) | (c4 & 63);
+
+      output.push((value >> 16) & 0xff);
+      if (sanitized[index + 2] !== undefined) {
+        output.push((value >> 8) & 0xff);
+      }
+      if (sanitized[index + 3] !== undefined) {
+        output.push(value & 0xff);
+      }
+    }
+
+    return Uint8Array.from(output);
   }
 
-  return prefixDashboardAssetReferences(
-    readFileSync(asset.filePath, "utf8"),
-    rootPath,
-  );
+  if (!shouldPrefixDashboardAsset(asset)) {
+    return asset.kind === "text" ? asset.content : decodeBase64(asset.content);
+  }
+
+  return prefixDashboardAssetReferences(asset.content, rootPath);
 }
 
 function injectDashboardRuntimeConfig(html: string, config: unknown): string {
@@ -535,9 +461,8 @@ async function resolveDashboardCoreService(
   const settingsStore =
     options.settingsStore ?? createMemoryDashboardSettingsStore();
   const devServerUrl = normalizeExternalUrl(
-    options.devServerUrl ?? process.env.ZELAVIS_UI_DEV_SERVER,
+    options.devServerUrl ?? readOptionalProcessEnv("ZELAVIS_UI_DEV_SERVER"),
   );
-  const shellPath = join(dashboardDistPath, "_shell.html");
   const assets = devServerUrl ? [] : collectDashboardAssets();
   const clientRoutes = [
     ...new Set(
@@ -577,13 +502,19 @@ async function resolveDashboardCoreService(
     const stored = (await settingsStore.read()) ?? {};
     const storedRootPath = normalizeEditableRootPath(stored.rootPath);
     const pendingRootPath =
-      storedRootPath && storedRootPath !== rootPath ? storedRootPath : undefined;
+      storedRootPath && storedRootPath !== rootPath
+        ? storedRootPath
+        : undefined;
     const theme = isDashboardThemeMode(stored.theme) ? stored.theme : "auto";
 
     return {
       rootPath,
       pendingRootPath,
-      apiBasePath: joinPathParts(rootPath, context.apiPrefix, context.apiVersion),
+      apiBasePath: joinPathParts(
+        rootPath,
+        context.apiPrefix,
+        context.apiVersion,
+      ),
       theme,
       persistence: "runtime",
       editable: {
@@ -593,12 +524,9 @@ async function resolveDashboardCoreService(
       restartRequired: Boolean(pendingRootPath),
     };
   };
-  const shell = existsSync(shellPath)
+  const shell = embeddedDashboardShell
     ? injectDashboardRuntimeConfig(
-        prefixDashboardAssetReferences(
-          readFileSync(shellPath, "utf8"),
-          rootPath,
-        ),
+        prefixDashboardAssetReferences(embeddedDashboardShell, rootPath),
         config,
       )
     : undefined;
@@ -808,9 +736,9 @@ function createServicePrefixes(
   };
 }
 
-export async function zelavis<TResult = unknown>(
-  options: ZelavisServerOptions<TResult>,
-): Promise<ZelavisServerRuntime<unknown, TResult>> {
+export async function zelavis(
+  options: ZelavisServerOptions = {},
+): Promise<ZelavisServerRuntime<unknown>> {
   const rootPath = normalizePath(options.rootPath, "/zelavis");
   const apiPrefix = normalizePath(options.api?.prefix, "/api");
   const apiVersion = normalizePathPart(options.api?.version ?? "v1");

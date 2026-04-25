@@ -69,10 +69,23 @@ Applications should usually import from `zelavis`, where core services are inclu
 import { zelavis } from "zelavis";
 import { nodeIntegration } from "zelavis/integrations/node";
 
-await zelavis({
-  integration: nodeIntegration(),
-});
+const runtime = await zelavis();
+const server = nodeIntegration(runtime);
 ```
+
+Zelavis can also run directly as a Web-style handler when an adapter is unnecessary:
+
+```ts
+import { zelavis } from "zelavis";
+
+const runtime = await zelavis({});
+
+const response = await runtime.fetch(
+  new Request("http://localhost/zelavis/api/v1/dashboard/config"),
+);
+```
+
+When a host framework needs fallthrough-aware mounting, use its thin integration instead. For example, h3 apps can use `h3Integration(app)` while still keeping Zelavis at `/zelavis`.
 
 By default, Zelavis owns one safe namespace:
 
@@ -87,7 +100,6 @@ Customize that namespace with `rootPath`:
 ```ts
 await zelavis({
   rootPath: "/admin",
-  integration: nodeIntegration(),
 });
 ```
 
@@ -116,7 +128,6 @@ await zelavis({
     dashboard: false,
     database: false,
   },
-  integration: nodeIntegration(),
 });
 ```
 
@@ -129,7 +140,6 @@ await zelavis({
       defaultTenantId: "acme",
     },
   },
-  integration: nodeIntegration(),
 });
 ```
 
@@ -144,7 +154,6 @@ await zelavis({
       },
     },
   },
-  integration: nodeIntegration(),
 });
 ```
 
@@ -199,9 +208,16 @@ pnpm --filter @zelavis/ecommerce build
 
 For a unified recurring billing flow (Stripe + PayPal) through the ecommerce core, see:
 
-- [examples/nodejs.ts](examples/nodejs.ts)
-- [examples/express.ts](examples/express.ts)
-- [examples/ecommerce-recurring-subscriptions.ts](examples/ecommerce-recurring-subscriptions.ts)
+- [examples/nodejs/index.ts](examples/nodejs/index.ts)
+- [examples/cloudflare](examples/cloudflare)
+- [examples/elysia](examples/elysia)
+- [examples/express/index.ts](examples/express/index.ts)
+- [examples/fastify](examples/fastify)
+- [examples/h3](examples/h3)
+- [examples/hono/index.ts](examples/hono/index.ts)
+- [examples/nextjs](examples/nextjs)
+- [examples/web-fetch](examples/web-fetch)
+- [docs/ecommerce-recurring-subscriptions.ts](docs/ecommerce-recurring-subscriptions.ts)
 
 The recurring subscriptions example uses these environment variables:
 

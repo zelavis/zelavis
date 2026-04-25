@@ -1,130 +1,111 @@
 import type { Request, Response, Router } from "express";
-import type {
-  ZelavisResolvedRoute,
-  ZelavisRouteResponse,
-  ZelavisServerIntegration,
-  ZelavisServerMountOptions,
-} from "../contracts.js";
+import { Readable } from "node:stream";
+import type { ZelavisServerRuntime } from "../contracts.js";
+import {
+  createRequestFromPlainInput,
+  toResponseHeaderEntries,
+} from "../core/request-dispatcher.js";
 
-function queryToSearchParams(query: Request["query"]): URLSearchParams {
-  const params = new URLSearchParams();
+function canHaveBody(method: string): boolean {
+  return method !== "GET" && method !== "HEAD";
+}
 
-  for (const [key, value] of Object.entries(query)) {
+async function toWebRequest(request: Request): Promise<globalThis.Request> {
+  const headers = new Headers();
+
+  for (const [key, value] of Object.entries(request.headers)) {
     if (Array.isArray(value)) {
       for (const item of value) {
-        params.append(key, String(item));
+        headers.append(key, item);
       }
-      continue;
-    }
-
-    if (typeof value === "string") {
-      params.append(key, value);
       continue;
     }
 
     if (value !== undefined) {
-      params.append(key, String(value));
+      headers.set(key, value);
     }
   }
 
-  return params;
+  const body =
+    request.body !== undefined
+      ? request.body
+      : canHaveBody(request.method)
+        ? (Readable.toWeb(request) as ReadableStream<Uint8Array>)
+        : undefined;
+
+  return createRequestFromPlainInput({
+    url: request.originalUrl || request.url,
+    method: request.method,
+    headers,
+    body,
+    baseUrl: `${request.protocol}://${request.get("host") ?? "localhost"}`,
+  });
 }
 
-function toHeaderMap(headers: Request["headers"]): Record<string, string | undefined> {
-  const result: Record<string, string | undefined> = {};
+async function sendExpressResponse(
+  response: Response,
+  payload: globalThis.Response,
+  method = "GET",
+): Promise<void> {
+  response.status(payload.status);
 
-  for (const [key, value] of Object.entries(headers)) {
-    if (Array.isArray(value)) {
-      result[key] = value.join(",");
+  for (const [key, value] of toResponseHeaderEntries(payload.headers)) {
+    if (key.toLowerCase() === "set-cookie") {
+      const existing = response.getHeader(key);
+
+      if (existing === undefined) {
+        response.setHeader(key, [value]);
+        continue;
+      }
+
+      const nextValues = Array.isArray(existing)
+        ? [...existing.map(String), value]
+        : [String(existing), value];
+      response.setHeader(key, nextValues);
       continue;
     }
 
-    result[key] = value;
-  }
-
-  return result;
-}
-
-function sendResponse(response: Response, payload: ZelavisRouteResponse): void {
-  for (const [key, value] of Object.entries(payload.headers ?? {})) {
     response.setHeader(key, value);
   }
 
-  const status = payload.status ?? 200;
-  if (payload.body === undefined) {
-    response.sendStatus(status);
+  if (method.toUpperCase() === "HEAD" || !payload.body) {
+    response.end();
     return;
   }
 
-  if (
-    typeof payload.body === "string" ||
-    payload.body instanceof Uint8Array ||
-    payload.body instanceof ArrayBuffer
-  ) {
-    response.status(status).send(payload.body);
-    return;
-  }
+  await new Promise<void>((resolve, reject) => {
+    const stream = Readable.fromWeb(payload.body as any);
 
-  response.status(status).json(payload.body);
-}
+    stream.on("error", reject);
+    response.on("error", reject);
+    response.on("finish", resolve);
 
-function defaultErrorResponse(error: unknown): ZelavisRouteResponse {
-  return {
-    status: 500,
-    body: {
-      error: error instanceof Error ? error.message : "Unknown error",
-    },
-  };
-}
-
-function mountExpressRoutes<TService = unknown>(
-  router: Router,
-  routes: readonly ZelavisResolvedRoute<TService>[],
-  options: Pick<ZelavisServerMountOptions<TService>, "onError"> = {},
-): Router {
-  for (const resolved of routes) {
-    const method = resolved.route.method.toLowerCase() as
-      | "get"
-      | "post"
-      | "put"
-      | "patch"
-      | "delete";
-
-    router[method](resolved.fullPath, async (request, response) => {
-      try {
-        const result = await resolved.route.handler({
-          service: resolved.service.service,
-          params: Object.fromEntries(
-            Object.entries(request.params).map(([key, value]) => [key, String(value)]),
-          ),
-          query: queryToSearchParams(request.query),
-          body: request.body,
-          headers: toHeaderMap(request.headers),
-          request,
-        });
-
-        sendResponse(response, result);
-      } catch (error) {
-        const errorPayload =
-          options.onError?.({
-            error,
-            resolvedRoute: resolved,
-          }) ?? defaultErrorResponse(error);
-
-        sendResponse(response, errorPayload);
-      }
-    });
-  }
-
-  return router;
+    stream.pipe(response);
+  });
 }
 
 export function expressIntegration<TService = unknown>(
+  runtime: Pick<ZelavisServerRuntime<TService>, "dispatch">,
   router: Router,
-): ZelavisServerIntegration<TService, Router> {
-  return {
-    mount(routes, options) {
-      return mountExpressRoutes(router, routes, options);
-    },
-  };
+): Router {
+  router.use(async (request, response, next) => {
+    const webRequest = await toWebRequest(request);
+    const result = await runtime.dispatch(webRequest, {
+      platform: {
+        express: {
+          request,
+          response,
+        },
+      },
+    });
+
+    if (!result.matched) {
+      next();
+      return;
+    }
+
+    await sendExpressResponse(response, result.response, request.method);
+  });
+
+  return router;
 }

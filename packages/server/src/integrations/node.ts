@@ -1,229 +1,102 @@
 import { createServer } from "node:http";
-import type {
-  IncomingHttpHeaders,
-  IncomingMessage,
-  Server,
-  ServerResponse,
-} from "node:http";
-import type {
-  ZelavisResolvedRoute,
-  ZelavisRouteResponse,
-  ZelavisServerIntegration,
-  ZelavisServerMountOptions,
-} from "../contracts.js";
+import type { IncomingMessage, Server, ServerResponse } from "node:http";
+import { Readable } from "node:stream";
+import type { ZelavisServerRuntime } from "../contracts.js";
+import {
+  createRequestFromPlainInput,
+  toResponseHeaderEntries,
+} from "../core/request-dispatcher.js";
 
-interface MatchedRoute<TService = unknown> {
-  resolvedRoute: ZelavisResolvedRoute<TService>;
-  params: Record<string, string>;
+function canHaveBody(method: string): boolean {
+  return method !== "GET" && method !== "HEAD";
 }
 
-function toHeaderMap(headers: IncomingHttpHeaders): Record<string, string | undefined> {
-  const result: Record<string, string | undefined> = {};
+async function toWebRequest(request: IncomingMessage): Promise<Request> {
+  const headers = new Headers();
 
-  for (const [key, value] of Object.entries(headers)) {
+  for (const [key, value] of Object.entries(request.headers)) {
     if (Array.isArray(value)) {
-      result[key] = value.join(",");
+      for (const item of value) {
+        headers.append(key, item);
+      }
       continue;
     }
 
-    result[key] = value;
+    if (value !== undefined) {
+      headers.set(key, value);
+    }
   }
 
-  return result;
+  const method = request.method ?? "GET";
+  const body = canHaveBody(method)
+    ? (Readable.toWeb(request) as ReadableStream<Uint8Array>)
+    : undefined;
+
+  return createRequestFromPlainInput({
+    url: request.url ?? "/",
+    method,
+    headers,
+    body,
+    baseUrl: `http://${request.headers.host ?? "localhost"}`,
+  });
 }
 
-function splitPath(path: string): string[] {
-  return path.split("/").filter(Boolean);
-}
+async function sendNodeResponse(
+  response: ServerResponse,
+  payload: Response,
+  method = "GET",
+): Promise<void> {
+  response.statusCode = payload.status;
 
-function matchPath(
-  pattern: string,
-  pathname: string,
-): Record<string, string> | undefined {
-  const patternParts = splitPath(pattern);
-  const pathParts = splitPath(pathname);
+  for (const [key, value] of toResponseHeaderEntries(payload.headers)) {
+    if (key.toLowerCase() === "set-cookie") {
+      const existing = response.getHeader(key);
 
-  const wildcardIndex = patternParts.findIndex((part) => part.startsWith("*"));
-  if (wildcardIndex >= 0) {
-    if (wildcardIndex !== patternParts.length - 1) {
-      return undefined;
-    }
+      if (existing === undefined) {
+        response.setHeader(key, [value]);
+        continue;
+      }
 
-    if (pathParts.length < wildcardIndex) {
-      return undefined;
-    }
-  } else if (patternParts.length !== pathParts.length) {
-    return undefined;
-  }
-
-  const params: Record<string, string> = {};
-
-  for (let index = 0; index < patternParts.length; index += 1) {
-    const patternPart = patternParts[index];
-    const pathPart = pathParts[index];
-
-    if (patternPart.startsWith("*")) {
-      const name = patternPart.slice(1) || "*";
-      params[name] = pathParts.slice(index).map(decodeURIComponent).join("/");
-      return params;
-    }
-
-    if (patternPart.startsWith(":")) {
-      params[patternPart.slice(1)] = decodeURIComponent(pathPart);
+      const nextValues = Array.isArray(existing)
+        ? [...existing.map(String), value]
+        : [String(existing), value];
+      response.setHeader(key, nextValues);
       continue;
     }
 
-    if (patternPart !== pathPart) {
-      return undefined;
-    }
-  }
-
-  return params;
-}
-
-function findRoute<TService = unknown>(
-  routes: readonly ZelavisResolvedRoute<TService>[],
-  request: IncomingMessage,
-  url: URL,
-): MatchedRoute<TService> | undefined {
-  const method = request.method?.toUpperCase();
-
-  for (const resolvedRoute of routes) {
-    if (resolvedRoute.route.method !== method) {
-      continue;
-    }
-
-    const params = matchPath(resolvedRoute.fullPath, url.pathname);
-    if (params) {
-      return { resolvedRoute, params };
-    }
-  }
-
-  return undefined;
-}
-
-async function readBody(request: IncomingMessage): Promise<string> {
-  const chunks: Buffer[] = [];
-
-  for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-
-  return Buffer.concat(chunks).toString("utf8");
-}
-
-async function parseBody(request: IncomingMessage): Promise<unknown> {
-  if (request.method === "GET" || request.method === "DELETE") {
-    return undefined;
-  }
-
-  const rawBody = await readBody(request);
-  if (!rawBody) {
-    return undefined;
-  }
-
-  const contentType = request.headers["content-type"]?.toLowerCase() ?? "";
-
-  if (contentType.includes("application/json")) {
-    return JSON.parse(rawBody);
-  }
-
-  if (contentType.includes("application/x-www-form-urlencoded")) {
-    return Object.fromEntries(new URLSearchParams(rawBody).entries());
-  }
-
-  return rawBody;
-}
-
-function sendResponse(response: ServerResponse, payload: ZelavisRouteResponse): void {
-  for (const [key, value] of Object.entries(payload.headers ?? {})) {
     response.setHeader(key, value);
   }
 
-  response.statusCode = payload.status ?? 200;
-
-  if (payload.body === undefined) {
+  if (method.toUpperCase() === "HEAD" || !payload.body) {
     response.end();
     return;
   }
 
-  if (
-    typeof payload.body === "string" ||
-    payload.body instanceof Uint8Array ||
-    payload.body instanceof ArrayBuffer
-  ) {
-    response.end(payload.body);
-    return;
-  }
+  await new Promise<void>((resolve, reject) => {
+    const stream = Readable.fromWeb(payload.body as any);
 
-  if (!response.hasHeader("content-type")) {
-    response.setHeader("content-type", "application/json; charset=utf-8");
-  }
+    stream.on("error", reject);
+    response.on("error", reject);
+    response.on("finish", resolve);
 
-  response.end(JSON.stringify(payload.body));
-}
-
-function defaultErrorResponse(error: unknown): ZelavisRouteResponse {
-  return {
-    status: 500,
-    body: {
-      error: error instanceof Error ? error.message : "Unknown error",
-    },
-  };
-}
-
-function notFoundResponse(): ZelavisRouteResponse {
-  return {
-    status: 404,
-    body: {
-      error: "Not found",
-    },
-  };
-}
-
-function mountNodeRoutes<TService = unknown>(
-  routes: readonly ZelavisResolvedRoute<TService>[],
-  options: Pick<ZelavisServerMountOptions<TService>, "onError"> = {},
-): Server {
-  return createServer(async (request, response) => {
-    const url = new URL(request.url ?? "/", "http://localhost");
-    const match = findRoute(routes, request, url);
-
-    if (!match) {
-      sendResponse(response, notFoundResponse());
-      return;
-    }
-
-    try {
-      const result = await match.resolvedRoute.route.handler({
-        service: match.resolvedRoute.service.service,
-        params: match.params,
-        query: url.searchParams,
-        body: await parseBody(request),
-        headers: toHeaderMap(request.headers),
-        request,
-      });
-
-      sendResponse(response, result);
-    } catch (error) {
-      const errorPayload =
-        options.onError?.({
-          error,
-          resolvedRoute: match.resolvedRoute,
-        }) ?? defaultErrorResponse(error);
-
-      sendResponse(response, errorPayload);
-    }
+    stream.pipe(response);
   });
 }
 
-export function nodeIntegration<TService = unknown>(): ZelavisServerIntegration<
-  TService,
-  Server
-> {
-  return {
-    mount(routes, options) {
-      return mountNodeRoutes(routes, options);
-    },
-  };
+export function nodeIntegration<TService = unknown>(
+  runtime: Pick<ZelavisServerRuntime<TService>, "fetch">,
+): Server {
+  return createServer(async (request, response) => {
+    const webRequest = await toWebRequest(request);
+    const webResponse = await runtime.fetch(webRequest, {
+      platform: {
+        node: {
+          request,
+          response,
+        },
+      },
+    });
+
+    await sendNodeResponse(response, webResponse, request.method ?? "GET");
+  });
 }

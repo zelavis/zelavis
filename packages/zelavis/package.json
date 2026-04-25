@@ -11,13 +11,25 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./integrations/elysia": {
+      "types": "./dist/integrations/elysia.d.ts",
+      "import": "./dist/integrations/elysia.js"
+    },
     "./integrations/express": {
       "types": "./dist/integrations/express.d.ts",
       "import": "./dist/integrations/express.js"
     },
+    "./integrations/fastify": {
+      "types": "./dist/integrations/fastify.d.ts",
+      "import": "./dist/integrations/fastify.js"
+    },
     "./integrations/hono": {
       "types": "./dist/integrations/hono.d.ts",
       "import": "./dist/integrations/hono.js"
+    },
+    "./integrations/h3": {
+      "types": "./dist/integrations/h3.d.ts",
+      "import": "./dist/integrations/h3.js"
     },
     "./integrations/node": {
       "types": "./dist/integrations/node.d.ts",
@@ -25,7 +37,7 @@
     }
   },
   "scripts": {
-    "build": "pnpm --filter @zelavis/ui build && tsc -p tsconfig.json && node scripts/copy-dashboard.mjs",
+    "build": "pnpm --filter @zelavis/ui build && node scripts/copy-dashboard.mjs && tsc -p tsconfig.json",
     "build:runtime": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm run build && node --test test/*.test.mjs"

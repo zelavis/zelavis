@@ -5,24 +5,17 @@ import { zelavisServer } from "../../server/dist/index.js";
 
 test("databaseService exposes database routes through the existing service contract", async () => {
   const database = await createDatabase();
-  const mounted = {};
 
   const runtime = await zelavisServer({
     services: [databaseService(database)],
     prefix: "/api",
-    integration: {
-      mount(routes) {
-        mounted.routes = routes;
-        return { routeCount: routes.length };
-      },
-    },
   });
 
   assert.equal(runtime.services.database.service, database);
   assert.equal(runtime.services.database.services[0].name, "documents");
-  assert.equal(runtime.server.routeCount, 8);
+  assert.equal(runtime.routes.length, 8);
   assert.deepEqual(
-    mounted.routes.map((route) => route.fullPath),
+    runtime.routes.map((route) => route.fullPath),
     [
       "/api/database/health",
       "/api/database/documents/collections",

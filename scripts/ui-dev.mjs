@@ -53,7 +53,7 @@ const children = [
       ZELAVIS_DEV_SERVER: backendOrigin,
     },
   ),
-  startProcess("node", ["--experimental-strip-types", "examples/nodejs.ts"], {
+  startProcess("pnpm", ["--filter", "@zelavis/example-nodejs", "dev"], {
     PORT: backendPort,
     ZELAVIS_UI_DEV_SERVER: uiOrigin,
   }),

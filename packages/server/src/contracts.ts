@@ -6,13 +6,15 @@ export interface ZelavisRouteContext<TService = unknown> {
   query: URLSearchParams;
   body: unknown;
   headers: Record<string, string | undefined>;
-  request: unknown;
+  requestHeaders: Headers;
+  request: Request;
+  platform?: unknown;
 }
 
 export interface ZelavisRouteResponse {
   status?: number;
   body?: unknown;
-  headers?: Record<string, string>;
+  headers?: HeadersInit;
 }
 
 export interface ZelavisServerRoute<TService = unknown> {
@@ -64,20 +66,61 @@ export interface ZelavisServerMountOptions<TService = unknown> {
   onError?: ZelavisServerErrorHandler<TService>;
 }
 
-export interface ZelavisServerIntegration<TService = unknown, TResult = unknown> {
-  mount: (
-    routes: readonly ZelavisResolvedRoute<TService>[],
-    options?: Pick<ZelavisServerMountOptions<TService>, "onError">,
-  ) => TResult;
+export interface ZelavisServerExecutionContext {
+  platform?: unknown;
 }
 
-export interface ZelavisServerOptions<TService = unknown, TResult = unknown>
-  extends ZelavisServerMountOptions<TService> {
+export interface ZelavisServerDispatchResult<TService = unknown> {
+  matched: boolean;
+  response: Response;
+  resolvedRoute?: ZelavisResolvedRoute<TService>;
+}
+
+export type ZelavisServerDispatchHandler<TService = unknown> = (
+  request: Request,
+  context?: ZelavisServerExecutionContext,
+) => Promise<ZelavisServerDispatchResult<TService>>;
+
+export type ZelavisServerFetchHandler<TService = unknown> = (
+  request: Request,
+  context?: ZelavisServerExecutionContext,
+) => Promise<Response>;
+
+export interface ZelavisPlainRequest {
+  url: string;
+  method?: string;
+  headers?: HeadersInit;
+  body?: unknown;
+  baseUrl?: string;
+  request?: Request;
+  platform?: unknown;
+}
+
+export interface ZelavisPlainResponse<TService = unknown> {
+  matched: boolean;
+  status: number;
+  headers: Record<string, string>;
+  headerEntries: readonly [string, string][];
+  responseHeaders: Headers;
+  body: unknown;
+  response: Response;
+  resolvedRoute?: ZelavisResolvedRoute<TService>;
+}
+
+export type ZelavisServerPlainHandler<TService = unknown> = (
+  request: ZelavisPlainRequest,
+) => Promise<ZelavisPlainResponse<TService>>;
+
+export interface ZelavisServerOptions<
+  TService = unknown,
+> extends ZelavisServerMountOptions<TService> {
   services: readonly ZelavisAnyServiceInput[];
-  integration: ZelavisServerIntegration<TService, TResult>;
 }
 
-export interface ZelavisServerRuntime<TService = unknown, TResult = unknown> {
+export interface ZelavisServerRuntime<TService = unknown> {
   services: Record<string, ZelavisServerService<any>>;
-  server: TResult;
+  routes: readonly ZelavisResolvedRoute<TService>[];
+  dispatch: ZelavisServerDispatchHandler<TService>;
+  fetch: ZelavisServerFetchHandler<TService>;
+  plain: ZelavisServerPlainHandler<TService>;
 }

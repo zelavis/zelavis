@@ -7,11 +7,18 @@
   "scripts": {
     "build": "pnpm -r --if-present build",
     "check": "pnpm run typecheck",
-    "example:express": "pnpm build && node --experimental-strip-types examples/express.ts",
-    "example:nodejs": "pnpm build && node --experimental-strip-types examples/nodejs.ts",
+    "example:cloudflare": "pnpm build && pnpm --filter @zelavis/example-cloudflare dev",
+    "example:elysia": "pnpm build && pnpm --filter @zelavis/example-elysia dev",
+    "example:express": "pnpm build && pnpm --filter @zelavis/example-express dev",
+    "example:fastify": "pnpm build && pnpm --filter @zelavis/example-fastify dev",
+    "example:h3": "pnpm build && pnpm --filter @zelavis/example-h3 dev",
+    "example:hono": "pnpm build && pnpm --filter @zelavis/example-hono dev",
+    "example:nextjs": "pnpm build && pnpm --filter @zelavis/example-nextjs dev",
+    "example:nodejs": "pnpm build && pnpm --filter @zelavis/example-nodejs dev",
+    "example:web-fetch": "pnpm --filter @zelavis/example-web-fetch typecheck",
     "ui:dev": "node scripts/ui-dev.mjs",
-    "test": "pnpm -r --if-present test && pnpm build && node --test examples/*.test.mjs",
-    "typecheck": "pnpm -r --if-present typecheck && pnpm --filter @zelavis/server exec tsc -p ../../examples/tsconfig.json"
+    "test": "pnpm -r --if-present test",
+    "typecheck": "pnpm -r --if-present typecheck"
   },
   "keywords": [],
   "author": "",

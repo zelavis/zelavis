@@ -299,7 +299,6 @@ export function NavMain({
 
   return (
     <SidebarGroup className="flex min-h-0 flex-1 flex-col">
-      <SidebarGroupLabel>Platform</SidebarGroupLabel>
       <Swiper
         className="min-h-0 w-full flex-1 overflow-hidden"
         dir={direction}
@@ -327,6 +326,10 @@ export function NavMain({
                   : "",
               ].join(" ")}
             >
+              {panelIndex === 0 ? (
+                <SidebarGroupLabel>Platform</SidebarGroupLabel>
+              ) : null}
+
               <SidebarMenu>
                 {panelIndex > 0 ? (
                   <SidebarMenuItem>

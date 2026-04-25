@@ -7,31 +7,19 @@ async function main(): Promise<void> {
   const app = express();
   const router = express.Router();
 
-  app.get("/health", (_request, response) => {
-    response.json({ ok: true });
+  app.get("/hello", (_request, response) => {
+    response.type("text/plain").send("Hello Express");
   });
   app.use(express.json());
 
   const zelavisRuntime = await zelavis({
-    integration: expressIntegration(router),
     onError: ({ error }) => ({
       status: 400,
       body: { error: error instanceof Error ? error.message : "Unknown error" },
     }),
   });
 
-  console.log("mounted services", Object.keys(zelavisRuntime.services));
-  console.log("existing app route", `GET http://localhost:${port}/health`);
-  console.log("dashboard", `GET http://localhost:${port}/zelavis`);
-  console.log(
-    "list auth providers",
-    `GET http://localhost:${port}/zelavis/api/v1/auth/providers`,
-  );
-  console.log(
-    "list database collections",
-    `GET http://localhost:${port}/zelavis/api/v1/database/documents/collections`,
-  );
-
+  expressIntegration(zelavisRuntime, router);
   app.use(router);
   app.listen(port, () => {
     console.log(

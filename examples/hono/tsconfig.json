@@ -1,0 +1,43 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "noEmit": true,
+    "baseUrl": "../..",
+    "typeRoots": ["packages/server/node_modules/@types", "node_modules/@types"],
+    "paths": {
+      "@zelavis/auth": ["packages/auth/src/index.ts"],
+      "@zelavis/database": ["packages/database/src/index.ts"],
+      "@zelavis/ecommerce": ["packages/ecommerce/src/index.ts"],
+      "@zelavis/ecommerce-paypal": [
+        "packages/ecommerce/plugins/paypal/src/index.ts"
+      ],
+      "@zelavis/ecommerce-stripe": [
+        "packages/ecommerce/plugins/stripe/src/index.ts"
+      ],
+      "@zelavis/server": ["packages/server/src/index.ts"],
+      "@zelavis/server/integrations/express": [
+        "packages/server/src/integrations/express.ts"
+      ],
+      "@zelavis/server/integrations/hono": [
+        "packages/server/src/integrations/hono.ts"
+      ],
+      "@zelavis/server/integrations/node": [
+        "packages/server/src/integrations/node.ts"
+      ],
+      "zelavis": ["packages/zelavis/src/index.ts"],
+      "zelavis/integrations/express": [
+        "packages/zelavis/src/integrations/express.ts"
+      ],
+      "zelavis/integrations/hono": [
+        "packages/zelavis/src/integrations/hono.ts"
+      ],
+      "zelavis/integrations/node": ["packages/zelavis/src/integrations/node.ts"]
+    }
+  },
+  "include": ["index.ts"]
+}

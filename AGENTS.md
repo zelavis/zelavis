@@ -42,7 +42,7 @@ The repo still contains domain packages such as `@zelavis/ecommerce`, but they a
 - `packages/ui` contains the admin/dashboard UI used by the runtime package.
 - `packages/*/integrations/*` contains framework or external-system adapters.
 - `packages/*/plugins/*` contains optional capability/provider/plugin packages.
-- `examples/*` contains runnable workspace examples.
+- `examples/*` contains runnable example workspace packages.
 - `docs/archive/*` is historical material and should not drive current product decisions unless explicitly revived.
 
 Each package should remain independently useful and focused.

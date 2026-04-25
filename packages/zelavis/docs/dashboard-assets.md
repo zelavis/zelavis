@@ -2,12 +2,11 @@
 
 The `zelavis` package ships the dashboard as a built SPA artifact. The source
 app lives in `@zelavis/ui`; `pnpm --filter zelavis build` builds that package
-and copies `packages/ui/dist/client` into `packages/zelavis/dist/dashboard`.
+and generates an embedded dashboard asset module from `packages/ui/dist/client`.
 
 ## Current Runtime
 
-The Node-compatible runtime reads copied files from `dist/dashboard` and exposes
-them through the existing dashboard core service:
+The runtime serves embedded dashboard assets through the existing dashboard core service:
 
 - `/zelavis` serves `_shell.html`
 - `/zelavis/settings` and other dashboard routes serve the same shell
@@ -32,10 +31,5 @@ interface ZelavisDashboardAssetSource {
 }
 ```
 
-Node can keep using filesystem assets. Cloudflare can use a generated manifest,
-Workers Assets, or an integration-provided binding. Bun can use its native file
-APIs. The dashboard service should not know which storage mechanism is active;
-the runtime integration should provide the asset source.
-
-This keeps `zelavis()` ergonomic while leaving room for Cloudflare D1,
-Turso, Bun, and other deployment targets.
+The current direction is to keep dashboard serving fetch-native by default and
+only step into Node-specific APIs for explicit Node-only helpers such as file-backed settings stores.

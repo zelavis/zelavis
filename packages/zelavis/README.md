@@ -13,6 +13,21 @@ Use `zelavis` for application and runtime code:
 ```ts
 import { zelavis } from "zelavis";
 import { nodeIntegration } from "zelavis/integrations/node";
+
+const runtime = await zelavis();
+const server = nodeIntegration(runtime);
+```
+
+Or embed the runtime directly in a Web/fetch environment:
+
+```ts
+import { zelavis } from "zelavis";
+
+const runtime = await zelavis({});
+
+export function GET(request: Request) {
+  return runtime.fetch(request);
+}
 ```
 
 Use scoped packages when building lower-level primitives, integrations, plugins, or tests that need direct package APIs:
@@ -29,11 +44,20 @@ import { authService } from "@zelavis/auth";
 import { zelavis } from "zelavis";
 import { nodeIntegration } from "zelavis/integrations/node";
 
-const runtime = await zelavis({
-  integration: nodeIntegration(),
-});
+const runtime = await zelavis();
+const server = nodeIntegration(runtime);
 
-runtime.server.listen(3000);
+server.listen(3000);
+```
+
+When you do not need a framework-specific adapter, use the Web-style runtime handlers directly:
+
+```ts
+const runtime = await zelavis({});
+
+const response = await runtime.fetch(
+  new Request("http://localhost/zelavis/api/v1/dashboard/config"),
+);
 ```
 
 By default, Zelavis owns one safe namespace:
@@ -53,7 +77,6 @@ Customize that namespace with `rootPath`:
 ```ts
 await zelavis({
   rootPath: "/admin",
-  integration: nodeIntegration(),
 });
 ```
 
@@ -72,6 +95,11 @@ into this package during `pnpm --filter zelavis build`. Application users should
 serve it through `zelavis`; they do not need to import `@zelavis/ui`
 directly.
 
+The runtime now supports both styles:
+
+- explicit adapter helpers such as Node, Elysia, Express, Fastify, Hono, and h3
+- direct Web-handler embedding through `runtime.fetch(...)`
+
 Dashboard client routes are served as SPA shell routes by the dashboard core
 service, so direct visits such as `/zelavis/settings` work in Node and Express.
 
@@ -85,7 +113,8 @@ PATCH /zelavis/api/v1/dashboard/settings
 Root path changes are saved as pending settings and report `restartRequired`
 because mounted routes cannot move safely while the runtime is already running.
 Pass `coreServices.dashboard.settingsStore` when you want to back these settings
-with your own storage.
+with your own storage. For the built-in Node file-backed store, import
+`createFileDashboardSettingsStore()` from `zelavis/integrations/node`.
 
 For local dashboard work, point Zelavis at a running UI dev server:
 
@@ -96,12 +125,11 @@ await zelavis({
       devServerUrl: "http://127.0.0.1:3001",
     },
   },
-  integration: nodeIntegration(),
 });
 ```
 
 When `devServerUrl` is set, dashboard route requests redirect to the live UI dev
-server instead of reading built dashboard assets from `dist/dashboard`.
+server instead of serving the embedded built dashboard assets.
 
 The dashboard, auth, and database core services are included by default. Disable any of them when you need a smaller server or want to supply replacements:
 
@@ -112,7 +140,6 @@ await zelavis({
     dashboard: false,
     database: false,
   },
-  integration: nodeIntegration(),
 });
 ```
 
@@ -134,7 +161,6 @@ await zelavis({
       },
     },
   },
-  integration: nodeIntegration(),
 });
 ```
 
@@ -147,6 +173,5 @@ await zelavis({
       defaultTenantId: "acme",
     },
   },
-  integration: nodeIntegration(),
 });
 ```

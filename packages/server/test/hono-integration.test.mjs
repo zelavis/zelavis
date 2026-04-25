@@ -8,7 +8,7 @@ test("honoIntegration mounts routes and passes normalized request context", asyn
   const serviceApi = { label: "demo-service" };
   const app = new Hono();
 
-  await zelavisServer({
+  const runtime = await zelavisServer({
     services: [
       defineServerService({
         name: "demo",
@@ -19,7 +19,14 @@ test("honoIntegration mounts routes and passes normalized request context", asyn
               id: "demo.show",
               method: "POST",
               path: "/items/:id",
-              handler: ({ service, params, query, body, headers, request }) => ({
+              handler: ({
+                service,
+                params,
+                query,
+                body,
+                headers,
+                request,
+              }) => ({
                 status: 201,
                 headers: {
                   "x-route": "demo.show",
@@ -40,8 +47,9 @@ test("honoIntegration mounts routes and passes normalized request context", asyn
       }),
     ],
     prefix: "/api",
-    integration: honoIntegration(app),
   });
+
+  honoIntegration(runtime, app);
 
   const response = await app.request("/api/demo/items/42?tag=one&tag=two", {
     method: "POST",
@@ -54,7 +62,10 @@ test("honoIntegration mounts routes and passes normalized request context", asyn
 
   assert.equal(response.status, 201);
   assert.equal(response.headers.get("x-route"), "demo.show");
-  assert.equal(response.headers.get("content-type"), "application/json; charset=utf-8");
+  assert.equal(
+    response.headers.get("content-type"),
+    "application/json; charset=utf-8",
+  );
 
   const payload = await response.json();
   assert.deepEqual(payload, {
@@ -71,7 +82,7 @@ test("honoIntegration mounts routes and passes normalized request context", asyn
 test("honoIntegration uses the configured error handler", async () => {
   const app = new Hono();
 
-  await zelavisServer({
+  const runtime = await zelavisServer({
     services: [
       defineServerService({
         name: "demo",
@@ -90,7 +101,6 @@ test("honoIntegration uses the configured error handler", async () => {
         },
       }),
     ],
-    integration: honoIntegration(app),
     onError: ({ error, resolvedRoute }) => ({
       status: 418,
       body: {
@@ -99,6 +109,8 @@ test("honoIntegration uses the configured error handler", async () => {
       },
     }),
   });
+
+  honoIntegration(runtime, app);
 
   const response = await app.request("/demo/error");
   assert.equal(response.status, 418);

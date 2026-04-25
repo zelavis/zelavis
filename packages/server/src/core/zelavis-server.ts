@@ -1,16 +1,26 @@
 import type {
   ZelavisAnyServiceInput,
   ZelavisServiceInput,
+  ZelavisServerDispatchHandler,
+  ZelavisServerFetchHandler,
   ZelavisServerOptions,
+  ZelavisServerPlainHandler,
   ZelavisServerRuntime,
   ZelavisServerService,
 } from "../contracts.js";
+import {
+  createZelavisDispatcher,
+  createZelavisFetchHandler,
+  createZelavisPlainHandler,
+} from "./request-dispatcher.js";
 import { resolveMountedEndpoints } from "./resolve-endpoints.js";
 
 async function resolveServiceInput<TService = unknown>(
   input: ZelavisServiceInput<TService>,
 ): Promise<ZelavisServerService<TService>>;
-async function resolveServiceInput(input: ZelavisAnyServiceInput): Promise<ZelavisServerService<any>>;
+async function resolveServiceInput(
+  input: ZelavisAnyServiceInput,
+): Promise<ZelavisServerService<any>>;
 async function resolveServiceInput(
   input: ZelavisAnyServiceInput,
 ): Promise<ZelavisServerService<any>> {
@@ -42,9 +52,9 @@ function toServiceMap<TService = unknown>(
   return result;
 }
 
-export async function zelavisServer<TService = unknown, TResult = unknown>(
-  options: ZelavisServerOptions<TService, TResult>,
-): Promise<ZelavisServerRuntime<TService, TResult>> {
+export async function zelavisServer<TService = unknown>(
+  options: ZelavisServerOptions<TService>,
+): Promise<ZelavisServerRuntime<TService>> {
   const services = await Promise.all(options.services.map(resolveServiceInput));
   const resolvedRoutes = resolveMountedEndpoints(services, {
     prefix: options.prefix,
@@ -52,13 +62,21 @@ export async function zelavisServer<TService = unknown, TResult = unknown>(
     servicePrefixes: options.servicePrefixes,
     pathOverrides: options.pathOverrides,
   });
-
-  const server = options.integration.mount(resolvedRoutes, {
+  const dispatch = createZelavisDispatcher(resolvedRoutes, {
     onError: options.onError,
-  });
+  }) as ZelavisServerDispatchHandler<TService>;
+  const fetch = createZelavisFetchHandler(
+    dispatch,
+  ) as ZelavisServerFetchHandler<TService>;
+  const plain = createZelavisPlainHandler(
+    dispatch,
+  ) as ZelavisServerPlainHandler<TService>;
 
   return {
     services: toServiceMap(services),
-    server,
+    routes: resolvedRoutes,
+    dispatch,
+    fetch,
+    plain,
   };
 }
