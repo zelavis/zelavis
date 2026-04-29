@@ -1,0 +1,34 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.1.1/schema.json",
+  "changelog": false,
+  "commit": false,
+  "fixed": [
+    [
+      "zelavis",
+      "@zelavis/server",
+      "@zelavis/database",
+      "@zelavis/database-node-sqlite",
+      "@zelavis/database-bun-sqlite",
+      "@zelavis/auth",
+      "@zelavis/auth-email-password",
+      "@zelavis/auth-username-password"
+    ]
+  ],
+  "linked": [],
+  "access": "public",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "ignore": [
+    "@zelavis/example-bun",
+    "@zelavis/example-cloudflare",
+    "@zelavis/example-elysia",
+    "@zelavis/example-express",
+    "@zelavis/example-fastify",
+    "@zelavis/example-h3",
+    "@zelavis/example-hono",
+    "@zelavis/example-nextjs",
+    "@zelavis/example-nextjs-pages-router",
+    "@zelavis/example-nodejs",
+    "@zelavis/example-web-fetch"
+  ]
+}

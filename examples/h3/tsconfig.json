@@ -20,7 +20,12 @@
         "packages/ecommerce/plugins/stripe/src/index.ts"
       ],
       "@zelavis/server": ["packages/server/src/index.ts"],
-      "zelavis": ["packages/zelavis/src/index.ts"]
+      "@zelavis/server/integrations/h3": [
+        "packages/server/src/integrations/h3.ts"
+      ],
+      "zelavis": ["packages/zelavis/src/index.ts"],
+      "zelavis/integrations/h3": ["packages/zelavis/src/integrations/h3.ts"],
+      "zelavis/integrations/node": ["packages/zelavis/src/integrations/node.ts"]
     }
   },
   "include": ["index.ts"]

@@ -1,0 +1,20 @@
+{
+  "name": "@zelavis/example-bun",
+  "version": "0.1.0-alpha.1",
+  "private": true,
+  "author": "Ivan Jeremic",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run index.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@zelavis/database-bun-sqlite": "workspace:*",
+    "zelavis": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.11.0",
+    "typescript": "^5.9.0"
+  }
+}

@@ -38,6 +38,10 @@ That starts the UI on `http://127.0.0.1:3001`, starts the Zelavis Node example
 on `http://127.0.0.1:3000`, proxies UI API calls back to Zelavis, and lets the
 runtime redirect `/zelavis` dashboard requests to the live UI dev server.
 
+The script prefers ports `3000` and `3001`, but if either is already in use it
+automatically picks the next available local port and wires both processes
+together with the selected origins.
+
 Override the target with `ZELAVIS_DEV_SERVER` when the backend runs elsewhere:
 
 ```bash

@@ -1,4 +1,4 @@
-import type { Request, Response, Router } from "express";
+import type { Request, RequestHandler, Response } from "express";
 import { Readable } from "node:stream";
 import type { ZelavisServerRuntime } from "../contracts.js";
 import {
@@ -86,9 +86,8 @@ async function sendExpressResponse(
 
 export function expressIntegration<TService = unknown>(
   runtime: Pick<ZelavisServerRuntime<TService>, "dispatch">,
-  router: Router,
-): Router {
-  router.use(async (request, response, next) => {
+): RequestHandler {
+  return async (request, response, next) => {
     const webRequest = await toWebRequest(request);
     const result = await runtime.dispatch(webRequest, {
       platform: {
@@ -105,7 +104,5 @@ export function expressIntegration<TService = unknown>(
     }
 
     await sendExpressResponse(response, result.response, request.method);
-  });
-
-  return router;
+  };
 }

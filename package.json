@@ -2,35 +2,55 @@
   "name": "zelavis-workspace",
   "version": "1.0.0",
   "private": true,
-  "description": "A collection of low-level utilities and libraries for building modern applications.",
+  "description": "Zelavis workspace for the composable backend platform.",
   "main": "index.js",
+  "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "build": "pnpm -r --if-present build",
+    "build": "pnpm -r --filter './packages/*' --filter './packages/*/integrations/*' --filter './packages/*/plugins/*' --if-present build",
     "check": "pnpm run typecheck",
-    "example:cloudflare": "pnpm build && pnpm --filter @zelavis/example-cloudflare dev",
-    "example:elysia": "pnpm build && pnpm --filter @zelavis/example-elysia dev",
-    "example:express": "pnpm build && pnpm --filter @zelavis/example-express dev",
-    "example:fastify": "pnpm build && pnpm --filter @zelavis/example-fastify dev",
-    "example:h3": "pnpm build && pnpm --filter @zelavis/example-h3 dev",
-    "example:hono": "pnpm build && pnpm --filter @zelavis/example-hono dev",
-    "example:nextjs": "pnpm build && pnpm --filter @zelavis/example-nextjs dev",
-    "example:nodejs": "pnpm build && pnpm --filter @zelavis/example-nodejs dev",
+    "changeset": "changeset",
+    "example:cloudflare": "pnpm --filter @zelavis/example-cloudflare dev",
+    "example:bun": "pnpm --filter @zelavis/example-bun dev",
+    "example:elysia": "pnpm --filter @zelavis/example-elysia dev",
+    "example:express": "pnpm --filter @zelavis/example-express dev",
+    "example:fastify": "pnpm --filter @zelavis/example-fastify dev",
+    "example:h3": "pnpm --filter @zelavis/example-h3 dev",
+    "example:hono": "pnpm --filter @zelavis/example-hono dev",
+    "example:nextjs": "pnpm --filter @zelavis/example-nextjs dev",
+    "example:nextjs-pages-router": "pnpm --filter @zelavis/example-nextjs-pages-router dev",
+    "example:nodejs": "pnpm --filter @zelavis/example-nodejs dev",
     "example:web-fetch": "pnpm --filter @zelavis/example-web-fetch typecheck",
+    "release:check": "pnpm typecheck && pnpm test && pnpm build",
+    "release:status": "changeset status --verbose",
+    "release:version": "changeset version && pnpm install --no-frozen-lockfile",
+    "release:publish:alpha": "pnpm release:check && changeset publish --tag alpha",
+    "release:publish:latest": "pnpm release:check && changeset publish",
     "ui:dev": "node scripts/ui-dev.mjs",
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "Ivan Jeremic",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zelavis/zelavis.git"
+  },
+  "homepage": "https://www.zelavis.com",
+  "bugs": {
+    "url": "https://github.com/zelavis/zelavis/issues"
+  },
   "type": "commonjs",
   "devDependencies": {
+    "@changesets/cli": "^2.31.0",
     "@types/express": "^5.0.6",
     "express": "^5.2.1",
+    "get-port": "^7.2.0",
     "zelavis": "workspace:*"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
+      "better-sqlite3",
       "esbuild",
       "lightningcss"
     ]

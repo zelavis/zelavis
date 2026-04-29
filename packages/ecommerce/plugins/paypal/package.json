@@ -1,8 +1,10 @@
 {
   "name": "@zelavis/ecommerce-paypal",
-  "version": "1.0.0",
-  "private": true,
+  "version": "0.1.0-alpha.1",
+  "private": false,
   "description": "PayPal payment provider plugin for @zelavis/ecommerce.",
+  "author": "Ivan Jeremic",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -20,6 +22,18 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zelavis/zelavis.git",
+    "directory": "packages/ecommerce/plugins/paypal"
+  },
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/packages/ecommerce/plugins/paypal#readme",
+  "bugs": {
+    "url": "https://github.com/zelavis/zelavis/issues"
+  },
   "dependencies": {
     "@paypal/paypal-server-sdk": "^2.2.0",
     "@zelavis/ecommerce": "workspace:*"

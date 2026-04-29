@@ -5,7 +5,6 @@ import { expressIntegration } from "zelavis/integrations/express";
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
   const app = express();
-  const router = express.Router();
 
   app.get("/hello", (_request, response) => {
     response.type("text/plain").send("Hello Express");
@@ -19,8 +18,7 @@ async function main(): Promise<void> {
     }),
   });
 
-  expressIntegration(zelavisRuntime, router);
-  app.use(router);
+  app.use(expressIntegration(zelavisRuntime));
   app.listen(port, () => {
     console.log(
       `zelavis Express example listening on http://localhost:${port}`,

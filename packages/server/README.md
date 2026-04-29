@@ -35,7 +35,8 @@ It is intended to be the common integration layer for platform packages such as 
 - `@zelavis/server/integrations/fastify`
 - `@zelavis/server/integrations/hono`
 - `@zelavis/server/integrations/h3`
+- `@zelavis/server/integrations/nextjs-pages-router`
 
-Use the Node.js integration when Zelavis should own a standalone HTTP server. Use an Elysia plugin, Express middleware, a Fastify plugin, or Hono/h3 integrations when mounting Zelavis into an existing app. When embedding into a fetch-oriented environment such as Next.js App Router or Cloudflare Workers, call `fetch(...)` directly and skip mount adapters entirely.
+Use the Node.js integration when Zelavis should own a standalone HTTP server. Use an Elysia plugin, Express middleware, a Fastify plugin, Hono/h3 middleware handlers, or the Next.js Pages Router adapter when mounting Zelavis into an existing app. When embedding into a fetch-oriented environment such as Next.js App Router or Cloudflare Workers, call `fetch(...)` directly and skip mount adapters entirely.
 
-For fetch-native examples, see [examples/web-fetch](../../examples/web-fetch) and [examples/cloudflare](../../examples/cloudflare). For mounting inside existing apps, see [examples/elysia](../../examples/elysia), [examples/fastify](../../examples/fastify), and [examples/h3](../../examples/h3).
+For fetch-native examples, see [examples/web-fetch](../../examples/web-fetch), [examples/cloudflare](../../examples/cloudflare), and [examples/nextjs](../../examples/nextjs). For mounting inside existing apps, see [examples/elysia](../../examples/elysia), [examples/fastify](../../examples/fastify), [examples/h3](../../examples/h3), and [examples/nextjs-pages-router](../../examples/nextjs-pages-router).

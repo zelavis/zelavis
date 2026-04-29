@@ -49,7 +49,7 @@ test("honoIntegration mounts routes and passes normalized request context", asyn
     prefix: "/api",
   });
 
-  honoIntegration(runtime, app);
+  app.use(honoIntegration(runtime));
 
   const response = await app.request("/api/demo/items/42?tag=one&tag=two", {
     method: "POST",
@@ -110,7 +110,7 @@ test("honoIntegration uses the configured error handler", async () => {
     }),
   });
 
-  honoIntegration(runtime, app);
+  app.use(honoIntegration(runtime));
 
   const response = await app.request("/demo/error");
   assert.equal(response.status, 418);

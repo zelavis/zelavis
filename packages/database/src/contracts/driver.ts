@@ -2,35 +2,57 @@ import type {
   CreateCollectionInput,
   DatabaseCollection,
   DatabaseDocument,
-  DeleteDocumentInput,
   FindDocumentByIdInput,
   FindDocumentsInput,
-  InsertDocumentInput,
   ListCollectionsInput,
-  UpdateDocumentInput,
 } from "./documents.js";
+import type {
+  DatabaseTimeSeriesAggregateInput,
+  DatabaseTimeSeriesDefinitionVersion,
+  DatabaseTimeSeriesPoint,
+  DatabaseTimeSeriesRangeInput,
+} from "./api.js";
+import type {
+  DatabaseAppendEventInput,
+  DatabaseEvent,
+  DatabaseEventPayload,
+  ReadDatabaseEventsInput,
+} from "./events.js";
+import type {
+  DatabaseCollectionSchema,
+  DatabaseStoredCollectionSchema,
+} from "./schemas.js";
 import type { DatabaseJsonObject } from "./json.js";
 import type { SqlDatabase } from "./sql.js";
 
-type TenantScoped<TInput extends { tenantId?: string }> = Omit<TInput, "tenantId"> & {
+type TenantScoped<TInput extends { tenantId?: string }> = Omit<
+  TInput,
+  "tenantId"
+> & {
   tenantId: string;
 };
 
 export interface DatabaseCapabilities {
   documents: true;
+  events: true;
   sql: boolean;
   transactions: boolean;
   tenantRouting: boolean;
 }
 
-export interface DatabaseDocumentDriver {
-  createCollection(input: TenantScoped<CreateCollectionInput>): Promise<DatabaseCollection>;
-  listCollections(input: TenantScoped<ListCollectionsInput>): Promise<DatabaseCollection[]>;
-  collectionExists(input: TenantScoped<ListCollectionsInput> & { name: string }): Promise<boolean>;
-  insertDocument<TData extends DatabaseJsonObject>(
-    input: TenantScoped<InsertDocumentInput<TData>>,
-  ): Promise<DatabaseDocument<TData>>;
-  findDocumentById(input: TenantScoped<FindDocumentByIdInput>): Promise<DatabaseDocument | null>;
+export interface DatabaseProjectionDriver {
+  getCollection(
+    input: TenantScoped<ListCollectionsInput> & { name: string },
+  ): Promise<DatabaseCollection | null>;
+  listCollections(
+    input: TenantScoped<ListCollectionsInput>,
+  ): Promise<DatabaseCollection[]>;
+  collectionExists(
+    input: TenantScoped<ListCollectionsInput> & { name: string },
+  ): Promise<boolean>;
+  findDocumentById(
+    input: TenantScoped<FindDocumentByIdInput>,
+  ): Promise<DatabaseDocument | null>;
   findDocuments(
     input: TenantScoped<FindDocumentsInput> & {
       where: NonNullable<FindDocumentsInput["where"]>;
@@ -39,17 +61,74 @@ export interface DatabaseDocumentDriver {
       offset: number;
     },
   ): Promise<DatabaseDocument[]>;
-  updateDocument<TData extends DatabaseJsonObject>(
-    input: TenantScoped<UpdateDocumentInput<TData>> & {
-      mode: NonNullable<UpdateDocumentInput["mode"]>;
-    },
-  ): Promise<DatabaseDocument<TData>>;
-  deleteDocument(input: TenantScoped<DeleteDocumentInput>): Promise<boolean>;
+}
+
+export interface DatabaseEventDriver {
+  append<TPayload extends DatabaseEventPayload>(
+    input: TenantScoped<DatabaseAppendEventInput<TPayload>>,
+  ): Promise<DatabaseEvent<TPayload>>;
+  read(input: TenantScoped<ReadDatabaseEventsInput>): Promise<DatabaseEvent[]>;
+}
+
+export interface DatabaseSchemaStorageDriver {
+  list(): Promise<DatabaseStoredCollectionSchema[]>;
+  save<TData extends DatabaseJsonObject = DatabaseJsonObject>(
+    schema: DatabaseCollectionSchema<TData>,
+  ): Promise<void>;
+  activate(collection: string, version: number): Promise<void>;
+}
+
+export interface DatabaseTimeSeriesStorageState {
+  lastSequence: number;
+  version: string;
+}
+
+export interface DatabaseTimeSeriesStoredPoint {
+  sourceSequence: number;
+  pointIndex: number;
+  point: DatabaseTimeSeriesPoint;
+}
+
+export interface DatabaseTimeSeriesStorageStateInput {
+  tenantId: string;
+  series: string;
+}
+
+export interface DatabaseTimeSeriesStorageResetInput extends DatabaseTimeSeriesStorageStateInput {
+  version: DatabaseTimeSeriesDefinitionVersion;
+}
+
+export interface DatabaseTimeSeriesStorageAppendInput extends DatabaseTimeSeriesStorageResetInput {
+  lastSequence: number;
+  points: readonly DatabaseTimeSeriesStoredPoint[];
+}
+
+export interface DatabaseTimeSeriesStoredRangeInput
+  extends DatabaseTimeSeriesStorageResetInput, DatabaseTimeSeriesRangeInput {}
+
+export interface DatabaseTimeSeriesStoredAggregateInput
+  extends
+    DatabaseTimeSeriesStorageResetInput,
+    DatabaseTimeSeriesAggregateInput {}
+
+export interface DatabaseTimeSeriesStorageDriver {
+  getState(
+    input: DatabaseTimeSeriesStorageStateInput,
+  ): Promise<DatabaseTimeSeriesStorageState | null>;
+  reset(input: DatabaseTimeSeriesStorageResetInput): Promise<void>;
+  append(input: DatabaseTimeSeriesStorageAppendInput): Promise<void>;
+  range(
+    input: DatabaseTimeSeriesStoredRangeInput,
+  ): Promise<DatabaseTimeSeriesPoint[]>;
+  aggregate(input: DatabaseTimeSeriesStoredAggregateInput): Promise<number>;
 }
 
 export interface DatabaseDriver {
   name: string;
   capabilities: DatabaseCapabilities;
-  documents: DatabaseDocumentDriver;
+  events: DatabaseEventDriver;
+  projections: DatabaseProjectionDriver;
+  schemas?: DatabaseSchemaStorageDriver;
+  timeseries?: DatabaseTimeSeriesStorageDriver;
   sql?: SqlDatabase;
 }

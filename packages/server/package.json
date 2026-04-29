@@ -1,8 +1,10 @@
 {
   "name": "@zelavis/server",
-  "version": "1.0.0",
-  "private": true,
+  "version": "0.1.0-alpha.1",
+  "private": false,
   "description": "Unified endpoint contract and framework adapters for zelavis server packages.",
+  "license": "MIT",
+  "author": "Ivan Jeremic",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -31,6 +33,10 @@
       "types": "./dist/integrations/h3.d.ts",
       "import": "./dist/integrations/h3.js"
     },
+    "./integrations/nextjs-pages-router": {
+      "types": "./dist/integrations/nextjs-pages-router.d.ts",
+      "import": "./dist/integrations/nextjs-pages-router.js"
+    },
     "./integrations/node": {
       "types": "./dist/integrations/node.d.ts",
       "import": "./dist/integrations/node.js"
@@ -44,12 +50,25 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zelavis/zelavis.git",
+    "directory": "packages/server"
+  },
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/packages/server#readme",
+  "bugs": {
+    "url": "https://github.com/zelavis/zelavis/issues"
+  },
   "peerDependencies": {
     "elysia": "^1.4.0",
     "express": "^4.18.0 || ^5.0.0",
     "fastify": "^5.0.0",
     "h3": "^2.0.0",
-    "hono": "^4.0.0"
+    "hono": "^4.0.0",
+    "next": "^16.0.0"
   },
   "peerDependenciesMeta": {
     "elysia": {
@@ -66,6 +85,9 @@
     },
     "hono": {
       "optional": true
+    },
+    "next": {
+      "optional": true
     }
   },
   "devDependencies": {
@@ -76,6 +98,7 @@
     "fastify": "^5.6.1",
     "h3": "2.0.1-rc.20",
     "hono": "^4.0.0",
+    "next": "16.2.4",
     "typescript": "^5.9.0"
   },
   "keywords": [
@@ -86,6 +109,8 @@
     "fastify",
     "h3",
     "hono",
+    "nextjs",
+    "pages-router",
     "integration"
   ]
 }

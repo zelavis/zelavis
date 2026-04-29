@@ -1,8 +1,10 @@
 {
   "name": "@zelavis/ecommerce",
-  "version": "1.0.0",
-  "private": true,
+  "version": "0.1.0-alpha.1",
+  "private": false,
   "description": "Low-level ecommerce primitives for building custom commerce platforms, CMS integrations, and backend applications.",
+  "author": "Ivan Jeremic",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -20,6 +22,18 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zelavis/zelavis.git",
+    "directory": "packages/ecommerce"
+  },
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/packages/ecommerce#readme",
+  "bugs": {
+    "url": "https://github.com/zelavis/zelavis/issues"
+  },
   "devDependencies": {
     "typescript": "^5.9.0"
   },

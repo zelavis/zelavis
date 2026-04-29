@@ -143,3 +143,27 @@ When acting as an agent in this repo:
 - Do not add compatibility aliases or legacy shims unless the user wants them.
 - For UI tasks, remember that the runtime and UI may run separately in dev and together in production.
 - If something looks generated, verify before editing.
+
+## Runtime Independence Rule
+
+Zelavis core must only depend on the JavaScript language and standard platform APIs.
+
+This repo must not be architected around:
+
+- Node.js APIs
+- Bun APIs
+- Deno APIs
+- Cloudflare-specific APIs
+- framework-specific request/response models
+- hosting provider SDKs or platform lock-in
+
+Allowed foundation:
+
+- ECMAScript / TypeScript
+- standard Web platform primitives such as `Request`, `Response`, `Headers`, `URL`, streams, and `crypto` where standard
+
+Required architecture rule:
+
+- host/framework/provider-specific behavior must live only in `integrations/*` or equivalent adapter boundaries
+- core packages must remain portable and runtime-neutral
+- Zelavis must never require a specific JS runtime, hosting provider, or framework as its architectural base

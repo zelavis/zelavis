@@ -1,12 +1,16 @@
 {
   "name": "@zelavis/example-nodejs",
+  "version": "0.1.0-alpha.1",
   "private": true,
+  "author": "Ivan Jeremic",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "node --experimental-strip-types index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@zelavis/database-node-sqlite": "workspace:*",
     "zelavis": "workspace:*"
   },
   "devDependencies": {

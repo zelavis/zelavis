@@ -1,10 +1,21 @@
-import { defineServerService, type ZelavisServerService } from "@zelavis/server";
+import {
+  defineServerService,
+  type ZelavisServerService,
+} from "@zelavis/server";
 import type { DatabaseApi } from "../core/types.js";
 import type {
   DatabaseDocumentFilter,
   DatabaseDocumentSort,
 } from "../contracts/documents.js";
 import type { DatabaseJsonObject } from "../contracts/json.js";
+import type {
+  DatabaseCollectionSchema,
+  DatabaseObjectSchemaDefinition,
+} from "../contracts/schemas.js";
+import type {
+  DatabaseTimeSeriesAggregateOperation,
+  DatabaseTimeSeriesRangeInput,
+} from "../contracts/api.js";
 
 function readBodyObject(body: unknown): Record<string, unknown> {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -36,6 +47,79 @@ function readSort(value: unknown): DatabaseDocumentSort[] {
 
 function readNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function readOptionalTimeSeriesBoundary(
+  value: unknown,
+  name: string,
+): number | string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.length > 0) {
+    return value;
+  }
+
+  throw new TypeError(`${name} must be a number or non-empty string.`);
+}
+
+function readTimeSeriesOrder(
+  value: unknown,
+): DatabaseTimeSeriesRangeInput["order"] {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+
+  if (value === "asc" || value === "desc") {
+    return value;
+  }
+
+  throw new TypeError('order must be either "asc" or "desc".');
+}
+
+function readTimeSeriesAggregateOperation(
+  value: unknown,
+): DatabaseTimeSeriesAggregateOperation {
+  if (
+    value === "avg" ||
+    value === "sum" ||
+    value === "min" ||
+    value === "max" ||
+    value === "count"
+  ) {
+    return value;
+  }
+
+  throw new TypeError(
+    'Time-series aggregate op must be one of "avg", "sum", "min", "max", or "count".',
+  );
+}
+
+function readRequiredNumber(value: unknown, name: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new TypeError(`${name} must be a number.`);
+  }
+
+  return value;
+}
+
+function readSchemaDefinition(value: unknown): DatabaseObjectSchemaDefinition {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("A schema document definition is required.");
+  }
+
+  if ((value as { type?: unknown }).type !== "object") {
+    throw new TypeError(
+      "Schema document definitions must use an object root type.",
+    );
+  }
+
+  return value as DatabaseObjectSchemaDefinition;
 }
 
 function errorResponse(status: number, error: unknown) {
@@ -71,7 +155,11 @@ export function createDatabaseServerService(
         },
       ],
     },
-    services: [createDatabaseDocumentsServerService(database)],
+    services: [
+      createDatabaseDocumentsServerService(database),
+      createDatabaseSchemasServerService(database),
+      createDatabaseTimeSeriesServerService(database),
+    ],
   });
 }
 
@@ -119,7 +207,9 @@ export function createDatabaseDocumentsServerService(
                   name,
                   tenantId: readString(input.tenantId),
                   metadata:
-                    input.metadata && typeof input.metadata === "object" && !Array.isArray(input.metadata)
+                    input.metadata &&
+                    typeof input.metadata === "object" &&
+                    !Array.isArray(input.metadata)
                       ? (input.metadata as Record<string, unknown>)
                       : undefined,
                 }),
@@ -237,6 +327,190 @@ export function createDatabaseDocumentsServerService(
   });
 }
 
-export function databaseService(database: DatabaseApi): ZelavisServerService<DatabaseApi> {
+export function createDatabaseSchemasServerService(
+  database: DatabaseApi,
+): ZelavisServerService<DatabaseApi> {
+  return defineServerService({
+    name: "schemas",
+    basePath: "schemas",
+    service: database,
+    api: {
+      v1: [
+        {
+          id: "database.schemas.list",
+          method: "GET",
+          path: "/collections",
+          handler: ({ service }) => ({
+            body: {
+              collections: service.schemas.listCollections(),
+            },
+          }),
+        },
+        {
+          id: "database.schemas.versions.list",
+          method: "GET",
+          path: "/:collection",
+          handler: ({ service, params }) => ({
+            body: {
+              collection: params.collection,
+              schemas: service.schemas.listVersionRecords(params.collection),
+            },
+          }),
+        },
+        {
+          id: "database.schemas.register",
+          method: "POST",
+          path: "/:collection",
+          handler: async ({ service, params, body }) => {
+            const input = readBodyObject(body);
+
+            try {
+              const schema: DatabaseCollectionSchema = {
+                collection: params.collection,
+                version: readRequiredNumber(input.version, "Schema version"),
+                activate: input.activate === true,
+                document: readSchemaDefinition(input.document),
+                metadata:
+                  input.metadata &&
+                  typeof input.metadata === "object" &&
+                  !Array.isArray(input.metadata)
+                    ? (input.metadata as Record<string, unknown>)
+                    : undefined,
+              };
+
+              return {
+                status: 201,
+                body: await service.schemas.register(schema),
+              };
+            } catch (error) {
+              return errorResponse(400, error);
+            }
+          },
+        },
+        {
+          id: "database.schemas.activate",
+          method: "POST",
+          path: "/:collection/activate",
+          handler: async ({ service, params, body }) => {
+            const input = readBodyObject(body);
+
+            try {
+              return {
+                body: await service.schemas.activate(
+                  params.collection,
+                  readRequiredNumber(input.version, "Schema version"),
+                ),
+              };
+            } catch (error) {
+              return errorResponse(404, error);
+            }
+          },
+        },
+        {
+          id: "database.schemas.validate",
+          method: "POST",
+          path: "/:collection/validate",
+          handler: ({ service, params, body }) => {
+            const input = readBodyObject(body);
+
+            try {
+              return {
+                body: service.schemas.validate({
+                  collection: params.collection,
+                  version:
+                    typeof input.version === "number"
+                      ? input.version
+                      : undefined,
+                  data: readJsonObject(input.data),
+                }),
+              };
+            } catch (error) {
+              return errorResponse(400, error);
+            }
+          },
+        },
+      ],
+    },
+  });
+}
+
+export function createDatabaseTimeSeriesServerService(
+  database: DatabaseApi,
+): ZelavisServerService<DatabaseApi> {
+  return defineServerService({
+    name: "timeseries",
+    basePath: "timeseries",
+    service: database,
+    api: {
+      v1: [
+        {
+          id: "database.timeseries.list",
+          method: "GET",
+          path: "/series",
+          handler: async ({ service }) => ({
+            body: {
+              series: await service.timeseries.list(),
+            },
+          }),
+        },
+        {
+          id: "database.timeseries.range",
+          method: "POST",
+          path: "/:series/range",
+          handler: async ({ service, params, body }) => {
+            const input = readBodyObject(body);
+
+            try {
+              return {
+                body: {
+                  points: await service.timeseries.get(params.series).range({
+                    start: readOptionalTimeSeriesBoundary(input.start, "start"),
+                    end: readOptionalTimeSeriesBoundary(input.end, "end"),
+                    limit: readNumber(input.limit, 100),
+                    order: readTimeSeriesOrder(input.order),
+                  }),
+                },
+              };
+            } catch (error) {
+              return errorResponse(
+                error instanceof TypeError ? 400 : 404,
+                error,
+              );
+            }
+          },
+        },
+        {
+          id: "database.timeseries.aggregate",
+          method: "POST",
+          path: "/:series/aggregate",
+          handler: async ({ service, params, body }) => {
+            const input = readBodyObject(body);
+
+            try {
+              return {
+                body: {
+                  value: await service.timeseries.get(params.series).aggregate({
+                    op: readTimeSeriesAggregateOperation(input.op),
+                    start: readOptionalTimeSeriesBoundary(input.start, "start"),
+                    end: readOptionalTimeSeriesBoundary(input.end, "end"),
+                  }),
+                },
+              };
+            } catch (error) {
+              return errorResponse(
+                error instanceof TypeError ? 400 : 404,
+                error,
+              );
+            }
+          },
+        },
+      ],
+    },
+  });
+}
+
+export function databaseService(
+  database: DatabaseApi,
+): ZelavisServerService<DatabaseApi> {
   return createDatabaseServerService(database);
 }

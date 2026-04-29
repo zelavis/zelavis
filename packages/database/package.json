@@ -1,8 +1,10 @@
 {
   "name": "@zelavis/database",
-  "version": "1.0.0",
-  "private": true,
+  "version": "0.1.0-alpha.1",
+  "private": false,
   "description": "Core database contracts and document primitives for Zelavis services.",
+  "license": "MIT",
+  "author": "Ivan Jeremic",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -20,6 +22,18 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zelavis/zelavis.git",
+    "directory": "packages/database"
+  },
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/packages/database#readme",
+  "bugs": {
+    "url": "https://github.com/zelavis/zelavis/issues"
+  },
   "dependencies": {
     "@zelavis/server": "workspace:*"
   },

@@ -40,6 +40,10 @@ Current packages:
   The high-level runtime package. It composes core services such as auth, database, and dashboard delivery, and re-exports server integrations.
 - [packages/database](packages/database)  
   A document-first, tenant-aware database core with an in-memory driver, optional SQL capability, and a mountable server service.
+- [packages/database/integrations/bun-sqlite](packages/database/integrations/bun-sqlite)  
+  A Bun SQLite integration package for `@zelavis/database` using the built-in `bun:sqlite` module.
+- [packages/database/integrations/node-sqlite](packages/database/integrations/node-sqlite)  
+  A Node.js SQLite integration package for `@zelavis/database` using `better-sqlite3`.
 - [packages/auth](packages/auth)  
   A low-level authentication core for accounts, credentials, sessions, and opt-in auth method plugins.
 - [packages/server](packages/server)  
@@ -85,7 +89,7 @@ const response = await runtime.fetch(
 );
 ```
 
-When a host framework needs fallthrough-aware mounting, use its thin integration instead. For example, h3 apps can use `h3Integration(app)` while still keeping Zelavis at `/zelavis`.
+When a host framework needs fallthrough-aware mounting, use its thin integration instead. For example, h3 apps can use `app.use("/**", h3Integration(runtime))` while still keeping Zelavis at `/zelavis`.
 
 By default, Zelavis owns one safe namespace:
 
@@ -162,10 +166,11 @@ Current architecture includes:
 - Tenant-aware document collections.
 - A document API for create, read, query, update, and delete operations.
 - An in-memory driver for development and tests.
-- An optional SQL capability contract for future SQLite-compatible integrations.
+- An optional SQL capability contract plus a Bun SQLite integration via `@zelavis/database-bun-sqlite`.
+- An optional SQL capability contract plus a Node SQLite integration via `@zelavis/database-node-sqlite`.
 - `databaseService(database)` for mounting database routes through `@zelavis/server`, with documents exposed as a nested service.
 
-The first implementation is intentionally portable and does not depend on `unstorage` or native SQLite bindings. Durable database drivers should be supplied by platform integrations such as future `@zelavis/integration-node`, `@zelavis/integration-cloudflare`, or `@zelavis/integration-turso` packages.
+The core implementation is intentionally portable and does not depend on `unstorage` or native SQLite bindings. Durable database drivers should be supplied by platform integrations such as `@zelavis/database-bun-sqlite`, `@zelavis/database-node-sqlite`, or future `@zelavis/integration-cloudflare` and `@zelavis/integration-turso` packages.
 
 ## Optional domain package: `@zelavis/ecommerce`
 
@@ -208,6 +213,7 @@ pnpm --filter @zelavis/ecommerce build
 
 For a unified recurring billing flow (Stripe + PayPal) through the ecommerce core, see:
 
+- [examples/bun](examples/bun)
 - [examples/nodejs/index.ts](examples/nodejs/index.ts)
 - [examples/cloudflare](examples/cloudflare)
 - [examples/elysia](examples/elysia)
@@ -216,6 +222,7 @@ For a unified recurring billing flow (Stripe + PayPal) through the ecommerce cor
 - [examples/h3](examples/h3)
 - [examples/hono/index.ts](examples/hono/index.ts)
 - [examples/nextjs](examples/nextjs)
+- [examples/nextjs-pages-router](examples/nextjs-pages-router)
 - [examples/web-fetch](examples/web-fetch)
 - [docs/ecommerce-recurring-subscriptions.ts](docs/ecommerce-recurring-subscriptions.ts)
 

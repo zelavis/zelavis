@@ -18,7 +18,8 @@ async function main(): Promise<void> {
     }),
   });
 
-  honoIntegration(zelavisRuntime, app);
+  app.use(honoIntegration(zelavisRuntime));
+
   serve(
     {
       fetch: app.fetch,

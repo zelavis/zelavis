@@ -1,6 +1,9 @@
 {
   "name": "@zelavis/example-web-fetch",
+  "version": "0.1.0-alpha.1",
   "private": true,
+  "author": "Ivan Jeremic",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit"

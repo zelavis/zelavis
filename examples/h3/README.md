@@ -23,4 +23,4 @@ Then open:
 
 ## Key file
 
-- `index.ts` creates an `H3` app, resolves the Zelavis runtime, and mounts it with `h3Integration(runtime, app)`
+- `index.ts` creates an `H3` app, resolves the Zelavis runtime, and mounts it with `app.use("/**", h3Integration(runtime))`

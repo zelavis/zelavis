@@ -1,21 +1,33 @@
 import type {
   DatabaseDriver,
-  DatabaseDocumentDriver,
+  DatabaseEventDriver,
+  DatabaseProjectionDriver,
+  DatabaseSchemaStorageDriver,
 } from "../contracts/driver.js";
 import type {
-  CreateCollectionInput,
   DatabaseCollection,
   DatabaseDocument,
   DatabaseDocumentFilter,
   DatabaseDocumentSort,
-  DeleteDocumentInput,
   FindDocumentByIdInput,
   FindDocumentsInput,
-  InsertDocumentInput,
-  ListCollectionsInput,
-  UpdateDocumentInput,
 } from "../contracts/documents.js";
+import type {
+  DatabaseAppendEventInput,
+  DatabaseCollectionCreatedPayload,
+  DatabaseDocumentDeletedPayload,
+  DatabaseDocumentUpsertedPayload,
+  DatabaseEvent,
+  DatabaseEventPayload,
+  ReadDatabaseEventsInput,
+} from "../contracts/events.js";
+import { DatabaseEventIdempotencyConflictError } from "../contracts/events.js";
 import type { DatabaseJson, DatabaseJsonObject } from "../contracts/json.js";
+import type {
+  DatabaseCollectionSchema,
+  DatabaseObjectSchemaDefinition,
+  DatabaseStoredCollectionSchema,
+} from "../contracts/schemas.js";
 import { defineDatabaseDriver } from "../core/define-database-driver.js";
 
 interface StoredCollection {
@@ -23,15 +35,32 @@ interface StoredCollection {
   documents: Map<string, DatabaseDocument>;
 }
 
-type TenantScoped<TInput extends { tenantId?: string }> = Omit<TInput, "tenantId"> & {
+type TenantScoped<TInput extends { tenantId?: string }> = Omit<
+  TInput,
+  "tenantId"
+> & {
   tenantId: string;
 };
 
-function generateId(): string {
-  return `doc_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+function generateId(prefix: string): string {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return `${prefix}_${globalThis.crypto.randomUUID().replaceAll("-", "")}`;
+  }
+
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function cloneJson<T extends DatabaseJson>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function cloneRecord<T extends Record<string, unknown>>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function cloneSchemaDefinition<T extends DatabaseObjectSchemaDefinition>(
+  value: T,
+): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
@@ -46,12 +75,77 @@ function cloneDocument<TData extends DatabaseJsonObject>(
   };
 }
 
+function cloneCollection(collection: DatabaseCollection): DatabaseCollection {
+  return {
+    ...collection,
+    createdAt: new Date(collection.createdAt),
+    metadata: collection.metadata
+      ? cloneRecord(collection.metadata)
+      : undefined,
+  };
+}
+
+function cloneSchemaRecord(
+  schema: DatabaseStoredCollectionSchema,
+): DatabaseStoredCollectionSchema {
+  return {
+    ...schema,
+    document: cloneSchemaDefinition(schema.document),
+    metadata: schema.metadata ? cloneRecord(schema.metadata) : undefined,
+  };
+}
+
+function cloneEvent<TPayload extends DatabaseEventPayload>(
+  event: DatabaseEvent<TPayload>,
+): DatabaseEvent<TPayload> {
+  return {
+    ...event,
+    payload: JSON.parse(JSON.stringify(event.payload)) as TPayload,
+  };
+}
+
 function collectionKey(tenantId: string, name: string): string {
   return `${tenantId}:${name}`;
 }
 
-function readPath(data: DatabaseJsonObject, path: string): DatabaseJson | undefined {
-  const parts = path.replace(/^\$\.?/, "").split(".").filter(Boolean);
+function documentRevisionKey(
+  tenantId: string,
+  collection: string,
+  documentId?: string,
+): string {
+  return `${tenantId}:${collection}:${documentId ?? ""}`;
+}
+
+function idempotencyKey(tenantId: string, key: string): string {
+  return `${tenantId}:${key}`;
+}
+
+function payloadText(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+function matchesIdempotentAppend<TPayload extends DatabaseEventPayload>(
+  event: DatabaseEvent<TPayload>,
+  input: TenantScoped<DatabaseAppendEventInput<TPayload>>,
+): boolean {
+  return (
+    event.collection === input.collection &&
+    event.documentId === input.documentId &&
+    event.type === input.type &&
+    event.revision - 1 === (input.expectedRevision ?? event.revision - 1) &&
+    event.schemaVersion === (input.schemaVersion ?? 1) &&
+    payloadText(event.payload) === payloadText(input.payload)
+  );
+}
+
+function readPath(
+  data: DatabaseJsonObject,
+  path: string,
+): DatabaseJson | undefined {
+  const parts = path
+    .replace(/^\$\.?/, "")
+    .split(".")
+    .filter(Boolean);
   let current: unknown = data;
 
   for (const part of parts) {
@@ -65,7 +159,10 @@ function readPath(data: DatabaseJsonObject, path: string): DatabaseJson | undefi
   return current as DatabaseJson | undefined;
 }
 
-function compareValues(left: DatabaseJson | undefined, right: DatabaseJson | undefined): number {
+function compareValues(
+  left: DatabaseJson | undefined,
+  right: DatabaseJson | undefined,
+): number {
   if (left === right) {
     return 0;
   }
@@ -87,12 +184,18 @@ function compareValues(left: DatabaseJson | undefined, right: DatabaseJson | und
   return leftText < rightText ? -1 : 1;
 }
 
-function matchesFilter(document: DatabaseDocument, filter: DatabaseDocumentFilter): boolean {
+function matchesFilter(
+  document: DatabaseDocument,
+  filter: DatabaseDocumentFilter,
+): boolean {
   const op = filter.op ?? "eq";
   const actual = readPath(document.data, filter.path);
 
   if (op === "in") {
-    return Array.isArray(filter.value) && filter.value.some((item) => compareValues(actual, item) === 0);
+    return (
+      Array.isArray(filter.value) &&
+      filter.value.some((item) => compareValues(actual, item) === 0)
+    );
   }
 
   if (Array.isArray(filter.value)) {
@@ -122,7 +225,10 @@ function sortDocuments(
   return [...documents].sort((left, right) => {
     for (const order of orderBy) {
       const direction = order.direction ?? "asc";
-      const result = compareValues(readPath(left.data, order.path), readPath(right.data, order.path));
+      const result = compareValues(
+        readPath(left.data, order.path),
+        readPath(right.data, order.path),
+      );
       if (result !== 0) {
         return direction === "asc" ? result : -result;
       }
@@ -134,124 +240,303 @@ function sortDocuments(
 
 export function createInMemoryDatabaseDriver(): DatabaseDriver {
   const collections = new Map<string, StoredCollection>();
+  const revisions = new Map<string, number>();
+  const events: DatabaseEvent[] = [];
+  const eventsByIdempotencyKey = new Map<string, DatabaseEvent>();
+  const schemas = new Map<
+    string,
+    Map<number, DatabaseStoredCollectionSchema>
+  >();
+  let sequence = 0;
 
   function getCollection(tenantId: string, name: string): StoredCollection {
     const collection = collections.get(collectionKey(tenantId, name));
     if (!collection) {
-      throw new Error(`Collection "${name}" does not exist for tenant "${tenantId}".`);
+      throw new Error(
+        `Collection "${name}" does not exist for tenant "${tenantId}".`,
+      );
     }
 
     return collection;
   }
 
-  const documents: DatabaseDocumentDriver = {
-    async createCollection(input) {
-      const key = collectionKey(input.tenantId, input.name);
-      if (collections.has(key)) {
-        throw new Error(`Collection "${input.name}" already exists for tenant "${input.tenantId}".`);
-      }
+  function applyCollectionCreated(
+    event: DatabaseEvent<DatabaseCollectionCreatedPayload>,
+  ): void {
+    const key = collectionKey(event.tenantId, event.collection);
+    if (collections.has(key)) {
+      throw new Error(
+        `Collection "${event.collection}" already exists for tenant "${event.tenantId}".`,
+      );
+    }
 
-      const meta: DatabaseCollection = {
-        name: input.name,
-        tenantId: input.tenantId,
-        createdAt: new Date(),
+    collections.set(key, {
+      meta: {
+        name: event.collection,
+        tenantId: event.tenantId,
+        createdAt: new Date(event.timestamp),
         documentCount: 0,
-        metadata: input.metadata,
-      };
+        metadata: event.payload.metadata
+          ? cloneRecord(event.payload.metadata)
+          : undefined,
+      },
+      documents: new Map(),
+    });
+  }
 
-      collections.set(key, {
-        meta,
-        documents: new Map(),
-      });
+  function applyDocumentUpserted(
+    event: DatabaseEvent<DatabaseDocumentUpsertedPayload>,
+  ): void {
+    const collection = getCollection(event.tenantId, event.collection);
+    const documentId = event.documentId;
 
-      return { ...meta, createdAt: new Date(meta.createdAt) };
+    if (!documentId) {
+      throw new Error("A document.upserted event requires a document ID.");
+    }
+
+    const current = collection.documents.get(documentId);
+    const next: DatabaseDocument = current
+      ? {
+          ...current,
+          data: cloneJson(event.payload.data),
+          updatedAt: new Date(event.timestamp),
+          version: event.revision,
+          schemaVersion: event.schemaVersion,
+        }
+      : {
+          id: documentId,
+          tenantId: event.tenantId,
+          collection: event.collection,
+          data: cloneJson(event.payload.data),
+          createdAt: new Date(event.timestamp),
+          updatedAt: new Date(event.timestamp),
+          version: event.revision,
+          schemaVersion: event.schemaVersion,
+        };
+
+    collection.documents.set(documentId, next);
+    collection.meta.documentCount = collection.documents.size;
+  }
+
+  function applyDocumentDeleted(
+    event: DatabaseEvent<DatabaseDocumentDeletedPayload>,
+  ): void {
+    const documentId = event.documentId;
+    if (!documentId) {
+      throw new Error("A document.deleted event requires a document ID.");
+    }
+
+    const collection = getCollection(event.tenantId, event.collection);
+    collection.documents.delete(documentId);
+    collection.meta.documentCount = collection.documents.size;
+  }
+
+  function applyEvent(event: DatabaseEvent): void {
+    if (event.type === "collection.created") {
+      applyCollectionCreated(
+        event as DatabaseEvent<DatabaseCollectionCreatedPayload>,
+      );
+      return;
+    }
+
+    if (event.type === "document.upserted") {
+      applyDocumentUpserted(
+        event as DatabaseEvent<DatabaseDocumentUpsertedPayload>,
+      );
+      return;
+    }
+
+    applyDocumentDeleted(
+      event as DatabaseEvent<DatabaseDocumentDeletedPayload>,
+    );
+  }
+
+  const projections: DatabaseProjectionDriver = {
+    async getCollection(input) {
+      const collection = collections.get(
+        collectionKey(input.tenantId, input.name),
+      );
+      return collection ? cloneCollection(collection.meta) : null;
     },
 
     async listCollections(input) {
       return [...collections.values()]
         .filter((collection) => collection.meta.tenantId === input.tenantId)
-        .map((collection) => ({
-          ...collection.meta,
-          createdAt: new Date(collection.meta.createdAt),
-        }));
+        .map((collection) => cloneCollection(collection.meta));
     },
 
     async collectionExists(input) {
       return collections.has(collectionKey(input.tenantId, input.name));
     },
 
-    async insertDocument<TData extends DatabaseJsonObject>(
-      input: TenantScoped<InsertDocumentInput<TData>>,
-    ) {
-      const collection = getCollection(input.tenantId, input.collection);
-      const id = input.id || generateId();
-      if (collection.documents.has(id)) {
-        throw new Error(`Document "${id}" already exists in collection "${input.collection}".`);
-      }
-
-      const now = new Date();
-      const document: DatabaseDocument<TData> = {
-        id,
-        tenantId: input.tenantId,
-        collection: input.collection,
-        data: cloneJson(input.data),
-        createdAt: now,
-        updatedAt: now,
-        version: 1,
-      };
-
-      collection.documents.set(id, document);
-      collection.meta.documentCount = collection.documents.size;
-      return cloneDocument(document);
-    },
-
-    async findDocumentById(input) {
+    async findDocumentById(input: TenantScoped<FindDocumentByIdInput>) {
       const collection = getCollection(input.tenantId, input.collection);
       const document = collection.documents.get(input.id);
       return document ? cloneDocument(document) : null;
     },
 
-    async findDocuments(input) {
+    async findDocuments(
+      input: TenantScoped<FindDocumentsInput> & {
+        where: NonNullable<FindDocumentsInput["where"]>;
+        orderBy: NonNullable<FindDocumentsInput["orderBy"]>;
+        limit: number;
+        offset: number;
+      },
+    ) {
       const collection = getCollection(input.tenantId, input.collection);
       const filtered = [...collection.documents.values()].filter((document) =>
         input.where.every((filter) => matchesFilter(document, filter)),
       );
       const sorted = sortDocuments(filtered, input.orderBy);
-      return sorted.slice(input.offset, input.offset + input.limit).map((document) => cloneDocument(document));
+      return sorted
+        .slice(input.offset, input.offset + input.limit)
+        .map((document) => cloneDocument(document));
     },
+  };
 
-    async updateDocument<TData extends DatabaseJsonObject>(
-      input: TenantScoped<UpdateDocumentInput<TData>> & { mode: "merge" | "replace" },
+  const eventDriver: DatabaseEventDriver = {
+    async append<TPayload extends DatabaseEventPayload>(
+      input: TenantScoped<DatabaseAppendEventInput<TPayload>>,
     ) {
-      const collection = getCollection(input.tenantId, input.collection);
-      const current = collection.documents.get(input.id);
-      if (!current) {
-        throw new Error(`Document "${input.id}" does not exist in collection "${input.collection}".`);
+      if (input.idempotencyKey) {
+        const existing = eventsByIdempotencyKey.get(
+          idempotencyKey(input.tenantId, input.idempotencyKey),
+        ) as DatabaseEvent<TPayload> | undefined;
+
+        if (existing) {
+          if (matchesIdempotentAppend(existing, input)) {
+            return cloneEvent(existing);
+          }
+
+          throw new DatabaseEventIdempotencyConflictError({
+            tenantId: input.tenantId,
+            idempotencyKey: input.idempotencyKey,
+            eventId: existing.eventId,
+          });
+        }
       }
 
-      const nextData =
-        input.mode === "replace"
-          ? cloneJson(input.data as TData)
-          : {
-              ...cloneJson(current.data),
-              ...cloneJson(input.data as DatabaseJsonObject),
-            };
-      const next: DatabaseDocument<TData> = {
-        ...(current as DatabaseDocument<TData>),
-        data: nextData as TData,
-        updatedAt: new Date(),
-        version: current.version + 1,
+      const revisionKey = documentRevisionKey(
+        input.tenantId,
+        input.collection,
+        input.documentId,
+      );
+      const currentRevision = revisions.get(revisionKey) ?? 0;
+      const expectedRevision = input.expectedRevision ?? currentRevision;
+
+      if (input.type === "collection.created" && currentRevision > 0) {
+        throw new Error(
+          `Collection "${input.collection}" already exists for tenant "${input.tenantId}".`,
+        );
+      }
+
+      if (
+        input.type === "document.upserted" &&
+        expectedRevision === 0 &&
+        currentRevision > 0
+      ) {
+        throw new Error(
+          `Document "${input.documentId ?? ""}" already exists in collection "${input.collection}".`,
+        );
+      }
+
+      if (expectedRevision !== currentRevision) {
+        throw new Error(
+          `Revision mismatch for stream "${revisionKey}". Expected ${expectedRevision}, found ${currentRevision}.`,
+        );
+      }
+
+      const event: DatabaseEvent<TPayload> = {
+        sequence: ++sequence,
+        eventId: generateId("evt"),
+        idempotencyKey: input.idempotencyKey,
+        nodeId: input.nodeId ?? "local",
+        tenantId: input.tenantId,
+        collection: input.collection,
+        documentId: input.documentId,
+        type: input.type,
+        revision: currentRevision + 1,
+        timestamp: new Date().toISOString(),
+        schemaVersion: input.schemaVersion ?? 1,
+        payload: JSON.parse(JSON.stringify(input.payload)) as TPayload,
       };
 
-      collection.documents.set(input.id, next);
-      return cloneDocument(next);
+      applyEvent(event);
+      revisions.set(revisionKey, event.revision);
+      events.push(event);
+
+      if (input.idempotencyKey) {
+        eventsByIdempotencyKey.set(
+          idempotencyKey(input.tenantId, input.idempotencyKey),
+          event,
+        );
+      }
+
+      return cloneEvent(event);
     },
 
-    async deleteDocument(input) {
-      const collection = getCollection(input.tenantId, input.collection);
-      const deleted = collection.documents.delete(input.id);
-      collection.meta.documentCount = collection.documents.size;
-      return deleted;
+    async read(input: TenantScoped<ReadDatabaseEventsInput>) {
+      const afterSequence = input.afterSequence ?? 0;
+      const limit = input.limit ?? 100;
+
+      return events
+        .filter((event) => event.tenantId === input.tenantId)
+        .filter(
+          (event) => !input.collection || event.collection === input.collection,
+        )
+        .filter(
+          (event) => !input.documentId || event.documentId === input.documentId,
+        )
+        .filter((event) => event.sequence > afterSequence)
+        .slice(0, limit)
+        .map((event) => cloneEvent(event));
+    },
+  };
+
+  const schemaDriver: DatabaseSchemaStorageDriver = {
+    async list() {
+      return [...schemas.values()]
+        .flatMap((versions) => [...versions.values()])
+        .sort((left, right) => {
+          const collectionOrder = left.collection.localeCompare(
+            right.collection,
+          );
+          return collectionOrder !== 0
+            ? collectionOrder
+            : left.version - right.version;
+        })
+        .map((schema) => cloneSchemaRecord(schema));
+    },
+
+    async save(schema: DatabaseCollectionSchema) {
+      const versions =
+        schemas.get(schema.collection) ??
+        new Map<number, DatabaseStoredCollectionSchema>();
+      const existing = versions.get(schema.version);
+      versions.set(schema.version, {
+        collection: schema.collection,
+        version: schema.version,
+        document: cloneSchemaDefinition(schema.document),
+        metadata: schema.metadata ? cloneRecord(schema.metadata) : undefined,
+        active: existing?.active ?? false,
+      });
+      schemas.set(schema.collection, versions);
+    },
+
+    async activate(collection: string, version: number) {
+      const versions = schemas.get(collection);
+      const schema = versions?.get(version);
+      if (!versions || !schema) {
+        throw new Error(
+          `Schema version ${version} for collection "${collection}" is not registered.`,
+        );
+      }
+
+      for (const record of versions.values()) {
+        record.active = false;
+      }
+
+      schema.active = true;
     },
   };
 
@@ -259,10 +544,13 @@ export function createInMemoryDatabaseDriver(): DatabaseDriver {
     name: "in-memory",
     capabilities: {
       documents: true,
+      events: true,
       sql: false,
       transactions: false,
       tenantRouting: true,
     },
-    documents,
+    events: eventDriver,
+    projections,
+    schemas: schemaDriver,
   });
 }

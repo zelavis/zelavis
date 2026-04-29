@@ -10,7 +10,9 @@ export interface DatabaseCollection {
   metadata?: Record<string, unknown>;
 }
 
-export interface DatabaseDocument<TData extends DatabaseJsonObject = DatabaseJsonObject> {
+export interface DatabaseDocument<
+  TData extends DatabaseJsonObject = DatabaseJsonObject,
+> {
   id: string;
   tenantId: DatabaseTenantId;
   collection: string;
@@ -18,6 +20,7 @@ export interface DatabaseDocument<TData extends DatabaseJsonObject = DatabaseJso
   createdAt: Date;
   updatedAt: Date;
   version: number;
+  schemaVersion: number;
 }
 
 export interface CreateCollectionInput {
@@ -30,7 +33,9 @@ export interface ListCollectionsInput {
   tenantId?: DatabaseTenantId;
 }
 
-export interface InsertDocumentInput<TData extends DatabaseJsonObject = DatabaseJsonObject> {
+export interface InsertDocumentInput<
+  TData extends DatabaseJsonObject = DatabaseJsonObject,
+> {
   tenantId?: DatabaseTenantId;
   collection: string;
   id?: string;
@@ -43,7 +48,14 @@ export interface FindDocumentByIdInput {
   id: string;
 }
 
-export type DatabaseFilterOperator = "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "in";
+export type DatabaseFilterOperator =
+  | "eq"
+  | "ne"
+  | "gt"
+  | "gte"
+  | "lt"
+  | "lte"
+  | "in";
 
 export interface DatabaseDocumentFilter {
   path: string;
@@ -65,7 +77,9 @@ export interface FindDocumentsInput {
   offset?: number;
 }
 
-export interface UpdateDocumentInput<TData extends DatabaseJsonObject = DatabaseJsonObject> {
+export interface UpdateDocumentInput<
+  TData extends DatabaseJsonObject = DatabaseJsonObject,
+> {
   tenantId?: DatabaseTenantId;
   collection: string;
   id: string;

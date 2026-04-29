@@ -29,10 +29,8 @@ function close(server) {
 
 test("expressIntegration preserves binary bodies, repeated headers, and HEAD fallback", async () => {
   const app = express();
-  const router = express.Router();
 
   app.use(express.json());
-  app.use(router);
 
   const runtime = await zelavisServer({
     services: [
@@ -71,7 +69,7 @@ test("expressIntegration preserves binary bodies, repeated headers, and HEAD fal
     ],
   });
 
-  expressIntegration(runtime, router);
+  app.use(expressIntegration(runtime));
 
   const server = app.listen(0, "127.0.0.1");
   const baseUrl = await new Promise((resolve) => {

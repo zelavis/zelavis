@@ -68,10 +68,12 @@ pnpm run ui:dev
 
 That starts:
 
-- the Zelavis runtime on `http://127.0.0.1:3000`
-- the UI dev server on `http://127.0.0.1:3001`
+- the Zelavis runtime, preferring `http://127.0.0.1:3000`
+- the UI dev server, preferring `http://127.0.0.1:3001`
 
 In this mode, requests to `/zelavis` are redirected to the live UI dev server.
+If either preferred port is already in use, the script automatically selects the
+next available local port.
 
 ### Other useful commands
 
@@ -113,6 +115,16 @@ When public behavior changes:
 
 Run the smallest useful validation for the area you changed.
 
+## Release workflow
+
+Publishable packages use Changesets-based release management.
+
+- release guide: [docs/releasing.md](docs/releasing.md)
+- create a release note: `pnpm changeset`
+- prepare versions: `pnpm release:version`
+- publish alpha builds: `pnpm release:publish:alpha`
+- publish stable builds later: `pnpm release:publish:latest`
+
 Examples:
 
 - UI-only change: run UI build and tests
@@ -139,3 +151,15 @@ A good contribution usually includes:
 - validation notes or test coverage
 
 If you introduce a new abstraction, explain why the existing patterns were not enough.
+
+## Architectural constraint: runtime neutrality
+
+Zelavis core is intentionally built on JavaScript and standard Web APIs only.
+
+Contributors should not:
+
+- introduce Node-only assumptions into core
+- couple core APIs to framework objects
+- build core features around cloud/provider SDKs
+
+Use integration packages for host-specific behavior instead.

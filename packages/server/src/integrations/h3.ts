@@ -3,9 +3,8 @@ import type { ZelavisServerRuntime } from "../contracts.js";
 
 export function h3Integration<TService = unknown>(
   runtime: Pick<ZelavisServerRuntime<TService>, "dispatch">,
-  app: H3,
-): H3 {
-  app.use(async (event: H3Event, next) => {
+): Parameters<H3["use"]>[0] {
+  return async (event: H3Event, next) => {
     const result = await runtime.dispatch(event.req, {
       platform: {
         h3: event,
@@ -17,7 +16,5 @@ export function h3Integration<TService = unknown>(
     }
 
     return result.response;
-  });
-
-  return app;
+  };
 }

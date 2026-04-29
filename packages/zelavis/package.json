@@ -1,8 +1,10 @@
 {
   "name": "zelavis",
-  "version": "1.0.0",
-  "private": true,
+  "version": "0.1.0-alpha.1",
+  "private": false,
   "description": "Composable Zelavis runtime with core services included by default.",
+  "license": "MIT",
+  "author": "Ivan Jeremic",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -31,6 +33,10 @@
       "types": "./dist/integrations/h3.d.ts",
       "import": "./dist/integrations/h3.js"
     },
+    "./integrations/nextjs-pages-router": {
+      "types": "./dist/integrations/nextjs-pages-router.d.ts",
+      "import": "./dist/integrations/nextjs-pages-router.js"
+    },
     "./integrations/node": {
       "types": "./dist/integrations/node.d.ts",
       "import": "./dist/integrations/node.js"
@@ -45,13 +51,24 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zelavis/zelavis.git",
+    "directory": "packages/zelavis"
+  },
+  "homepage": "https://www.zelavis.com",
+  "bugs": {
+    "url": "https://github.com/zelavis/zelavis/issues"
+  },
   "dependencies": {
     "@zelavis/auth": "workspace:*",
     "@zelavis/database": "workspace:*",
     "@zelavis/server": "workspace:*"
   },
   "devDependencies": {
-    "@zelavis/ui": "workspace:*",
     "typescript": "^5.9.0"
   },
   "keywords": [

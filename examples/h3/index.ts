@@ -15,7 +15,7 @@ async function main(): Promise<void> {
     }),
   });
 
-  h3Integration(zelavisRuntime, app);
+  app.use("/**", h3Integration(zelavisRuntime));
 
   serve(app, {
     port,

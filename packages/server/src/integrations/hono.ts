@@ -1,11 +1,11 @@
-import type { Context, Hono } from "hono";
+import type { MiddlewareHandler } from "hono";
+import { createMiddleware } from "hono/factory";
 import type { ZelavisServerRuntime } from "../contracts.js";
 
 export function honoIntegration<TService = unknown>(
   runtime: Pick<ZelavisServerRuntime<TService>, "dispatch">,
-  app: Hono,
-): Hono {
-  app.use("*", async (context: Context, next) => {
+): MiddlewareHandler {
+  return createMiddleware(async (context, next) => {
     const result = await runtime.dispatch(context.req.raw, {
       platform: {
         hono: context,
@@ -18,6 +18,4 @@ export function honoIntegration<TService = unknown>(
 
     return result.response;
   });
-
-  return app;
 }

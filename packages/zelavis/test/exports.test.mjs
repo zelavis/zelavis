@@ -9,6 +9,8 @@ test("zelavis package exports runtime APIs and integration subpaths", async () =
   const fastifyIntegration = await import("zelavis/integrations/fastify");
   const honoIntegration = await import("zelavis/integrations/hono");
   const h3Integration = await import("zelavis/integrations/h3");
+  const nextjsPagesRouterIntegration =
+    await import("zelavis/integrations/nextjs-pages-router");
 
   assert.equal(typeof runtime.zelavis, "function");
   assert.equal(typeof elysiaIntegration.elysiaIntegration, "function");
@@ -21,4 +23,8 @@ test("zelavis package exports runtime APIs and integration subpaths", async () =
   assert.equal(typeof fastifyIntegration.fastifyIntegration, "function");
   assert.equal(typeof honoIntegration.honoIntegration, "function");
   assert.equal(typeof h3Integration.h3Integration, "function");
+  assert.equal(
+    typeof nextjsPagesRouterIntegration.nextjsPagesRouterIntegration,
+    "function",
+  );
 });

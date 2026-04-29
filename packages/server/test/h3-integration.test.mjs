@@ -33,7 +33,7 @@ test("h3Integration preserves full external paths and falls through for host rou
     prefix: "/zelavis",
   });
 
-  h3Integration(runtime, app);
+  app.use("/**", h3Integration(runtime));
 
   const hostResponse = await app.request("http://localhost/hello");
   assert.equal(hostResponse.status, 200);
