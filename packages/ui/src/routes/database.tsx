@@ -4,8 +4,6 @@ import { useMemo, useState } from "react";
 import { Activity, Braces, Database, Table2 } from "lucide-react";
 
 import {
-  type DatabaseTimeSeriesAggregateOperation,
-  type DatabaseTimeSeriesSummary,
   DataRow,
   PageHeader,
   ResourceNotice,
@@ -15,6 +13,8 @@ import {
 import { Badge } from "#/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import {
+  type DatabaseTimeSeriesAggregateOperation,
+  type DatabaseTimeSeriesSummary,
   type DatabaseStoredCollectionSchema,
   type DatabaseTimeSeriesPoint,
   activateDatabaseSchemaVersion,
