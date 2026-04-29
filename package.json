@@ -23,7 +23,7 @@
     "example:web-fetch": "pnpm --filter @zelavis/example-web-fetch typecheck",
     "release:check": "pnpm typecheck && pnpm test && pnpm build",
     "release:status": "changeset status --verbose",
-    "release:version": "changeset version && pnpm install --no-frozen-lockfile",
+    "release:version": "node scripts/release-version.mjs stable",
     "release:version:alpha": "node scripts/release-version.mjs alpha",
     "release:pre:exit": "changeset pre exit",
     "release:publish:alpha": "node scripts/release-publish.mjs alpha",
