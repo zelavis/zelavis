@@ -1,5 +1,11 @@
 # @zelavis/auth-email-password
 
+## 1.0.1-alpha.2
+
+### Patch Changes
+
+- @zelavis/auth@1.0.1-alpha.2
+
 ## 1.0.1-alpha.1
 
 ### Patch Changes

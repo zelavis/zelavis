@@ -222,6 +222,9 @@ function TimeSeriesChart({
 function DatabaseRoute() {
   const [selectedCollection, setSelectedCollection] = useState<string>();
   const [selectedSeriesName, setSelectedSeriesName] = useState<string>();
+  const [contentTab, setContentTab] = useState<"documents" | "schema">(
+    "documents",
+  );
   const [collectionName, setCollectionName] = useState("");
   const [documentId, setDocumentId] = useState("");
   const [documentJson, setDocumentJson] = useState(
@@ -644,102 +647,245 @@ function DatabaseRoute() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center justify-between gap-3">
-              <span>{selected ?? "Documents"}</span>
-              {selected ? <Badge variant="outline">limit 25</Badge> : null}
+              <span>
+                {contentTab === "documents"
+                  ? (selected ?? "Documents")
+                  : selected
+                    ? `${selected} schema builder`
+                    : "Schema builder"}
+              </span>
+              <div className="flex items-center gap-2">
+                {contentTab === "documents" && selected ? (
+                  <Badge variant="outline">limit 25</Badge>
+                ) : null}
+                {contentTab === "schema" && selected ? (
+                  <Badge variant="outline">
+                    {activeSchemaSummary?.activeVersion
+                      ? `active v${activeSchemaSummary.activeVersion}`
+                      : "no active schema"}
+                  </Badge>
+                ) : null}
+              </div>
             </CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4 p-4">
-            <form
-              className="grid gap-3"
-              onSubmit={
-                editingDocument ? handleUpdateDocument : handleInsertDocument
-              }
-            >
-              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                <input
-                  value={documentId}
-                  onChange={(event) => setDocumentId(event.target.value)}
-                  placeholder="optional document id"
-                  className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm"
-                  disabled={!selected || Boolean(editingDocument)}
-                />
-                <Button
-                  type="submit"
-                  size="sm"
-                  disabled={!config || !selected || saving}
-                >
-                  {editingDocument ? "Update" : "Insert"}
-                </Button>
-              </div>
-              <textarea
-                value={documentJson}
-                onChange={(event) => setDocumentJson(event.target.value)}
-                className="min-h-28 resize-y rounded-md border bg-background px-3 py-2 font-mono text-sm"
-                spellCheck={false}
-                disabled={!selected}
-              />
-              {editingDocument ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setEditingDocumentId(undefined);
-                    setDocumentId("");
-                    setDocumentJson('{\n  "name": "Draft item"\n}');
-                  }}
-                >
-                  Cancel Edit
-                </Button>
-              ) : null}
-            </form>
-
-            <div className="overflow-hidden rounded-md border">
-              {documentRows.map((document) => (
-                <DataRow
-                  key={document.id}
-                  label={document.id}
-                  detail={JSON.stringify(document.data)}
-                  meta={
-                    <div className="flex items-center gap-2">
-                      <Badge variant="secondary">v{document.version}</Badge>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleEditDocument(document.id)}
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => void handleDeleteDocument(document.id)}
-                      >
-                        Delete
-                      </Button>
-                    </div>
-                  }
-                />
-              ))}
-              {documentRows.length === 0 ? (
-                <div className="p-4">
-                  <ResourceNotice
-                    title={
-                      documents.loading && selected
-                        ? "Loading documents"
-                        : "No documents selected"
-                    }
-                    description={
-                      selected
-                        ? "This collection is empty or the query endpoint returned no documents."
-                        : "Select a collection to query documents."
-                    }
-                  />
-                </div>
-              ) : null}
+            <div className="inline-flex w-full rounded-md border bg-muted/30 p-1">
+              <button
+                type="button"
+                onClick={() => setContentTab("documents")}
+                className={`flex-1 rounded-sm px-3 py-2 text-sm font-medium transition-colors ${
+                  contentTab === "documents"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                aria-pressed={contentTab === "documents"}
+              >
+                Documents
+              </button>
+              <button
+                type="button"
+                onClick={() => setContentTab("schema")}
+                className={`flex-1 rounded-sm px-3 py-2 text-sm font-medium transition-colors ${
+                  contentTab === "schema"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                aria-pressed={contentTab === "schema"}
+              >
+                Schema Builder
+              </button>
             </div>
+
+            {contentTab === "documents" ? (
+              <>
+                <form
+                  className="grid gap-3"
+                  onSubmit={
+                    editingDocument
+                      ? handleUpdateDocument
+                      : handleInsertDocument
+                  }
+                >
+                  <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                    <input
+                      value={documentId}
+                      onChange={(event) => setDocumentId(event.target.value)}
+                      placeholder="optional document id"
+                      className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm"
+                      disabled={!selected || Boolean(editingDocument)}
+                    />
+                    <Button
+                      type="submit"
+                      size="sm"
+                      disabled={!config || !selected || saving}
+                    >
+                      {editingDocument ? "Update" : "Insert"}
+                    </Button>
+                  </div>
+                  <textarea
+                    value={documentJson}
+                    onChange={(event) => setDocumentJson(event.target.value)}
+                    className="min-h-28 resize-y rounded-md border bg-background px-3 py-2 font-mono text-sm"
+                    spellCheck={false}
+                    disabled={!selected}
+                  />
+                  {editingDocument ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setEditingDocumentId(undefined);
+                        setDocumentId("");
+                        setDocumentJson('{\n  "name": "Draft item"\n}');
+                      }}
+                    >
+                      Cancel Edit
+                    </Button>
+                  ) : null}
+                </form>
+
+                <div className="overflow-hidden rounded-md border">
+                  {documentRows.map((document) => (
+                    <DataRow
+                      key={document.id}
+                      label={document.id}
+                      detail={JSON.stringify(document.data)}
+                      meta={
+                        <div className="flex items-center gap-2">
+                          <Badge variant="secondary">v{document.version}</Badge>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleEditDocument(document.id)}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              void handleDeleteDocument(document.id)
+                            }
+                          >
+                            Delete
+                          </Button>
+                        </div>
+                      }
+                    />
+                  ))}
+                  {documentRows.length === 0 ? (
+                    <div className="p-4">
+                      <ResourceNotice
+                        title={
+                          documents.loading && selected
+                            ? "Loading documents"
+                            : "No documents selected"
+                        }
+                        description={
+                          selected
+                            ? "This collection is empty or the query endpoint returned no documents."
+                            : "Select a collection to query documents."
+                        }
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              </>
+            ) : (
+              <>
+                <form className="grid gap-3" onSubmit={handleCreateSchema}>
+                  <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                    <input
+                      value={schemaVersion}
+                      onChange={(event) => setSchemaVersion(event.target.value)}
+                      inputMode="numeric"
+                      placeholder="schema version"
+                      className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm"
+                      disabled={!selected}
+                    />
+                    <Button
+                      type="submit"
+                      size="sm"
+                      disabled={
+                        !config ||
+                        !selected ||
+                        saving ||
+                        !Number.isInteger(Number(schemaVersion))
+                      }
+                    >
+                      Register
+                    </Button>
+                  </div>
+                  <textarea
+                    value={schemaJson}
+                    onChange={(event) => setSchemaJson(event.target.value)}
+                    className="min-h-40 resize-y rounded-md border bg-background px-3 py-2 font-mono text-sm"
+                    spellCheck={false}
+                    disabled={!selected}
+                  />
+                </form>
+
+                <div className="grid gap-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="text-sm font-semibold">
+                      {selected
+                        ? `${selected} schema versions`
+                        : "Schema versions"}
+                    </h3>
+                    {selected ? (
+                      <Badge variant="secondary">
+                        {schemaVersionRows.length} versions
+                      </Badge>
+                    ) : null}
+                  </div>
+
+                  <div className="overflow-hidden rounded-md border">
+                    {schemaVersionRows.map((schema) => (
+                      <DataRow
+                        key={`${schema.collection}:${schema.version}`}
+                        label={`v${schema.version}`}
+                        detail={JSON.stringify(schema.document)}
+                        meta={
+                          <div className="flex items-center gap-2">
+                            <Badge
+                              variant={schema.active ? "default" : "secondary"}
+                            >
+                              {schema.active ? "active" : "inactive"}
+                            </Badge>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={schema.active}
+                              onClick={() => void handleActivateSchema(schema)}
+                            >
+                              Activate
+                            </Button>
+                          </div>
+                        }
+                      />
+                    ))}
+                    {schemaVersionRows.length === 0 ? (
+                      <div className="p-4">
+                        <ResourceNotice
+                          title={
+                            selected ? "No schemas yet" : "Select a collection"
+                          }
+                          description={
+                            selected
+                              ? "Register a collection schema to enforce write-time validation and track active versions."
+                              : "Choose a collection to view and manage schema versions."
+                          }
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
       </section>
@@ -981,103 +1127,6 @@ function DatabaseRoute() {
                 description="Choose a registered time-series definition to inspect recent samples and aggregates."
               />
             )}
-          </CardContent>
-        </Card>
-      </section>
-
-      <section className="grid gap-4 lg:grid-cols-[minmax(320px,0.5fr)_minmax(0,1fr)]">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between gap-3">
-              <span>Schema registry</span>
-              {selected ? (
-                <Badge variant="outline">
-                  {activeSchemaSummary?.activeVersion
-                    ? `active v${activeSchemaSummary.activeVersion}`
-                    : "no active schema"}
-                </Badge>
-              ) : null}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4 p-4">
-            <form className="grid gap-3" onSubmit={handleCreateSchema}>
-              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                <input
-                  value={schemaVersion}
-                  onChange={(event) => setSchemaVersion(event.target.value)}
-                  inputMode="numeric"
-                  placeholder="schema version"
-                  className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm"
-                  disabled={!selected}
-                />
-                <Button
-                  type="submit"
-                  size="sm"
-                  disabled={
-                    !config ||
-                    !selected ||
-                    saving ||
-                    !Number.isInteger(Number(schemaVersion))
-                  }
-                >
-                  Register
-                </Button>
-              </div>
-              <textarea
-                value={schemaJson}
-                onChange={(event) => setSchemaJson(event.target.value)}
-                className="min-h-40 resize-y rounded-md border bg-background px-3 py-2 font-mono text-sm"
-                spellCheck={false}
-                disabled={!selected}
-              />
-            </form>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>
-              {selected ? `${selected} schema versions` : "Schema versions"}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4 p-4">
-            <div className="overflow-hidden rounded-md border">
-              {schemaVersionRows.map((schema) => (
-                <DataRow
-                  key={`${schema.collection}:${schema.version}`}
-                  label={`v${schema.version}`}
-                  detail={JSON.stringify(schema.document)}
-                  meta={
-                    <div className="flex items-center gap-2">
-                      <Badge variant={schema.active ? "default" : "secondary"}>
-                        {schema.active ? "active" : "inactive"}
-                      </Badge>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={schema.active}
-                        onClick={() => void handleActivateSchema(schema)}
-                      >
-                        Activate
-                      </Button>
-                    </div>
-                  }
-                />
-              ))}
-              {schemaVersionRows.length === 0 ? (
-                <div className="p-4">
-                  <ResourceNotice
-                    title={selected ? "No schemas yet" : "Select a collection"}
-                    description={
-                      selected
-                        ? "Register a collection schema to enforce write-time validation and track active versions."
-                        : "Choose a collection to view and manage schema versions."
-                    }
-                  />
-                </div>
-              ) : null}
-            </div>
           </CardContent>
         </Card>
       </section>

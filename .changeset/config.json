@@ -19,6 +19,7 @@
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
   "ignore": [
+    "@zelavis/ui",
     "@zelavis/example-bun",
     "@zelavis/example-cloudflare",
     "@zelavis/example-elysia",

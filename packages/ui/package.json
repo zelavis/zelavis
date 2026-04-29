@@ -1,13 +1,10 @@
 {
   "name": "@zelavis/ui",
-  "version": "0.1.0-alpha.1",
-  "private": false,
+  "version": "0.1.0-alpha.2",
+  "private": true,
   "author": "Ivan Jeremic",
   "license": "MIT",
   "type": "module",
-  "publishConfig": {
-    "access": "public"
-  },
   "repository": {
     "type": "git",
     "url": "https://github.com/zelavis/zelavis.git",

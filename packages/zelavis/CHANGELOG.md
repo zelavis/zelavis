@@ -1,5 +1,14 @@
 # zelavis
 
+## 1.0.1-alpha.2
+
+### Patch Changes
+
+- Add a tabbed schema builder to the database dashboard.
+  - @zelavis/server@1.0.1-alpha.2
+  - @zelavis/database@1.0.1-alpha.2
+  - @zelavis/auth@1.0.1-alpha.2
+
 ## 1.0.1-alpha.1
 
 ### Patch Changes

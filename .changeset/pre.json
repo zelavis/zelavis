@@ -20,6 +20,7 @@
     "zelavis": "1.0.0"
   },
   "changesets": [
+    "add-a-tabbed-schema-builder-to-the-datab-c8217a03",
     "core-prerelease-refresh-1f2a6c4b",
     "release-cleanup-state-6f3c2d91"
   ]

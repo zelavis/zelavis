@@ -1,6 +1,6 @@
 {
   "name": "@zelavis/server",
-  "version": "1.0.1-alpha.1",
+  "version": "1.0.1-alpha.2",
   "private": false,
   "description": "Unified endpoint contract and framework adapters for zelavis server packages.",
   "license": "MIT",
