@@ -1,6 +1,6 @@
 {
   "name": "@zelavis/auth-email-password",
-  "version": "0.1.0-alpha.1",
+  "version": "1.0.1-alpha.1",
   "private": false,
   "description": "Email/password plugin for @zelavis/auth.",
   "license": "MIT",

@@ -1,6 +1,6 @@
 {
   "name": "@zelavis/auth-username-password",
-  "version": "0.1.0-alpha.1",
+  "version": "1.0.1-alpha.1",
   "private": false,
   "description": "Username/password plugin for @zelavis/auth.",
   "license": "MIT",

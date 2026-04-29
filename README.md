@@ -77,6 +77,10 @@ const runtime = await zelavis();
 const server = nodeIntegration(runtime);
 ```
 
+Maintainers publishing packages should use [docs/releasing.md](docs/releasing.md).
+If you use `NPM_TOKEN`, set it in your local shell or CI secret store. Do not
+commit tokens to this repository.
+
 Zelavis can also run directly as a Web-style handler when an adapter is unnecessary:
 
 ```ts
@@ -249,3 +253,7 @@ Near-term areas:
 ## Contributing
 
 Contributors and coding agents should follow the guidance in [AGENTS.md](AGENTS.md).
+
+Maintainers publishing packages should use [docs/releasing.md](docs/releasing.md).
+If you use `NPM_TOKEN`, set it in your local shell or CI secret store. Do not
+commit tokens to this repository.

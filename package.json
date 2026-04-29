@@ -9,6 +9,7 @@
     "build": "pnpm -r --filter './packages/*' --filter './packages/*/integrations/*' --filter './packages/*/plugins/*' --if-present build",
     "check": "pnpm run typecheck",
     "changeset": "changeset",
+    "changeset:add": "node scripts/create-changeset.mjs",
     "example:cloudflare": "pnpm --filter @zelavis/example-cloudflare dev",
     "example:bun": "pnpm --filter @zelavis/example-bun dev",
     "example:elysia": "pnpm --filter @zelavis/example-elysia dev",
@@ -23,8 +24,10 @@
     "release:check": "pnpm typecheck && pnpm test && pnpm build",
     "release:status": "changeset status --verbose",
     "release:version": "changeset version && pnpm install --no-frozen-lockfile",
-    "release:publish:alpha": "pnpm release:check && changeset publish --tag alpha",
-    "release:publish:latest": "pnpm release:check && changeset publish",
+    "release:version:alpha": "node scripts/release-version.mjs alpha",
+    "release:pre:exit": "changeset pre exit",
+    "release:publish:alpha": "node scripts/release-publish.mjs alpha",
+    "release:publish:latest": "node scripts/release-publish.mjs latest",
     "ui:dev": "node scripts/ui-dev.mjs",
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck"
@@ -42,6 +45,7 @@
   },
   "type": "commonjs",
   "devDependencies": {
+    "@changesets/changelog-git": "^0.2.1",
     "@changesets/cli": "^2.31.0",
     "@types/express": "^5.0.6",
     "express": "^5.2.1",

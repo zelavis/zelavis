@@ -1,6 +1,6 @@
 {
   "name": "@zelavis/database-node-sqlite",
-  "version": "0.1.0-alpha.1",
+  "version": "1.0.1-alpha.1",
   "private": false,
   "description": "Node.js better-sqlite3 integration for @zelavis/database.",
   "license": "MIT",
