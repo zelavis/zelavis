@@ -17,6 +17,7 @@ import {
   Settings2,
   ShieldCheck,
   Store,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 
@@ -31,7 +32,8 @@ export type DashboardRoutePath =
   | "/marketplace"
   | "/services"
   | "/settings"
-  | "/settings/appearance";
+  | "/settings/appearance"
+  | "/users";
 
 export type DashboardNavItem = {
   title: string;
@@ -93,6 +95,11 @@ export const platformNavItems: readonly DashboardNavItem[] = [
         title: "Auth",
         url: "/auth",
         icon: Fingerprint,
+      },
+      {
+        title: "Users",
+        url: "/users",
+        icon: Users,
       },
       {
         title: "Database",

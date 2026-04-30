@@ -301,6 +301,7 @@ const defaultDashboardClientRoutes = [
   "/marketplace",
   "/services",
   "/settings",
+  "/users",
 ] as const;
 
 interface DashboardAsset {

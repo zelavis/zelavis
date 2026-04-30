@@ -127,6 +127,7 @@ const fallbackConfig: RuntimeConfig = {
       "/database",
       "/services",
       "/settings",
+      "/users",
     ],
     assetRoot: "/assets",
   },
