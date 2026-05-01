@@ -30,7 +30,7 @@ Add versioned docs only when at least one of these becomes true:
 /docs/current/getting-started/
 /docs/current/guides/
 /docs/current/packages/
-/docs/current/integrations/
+/docs/current/adapters/
 /docs/current/architecture/
 /docs/current/reference/
 /docs/v1/

@@ -326,53 +326,54 @@ export function NavMain({
                   : "",
               ].join(" ")}
             >
-              {panelIndex === 0 ? (
-                <SidebarGroupLabel>Platform</SidebarGroupLabel>
-              ) : null}
-
-              <SidebarMenu>
-                {panelIndex > 0 ? (
-                  <SidebarMenuItem>
-                    <SidebarMenuButton onClick={goBack} tooltip="Back">
-                      <ChevronLeft className="rtl:rotate-180" />
-                      <span>{panel.title}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
+              <div className="flex min-h-0 w-full shrink-0 flex-col gap-1">
+                {panelIndex === 0 ? (
+                  <SidebarGroupLabel>Platform</SidebarGroupLabel>
                 ) : null}
-
-                {panel.items.map((item) => {
-                  const hasChildren = Boolean(item.items?.length);
-                  const isActive = itemContainsPath(item, pathname);
-                  const Icon = item.icon;
-
-                  return (
-                    <SidebarMenuItem key={item.title}>
-                      {hasChildren && item.items ? (
-                        <SidebarMenuButton
-                          isActive={isActive}
-                          tooltip={item.title}
-                          onClick={() =>
-                            openPanel(item.title, item.items ?? [])
-                          }
-                        >
-                          {Icon ? <Icon /> : null}
-                          <span>{item.title}</span>
-                          <ChevronRight className="ms-auto rtl:rotate-180" />
-                        </SidebarMenuButton>
-                      ) : item.url ? (
-                        <SidebarMenuButton
-                          render={<Link to={item.url} />}
-                          isActive={isActive}
-                          tooltip={item.title}
-                        >
-                          {Icon ? <Icon /> : null}
-                          <span>{item.title}</span>
-                        </SidebarMenuButton>
-                      ) : null}
+                <SidebarMenu>
+                  {panelIndex > 0 ? (
+                    <SidebarMenuItem>
+                      <SidebarMenuButton onClick={goBack} tooltip="Back">
+                        <ChevronLeft className="rtl:rotate-180" />
+                        <span>{panel.title}</span>
+                      </SidebarMenuButton>
                     </SidebarMenuItem>
-                  );
-                })}
-              </SidebarMenu>
+                  ) : null}
+
+                  {panel.items.map((item) => {
+                    const hasChildren = Boolean(item.items?.length);
+                    const isActive = itemContainsPath(item, pathname);
+                    const Icon = item.icon;
+
+                    return (
+                      <SidebarMenuItem key={item.title}>
+                        {hasChildren && item.items ? (
+                          <SidebarMenuButton
+                            isActive={isActive}
+                            tooltip={item.title}
+                            onClick={() =>
+                              openPanel(item.title, item.items ?? [])
+                            }
+                          >
+                            {Icon ? <Icon /> : null}
+                            <span>{item.title}</span>
+                            <ChevronRight className="ms-auto rtl:rotate-180" />
+                          </SidebarMenuButton>
+                        ) : item.url ? (
+                          <SidebarMenuButton
+                            render={<Link to={item.url} />}
+                            isActive={isActive}
+                            tooltip={item.title}
+                          >
+                            {Icon ? <Icon /> : null}
+                            <span>{item.title}</span>
+                          </SidebarMenuButton>
+                        ) : null}
+                      </SidebarMenuItem>
+                    );
+                  })}
+                </SidebarMenu>
+              </div>
 
               {panelIndex === 0 && communityProjects.length > 0 ? (
                 <NavProjects projects={communityProjects} nested />

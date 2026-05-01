@@ -39,10 +39,11 @@ async function main() {
   const preferredBackendPort = parsePreferredPort(process.env.PORT, 3000);
   const preferredUiPort = parsePreferredPort(process.env.ZELAVIS_UI_PORT, 3001);
   const searchWindow = 50;
+  const uiBasePath = "/zelavis/";
 
   console.log("Preparing Zelavis runtime packages for dashboard dev...");
   runSetup(
-    "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/database build && pnpm --filter @zelavis/auth build && pnpm --filter zelavis build:runtime",
+    "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/database build && pnpm --filter @zelavis/database-node-sqlite build && pnpm --filter @zelavis/auth build && pnpm --filter zelavis build:runtime",
   );
 
   const backendPort = await getPort({
@@ -57,11 +58,13 @@ async function main() {
   });
   const backendOrigin = `http://127.0.0.1:${backendPort}`;
   const uiOrigin = `http://127.0.0.1:${uiPort}`;
+  const uiDashboardOrigin = new URL(uiBasePath, uiOrigin).toString();
+  const uiDashboardRedirectOrigin = uiDashboardOrigin.replace(/\/+$/, "");
 
   console.log(`Starting Zelavis runtime on ${backendOrigin} ...`);
-  console.log(`Starting UI dev server on ${uiOrigin} ...`);
+  console.log(`Starting UI dev server on ${uiDashboardOrigin} ...`);
   console.log(
-    `Dashboard requests to ${backendOrigin}/zelavis will redirect to ${uiOrigin}.`,
+    `Dashboard requests to ${backendOrigin}/zelavis will redirect to ${uiDashboardOrigin}.`,
   );
 
   if (backendPort !== preferredBackendPort) {
@@ -92,11 +95,12 @@ async function main() {
       ],
       {
         ZELAVIS_DEV_SERVER: backendOrigin,
+        ZELAVIS_UI_BASE_PATH: uiBasePath,
       },
     ),
     startProcess("pnpm", ["--filter", "@zelavis/example-nodejs", "dev"], {
       PORT: String(backendPort),
-      ZELAVIS_UI_DEV_SERVER: uiOrigin,
+      ZELAVIS_UI_DEV_SERVER: uiDashboardRedirectOrigin,
     }),
   ];
 

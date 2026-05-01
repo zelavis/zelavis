@@ -2,7 +2,7 @@
 
 `@zelavis/database` provides the core database contracts and document primitives for Zelavis.
 
-The package is now event-first internally. Document APIs remain the main ergonomic surface, but writes append events and reads come from projections. SQL is still an optional driver capability so SQLite-compatible integrations can expose raw SQL without forcing every runtime to support it.
+The package is now event-first internally. Document APIs remain the main ergonomic surface, but writes append events and reads come from projections. SQL is still an optional driver capability so SQLite-compatible adapters can expose raw SQL without forcing every runtime to support it.
 
 The document read model is the first built-in projection. A projection registry contract now exists so future derived models can be introduced explicitly instead of being hidden behind adapter-specific behavior.
 
@@ -14,7 +14,7 @@ The first time-series slice is now also present as a public contract. Series def
 - Event log contract plus projection contract.
 - Collection schema registry and write-time validation.
 - In-memory driver for local development and tests.
-- Optional SQL capability contract for SQLite-compatible integrations.
+- Optional SQL capability contract for SQLite-compatible adapters.
 - Server service routes through the existing `@zelavis/server` service contract, with documents exposed as a nested service.
 
 ## Non-goals for the first slice
@@ -23,12 +23,12 @@ The first time-series slice is now also present as a public contract. Series def
 - No `unstorage` dependency.
 - No replication, offline sync, or distributed transactions.
 
-Platform integrations should provide durable database drivers later, for example:
+Platform adapters should provide durable database drivers later, for example:
 
 - `@zelavis/database-bun-sqlite` supplies a Bun SQLite driver using the built-in `bun:sqlite` module.
 - `@zelavis/database-node-sqlite` supplies a Node SQLite driver using `better-sqlite3`.
-- `@zelavis/integration-cloudflare` can supply a D1 driver.
-- `@zelavis/integration-turso` can supply a libSQL/Turso driver.
+- `@zelavis/adapter-cloudflare` can supply a D1 driver.
+- `@zelavis/adapter-turso` can supply a libSQL/Turso driver.
 
 ## Usage
 
@@ -76,7 +76,6 @@ await database.schemas.register({
 
 await zelavisServer({
   services: [databaseService(database)],
-  integration,
 });
 ```
 

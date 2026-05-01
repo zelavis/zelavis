@@ -26,6 +26,7 @@ export type DashboardRoutePath =
   | "/agents"
   | "/auth"
   | "/builder"
+  | "/builder/pages"
   | "/commerce"
   | "/content"
   | "/database"
@@ -119,8 +120,15 @@ export const platformNavItems: readonly DashboardNavItem[] = [
       },
       {
         title: "Builder",
-        url: "/builder",
         icon: PanelsTopLeft,
+        items: [
+          {
+            title: "Pages",
+            url: "/builder/pages",
+            icon: FileText,
+            pageLabel: "Builder",
+          },
+        ],
       },
       {
         title: "Content",

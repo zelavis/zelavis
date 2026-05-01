@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createBetterSqlite3DatabaseDriver } from "@zelavis/database-node-sqlite";
 import { zelavis } from "zelavis";
-import { nodeIntegration } from "zelavis/integrations/node";
+import { nodeAdapter } from "zelavis/adapters/node";
 
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
@@ -22,7 +22,7 @@ async function main(): Promise<void> {
       body: { error: error instanceof Error ? error.message : "Unknown error" },
     }),
   });
-  const server = nodeIntegration(zelavisRuntime);
+  const server = nodeAdapter(zelavisRuntime);
 
   console.log(
     "database driver",

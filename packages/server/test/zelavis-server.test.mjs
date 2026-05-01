@@ -75,7 +75,7 @@ test("zelavisServer resolves promised nested services without adding them to the
   assert.equal(runtime.routes[0].service.name, "child");
 });
 
-test("zelavisServer exposes fetch and plain handlers without requiring a mount integration", async () => {
+test("zelavisServer exposes fetch and plain handlers without requiring a mount adapter", async () => {
   const runtime = await zelavisServer({
     services: [
       defineServerService({

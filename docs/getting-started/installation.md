@@ -9,7 +9,7 @@ Current recommended baseline:
 - Node.js
 - pnpm
 
-Some examples and integrations also target other runtimes, but the main repository workflow today is centered on pnpm and the existing workspace scripts.
+Some examples and adapters also target other runtimes, but the main repository workflow today is centered on pnpm and the existing workspace scripts.
 
 ## Install workspace dependencies
 

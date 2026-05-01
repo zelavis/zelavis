@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "WebWorker"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["@cloudflare/workers-types"],
+    "baseUrl": "..",
+    "paths": {
+      "zelavis": ["packages/zelavis/src/index.ts"],
+      "@zelavis/database": ["packages/database/src/index.ts"],
+      "@zelavis/database-cloudflare-d1": [
+        "packages/database/adapters/cloudflare-d1/src/index.ts"
+      ]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

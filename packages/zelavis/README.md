@@ -4,7 +4,7 @@
 
 Use this package when building an application or service with Zelavis and you want the default platform building blocks wired together for you. Lower-level packages such as `@zelavis/server`, `@zelavis/database`, and `@zelavis/auth` remain available when you need direct access to the primitives.
 
-Today, that mostly means auth, database, server integration, and dashboard delivery under one runtime entry point.
+Today, that mostly means auth, database, server mounting, and dashboard delivery under one runtime entry point.
 
 ## Import split
 
@@ -12,10 +12,10 @@ Use `zelavis` for application and runtime code:
 
 ```ts
 import { zelavis } from "zelavis";
-import { nodeIntegration } from "zelavis/integrations/node";
+import { nodeAdapter } from "zelavis/adapters/node";
 
 const runtime = await zelavis();
-const server = nodeIntegration(runtime);
+const server = nodeAdapter(runtime);
 ```
 
 Or embed the runtime directly in a Web/fetch environment:
@@ -30,7 +30,7 @@ export function GET(request: Request) {
 }
 ```
 
-Use scoped packages when building lower-level primitives, integrations, plugins, or tests that need direct package APIs:
+Use scoped packages when building lower-level primitives, adapters, plugins, or tests that need direct package APIs:
 
 ```ts
 import { createDatabase } from "@zelavis/database";
@@ -42,10 +42,10 @@ import { authService } from "@zelavis/auth";
 
 ```ts
 import { zelavis } from "zelavis";
-import { nodeIntegration } from "zelavis/integrations/node";
+import { nodeAdapter } from "zelavis/adapters/node";
 
 const runtime = await zelavis();
-const server = nodeIntegration(runtime);
+const server = nodeAdapter(runtime);
 
 server.listen(3000);
 ```
@@ -114,7 +114,7 @@ Root path changes are saved as pending settings and report `restartRequired`
 because mounted routes cannot move safely while the runtime is already running.
 Pass `coreServices.dashboard.settingsStore` when you want to back these settings
 with your own storage. For the built-in Node file-backed store, import
-`createFileDashboardSettingsStore()` from `zelavis/integrations/node`.
+`createFileDashboardSettingsStore()` from `zelavis/adapters/node`.
 
 For local dashboard work, point Zelavis at a running UI dev server:
 

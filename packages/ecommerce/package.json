@@ -2,7 +2,7 @@
   "name": "@zelavis/ecommerce",
   "version": "0.1.0-alpha.1",
   "private": false,
-  "description": "Low-level ecommerce primitives for building custom commerce platforms, CMS integrations, and backend applications.",
+  "description": "Low-level ecommerce primitives for building custom commerce platforms, CMS systems, and backend applications.",
   "author": "Ivan Jeremic",
   "license": "MIT",
   "type": "module",

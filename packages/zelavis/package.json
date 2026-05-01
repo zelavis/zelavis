@@ -13,37 +13,37 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./integrations/elysia": {
-      "types": "./dist/integrations/elysia.d.ts",
-      "import": "./dist/integrations/elysia.js"
+    "./adapters/elysia": {
+      "types": "./dist/adapters/elysia.d.ts",
+      "import": "./dist/adapters/elysia.js"
     },
-    "./integrations/express": {
-      "types": "./dist/integrations/express.d.ts",
-      "import": "./dist/integrations/express.js"
+    "./adapters/express": {
+      "types": "./dist/adapters/express.d.ts",
+      "import": "./dist/adapters/express.js"
     },
-    "./integrations/fastify": {
-      "types": "./dist/integrations/fastify.d.ts",
-      "import": "./dist/integrations/fastify.js"
+    "./adapters/fastify": {
+      "types": "./dist/adapters/fastify.d.ts",
+      "import": "./dist/adapters/fastify.js"
     },
-    "./integrations/hono": {
-      "types": "./dist/integrations/hono.d.ts",
-      "import": "./dist/integrations/hono.js"
+    "./adapters/hono": {
+      "types": "./dist/adapters/hono.d.ts",
+      "import": "./dist/adapters/hono.js"
     },
-    "./integrations/h3": {
-      "types": "./dist/integrations/h3.d.ts",
-      "import": "./dist/integrations/h3.js"
+    "./adapters/h3": {
+      "types": "./dist/adapters/h3.d.ts",
+      "import": "./dist/adapters/h3.js"
     },
-    "./integrations/nextjs-pages-router": {
-      "types": "./dist/integrations/nextjs-pages-router.d.ts",
-      "import": "./dist/integrations/nextjs-pages-router.js"
+    "./adapters/nextjs-pages-router": {
+      "types": "./dist/adapters/nextjs-pages-router.d.ts",
+      "import": "./dist/adapters/nextjs-pages-router.js"
     },
-    "./integrations/node": {
-      "types": "./dist/integrations/node.d.ts",
-      "import": "./dist/integrations/node.js"
+    "./adapters/node": {
+      "types": "./dist/adapters/node.d.ts",
+      "import": "./dist/adapters/node.js"
     }
   },
   "scripts": {
-    "build": "pnpm --filter @zelavis/ui build && node scripts/copy-dashboard.mjs && tsc -p tsconfig.json",
+    "build": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/database build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/ui build && node scripts/copy-dashboard.mjs && tsc -p tsconfig.json",
     "build:runtime": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm run build && node --test test/*.test.mjs"

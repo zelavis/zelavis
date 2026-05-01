@@ -1,6 +1,6 @@
 import { H3, serve } from "h3";
 import { zelavis } from "zelavis";
-import { h3Integration } from "zelavis/integrations/h3";
+import { h3Adapter } from "zelavis/adapters/h3";
 
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
@@ -15,7 +15,7 @@ async function main(): Promise<void> {
     }),
   });
 
-  app.use("/**", h3Integration(zelavisRuntime));
+  app.use("/**", h3Adapter(zelavisRuntime));
 
   serve(app, {
     port,

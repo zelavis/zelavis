@@ -1,6 +1,6 @@
 # @zelavis/auth
 
-Low-level authentication building blocks for custom backends, internal platforms, CMS systems, and application integrations.
+Low-level authentication building blocks for custom backends, internal platforms, CMS systems, and application adapters.
 
 This package is intentionally auth-method agnostic. The core package provides accounts, sessions, repository contracts, and plugin registration, but it does not assume password login, magic links, OAuth, or any specific authentication flow by default.
 
@@ -55,7 +55,7 @@ const result = await auth.authentication.authenticate("email-password", {
 });
 ```
 
-## HTTP Integrations
+## HTTP Adapters
 
 `@zelavis/auth` exports a server service surface:
 

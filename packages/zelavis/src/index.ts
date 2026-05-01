@@ -7,6 +7,7 @@ import {
   createDatabaseServerService,
   type CreateDatabaseOptions,
   type DatabaseApi,
+  type DatabaseJsonObject,
 } from "@zelavis/database";
 import {
   defineServerService,
@@ -23,7 +24,14 @@ import {
 } from "./generated/dashboard-assets.js";
 
 export * from "@zelavis/database";
-export * from "@zelavis/server";
+export {
+  defineServerService,
+  type ZelavisAnyServiceInput,
+  type ZelavisServerErrorHandler,
+  type ZelavisServerRoute,
+  type ZelavisServerRuntime,
+  type ZelavisServerService,
+} from "@zelavis/server";
 
 export type ZelavisAuthCoreServiceOptions = boolean | AuthServiceOptions;
 
@@ -40,6 +48,45 @@ export type ZelavisDashboardCoreServiceInput =
   | boolean
   | ZelavisDashboardCoreServiceOptions;
 
+export interface ZelavisWebsiteAction {
+  label: string;
+  href: string;
+  variant?: "primary" | "secondary";
+}
+
+export interface ZelavisWebsiteCard {
+  title: string;
+  description: string;
+  href?: string;
+}
+
+export interface ZelavisWebsitePage {
+  path: string;
+  title: string;
+  kicker?: string;
+  headline?: string;
+  description?: string;
+  actions?: readonly ZelavisWebsiteAction[];
+  cards?: readonly ZelavisWebsiteCard[];
+}
+
+export interface ZelavisWebsitePagesStore {
+  read: () =>
+    | Promise<readonly ZelavisWebsitePage[]>
+    | readonly ZelavisWebsitePage[];
+  write: (
+    pages: readonly ZelavisWebsitePage[],
+  ) => Promise<readonly ZelavisWebsitePage[]> | readonly ZelavisWebsitePage[];
+}
+
+export interface ZelavisWebsiteCoreServiceOptions {
+  pagesStore?: ZelavisWebsitePagesStore;
+}
+
+export type ZelavisWebsiteCoreServiceInput =
+  | boolean
+  | ZelavisWebsiteCoreServiceOptions;
+
 export type ZelavisDatabaseCoreServiceOptions =
   | boolean
   | CreateDatabaseOptions
@@ -50,6 +97,7 @@ export interface ZelavisCoreServicesOptions {
   auth?: ZelavisAuthCoreServiceOptions;
   dashboard?: ZelavisDashboardCoreServiceInput;
   database?: ZelavisDatabaseCoreServiceOptions;
+  website?: ZelavisWebsiteCoreServiceInput;
 }
 
 export interface ZelavisApiOptions {
@@ -64,10 +112,12 @@ export interface ZelavisDashboardSettings {
   pendingRootPath?: string;
   apiBasePath: string;
   theme: ZelavisDashboardThemeMode;
+  pageBuilderEnabled: boolean;
   persistence: "runtime" | "read-only";
   editable: {
     rootPath: boolean;
     theme: boolean;
+    pageBuilder: boolean;
   };
   restartRequired: boolean;
 }
@@ -75,6 +125,7 @@ export interface ZelavisDashboardSettings {
 export interface ZelavisDashboardSettingsUpdate {
   rootPath?: string;
   theme?: ZelavisDashboardThemeMode;
+  pageBuilderEnabled?: boolean;
 }
 
 export interface ZelavisDashboardSettingsStore {
@@ -96,6 +147,15 @@ export interface ZelavisServerOptions {
   pathOverrides?: Record<string, string>;
   onError?: ZelavisServerErrorHandler;
 }
+
+export interface ZelavisDatabaseDocumentStoreOptions {
+  collection?: string;
+  documentId?: string;
+}
+
+const DEFAULT_ZELAVIS_STATE_COLLECTION = "zelavis_system";
+const DEFAULT_DASHBOARD_SETTINGS_DOCUMENT_ID = "dashboard.settings";
+const DEFAULT_WEBSITE_PAGES_DOCUMENT_ID = "website.pages";
 
 function readOptionalProcessEnv(name: string): string | undefined {
   const runtimeProcess = (
@@ -190,6 +250,10 @@ function isDashboardThemeMode(
   return value === "light" || value === "dark" || value === "auto";
 }
 
+function isBoolean(value: unknown): value is boolean {
+  return typeof value === "boolean";
+}
+
 function readBodyObject(body: unknown): Record<string, unknown> {
   return body && typeof body === "object" && !Array.isArray(body)
     ? (body as Record<string, unknown>)
@@ -212,6 +276,313 @@ function createMemoryDashboardSettingsStore(): ZelavisDashboardSettingsStore {
   };
 }
 
+function createMemoryWebsitePagesStore(
+  initialPages: readonly ZelavisWebsitePage[],
+): ZelavisWebsitePagesStore {
+  let pages = [...initialPages];
+
+  return {
+    read: () => pages,
+    write(nextPages) {
+      pages = [...nextPages];
+      return pages;
+    },
+  };
+}
+
+async function ensureDatabaseCollection(
+  database: DatabaseApi,
+  name: string,
+): Promise<void> {
+  if (await database.documents.collectionExists({ name })) {
+    return;
+  }
+
+  try {
+    await database.documents.createCollection({
+      name,
+      metadata: {
+        internal: true,
+        managedBy: "zelavis",
+      },
+    });
+  } catch (error) {
+    if (await database.documents.collectionExists({ name })) {
+      return;
+    }
+
+    throw error;
+  }
+}
+
+function normalizeStoredWebsiteAction(
+  value: unknown,
+): ZelavisWebsiteAction | undefined {
+  const input = readBodyObject(value);
+  const label = typeof input.label === "string" ? input.label.trim() : "";
+  const href = typeof input.href === "string" ? input.href.trim() : "";
+  const variant =
+    input.variant === "primary" || input.variant === "secondary"
+      ? input.variant
+      : undefined;
+
+  if (!label || !href) {
+    return undefined;
+  }
+
+  return {
+    label,
+    href,
+    ...(variant ? { variant } : {}),
+  };
+}
+
+function normalizeStoredWebsiteCard(
+  value: unknown,
+): ZelavisWebsiteCard | undefined {
+  const input = readBodyObject(value);
+  const title = typeof input.title === "string" ? input.title.trim() : "";
+  const description =
+    typeof input.description === "string" ? input.description.trim() : "";
+  const href =
+    typeof input.href === "string" && input.href.trim()
+      ? input.href.trim()
+      : undefined;
+
+  if (!title || !description) {
+    return undefined;
+  }
+
+  return {
+    title,
+    description,
+    ...(href ? { href } : {}),
+  };
+}
+
+function normalizeStoredWebsitePage(
+  value: unknown,
+): ZelavisWebsitePage | undefined {
+  const input = readBodyObject(value);
+  const path = normalizePath(
+    typeof input.path === "string" ? input.path : undefined,
+    "",
+  );
+  const title = typeof input.title === "string" ? input.title.trim() : "";
+  const kicker =
+    typeof input.kicker === "string" && input.kicker.trim()
+      ? input.kicker.trim()
+      : undefined;
+  const headline =
+    typeof input.headline === "string" && input.headline.trim()
+      ? input.headline.trim()
+      : undefined;
+  const description =
+    typeof input.description === "string" && input.description.trim()
+      ? input.description.trim()
+      : undefined;
+  const actions = Array.isArray(input.actions)
+    ? input.actions
+        .map((action) => normalizeStoredWebsiteAction(action))
+        .filter((action): action is ZelavisWebsiteAction => Boolean(action))
+    : undefined;
+  const cards = Array.isArray(input.cards)
+    ? input.cards
+        .map((card) => normalizeStoredWebsiteCard(card))
+        .filter((card): card is ZelavisWebsiteCard => Boolean(card))
+    : undefined;
+
+  if (!path || !title) {
+    return undefined;
+  }
+
+  return {
+    path,
+    title,
+    ...(kicker ? { kicker } : {}),
+    ...(headline ? { headline } : {}),
+    ...(description ? { description } : {}),
+    ...(actions && actions.length > 0 ? { actions } : {}),
+    ...(cards && cards.length > 0 ? { cards } : {}),
+  };
+}
+
+function normalizeWebsitePages(
+  pages: readonly ZelavisWebsitePage[],
+): ZelavisWebsitePage[] {
+  return pages
+    .map((page) => normalizeStoredWebsitePage(page))
+    .filter((page): page is ZelavisWebsitePage => Boolean(page));
+}
+
+function serializeWebsitePage(page: ZelavisWebsitePage): DatabaseJsonObject {
+  return {
+    path: page.path,
+    title: page.title,
+    ...(page.kicker ? { kicker: page.kicker } : {}),
+    ...(page.headline ? { headline: page.headline } : {}),
+    ...(page.description ? { description: page.description } : {}),
+    ...(page.actions
+      ? {
+          actions: page.actions.map((action) => ({
+            label: action.label,
+            href: action.href,
+            ...(action.variant ? { variant: action.variant } : {}),
+          })),
+        }
+      : {}),
+    ...(page.cards
+      ? {
+          cards: page.cards.map((card) => ({
+            title: card.title,
+            description: card.description,
+            ...(card.href ? { href: card.href } : {}),
+          })),
+        }
+      : {}),
+  };
+}
+
+async function readDatabaseDocument(
+  database: DatabaseApi,
+  options: Required<ZelavisDatabaseDocumentStoreOptions>,
+) {
+  await ensureDatabaseCollection(database, options.collection);
+  return database.documents.findById({
+    collection: options.collection,
+    id: options.documentId,
+  });
+}
+
+async function writeDatabaseDocument(
+  database: DatabaseApi,
+  options: Required<ZelavisDatabaseDocumentStoreOptions>,
+  data: DatabaseJsonObject,
+): Promise<void> {
+  await ensureDatabaseCollection(database, options.collection);
+  const current = await database.documents.findById({
+    collection: options.collection,
+    id: options.documentId,
+  });
+
+  if (current) {
+    await database.documents.update({
+      collection: options.collection,
+      id: options.documentId,
+      data,
+      mode: "replace",
+    });
+    return;
+  }
+
+  await database.documents.insert({
+    collection: options.collection,
+    id: options.documentId,
+    data,
+  });
+}
+
+export function createDatabaseDashboardSettingsStore(
+  database: DatabaseApi,
+  options: ZelavisDatabaseDocumentStoreOptions = {},
+): ZelavisDashboardSettingsStore {
+  const documentOptions = {
+    collection: options.collection ?? DEFAULT_ZELAVIS_STATE_COLLECTION,
+    documentId: options.documentId ?? DEFAULT_DASHBOARD_SETTINGS_DOCUMENT_ID,
+  };
+
+  return {
+    async read() {
+      const document = await readDatabaseDocument(database, documentOptions);
+      const input = readBodyObject(document?.data);
+      const settings: ZelavisDashboardSettingsUpdate = {};
+
+      if (typeof input.rootPath === "string") {
+        settings.rootPath = normalizeEditableRootPath(input.rootPath);
+      }
+
+      if (isDashboardThemeMode(input.theme)) {
+        settings.theme = input.theme;
+      }
+
+      if (isBoolean(input.pageBuilderEnabled)) {
+        settings.pageBuilderEnabled = input.pageBuilderEnabled;
+      }
+
+      return settings;
+    },
+    async write(update) {
+      const next = {
+        ...((await this.read()) ?? {}),
+        ...update,
+      };
+
+      await writeDatabaseDocument(database, documentOptions, {
+        kind: "dashboard-settings",
+        ...next,
+      });
+
+      return next;
+    },
+  };
+}
+
+export function createDatabaseWebsitePagesStore(
+  database: DatabaseApi,
+  options: ZelavisDatabaseDocumentStoreOptions = {},
+): ZelavisWebsitePagesStore {
+  const documentOptions = {
+    collection: options.collection ?? DEFAULT_ZELAVIS_STATE_COLLECTION,
+    documentId: options.documentId ?? DEFAULT_WEBSITE_PAGES_DOCUMENT_ID,
+  };
+
+  return {
+    async read() {
+      const document = await readDatabaseDocument(database, documentOptions);
+      const input = readBodyObject(document?.data);
+
+      if (!Array.isArray(input.pages)) {
+        return [];
+      }
+
+      return input.pages
+        .map((page) => normalizeStoredWebsitePage(page))
+        .filter((page): page is ZelavisWebsitePage => Boolean(page));
+    },
+    async write(pages) {
+      const normalizedPages = normalizeWebsitePages(pages);
+
+      await writeDatabaseDocument(database, documentOptions, {
+        kind: "website-pages",
+        pages: normalizedPages.map((page) => serializeWebsitePage(page)),
+      });
+
+      return normalizedPages;
+    },
+  };
+}
+
+function resolveDashboardSettingsStore(
+  option: ZelavisDashboardCoreServiceInput | undefined,
+  fallbackStore?: ZelavisDashboardSettingsStore,
+): ZelavisDashboardSettingsStore | undefined {
+  const dashboardOption = option ?? true;
+
+  if (dashboardOption === false) {
+    return undefined;
+  }
+
+  if (dashboardOption === true) {
+    return fallbackStore ?? createMemoryDashboardSettingsStore();
+  }
+
+  return (
+    dashboardOption.settingsStore ??
+    fallbackStore ??
+    createMemoryDashboardSettingsStore()
+  );
+}
+
 function readDashboardSettingsUpdate(
   body: unknown,
 ): ZelavisDashboardSettingsUpdate {
@@ -224,6 +595,10 @@ function readDashboardSettingsUpdate(
 
   if (isDashboardThemeMode(input.theme)) {
     update.theme = input.theme;
+  }
+
+  if (isBoolean(input.pageBuilderEnabled)) {
+    update.pageBuilderEnabled = input.pageBuilderEnabled;
   }
 
   return update;
@@ -295,6 +670,7 @@ const defaultDashboardClientRoutes = [
   "/agents",
   "/auth",
   "/builder",
+  "/builder/pages",
   "/commerce",
   "/content",
   "/database",
@@ -397,6 +773,186 @@ function injectDashboardRuntimeConfig(html: string, config: unknown): string {
     : `${script}${html}`;
 }
 
+function renderWebsitePage(page: ZelavisWebsitePage): string {
+  const title = escapeHtml(page.title);
+  const kicker = page.kicker
+    ? `<span class="kicker">${escapeHtml(page.kicker)}</span>`
+    : "";
+  const headline = escapeHtml(page.headline ?? page.title);
+  const description = page.description
+    ? `<p>${escapeHtml(page.description)}</p>`
+    : "";
+  const actions =
+    page.actions && page.actions.length > 0
+      ? `<div class="actions">${page.actions
+          .map((action) => {
+            const variantClass = action.variant === "primary" ? " primary" : "";
+            return `<a class="button${variantClass}" href="${escapeHtml(action.href)}">${escapeHtml(action.label)}</a>`;
+          })
+          .join("")}</div>`
+      : "";
+  const cards =
+    page.cards && page.cards.length > 0
+      ? `<section class="grid">${page.cards
+          .map((card) => {
+            const content = `<h2>${escapeHtml(card.title)}</h2><p>${escapeHtml(card.description)}</p>`;
+
+            if (!card.href) {
+              return `<article class="card">${content}</article>`;
+            }
+
+            return `<a class="card card-link" href="${escapeHtml(card.href)}">${content}</a>`;
+          })
+          .join("")}</section>`
+      : "";
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${title}</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #09090b;
+        --panel: #111114;
+        --muted: #a1a1aa;
+        --text: #fafafa;
+        --accent: #8b5cf6;
+        --border: #27272a;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: radial-gradient(circle at top, #18181b 0%, var(--bg) 50%);
+        color: var(--text);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      main {
+        width: 100%;
+        max-width: 72rem;
+        margin: 0 auto;
+        padding: 5rem 1.5rem;
+      }
+
+      .hero {
+        padding: 2rem 0 3rem;
+      }
+
+      .kicker {
+        display: inline-block;
+        margin-bottom: 1rem;
+        padding: 0.375rem 0.625rem;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        color: #c4b5fd;
+        background: rgba(139, 92, 246, 0.1);
+        font-size: 0.875rem;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(2.5rem, 8vw, 4.75rem);
+        line-height: 1;
+      }
+
+      p {
+        color: var(--muted);
+        font-size: 1.05rem;
+        line-height: 1.7;
+        max-width: 44rem;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.875rem;
+        margin-top: 2rem;
+      }
+
+      a.button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 0.75rem;
+        padding: 0.9rem 1.1rem;
+        text-decoration: none;
+        font-weight: 600;
+        border: 1px solid var(--border);
+        color: var(--text);
+        background: var(--panel);
+      }
+
+      a.button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+      }
+
+      .grid {
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+        margin-top: 2rem;
+      }
+
+      .card {
+        border: 1px solid var(--border);
+        border-radius: 1rem;
+        padding: 1rem;
+        background: rgba(17, 17, 20, 0.8);
+        text-decoration: none;
+      }
+
+      .card-link {
+        color: inherit;
+      }
+
+      .card h2 {
+        margin: 0 0 0.5rem;
+        font-size: 1rem;
+      }
+
+      .card p {
+        margin: 0;
+        font-size: 0.95rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        ${kicker}
+        <h1>${headline}</h1>
+        ${description}
+        ${actions}
+      </section>
+      ${cards}
+    </main>
+  </body>
+</html>`;
+}
+
+function createWebsitePageRouteId(path: string): string {
+  const normalized = normalizePathPart(path);
+  return normalized
+    ? `website.page.${normalized.replaceAll("/", ".")}`
+    : "website.page.home";
+}
+
+function isReservedWebsitePath(path: string, rootPath: string): boolean {
+  return (
+    path === rootPath ||
+    path.startsWith(`${rootPath}/`) ||
+    path === "/api" ||
+    path.startsWith("/api/")
+  );
+}
+
 function isDatabaseApi(value: unknown): value is DatabaseApi {
   return Boolean(
     value &&
@@ -409,7 +965,7 @@ function isDatabaseApi(value: unknown): value is DatabaseApi {
 
 async function resolveDatabaseCoreService(
   option: ZelavisDatabaseCoreServiceOptions | undefined,
-): Promise<ZelavisServerService<any> | undefined> {
+): Promise<DatabaseApi | undefined> {
   const databaseOption = option ?? true;
 
   if (databaseOption === false) {
@@ -417,15 +973,13 @@ async function resolveDatabaseCoreService(
   }
 
   if (databaseOption === true) {
-    return createDatabaseServerService(await createDatabase());
+    return createDatabase();
   }
 
   const resolvedDatabaseOption = await databaseOption;
-  const database = isDatabaseApi(resolvedDatabaseOption)
+  return isDatabaseApi(resolvedDatabaseOption)
     ? resolvedDatabaseOption
     : await createDatabase(resolvedDatabaseOption);
-
-  return createDatabaseServerService(database);
 }
 
 async function resolveAuthCoreService(
@@ -447,6 +1001,8 @@ async function resolveDashboardCoreService(
     apiVersion: string;
     rootPath: string;
     serviceNames: readonly string[];
+    settingsStore?: ZelavisDashboardSettingsStore;
+    websiteEnabled: boolean;
   },
 ): Promise<ZelavisServerService<any> | undefined> {
   const dashboardOption = option ?? true;
@@ -460,7 +1016,9 @@ async function resolveDashboardCoreService(
   const subtitle = options.subtitle ?? "Backend, dashboard, and core services.";
   const rootPath = context.rootPath;
   const settingsStore =
-    options.settingsStore ?? createMemoryDashboardSettingsStore();
+    context.settingsStore ??
+    options.settingsStore ??
+    createMemoryDashboardSettingsStore();
   const devServerUrl = normalizeExternalUrl(
     options.devServerUrl ?? readOptionalProcessEnv("ZELAVIS_UI_DEV_SERVER"),
   );
@@ -487,16 +1045,22 @@ async function resolveDashboardCoreService(
     },
     services: context.serviceNames.map((name) => ({
       name,
-      core: name === "dashboard" || name === "auth" || name === "database",
+      core:
+        name === "dashboard" ||
+        name === "auth" ||
+        name === "database" ||
+        name === "website",
       apiPath:
-        name === "dashboard"
-          ? rootPath
-          : joinPathParts(
-              rootPath,
-              context.apiPrefix,
-              context.apiVersion,
-              name,
-            ),
+        name === "website"
+          ? "/"
+          : name === "dashboard"
+            ? rootPath
+            : joinPathParts(
+                rootPath,
+                context.apiPrefix,
+                context.apiVersion,
+                name,
+              ),
     })),
   };
   const readDashboardSettings = async (): Promise<ZelavisDashboardSettings> => {
@@ -507,6 +1071,9 @@ async function resolveDashboardCoreService(
         ? storedRootPath
         : undefined;
     const theme = isDashboardThemeMode(stored.theme) ? stored.theme : "auto";
+    const pageBuilderEnabled = isBoolean(stored.pageBuilderEnabled)
+      ? stored.pageBuilderEnabled
+      : false;
 
     return {
       rootPath,
@@ -517,10 +1084,12 @@ async function resolveDashboardCoreService(
         context.apiVersion,
       ),
       theme,
+      pageBuilderEnabled,
       persistence: "runtime",
       editable: {
         rootPath: true,
         theme: true,
+        pageBuilder: context.websiteEnabled,
       },
       restartRequired: Boolean(pendingRootPath),
     };
@@ -714,21 +1283,241 @@ async function resolveDashboardCoreService(
   });
 }
 
+async function resolveWebsiteCoreService(
+  option: ZelavisWebsiteCoreServiceInput | undefined,
+  context: {
+    rootPath: string;
+    apiPrefix: string;
+    apiVersion: string;
+    pagesStore?: ZelavisWebsitePagesStore;
+  },
+): Promise<ZelavisServerService<any> | undefined> {
+  const websiteOption = option ?? true;
+
+  if (websiteOption === false) {
+    return undefined;
+  }
+
+  const options = websiteOption === true ? {} : websiteOption;
+  const pagesStore =
+    options.pagesStore ??
+    context.pagesStore ??
+    createMemoryWebsitePagesStore([]);
+
+  async function readPages(): Promise<ZelavisWebsitePage[]> {
+    return [...((await pagesStore.read()) ?? [])].map((page) => ({
+      ...page,
+      path: normalizePath(page.path, "/"),
+    }));
+  }
+
+  async function writePages(
+    pages: readonly ZelavisWebsitePage[],
+  ): Promise<readonly ZelavisWebsitePage[]> {
+    return pagesStore.write(
+      pages.map((page) => ({
+        ...page,
+        path: normalizePath(page.path, "/"),
+      })),
+    );
+  }
+
+  return defineServerService({
+    name: "website",
+    basePath: "/",
+    service: {
+      pages: [],
+    },
+    api: {
+      v1: [
+        {
+          id: "website.pages.list",
+          method: "GET",
+          path: joinPathParts(
+            context.rootPath,
+            context.apiPrefix,
+            context.apiVersion,
+            "website/pages",
+          ),
+          handler: async () => ({
+            status: 200,
+            body: {
+              pages: await readPages(),
+            },
+          }),
+        },
+        {
+          id: "website.pages.create",
+          method: "POST",
+          path: joinPathParts(
+            context.rootPath,
+            context.apiPrefix,
+            context.apiVersion,
+            "website/pages",
+          ),
+          handler: async ({ body }: { body: unknown }) => {
+            const input = readBodyObject(body);
+            const title =
+              typeof input.title === "string" ? input.title.trim() : "";
+            const path = normalizePath(
+              typeof input.path === "string" ? input.path : undefined,
+              "",
+            );
+            const headline =
+              typeof input.headline === "string" && input.headline.trim()
+                ? input.headline.trim()
+                : undefined;
+            const description =
+              typeof input.description === "string" && input.description.trim()
+                ? input.description.trim()
+                : undefined;
+
+            if (!title) {
+              return {
+                status: 400,
+                body: {
+                  error: "Website pages require a title.",
+                },
+              };
+            }
+
+            if (!path) {
+              return {
+                status: 400,
+                body: {
+                  error: "Website pages require a path.",
+                },
+              };
+            }
+
+            if (isReservedWebsitePath(path, context.rootPath)) {
+              return {
+                status: 400,
+                body: {
+                  error: "That path is reserved by Zelavis.",
+                },
+              };
+            }
+
+            const pages = await readPages();
+            if (pages.some((page) => page.path === path)) {
+              return {
+                status: 409,
+                body: {
+                  error: "A website page already exists for that path.",
+                },
+              };
+            }
+
+            const page: ZelavisWebsitePage = {
+              path,
+              title,
+              headline,
+              description,
+            };
+
+            await writePages([...pages, page]);
+
+            return {
+              status: 201,
+              body: page,
+            };
+          },
+        },
+        {
+          id: "website.page.dynamic",
+          method: "GET",
+          path: "/*path",
+          handler: async ({ params }: { params: Record<string, string> }) => {
+            const pages = await readPages();
+            const requestPath = normalizePath(params.path, "/");
+            const hasHomePage = pages.some((entry) => entry.path === "/");
+
+            if (requestPath === context.rootPath) {
+              return {
+                status: 404,
+                body: {
+                  error: "Not found",
+                },
+              };
+            }
+
+            if (!hasHomePage) {
+              if (requestPath === "/") {
+                return {
+                  status: 307,
+                  headers: {
+                    location: context.rootPath,
+                    "cache-control": "no-cache",
+                  } as Record<string, string>,
+                };
+              }
+
+              return {
+                status: 404,
+                body: {
+                  error: "Not found",
+                },
+              };
+            }
+
+            const page = pages.find((entry) => entry.path === requestPath);
+            if (!page) {
+              return {
+                status: 404,
+                body: {
+                  error: "Not found",
+                },
+              };
+            }
+
+            return {
+              status: 200,
+              headers: {
+                "content-type": "text/html; charset=utf-8",
+                "cache-control": "no-cache",
+              } as Record<string, string>,
+              body: renderWebsitePage(page),
+            };
+          },
+        },
+      ],
+    },
+  });
+}
+
 function createServicePrefixes(
   services: readonly ZelavisServerService<any>[],
   options: {
+    rootPath: string;
+    mountPrefix: string;
     apiPrefix: string;
     apiVersion: string;
     overrides?: Record<string, string>;
   },
 ): Record<string, string> {
   const prefixes: Record<string, string> = {};
+  const mountAtRoot = options.mountPrefix === "/";
 
   for (const service of services) {
-    prefixes[service.name] =
-      service.name === "dashboard"
-        ? "/"
-        : joinPathParts(options.apiPrefix, options.apiVersion, service.name);
+    if (service.name === "website") {
+      prefixes[service.name] = "/";
+      continue;
+    }
+
+    if (service.name === "dashboard") {
+      prefixes[service.name] = mountAtRoot ? options.rootPath : "/";
+      continue;
+    }
+
+    prefixes[service.name] = mountAtRoot
+      ? joinPathParts(
+          options.rootPath,
+          options.apiPrefix,
+          options.apiVersion,
+          service.name,
+        )
+      : joinPathParts(options.apiPrefix, options.apiVersion, service.name);
   }
 
   return {
@@ -748,18 +1537,48 @@ export async function zelavis(
   const hasDashboardService = services.some(
     (service) => service.name === "dashboard",
   );
+  const hasWebsiteService = services.some(
+    (service) => service.name === "website",
+  );
   const hasDatabaseService = services.some(
     (service) => service.name === "database",
+  );
+  const providedDatabaseService = services.find(
+    (service) => service.name === "database" && isDatabaseApi(service.service),
   );
   const authService = hasAuthService
     ? undefined
     : await resolveAuthCoreService(options.coreServices?.auth);
-  const databaseService = hasDatabaseService
+  const databaseApi = hasDatabaseService
     ? undefined
     : await resolveDatabaseCoreService(options.coreServices?.database);
-  const coreServices = [databaseService, authService].filter(
+  const databaseService = databaseApi
+    ? createDatabaseServerService(databaseApi)
+    : undefined;
+  const resolvedDatabaseApi =
+    (providedDatabaseService?.service as DatabaseApi | undefined) ??
+    databaseApi;
+  const dashboardSettingsStore = resolveDashboardSettingsStore(
+    options.coreServices?.dashboard,
+    resolvedDatabaseApi
+      ? createDatabaseDashboardSettingsStore(resolvedDatabaseApi)
+      : undefined,
+  );
+  const websiteCoreOptions = options.coreServices?.website;
+  const websiteService = hasWebsiteService
+    ? undefined
+    : await resolveWebsiteCoreService(websiteCoreOptions, {
+        rootPath,
+        apiPrefix,
+        apiVersion,
+        pagesStore: resolvedDatabaseApi
+          ? createDatabaseWebsitePagesStore(resolvedDatabaseApi)
+          : undefined,
+      });
+  const coreServices = [databaseService, authService, websiteService].filter(
     (service): service is ZelavisServerService<any> => Boolean(service),
   );
+  const websiteEnabled = hasWebsiteService || Boolean(websiteService);
   const serviceNames = [
     ...(hasDashboardService || options.coreServices?.dashboard === false
       ? []
@@ -774,17 +1593,22 @@ export async function zelavis(
         apiVersion,
         rootPath,
         serviceNames,
+        settingsStore: dashboardSettingsStore,
+        websiteEnabled,
       });
   const finalServices = [...coreServices, ...services, dashboardService].filter(
     (service): service is ZelavisServerService<any> => Boolean(service),
   );
+  const mountPrefix = websiteEnabled ? "/" : rootPath;
 
   return mountZelavisServer({
     ...options,
-    prefix: rootPath,
+    prefix: mountPrefix,
     version: "v1",
     services: finalServices,
     servicePrefixes: createServicePrefixes(finalServices, {
+      rootPath,
+      mountPrefix,
       apiPrefix,
       apiVersion,
       overrides: options.servicePrefixes,

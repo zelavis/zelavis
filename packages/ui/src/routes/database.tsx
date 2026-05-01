@@ -535,7 +535,7 @@ function DatabaseRoute() {
       <PageHeader
         eyebrow="Database"
         title="Multi-model database"
-        description="Document storage first, SQL capability preserved for adapters and integrations."
+        description="Document storage first, SQL capability preserved for adapters and adapters."
         actions={
           <Button
             type="button"
@@ -561,7 +561,7 @@ function DatabaseRoute() {
         <StatCard
           label="SQL"
           value={databaseHealth?.capabilities.sql ? "enabled" : "capability"}
-          detail="available when the integration supports it"
+          detail="available when the adapter supports it"
           icon={Table2}
         />
         <StatCard

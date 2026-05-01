@@ -28,10 +28,12 @@ export interface DashboardSettings {
   pendingRootPath?: string;
   apiBasePath: string;
   theme: DashboardThemeMode;
+  pageBuilderEnabled: boolean;
   persistence: "runtime" | "read-only";
   editable: {
     rootPath: boolean;
     theme: boolean;
+    pageBuilder: boolean;
   };
   restartRequired: boolean;
 }
@@ -39,6 +41,15 @@ export interface DashboardSettings {
 export interface DashboardSettingsUpdate {
   rootPath?: string;
   theme?: DashboardThemeMode;
+  pageBuilderEnabled?: boolean;
+}
+
+export interface WebsitePage {
+  path: string;
+  title: string;
+  kicker?: string;
+  headline?: string;
+  description?: string;
 }
 
 declare global {
@@ -122,6 +133,7 @@ const fallbackConfig: RuntimeConfig = {
       "/agents",
       "/auth",
       "/builder",
+      "/builder/pages",
       "/commerce",
       "/content",
       "/database",
@@ -256,6 +268,29 @@ export async function updateDashboardSettings(
       body: JSON.stringify(input),
     },
   );
+}
+
+export async function listWebsitePages(config: RuntimeConfig) {
+  const result = await readJson<{ pages: WebsitePage[] }>(
+    `${config.api.basePath}/website/pages`,
+  );
+
+  return result.pages;
+}
+
+export async function createWebsitePage(
+  config: RuntimeConfig,
+  input: {
+    title: string;
+    path: string;
+    headline?: string;
+    description?: string;
+  },
+) {
+  return readJson<WebsitePage>(`${config.api.basePath}/website/pages`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 export async function getDatabaseHealth(config: RuntimeConfig) {

@@ -4,7 +4,7 @@ This example shows Zelavis mounted inside an existing h3 app.
 
 - h3 can keep owning the main app
 - Zelavis can be mounted under `/zelavis` without changing its external `rootPath`
-- h3 uses a dedicated thin integration so unmatched requests still fall through to the host app
+- h3 uses a dedicated thin adapter so unmatched requests still fall through to the host app
 - dashboard links and API URLs stay stable at `/zelavis/*`
 
 ## Run
@@ -23,4 +23,4 @@ Then open:
 
 ## Key file
 
-- `index.ts` creates an `H3` app, resolves the Zelavis runtime, and mounts it with `app.use("/**", h3Integration(runtime))`
+- `index.ts` creates an `H3` app, resolves the Zelavis runtime, and mounts it with `app.use("/**", h3Adapter(runtime))`

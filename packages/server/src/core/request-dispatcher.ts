@@ -62,6 +62,27 @@ function matchPath(
   return params;
 }
 
+function scoreMatchedPath(pattern: string): number {
+  const parts = splitPath(pattern);
+  let score = 0;
+
+  for (const part of parts) {
+    if (part.startsWith("*")) {
+      score += 1;
+      continue;
+    }
+
+    if (part.startsWith(":")) {
+      score += 10;
+      continue;
+    }
+
+    score += 100;
+  }
+
+  return score + parts.length;
+}
+
 function toHeaderMap(headers: Headers): Record<string, string | undefined> {
   const result: Record<string, string | undefined> = {};
 
@@ -377,6 +398,13 @@ export function createZelavisDispatcher<TService = unknown>(
   return async (request, context) => {
     const url = new URL(request.url);
     const method = request.method.toUpperCase();
+    let matched:
+      | {
+          resolvedRoute: ZelavisResolvedRoute<TService>;
+          params: Record<string, string>;
+          score: number;
+        }
+      | undefined;
 
     for (const resolvedRoute of routes) {
       const routeMethod = resolvedRoute.route.method;
@@ -393,10 +421,21 @@ export function createZelavisDispatcher<TService = unknown>(
         continue;
       }
 
+      const score = scoreMatchedPath(resolvedRoute.fullPath);
+      if (!matched || score > matched.score) {
+        matched = {
+          resolvedRoute,
+          params,
+          score,
+        };
+      }
+    }
+
+    if (matched) {
       return executeResolvedRoute(
-        resolvedRoute,
+        matched.resolvedRoute,
         request,
-        params,
+        matched.params,
         options,
         context,
       );

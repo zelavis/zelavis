@@ -1,7 +1,7 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { zelavis } from "zelavis";
-import { honoIntegration } from "zelavis/integrations/hono";
+import { honoAdapter } from "zelavis/adapters/hono";
 
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
@@ -18,7 +18,7 @@ async function main(): Promise<void> {
     }),
   });
 
-  app.use(honoIntegration(zelavisRuntime));
+  app.use(honoAdapter(zelavisRuntime));
 
   serve(
     {

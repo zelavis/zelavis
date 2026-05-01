@@ -17,10 +17,10 @@ The shell is rewritten at runtime so the configured `rootPath` owns every
 absolute dashboard link. A server mounted at `/admin` serves assets from
 `/admin/assets/*` without rebuilding the UI.
 
-## Integration Direction
+## Adapter Direction
 
 Keep the dashboard service contract stable and move asset loading behind a small
-runtime boundary when non-Node integrations need it.
+runtime boundary when non-Node adapters need it.
 
 Recommended shape:
 

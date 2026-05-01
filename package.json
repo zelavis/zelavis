@@ -6,7 +6,7 @@
   "main": "index.js",
   "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "build": "pnpm -r --filter './packages/*' --filter './packages/*/integrations/*' --filter './packages/*/plugins/*' --if-present build",
+    "build": "pnpm -r --filter './packages/*' --filter './packages/*/adapters/*' --filter './packages/*/plugins/*' --if-present build",
     "check": "pnpm run typecheck",
     "changeset": "changeset",
     "changeset:add": "node scripts/create-changeset.mjs",
@@ -29,6 +29,8 @@
     "release:publish:alpha": "node scripts/release-publish.mjs alpha",
     "release:publish:latest": "node scripts/release-publish.mjs latest",
     "ui:dev": "node scripts/ui-dev.mjs",
+    "website:dev": "pnpm --filter @zelavis/website dev",
+    "website:typecheck": "pnpm --filter @zelavis/website typecheck",
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck"
   },

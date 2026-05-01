@@ -40,7 +40,7 @@ The repo still contains domain packages such as `@zelavis/ecommerce`, but they a
 - `packages/database` contains the document-first database core and server-facing database service.
 - `packages/auth` contains the low-level auth core and auth method plugins.
 - `packages/ui` contains the admin/dashboard UI used by the runtime package.
-- `packages/*/integrations/*` contains framework or external-system adapters.
+- `packages/*/adapters/*` contains framework or external-system adapters.
 - `packages/*/plugins/*` contains optional capability/provider/plugin packages.
 - `examples/*` contains runnable example workspace packages.
 - `docs/archive/*` is historical material and should not drive current product decisions unless explicitly revived.
@@ -65,20 +65,20 @@ When creating or extending packages:
 - Start from the domain model and the public API.
 - Define interfaces for infrastructure concerns such as storage, payments, queues, or external providers.
 - Ship an in-memory or local-development implementation when it improves usability or testability.
-- Keep provider integrations behind plugin or adapter boundaries.
+- Keep provider adapters behind plugin or adapter boundaries.
 - Make defaults simple, but keep escape hatches available.
 - Preserve a clear distinction between what exists today and what is only planned.
 
 Use these boundaries consistently:
 
-- `integrations` for framework bindings and external runtime adapters such as Express, Hono, or Node-specific mounting
+- `adapters` for framework bindings and external runtime adapters such as Express, Hono, or Node-specific mounting
 - `plugins` for optional domain/provider capabilities such as auth methods or payment providers
 
 ### For core platform work
 
 - Treat auth, database, server/runtime composition, and admin UX as the primary building blocks.
 - Keep service APIs mountable through shared server contracts so packages compose cleanly.
-- Keep storage, auth methods, and future provider integrations replaceable.
+- Keep storage, auth methods, and future provider adapters replaceable.
 - Document current limitations clearly when functionality is placeholder or in progress.
 
 ### For ecommerce-specific work
@@ -128,7 +128,7 @@ Do not manually edit generated files unless the user explicitly asks for it and 
 
 - Each package should have a focused README with purpose, scope, and basic usage.
 - Top-level docs should describe Zelavis as an in-progress backend platform, not as a generic utilities repo.
-- Document extension points and integration boundaries.
+- Document extension points and adapter boundaries.
 - Be explicit about what is implemented today versus roadmap direction.
 - Avoid vague marketing language.
 
@@ -164,6 +164,6 @@ Allowed foundation:
 
 Required architecture rule:
 
-- host/framework/provider-specific behavior must live only in `integrations/*` or equivalent adapter boundaries
+- host/framework/provider-specific behavior must live only in `adapters/*` or equivalent adapter boundaries
 - core packages must remain portable and runtime-neutral
 - Zelavis must never require a specific JS runtime, hosting provider, or framework as its architectural base

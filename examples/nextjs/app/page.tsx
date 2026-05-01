@@ -38,7 +38,7 @@ export default function Home() {
               What this proves
             </h2>
             <ul className="space-y-3 text-sm leading-6 text-black/70 dark:text-white/70">
-              <li>• Zelavis can run without a mount-specific integration.</li>
+              <li>• Zelavis can run without a mount-specific adapter.</li>
               <li>
                 • Next.js can host the dashboard under <strong>/zelavis</strong>
                 .

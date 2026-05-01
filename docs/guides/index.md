@@ -7,7 +7,7 @@ Planned content:
 - configuring auth
 - working with schemas
 - running the dashboard in development
-- using runtime integrations
+- using runtime adapters
 - self-hosting workflows
 
 Guideline:

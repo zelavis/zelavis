@@ -25,4 +25,4 @@ Then open:
 
 ## Key file
 
-- `index.ts` resolves the Zelavis runtime, creates a minimal `new Elysia()` app, and mounts `elysiaIntegration(runtime)` with `app.use(...)`
+- `index.ts` resolves the Zelavis runtime, creates a minimal `new Elysia()` app, and mounts `elysiaAdapter(runtime)` with `app.use(...)`

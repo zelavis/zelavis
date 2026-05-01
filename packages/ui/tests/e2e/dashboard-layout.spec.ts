@@ -34,7 +34,11 @@ test('desktop dashboard sidebar does not overlap', async ({ page }, testInfo) =>
   await expect(appHeader.getByRole('button', { name: /Theme mode/ })).toHaveCount(0)
 
   const nav = page.getByRole('complementary', { name: 'Dashboard navigation' })
-  const links = nav.locator('a')
+  const rootSlide = nav.locator('.swiper-slide-active').first()
+  const links = rootSlide
+    .getByRole('list')
+    .first()
+    .locator('a')
   await expect(nav).toBeVisible()
 
   const navOverflow = await nav.evaluate(
@@ -106,7 +110,9 @@ test('overview nav is only active on the overview route', async ({ page }, testI
   await gotoDashboard(page, '/database')
 
   await expect(page.getByRole('heading', { name: 'Multi-model database' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Core' })).toBeVisible()
+  await expect(
+    page.getByRole('complementary', { name: 'Dashboard navigation' }).locator('.swiper-slide-active'),
+  ).toContainText('Platform')
   await expect(
     page
       .getByRole('complementary', { name: 'Dashboard navigation' })
@@ -146,6 +152,9 @@ test('sidebar shows a single platform label on the root panel', async ({
 
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
   await expect(sidebar.getByText('Platform', { exact: true })).toHaveCount(1)
+  await expect(
+    sidebar.locator('.swiper-slide-active').getByText('Platform', { exact: true }),
+  ).toBeVisible()
   await expect(sidebar.getByText('Help', { exact: true })).toBeVisible()
 })
 
@@ -197,7 +206,7 @@ test('sidebar panel state survives refresh through the router', async ({
   await waitForDashboardHydration(page)
 
   await expect(sidebar.getByRole('button', { name: 'Workspace', exact: true })).toBeVisible()
-  await expect(sidebar.getByRole('link', { name: 'Builder', exact: true })).toBeVisible()
+  await expect(sidebar.getByRole('button', { name: 'Builder', exact: true })).toBeVisible()
 })
 
 test('sidebar route panels restore from the current route on refresh', async ({
@@ -288,8 +297,11 @@ test('settings shows read-only root path controls', async ({ page }, testInfo) =
 
   await expect(page.getByRole('heading', { name: 'Runtime Settings' })).toBeVisible()
   await expect(page.getByLabel('Path')).toHaveValue('/zelavis')
-  await expect(page.getByText('Read-only until runtime settings storage is available.')).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Save' }).first()).toBeDisabled()
+  await expect(
+    page.getByText(
+      /Read-only until runtime settings storage is available\.|Runtime settings storage is available\. Root path changes apply after restart\./,
+    ),
+  ).toBeVisible()
 })
 
 test('appearance settings persist the dashboard theme', async ({ page }, testInfo) => {

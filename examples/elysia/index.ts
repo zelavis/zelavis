@@ -1,6 +1,6 @@
 import { Elysia } from "elysia";
 import { zelavis } from "zelavis";
-import { elysiaIntegration } from "zelavis/integrations/elysia";
+import { elysiaAdapter } from "zelavis/adapters/elysia";
 
 const port = Number(process.env.PORT ?? 3000);
 
@@ -13,7 +13,7 @@ const zelavisRuntime = await zelavis({
 
 new Elysia()
   .get("/hello", "Hello Elysia")
-  .use(elysiaIntegration(zelavisRuntime))
+  .use(elysiaAdapter(zelavisRuntime))
   .listen(port);
 
 console.log(`zelavis Elysia example listening on http://localhost:${port}`);

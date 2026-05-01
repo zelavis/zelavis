@@ -1,6 +1,6 @@
 # @zelavis/ecommerce
 
-Low-level ecommerce building blocks for custom software, CMS integrations, and application backends.
+Low-level ecommerce building blocks for custom software, CMS systems, and application backends.
 
 This package is intended to sit below a storefront, admin panel, CMS plugin, or SaaS product. It focuses on composable domain services and payment/provider plugins rather than prescribing a full application.
 
@@ -100,14 +100,14 @@ const order = await commerce.orders.create({
 await commerce.payments.createPayment(order, "stripe");
 ```
 
-## HTTP Integrations
+## HTTP Adapters
 
 Framework helpers live in nested workspace packages:
 
 - `@zelavis/ecommerce-express`
 - `@zelavis/ecommerce-hono`
 
-These integrations are thin transport adapters around the core services. They are optional and intended as convenience layers, not as the primary architecture of the package.
+These adapters are thin transport adapters around the core services. They are optional and intended as convenience layers, not as the primary architecture of the package.
 
 ## Plugins
 
@@ -116,7 +116,7 @@ Optional domain capabilities live in nested workspace plugin packages:
 - `@zelavis/ecommerce-stripe`
 - `@zelavis/ecommerce-paypal`
 
-Payment providers should be implemented as plugins, not transport integrations.
+Payment providers should be implemented as plugins, not transport adapters.
 
 ## Recurring Billing
 

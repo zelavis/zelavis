@@ -20,7 +20,7 @@ function getPublishablePackageVersions() {
       packageJsonPaths.push(directPackageJsonPath);
     }
 
-    for (const nestedFolderName of ["integrations", "plugins"]) {
+    for (const nestedFolderName of ["adapters", "plugins"]) {
       const nestedRoot = join(packagesDir, entry.name, nestedFolderName);
 
       if (!existsSync(nestedRoot)) {

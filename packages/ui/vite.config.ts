@@ -8,8 +8,21 @@ import tailwindcss from '@tailwindcss/vite'
 
 const zelavisDevServer =
   process.env.ZELAVIS_DEV_SERVER ?? 'http://127.0.0.1:3000'
+const zelavisUiBasePath = normalizeBasePath(
+  process.env.ZELAVIS_UI_BASE_PATH ?? '/',
+)
+
+function normalizeBasePath(path: string): string {
+  if (!path || path === '/') {
+    return '/'
+  }
+
+  const withLeadingSlash = path.startsWith('/') ? path : `/${path}`
+  return `${withLeadingSlash.replace(/\/+$/, '')}/`
+}
 
 const config = defineConfig({
+  base: zelavisUiBasePath,
   resolve: { tsconfigPaths: true },
   build: {
     rollupOptions: {

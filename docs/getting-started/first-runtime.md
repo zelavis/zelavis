@@ -6,10 +6,10 @@ This page shows the simplest current way to start Zelavis.
 
 ```ts
 import { zelavis } from "zelavis";
-import { nodeIntegration } from "zelavis/integrations/node";
+import { nodeAdapter } from "zelavis/adapters/node";
 
 const runtime = await zelavis();
-const server = nodeIntegration(runtime);
+const server = nodeAdapter(runtime);
 
 server.listen(3000);
 ```
@@ -60,6 +60,6 @@ const response = await runtime.fetch(
 
 ## Next
 
-- [Node integration](../integrations/node.md)
+- [Node adapter](../adapters/node.md)
 - [zelavis package](../packages/zelavis.md)
 - [@zelavis/server](../packages/server.md)

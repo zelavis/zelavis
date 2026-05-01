@@ -1,0 +1,20 @@
+{
+  "name": "@zelavis/website",
+  "private": true,
+  "author": "Ivan Jeremic",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@zelavis/database-cloudflare-d1": "workspace:*",
+    "zelavis": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260404.0",
+    "typescript": "^5.9.0",
+    "wrangler": "^4.12.0"
+  }
+}

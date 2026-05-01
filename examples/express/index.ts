@@ -1,6 +1,6 @@
 import express from "express";
 import { zelavis } from "zelavis";
-import { expressIntegration } from "zelavis/integrations/express";
+import { expressAdapter } from "zelavis/adapters/express";
 
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
@@ -18,7 +18,7 @@ async function main(): Promise<void> {
     }),
   });
 
-  app.use(expressIntegration(zelavisRuntime));
+  app.use(expressAdapter(zelavisRuntime));
   app.listen(port, () => {
     console.log(
       `zelavis Express example listening on http://localhost:${port}`,

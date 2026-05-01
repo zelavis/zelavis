@@ -50,5 +50,5 @@ Treat runtime neutrality as a hard architectural rule.
 
 - Zelavis core may depend only on JavaScript/TypeScript and standard Web/ECMAScript APIs.
 - Do not redesign core packages around Node.js, Bun, Deno, Cloudflare, Next.js, or any framework/provider runtime.
-- Put runtime/framework-specific behavior only in `integrations/*` or adapter/plugin layers.
-- If a proposal introduces runtime lock-in, reject it unless the user explicitly wants a runtime-specific integration package.
+- Put runtime/framework-specific behavior only in `adapters/*` or adapter/plugin layers.
+- If a proposal introduces runtime lock-in, reject it unless the user explicitly wants a runtime-specific adapter package.

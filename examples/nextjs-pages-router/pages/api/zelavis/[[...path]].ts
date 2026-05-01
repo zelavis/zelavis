@@ -1,4 +1,4 @@
-import { nextjsPagesRouterIntegration } from "zelavis/integrations/nextjs-pages-router";
+import { nextjsPagesRouterAdapter } from "zelavis/adapters/nextjs-pages-router";
 import { getZelavisRuntime } from "@/lib/zelavis";
 
 export const config = {
@@ -8,7 +8,7 @@ export const config = {
   },
 };
 
-export default nextjsPagesRouterIntegration(getZelavisRuntime(), {
+export default nextjsPagesRouterAdapter(getZelavisRuntime(), {
   routePrefix: "/api/zelavis",
   mountPath: "/zelavis",
 });

@@ -1,6 +1,6 @@
 This example shows Zelavis running inside a Cloudflare Worker.
 
-It does not need a dedicated Cloudflare integration helper because Cloudflare Workers already use the standard Web `Request` → `Response` fetch handler model that Zelavis exposes directly.
+It does not need a dedicated Cloudflare adapter helper because Cloudflare Workers already use the standard Web `Request` → `Response` fetch handler model that Zelavis exposes directly.
 
 ## What it demonstrates
 

@@ -22,6 +22,7 @@ import { Route as AgentsRouteImport } from './routes/agents'
 import { Route as SplatRouteImport } from './routes/$'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
+import { Route as BuilderPagesRouteImport } from './routes/builder.pages'
 
 const UsersRoute = UsersRouteImport.update({
   id: '/users',
@@ -88,13 +89,18 @@ const SettingsAppearanceRoute = SettingsAppearanceRouteImport.update({
   path: '/appearance',
   getParentRoute: () => SettingsRoute,
 } as any)
+const BuilderPagesRoute = BuilderPagesRouteImport.update({
+  id: '/pages',
+  path: '/pages',
+  getParentRoute: () => BuilderRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$': typeof SplatRoute
   '/agents': typeof AgentsRoute
   '/auth': typeof AuthRoute
-  '/builder': typeof BuilderRoute
+  '/builder': typeof BuilderRouteWithChildren
   '/commerce': typeof CommerceRoute
   '/content': typeof ContentRoute
   '/database': typeof DatabaseRoute
@@ -102,6 +108,7 @@ export interface FileRoutesByFullPath {
   '/services': typeof ServicesRoute
   '/settings': typeof SettingsRouteWithChildren
   '/users': typeof UsersRoute
+  '/builder/pages': typeof BuilderPagesRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
 }
 export interface FileRoutesByTo {
@@ -109,7 +116,7 @@ export interface FileRoutesByTo {
   '/$': typeof SplatRoute
   '/agents': typeof AgentsRoute
   '/auth': typeof AuthRoute
-  '/builder': typeof BuilderRoute
+  '/builder': typeof BuilderRouteWithChildren
   '/commerce': typeof CommerceRoute
   '/content': typeof ContentRoute
   '/database': typeof DatabaseRoute
@@ -117,6 +124,7 @@ export interface FileRoutesByTo {
   '/services': typeof ServicesRoute
   '/settings': typeof SettingsRouteWithChildren
   '/users': typeof UsersRoute
+  '/builder/pages': typeof BuilderPagesRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
 }
 export interface FileRoutesById {
@@ -125,7 +133,7 @@ export interface FileRoutesById {
   '/$': typeof SplatRoute
   '/agents': typeof AgentsRoute
   '/auth': typeof AuthRoute
-  '/builder': typeof BuilderRoute
+  '/builder': typeof BuilderRouteWithChildren
   '/commerce': typeof CommerceRoute
   '/content': typeof ContentRoute
   '/database': typeof DatabaseRoute
@@ -133,6 +141,7 @@ export interface FileRoutesById {
   '/services': typeof ServicesRoute
   '/settings': typeof SettingsRouteWithChildren
   '/users': typeof UsersRoute
+  '/builder/pages': typeof BuilderPagesRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
 }
 export interface FileRouteTypes {
@@ -150,6 +159,7 @@ export interface FileRouteTypes {
     | '/services'
     | '/settings'
     | '/users'
+    | '/builder/pages'
     | '/settings/appearance'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -165,6 +175,7 @@ export interface FileRouteTypes {
     | '/services'
     | '/settings'
     | '/users'
+    | '/builder/pages'
     | '/settings/appearance'
   id:
     | '__root__'
@@ -180,6 +191,7 @@ export interface FileRouteTypes {
     | '/services'
     | '/settings'
     | '/users'
+    | '/builder/pages'
     | '/settings/appearance'
   fileRoutesById: FileRoutesById
 }
@@ -188,7 +200,7 @@ export interface RootRouteChildren {
   SplatRoute: typeof SplatRoute
   AgentsRoute: typeof AgentsRoute
   AuthRoute: typeof AuthRoute
-  BuilderRoute: typeof BuilderRoute
+  BuilderRoute: typeof BuilderRouteWithChildren
   CommerceRoute: typeof CommerceRoute
   ContentRoute: typeof ContentRoute
   DatabaseRoute: typeof DatabaseRoute
@@ -291,8 +303,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsAppearanceRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/builder/pages': {
+      id: '/builder/pages'
+      path: '/pages'
+      fullPath: '/builder/pages'
+      preLoaderRoute: typeof BuilderPagesRouteImport
+      parentRoute: typeof BuilderRoute
+    }
   }
 }
+
+interface BuilderRouteChildren {
+  BuilderPagesRoute: typeof BuilderPagesRoute
+}
+
+const BuilderRouteChildren: BuilderRouteChildren = {
+  BuilderPagesRoute: BuilderPagesRoute,
+}
+
+const BuilderRouteWithChildren =
+  BuilderRoute._addFileChildren(BuilderRouteChildren)
 
 interface SettingsRouteChildren {
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
@@ -311,7 +341,7 @@ const rootRouteChildren: RootRouteChildren = {
   SplatRoute: SplatRoute,
   AgentsRoute: AgentsRoute,
   AuthRoute: AuthRoute,
-  BuilderRoute: BuilderRoute,
+  BuilderRoute: BuilderRouteWithChildren,
   CommerceRoute: CommerceRoute,
   ContentRoute: ContentRoute,
   DatabaseRoute: DatabaseRoute,

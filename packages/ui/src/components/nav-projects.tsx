@@ -59,7 +59,9 @@ export function NavProjects({
 
   if (nested) {
     return (
-      <div className="group-data-[collapsible=icon]:hidden">{content}</div>
+      <div className="w-full shrink-0 group-data-[collapsible=icon]:hidden">
+        {content}
+      </div>
     );
   }
 

@@ -27,7 +27,7 @@ By default, Zelavis owns one safe namespace under `/zelavis` and includes dashbo
 
 ## When to use lower-level packages instead
 
-Use scoped packages directly when you need lower-level control over primitives, integrations, or tests:
+Use scoped packages directly when you need lower-level control over primitives, adapters, or tests:
 
 - `@zelavis/server`
 - `@zelavis/database`

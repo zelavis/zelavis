@@ -9,7 +9,7 @@ Likely pages:
 - auth boundaries
 - database model
 - dashboard delivery model
-- provider and integration boundaries
+- provider and adapter boundaries
 
 Guideline:
 

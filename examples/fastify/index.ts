@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 import { zelavis } from "zelavis";
-import { fastifyIntegration } from "zelavis/integrations/fastify";
+import { fastifyAdapter } from "zelavis/adapters/fastify";
 
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
@@ -15,7 +15,7 @@ async function main(): Promise<void> {
     }),
   });
 
-  await app.register(fastifyIntegration(zelavisRuntime));
+  await app.register(fastifyAdapter(zelavisRuntime));
   await app.listen({
     port,
     host: "127.0.0.1",

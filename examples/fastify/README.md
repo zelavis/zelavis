@@ -23,4 +23,4 @@ Then open:
 
 ## Key file
 
-- `index.ts` creates a Fastify instance, resolves the Zelavis runtime, and registers `fastifyIntegration(runtime)` with `app.register(...)`
+- `index.ts` creates a Fastify instance, resolves the Zelavis runtime, and registers `fastifyAdapter(runtime)` with `app.register(...)`

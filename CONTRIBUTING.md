@@ -38,14 +38,14 @@ The ecommerce package is still useful, but it should be treated as an optional d
 - Keep changes small and focused.
 - Prefer explicit contracts over hidden magic.
 - Keep core packages framework-agnostic unless they are explicitly adapters.
-- Favor composition, plugins, and integrations over tight coupling.
+- Favor composition, plugins, and adapters over tight coupling.
 - Avoid heavy dependencies unless clearly justified.
 - Be clear about what exists today versus what is only planned.
 
 ## Repo layout
 
 - `packages/*` contains workspace packages.
-- `packages/*/integrations/*` contains framework or external runtime adapters.
+- `packages/*/adapters/*` contains framework or external runtime adapters.
 - `packages/*/plugins/*` contains optional capability/provider packages.
 - `examples/*` contains runnable example workspace packages.
 - `docs/archive/*` is historical material and should not be treated as current source of truth unless explicitly revived.
@@ -162,4 +162,4 @@ Contributors should not:
 - couple core APIs to framework objects
 - build core features around cloud/provider SDKs
 
-Use integration packages for host-specific behavior instead.
+Use adapter packages for host-specific behavior instead.

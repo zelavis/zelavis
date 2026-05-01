@@ -1,30 +1,33 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-test("zelavis package exports runtime APIs and integration subpaths", async () => {
+test("zelavis package exports runtime APIs and adapter subpaths", async () => {
   const runtime = await import("zelavis");
-  const elysiaIntegration = await import("zelavis/integrations/elysia");
-  const nodeIntegration = await import("zelavis/integrations/node");
-  const expressIntegration = await import("zelavis/integrations/express");
-  const fastifyIntegration = await import("zelavis/integrations/fastify");
-  const honoIntegration = await import("zelavis/integrations/hono");
-  const h3Integration = await import("zelavis/integrations/h3");
-  const nextjsPagesRouterIntegration =
-    await import("zelavis/integrations/nextjs-pages-router");
+  const elysiaAdapter = await import("zelavis/adapters/elysia");
+  const nodeAdapter = await import("zelavis/adapters/node");
+  const expressAdapter = await import("zelavis/adapters/express");
+  const fastifyAdapter = await import("zelavis/adapters/fastify");
+  const honoAdapter = await import("zelavis/adapters/hono");
+  const h3Adapter = await import("zelavis/adapters/h3");
+  const nextjsPagesRouterAdapter =
+    await import("zelavis/adapters/nextjs-pages-router");
 
   assert.equal(typeof runtime.zelavis, "function");
-  assert.equal(typeof elysiaIntegration.elysiaIntegration, "function");
-  assert.equal(typeof nodeIntegration.nodeIntegration, "function");
+  assert.equal(typeof runtime.createDatabase, "function");
+  assert.equal(typeof runtime.defineServerService, "function");
+  assert.equal("zelavisServer" in runtime, false);
+  assert.equal(typeof elysiaAdapter.elysiaAdapter, "function");
+  assert.equal(typeof nodeAdapter.nodeAdapter, "function");
   assert.equal(
-    typeof nodeIntegration.createFileDashboardSettingsStore,
+    typeof nodeAdapter.createFileDashboardSettingsStore,
     "function",
   );
-  assert.equal(typeof expressIntegration.expressIntegration, "function");
-  assert.equal(typeof fastifyIntegration.fastifyIntegration, "function");
-  assert.equal(typeof honoIntegration.honoIntegration, "function");
-  assert.equal(typeof h3Integration.h3Integration, "function");
+  assert.equal(typeof expressAdapter.expressAdapter, "function");
+  assert.equal(typeof fastifyAdapter.fastifyAdapter, "function");
+  assert.equal(typeof honoAdapter.honoAdapter, "function");
+  assert.equal(typeof h3Adapter.h3Adapter, "function");
   assert.equal(
-    typeof nextjsPagesRouterIntegration.nextjsPagesRouterIntegration,
+    typeof nextjsPagesRouterAdapter.nextjsPagesRouterAdapter,
     "function",
   );
 });

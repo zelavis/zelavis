@@ -2,7 +2,7 @@
 
 `@zelavis/server` defines a shared service contract plus a Web-first execution layer for running Zelavis APIs across Node.js and server frameworks.
 
-It is intended to be the common integration layer for platform packages such as `@zelavis/auth`, `@zelavis/database`, and the high-level `zelavis` runtime, while remaining reusable for optional domain packages such as `@zelavis/ecommerce`.
+It is intended to be the common adapter layer for platform packages such as `@zelavis/auth`, `@zelavis/database`, and the high-level `zelavis` runtime, while remaining reusable for optional domain packages such as `@zelavis/ecommerce`.
 
 ## Core ideas
 
@@ -16,7 +16,7 @@ It is intended to be the common integration layer for platform packages such as 
 
 - `fetch(request)` for Web and fetch-compatible runtimes
 - `plain({ url, method, headers, body })` for tests and object-in/object-out embedding
-- `dispatch(request)` when integrations need match metadata as well as the final `Response`
+- `dispatch(request)` when adapters need match metadata as well as the final `Response`
 - explicit adapter helpers built around the resolved runtime when a framework-specific shape is useful
 
 ## Guarantees being targeted
@@ -27,16 +27,16 @@ It is intended to be the common integration layer for platform packages such as 
 - `multipart/form-data` bodies are preserved as form values instead of being flattened away
 - `HEAD` requests can reuse `GET` handlers without sending a response body
 
-## Integrations
+## Adapters
 
-- `@zelavis/server/integrations/elysia`
-- `@zelavis/server/integrations/node`
-- `@zelavis/server/integrations/express`
-- `@zelavis/server/integrations/fastify`
-- `@zelavis/server/integrations/hono`
-- `@zelavis/server/integrations/h3`
-- `@zelavis/server/integrations/nextjs-pages-router`
+- `@zelavis/server/adapters/elysia`
+- `@zelavis/server/adapters/node`
+- `@zelavis/server/adapters/express`
+- `@zelavis/server/adapters/fastify`
+- `@zelavis/server/adapters/hono`
+- `@zelavis/server/adapters/h3`
+- `@zelavis/server/adapters/nextjs-pages-router`
 
-Use the Node.js integration when Zelavis should own a standalone HTTP server. Use an Elysia plugin, Express middleware, a Fastify plugin, Hono/h3 middleware handlers, or the Next.js Pages Router adapter when mounting Zelavis into an existing app. When embedding into a fetch-oriented environment such as Next.js App Router or Cloudflare Workers, call `fetch(...)` directly and skip mount adapters entirely.
+Use the Node.js adapter when Zelavis should own a standalone HTTP server. Use an Elysia plugin, Express middleware, a Fastify plugin, Hono/h3 middleware handlers, or the Next.js Pages Router adapter when mounting Zelavis into an existing app. When embedding into a fetch-oriented environment such as Next.js App Router or Cloudflare Workers, call `fetch(...)` directly and skip mount adapters entirely.
 
 For fetch-native examples, see [examples/web-fetch](../../examples/web-fetch), [examples/cloudflare](../../examples/cloudflare), and [examples/nextjs](../../examples/nextjs). For mounting inside existing apps, see [examples/elysia](../../examples/elysia), [examples/fastify](../../examples/fastify), [examples/h3](../../examples/h3), and [examples/nextjs-pages-router](../../examples/nextjs-pages-router).

@@ -14,9 +14,9 @@ Today, Zelavis is still foundation-first. It already has working packages for au
 - Framework-agnostic by default.
 - Strong contracts over hidden magic.
 - Small, composable package surfaces.
-- Clear extension points for providers, adapters, and integrations.
+- Clear extension points for providers, adapters, and plugins.
 
-This repository is intended for developers building custom software, internal tools, multi-tenant backends, CMS integrations, platform services, plugins, and reusable infrastructure components.
+This repository is intended for developers building custom software, internal tools, multi-tenant backends, CMS systems, platform services, plugins, and reusable infrastructure components.
 
 ## Current shape
 
@@ -24,7 +24,7 @@ Zelavis currently focuses on these platform layers:
 
 - Auth primitives and pluggable authentication methods.
 - A tenant-aware, document-first database core.
-- Shared server contracts and HTTP integrations.
+- Shared server contracts and HTTP adapters.
 - A high-level runtime package that composes core services.
 - An admin UI package that powers the runtime dashboard shell.
 
@@ -37,13 +37,13 @@ Packages live in [packages/](packages).
 Current packages:
 
 - [packages/zelavis](packages/zelavis)  
-  The high-level runtime package. It composes core services such as auth, database, and dashboard delivery, and re-exports server integrations.
+  The high-level runtime package. It composes core services such as auth, database, and dashboard delivery, and re-exports server adapters.
 - [packages/database](packages/database)  
   A document-first, tenant-aware database core with an in-memory driver, optional SQL capability, and a mountable server service.
-- [packages/database/integrations/bun-sqlite](packages/database/integrations/bun-sqlite)  
-  A Bun SQLite integration package for `@zelavis/database` using the built-in `bun:sqlite` module.
-- [packages/database/integrations/node-sqlite](packages/database/integrations/node-sqlite)  
-  A Node.js SQLite integration package for `@zelavis/database` using `better-sqlite3`.
+- [packages/database/adapters/bun-sqlite](packages/database/adapters/bun-sqlite)
+  A Bun SQLite adapter package for `@zelavis/database` using the built-in `bun:sqlite` module.
+- [packages/database/adapters/node-sqlite](packages/database/adapters/node-sqlite)
+  A Node.js SQLite adapter package for `@zelavis/database` using `better-sqlite3`.
 - [packages/auth](packages/auth)  
   A low-level authentication core for accounts, credentials, sessions, and opt-in auth method plugins.
 - [packages/server](packages/server)  
@@ -52,10 +52,10 @@ Current packages:
   The admin/dashboard frontend used by the high-level runtime.
 - [packages/ecommerce](packages/ecommerce)  
   An optional low-level ecommerce core for building custom commerce platforms, CMS plugins, and embedded commerce workflows.
-- [packages/ecommerce/integrations/express](packages/ecommerce/integrations/express)  
-  An Express integration package for exposing the ecommerce core over HTTP.
-- [packages/ecommerce/integrations/hono](packages/ecommerce/integrations/hono)  
-  A Hono integration package for exposing the ecommerce core over HTTP.
+- [packages/ecommerce/adapters/express](packages/ecommerce/adapters/express)
+  An Express adapter package for exposing the ecommerce core over HTTP.
+- [packages/ecommerce/adapters/hono](packages/ecommerce/adapters/hono)
+  A Hono adapter package for exposing the ecommerce core over HTTP.
 - [packages/ecommerce/plugins/stripe](packages/ecommerce/plugins/stripe)  
   A Stripe payment provider plugin for `@zelavis/ecommerce`.
 - [packages/ecommerce/plugins/paypal](packages/ecommerce/plugins/paypal)  
@@ -71,10 +71,10 @@ Applications should usually import from `zelavis`, where core services are inclu
 
 ```ts
 import { zelavis } from "zelavis";
-import { nodeIntegration } from "zelavis/integrations/node";
+import { nodeAdapter } from "zelavis/adapters/node";
 
 const runtime = await zelavis();
-const server = nodeIntegration(runtime);
+const server = nodeAdapter(runtime);
 ```
 
 Maintainers publishing packages should use [docs/releasing.md](docs/releasing.md).
@@ -93,7 +93,7 @@ const response = await runtime.fetch(
 );
 ```
 
-When a host framework needs fallthrough-aware mounting, use its thin integration instead. For example, h3 apps can use `app.use("/**", h3Integration(runtime))` while still keeping Zelavis at `/zelavis`.
+When a host framework needs fallthrough-aware mounting, use its thin adapter instead. For example, h3 apps can use `app.use("/**", h3Adapter(runtime))` while still keeping Zelavis at `/zelavis`.
 
 By default, Zelavis owns one safe namespace:
 
@@ -119,7 +119,7 @@ That moves the dashboard and APIs together:
 /admin/api/v1/database
 ```
 
-Use scoped packages such as `@zelavis/server`, `@zelavis/database`, and `@zelavis/auth` when building lower-level primitives, integrations, plugins, or tests that need direct package APIs.
+Use scoped packages such as `@zelavis/server`, `@zelavis/database`, and `@zelavis/auth` when building lower-level primitives, adapters, plugins, or tests that need direct package APIs.
 
 ## Core Services
 
@@ -170,11 +170,11 @@ Current architecture includes:
 - Tenant-aware document collections.
 - A document API for create, read, query, update, and delete operations.
 - An in-memory driver for development and tests.
-- An optional SQL capability contract plus a Bun SQLite integration via `@zelavis/database-bun-sqlite`.
-- An optional SQL capability contract plus a Node SQLite integration via `@zelavis/database-node-sqlite`.
+- An optional SQL capability contract plus a Bun SQLite adapter via `@zelavis/database-bun-sqlite`.
+- An optional SQL capability contract plus a Node SQLite adapter via `@zelavis/database-node-sqlite`.
 - `databaseService(database)` for mounting database routes through `@zelavis/server`, with documents exposed as a nested service.
 
-The core implementation is intentionally portable and does not depend on `unstorage` or native SQLite bindings. Durable database drivers should be supplied by platform integrations such as `@zelavis/database-bun-sqlite`, `@zelavis/database-node-sqlite`, or future `@zelavis/integration-cloudflare` and `@zelavis/integration-turso` packages.
+The core implementation is intentionally portable and does not depend on `unstorage` or native SQLite bindings. Durable database drivers should be supplied by platform adapters such as `@zelavis/database-bun-sqlite`, `@zelavis/database-node-sqlite`, or future `@zelavis/adapter-cloudflare` and `@zelavis/adapter-turso` packages.
 
 ## Optional domain package: `@zelavis/ecommerce`
 
@@ -186,14 +186,14 @@ Current architecture includes:
 - Repository contracts that isolate persistence from business logic.
 - In-memory repository implementations for development and tests.
 - A plugin-oriented payment layer for providers such as Stripe, PayPal, and others.
-- Optional framework adapters exposed as separate integration packages such as `@zelavis/ecommerce-express` and `@zelavis/ecommerce-hono`.
+- Optional framework adapters exposed as separate adapter packages such as `@zelavis/ecommerce-express` and `@zelavis/ecommerce-hono`.
 
 This package is meant to support use cases such as:
 
 - Building a WooCommerce-like plugin on top of an existing app or CMS.
 - Building a PrestaShop-like commerce system with your own admin and storefront layers.
 - Embedding commerce operations directly inside a backend application.
-- Creating provider adapters and storage integrations without rewriting the core domain.
+- Creating provider adapters and storage adapters without rewriting the core domain.
 
 ## Getting Started
 

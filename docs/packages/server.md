@@ -4,14 +4,14 @@
 
 ## Current role
 
-Packages expose server services through a shared contract, and integrations mount or embed the resolved runtime.
+Packages expose server services through a shared contract, and adapters mount or embed the resolved runtime.
 
 ## Core ideas
 
 - packages export services with `defineServerService(...)`
 - services can compose nested services
 - `zelavisServer(...)` resolves routes once and exposes reusable runtime handlers
-- integrations adapt the resolved runtime to framework-specific shapes
+- adapters adapt the resolved runtime to framework-specific shapes
 
 ## Runtime surfaces
 
@@ -28,4 +28,4 @@ This package is the transport boundary that keeps domain packages mountable with
 ## Related docs
 
 - [zelavis](./zelavis.md)
-- [Node integration](../integrations/node.md)
+- [Node adapter](../adapters/node.md)

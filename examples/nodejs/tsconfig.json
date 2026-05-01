@@ -13,7 +13,7 @@
       "@zelavis/auth": ["packages/auth/src/index.ts"],
       "@zelavis/database": ["packages/database/src/index.ts"],
       "@zelavis/database-node-sqlite": [
-        "packages/database/integrations/node-sqlite/src/index.ts"
+        "packages/database/adapters/node-sqlite/src/index.ts"
       ],
       "@zelavis/ecommerce": ["packages/ecommerce/src/index.ts"],
       "@zelavis/ecommerce-paypal": [
@@ -23,20 +23,20 @@
         "packages/ecommerce/plugins/stripe/src/index.ts"
       ],
       "@zelavis/server": ["packages/server/src/index.ts"],
-      "@zelavis/server/integrations/express": [
-        "packages/server/src/integrations/express.ts"
+      "@zelavis/server/adapters/express": [
+        "packages/server/src/adapters/express.ts"
       ],
-      "@zelavis/server/integrations/node": [
-        "packages/server/src/integrations/node.ts"
+      "@zelavis/server/adapters/node": [
+        "packages/server/src/adapters/node.ts"
       ],
       "zelavis": ["packages/zelavis/src/index.ts"],
-      "zelavis/integrations/express": [
-        "packages/zelavis/src/integrations/express.ts"
+      "zelavis/adapters/express": [
+        "packages/zelavis/src/adapters/express.ts"
       ],
-      "zelavis/integrations/hono": [
-        "packages/zelavis/src/integrations/hono.ts"
+      "zelavis/adapters/hono": [
+        "packages/zelavis/src/adapters/hono.ts"
       ],
-      "zelavis/integrations/node": ["packages/zelavis/src/integrations/node.ts"]
+      "zelavis/adapters/node": ["packages/zelavis/src/adapters/node.ts"]
     }
   },
   "include": ["index.ts"]
