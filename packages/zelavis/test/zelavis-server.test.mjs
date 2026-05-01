@@ -375,6 +375,48 @@ test("zelavis can redirect dashboard routes to a UI dev server", async () => {
   );
 });
 
+test("zelavis preserves a mounted dev-server dashboard base path", async () => {
+  const runtime = await zelavis({
+    coreServices: {
+      dashboard: {
+        devServerUrl: "http://127.0.0.1:3001/zelavis",
+      },
+    },
+  });
+  const routes = runtime.routes;
+
+  const rootRoute = routes.find((route) => route.fullPath === "/zelavis");
+  const rootResponse = await rootRoute.route.handler({
+    service: rootRoute.service.service,
+    params: {},
+    query: new URLSearchParams(),
+    body: undefined,
+    headers: {},
+    request: { url: "/zelavis" },
+  });
+
+  assert.equal(rootResponse.status, 307);
+  assert.equal(rootResponse.headers.location, "http://127.0.0.1:3001/zelavis/");
+
+  const settingsRoute = routes.find(
+    (route) => route.fullPath === "/zelavis/settings",
+  );
+  const settingsResponse = await settingsRoute.route.handler({
+    service: settingsRoute.service.service,
+    params: {},
+    query: new URLSearchParams("tab=auth"),
+    body: undefined,
+    headers: {},
+    request: { url: "/zelavis/settings?tab=auth" },
+  });
+
+  assert.equal(settingsResponse.status, 307);
+  assert.equal(
+    settingsResponse.headers.location,
+    "http://127.0.0.1:3001/zelavis/settings?tab=auth",
+  );
+});
+
 test("zelavis can disable all core services", async () => {
   const runtime = await zelavis({
     coreServices: {

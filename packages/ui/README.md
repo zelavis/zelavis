@@ -48,6 +48,15 @@ Override the target with `ZELAVIS_DEV_SERVER` when the backend runs elsewhere:
 ZELAVIS_DEV_SERVER=http://127.0.0.1:3333 pnpm --filter @zelavis/ui dev
 ```
 
+Mount the standalone UI dev server under the production-style dashboard base:
+
+```bash
+ZELAVIS_UI_BASE_PATH=/zelavis/ pnpm --filter @zelavis/ui dev
+```
+
+Leave `ZELAVIS_UI_BASE_PATH` unset when you want the package-level UI dev server
+to stay root-mounted at `/` for isolated UI work.
+
 ## Shipping Plan
 
 The dashboard should be shipped through the high-level `zelavis` package, not imported by application users directly.
