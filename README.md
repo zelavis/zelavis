@@ -237,6 +237,13 @@ The repository keeps a small baseline CI workflow:
 
 That keeps the default branch honest without forcing every package and example into one heavy pipeline.
 
+Dependabot is also configured for weekly npm and GitHub Actions update PRs, and a companion workflow enables squash auto-merge for safe patch and minor Dependabot updates after checks pass.
+
+Two GitHub repository settings still need to be enabled manually in the web UI:
+
+- branch protection on `main` that requires the `CI` workflow to pass
+- repository-level auto-merge support, so Dependabot PRs can enter the merge queue automatically
+
 ## Usage Example
 
 For a unified recurring billing flow (Stripe + PayPal) through the ecommerce core, see:

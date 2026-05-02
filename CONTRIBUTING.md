@@ -127,6 +127,8 @@ The default CI baseline currently runs:
 
 For lockfile or dependency changes, run the audit locally before opening a PR.
 
+Dependabot and Dependabot auto-merge are configured in-repo, but GitHub branch protection and repository auto-merge still need to be enabled once in the repository settings.
+
 ## Release workflow
 
 Publishable packages use Changesets-based release management.
