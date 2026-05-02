@@ -1,7 +1,7 @@
-import { zelavis } from "zelavis";
+import { Zelavis } from "zelavis";
 
-const runtimePromise = zelavis({});
+const zelavis = new Zelavis({});
 
 export function getZelavisRuntime() {
-  return runtimePromise;
+  return zelavis.runtime();
 }

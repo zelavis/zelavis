@@ -11,7 +11,7 @@ Used by the `zelavis` dashboard core service when you want dashboard requests to
 Equivalent code-level option:
 
 ```ts
-await zelavis({
+new Zelavis({
   coreServices: {
     dashboard: {
       devServerUrl: "http://127.0.0.1:3001/zelavis",

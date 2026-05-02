@@ -1,13 +1,13 @@
 import { fileURLToPath } from "node:url";
 import { createBunSqliteDatabaseDriver } from "@zelavis/database-bun-sqlite";
-import { zelavis } from "zelavis";
+import { Zelavis } from "zelavis";
 
 const port = Number(Bun.env.PORT ?? 3000);
 const databasePath = fileURLToPath(
   new URL("./.data/zelavis.sqlite", import.meta.url),
 );
 
-const runtime = await zelavis({
+const zelavis = new Zelavis({
   coreServices: {
     database: {
       driver: createBunSqliteDatabaseDriver({
@@ -20,6 +20,7 @@ const runtime = await zelavis({
     body: { error: error instanceof Error ? error.message : "Unknown error" },
   }),
 });
+const runtime = await zelavis.runtime();
 
 let server: ReturnType<typeof Bun.serve>;
 server = Bun.serve({

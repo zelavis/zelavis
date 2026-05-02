@@ -6,12 +6,16 @@ Use the Elysia adapter when Zelavis should be mounted inside an Elysia applicati
 
 ```ts
 import { Elysia } from "elysia";
-import { zelavis } from "zelavis";
+import { Zelavis } from "zelavis";
 import { elysiaAdapter } from "zelavis/adapters/elysia";
+import { nodePlatform } from "zelavis/platforms/node";
 
-const runtime = await zelavis();
+const zelavis = new Zelavis({
+  adapter: elysiaAdapter(),
+  platform: nodePlatform(),
+});
 
-new Elysia().use(elysiaAdapter(runtime)).listen(3000);
+new Elysia().use(await zelavis.adapter.elysiaPlugin()).listen(3000);
 ```
 
 ## Good fit

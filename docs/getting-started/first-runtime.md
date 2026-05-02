@@ -5,18 +5,22 @@ This page shows the simplest current way to start Zelavis.
 ## Quick start
 
 ```ts
-import { zelavis } from "zelavis";
+import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
+import { nodePlatform } from "zelavis/platforms/node";
 
-const runtime = await zelavis();
-const server = nodeAdapter(runtime);
+const zelavis = new Zelavis({
+  adapter: nodeAdapter(),
+  platform: nodePlatform(),
+});
+const server = await zelavis.adapter.nodeServer();
 
 server.listen(3000);
 ```
 
 ## What you get by default
 
-Today, `zelavis()` includes these core services by default:
+Today, a default `new Zelavis(...)` runtime includes these core services by default:
 
 - dashboard
 - auth
@@ -41,7 +45,7 @@ The website core service also mounts public website pages at `/`, while still re
 ## Disable built-in services when needed
 
 ```ts
-await zelavis({
+new Zelavis({
   coreServices: {
     auth: false,
     dashboard: false,
@@ -71,10 +75,10 @@ Root path changes are stored as pending runtime settings and require a restart b
 When you do not need a framework-specific mount helper:
 
 ```ts
-import { zelavis } from "zelavis";
+import { Zelavis } from "zelavis";
 
-const runtime = await zelavis();
-const response = await runtime.fetch(
+const zelavis = new Zelavis({});
+const response = await zelavis.fetch(
   new Request("http://localhost/zelavis/api/v1/dashboard/config"),
 );
 ```

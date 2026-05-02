@@ -13,8 +13,13 @@
     "isolatedModules": true,
     "jsx": "react-jsx",
     "incremental": true,
+    "baseUrl": "../..",
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["examples/nextjs-pages-router/*"],
+      "zelavis": ["packages/zelavis/src/index.ts"],
+      "zelavis/adapters/nextjs-pages-router": [
+        "packages/zelavis/src/adapters/nextjs-pages-router.ts"
+      ]
     }
   },
   "include": [

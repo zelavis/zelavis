@@ -17,9 +17,14 @@ Today, that mostly means:
 ## Main entry point
 
 ```ts
-import { zelavis } from "zelavis";
+import { Zelavis } from "zelavis";
+import { nodeAdapter } from "zelavis/adapters/node";
+import { nodePlatform } from "zelavis/platforms/node";
 
-const runtime = await zelavis();
+const zelavis = new Zelavis({
+  adapter: nodeAdapter(),
+  platform: nodePlatform(),
+});
 ```
 
 ## Default behavior
@@ -35,6 +40,8 @@ Use scoped packages directly when you need lower-level control over primitives, 
 - `@zelavis/server`
 - `@zelavis/database`
 - `@zelavis/auth`
+
+The lower-level `zelavis()` function still exists for direct runtime composition, but the main public application-facing entry point is the `Zelavis` class with framework adapters plus platform presets.
 
 ## Related docs
 

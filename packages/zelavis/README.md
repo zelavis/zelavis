@@ -8,25 +8,29 @@ Today, that mostly means auth, database, website delivery, server mounting, and 
 
 ## Import split
 
-Use `zelavis` for application and runtime code:
+Use `Zelavis` for application and runtime code:
 
 ```ts
-import { zelavis } from "zelavis";
+import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
+import { nodePlatform } from "zelavis/platforms/node";
 
-const runtime = await zelavis();
-const server = nodeAdapter(runtime);
+const zelavis = new Zelavis({
+  adapter: nodeAdapter(),
+  platform: nodePlatform(),
+});
+const server = await zelavis.adapter.nodeServer();
 ```
 
 Or embed the runtime directly in a Web/fetch environment:
 
 ```ts
-import { zelavis } from "zelavis";
+import { Zelavis } from "zelavis";
 
-const runtime = await zelavis({});
+const zelavis = new Zelavis({});
 
 export function GET(request: Request) {
-  return runtime.fetch(request);
+  return zelavis.fetch(request);
 }
 ```
 
@@ -41,11 +45,15 @@ import { authService } from "@zelavis/auth";
 ## Usage
 
 ```ts
-import { zelavis } from "zelavis";
+import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
+import { nodePlatform } from "zelavis/platforms/node";
 
-const runtime = await zelavis();
-const server = nodeAdapter(runtime);
+const zelavis = new Zelavis({
+  adapter: nodeAdapter(),
+  platform: nodePlatform(),
+});
+const server = await zelavis.adapter.nodeServer();
 
 server.listen(3000);
 ```
@@ -53,9 +61,9 @@ server.listen(3000);
 When you do not need a framework-specific adapter, use the Web-style runtime handlers directly:
 
 ```ts
-const runtime = await zelavis({});
+const zelavis = new Zelavis({});
 
-const response = await runtime.fetch(
+const response = await zelavis.fetch(
   new Request("http://localhost/zelavis/api/v1/dashboard/config"),
 );
 ```
@@ -76,7 +84,7 @@ By default, Zelavis owns one safe namespace:
 Customize that namespace with `rootPath`:
 
 ```ts
-await zelavis({
+new Zelavis({
   rootPath: "/admin",
 });
 ```
@@ -101,7 +109,8 @@ directly.
 
 The runtime now supports both styles:
 
-- explicit adapter helpers such as Node, Elysia, Express, Fastify, Hono, and h3
+- explicit framework adapters such as Node, Elysia, Express, Fastify, Hono, and h3
+- host-level platform presets such as the Node platform
 - direct Web-handler embedding through `runtime.fetch(...)`
 
 Dashboard client routes are served as SPA shell routes by the dashboard core
@@ -123,7 +132,7 @@ with your own storage. For the built-in Node file-backed store, import
 For local dashboard work, point Zelavis at the mounted dashboard base URL of a running UI dev server:
 
 ```ts
-await zelavis({
+new Zelavis({
   coreServices: {
     dashboard: {
       devServerUrl: "http://127.0.0.1:3001/zelavis",
@@ -138,7 +147,7 @@ server instead of serving the embedded built dashboard assets.
 The dashboard, auth, database, and website core services are included by default. Disable any of them when you need a smaller server or want to supply replacements:
 
 ```ts
-await zelavis({
+new Zelavis({
   coreServices: {
     auth: false,
     dashboard: false,
@@ -153,7 +162,7 @@ Configure the built-in auth service when the defaults are not enough:
 ```ts
 import { emailPasswordPlugin } from "@zelavis/auth-email-password";
 
-await zelavis({
+new Zelavis({
   coreServices: {
     auth: {
       authOptions: {
@@ -172,7 +181,7 @@ await zelavis({
 Configure the built-in database service when the defaults are not enough:
 
 ```ts
-await zelavis({
+new Zelavis({
   coreServices: {
     database: {
       defaultTenantId: "acme",

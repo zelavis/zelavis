@@ -12,9 +12,6 @@
     "paths": {
       "@zelavis/auth": ["packages/auth/src/index.ts"],
       "@zelavis/database": ["packages/database/src/index.ts"],
-      "@zelavis/database-node-sqlite": [
-        "packages/database/adapters/node-sqlite/src/index.ts"
-      ],
       "@zelavis/ecommerce": ["packages/ecommerce/src/index.ts"],
       "@zelavis/ecommerce-paypal": [
         "packages/ecommerce/plugins/paypal/src/index.ts"
@@ -30,6 +27,9 @@
         "packages/server/src/adapters/node.ts"
       ],
       "zelavis": ["packages/zelavis/src/index.ts"],
+      "zelavis/platforms/node": [
+        "packages/zelavis/src/platforms/node.ts"
+      ],
       "zelavis/adapters/express": [
         "packages/zelavis/src/adapters/express.ts"
       ],

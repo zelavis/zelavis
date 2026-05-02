@@ -1,8 +1,8 @@
-import { zelavis } from "zelavis";
+import { Zelavis } from "zelavis";
 
 interface Env {}
 
-const runtimePromise = zelavis({});
+const zelavis = new Zelavis({});
 
 export default {
   async fetch(
@@ -20,9 +20,7 @@ export default {
       return new Response("Not Found", { status: 404 });
     }
 
-    const runtime = await runtimePromise;
-
-    return runtime.fetch(request, {
+    return zelavis.fetch(request, {
       platform: {
         cloudflare: {
           env,

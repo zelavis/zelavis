@@ -1,6 +1,7 @@
 import express from "express";
-import { zelavis } from "zelavis";
+import { Zelavis } from "zelavis";
 import { expressAdapter } from "zelavis/adapters/express";
+import { nodePlatform } from "zelavis/platforms/node";
 
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
@@ -11,14 +12,16 @@ async function main(): Promise<void> {
   });
   app.use(express.json());
 
-  const zelavisRuntime = await zelavis({
+  const zelavis = new Zelavis({
+    adapter: expressAdapter(),
+    platform: nodePlatform(),
     onError: ({ error }) => ({
       status: 400,
       body: { error: error instanceof Error ? error.message : "Unknown error" },
     }),
   });
 
-  app.use(expressAdapter(zelavisRuntime));
+  app.use(zelavis.adapter.expressMiddleware());
   app.listen(port, () => {
     console.log(
       `zelavis Express example listening on http://localhost:${port}`,

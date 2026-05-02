@@ -6,13 +6,15 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
+import type { Server } from "node:http";
+import { nodeAdapter as bindNodeRuntime } from "@zelavis/server/adapters/node";
 import type {
+  ZelavisAdapterBinding,
   ZelavisDashboardSettingsStore,
   ZelavisDashboardSettingsUpdate,
   ZelavisDashboardThemeMode,
 } from "../index.js";
-
-export { nodeAdapter } from "@zelavis/server/adapters/node";
+import { createLazyBoundValue, createRuntimeBackedAdapter } from "./_shared.js";
 
 function normalizePathPart(part: string | undefined): string {
   if (!part) {
@@ -110,4 +112,25 @@ export function createFileDashboardSettingsStore(
     read,
     write,
   };
+}
+
+export interface ZelavisNodeBinding extends ZelavisAdapterBinding {
+  nodeServer(): Promise<Server>;
+}
+
+export function nodeAdapter() {
+  return createRuntimeBackedAdapter<ZelavisNodeBinding>("node", ({ getRuntime }) => {
+    const getServer = createLazyBoundValue(async () =>
+      bindNodeRuntime(await getRuntime()),
+    );
+
+    return {
+      async ready() {
+        await getServer();
+      },
+      async nodeServer() {
+        return getServer();
+      },
+    };
+  });
 }

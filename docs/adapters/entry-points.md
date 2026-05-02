@@ -1,6 +1,8 @@
 # Adapter Entry Points
 
-Zelavis currently exposes adapter entry points from both the high-level `zelavis` package and the lower-level `@zelavis/server` package.
+Zelavis currently exposes framework adapter entry points from both the high-level `zelavis` package and the lower-level `@zelavis/server` package.
+
+At the high level, framework adapters are now paired with platform presets. The framework adapter decides how Zelavis plugs into Express, Fastify, Hono, and so on. The platform preset decides host-level defaults such as database or local storage choices.
 
 ## High-level runtime adapters
 
@@ -19,11 +21,15 @@ zelavis/adapters/nextjs-pages-router
 Typical usage:
 
 ```ts
-import { zelavis } from "zelavis";
+import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
+import { nodePlatform } from "zelavis/platforms/node";
 
-const runtime = await zelavis();
-const server = nodeAdapter(runtime);
+const zelavis = new Zelavis({
+  adapter: nodeAdapter(),
+  platform: nodePlatform(),
+});
+const server = await zelavis.adapter.nodeServer();
 ```
 
 ## Lower-level server adapters

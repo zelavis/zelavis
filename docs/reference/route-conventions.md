@@ -27,7 +27,7 @@ With the default runtime settings:
 With:
 
 ```ts
-await zelavis({
+new Zelavis({
   rootPath: "/admin",
   api: {
     prefix: "/api",

@@ -24,6 +24,9 @@
         "packages/server/src/adapters/h3.ts"
       ],
       "zelavis": ["packages/zelavis/src/index.ts"],
+      "zelavis/platforms/node": [
+        "packages/zelavis/src/platforms/node.ts"
+      ],
       "zelavis/adapters/h3": ["packages/zelavis/src/adapters/h3.ts"],
       "zelavis/adapters/node": ["packages/zelavis/src/adapters/node.ts"]
     }

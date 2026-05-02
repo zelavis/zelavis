@@ -22,7 +22,11 @@ import {
   zelavisServer as mountZelavisServer,
   type ZelavisServerErrorStatusRule,
   type ZelavisAnyServiceInput,
+  type ZelavisServerDispatchHandler,
   type ZelavisServerErrorHandler,
+  type ZelavisServerExecutionContext,
+  type ZelavisServerFetchHandler,
+  type ZelavisServerPlainHandler,
   type ZelavisServerRuntime,
   type ZelavisServerService,
 } from "@zelavis/server";
@@ -216,9 +220,52 @@ export interface ZelavisServerOptions {
   onError?: ZelavisServerErrorHandler;
 }
 
+export interface ZelavisAdapterBinding {
+  ready?(): Promise<void> | void;
+}
+
+export interface ZelavisAdapterRuntimeContext {
+  getRuntime: () => Promise<ZelavisServerRuntime<unknown>>;
+}
+
+export interface ZelavisAdapterFactory<TAdapter extends object = object> {
+  name: string;
+  bind(context: ZelavisAdapterRuntimeContext): TAdapter;
+}
+
+export interface ZelavisResolvedPlatformOptions
+  extends Partial<ZelavisServerOptions> {}
+
+export interface ZelavisPlatformPreset {
+  name: string;
+  resolve(
+    options: ZelavisConstructorOptions<any>,
+  ):
+    | Promise<ZelavisResolvedPlatformOptions>
+    | ZelavisResolvedPlatformOptions;
+}
+
+export interface ZelavisConstructorOptions<TAdapter extends object = object>
+  extends ZelavisServerOptions {
+  adapter?: ZelavisAdapterFactory<TAdapter>;
+  platform?: ZelavisPlatformPreset | readonly ZelavisPlatformPreset[];
+}
+
 export interface ZelavisDatabaseDocumentStoreOptions {
   collection?: string;
   documentId?: string;
+}
+
+export function createAdapter<TAdapter extends object>(
+  adapter: ZelavisAdapterFactory<TAdapter>,
+): ZelavisAdapterFactory<TAdapter> {
+  return adapter;
+}
+
+export function createPlatform<TPlatform extends ZelavisPlatformPreset>(
+  platform: TPlatform,
+): TPlatform {
+  return platform;
 }
 
 const DEFAULT_ZELAVIS_STATE_COLLECTION = "zelavis_system";
@@ -1798,4 +1845,150 @@ export async function zelavis(
       overrides: options.servicePrefixes,
     }),
   });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function mergeMaybeRecord<TValue>(
+  base: TValue | undefined,
+  override: TValue | undefined,
+): TValue | undefined {
+  if (override === undefined) {
+    return base;
+  }
+
+  if (base === undefined) {
+    return override;
+  }
+
+  if (isRecord(base) && isRecord(override)) {
+    return {
+      ...base,
+      ...override,
+    } as TValue;
+  }
+
+  return override;
+}
+
+function mergeCoreServicesOptions(
+  base: ZelavisCoreServicesOptions | undefined,
+  override: ZelavisCoreServicesOptions | undefined,
+): ZelavisCoreServicesOptions | undefined {
+  if (!base) {
+    return override;
+  }
+
+  if (!override) {
+    return base;
+  }
+
+  return {
+    auth: mergeMaybeRecord(base.auth, override.auth),
+    dashboard: mergeMaybeRecord(base.dashboard, override.dashboard),
+    database: mergeMaybeRecord(base.database, override.database),
+    website: mergeMaybeRecord(base.website, override.website),
+  };
+}
+
+function mergeZelavisServerOptions(
+  base: ZelavisServerOptions,
+  override: ZelavisServerOptions,
+): ZelavisServerOptions {
+  return {
+    ...base,
+    ...override,
+    api: {
+      ...(base.api ?? {}),
+      ...(override.api ?? {}),
+    },
+    services: [...(base.services ?? []), ...(override.services ?? [])],
+    coreServices: mergeCoreServicesOptions(
+      base.coreServices,
+      override.coreServices,
+    ),
+    servicePrefixes: {
+      ...(base.servicePrefixes ?? {}),
+      ...(override.servicePrefixes ?? {}),
+    },
+    pathOverrides: {
+      ...(base.pathOverrides ?? {}),
+      ...(override.pathOverrides ?? {}),
+    },
+  };
+}
+
+async function resolvePlatformOptions(
+  options: ZelavisConstructorOptions<any>,
+): Promise<ZelavisServerOptions> {
+  const platforms = options.platform
+    ? Array.isArray(options.platform)
+      ? options.platform
+      : [options.platform]
+    : [];
+  let resolved: ZelavisServerOptions = {};
+
+  for (const platform of platforms) {
+    resolved = mergeZelavisServerOptions(
+      resolved,
+      await platform.resolve(options),
+    );
+  }
+
+  const { adapter: _adapter, platform: _platform, ...serverOptions } = options;
+  return mergeZelavisServerOptions(resolved, serverOptions);
+}
+
+export class Zelavis<TAdapter extends object = {}> {
+  readonly adapter: TAdapter;
+  private readonly options: ZelavisConstructorOptions<TAdapter>;
+  private runtimePromise?: Promise<ZelavisServerRuntime<unknown>>;
+
+  constructor(options: ZelavisConstructorOptions<TAdapter> = {}) {
+    this.options = options;
+    this.adapter = options.adapter
+      ? options.adapter.bind({
+          getRuntime: () => this.runtime(),
+        })
+      : ({} as TAdapter);
+  }
+
+  async runtime(): Promise<ZelavisServerRuntime<unknown>> {
+    this.runtimePromise ??= (async () => {
+      const runtime = await zelavis(await resolvePlatformOptions(this.options));
+      const maybeBinding = this.adapter as Partial<ZelavisAdapterBinding>;
+      if (typeof maybeBinding.ready === "function") {
+        await maybeBinding.ready();
+      }
+      return runtime;
+    })();
+
+    return this.runtimePromise;
+  }
+
+  async fetch(
+    request: Request,
+    context?: ZelavisServerExecutionContext,
+  ): Promise<Response> {
+    const runtime = await this.runtime();
+    const handler = runtime.fetch as ZelavisServerFetchHandler<unknown>;
+    return handler(request, context);
+  }
+
+  async dispatch(
+    request: Request,
+    context?: ZelavisServerExecutionContext,
+  ) {
+    const runtime = await this.runtime();
+    const handler = runtime.dispatch as ZelavisServerDispatchHandler<unknown>;
+    return handler(request, context);
+  }
+
+  async plain(request: Parameters<ZelavisServerPlainHandler<unknown>>[0]) {
+    const runtime = await this.runtime();
+    const handler = runtime.plain as ZelavisServerPlainHandler<unknown>;
+    return handler(request);
+  }
 }

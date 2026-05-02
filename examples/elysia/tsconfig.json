@@ -24,6 +24,9 @@
         "packages/server/src/adapters/elysia.ts"
       ],
       "zelavis": ["packages/zelavis/src/index.ts"],
+      "zelavis/platforms/node": [
+        "packages/zelavis/src/platforms/node.ts"
+      ],
       "zelavis/adapters/elysia": [
         "packages/zelavis/src/adapters/elysia.ts"
       ]

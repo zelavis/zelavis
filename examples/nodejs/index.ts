@@ -1,34 +1,27 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createBetterSqlite3DatabaseDriver } from "@zelavis/database-node-sqlite";
-import { zelavis } from "zelavis";
+import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
+import { nodePlatform } from "zelavis/platforms/node";
 
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
   const dataDirectory = fileURLToPath(new URL("./.data", import.meta.url));
-  const databasePath = join(dataDirectory, "zelavis.sqlite");
-
-  const zelavisRuntime = await zelavis({
-    coreServices: {
-      database: {
-        driver: createBetterSqlite3DatabaseDriver({
-          filename: databasePath,
-        }),
-      },
-    },
+  const zelavis = new Zelavis({
+    adapter: nodeAdapter(),
+    platform: nodePlatform({
+      dataDirectory,
+    }),
     onError: ({ error }) => ({
       status: 400,
       body: { error: error instanceof Error ? error.message : "Unknown error" },
     }),
   });
-  const server = nodeAdapter(zelavisRuntime);
+  const runtime = await zelavis.runtime();
+  const server = await zelavis.adapter.nodeServer();
 
-  console.log(
-    "database driver",
-    zelavisRuntime.services.database.service.driver.name,
-  );
-  console.log("database file", databasePath);
+  console.log("database driver", runtime.services.database.service.driver.name);
+  console.log("database file", join(dataDirectory, "zelavis.sqlite"));
 
   server.listen(port, () => {
     console.log(

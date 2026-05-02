@@ -7,13 +7,17 @@ Use the Hono adapter when Zelavis should be mounted into an existing Hono applic
 ```ts
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
-import { zelavis } from "zelavis";
+import { Zelavis } from "zelavis";
 import { honoAdapter } from "zelavis/adapters/hono";
+import { nodePlatform } from "zelavis/platforms/node";
 
 const app = new Hono();
-const runtime = await zelavis();
+const zelavis = new Zelavis({
+  adapter: honoAdapter(),
+  platform: nodePlatform(),
+});
 
-app.use(honoAdapter(runtime));
+app.use(zelavis.adapter.honoMiddleware());
 
 serve({
   fetch: app.fetch,

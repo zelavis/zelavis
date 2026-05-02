@@ -6,14 +6,18 @@ Use the Express adapter when Zelavis should live inside an existing Express appl
 
 ```ts
 import express from "express";
-import { zelavis } from "zelavis";
+import { Zelavis } from "zelavis";
 import { expressAdapter } from "zelavis/adapters/express";
+import { nodePlatform } from "zelavis/platforms/node";
 
 const app = express();
-const runtime = await zelavis();
+const zelavis = new Zelavis({
+  adapter: expressAdapter(),
+  platform: nodePlatform(),
+});
 
 app.use(express.json());
-app.use(expressAdapter(runtime));
+app.use(zelavis.adapter.expressMiddleware());
 
 app.listen(3000);
 ```
@@ -26,7 +30,7 @@ app.listen(3000);
 
 ## Notes
 
-- Register any app-specific Express middleware before `expressAdapter(runtime)` when those routes should see parsed request bodies or custom headers first.
+- Register any app-specific Express middleware before `zelavis.adapter.expressMiddleware()` when those routes should see parsed request bodies or custom headers first.
 - Zelavis still serves the dashboard under its configured `rootPath`, for example `/zelavis`.
 - The Express app can keep its own routes outside the Zelavis namespace.
 
