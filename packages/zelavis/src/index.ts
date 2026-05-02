@@ -1,13 +1,18 @@
 import {
   authService as createAuthService,
+  AuthDomainError,
+  AuthNotFoundError,
+  AuthValidationError,
   type AuthServiceOptions,
 } from "@zelavis/auth";
 import {
   createDatabase,
   createDatabaseServerService,
+  DatabaseConflictError,
   type CreateDatabaseOptions,
   type DatabaseApi,
   type DatabaseJsonObject,
+  DatabaseNotFoundError,
 } from "@zelavis/database";
 import {
   defineServerService,
@@ -86,6 +91,27 @@ export interface ZelavisWebsiteCoreServiceOptions {
 export type ZelavisWebsiteCoreServiceInput =
   | boolean
   | ZelavisWebsiteCoreServiceOptions;
+
+class ZelavisDomainError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ZelavisDomainError";
+  }
+}
+
+class ZelavisValidationError extends ZelavisDomainError {
+  constructor(message: string) {
+    super(message);
+    this.name = "ZelavisValidationError";
+  }
+}
+
+class ZelavisConflictError extends ZelavisDomainError {
+  constructor(message: string) {
+    super(message);
+    this.name = "ZelavisConflictError";
+  }
+}
 
 export type ZelavisDatabaseCoreServiceOptions =
   | boolean
@@ -258,6 +284,52 @@ function readBodyObject(body: unknown): Record<string, unknown> {
   return body && typeof body === "object" && !Array.isArray(body)
     ? (body as Record<string, unknown>)
     : {};
+}
+
+function createJsonErrorResponse(status: number, error: unknown) {
+  return {
+    status,
+    body: {
+      error: error instanceof Error ? error.message : String(error),
+    },
+  };
+}
+
+function getZelavisErrorStatus(error: unknown, fallback = 500): number {
+  if (
+    error instanceof TypeError ||
+    error instanceof AuthValidationError ||
+    error instanceof ZelavisValidationError
+  ) {
+    return 400;
+  }
+
+  if (
+    error instanceof DatabaseNotFoundError ||
+    error instanceof AuthNotFoundError
+  ) {
+    return 404;
+  }
+
+  if (
+    error instanceof DatabaseConflictError ||
+    error instanceof ZelavisConflictError
+  ) {
+    return 409;
+  }
+
+  if (
+    error instanceof AuthDomainError ||
+    error instanceof ZelavisDomainError
+  ) {
+    return 400;
+  }
+
+  return fallback;
+}
+
+function zelavisErrorResponse(error: unknown, fallback = 500) {
+  return createJsonErrorResponse(getZelavisErrorStatus(error, fallback), error);
 }
 
 function createMemoryDashboardSettingsStore(): ZelavisDashboardSettingsStore {
@@ -589,15 +661,31 @@ function readDashboardSettingsUpdate(
   const input = readBodyObject(body);
   const update: ZelavisDashboardSettingsUpdate = {};
 
-  if (typeof input.rootPath === "string") {
+  if ("rootPath" in input) {
+    if (typeof input.rootPath !== "string") {
+      throw new ZelavisValidationError("Root path must be a string.");
+    }
+
     update.rootPath = normalizeEditableRootPath(input.rootPath);
   }
 
-  if (isDashboardThemeMode(input.theme)) {
+  if ("theme" in input) {
+    if (!isDashboardThemeMode(input.theme)) {
+      throw new ZelavisValidationError(
+        'Theme must be one of "light", "dark", or "auto".',
+      );
+    }
+
     update.theme = input.theme;
   }
 
-  if (isBoolean(input.pageBuilderEnabled)) {
+  if ("pageBuilderEnabled" in input) {
+    if (!isBoolean(input.pageBuilderEnabled)) {
+      throw new ZelavisValidationError(
+        "Page builder enabled must be a boolean.",
+      );
+    }
+
     update.pageBuilderEnabled = input.pageBuilderEnabled;
   }
 
@@ -1250,13 +1338,17 @@ async function resolveDashboardCoreService(
             "dashboard/settings",
           ),
           handler: async ({ body }: { body: unknown }) => {
-            const update = readDashboardSettingsUpdate(body);
-            await settingsStore.write(update);
+            try {
+              const update = readDashboardSettingsUpdate(body);
+              await settingsStore.write(update);
 
-            return {
-              status: 200,
-              body: await readDashboardSettings(),
-            };
+              return {
+                status: 200,
+                body: await readDashboardSettings(),
+              };
+            } catch (error) {
+              return zelavisErrorResponse(error, 400);
+            }
           },
         },
         ...assets.map((asset) => ({
@@ -1356,72 +1448,64 @@ async function resolveWebsiteCoreService(
             "website/pages",
           ),
           handler: async ({ body }: { body: unknown }) => {
-            const input = readBodyObject(body);
-            const title =
-              typeof input.title === "string" ? input.title.trim() : "";
-            const path = normalizePath(
-              typeof input.path === "string" ? input.path : undefined,
-              "",
-            );
-            const headline =
-              typeof input.headline === "string" && input.headline.trim()
-                ? input.headline.trim()
-                : undefined;
-            const description =
-              typeof input.description === "string" && input.description.trim()
-                ? input.description.trim()
-                : undefined;
+            try {
+              const input = readBodyObject(body);
+              const title =
+                typeof input.title === "string" ? input.title.trim() : "";
+              const path = normalizePath(
+                typeof input.path === "string" ? input.path : undefined,
+                "",
+              );
+              const headline =
+                typeof input.headline === "string" && input.headline.trim()
+                  ? input.headline.trim()
+                  : undefined;
+              const description =
+                typeof input.description === "string" && input.description.trim()
+                  ? input.description.trim()
+                  : undefined;
 
-            if (!title) {
-              return {
-                status: 400,
-                body: {
-                  error: "Website pages require a title.",
-                },
+              if (!title) {
+                throw new ZelavisValidationError(
+                  "Website pages require a title.",
+                );
+              }
+
+              if (!path) {
+                throw new ZelavisValidationError(
+                  "Website pages require a path.",
+                );
+              }
+
+              if (isReservedWebsitePath(path, context.rootPath)) {
+                throw new ZelavisValidationError(
+                  "That path is reserved by Zelavis.",
+                );
+              }
+
+              const pages = await readPages();
+              if (pages.some((page) => page.path === path)) {
+                throw new ZelavisConflictError(
+                  "A website page already exists for that path.",
+                );
+              }
+
+              const page: ZelavisWebsitePage = {
+                path,
+                title,
+                headline,
+                description,
               };
-            }
 
-            if (!path) {
+              await writePages([...pages, page]);
+
               return {
-                status: 400,
-                body: {
-                  error: "Website pages require a path.",
-                },
+                status: 201,
+                body: page,
               };
+            } catch (error) {
+              return zelavisErrorResponse(error, 400);
             }
-
-            if (isReservedWebsitePath(path, context.rootPath)) {
-              return {
-                status: 400,
-                body: {
-                  error: "That path is reserved by Zelavis.",
-                },
-              };
-            }
-
-            const pages = await readPages();
-            if (pages.some((page) => page.path === path)) {
-              return {
-                status: 409,
-                body: {
-                  error: "A website page already exists for that path.",
-                },
-              };
-            }
-
-            const page: ZelavisWebsitePage = {
-              path,
-              title,
-              headline,
-              description,
-            };
-
-            await writePages([...pages, page]);
-
-            return {
-              status: 201,
-              body: page,
-            };
           },
         },
         {

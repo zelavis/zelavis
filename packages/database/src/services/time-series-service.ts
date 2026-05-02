@@ -18,6 +18,7 @@ import type {
 } from "../contracts/driver.js";
 import type { DatabaseEvent } from "../contracts/events.js";
 import type { DatabaseJson } from "../contracts/json.js";
+import { DatabaseNotFoundError } from "../core/errors.js";
 
 function cloneSummary(
   summary: DatabaseTimeSeriesSummary,
@@ -228,7 +229,7 @@ export class TimeSeriesService implements DatabaseTimeSeriesApi {
     const projection = projections.find((candidate) => candidate.name === name);
 
     if (!projection) {
-      throw new Error(
+      throw new DatabaseNotFoundError(
         `Unknown projection "${name}" for time-series definition.`,
       );
     }

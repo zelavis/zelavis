@@ -176,6 +176,16 @@ Current architecture includes:
 
 The core implementation is intentionally portable and does not depend on `unstorage` or native SQLite bindings. Durable database drivers should be supplied by platform adapters such as `@zelavis/database-bun-sqlite`, `@zelavis/database-node-sqlite`, or future `@zelavis/adapter-cloudflare` and `@zelavis/adapter-turso` packages.
 
+## Error Model
+
+Zelavis packages now follow a shared internal error rule:
+
+- Expected domain failures use typed internal errors such as validation, conflict, and not-found errors.
+- Transport layers such as HTTP services map those known domain errors centrally instead of hand-rolling status codes in each route.
+- Unexpected runtime and infrastructure failures still throw normally and bubble as true server errors.
+
+That keeps the public APIs ergonomic while making core behavior more explicit inside the platform packages.
+
 ## Optional domain package: `@zelavis/ecommerce`
 
 The ecommerce package focuses on the primitives required to build larger commerce systems without prescribing the final product.

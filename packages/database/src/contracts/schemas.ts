@@ -1,4 +1,5 @@
 import type { DatabaseJsonObject } from "./json.js";
+import { DatabaseDomainError } from "../core/errors.js";
 
 export type DatabaseSchemaPrimitiveType =
   | "string"
@@ -112,7 +113,7 @@ export interface ValidateDatabaseDocumentResult {
   validation: DatabaseSchemaValidationResult;
 }
 
-export class DatabaseSchemaValidationError extends Error {
+export class DatabaseSchemaValidationError extends DatabaseDomainError {
   readonly collection: string;
   readonly schemaVersion: number;
   readonly issues: DatabaseSchemaValidationIssue[];

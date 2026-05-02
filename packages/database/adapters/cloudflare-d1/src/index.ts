@@ -33,7 +33,10 @@ import {
   type SqlParameter,
   type SqlQueryInput,
   type SqlQueryResult,
+  DatabaseConflictError,
   DatabaseEventIdempotencyConflictError,
+  DatabaseNotFoundError,
+  DatabaseRevisionMismatchError,
 } from "@zelavis/database";
 
 type TenantScoped<TInput extends { tenantId?: string }> = Omit<
@@ -701,7 +704,7 @@ export function createCloudflareD1DatabaseDriver(
       const expectedRevision = input.expectedRevision ?? currentRevision;
 
       if (input.type === "collection.created" && currentRevision > 0) {
-        throw new Error(
+        throw new DatabaseConflictError(
           `Collection "${input.collection}" already exists for tenant "${input.tenantId}".`,
         );
       }
@@ -711,13 +714,13 @@ export function createCloudflareD1DatabaseDriver(
         expectedRevision === 0 &&
         currentRevision > 0
       ) {
-        throw new Error(
+        throw new DatabaseConflictError(
           `Document "${input.documentId ?? ""}" already exists in collection "${input.collection}".`,
         );
       }
 
       if (expectedRevision !== currentRevision) {
-        throw new Error(
+        throw new DatabaseRevisionMismatchError(
           `Revision mismatch for stream "${input.tenantId}:${input.collection}:${input.documentId ?? ""}". Expected ${expectedRevision}, found ${currentRevision}.`,
         );
       }
@@ -810,7 +813,7 @@ export function createCloudflareD1DatabaseDriver(
           [input.tenantId, input.collection],
         );
         if (!collection) {
-          throw new Error(
+          throw new DatabaseNotFoundError(
             `Collection "${input.collection}" does not exist for tenant "${input.tenantId}".`,
           );
         }

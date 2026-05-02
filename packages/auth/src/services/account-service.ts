@@ -1,5 +1,6 @@
 import type { AccountRepository } from "../contracts/repositories.js";
 import type { Account } from "../domain/entities.js";
+import { AuthValidationError } from "../core/errors.js";
 
 export interface CreateAccountInput {
   id: string;
@@ -15,11 +16,13 @@ export class AccountService {
 
   async create(input: CreateAccountInput): Promise<Account> {
     if (!input.id) {
-      throw new TypeError("Account creation requires an id.");
+      throw new AuthValidationError("Account creation requires an id.");
     }
 
     if (!input.email && !input.username) {
-      throw new TypeError("Account creation requires at least an email or username.");
+      throw new AuthValidationError(
+        "Account creation requires at least an email or username.",
+      );
     }
 
     const now = new Date();

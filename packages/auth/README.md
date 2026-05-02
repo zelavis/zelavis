@@ -63,3 +63,7 @@ const result = await auth.authentication.authenticate("email-password", {
 - `authService({ authOptions, plugins })`
 
 In the default flow, no auth-specific server plugin is required. `authService()` can be passed directly to `zelavisServer(...)`, and routing is configured centrally via `prefix`, `servicePrefixes`, and `pathOverrides`.
+
+## Error handling
+
+`@zelavis/auth` now uses small internal domain error classes for expected validation and not-found cases. The HTTP service maps those errors centrally so invalid auth input returns `400` and missing auth providers return `404`, without each route needing custom status logic.

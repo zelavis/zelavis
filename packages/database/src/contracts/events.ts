@@ -1,5 +1,6 @@
 import type { DatabaseCollection, DatabaseTenantId } from "./documents.js";
 import type { DatabaseJsonObject } from "./json.js";
+import { DatabaseConflictError } from "../core/errors.js";
 
 export type DatabaseEventType =
   | "collection.created"
@@ -64,7 +65,7 @@ export interface ReadDatabaseEventsInput {
   limit?: number;
 }
 
-export class DatabaseEventIdempotencyConflictError extends Error {
+export class DatabaseEventIdempotencyConflictError extends DatabaseConflictError {
   readonly tenantId: DatabaseTenantId;
   readonly idempotencyKey: string;
   readonly eventId: string;

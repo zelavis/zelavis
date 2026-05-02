@@ -2,6 +2,7 @@ export * from "./contracts/credential-provider.js";
 export * from "./contracts/repositories.js";
 export * from "./core/create-auth.js";
 export * from "./core/define-auth-plugin.js";
+export * from "./core/errors.js";
 export * from "./core/types.js";
 export * from "./domain/entities.js";
 export * from "./services/account-service.js";

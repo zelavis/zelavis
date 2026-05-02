@@ -16,6 +16,15 @@ import type {
   DatabaseTimeSeriesAggregateOperation,
   DatabaseTimeSeriesRangeInput,
 } from "../contracts/api.js";
+import {
+  DatabaseEventIdempotencyConflictError,
+} from "../contracts/events.js";
+import { DatabaseSchemaValidationError } from "../contracts/schemas.js";
+import {
+  DatabaseConflictError,
+  DatabaseDomainError,
+  DatabaseNotFoundError,
+} from "../core/errors.js";
 
 function readBodyObject(body: unknown): Record<string, unknown> {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -131,6 +140,40 @@ function errorResponse(status: number, error: unknown) {
   };
 }
 
+function getDatabaseErrorStatus(
+  error: unknown,
+  fallback = 500,
+): number {
+  if (error instanceof TypeError) {
+    return 400;
+  }
+
+  if (error instanceof DatabaseSchemaValidationError) {
+    return 400;
+  }
+
+  if (error instanceof DatabaseNotFoundError) {
+    return 404;
+  }
+
+  if (
+    error instanceof DatabaseEventIdempotencyConflictError ||
+    error instanceof DatabaseConflictError
+  ) {
+    return 409;
+  }
+
+  if (error instanceof DatabaseDomainError) {
+    return 400;
+  }
+
+  return fallback;
+}
+
+function databaseErrorResponse(error: unknown, fallback = 500) {
+  return errorResponse(getDatabaseErrorStatus(error, fallback), error);
+}
+
 export function createDatabaseServerService(
   database: DatabaseApi,
 ): ZelavisServerService<DatabaseApi> {
@@ -215,7 +258,7 @@ export function createDatabaseDocumentsServerService(
                 }),
               };
             } catch (error) {
-              return errorResponse(409, error);
+              return databaseErrorResponse(error, 409);
             }
           },
         },
@@ -236,7 +279,7 @@ export function createDatabaseDocumentsServerService(
                 }),
               };
             } catch (error) {
-              return errorResponse(400, error);
+              return databaseErrorResponse(error, 400);
             }
           },
         },
@@ -283,7 +326,7 @@ export function createDatabaseDocumentsServerService(
                 },
               };
             } catch (error) {
-              return errorResponse(404, error);
+              return databaseErrorResponse(error, 404);
             }
           },
         },
@@ -304,7 +347,7 @@ export function createDatabaseDocumentsServerService(
                 }),
               };
             } catch (error) {
-              return errorResponse(404, error);
+              return databaseErrorResponse(error, 404);
             }
           },
         },
@@ -383,7 +426,7 @@ export function createDatabaseSchemasServerService(
                 body: await service.schemas.register(schema),
               };
             } catch (error) {
-              return errorResponse(400, error);
+              return databaseErrorResponse(error, 400);
             }
           },
         },
@@ -402,7 +445,7 @@ export function createDatabaseSchemasServerService(
                 ),
               };
             } catch (error) {
-              return errorResponse(404, error);
+              return databaseErrorResponse(error, 404);
             }
           },
         },
@@ -425,7 +468,7 @@ export function createDatabaseSchemasServerService(
                 }),
               };
             } catch (error) {
-              return errorResponse(400, error);
+              return databaseErrorResponse(error, 400);
             }
           },
         },
@@ -472,10 +515,7 @@ export function createDatabaseTimeSeriesServerService(
                 },
               };
             } catch (error) {
-              return errorResponse(
-                error instanceof TypeError ? 400 : 404,
-                error,
-              );
+              return databaseErrorResponse(error, 404);
             }
           },
         },
@@ -497,10 +537,7 @@ export function createDatabaseTimeSeriesServerService(
                 },
               };
             } catch (error) {
-              return errorResponse(
-                error instanceof TypeError ? 400 : 404,
-                error,
-              );
+              return databaseErrorResponse(error, 404);
             }
           },
         },

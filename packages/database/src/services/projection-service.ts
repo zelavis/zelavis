@@ -5,6 +5,12 @@ import type {
   DatabaseProjectionsApi,
   DatabaseProjectionSummary,
 } from "../contracts/api.js";
+import {
+  DatabaseConflictError,
+  DatabaseDomainError,
+  DatabaseNotFoundError,
+} from "../core/errors.js";
+import { err, ok, type Result } from "../core/result.js";
 
 function cloneStrings(values?: readonly string[]): string[] | undefined {
   return values ? [...values] : undefined;
@@ -41,6 +47,48 @@ function matchesCollections(
 }
 
 export const BUILTIN_DOCUMENT_PROJECTION_NAME = "documents";
+
+type ProjectionRegistrationFailure =
+  | {
+      kind: "missing-name";
+    }
+  | {
+      kind: "duplicate-name";
+      name: string;
+    };
+
+function validateProjectionRegistration(
+  definition: DatabaseProjectionDefinition,
+  builtins: ReadonlyMap<string, DatabaseProjectionDefinition>,
+  registered: ReadonlyMap<string, DatabaseProjectionDefinition>,
+): Result<DatabaseProjectionDefinition, ProjectionRegistrationFailure> {
+  if (!definition.name || definition.name.length === 0) {
+    return err({
+      kind: "missing-name",
+    });
+  }
+
+  if (builtins.has(definition.name) || registered.has(definition.name)) {
+    return err({
+      kind: "duplicate-name",
+      name: definition.name,
+    });
+  }
+
+  return ok(definition);
+}
+
+function toProjectionRegistrationError(
+  failure: ProjectionRegistrationFailure,
+): DatabaseDomainError {
+  if (failure.kind === "duplicate-name") {
+    return new DatabaseConflictError(
+      `Projection "${failure.name}" is already registered.`,
+    );
+  }
+
+  return new DatabaseDomainError("A projection name is required.");
+}
 
 export function createBuiltinDocumentProjectionDefinition(): DatabaseProjectionDefinition {
   return {
@@ -80,15 +128,14 @@ export class ProjectionService implements DatabaseProjectionsApi {
   }
 
   async register(definition: DatabaseProjectionDefinition): Promise<void> {
-    if (!definition.name || definition.name.length === 0) {
-      throw new Error("A projection name is required.");
-    }
+    const validation = validateProjectionRegistration(
+      definition,
+      this.builtins,
+      this.registered,
+    );
 
-    if (
-      this.builtins.has(definition.name) ||
-      this.registered.has(definition.name)
-    ) {
-      throw new Error(`Projection "${definition.name}" is already registered.`);
+    if (!validation.ok) {
+      throw toProjectionRegistrationError(validation.error);
     }
 
     this.registered.set(definition.name, {
@@ -126,7 +173,7 @@ export class ProjectionService implements DatabaseProjectionsApi {
       );
 
       if (missing.length > 0) {
-        throw new Error(
+        throw new DatabaseNotFoundError(
           `Cannot rebuild unknown projections: ${missing.join(", ")}.`,
         );
       }

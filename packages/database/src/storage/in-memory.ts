@@ -29,6 +29,12 @@ import type {
   DatabaseStoredCollectionSchema,
 } from "../contracts/schemas.js";
 import { defineDatabaseDriver } from "../core/define-database-driver.js";
+import {
+  DatabaseConflictError,
+  DatabaseNotFoundError,
+  DatabaseRevisionMismatchError,
+} from "../core/errors.js";
+import { err, ok, type Result } from "../core/result.js";
 
 interface StoredCollection {
   meta: DatabaseCollection;
@@ -238,6 +244,62 @@ function sortDocuments(
   });
 }
 
+interface AppendPreflightSuccess {
+  currentRevision: number;
+  expectedRevision: number;
+  revisionKey: string;
+}
+
+type AppendPreflightFailure =
+  | {
+      kind: "idempotency-conflict";
+      eventId: string;
+      idempotencyKey: string;
+      tenantId: string;
+    }
+  | {
+      kind: "duplicate-collection";
+      collection: string;
+      tenantId: string;
+    }
+  | {
+      kind: "duplicate-document";
+      collection: string;
+      documentId?: string;
+    }
+  | {
+      kind: "revision-mismatch";
+      expectedRevision: number;
+      currentRevision: number;
+      revisionKey: string;
+    };
+
+function toAppendError(failure: AppendPreflightFailure): Error {
+  if (failure.kind === "idempotency-conflict") {
+    return new DatabaseEventIdempotencyConflictError({
+      tenantId: failure.tenantId,
+      idempotencyKey: failure.idempotencyKey,
+      eventId: failure.eventId,
+    });
+  }
+
+  if (failure.kind === "duplicate-collection") {
+    return new DatabaseConflictError(
+      `Collection "${failure.collection}" already exists for tenant "${failure.tenantId}".`,
+    );
+  }
+
+  if (failure.kind === "duplicate-document") {
+    return new DatabaseConflictError(
+      `Document "${failure.documentId ?? ""}" already exists in collection "${failure.collection}".`,
+    );
+  }
+
+  return new DatabaseRevisionMismatchError(
+    `Revision mismatch for stream "${failure.revisionKey}". Expected ${failure.expectedRevision}, found ${failure.currentRevision}.`,
+  );
+}
+
 export function createInMemoryDatabaseDriver(): DatabaseDriver {
   const collections = new Map<string, StoredCollection>();
   const revisions = new Map<string, number>();
@@ -249,10 +311,84 @@ export function createInMemoryDatabaseDriver(): DatabaseDriver {
   >();
   let sequence = 0;
 
+  function preflightAppend<TPayload extends DatabaseEventPayload>(
+    input: TenantScoped<DatabaseAppendEventInput<TPayload>>,
+  ): Result<AppendPreflightSuccess, AppendPreflightFailure> {
+    if (input.idempotencyKey) {
+      const existing = eventsByIdempotencyKey.get(
+        idempotencyKey(input.tenantId, input.idempotencyKey),
+      ) as DatabaseEvent<TPayload> | undefined;
+
+      if (existing) {
+        if (matchesIdempotentAppend(existing, input)) {
+          return ok({
+            currentRevision: existing.revision - 1,
+            expectedRevision: input.expectedRevision ?? existing.revision - 1,
+            revisionKey: documentRevisionKey(
+              input.tenantId,
+              input.collection,
+              input.documentId,
+            ),
+          });
+        }
+
+        return err({
+          kind: "idempotency-conflict",
+          tenantId: input.tenantId,
+          idempotencyKey: input.idempotencyKey,
+          eventId: existing.eventId,
+        });
+      }
+    }
+
+    const revisionKey = documentRevisionKey(
+      input.tenantId,
+      input.collection,
+      input.documentId,
+    );
+    const currentRevision = revisions.get(revisionKey) ?? 0;
+    const expectedRevision = input.expectedRevision ?? currentRevision;
+
+    if (input.type === "collection.created" && currentRevision > 0) {
+      return err({
+        kind: "duplicate-collection",
+        collection: input.collection,
+        tenantId: input.tenantId,
+      });
+    }
+
+    if (
+      input.type === "document.upserted" &&
+      expectedRevision === 0 &&
+      currentRevision > 0
+    ) {
+      return err({
+        kind: "duplicate-document",
+        collection: input.collection,
+        documentId: input.documentId,
+      });
+    }
+
+    if (expectedRevision !== currentRevision) {
+      return err({
+        kind: "revision-mismatch",
+        expectedRevision,
+        currentRevision,
+        revisionKey,
+      });
+    }
+
+    return ok({
+      currentRevision,
+      expectedRevision,
+      revisionKey,
+    });
+  }
+
   function getCollection(tenantId: string, name: string): StoredCollection {
     const collection = collections.get(collectionKey(tenantId, name));
     if (!collection) {
-      throw new Error(
+      throw new DatabaseNotFoundError(
         `Collection "${name}" does not exist for tenant "${tenantId}".`,
       );
     }
@@ -265,7 +401,7 @@ export function createInMemoryDatabaseDriver(): DatabaseDriver {
   ): void {
     const key = collectionKey(event.tenantId, event.collection);
     if (collections.has(key)) {
-      throw new Error(
+      throw new DatabaseConflictError(
         `Collection "${event.collection}" already exists for tenant "${event.tenantId}".`,
       );
     }
@@ -398,52 +534,20 @@ export function createInMemoryDatabaseDriver(): DatabaseDriver {
     async append<TPayload extends DatabaseEventPayload>(
       input: TenantScoped<DatabaseAppendEventInput<TPayload>>,
     ) {
+      const preflight = preflightAppend(input);
+
+      if (!preflight.ok) {
+        throw toAppendError(preflight.error);
+      }
+
       if (input.idempotencyKey) {
         const existing = eventsByIdempotencyKey.get(
           idempotencyKey(input.tenantId, input.idempotencyKey),
         ) as DatabaseEvent<TPayload> | undefined;
 
-        if (existing) {
-          if (matchesIdempotentAppend(existing, input)) {
-            return cloneEvent(existing);
-          }
-
-          throw new DatabaseEventIdempotencyConflictError({
-            tenantId: input.tenantId,
-            idempotencyKey: input.idempotencyKey,
-            eventId: existing.eventId,
-          });
+        if (existing && matchesIdempotentAppend(existing, input)) {
+          return cloneEvent(existing);
         }
-      }
-
-      const revisionKey = documentRevisionKey(
-        input.tenantId,
-        input.collection,
-        input.documentId,
-      );
-      const currentRevision = revisions.get(revisionKey) ?? 0;
-      const expectedRevision = input.expectedRevision ?? currentRevision;
-
-      if (input.type === "collection.created" && currentRevision > 0) {
-        throw new Error(
-          `Collection "${input.collection}" already exists for tenant "${input.tenantId}".`,
-        );
-      }
-
-      if (
-        input.type === "document.upserted" &&
-        expectedRevision === 0 &&
-        currentRevision > 0
-      ) {
-        throw new Error(
-          `Document "${input.documentId ?? ""}" already exists in collection "${input.collection}".`,
-        );
-      }
-
-      if (expectedRevision !== currentRevision) {
-        throw new Error(
-          `Revision mismatch for stream "${revisionKey}". Expected ${expectedRevision}, found ${currentRevision}.`,
-        );
       }
 
       const event: DatabaseEvent<TPayload> = {
@@ -455,14 +559,14 @@ export function createInMemoryDatabaseDriver(): DatabaseDriver {
         collection: input.collection,
         documentId: input.documentId,
         type: input.type,
-        revision: currentRevision + 1,
+        revision: preflight.value.currentRevision + 1,
         timestamp: new Date().toISOString(),
         schemaVersion: input.schemaVersion ?? 1,
         payload: JSON.parse(JSON.stringify(input.payload)) as TPayload,
       };
 
       applyEvent(event);
-      revisions.set(revisionKey, event.revision);
+      revisions.set(preflight.value.revisionKey, event.revision);
       events.push(event);
 
       if (input.idempotencyKey) {
@@ -527,7 +631,7 @@ export function createInMemoryDatabaseDriver(): DatabaseDriver {
       const versions = schemas.get(collection);
       const schema = versions?.get(version);
       if (!versions || !schema) {
-        throw new Error(
+        throw new DatabaseNotFoundError(
           `Schema version ${version} for collection "${collection}" is not registered.`,
         );
       }

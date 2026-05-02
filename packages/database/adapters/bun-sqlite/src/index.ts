@@ -32,7 +32,10 @@ import {
   type SqlParameter,
   type SqlQueryInput,
   type SqlQueryResult,
+  DatabaseConflictError,
   DatabaseEventIdempotencyConflictError,
+  DatabaseNotFoundError,
+  DatabaseRevisionMismatchError,
 } from "@zelavis/database";
 
 type BunSqliteDatabase = Database;
@@ -923,7 +926,7 @@ export function createBunSqliteDatabaseDriver(
     ) => {
       const result = deleteDocumentStatement.run(tenantId, collection, id);
       if (result.changes < 1) {
-        throw new Error(
+        throw new DatabaseNotFoundError(
           `Document "${id}" does not exist in collection "${collection}".`,
         );
       }
@@ -949,7 +952,7 @@ export function createBunSqliteDatabaseDriver(
     (collection: string, version: number) => {
       const result = activateSchemaStatement.run(collection, version);
       if (result.changes < 1) {
-        throw new Error(
+        throw new DatabaseNotFoundError(
           `Schema version ${version} for collection "${collection}" is not registered.`,
         );
       }
@@ -1173,7 +1176,7 @@ export function createBunSqliteDatabaseDriver(
       const expectedRevision = input.expectedRevision ?? currentRevision;
 
       if (input.type === "collection.created" && currentRevision > 0) {
-        throw new Error(
+        throw new DatabaseConflictError(
           `Collection "${input.collection}" already exists for tenant "${input.tenantId}".`,
         );
       }
@@ -1183,13 +1186,13 @@ export function createBunSqliteDatabaseDriver(
         expectedRevision === 0 &&
         currentRevision > 0
       ) {
-        throw new Error(
+        throw new DatabaseConflictError(
           `Document "${input.documentId ?? ""}" already exists in collection "${input.collection}".`,
         );
       }
 
       if (expectedRevision !== currentRevision) {
-        throw new Error(
+        throw new DatabaseRevisionMismatchError(
           `Revision mismatch for stream "${input.tenantId}:${input.collection}:${input.documentId ?? ""}". Expected ${expectedRevision}, found ${currentRevision}.`,
         );
       }
@@ -1217,7 +1220,7 @@ export function createBunSqliteDatabaseDriver(
           input.collection,
         );
         if (!collection) {
-          throw new Error(
+          throw new DatabaseNotFoundError(
             `Collection "${input.collection}" does not exist for tenant "${input.tenantId}".`,
           );
         }

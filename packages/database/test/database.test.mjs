@@ -158,6 +158,66 @@ test("database validates documents against registered collection schemas", async
   assert.equal(valid.schemaVersion, 1);
 });
 
+test("database schema validation reports both structural and custom issues", async () => {
+  const database = await createDatabase({
+    schemas: [
+      {
+        collection: "products",
+        version: 1,
+        activate: true,
+        document: {
+          type: "object",
+          additionalProperties: false,
+          required: ["name", "price"],
+          properties: {
+            name: { type: "string", minLength: 3 },
+            price: { type: "number", minimum: 0 },
+          },
+        },
+        validate(input) {
+          if (input.name === "bad") {
+            return {
+              valid: false,
+              issues: [
+                {
+                  path: "$.name",
+                  message: "must not be reserved",
+                },
+              ],
+            };
+          }
+        },
+      },
+    ],
+  });
+
+  const result = database.schemas.validate({
+    collection: "products",
+    data: {
+      name: "bad",
+      price: -5,
+      extra: true,
+    },
+  });
+
+  assert.equal(result.schemaVersion, 1);
+  assert.equal(result.validation.valid, false);
+  assert.deepEqual(result.validation.issues, [
+    {
+      path: "$.price",
+      message: "must be >= 0",
+    },
+    {
+      path: "$.extra",
+      message: "is not allowed",
+    },
+    {
+      path: "$.name",
+      message: "must not be reserved",
+    },
+  ]);
+});
+
 test("database can activate newer schema versions for later writes", async () => {
   const database = await createDatabase({
     schemas: [

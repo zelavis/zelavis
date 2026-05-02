@@ -197,6 +197,20 @@ test("zelavis includes core services by default", async () => {
   assert.equal(updateResponse.body.pendingRootPath, "/admin");
   assert.equal(updateResponse.body.theme, "dark");
   assert.equal(updateResponse.body.restartRequired, true);
+
+  const invalidUpdateResponse = await updateRoute.route.handler({
+    service: updateRoute.service.service,
+    params: {},
+    query: new URLSearchParams(),
+    body: {
+      theme: "violet",
+    },
+    headers: {},
+    request: undefined,
+  });
+
+  assert.equal(invalidUpdateResponse.status, 400);
+  assert.match(invalidUpdateResponse.body.error, /Theme must be/);
 });
 
 test("zelavis can disable the database core service", async () => {
@@ -570,6 +584,20 @@ test("zelavis can provide public website pages as a core service", async () => {
     }),
   );
   assert.equal(createDocsResponse.status, 201);
+
+  const duplicateDocsResponse = await runtime.fetch(
+    new Request("http://localhost/zelavis/api/v1/website/pages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        title: "Docs Again",
+        path: "/docs",
+      }),
+    }),
+  );
+  assert.equal(duplicateDocsResponse.status, 409);
 
   const homeResponse = await runtime.fetch(new Request("http://localhost/"));
   assert.equal(homeResponse.status, 200);

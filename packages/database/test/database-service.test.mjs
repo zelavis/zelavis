@@ -69,6 +69,26 @@ test("databaseService returns API errors for duplicate collections", async () =>
   assert.match(duplicate.body.error, /already exists/);
 });
 
+test("database projection registration surfaces domain conflicts", async () => {
+  const database = await createDatabase();
+
+  await database.projections.register({
+    name: "timeseries.metrics",
+  });
+
+  await assert.rejects(
+    () =>
+      database.projections.register({
+        name: "timeseries.metrics",
+      }),
+    (error) => {
+      assert.equal(error.name, "DatabaseConflictError");
+      assert.match(error.message, /already registered/);
+      return true;
+    },
+  );
+});
+
 test("databaseService can register and activate collection schemas", async () => {
   const database = await createDatabase();
   const service = databaseService(database);
@@ -154,6 +174,46 @@ test("databaseService can register and activate collection schemas", async () =>
       { version: 2, active: true },
     ],
   );
+});
+
+test("databaseService returns 400 for schema validation failures", async () => {
+  const database = await createDatabase();
+  await database.documents.createCollection({ name: "products" });
+  await database.schemas.register({
+    collection: "products",
+    version: 1,
+    activate: true,
+    document: {
+      type: "object",
+      additionalProperties: false,
+      required: ["name"],
+      properties: {
+        name: { type: "string", minLength: 3 },
+      },
+    },
+  });
+
+  const service = databaseService(database);
+  const documents = await service.services[0];
+  const insertDocument = documents.api.v1.find(
+    (route) => route.id === "database.documents.insert",
+  );
+
+  const response = await insertDocument.handler({
+    service: database,
+    params: { collection: "products" },
+    query: new URLSearchParams(),
+    body: {
+      data: {
+        name: "x",
+      },
+    },
+    headers: {},
+    request: undefined,
+  });
+
+  assert.equal(response.status, 400);
+  assert.match(response.body.error, /Schema validation failed/);
 });
 
 test("databaseService exposes time-series list, range, and aggregate routes", async () => {

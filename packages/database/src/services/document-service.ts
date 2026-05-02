@@ -14,6 +14,7 @@ import type {
 import type { DatabaseDocumentUpsertedPayload } from "../contracts/events.js";
 import type { DatabaseJsonObject } from "../contracts/json.js";
 import { DatabaseSchemaValidationError } from "../contracts/schemas.js";
+import { DatabaseNotFoundError } from "../core/errors.js";
 import type { EventService } from "./event-service.js";
 import type { SchemaService } from "./schema-service.js";
 
@@ -178,7 +179,7 @@ export class DocumentService implements DatabaseDocumentsApi {
       })
       .then(async (current) => {
         if (!current) {
-          throw new Error(
+          throw new DatabaseNotFoundError(
             `Document "${resolved.id}" does not exist in collection "${resolved.collection}".`,
           );
         }

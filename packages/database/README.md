@@ -85,4 +85,12 @@ The `database.projections` API currently exposes the built-in `documents` projec
 
 The `database.timeseries` API currently supports defining and listing named time-series definitions, validating optional projection references, and executing `range()` / `aggregate()` for mapped series. In-memory drivers replay events directly. SQLite-backed drivers persist mapped samples, sync forward from event checkpoints, and rebuild stored samples when the series `version` changes.
 
+## Error handling
+
+The package now distinguishes between expected domain failures and unexpected runtime failures internally.
+
+- Domain validation and conflict cases use small internal error types such as schema validation, conflict, and not-found errors.
+- Expected validation results may use internal `Result`-style flows inside the package.
+- The public API still stays ergonomic: document writes throw, schema validation returns a typed validation object, and server adapters map known domain errors to stable HTTP statuses.
+
 Core services and extension services should use the same Zelavis service contract. A future Zelavis runtime may enable the database by default, but the database service should remain replaceable and disableable.

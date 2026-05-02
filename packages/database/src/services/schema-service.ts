@@ -12,6 +12,8 @@ import type {
   ValidateDatabaseDocumentInput,
   ValidateDatabaseDocumentResult,
 } from "../contracts/schemas.js";
+import { DatabaseNotFoundError } from "../core/errors.js";
+import { err, ok, type Result } from "../core/result.js";
 
 function cloneDefinition<TDefinition extends DatabaseSchemaDefinition>(
   definition: TDefinition,
@@ -265,6 +267,54 @@ function validateObjectSchema(
   };
 }
 
+interface SchemaValidationContext {
+  schema: DatabaseCollectionSchema | null;
+  schemaVersion: number;
+}
+
+interface SchemaValidationFailure extends SchemaValidationContext {
+  issues: DatabaseSchemaValidationIssue[];
+}
+
+function validateSchemaInput<TData extends DatabaseJsonObject>(
+  schema: DatabaseCollectionSchema | null,
+  input: ValidateDatabaseDocumentInput<TData>,
+): Result<SchemaValidationContext, SchemaValidationFailure> {
+  if (!schema) {
+    return ok({
+      schema: null,
+      schemaVersion: 1,
+    });
+  }
+
+  const issues: DatabaseSchemaValidationIssue[] = [];
+  const structural = validateObjectSchema(schema.document, input.data);
+  if (!structural.valid) {
+    issues.push(...structural.issues);
+  }
+
+  if (schema.validate) {
+    const custom = schema.validate(input.data);
+    if (custom && !custom.valid) {
+      issues.push(...custom.issues);
+    }
+  }
+
+  const context = {
+    schema: cloneSchema(schema),
+    schemaVersion: schema.version,
+  };
+
+  if (issues.length === 0) {
+    return ok(context);
+  }
+
+  return err({
+    ...context,
+    issues,
+  });
+}
+
 export class SchemaService implements DatabaseSchemasApi {
   private readonly schemasByCollection = new Map<
     string,
@@ -466,7 +516,7 @@ export class SchemaService implements DatabaseSchemasApi {
   ): Promise<DatabaseCollectionSchema> {
     const schema = this.schemasByCollection.get(collection)?.get(version);
     if (!schema) {
-      throw new Error(
+      throw new DatabaseNotFoundError(
         `Schema version ${version} for collection "${collection}" is not registered.`,
       );
     }
@@ -489,35 +539,23 @@ export class SchemaService implements DatabaseSchemasApi {
       : (this.schemasByCollection
           .get(input.collection)
           ?.get(this.activeVersions.get(input.collection) ?? -1) ?? null);
+    const result = validateSchemaInput(schema, input);
 
-    if (!schema) {
+    if (result.ok) {
       return {
-        schema: null,
-        schemaVersion: 1,
+        schema: result.value.schema,
+        schemaVersion: result.value.schemaVersion,
         validation: { valid: true, issues: [] },
       };
     }
 
-    const issues: DatabaseSchemaValidationIssue[] = [];
-    const structural = validateObjectSchema(schema.document, input.data);
-    if (!structural.valid) {
-      issues.push(...structural.issues);
-    }
-
-    if (schema.validate) {
-      const custom = schema.validate(input.data);
-      if (custom && !custom.valid) {
-        issues.push(...custom.issues);
-      }
-    }
-
     return {
-      schema: cloneSchema(schema),
-      schemaVersion: schema.version,
-      validation:
-        issues.length === 0
-          ? { valid: true, issues: [] }
-          : { valid: false, issues },
+      schema: result.error.schema,
+      schemaVersion: result.error.schemaVersion,
+      validation: {
+        valid: false,
+        issues: result.error.issues,
+      },
     };
   }
 }

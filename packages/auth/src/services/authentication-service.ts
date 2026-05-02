@@ -7,6 +7,7 @@ import type {
 import type { AccountService } from "./account-service.js";
 import type { CredentialService } from "./credential-service.js";
 import type { SessionService } from "./session-service.js";
+import { AuthNotFoundError, AuthValidationError } from "../core/errors.js";
 
 export interface AuthenticationServiceOptions {
   accounts: AccountService;
@@ -21,7 +22,9 @@ export class AuthenticationService {
 
   registerProvider(provider: CredentialProvider): CredentialProvider {
     if (!provider.name) {
-      throw new TypeError("Credential provider registration requires a name.");
+      throw new AuthValidationError(
+        "Credential provider registration requires a name.",
+      );
     }
 
     this.providers.set(provider.name, provider);
@@ -40,7 +43,9 @@ export class AuthenticationService {
     const provider = this.providers.get(providerName);
 
     if (!provider) {
-      throw new Error(`Unknown authentication provider: ${providerName}`);
+      throw new AuthNotFoundError(
+        `Unknown authentication provider: ${providerName}`,
+      );
     }
 
     const api: CredentialProviderApi = {

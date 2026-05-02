@@ -1,5 +1,6 @@
 import type { CredentialRepository } from "../contracts/repositories.js";
 import type { Credential } from "../domain/entities.js";
+import { AuthValidationError } from "../core/errors.js";
 
 export interface CreateCredentialInput {
   id: string;
@@ -15,19 +16,25 @@ export class CredentialService {
 
   async create(input: CreateCredentialInput): Promise<Credential> {
     if (!input.id) {
-      throw new TypeError("Credential creation requires an id.");
+      throw new AuthValidationError("Credential creation requires an id.");
     }
 
     if (!input.accountId) {
-      throw new TypeError("Credential creation requires an accountId.");
+      throw new AuthValidationError(
+        "Credential creation requires an accountId.",
+      );
     }
 
     if (!input.provider) {
-      throw new TypeError("Credential creation requires a provider.");
+      throw new AuthValidationError(
+        "Credential creation requires a provider.",
+      );
     }
 
     if (!input.identifier) {
-      throw new TypeError("Credential creation requires an identifier.");
+      throw new AuthValidationError(
+        "Credential creation requires an identifier.",
+      );
     }
 
     const now = new Date();

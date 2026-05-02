@@ -1,5 +1,6 @@
 import type { SessionRepository } from "../contracts/repositories.js";
 import type { Session } from "../domain/entities.js";
+import { AuthValidationError } from "../core/errors.js";
 
 function createRandomUuid(): string {
   if (
@@ -30,7 +31,7 @@ export class SessionService {
 
   async create(input: CreateSessionInput): Promise<Session> {
     if (!input.accountId) {
-      throw new TypeError("Session creation requires an accountId.");
+      throw new AuthValidationError("Session creation requires an accountId.");
     }
 
     const now = new Date();
