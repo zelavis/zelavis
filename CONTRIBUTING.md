@@ -81,6 +81,8 @@ next available local port.
 pnpm build
 pnpm test
 pnpm typecheck
+pnpm audit:security
+pnpm ci:runtime
 pnpm --filter ./packages/ui build
 pnpm --filter ./packages/ui test
 pnpm --filter zelavis test
@@ -114,6 +116,14 @@ When public behavior changes:
 ## Tests and validation
 
 Run the smallest useful validation for the area you changed.
+
+The default CI baseline currently runs:
+
+- `pnpm check`
+- `pnpm --filter zelavis test`
+- `pnpm audit:security`
+
+For lockfile or dependency changes, run the audit locally before opening a PR.
 
 ## Release workflow
 

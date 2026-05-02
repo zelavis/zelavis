@@ -218,10 +218,22 @@ Run package scripts from the workspace root or target a specific package:
 ```bash
 pnpm typecheck
 pnpm test
+pnpm audit:security
+pnpm ci:runtime
 pnpm build
 pnpm --filter @zelavis/ecommerce typecheck
 pnpm --filter @zelavis/ecommerce build
 ```
+
+## CI Baseline
+
+The repository keeps a small baseline CI workflow:
+
+- `pnpm check` for workspace typechecks
+- `pnpm --filter zelavis test` for the main runtime package
+- `pnpm audit:security` to fail when moderate-or-higher vulnerabilities re-enter the lockfile
+
+That keeps the default branch honest without forcing every package and example into one heavy pipeline.
 
 ## Usage Example
 
