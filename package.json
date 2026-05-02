@@ -10,6 +10,7 @@
     "build": "pnpm -r --filter './packages/*' --filter './packages/*/adapters/*' --filter './packages/*/plugins/*' --if-present build",
     "check": "pnpm run typecheck",
     "ci:runtime": "pnpm check && pnpm --filter zelavis test",
+    "ci:ui": "pnpm --filter @zelavis/ui typecheck && ZELAVIS_UI_BASE_PATH=/zelavis/ pnpm --filter @zelavis/ui exec playwright test --project=desktop",
     "changeset": "changeset",
     "changeset:add": "node scripts/create-changeset.mjs",
     "example:cloudflare": "pnpm --filter @zelavis/example-cloudflare dev",

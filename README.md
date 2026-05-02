@@ -220,6 +220,7 @@ pnpm typecheck
 pnpm test
 pnpm audit:security
 pnpm ci:runtime
+pnpm ci:ui
 pnpm build
 pnpm --filter @zelavis/ecommerce typecheck
 pnpm --filter @zelavis/ecommerce build
@@ -231,6 +232,7 @@ The repository keeps a small baseline CI workflow:
 
 - `pnpm check` for workspace typechecks
 - `pnpm --filter zelavis test` for the main runtime package
+- `pnpm ci:ui` for a mounted desktop dashboard Playwright pass
 - `pnpm audit:security` to fail when moderate-or-higher vulnerabilities re-enter the lockfile
 
 That keeps the default branch honest without forcing every package and example into one heavy pipeline.

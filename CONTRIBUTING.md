@@ -83,6 +83,7 @@ pnpm test
 pnpm typecheck
 pnpm audit:security
 pnpm ci:runtime
+pnpm ci:ui
 pnpm --filter ./packages/ui build
 pnpm --filter ./packages/ui test
 pnpm --filter zelavis test
@@ -121,6 +122,7 @@ The default CI baseline currently runs:
 
 - `pnpm check`
 - `pnpm --filter zelavis test`
+- `pnpm ci:ui`
 - `pnpm audit:security`
 
 For lockfile or dependency changes, run the audit locally before opening a PR.

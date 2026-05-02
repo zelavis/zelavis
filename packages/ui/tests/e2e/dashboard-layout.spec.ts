@@ -152,7 +152,7 @@ test('overview nav is only active on the overview route', async ({ page }, testI
   await expect(page.getByRole('heading', { name: 'Multi-model database' })).toBeVisible()
   await expect(
     page.getByRole('complementary', { name: 'Dashboard navigation' }).locator('.swiper-slide-active'),
-  ).toContainText('Platform')
+  ).toContainText('Core')
   await expect(
     page
       .getByRole('complementary', { name: 'Dashboard navigation' })
