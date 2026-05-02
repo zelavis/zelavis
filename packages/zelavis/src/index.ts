@@ -629,6 +629,15 @@ async function readDatabaseDocument(
   });
 }
 
+async function readValidatedDatabaseDocumentData<T>(
+  database: DatabaseApi,
+  options: Required<ZelavisDatabaseDocumentStoreOptions>,
+  parse: (value: unknown) => T,
+): Promise<T> {
+  const document = await readDatabaseDocument(database, options);
+  return parse(document?.data);
+}
+
 async function writeDatabaseDocument(
   database: DatabaseApi,
   options: Required<ZelavisDatabaseDocumentStoreOptions>,
@@ -668,9 +677,11 @@ export function createDatabaseDashboardSettingsStore(
 
   return {
     async read() {
-      const document = await readDatabaseDocument(database, documentOptions);
-      const input = readBodyObject(document?.data);
-      return parseStoredDashboardSettingsUpdate(input);
+      return readValidatedDatabaseDocumentData(
+        database,
+        documentOptions,
+        (value) => parseStoredDashboardSettingsUpdate(readBodyObject(value)),
+      );
     },
     async write(update) {
       const next = {
@@ -699,8 +710,11 @@ export function createDatabaseWebsitePagesStore(
 
   return {
     async read() {
-      const document = await readDatabaseDocument(database, documentOptions);
-      return parseStoredWebsitePages(document?.data);
+      return readValidatedDatabaseDocumentData(
+        database,
+        documentOptions,
+        parseStoredWebsitePages,
+      );
     },
     async write(pages) {
       const normalizedPages = normalizeWebsitePages(pages);
