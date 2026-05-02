@@ -3,7 +3,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database as RawDatabase } from "bun:sqlite";
-import { createDatabase } from "@zelavis/database";
+import {
+  DatabaseConflictError,
+  DatabaseRevisionMismatchError,
+  createDatabase,
+} from "@zelavis/database";
 import {
   createBunSqliteDatabase,
   createBunSqliteDatabaseDriver,
@@ -233,6 +237,56 @@ test("bun:sqlite database preserves idempotent event retries across reopen", asy
 
     expect(retried.eventId).toBe(created.eventId);
     expect(events).toHaveLength(1);
+  } finally {
+    rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
+test("bun:sqlite database uses typed conflict and revision errors", async () => {
+  const temp = createTempDatabasePath();
+
+  try {
+    const database = await createBunSqliteDatabase({ filename: temp.filename });
+
+    await database.events.append({
+      collection: "products",
+      type: "collection.created",
+      expectedRevision: 0,
+      payload: { metadata: { source: "test" } },
+    });
+
+    try {
+      await database.events.append({
+        collection: "products",
+        type: "collection.created",
+        expectedRevision: 0,
+        payload: { metadata: { source: "test" } },
+      });
+      throw new Error("Expected duplicate collection conflict.");
+    } catch (error) {
+      expect(error).toBeInstanceOf(DatabaseConflictError);
+      expect((error as Error).name).toBe("DatabaseConflictError");
+    }
+
+    await database.documents.insert({
+      collection: "products",
+      id: "product_1",
+      data: { name: "Demo" },
+    });
+
+    try {
+      await database.events.append({
+        collection: "products",
+        documentId: "product_1",
+        type: "document.upserted",
+        expectedRevision: 2,
+        payload: { data: { name: "Outdated" } },
+      });
+      throw new Error("Expected revision mismatch.");
+    } catch (error) {
+      expect(error).toBeInstanceOf(DatabaseRevisionMismatchError);
+      expect((error as Error).name).toBe("DatabaseRevisionMismatchError");
+    }
   } finally {
     rmSync(temp.directory, { recursive: true, force: true });
   }

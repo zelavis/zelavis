@@ -93,4 +93,6 @@ The package now distinguishes between expected domain failures and unexpected ru
 - Expected validation results may use internal `Result`-style flows inside the package.
 - The public API still stays ergonomic: document writes throw, schema validation returns a typed validation object, and server adapters map known domain errors to stable HTTP statuses.
 
+When database-backed services expose HTTP routes, they can reuse the shared JSON error helpers from `@zelavis/server` instead of re-implementing response formatting in each package.
+
 Core services and extension services should use the same Zelavis service contract. A future Zelavis runtime may enable the database by default, but the database service should remain replaceable and disableable.

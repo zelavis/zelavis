@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import Database from "better-sqlite3";
-import { createDatabase } from "@zelavis/database";
+import {
+  DatabaseConflictError,
+  DatabaseRevisionMismatchError,
+  createDatabase,
+} from "@zelavis/database";
 import {
   createBetterSqlite3Database,
   createBetterSqlite3DatabaseDriver,
@@ -248,6 +252,62 @@ test("better-sqlite3 database preserves idempotent event retries across reopen",
 
     assert.equal(retried.eventId, created.eventId);
     assert.equal(events.length, 1);
+  } finally {
+    rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
+test("better-sqlite3 database uses typed conflict and revision errors", async () => {
+  const temp = createTempDatabasePath();
+
+  try {
+    const database = await createBetterSqlite3Database({
+      filename: temp.filename,
+    });
+
+    await database.events.append({
+      collection: "products",
+      type: "collection.created",
+      expectedRevision: 0,
+      payload: { metadata: { source: "test" } },
+    });
+
+    await assert.rejects(
+      () =>
+        database.events.append({
+          collection: "products",
+          type: "collection.created",
+          expectedRevision: 0,
+          payload: { metadata: { source: "test" } },
+        }),
+      (error) => {
+        assert.equal(error instanceof DatabaseConflictError, true);
+        assert.equal(error.name, "DatabaseConflictError");
+        return true;
+      },
+    );
+
+    await database.documents.insert({
+      collection: "products",
+      id: "product_1",
+      data: { name: "Demo" },
+    });
+
+    await assert.rejects(
+      () =>
+        database.events.append({
+          collection: "products",
+          documentId: "product_1",
+          type: "document.upserted",
+          expectedRevision: 2,
+          payload: { data: { name: "Outdated" } },
+        }),
+      (error) => {
+        assert.equal(error instanceof DatabaseRevisionMismatchError, true);
+        assert.equal(error.name, "DatabaseRevisionMismatchError");
+        return true;
+      },
+    );
   } finally {
     rmSync(temp.directory, { recursive: true, force: true });
   }

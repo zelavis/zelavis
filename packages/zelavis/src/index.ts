@@ -461,6 +461,28 @@ function normalizeStoredWebsiteCard(
   };
 }
 
+function parseStoredWebsiteAction(value: unknown): ZelavisWebsiteAction {
+  const action = normalizeStoredWebsiteAction(value);
+  if (!action) {
+    throw new ZelavisValidationError(
+      "Stored website actions require a label and href.",
+    );
+  }
+
+  return action;
+}
+
+function parseStoredWebsiteCard(value: unknown): ZelavisWebsiteCard {
+  const card = normalizeStoredWebsiteCard(value);
+  if (!card) {
+    throw new ZelavisValidationError(
+      "Stored website cards require a title and description.",
+    );
+  }
+
+  return card;
+}
+
 function normalizeStoredWebsitePage(
   value: unknown,
 ): ZelavisWebsitePage | undefined {
@@ -506,6 +528,58 @@ function normalizeStoredWebsitePage(
     ...(actions && actions.length > 0 ? { actions } : {}),
     ...(cards && cards.length > 0 ? { cards } : {}),
   };
+}
+
+function parseStoredWebsitePage(value: unknown): ZelavisWebsitePage {
+  const input = readBodyObject(value);
+  const page = normalizeStoredWebsitePage(value);
+
+  if (!page) {
+    throw new ZelavisValidationError(
+      "Stored website pages require a path and title.",
+    );
+  }
+
+  if ("actions" in input && !Array.isArray(input.actions)) {
+    throw new ZelavisValidationError(
+      "Stored website page actions must be an array.",
+    );
+  }
+
+  if ("cards" in input && !Array.isArray(input.cards)) {
+    throw new ZelavisValidationError(
+      "Stored website page cards must be an array.",
+    );
+  }
+
+  const actions = Array.isArray(input.actions)
+    ? input.actions.map((action) => parseStoredWebsiteAction(action))
+    : undefined;
+  const cards = Array.isArray(input.cards)
+    ? input.cards.map((card) => parseStoredWebsiteCard(card))
+    : undefined;
+
+  return {
+    ...page,
+    ...(actions && actions.length > 0 ? { actions } : {}),
+    ...(cards && cards.length > 0 ? { cards } : {}),
+  };
+}
+
+function parseStoredWebsitePages(value: unknown): ZelavisWebsitePage[] {
+  const input = readBodyObject(value);
+
+  if (!("pages" in input)) {
+    return [];
+  }
+
+  if (!Array.isArray(input.pages)) {
+    throw new ZelavisValidationError(
+      "Stored website pages must be an array.",
+    );
+  }
+
+  return input.pages.map((page) => parseStoredWebsitePage(page));
 }
 
 function normalizeWebsitePages(
@@ -626,15 +700,7 @@ export function createDatabaseWebsitePagesStore(
   return {
     async read() {
       const document = await readDatabaseDocument(database, documentOptions);
-      const input = readBodyObject(document?.data);
-
-      if (!Array.isArray(input.pages)) {
-        return [];
-      }
-
-      return input.pages
-        .map((page) => normalizeStoredWebsitePage(page))
-        .filter((page): page is ZelavisWebsitePage => Boolean(page));
+      return parseStoredWebsitePages(document?.data);
     },
     async write(pages) {
       const normalizedPages = normalizeWebsitePages(pages);
@@ -1441,12 +1507,18 @@ async function resolveWebsiteCoreService(
             context.apiVersion,
             "website/pages",
           ),
-          handler: async () => ({
-            status: 200,
-            body: {
-              pages: await readPages(),
-            },
-          }),
+          handler: async () => {
+            try {
+              return {
+                status: 200,
+                body: {
+                  pages: await readPages(),
+                },
+              };
+            } catch (error) {
+              return zelavisErrorResponse(error, 400);
+            }
+          },
         },
         {
           id: "website.pages.create",
@@ -1523,56 +1595,60 @@ async function resolveWebsiteCoreService(
           method: "GET",
           path: "/*path",
           handler: async ({ params }: { params: Record<string, string> }) => {
-            const pages = await readPages();
-            const requestPath = normalizePath(params.path, "/");
-            const hasHomePage = pages.some((entry) => entry.path === "/");
+            try {
+              const pages = await readPages();
+              const requestPath = normalizePath(params.path, "/");
+              const hasHomePage = pages.some((entry) => entry.path === "/");
 
-            if (requestPath === context.rootPath) {
-              return {
-                status: 404,
-                body: {
-                  error: "Not found",
-                },
-              };
-            }
-
-            if (!hasHomePage) {
-              if (requestPath === "/") {
+              if (requestPath === context.rootPath) {
                 return {
-                  status: 307,
-                  headers: {
-                    location: context.rootPath,
-                    "cache-control": "no-cache",
-                  } as Record<string, string>,
+                  status: 404,
+                  body: {
+                    error: "Not found",
+                  },
+                };
+              }
+
+              if (!hasHomePage) {
+                if (requestPath === "/") {
+                  return {
+                    status: 307,
+                    headers: {
+                      location: context.rootPath,
+                      "cache-control": "no-cache",
+                    } as Record<string, string>,
+                  };
+                }
+
+                return {
+                  status: 404,
+                  body: {
+                    error: "Not found",
+                  },
+                };
+              }
+
+              const page = pages.find((entry) => entry.path === requestPath);
+              if (!page) {
+                return {
+                  status: 404,
+                  body: {
+                    error: "Not found",
+                  },
                 };
               }
 
               return {
-                status: 404,
-                body: {
-                  error: "Not found",
-                },
+                status: 200,
+                headers: {
+                  "content-type": "text/html; charset=utf-8",
+                  "cache-control": "no-cache",
+                } as Record<string, string>,
+                body: renderWebsitePage(page),
               };
+            } catch (error) {
+              return zelavisErrorResponse(error, 400);
             }
-
-            const page = pages.find((entry) => entry.path === requestPath);
-            if (!page) {
-              return {
-                status: 404,
-                body: {
-                  error: "Not found",
-                },
-              };
-            }
-
-            return {
-              status: 200,
-              headers: {
-                "content-type": "text/html; charset=utf-8",
-                "cache-control": "no-cache",
-              } as Record<string, string>,
-              body: renderWebsitePage(page),
-            };
           },
         },
       ],

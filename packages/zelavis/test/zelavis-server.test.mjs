@@ -763,3 +763,37 @@ test("zelavis rejects invalid persisted dashboard settings on read", async () =>
   assert.equal(response.status, 400);
   assert.match(await response.text(), /Stored dashboard theme must be one of/);
 });
+
+test("zelavis rejects invalid persisted website pages on read", async () => {
+  const database = await createDatabase();
+  await database.documents.createCollection({ name: "zelavis_system" });
+  await database.documents.insert({
+    collection: "zelavis_system",
+    id: "website.pages",
+    data: {
+      kind: "website-pages",
+      pages: [
+        {
+          path: "/broken",
+          title: "Broken",
+          actions: [{ label: "Missing href" }],
+        },
+      ],
+    },
+  });
+
+  const runtime = await zelavis({
+    coreServices: {
+      auth: false,
+      database,
+      website: true,
+    },
+  });
+
+  const response = await runtime.fetch(
+    new Request("http://localhost/zelavis/api/v1/website/pages"),
+  );
+
+  assert.equal(response.status, 400);
+  assert.match(await response.text(), /Stored website actions require a label and href/);
+});

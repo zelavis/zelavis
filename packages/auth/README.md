@@ -67,3 +67,5 @@ In the default flow, no auth-specific server plugin is required. `authService()`
 ## Error handling
 
 `@zelavis/auth` now uses small internal domain error classes for expected validation and not-found cases. The HTTP service maps those errors centrally so invalid auth input returns `400` and missing auth providers return `404`, without each route needing custom status logic.
+
+Service packages can reuse the shared JSON error helpers exported by `@zelavis/server` when they need the same central mapping pattern.
