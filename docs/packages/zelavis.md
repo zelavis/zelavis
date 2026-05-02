@@ -11,6 +11,7 @@ Today, that mostly means:
 - dashboard delivery
 - auth service
 - database service
+- website service
 - runtime composition
 
 ## Main entry point
@@ -23,7 +24,9 @@ const runtime = await zelavis();
 
 ## Default behavior
 
-By default, Zelavis owns one safe namespace under `/zelavis` and includes dashboard, auth, and database core services.
+By default, Zelavis owns one safe namespace under `/zelavis` and includes dashboard, auth, database, and website core services.
+
+The dashboard stays mounted under the configured root path, while API services stay grouped under `/api/<version>/...`.
 
 ## When to use lower-level packages instead
 

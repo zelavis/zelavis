@@ -1,15 +1,12 @@
 # Reference
 
-Use this section for stable reference material.
+Use this section for stable, scan-friendly reference material.
 
-Likely pages:
+Current pages:
 
-- public HTTP routes
-- runtime configuration
-- dashboard settings
-- environment variables
-- service naming and route conventions
+- [Dashboard Settings](./dashboard-settings.md)
+- [Route Conventions](./route-conventions.md)
 
 Guideline:
 
-Reference pages should be concise, exact, and easy to scan.
+Reference pages should stay concise, exact, and focused on current behavior.

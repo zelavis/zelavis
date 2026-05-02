@@ -1,0 +1,66 @@
+# Route Conventions
+
+The default Zelavis runtime mounts the dashboard under a safe root path and groups API services under a versioned API namespace.
+
+## Default mounted paths
+
+With the default runtime settings:
+
+```txt
+/zelavis
+/zelavis/settings
+/zelavis/assets/*
+/zelavis/api/v1/dashboard/config
+/zelavis/api/v1/dashboard/settings
+/zelavis/api/v1/auth/*
+/zelavis/api/v1/database/*
+/zelavis/api/v1/website/pages
+```
+
+## Root path behavior
+
+- `rootPath` defaults to `/zelavis`.
+- The dashboard shell and dashboard client routes live under `rootPath`.
+- Static dashboard assets live under `${rootPath}/assets/*`.
+- Service APIs live under `${rootPath}${api.prefix}/${api.version}/...`.
+
+With:
+
+```ts
+await zelavis({
+  rootPath: "/admin",
+  api: {
+    prefix: "/api",
+    version: "v2",
+  },
+});
+```
+
+the mounted paths become:
+
+```txt
+/admin
+/admin/settings
+/admin/assets/*
+/admin/api/v2/dashboard/config
+/admin/api/v2/dashboard/settings
+/admin/api/v2/auth/*
+/admin/api/v2/database/*
+/admin/api/v2/website/pages
+```
+
+## Website core service
+
+When the built-in website core service is enabled, public website pages are mounted at `/`.
+
+Important rules:
+
+- `/` can serve the home page managed by the website core service.
+- Zelavis reserves the configured dashboard root path and anything under it.
+- Creating a website page at the active dashboard root path is rejected.
+
+## Related docs
+
+- [Dashboard Settings](./dashboard-settings.md)
+- [First Runtime](../getting-started/first-runtime.md)
+- [@zelavis/server](../packages/server.md)

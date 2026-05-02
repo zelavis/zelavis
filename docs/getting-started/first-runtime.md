@@ -21,17 +21,22 @@ Today, `zelavis()` includes these core services by default:
 - dashboard
 - auth
 - database
+- website
 
 Default root namespace:
 
 ```txt
 /zelavis
+/zelavis/settings
 /zelavis/assets/*
 /zelavis/api/v1/dashboard/config
 /zelavis/api/v1/dashboard/settings
 /zelavis/api/v1/auth
 /zelavis/api/v1/database
+/zelavis/api/v1/website/pages
 ```
+
+The website core service also mounts public website pages at `/`, while still reserving the dashboard namespace under `/zelavis`.
 
 ## Disable built-in services when needed
 
@@ -41,9 +46,25 @@ await zelavis({
     auth: false,
     dashboard: false,
     database: false,
+    website: false,
   },
 });
 ```
+
+## Dashboard settings
+
+The built-in dashboard settings endpoint currently exposes:
+
+- `rootPath`
+- `pendingRootPath`
+- `apiBasePath`
+- `theme`
+- `pageBuilderEnabled`
+- `persistence`
+- `editable`
+- `restartRequired`
+
+Root path changes are stored as pending runtime settings and require a restart before the dashboard actually moves.
 
 ## Use the fetch-style runtime directly
 

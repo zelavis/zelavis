@@ -20,6 +20,7 @@ server.listen(3000);
 - simple self-hosted deployments
 - local dashboard development
 - file-backed dashboard settings storage
+- serving the default website and dashboard together from one Node process
 
 ## Dashboard settings storage
 
@@ -30,6 +31,8 @@ import { createFileDashboardSettingsStore } from "zelavis/adapters/node";
 ```
 
 Use it when you want runtime-editable dashboard settings persisted to disk.
+
+The helper persists dashboard settings such as theme, pending `rootPath`, and page-builder toggles outside the runtime process.
 
 ## Related docs
 

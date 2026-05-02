@@ -41,7 +41,7 @@ Current behavior:
 
 - the Zelavis runtime runs on `http://127.0.0.1:3000`
 - the UI dev server runs on `http://127.0.0.1:3001`
-- dashboard requests under `/zelavis` redirect to the live UI dev server
+- dashboard requests under `/zelavis` redirect to the live UI dev server mounted at `http://127.0.0.1:3001/zelavis/`
 
 ## What to read next
 
