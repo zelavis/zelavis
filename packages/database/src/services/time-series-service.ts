@@ -18,7 +18,10 @@ import type {
 } from "../contracts/driver.js";
 import type { DatabaseEvent } from "../contracts/events.js";
 import type { DatabaseJson } from "../contracts/json.js";
-import { DatabaseNotFoundError } from "../core/errors.js";
+import {
+  DatabaseNotFoundError,
+  DatabaseValidationError,
+} from "../core/errors.js";
 
 function cloneSummary(
   summary: DatabaseTimeSeriesSummary,
@@ -245,7 +248,7 @@ export class TimeSeriesService implements DatabaseTimeSeriesApi {
     points: DatabaseTimeSeriesStoredPoint[];
   }> {
     if (!definition.map) {
-      throw new Error(
+      throw new DatabaseValidationError(
         `Time-series "${definition.name}" does not define an event mapper yet.`,
       );
     }
@@ -294,7 +297,7 @@ export class TimeSeriesService implements DatabaseTimeSeriesApi {
     }
 
     if (!definition.map) {
-      throw new Error(
+      throw new DatabaseValidationError(
         `Time-series "${definition.name}" does not define an event mapper yet.`,
       );
     }

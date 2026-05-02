@@ -1,5 +1,7 @@
 import {
+  createMappedJsonErrorResponse,
   defineServerService,
+  type ZelavisServerErrorStatusRule,
   type ZelavisServerService,
 } from "@zelavis/server";
 import type { DatabaseApi } from "../core/types.js";
@@ -24,6 +26,8 @@ import {
   DatabaseConflictError,
   DatabaseDomainError,
   DatabaseNotFoundError,
+  DatabaseRevisionMismatchError,
+  DatabaseValidationError,
 } from "../core/errors.js";
 
 function readBodyObject(body: unknown): Record<string, unknown> {
@@ -131,47 +135,33 @@ function readSchemaDefinition(value: unknown): DatabaseObjectSchemaDefinition {
   return value as DatabaseObjectSchemaDefinition;
 }
 
-function errorResponse(status: number, error: unknown) {
-  return {
-    status,
-    body: {
-      error: error instanceof Error ? error.message : String(error),
-    },
-  };
-}
-
-function getDatabaseErrorStatus(
-  error: unknown,
-  fallback = 500,
-): number {
-  if (error instanceof TypeError) {
-    return 400;
-  }
-
-  if (error instanceof DatabaseSchemaValidationError) {
-    return 400;
-  }
-
-  if (error instanceof DatabaseNotFoundError) {
-    return 404;
-  }
-
-  if (
-    error instanceof DatabaseEventIdempotencyConflictError ||
-    error instanceof DatabaseConflictError
-  ) {
-    return 409;
-  }
-
-  if (error instanceof DatabaseDomainError) {
-    return 400;
-  }
-
-  return fallback;
-}
+const databaseErrorRules: readonly ZelavisServerErrorStatusRule[] = [
+  {
+    matches: (error) =>
+      error instanceof TypeError ||
+      error instanceof DatabaseValidationError ||
+      error instanceof DatabaseSchemaValidationError,
+    status: 400,
+  },
+  {
+    matches: (error) => error instanceof DatabaseNotFoundError,
+    status: 404,
+  },
+  {
+    matches: (error) =>
+      error instanceof DatabaseEventIdempotencyConflictError ||
+      error instanceof DatabaseRevisionMismatchError ||
+      error instanceof DatabaseConflictError,
+    status: 409,
+  },
+  {
+    matches: (error) => error instanceof DatabaseDomainError,
+    status: 400,
+  },
+];
 
 function databaseErrorResponse(error: unknown, fallback = 500) {
-  return errorResponse(getDatabaseErrorStatus(error, fallback), error);
+  return createMappedJsonErrorResponse(error, databaseErrorRules, fallback);
 }
 
 export function createDatabaseServerService(

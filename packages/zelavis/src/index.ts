@@ -9,14 +9,18 @@ import {
   createDatabase,
   createDatabaseServerService,
   DatabaseConflictError,
+  DatabaseRevisionMismatchError,
+  DatabaseValidationError,
   type CreateDatabaseOptions,
   type DatabaseApi,
   type DatabaseJsonObject,
   DatabaseNotFoundError,
 } from "@zelavis/database";
 import {
+  createMappedJsonErrorResponse,
   defineServerService,
   zelavisServer as mountZelavisServer,
+  type ZelavisServerErrorStatusRule,
   type ZelavisAnyServiceInput,
   type ZelavisServerErrorHandler,
   type ZelavisServerRuntime,
@@ -111,6 +115,44 @@ class ZelavisConflictError extends ZelavisDomainError {
     super(message);
     this.name = "ZelavisConflictError";
   }
+}
+
+function parseStoredDashboardSettingsUpdate(
+  input: Record<string, unknown>,
+): ZelavisDashboardSettingsUpdate {
+  const update: ZelavisDashboardSettingsUpdate = {};
+
+  if ("rootPath" in input) {
+    if (typeof input.rootPath !== "string") {
+      throw new ZelavisValidationError(
+        "Stored dashboard root path must be a string.",
+      );
+    }
+
+    update.rootPath = normalizeEditableRootPath(input.rootPath);
+  }
+
+  if ("theme" in input) {
+    if (!isDashboardThemeMode(input.theme)) {
+      throw new ZelavisValidationError(
+        'Stored dashboard theme must be one of "light", "dark", or "auto".',
+      );
+    }
+
+    update.theme = input.theme;
+  }
+
+  if ("pageBuilderEnabled" in input) {
+    if (!isBoolean(input.pageBuilderEnabled)) {
+      throw new ZelavisValidationError(
+        "Stored page builder enabled must be a boolean.",
+      );
+    }
+
+    update.pageBuilderEnabled = input.pageBuilderEnabled;
+  }
+
+  return update;
 }
 
 export type ZelavisDatabaseCoreServiceOptions =
@@ -286,50 +328,37 @@ function readBodyObject(body: unknown): Record<string, unknown> {
     : {};
 }
 
-function createJsonErrorResponse(status: number, error: unknown) {
-  return {
-    status,
-    body: {
-      error: error instanceof Error ? error.message : String(error),
-    },
-  };
-}
-
-function getZelavisErrorStatus(error: unknown, fallback = 500): number {
-  if (
-    error instanceof TypeError ||
-    error instanceof AuthValidationError ||
-    error instanceof ZelavisValidationError
-  ) {
-    return 400;
-  }
-
-  if (
-    error instanceof DatabaseNotFoundError ||
-    error instanceof AuthNotFoundError
-  ) {
-    return 404;
-  }
-
-  if (
-    error instanceof DatabaseConflictError ||
-    error instanceof ZelavisConflictError
-  ) {
-    return 409;
-  }
-
-  if (
-    error instanceof AuthDomainError ||
-    error instanceof ZelavisDomainError
-  ) {
-    return 400;
-  }
-
-  return fallback;
-}
+const zelavisErrorRules: readonly ZelavisServerErrorStatusRule[] = [
+  {
+    matches: (error) =>
+      error instanceof TypeError ||
+      error instanceof AuthValidationError ||
+      error instanceof DatabaseValidationError ||
+      error instanceof ZelavisValidationError,
+    status: 400,
+  },
+  {
+    matches: (error) =>
+      error instanceof DatabaseNotFoundError ||
+      error instanceof AuthNotFoundError,
+    status: 404,
+  },
+  {
+    matches: (error) =>
+      error instanceof DatabaseRevisionMismatchError ||
+      error instanceof DatabaseConflictError ||
+      error instanceof ZelavisConflictError,
+    status: 409,
+  },
+  {
+    matches: (error) =>
+      error instanceof AuthDomainError || error instanceof ZelavisDomainError,
+    status: 400,
+  },
+];
 
 function zelavisErrorResponse(error: unknown, fallback = 500) {
-  return createJsonErrorResponse(getZelavisErrorStatus(error, fallback), error);
+  return createMappedJsonErrorResponse(error, zelavisErrorRules, fallback);
 }
 
 function createMemoryDashboardSettingsStore(): ZelavisDashboardSettingsStore {
@@ -567,21 +596,7 @@ export function createDatabaseDashboardSettingsStore(
     async read() {
       const document = await readDatabaseDocument(database, documentOptions);
       const input = readBodyObject(document?.data);
-      const settings: ZelavisDashboardSettingsUpdate = {};
-
-      if (typeof input.rootPath === "string") {
-        settings.rootPath = normalizeEditableRootPath(input.rootPath);
-      }
-
-      if (isDashboardThemeMode(input.theme)) {
-        settings.theme = input.theme;
-      }
-
-      if (isBoolean(input.pageBuilderEnabled)) {
-        settings.pageBuilderEnabled = input.pageBuilderEnabled;
-      }
-
-      return settings;
+      return parseStoredDashboardSettingsUpdate(input);
     },
     async write(update) {
       const next = {
@@ -659,37 +674,24 @@ function readDashboardSettingsUpdate(
   body: unknown,
 ): ZelavisDashboardSettingsUpdate {
   const input = readBodyObject(body);
-  const update: ZelavisDashboardSettingsUpdate = {};
 
-  if ("rootPath" in input) {
-    if (typeof input.rootPath !== "string") {
-      throw new ZelavisValidationError("Root path must be a string.");
+  try {
+    return parseStoredDashboardSettingsUpdate(input);
+  } catch (error) {
+    if (!(error instanceof ZelavisValidationError)) {
+      throw error;
     }
 
-    update.rootPath = normalizeEditableRootPath(input.rootPath);
+    const normalizedMessage = error.message
+      .replace(/^Stored dashboard /, "")
+      .replace(/^Stored page builder enabled/, "Page builder enabled")
+      .replace(/^Stored dashboard theme/, "Theme")
+      .replace(/^Stored dashboard root path/, "Root path");
+
+    throw new ZelavisValidationError(
+      normalizedMessage.charAt(0).toUpperCase() + normalizedMessage.slice(1),
+    );
   }
-
-  if ("theme" in input) {
-    if (!isDashboardThemeMode(input.theme)) {
-      throw new ZelavisValidationError(
-        'Theme must be one of "light", "dark", or "auto".',
-      );
-    }
-
-    update.theme = input.theme;
-  }
-
-  if ("pageBuilderEnabled" in input) {
-    if (!isBoolean(input.pageBuilderEnabled)) {
-      throw new ZelavisValidationError(
-        "Page builder enabled must be a boolean.",
-      );
-    }
-
-    update.pageBuilderEnabled = input.pageBuilderEnabled;
-  }
-
-  return update;
 }
 
 function readRequestUrl(request: unknown): string | undefined {
@@ -1152,7 +1154,9 @@ async function resolveDashboardCoreService(
     })),
   };
   const readDashboardSettings = async (): Promise<ZelavisDashboardSettings> => {
-    const stored = (await settingsStore.read()) ?? {};
+    const stored = parseStoredDashboardSettingsUpdate(
+      readBodyObject((await settingsStore.read()) ?? {}),
+    );
     const storedRootPath = normalizeEditableRootPath(stored.rootPath);
     const pendingRootPath =
       storedRootPath && storedRootPath !== rootPath
@@ -1324,10 +1328,16 @@ async function resolveDashboardCoreService(
             context.apiVersion,
             "dashboard/settings",
           ),
-          handler: async () => ({
-            status: 200,
-            body: await readDashboardSettings(),
-          }),
+          handler: async () => {
+            try {
+              return {
+                status: 200,
+                body: await readDashboardSettings(),
+              };
+            } catch (error) {
+              return zelavisErrorResponse(error, 400);
+            }
+          },
         },
         {
           id: "dashboard.settings.update",

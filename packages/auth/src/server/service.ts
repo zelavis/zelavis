@@ -1,4 +1,9 @@
-import { defineServerService, type ZelavisServerService } from "@zelavis/server";
+import {
+  createMappedJsonErrorResponse,
+  defineServerService,
+  type ZelavisServerErrorStatusRule,
+  type ZelavisServerService,
+} from "@zelavis/server";
 import type { AuthApi } from "../core/types.js";
 import {
   AuthDomainError,
@@ -6,33 +11,24 @@ import {
   AuthValidationError,
 } from "../core/errors.js";
 
-function errorResponse(status: number, error: unknown) {
-  return {
-    status,
-    body: {
-      error: error instanceof Error ? error.message : String(error),
-    },
-  };
-}
-
-function getAuthErrorStatus(error: unknown, fallback = 500): number {
-  if (error instanceof AuthNotFoundError) {
-    return 404;
-  }
-
-  if (error instanceof AuthValidationError || error instanceof TypeError) {
-    return 400;
-  }
-
-  if (error instanceof AuthDomainError) {
-    return 400;
-  }
-
-  return fallback;
-}
+const authErrorRules: readonly ZelavisServerErrorStatusRule[] = [
+  {
+    matches: (error) => error instanceof AuthNotFoundError,
+    status: 404,
+  },
+  {
+    matches: (error) =>
+      error instanceof AuthValidationError || error instanceof TypeError,
+    status: 400,
+  },
+  {
+    matches: (error) => error instanceof AuthDomainError,
+    status: 400,
+  },
+];
 
 function authErrorResponse(error: unknown, fallback = 500) {
-  return errorResponse(getAuthErrorStatus(error, fallback), error);
+  return createMappedJsonErrorResponse(error, authErrorRules, fallback);
 }
 
 export function createAuthServerService(auth: AuthApi): ZelavisServerService<AuthApi> {

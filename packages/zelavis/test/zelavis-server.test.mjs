@@ -737,3 +737,29 @@ test("zelavis persists dashboard settings and website pages through the database
     /Persisted through the shared database layer/,
   );
 });
+
+test("zelavis rejects invalid persisted dashboard settings on read", async () => {
+  const runtime = await zelavis({
+    coreServices: {
+      dashboard: {
+        settingsStore: {
+          async read() {
+            return {
+              theme: "violet",
+            };
+          },
+          async write(update) {
+            return update;
+          },
+        },
+      },
+    },
+  });
+
+  const response = await runtime.fetch(
+    new Request("http://localhost/zelavis/api/v1/dashboard/settings"),
+  );
+
+  assert.equal(response.status, 400);
+  assert.match(await response.text(), /Stored dashboard theme must be one of/);
+});

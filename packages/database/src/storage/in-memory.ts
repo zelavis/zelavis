@@ -33,6 +33,7 @@ import {
   DatabaseConflictError,
   DatabaseNotFoundError,
   DatabaseRevisionMismatchError,
+  DatabaseValidationError,
 } from "../core/errors.js";
 import { err, ok, type Result } from "../core/result.js";
 
@@ -427,7 +428,9 @@ export function createInMemoryDatabaseDriver(): DatabaseDriver {
     const documentId = event.documentId;
 
     if (!documentId) {
-      throw new Error("A document.upserted event requires a document ID.");
+      throw new DatabaseValidationError(
+        "A document.upserted event requires a document ID.",
+      );
     }
 
     const current = collection.documents.get(documentId);
@@ -459,7 +462,9 @@ export function createInMemoryDatabaseDriver(): DatabaseDriver {
   ): void {
     const documentId = event.documentId;
     if (!documentId) {
-      throw new Error("A document.deleted event requires a document ID.");
+      throw new DatabaseValidationError(
+        "A document.deleted event requires a document ID.",
+      );
     }
 
     const collection = getCollection(event.tenantId, event.collection);

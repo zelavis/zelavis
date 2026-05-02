@@ -36,6 +36,7 @@ import {
   DatabaseEventIdempotencyConflictError,
   DatabaseNotFoundError,
   DatabaseRevisionMismatchError,
+  DatabaseValidationError,
 } from "@zelavis/database";
 
 type BetterSqlite3Database = InstanceType<typeof Database>;
@@ -1196,7 +1197,9 @@ export function createBetterSqlite3DatabaseDriver(
         );
       } else if (input.type === "document.upserted") {
         if (!input.documentId) {
-          throw new Error("A document.upserted event requires a document ID.");
+          throw new DatabaseValidationError(
+            "A document.upserted event requires a document ID.",
+          );
         }
 
         const collection = findCollectionStatement.get(
@@ -1225,7 +1228,9 @@ export function createBetterSqlite3DatabaseDriver(
         );
       } else {
         if (!input.documentId) {
-          throw new Error("A document.deleted event requires a document ID.");
+          throw new DatabaseValidationError(
+            "A document.deleted event requires a document ID.",
+          );
         }
 
         appendDocumentDeletedTransaction(

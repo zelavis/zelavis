@@ -5,6 +5,13 @@ export class DatabaseDomainError extends Error {
   }
 }
 
+export class DatabaseValidationError extends DatabaseDomainError {
+  constructor(message: string) {
+    super(message);
+    this.name = "DatabaseValidationError";
+  }
+}
+
 export class DatabaseConflictError extends DatabaseDomainError {
   constructor(message: string) {
     super(message);
