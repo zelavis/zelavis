@@ -1,7 +1,34 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 
+function normalizeDashboardBasePath(path: string) {
+  if (!path || path === '/') {
+    return ''
+  }
+
+  const withLeadingSlash = path.startsWith('/') ? path : `/${path}`
+  return withLeadingSlash.replace(/\/+$/, '')
+}
+
+const dashboardBasePath = normalizeDashboardBasePath(
+  process.env.ZELAVIS_UI_BASE_PATH ?? '/',
+)
+
+function toDashboardPath(path: string) {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+
+  if (!dashboardBasePath) {
+    return normalizedPath
+  }
+
+  if (normalizedPath === '/') {
+    return `${dashboardBasePath}/`
+  }
+
+  return `${dashboardBasePath}${normalizedPath}`
+}
+
 async function gotoDashboard(page: Page, path: string) {
-  await page.goto(path)
+  await page.goto(toDashboardPath(path))
   await waitForDashboardHydration(page)
 }
 
@@ -102,6 +129,19 @@ test('mobile dashboard captures a stable stacked header', async ({ page }, testI
     body: screenshot,
     contentType: 'image/png',
   })
+})
+
+test('mounted dev server can serve the dashboard from /zelavis/', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+  test.skip(dashboardBasePath !== '/zelavis')
+
+  await gotoDashboard(page, '/settings')
+
+  await expect(page).toHaveURL(/\/zelavis\/settings$/)
+  await expect(page.getByRole('heading', { name: 'Runtime Settings' })).toBeVisible()
+  await expect(page.locator('html[data-zelavis-hydrated="true"]')).toBeVisible()
 })
 
 test('overview nav is only active on the overview route', async ({ page }, testInfo) => {

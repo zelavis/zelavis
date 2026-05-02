@@ -19,10 +19,12 @@
   },
   "scripts": {
     "dev": "vite dev --port 3000",
+    "dev:mounted": "vite dev --port 3000 --base /zelavis/",
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run --passWithNoTests --exclude 'tests/e2e/**'",
     "test:e2e": "playwright test",
+    "test:e2e:mounted": "ZELAVIS_UI_BASE_PATH=/zelavis/ playwright test",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
