@@ -330,6 +330,9 @@ export function createPlatform<TPlatform extends ZelavisPlatformPreset>(
 const DEFAULT_ZELAVIS_STATE_COLLECTION = "zelavis_system";
 const DEFAULT_DASHBOARD_SETTINGS_DOCUMENT_ID = "dashboard.settings";
 const DEFAULT_WEBSITE_PAGES_DOCUMENT_ID = "website.pages";
+const DEFAULT_PLATFORM_DASHBOARD_SETTINGS_KEY =
+  "zelavis/dashboard-settings.json";
+const DEFAULT_PLATFORM_WEBSITE_PAGES_PATH = "zelavis/website-pages.json";
 
 function readOptionalProcessEnv(name: string): string | undefined {
   const runtimeProcess = (
@@ -828,6 +831,102 @@ export function createDatabaseWebsitePagesStore(
       await writeDatabaseDocument(database, documentOptions, {
         kind: "website-pages",
         pages: normalizedPages.map((page) => serializeWebsitePage(page)),
+      });
+
+      return normalizedPages;
+    },
+  };
+}
+
+export function createKeyValueDashboardSettingsStore(
+  store: ZelavisKeyValueStore,
+  key = DEFAULT_PLATFORM_DASHBOARD_SETTINGS_KEY,
+): ZelavisDashboardSettingsStore {
+  return {
+    async read() {
+      const value = await store.get(key);
+      if (!value) {
+        return undefined;
+      }
+
+      return parseStoredDashboardSettingsUpdate(
+        readBodyObject(JSON.parse(value) as unknown),
+      );
+    },
+    async write(update) {
+      const normalized = parseStoredDashboardSettingsUpdate(
+        readBodyObject(update),
+      );
+      await store.set(key, JSON.stringify(normalized));
+      return normalized;
+    },
+  };
+}
+
+export function createFileStorageDashboardSettingsStore(
+  storage: ZelavisFileStorage,
+  path = DEFAULT_PLATFORM_DASHBOARD_SETTINGS_KEY,
+): ZelavisDashboardSettingsStore {
+  return {
+    async read() {
+      const file = await storage.get(path);
+      if (!file) {
+        return undefined;
+      }
+
+      return parseStoredDashboardSettingsUpdate(
+        readBodyObject(
+          JSON.parse(new TextDecoder().decode(file.body)) as unknown,
+        ),
+      );
+    },
+    async write(update) {
+      const normalized = parseStoredDashboardSettingsUpdate(
+        readBodyObject(update),
+      );
+      await storage.put({
+        path,
+        body: JSON.stringify(normalized, null, 2),
+        contentType: "application/json; charset=utf-8",
+      });
+      return normalized;
+    },
+  };
+}
+
+export function createFileStorageWebsitePagesStore(
+  storage: ZelavisFileStorage,
+  path = DEFAULT_PLATFORM_WEBSITE_PAGES_PATH,
+): ZelavisWebsitePagesStore {
+  return {
+    async read() {
+      const file = await storage.get(path);
+      if (!file) {
+        return [];
+      }
+
+      return normalizeWebsitePages(
+        parseStoredWebsitePages(
+          readBodyObject(
+            JSON.parse(new TextDecoder().decode(file.body)) as unknown,
+          ),
+        ),
+      );
+    },
+    async write(pages) {
+      const normalizedPages = normalizeWebsitePages(pages);
+
+      await storage.put({
+        path,
+        body: JSON.stringify(
+          {
+            kind: "website-pages",
+            pages: normalizedPages.map((page) => serializeWebsitePage(page)),
+          },
+          null,
+          2,
+        ),
+        contentType: "application/json; charset=utf-8",
       });
 
       return normalizedPages;
@@ -2034,6 +2133,58 @@ async function resolvePlatformState(
   };
 }
 
+function applyPlatformResourceDefaults(
+  options: ZelavisServerOptions,
+  resources: ZelavisPlatformResources,
+): ZelavisServerOptions {
+  const nextCoreServices: ZelavisCoreServicesOptions = {
+    ...(options.coreServices ?? {}),
+  };
+  const databaseConfigured =
+    nextCoreServices.database !== undefined && nextCoreServices.database !== false;
+
+  if (nextCoreServices.dashboard !== false) {
+    const currentDashboard =
+      nextCoreServices.dashboard === true || nextCoreServices.dashboard === undefined
+        ? {}
+        : nextCoreServices.dashboard;
+
+    if (!currentDashboard.settingsStore) {
+      const settingsStore = resources.kv
+        ? createKeyValueDashboardSettingsStore(resources.kv)
+        : resources.files
+          ? createFileStorageDashboardSettingsStore(resources.files)
+          : undefined;
+
+      if (settingsStore) {
+        nextCoreServices.dashboard = {
+          ...currentDashboard,
+          settingsStore,
+        };
+      }
+    }
+  }
+
+  if (nextCoreServices.website !== false) {
+    const currentWebsite =
+      nextCoreServices.website === true || nextCoreServices.website === undefined
+        ? {}
+        : nextCoreServices.website;
+
+    if (!currentWebsite.pagesStore && !databaseConfigured && resources.files) {
+      nextCoreServices.website = {
+        ...currentWebsite,
+        pagesStore: createFileStorageWebsitePagesStore(resources.files),
+      };
+    }
+  }
+
+  return {
+    ...options,
+    coreServices: nextCoreServices,
+  };
+}
+
 export class Zelavis<TAdapter extends object = {}> {
   readonly adapter: TAdapter;
   private readonly options: ZelavisConstructorOptions<TAdapter>;
@@ -2062,7 +2213,12 @@ export class Zelavis<TAdapter extends object = {}> {
     this.runtimePromise ??= (async () => {
       const resolved = await resolvePlatformState(this.options);
       this.resolvedPlatformContext = resolved.context;
-      const runtime = await zelavis(resolved.serverOptions);
+      const runtime = await zelavis(
+        applyPlatformResourceDefaults(
+          resolved.serverOptions,
+          resolved.context.resources,
+        ),
+      );
       const maybeBinding = this.adapter as Partial<ZelavisAdapterBinding>;
       if (typeof maybeBinding.ready === "function") {
         await maybeBinding.ready();

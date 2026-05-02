@@ -53,6 +53,10 @@
       "types": "./dist/platforms/cloudflare.d.ts",
       "import": "./dist/platforms/cloudflare.js"
     },
+    "./platforms/netlify": {
+      "types": "./dist/platforms/netlify.d.ts",
+      "import": "./dist/platforms/netlify.js"
+    },
     "./platforms/vercel": {
       "types": "./dist/platforms/vercel.d.ts",
       "import": "./dist/platforms/vercel.js"

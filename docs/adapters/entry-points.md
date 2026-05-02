@@ -40,6 +40,7 @@ Use these when you want Zelavis to pick host-level database, KV, dashboard setti
 zelavis/platforms/node
 zelavis/platforms/bun
 zelavis/platforms/cloudflare
+zelavis/platforms/netlify
 zelavis/platforms/vercel
 ```
 

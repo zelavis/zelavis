@@ -15,6 +15,7 @@ That split matters because the same framework can run on different platforms. Fo
 zelavis/platforms/node
 zelavis/platforms/bun
 zelavis/platforms/cloudflare
+zelavis/platforms/netlify
 zelavis/platforms/vercel
 ```
 
@@ -60,12 +61,28 @@ Today it is intentionally lighter than Node or Cloudflare:
 
 That keeps the Vercel story honest until Zelavis has stronger first-party opinions there.
 
+For file storage, Vercel Blob is the natural fit. Zelavis can wrap a Vercel Blob client through `createVercelBlobFileStorage(...)` and use it as the platform file storage resource.
+
+### `netlifyPlatform()`
+
+Provides a Netlify-shaped platform slot.
+
+Netlify Blobs is a good fit here because Netlify documents it as a store for blobs, unstructured data, and even simple key/value or lightweight database patterns. Zelavis can wrap a Netlify Blobs store through:
+
+- `createNetlifyBlobsKeyValueStore(...)`
+- `createNetlifyBlobsFileStorage(...)`
+
 ## Platform resources
 
 Each platform preset can contribute runtime resources through `zelavis.platform.resources`:
 
 - `kv`
 - `files`
+
+When you use the high-level `Zelavis` class, these resources are not only visible to adapters. Zelavis also uses them as fallback persistence for core services:
+
+- dashboard settings prefer platform KV, then platform files, then in-memory persistence
+- website pages can persist to platform file storage when no database core service is configured
 
 These resources are not framework adapters and they are not Zelavis services. They are host-level infrastructure capabilities that platform presets can provide to the runtime and to adapters.
 

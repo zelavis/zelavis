@@ -111,6 +111,7 @@ The runtime now supports both styles:
 
 - explicit framework adapters such as Node, Elysia, Express, Fastify, Hono, and h3
 - host-level platform presets such as Node, Bun, Cloudflare, and Vercel
+- host-level platform presets such as Node, Bun, Cloudflare, Netlify, and Vercel
 - direct Web-handler embedding through `runtime.fetch(...)`
 
 Platform presets are where Zelavis now chooses host-level infrastructure defaults:
@@ -126,6 +127,7 @@ Current platform entry points:
 zelavis/platforms/node
 zelavis/platforms/bun
 zelavis/platforms/cloudflare
+zelavis/platforms/netlify
 zelavis/platforms/vercel
 ```
 
@@ -133,6 +135,11 @@ The important split is:
 
 - framework adapters answer "how does Zelavis mount here?"
 - platform presets answer "what infrastructure defaults does this host provide?"
+
+Platform resources now also feed real core-service persistence in the high-level `Zelavis` class:
+
+- dashboard settings can persist through platform KV or platform files
+- website pages can persist through platform files when no database core service is configured
 
 Dashboard client routes are served as SPA shell routes by the dashboard core
 service, so direct visits such as `/zelavis/settings` work in Node and Express.

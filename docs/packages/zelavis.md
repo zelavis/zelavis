@@ -48,6 +48,7 @@ Current platform presets are:
 - `zelavis/platforms/node`
 - `zelavis/platforms/bun`
 - `zelavis/platforms/cloudflare`
+- `zelavis/platforms/netlify`
 - `zelavis/platforms/vercel`
 
 ## Related docs
