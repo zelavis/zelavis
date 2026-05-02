@@ -34,7 +34,7 @@ Node runtime from the workspace root:
 pnpm run ui:dev
 ```
 
-That starts the UI on `http://127.0.0.1:3001/zelavis`, starts the Zelavis Node example
+That starts the UI on `http://127.0.0.1:3001/zelavis/`, starts the Zelavis Node example
 on `http://127.0.0.1:3000`, proxies UI API calls back to Zelavis, and lets the
 runtime redirect `/zelavis` dashboard requests to the live UI dev server.
 
@@ -57,20 +57,18 @@ ZELAVIS_UI_BASE_PATH=/zelavis/ pnpm --filter @zelavis/ui dev
 Leave `ZELAVIS_UI_BASE_PATH` unset when you want the package-level UI dev server
 to stay root-mounted at `/` for isolated UI work.
 
-## Shipping Plan
+## Shipping
 
-The dashboard should be shipped through the high-level `zelavis` package, not imported by application users directly.
+The dashboard is shipped through the high-level `zelavis` package, not imported by application users directly.
 
-Planned flow:
+Current flow:
 
 1. Build this package as a static SPA artifact.
-2. Include the built client assets in the publishable dashboard artifact.
-3. Teach the core dashboard service in `zelavis` to serve the SPA shell at the configured dashboard root.
+2. Copy the built client assets into the publishable `zelavis` dashboard artifact.
+3. Let the dashboard core service in `zelavis` serve the SPA shell at the configured dashboard root.
 4. Serve dashboard assets below that same configured root, so custom roots such as `/admin` or `/backend` work without rebuilding the UI.
 5. Keep dashboard API calls relative to the configured Zelavis API prefix.
 
-Until that wiring exists, this package is build-ready but is not yet served by `zelavis()`.
-
 ## Notes
 
-The current routes and demo components come from the starter and are temporary. They can be replaced as the real dashboard shape lands.
+The dashboard is now embedded into `zelavis`, but local UI development still happens in this workspace package so routing, layout, and dashboard behavior can evolve independently from the runtime build.

@@ -4,7 +4,7 @@
 
 Use this package when building an application or service with Zelavis and you want the default platform building blocks wired together for you. Lower-level packages such as `@zelavis/server`, `@zelavis/database`, and `@zelavis/auth` remain available when you need direct access to the primitives.
 
-Today, that mostly means auth, database, server mounting, and dashboard delivery under one runtime entry point.
+Today, that mostly means auth, database, website delivery, server mounting, and dashboard delivery under one runtime entry point.
 
 ## Import split
 
@@ -70,6 +70,7 @@ By default, Zelavis owns one safe namespace:
 /zelavis/api/v1/dashboard/settings
 /zelavis/api/v1/auth
 /zelavis/api/v1/database
+/zelavis/api/v1/website/pages
 ```
 
 Customize that namespace with `rootPath`:
@@ -86,8 +87,11 @@ That moves the dashboard and APIs together:
 /admin
 /admin/settings
 /admin/assets/*
+/admin/api/v1/dashboard/config
+/admin/api/v1/dashboard/settings
 /admin/api/v1/auth
 /admin/api/v1/database
+/admin/api/v1/website/pages
 ```
 
 The dashboard UI is built from the `@zelavis/ui` workspace package and copied
@@ -116,13 +120,13 @@ Pass `coreServices.dashboard.settingsStore` when you want to back these settings
 with your own storage. For the built-in Node file-backed store, import
 `createFileDashboardSettingsStore()` from `zelavis/adapters/node`.
 
-For local dashboard work, point Zelavis at a running UI dev server:
+For local dashboard work, point Zelavis at the mounted dashboard base URL of a running UI dev server:
 
 ```ts
 await zelavis({
   coreServices: {
     dashboard: {
-      devServerUrl: "http://127.0.0.1:3001",
+      devServerUrl: "http://127.0.0.1:3001/zelavis",
     },
   },
 });
@@ -131,7 +135,7 @@ await zelavis({
 When `devServerUrl` is set, dashboard route requests redirect to the live UI dev
 server instead of serving the embedded built dashboard assets.
 
-The dashboard, auth, and database core services are included by default. Disable any of them when you need a smaller server or want to supply replacements:
+The dashboard, auth, database, and website core services are included by default. Disable any of them when you need a smaller server or want to supply replacements:
 
 ```ts
 await zelavis({
@@ -139,6 +143,7 @@ await zelavis({
     auth: false,
     dashboard: false,
     database: false,
+    website: false,
   },
 });
 ```

@@ -45,3 +45,4 @@ Until then, keep `docs/` as the single current source of truth.
 - [Dashboard Development](./guides/dashboard-development.md)
 - [zelavis package](./packages/zelavis.md)
 - [Node adapter](./adapters/node.md)
+- [Environment Variables](./reference/environment-variables.md)

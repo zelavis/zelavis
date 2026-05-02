@@ -27,8 +27,8 @@ Platform adapters should provide durable database drivers later, for example:
 
 - `@zelavis/database-bun-sqlite` supplies a Bun SQLite driver using the built-in `bun:sqlite` module.
 - `@zelavis/database-node-sqlite` supplies a Node SQLite driver using `better-sqlite3`.
-- `@zelavis/adapter-cloudflare` can supply a D1 driver.
-- `@zelavis/adapter-turso` can supply a libSQL/Turso driver.
+- `@zelavis/database-cloudflare-d1` supplies a Cloudflare D1 driver.
+- future libSQL/Turso adapters can follow the same contract without changing the core database API.
 
 ## Usage
 

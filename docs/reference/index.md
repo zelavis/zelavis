@@ -5,6 +5,7 @@ Use this section for stable, scan-friendly reference material.
 Current pages:
 
 - [Dashboard Settings](./dashboard-settings.md)
+- [Environment Variables](./environment-variables.md)
 - [Route Conventions](./route-conventions.md)
 
 Guideline:
