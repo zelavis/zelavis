@@ -32,6 +32,30 @@ const zelavis = new Zelavis({
 const server = await zelavis.adapter.nodeServer();
 ```
 
+## Platform preset entry points
+
+Use these when you want Zelavis to pick host-level database, KV, dashboard settings, or file-storage defaults for a runtime environment:
+
+```txt
+zelavis/platforms/node
+zelavis/platforms/bun
+zelavis/platforms/cloudflare
+zelavis/platforms/vercel
+```
+
+Typical usage:
+
+```ts
+import { Zelavis } from "zelavis";
+import { expressAdapter } from "zelavis/adapters/express";
+import { nodePlatform } from "zelavis/platforms/node";
+
+const zelavis = new Zelavis({
+  adapter: expressAdapter(),
+  platform: nodePlatform(),
+});
+```
+
 ## Lower-level server adapters
 
 Use these when you are working directly with `zelavisServer(...)` or custom server services:
@@ -86,5 +110,6 @@ That is the preferred shape for fetch-native environments such as:
 ## Related docs
 
 - [Node Adapter](./node.md)
+- [Platform Presets](../reference/platform-presets.md)
 - [First Runtime](../getting-started/first-runtime.md)
 - [@zelavis/server](../packages/server.md)

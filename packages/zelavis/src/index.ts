@@ -224,8 +224,64 @@ export interface ZelavisAdapterBinding {
   ready?(): Promise<void> | void;
 }
 
+export interface ZelavisKeyValueStore {
+  get(key: string): Promise<string | undefined> | string | undefined;
+  set(key: string, value: string): Promise<void> | void;
+  delete(key: string): Promise<boolean> | boolean;
+  list?(prefix?: string): Promise<readonly string[]> | readonly string[];
+}
+
+export interface ZelavisFileStoragePutInput {
+  path: string;
+  body: string | Uint8Array | ArrayBuffer | Blob | ReadableStream<Uint8Array>;
+  contentType?: string;
+  metadata?: Record<string, string>;
+}
+
+export interface ZelavisFileStorageEntry {
+  path: string;
+  size?: number;
+  updatedAt?: Date;
+  contentType?: string;
+  metadata?: Record<string, string>;
+}
+
+export interface ZelavisFileStorageObject extends ZelavisFileStorageEntry {
+  body: Uint8Array;
+}
+
+export interface ZelavisFileStorage {
+  get(
+    path: string,
+  ):
+    | Promise<ZelavisFileStorageObject | undefined>
+    | ZelavisFileStorageObject
+    | undefined;
+  put(
+    input: ZelavisFileStoragePutInput,
+  ):
+    | Promise<ZelavisFileStorageEntry>
+    | ZelavisFileStorageEntry;
+  delete(path: string): Promise<boolean> | boolean;
+  list?(
+    prefix?: string,
+  ): Promise<readonly ZelavisFileStorageEntry[]> | readonly ZelavisFileStorageEntry[];
+}
+
+export interface ZelavisPlatformResources {
+  kv?: ZelavisKeyValueStore;
+  files?: ZelavisFileStorage;
+}
+
+export interface ZelavisPlatformContext {
+  presets: readonly string[];
+  resources: ZelavisPlatformResources;
+  metadata: Record<string, unknown>;
+}
+
 export interface ZelavisAdapterRuntimeContext {
   getRuntime: () => Promise<ZelavisServerRuntime<unknown>>;
+  getPlatform: () => ZelavisPlatformContext;
 }
 
 export interface ZelavisAdapterFactory<TAdapter extends object = object> {
@@ -234,7 +290,10 @@ export interface ZelavisAdapterFactory<TAdapter extends object = object> {
 }
 
 export interface ZelavisResolvedPlatformOptions
-  extends Partial<ZelavisServerOptions> {}
+  extends Partial<ZelavisServerOptions> {
+  resources?: ZelavisPlatformResources;
+  metadata?: Record<string, unknown>;
+}
 
 export interface ZelavisPlatformPreset {
   name: string;
@@ -1920,44 +1979,90 @@ function mergeZelavisServerOptions(
   };
 }
 
-async function resolvePlatformOptions(
+function mergePlatformResources(
+  base: ZelavisPlatformResources | undefined,
+  override: ZelavisPlatformResources | undefined,
+): ZelavisPlatformResources {
+  return {
+    ...(base ?? {}),
+    ...(override ?? {}),
+  };
+}
+
+function mergePlatformMetadata(
+  base: Record<string, unknown> | undefined,
+  override: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  return {
+    ...(base ?? {}),
+    ...(override ?? {}),
+  };
+}
+
+async function resolvePlatformState(
   options: ZelavisConstructorOptions<any>,
-): Promise<ZelavisServerOptions> {
+): Promise<{
+  serverOptions: ZelavisServerOptions;
+  context: ZelavisPlatformContext;
+}> {
   const platforms = options.platform
     ? Array.isArray(options.platform)
       ? options.platform
       : [options.platform]
     : [];
   let resolved: ZelavisServerOptions = {};
+  let resources: ZelavisPlatformResources = {};
+  let metadata: Record<string, unknown> = {};
+  const presets: string[] = [];
 
   for (const platform of platforms) {
-    resolved = mergeZelavisServerOptions(
-      resolved,
-      await platform.resolve(options),
-    );
+    const next = await platform.resolve(options);
+    presets.push(platform.name);
+    resolved = mergeZelavisServerOptions(resolved, next);
+    resources = mergePlatformResources(resources, next.resources);
+    metadata = mergePlatformMetadata(metadata, next.metadata);
   }
 
   const { adapter: _adapter, platform: _platform, ...serverOptions } = options;
-  return mergeZelavisServerOptions(resolved, serverOptions);
+  return {
+    serverOptions: mergeZelavisServerOptions(resolved, serverOptions),
+    context: {
+      presets,
+      resources,
+      metadata,
+    },
+  };
 }
 
 export class Zelavis<TAdapter extends object = {}> {
   readonly adapter: TAdapter;
   private readonly options: ZelavisConstructorOptions<TAdapter>;
   private runtimePromise?: Promise<ZelavisServerRuntime<unknown>>;
+  private resolvedPlatformContext: ZelavisPlatformContext = {
+    presets: [],
+    resources: {},
+    metadata: {},
+  };
 
   constructor(options: ZelavisConstructorOptions<TAdapter> = {}) {
     this.options = options;
     this.adapter = options.adapter
       ? options.adapter.bind({
           getRuntime: () => this.runtime(),
+          getPlatform: () => this.platform,
         })
       : ({} as TAdapter);
   }
 
+  get platform(): ZelavisPlatformContext {
+    return this.resolvedPlatformContext;
+  }
+
   async runtime(): Promise<ZelavisServerRuntime<unknown>> {
     this.runtimePromise ??= (async () => {
-      const runtime = await zelavis(await resolvePlatformOptions(this.options));
+      const resolved = await resolvePlatformState(this.options);
+      this.resolvedPlatformContext = resolved.context;
+      const runtime = await zelavis(resolved.serverOptions);
       const maybeBinding = this.adapter as Partial<ZelavisAdapterBinding>;
       if (typeof maybeBinding.ready === "function") {
         await maybeBinding.ready();

@@ -1,5 +1,4 @@
 import { join, resolve } from "node:path";
-import { createBetterSqlite3DatabaseDriver } from "@zelavis/database-node-sqlite";
 import {
   createPlatform,
   type ZelavisConstructorOptions,
@@ -9,28 +8,31 @@ import {
 import { createFileDashboardSettingsStore } from "../adapters/node.js";
 import { createLocalFileStorage, createMemoryKeyValueStore } from "./_shared.js";
 
-export interface NodePlatformDatabaseOptions {
+export interface BunPlatformDatabaseOptions {
   filename?: string;
   readonly?: boolean;
-  fileMustExist?: boolean;
+  create?: boolean;
   defaultTenantId?: string;
-  pragma?: readonly string[];
 }
 
-export interface NodePlatformDashboardOptions {
+export interface BunPlatformDashboardOptions {
   settingsFile?: string;
 }
 
-export interface NodePlatformOptions {
+export interface BunPlatformFileStorageOptions {
+  rootDirectory?: string;
+}
+
+export interface BunPlatformKeyValueOptions {
+  kind?: "memory";
+}
+
+export interface BunPlatformOptions {
   dataDirectory?: string;
-  database?: false | NodePlatformDatabaseOptions;
-  dashboard?: false | NodePlatformDashboardOptions;
-  files?: false | {
-    rootDirectory?: string;
-  };
-  kv?: false | {
-    kind?: "memory";
-  };
+  database?: false | BunPlatformDatabaseOptions;
+  dashboard?: false | BunPlatformDashboardOptions;
+  files?: false | BunPlatformFileStorageOptions;
+  kv?: false | BunPlatformKeyValueOptions;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -41,24 +43,10 @@ function normalizeDataDirectory(path: string | undefined): string {
   return resolve(path?.trim() ? path : ".zelavis");
 }
 
-function shouldConfigureDatabase(
-  options: ZelavisConstructorOptions<any>,
-): boolean {
-  return options.coreServices?.database !== false;
-}
-
-function shouldConfigureDashboard(
-  options: ZelavisConstructorOptions<any>,
-): boolean {
-  return options.coreServices?.dashboard !== false;
-}
-
-function mergeDatabaseCoreService(
-  existing: ZelavisConstructorOptions<any>["coreServices"] extends infer _T
-    ? unknown
-    : never,
+function mergeExisting(
+  existing: unknown,
   next: Record<string, unknown>,
-) {
+): unknown {
   if (existing === undefined || existing === true) {
     return next;
   }
@@ -73,62 +61,47 @@ function mergeDatabaseCoreService(
   return existing;
 }
 
-function mergeDashboardCoreService(
-  existing: ZelavisConstructorOptions<any>["coreServices"] extends infer _T
-    ? unknown
-    : never,
-  next: Record<string, unknown>,
-) {
-  if (existing === undefined || existing === true) {
-    return next;
-  }
-
-  if (isObject(existing)) {
-    return {
-      ...next,
-      ...existing,
-    };
-  }
-
-  return existing;
-}
-
-export function nodePlatform(
-  options: NodePlatformOptions = {},
+export function bunPlatform(
+  options: BunPlatformOptions = {},
 ): ZelavisPlatformPreset {
   return createPlatform({
-    name: "node",
+    name: "bun",
     async resolve(
       constructorOptions: ZelavisConstructorOptions<any>,
     ): Promise<ZelavisResolvedPlatformOptions> {
       const dataDirectory = normalizeDataDirectory(options.dataDirectory);
       const nextCoreServices: Record<string, unknown> = {};
 
-      if (shouldConfigureDatabase(constructorOptions) && options.database !== false) {
+      if (
+        constructorOptions.coreServices?.database !== false &&
+        options.database !== false
+      ) {
+        const { createBunSqliteDatabaseDriver } = await import(
+          "@zelavis/database-bun-sqlite"
+        );
         const databaseOptions = options.database ?? {};
-        nextCoreServices.database = mergeDatabaseCoreService(
+        nextCoreServices.database = mergeExisting(
           constructorOptions.coreServices?.database,
           {
             defaultTenantId: databaseOptions.defaultTenantId,
-            driver: createBetterSqlite3DatabaseDriver({
+            driver: createBunSqliteDatabaseDriver({
               filename: databaseOptions.filename
                 ? resolve(databaseOptions.filename)
                 : join(dataDirectory, "zelavis.sqlite"),
               readonly: databaseOptions.readonly,
-              fileMustExist: databaseOptions.fileMustExist,
+              create: databaseOptions.create,
               defaultTenantId: databaseOptions.defaultTenantId,
-              pragma: databaseOptions.pragma,
             }),
           },
         );
       }
 
       if (
-        shouldConfigureDashboard(constructorOptions) &&
+        constructorOptions.coreServices?.dashboard !== false &&
         options.dashboard !== false
       ) {
         const dashboardOptions = options.dashboard ?? {};
-        nextCoreServices.dashboard = mergeDashboardCoreService(
+        nextCoreServices.dashboard = mergeExisting(
           constructorOptions.coreServices?.dashboard,
           {
             settingsStore: createFileDashboardSettingsStore(
@@ -157,7 +130,7 @@ export function nodePlatform(
                 ),
         },
         metadata: {
-          runtime: "node",
+          runtime: "bun",
         },
       };
     },

@@ -12,9 +12,6 @@
     "paths": {
       "@zelavis/auth": ["packages/auth/src/index.ts"],
       "@zelavis/database": ["packages/database/src/index.ts"],
-      "@zelavis/database-bun-sqlite": [
-        "packages/database/adapters/bun-sqlite/src/index.ts"
-      ],
       "@zelavis/ecommerce": ["packages/ecommerce/src/index.ts"],
       "@zelavis/ecommerce-paypal": [
         "packages/ecommerce/plugins/paypal/src/index.ts"
@@ -26,7 +23,8 @@
       "bun:sqlite": [
         "packages/database/adapters/bun-sqlite/src/bun-sqlite.d.ts"
       ],
-      "zelavis": ["packages/zelavis/src/index.ts"]
+      "zelavis": ["packages/zelavis/src/index.ts"],
+      "zelavis/platforms/bun": ["packages/zelavis/src/platforms/bun.ts"]
     }
   },
   "include": ["index.ts", "bun-runtime.d.ts"]

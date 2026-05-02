@@ -9,6 +9,7 @@ It does not need a dedicated Cloudflare adapter helper because Cloudflare Worker
 - the worker can still keep its own host routes like `/hello`
 - Zelavis stays mounted at `/zelavis/*`
 - the built-in dashboard works at the edge too
+- `cloudflarePlatform()` can carry D1, KV, and R2 bindings into Zelavis as one platform preset
 
 ## Run
 

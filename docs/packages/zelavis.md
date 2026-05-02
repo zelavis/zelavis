@@ -43,6 +43,13 @@ Use scoped packages directly when you need lower-level control over primitives, 
 
 The lower-level `zelavis()` function still exists for direct runtime composition, but the main public application-facing entry point is the `Zelavis` class with framework adapters plus platform presets.
 
+Current platform presets are:
+
+- `zelavis/platforms/node`
+- `zelavis/platforms/bun`
+- `zelavis/platforms/cloudflare`
+- `zelavis/platforms/vercel`
+
 ## Related docs
 
 - [First Runtime](../getting-started/first-runtime.md)

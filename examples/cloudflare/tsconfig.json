@@ -10,7 +10,10 @@
     "types": ["@cloudflare/workers-types"],
     "baseUrl": "../..",
     "paths": {
-      "zelavis": ["packages/zelavis/src/index.ts"]
+      "zelavis": ["packages/zelavis/src/index.ts"],
+      "zelavis/platforms/cloudflare": [
+        "packages/zelavis/src/platforms/cloudflare.ts"
+      ]
     }
   },
   "include": ["src/**/*.ts"]

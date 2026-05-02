@@ -38,9 +38,6 @@ importers:
 
   examples/bun:
     dependencies:
-      '@zelavis/database-bun-sqlite':
-        specifier: workspace:*
-        version: link:../../packages/database/adapters/bun-sqlite
       zelavis:
         specifier: workspace:*
         version: link:../../packages/zelavis
@@ -544,6 +541,12 @@ importers:
       '@zelavis/database':
         specifier: workspace:*
         version: link:../database
+      '@zelavis/database-bun-sqlite':
+        specifier: workspace:*
+        version: link:../database/adapters/bun-sqlite
+      '@zelavis/database-cloudflare-d1':
+        specifier: workspace:*
+        version: link:../database/adapters/cloudflare-d1
       '@zelavis/database-node-sqlite':
         specifier: workspace:*
         version: link:../database/adapters/node-sqlite

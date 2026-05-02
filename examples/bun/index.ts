@@ -1,20 +1,14 @@
 import { fileURLToPath } from "node:url";
-import { createBunSqliteDatabaseDriver } from "@zelavis/database-bun-sqlite";
 import { Zelavis } from "zelavis";
+import { bunPlatform } from "zelavis/platforms/bun";
 
 const port = Number(Bun.env.PORT ?? 3000);
-const databasePath = fileURLToPath(
-  new URL("./.data/zelavis.sqlite", import.meta.url),
-);
+const dataDirectory = fileURLToPath(new URL("./.data", import.meta.url));
 
 const zelavis = new Zelavis({
-  coreServices: {
-    database: {
-      driver: createBunSqliteDatabaseDriver({
-        filename: databasePath,
-      }),
-    },
-  },
+  platform: bunPlatform({
+    dataDirectory,
+  }),
   onError: ({ error }) => ({
     status: 400,
     body: { error: error instanceof Error ? error.message : "Unknown error" },
@@ -47,5 +41,5 @@ server = Bun.serve({
 });
 
 console.log("database driver", runtime.services.database.service.driver.name);
-console.log("database file", databasePath);
+console.log("database file", fileURLToPath(new URL("./.data/zelavis.sqlite", import.meta.url)));
 console.log(`zelavis Bun example listening on http://localhost:${port}`);

@@ -12,6 +12,9 @@ test("zelavis package exports runtime APIs and adapter subpaths", async () => {
   const nextjsPagesRouterAdapter =
     await import("zelavis/adapters/nextjs-pages-router");
   const nodePlatform = await import("zelavis/platforms/node");
+  const bunPlatform = await import("zelavis/platforms/bun");
+  const cloudflarePlatform = await import("zelavis/platforms/cloudflare");
+  const vercelPlatform = await import("zelavis/platforms/vercel");
 
   assert.equal(typeof runtime.zelavis, "function");
   assert.equal(typeof runtime.Zelavis, "function");
@@ -35,6 +38,9 @@ test("zelavis package exports runtime APIs and adapter subpaths", async () => {
     "function",
   );
   assert.equal(typeof nodePlatform.nodePlatform, "function");
+  assert.equal(typeof bunPlatform.bunPlatform, "function");
+  assert.equal(typeof cloudflarePlatform.cloudflarePlatform, "function");
+  assert.equal(typeof vercelPlatform.vercelPlatform, "function");
 });
 
 test("Zelavis class can bind a node adapter and accept a node platform preset", async () => {
@@ -48,4 +54,78 @@ test("Zelavis class can bind a node adapter and accept a node platform preset", 
   });
 
   assert.equal(typeof zelavis.adapter.nodeServer, "function");
+});
+
+test("Zelavis merges platform resources and metadata for adapters", async () => {
+  const { Zelavis, createAdapter, createPlatform } = await import("zelavis");
+
+  let capturedPlatform;
+
+  const firstPlatform = createPlatform({
+    name: "first",
+    resolve() {
+      return {
+        metadata: { runtime: "custom", first: true },
+        resources: {
+          kv: {
+            get() {
+              return "alpha";
+            },
+            set() {},
+            delete() {
+              return true;
+            },
+          },
+        },
+      };
+    },
+  });
+
+  const secondPlatform = createPlatform({
+    name: "second",
+    resolve() {
+      return {
+        metadata: { second: true },
+        resources: {
+          files: {
+            get() {
+              return undefined;
+            },
+            put(input) {
+              return { path: input.path };
+            },
+            delete() {
+              return false;
+            },
+          },
+        },
+      };
+    },
+  });
+
+  const zelavis = new Zelavis({
+    adapter: createAdapter({
+      name: "capture",
+      bind(context) {
+        return {
+          async snapshot() {
+            await context.getRuntime();
+            capturedPlatform = context.getPlatform();
+            return capturedPlatform;
+          },
+        };
+      },
+    }),
+    platform: [firstPlatform, secondPlatform],
+  });
+
+  const snapshot = await zelavis.adapter.snapshot();
+
+  assert.deepEqual(snapshot.presets, ["first", "second"]);
+  assert.equal(snapshot.metadata.runtime, "custom");
+  assert.equal(snapshot.metadata.first, true);
+  assert.equal(snapshot.metadata.second, true);
+  assert.equal(snapshot.resources.kv.get("x"), "alpha");
+  assert.equal(typeof snapshot.resources.files.put, "function");
+  assert.equal(capturedPlatform, snapshot);
 });

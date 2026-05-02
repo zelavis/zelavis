@@ -44,6 +44,18 @@
     "./platforms/node": {
       "types": "./dist/platforms/node.d.ts",
       "import": "./dist/platforms/node.js"
+    },
+    "./platforms/bun": {
+      "types": "./dist/platforms/bun.d.ts",
+      "import": "./dist/platforms/bun.js"
+    },
+    "./platforms/cloudflare": {
+      "types": "./dist/platforms/cloudflare.d.ts",
+      "import": "./dist/platforms/cloudflare.js"
+    },
+    "./platforms/vercel": {
+      "types": "./dist/platforms/vercel.d.ts",
+      "import": "./dist/platforms/vercel.js"
     }
   },
   "scripts": {
@@ -70,6 +82,8 @@
   "dependencies": {
     "@zelavis/auth": "workspace:*",
     "@zelavis/database": "workspace:*",
+    "@zelavis/database-bun-sqlite": "workspace:*",
+    "@zelavis/database-cloudflare-d1": "workspace:*",
     "@zelavis/database-node-sqlite": "workspace:*",
     "@zelavis/server": "workspace:*"
   },

@@ -19,8 +19,8 @@ Then open:
 
 ## Key Files
 
-- `index.ts` starts a Bun server with `Bun.serve()`
-- `@zelavis/database-bun-sqlite` provides the persistent Bun SQLite driver
+- `index.ts` starts a Bun server with `Bun.serve()` and configures `bunPlatform()`
+- `bunPlatform()` chooses the persistent Bun SQLite driver and local storage defaults
 - data is stored in `.data/zelavis.sqlite`
 
 ## Why this exists
