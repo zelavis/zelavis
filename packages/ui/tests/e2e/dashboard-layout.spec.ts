@@ -164,6 +164,20 @@ test('overview nav is only active on the overview route', async ({ page }, testI
   )
 })
 
+test('storage is reachable from the core area', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await gotoDashboard(page, '/storage')
+
+  await expect(page.getByRole('heading', { name: 'Storage' })).toBeVisible()
+  await expect(
+    page
+      .getByRole('complementary', { name: 'Dashboard navigation' })
+      .getByRole('link', { name: 'Storage', exact: true })
+      .first(),
+  ).toHaveAttribute('aria-current', 'page')
+})
+
 test('sidebar category rows drill down into sliding panels', async ({
   page,
 }, testInfo) => {

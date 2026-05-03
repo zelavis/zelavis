@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as UsersRouteImport } from './routes/users'
+import { Route as StorageRouteImport } from './routes/storage'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ServicesRouteImport } from './routes/services'
 import { Route as MarketplaceRouteImport } from './routes/marketplace'
@@ -27,6 +28,11 @@ import { Route as BuilderPagesRouteImport } from './routes/builder.pages'
 const UsersRoute = UsersRouteImport.update({
   id: '/users',
   path: '/users',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StorageRoute = StorageRouteImport.update({
+  id: '/storage',
+  path: '/storage',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -107,6 +113,7 @@ export interface FileRoutesByFullPath {
   '/marketplace': typeof MarketplaceRoute
   '/services': typeof ServicesRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/storage': typeof StorageRoute
   '/users': typeof UsersRoute
   '/builder/pages': typeof BuilderPagesRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -123,6 +130,7 @@ export interface FileRoutesByTo {
   '/marketplace': typeof MarketplaceRoute
   '/services': typeof ServicesRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/storage': typeof StorageRoute
   '/users': typeof UsersRoute
   '/builder/pages': typeof BuilderPagesRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -140,6 +148,7 @@ export interface FileRoutesById {
   '/marketplace': typeof MarketplaceRoute
   '/services': typeof ServicesRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/storage': typeof StorageRoute
   '/users': typeof UsersRoute
   '/builder/pages': typeof BuilderPagesRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -158,6 +167,7 @@ export interface FileRouteTypes {
     | '/marketplace'
     | '/services'
     | '/settings'
+    | '/storage'
     | '/users'
     | '/builder/pages'
     | '/settings/appearance'
@@ -174,6 +184,7 @@ export interface FileRouteTypes {
     | '/marketplace'
     | '/services'
     | '/settings'
+    | '/storage'
     | '/users'
     | '/builder/pages'
     | '/settings/appearance'
@@ -190,6 +201,7 @@ export interface FileRouteTypes {
     | '/marketplace'
     | '/services'
     | '/settings'
+    | '/storage'
     | '/users'
     | '/builder/pages'
     | '/settings/appearance'
@@ -207,6 +219,7 @@ export interface RootRouteChildren {
   MarketplaceRoute: typeof MarketplaceRoute
   ServicesRoute: typeof ServicesRoute
   SettingsRoute: typeof SettingsRouteWithChildren
+  StorageRoute: typeof StorageRoute
   UsersRoute: typeof UsersRoute
 }
 
@@ -217,6 +230,13 @@ declare module '@tanstack/react-router' {
       path: '/users'
       fullPath: '/users'
       preLoaderRoute: typeof UsersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/storage': {
+      id: '/storage'
+      path: '/storage'
+      fullPath: '/storage'
+      preLoaderRoute: typeof StorageRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -348,6 +368,7 @@ const rootRouteChildren: RootRouteChildren = {
   MarketplaceRoute: MarketplaceRoute,
   ServicesRoute: ServicesRoute,
   SettingsRoute: SettingsRouteWithChildren,
+  StorageRoute: StorageRoute,
   UsersRoute: UsersRoute,
 }
 export const routeTree = rootRouteImport

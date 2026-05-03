@@ -22,6 +22,7 @@ test("zelavis package exports runtime APIs and adapter subpaths", async () => {
   assert.equal(typeof runtime.createAdapter, "function");
   assert.equal(typeof runtime.createPlatform, "function");
   assert.equal(typeof runtime.createDatabase, "function");
+  assert.equal(typeof runtime.createFileReference, "function");
   assert.equal(typeof runtime.defineServerService, "function");
   assert.equal("zelavisServer" in runtime, false);
   assert.equal(typeof elysiaAdapter.elysiaAdapter, "function");
@@ -248,6 +249,11 @@ test("Zelavis platform resources back dashboard settings, website pages, and sto
   );
 
   assert.equal(uploadResponse.status, 200);
+  const uploaded = await uploadResponse.json();
+  assert.equal(uploaded.file.path, "uploads/hello.txt");
+  assert.equal(typeof uploaded.file.checksum, "string");
+  assert.equal(uploaded.file.metadata.origin, "test");
+  assert.equal(uploaded.reference.href, "/zelavis/api/v1/storage/files/uploads/hello.txt");
   assert.equal(files.has("uploads/hello.txt"), true);
 
   const listResponse = await zelavis.fetch(
@@ -257,11 +263,26 @@ test("Zelavis platform resources back dashboard settings, website pages, and sto
   const listed = await listResponse.json();
   assert.equal(Array.isArray(listed.files), true);
   assert.equal(listed.files.some((file) => file.path === "uploads/hello.txt"), true);
+  assert.equal(Array.isArray(listed.references), true);
+
+  const metadataResponse = await zelavis.fetch(
+    new Request("http://localhost/zelavis/api/v1/storage/files/uploads/hello.txt?format=metadata"),
+  );
+  assert.equal(metadataResponse.status, 200);
+  const metadataBody = await metadataResponse.json();
+  assert.equal(metadataBody.file.path, "uploads/hello.txt");
+  assert.equal(metadataBody.file.metadata.origin, "test");
+  assert.equal(typeof metadataBody.file.checksum, "string");
+  assert.equal(
+    metadataBody.reference.metadataHref,
+    "/zelavis/api/v1/storage/files/uploads/hello.txt?format=metadata",
+  );
 
   const readResponse = await zelavis.fetch(
     new Request("http://localhost/zelavis/api/v1/storage/files/uploads/hello.txt"),
   );
   assert.equal(readResponse.status, 200);
+  assert.equal(typeof readResponse.headers.get("x-zelavis-checksum-sha256"), "string");
   assert.equal(await readResponse.text(), "hello world");
 
   const deleteResponse = await zelavis.fetch(

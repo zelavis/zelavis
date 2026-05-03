@@ -15,6 +15,8 @@ import type {
   ZelavisKeyValueStore,
 } from "../index.js";
 
+const STORAGE_METADATA_SUFFIX = ".zelavis-meta.json";
+
 function normalizeStoragePath(path: string): string {
   return path.replace(/^\/+/, "").replace(/\\/g, "/");
 }
@@ -116,7 +118,12 @@ async function walkFiles(root: string, current = root): Promise<string[]> {
       continue;
     }
 
-    files.push(relative(root, nextPath).replace(/\\/g, "/"));
+    const relativePath = relative(root, nextPath).replace(/\\/g, "/");
+    if (relativePath.endsWith(STORAGE_METADATA_SUFFIX)) {
+      continue;
+    }
+
+    files.push(relativePath);
   }
 
   return files;
@@ -129,13 +136,79 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
     return join(rootPath, normalizeStoragePath(path));
   }
 
+  function resolveMetadataPath(path: string): string {
+    return `${resolvePath(path)}${STORAGE_METADATA_SUFFIX}`;
+  }
+
+  async function readStoredMetadata(path: string): Promise<{
+    contentType?: string;
+    metadata?: Record<string, string>;
+    checksum?: string;
+  }> {
+    try {
+      const raw = await readFile(resolveMetadataPath(path), "utf8");
+      const parsed = JSON.parse(raw) as {
+        contentType?: unknown;
+        metadata?: unknown;
+        checksum?: unknown;
+      };
+
+      return {
+        contentType:
+          typeof parsed.contentType === "string" ? parsed.contentType : undefined,
+        metadata:
+          parsed.metadata && typeof parsed.metadata === "object"
+            ? (parsed.metadata as Record<string, string>)
+            : undefined,
+        checksum: typeof parsed.checksum === "string" ? parsed.checksum : undefined,
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return {};
+      }
+
+      throw error;
+    }
+  }
+
+  async function writeStoredMetadata(
+    path: string,
+    value: {
+      contentType?: string;
+      metadata?: Record<string, string>;
+      checksum?: string;
+    },
+  ): Promise<void> {
+    const metadataPath = resolveMetadataPath(path);
+
+    if (!value.contentType && !value.metadata && !value.checksum) {
+      try {
+        await rm(metadataPath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw error;
+        }
+      }
+      return;
+    }
+
+    await mkdir(dirname(metadataPath), { recursive: true });
+    await writeFile(metadataPath, JSON.stringify(value, null, 2));
+  }
+
   async function createEntry(path: string): Promise<ZelavisFileStorageEntry> {
-    const info = await stat(resolvePath(path));
+    const [info, stored] = await Promise.all([
+      stat(resolvePath(path)),
+      readStoredMetadata(path),
+    ]);
 
     return {
       path: normalizeStoragePath(path),
       size: info.size,
       updatedAt: info.mtime,
+      contentType: stored.contentType,
+      metadata: stored.metadata,
+      checksum: stored.checksum,
     };
   }
 
@@ -144,13 +217,20 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
       const normalized = normalizeStoragePath(path);
       try {
         const filePath = resolvePath(normalized);
-        const [body, info] = await Promise.all([readFile(filePath), stat(filePath)]);
+        const [body, info, stored] = await Promise.all([
+          readFile(filePath),
+          stat(filePath),
+          readStoredMetadata(normalized),
+        ]);
 
         return {
           path: normalized,
           body: new Uint8Array(body),
           size: info.size,
           updatedAt: info.mtime,
+          contentType: stored.contentType,
+          metadata: stored.metadata,
+          checksum: stored.checksum,
         };
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -167,6 +247,11 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
 
       await mkdir(dirname(filePath), { recursive: true });
       await writeFile(filePath, bytes);
+      await writeStoredMetadata(normalized, {
+        contentType: input.contentType,
+        metadata: input.metadata,
+        checksum: input.metadata?.["checksum-sha256"],
+      });
 
       const info = await stat(filePath);
 
@@ -176,11 +261,19 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
         updatedAt: info.mtime,
         contentType: input.contentType,
         metadata: input.metadata,
+        checksum: input.metadata?.["checksum-sha256"],
       };
     },
     async delete(path) {
       try {
-        await rm(resolvePath(path));
+        await Promise.all([
+          rm(resolvePath(path)),
+          rm(resolveMetadataPath(path)).catch((error: NodeJS.ErrnoException) => {
+            if (error.code !== "ENOENT") {
+              throw error;
+            }
+          }),
+        ]);
         return true;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") {

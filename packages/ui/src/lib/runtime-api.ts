@@ -52,6 +52,27 @@ export interface WebsitePage {
   description?: string;
 }
 
+export interface StorageFile {
+  path: string;
+  size?: number;
+  updatedAt?: string;
+  contentType?: string;
+  metadata?: Record<string, string>;
+  checksum?: string;
+}
+
+export interface StorageFileReference {
+  kind: "file";
+  path: string;
+  href: string;
+  metadataHref: string;
+  size?: number;
+  updatedAt?: string;
+  contentType?: string;
+  metadata?: Record<string, string>;
+  checksum?: string;
+}
+
 declare global {
   interface Window {
     __ZELAVIS_RUNTIME_CONFIG__?: RuntimeConfig;
@@ -139,6 +160,7 @@ const fallbackConfig: RuntimeConfig = {
       "/database",
       "/services",
       "/settings",
+      "/storage",
       "/users",
     ],
     assetRoot: "/assets",
@@ -147,6 +169,7 @@ const fallbackConfig: RuntimeConfig = {
     { name: "dashboard", core: true, apiPath: "/" },
     { name: "auth", core: true, apiPath: "/api/v1/auth" },
     { name: "database", core: true, apiPath: "/api/v1/database" },
+    { name: "storage", core: true, apiPath: "/api/v1/storage" },
   ],
 };
 
@@ -168,6 +191,14 @@ function inferFallbackRootPath(rootPath: string): string {
     window.location.hostname === "127.0.0.1"
     ? "/zelavis"
     : rootPath;
+}
+
+function encodeStoragePath(path: string): string {
+  return path
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join('/')
 }
 
 async function readJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -291,6 +322,102 @@ export async function createWebsitePage(
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+export async function listStorageFiles(
+  config: RuntimeConfig,
+  prefix?: string,
+): Promise<{
+  files: StorageFile[];
+  references: StorageFileReference[];
+}> {
+  const search = prefix ? `?prefix=${encodeURIComponent(prefix)}` : "";
+  return readJson<{
+    files: StorageFile[];
+    references: StorageFileReference[];
+  }>(`${config.api.basePath}/storage/files${search}`);
+}
+
+export async function getStorageFileMetadata(
+  config: RuntimeConfig,
+  path: string,
+): Promise<{
+  file: StorageFile;
+  reference: StorageFileReference;
+}> {
+  return readJson<{ file: StorageFile; reference: StorageFileReference }>(
+    `${config.api.basePath}/storage/files/${encodeStoragePath(path)}?format=metadata`,
+  );
+}
+
+export async function uploadStorageFile(
+  config: RuntimeConfig,
+  input: {
+    path: string;
+    body: Blob | ArrayBuffer | Uint8Array | string;
+    contentType?: string;
+    metadata?: Record<string, string>;
+  },
+): Promise<{
+  file: StorageFile;
+  reference: StorageFileReference;
+}> {
+  const headers = new Headers();
+  if (input.contentType) {
+    headers.set("content-type", input.contentType);
+  }
+
+  for (const [key, value] of Object.entries(input.metadata ?? {})) {
+    headers.set(`x-zelavis-meta-${key}`, value);
+  }
+
+  const body =
+    input.body instanceof Uint8Array
+      ? new Blob([
+          input.body.buffer.slice(
+            input.body.byteOffset,
+            input.body.byteOffset + input.body.byteLength,
+          ) as ArrayBuffer,
+        ])
+      : input.body;
+
+  const response = await fetch(
+    `${config.api.basePath}/storage/files/${encodeStoragePath(input.path)}`,
+    {
+      method: "PUT",
+      headers,
+      body,
+    },
+  );
+
+  if (!response.ok) {
+    const contentType = response.headers.get("content-type") ?? "";
+    let message = `Request failed: ${response.status}`;
+    if (contentType.includes("application/json")) {
+      const body = (await response.json()) as { error?: unknown };
+      if (typeof body.error === "string" && body.error.length > 0) {
+        message = body.error;
+      }
+    }
+    throw new Error(`${message} (${input.path})`);
+  }
+
+  return response.json() as Promise<{
+    file: StorageFile;
+    reference: StorageFileReference;
+  }>;
+}
+
+export async function deleteStorageFile(
+  config: RuntimeConfig,
+  path: string,
+): Promise<{ deleted: boolean; path: string }> {
+  return readJson<{ deleted: boolean; path: string }>(
+    `${config.api.basePath}/storage/files/${encodeStoragePath(path)}`,
+    {
+      method: "DELETE",
+    },
+  );
 }
 
 export async function getDatabaseHealth(config: RuntimeConfig) {

@@ -253,10 +253,23 @@ export interface ZelavisFileStorageEntry {
   updatedAt?: Date;
   contentType?: string;
   metadata?: Record<string, string>;
+  checksum?: string;
 }
 
 export interface ZelavisFileStorageObject extends ZelavisFileStorageEntry {
   body: Uint8Array;
+}
+
+export interface ZelavisFileReference {
+  kind: "file";
+  path: string;
+  href: string;
+  metadataHref: string;
+  size?: number;
+  updatedAt?: string;
+  contentType?: string;
+  metadata?: Record<string, string>;
+  checksum?: string;
 }
 
 export interface ZelavisFileStorage {
@@ -342,6 +355,7 @@ const DEFAULT_WEBSITE_PAGES_DOCUMENT_ID = "website.pages";
 const DEFAULT_PLATFORM_DASHBOARD_SETTINGS_KEY =
   "zelavis/dashboard-settings.json";
 const DEFAULT_PLATFORM_WEBSITE_PAGES_PATH = "zelavis/website-pages.json";
+const STORAGE_CHECKSUM_METADATA_KEY = "checksum-sha256";
 
 function readOptionalProcessEnv(name: string): string | undefined {
   const runtimeProcess = (
@@ -404,6 +418,14 @@ function joinPathParts(...parts: (string | undefined)[]): string {
   return normalized.length > 0 ? `/${normalized.join("/")}` : "/";
 }
 
+function encodeStoragePath(path: string): string {
+  return path
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -438,6 +460,10 @@ function isDashboardThemeMode(
 
 function isBoolean(value: unknown): value is boolean {
   return typeof value === "boolean";
+}
+
+function toIsoDate(value: Date | undefined): string | undefined {
+  return value ? value.toISOString() : undefined;
 }
 
 function readBodyObject(body: unknown): Record<string, unknown> {
@@ -1085,6 +1111,77 @@ async function readRequestBytes(
   return new Uint8Array(body);
 }
 
+async function computeSha256Hex(body: Uint8Array): Promise<string> {
+  if (
+    typeof crypto === "undefined" ||
+    !crypto.subtle ||
+    typeof crypto.subtle.digest !== "function"
+  ) {
+    throw new ZelavisDomainError(
+      "This runtime does not support Web Crypto digest operations.",
+    );
+  }
+
+  const view = body.buffer.slice(
+    body.byteOffset,
+    body.byteOffset + body.byteLength,
+  ) as ArrayBuffer;
+  const digest = await crypto.subtle.digest("SHA-256", view);
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function readStorageChecksum(
+  entry: Pick<ZelavisFileStorageEntry, "checksum" | "metadata">,
+): string | undefined {
+  return entry.checksum ?? entry.metadata?.[STORAGE_CHECKSUM_METADATA_KEY];
+}
+
+function createStorageMetadata(
+  metadata: Record<string, string> | undefined,
+  checksum: string,
+): Record<string, string> {
+  return {
+    ...(metadata ?? {}),
+    [STORAGE_CHECKSUM_METADATA_KEY]: checksum,
+  };
+}
+
+export function createFileReference(
+  entry: ZelavisFileStorageEntry,
+  options: {
+    rootPath?: string;
+    apiPrefix?: string;
+    apiVersion?: string;
+  } = {},
+): ZelavisFileReference {
+  const rootPath = normalizePath(options.rootPath, "/zelavis");
+  const apiPrefix = normalizePath(options.apiPrefix, "/api");
+  const apiVersion = normalizePathPart(options.apiVersion ?? "v1");
+  const encodedPath = encodeStoragePath(entry.path);
+  const href = joinPathParts(
+    rootPath,
+    apiPrefix,
+    apiVersion,
+    "storage",
+    "files",
+    encodedPath,
+  );
+
+  return {
+    kind: "file",
+    path: entry.path,
+    href,
+    metadataHref: `${href}?format=metadata`,
+    size: entry.size,
+    updatedAt: toIsoDate(entry.updatedAt),
+    contentType: entry.contentType,
+    metadata: entry.metadata,
+    checksum: readStorageChecksum(entry),
+  };
+}
+
 const defaultDashboardClientRoutes = [
   "/agents",
   "/auth",
@@ -1096,6 +1193,7 @@ const defaultDashboardClientRoutes = [
   "/marketplace",
   "/services",
   "/settings",
+  "/storage",
   "/users",
 ] as const;
 
@@ -1956,10 +2054,18 @@ async function resolveStorageCoreService(
           handler: async ({ query }) => {
             try {
               const prefix = query.get("prefix") ?? undefined;
+              const files = storage.list ? await storage.list(prefix) : [];
               return {
                 status: 200,
                 body: {
-                  files: storage.list ? await storage.list(prefix) : [],
+                  files,
+                  references: files.map((file) =>
+                    createFileReference(file, {
+                      rootPath: context.rootPath,
+                      apiPrefix: context.apiPrefix,
+                      apiVersion: context.apiVersion,
+                    }),
+                  ),
                 },
               };
             } catch (error) {
@@ -1971,7 +2077,7 @@ async function resolveStorageCoreService(
           id: "storage.files.read",
           method: "GET",
           path: "/files/*path",
-          handler: async ({ params }) => {
+          handler: async ({ params, query }) => {
             try {
               const path = params.path ?? "";
               if (!path) {
@@ -1983,11 +2089,38 @@ async function resolveStorageCoreService(
                 throw new ZelavisValidationError("Storage file not found.");
               }
 
+              if (query.get("format") === "metadata") {
+                return {
+                  status: 200,
+                  body: {
+                    file: {
+                      path: file.path,
+                      size: file.size,
+                      updatedAt: toIsoDate(file.updatedAt),
+                      contentType: file.contentType,
+                      metadata: file.metadata,
+                      checksum: readStorageChecksum(file),
+                    },
+                    reference: createFileReference(file, {
+                      rootPath: context.rootPath,
+                      apiPrefix: context.apiPrefix,
+                      apiVersion: context.apiVersion,
+                    }),
+                  },
+                };
+              }
+
               return {
                 status: 200,
                 headers: {
                   "content-type":
                     file.contentType ?? "application/octet-stream",
+                  ...(readStorageChecksum(file)
+                    ? {
+                        "x-zelavis-checksum-sha256":
+                          readStorageChecksum(file) as string,
+                      }
+                    : {}),
                   ...(file.size !== undefined
                     ? { "content-length": String(file.size) }
                     : {}),
@@ -2011,19 +2144,41 @@ async function resolveStorageCoreService(
               }
 
               const body = await readRequestBytes(request);
-              const metadata = readStorageMetadataHeaders(requestHeaders);
+              const checksum = await computeSha256Hex(body);
+              const metadata = createStorageMetadata(
+                readStorageMetadataHeaders(requestHeaders),
+                checksum,
+              );
               const contentType =
                 requestHeaders?.get("content-type") ?? undefined;
-              const entry = await storage.put({
+              const storedEntry = await storage.put({
                 path,
                 body,
                 contentType,
                 metadata,
               });
+              const entry: ZelavisFileStorageEntry = {
+                ...storedEntry,
+                checksum: readStorageChecksum(storedEntry) ?? checksum,
+                metadata:
+                  storedEntry.metadata && storedEntry.metadata !== metadata
+                    ? {
+                        ...metadata,
+                        ...storedEntry.metadata,
+                      }
+                    : metadata,
+              };
 
               return {
                 status: 200,
-                body: entry,
+                body: {
+                  file: entry,
+                  reference: createFileReference(entry, {
+                    rootPath: context.rootPath,
+                    apiPrefix: context.apiPrefix,
+                    apiVersion: context.apiVersion,
+                  }),
+                },
               };
             } catch (error) {
               return zelavisErrorResponse(error, 400);

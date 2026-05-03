@@ -3,6 +3,7 @@ import {
   Boxes,
   CreditCard,
   Database,
+  Files,
   FileText,
   Fingerprint,
   Github,
@@ -34,6 +35,7 @@ export type DashboardRoutePath =
   | "/services"
   | "/settings"
   | "/settings/appearance"
+  | "/storage"
   | "/users";
 
 export type DashboardNavItem = {
@@ -106,6 +108,11 @@ export const platformNavItems: readonly DashboardNavItem[] = [
         title: "Database",
         url: "/database",
         icon: Database,
+      },
+      {
+        title: "Storage",
+        url: "/storage",
+        icon: Files,
       },
     ],
   },

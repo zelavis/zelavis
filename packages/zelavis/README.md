@@ -158,9 +158,12 @@ When a file storage resource exists, Zelavis can also expose a built-in storage 
 ```txt
 GET /zelavis/api/v1/storage/files
 GET /zelavis/api/v1/storage/files/*
+GET /zelavis/api/v1/storage/files/*?format=metadata
 PUT /zelavis/api/v1/storage/files/*
 DELETE /zelavis/api/v1/storage/files/*
 ```
+
+Writes return file metadata plus a first-class Zelavis file reference, and reads expose the SHA-256 checksum through metadata responses and the `x-zelavis-checksum-sha256` response header when available.
 
 Root path changes are saved as pending settings and report `restartRequired`
 because mounted routes cannot move safely while the runtime is already running.
