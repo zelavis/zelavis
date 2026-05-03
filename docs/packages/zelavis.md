@@ -11,6 +11,7 @@ Today, that mostly means:
 - dashboard delivery
 - auth service
 - database service
+- storage service when a platform file store exists
 - website service
 - runtime composition
 

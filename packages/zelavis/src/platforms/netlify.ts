@@ -36,7 +36,7 @@ export interface NetlifyBlobsStore {
       metadata?: Record<string, string>;
       contentType?: string;
     },
-  ): Promise<void>;
+  ): Promise<unknown>;
   delete(key: string): Promise<void>;
   list(options?: {
     prefix?: string;

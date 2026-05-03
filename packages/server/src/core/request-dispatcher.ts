@@ -65,9 +65,11 @@ function matchPath(
 function scoreMatchedPath(pattern: string): number {
   const parts = splitPath(pattern);
   let score = 0;
+  let wildcardCount = 0;
 
   for (const part of parts) {
     if (part.startsWith("*")) {
+      wildcardCount += 1;
       score += 1;
       continue;
     }
@@ -80,7 +82,7 @@ function scoreMatchedPath(pattern: string): number {
     score += 100;
   }
 
-  return score + parts.length;
+  return score + parts.length - wildcardCount * 1000;
 }
 
 function toHeaderMap(headers: Headers): Record<string, string | undefined> {

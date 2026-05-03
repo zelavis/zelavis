@@ -100,6 +100,14 @@ export type ZelavisWebsiteCoreServiceInput =
   | boolean
   | ZelavisWebsiteCoreServiceOptions;
 
+export interface ZelavisStorageCoreServiceOptions {
+  storage?: ZelavisFileStorage;
+}
+
+export type ZelavisStorageCoreServiceInput =
+  | boolean
+  | ZelavisStorageCoreServiceOptions;
+
 class ZelavisDomainError extends Error {
   constructor(message: string) {
     super(message);
@@ -169,6 +177,7 @@ export interface ZelavisCoreServicesOptions {
   auth?: ZelavisAuthCoreServiceOptions;
   dashboard?: ZelavisDashboardCoreServiceInput;
   database?: ZelavisDatabaseCoreServiceOptions;
+  storage?: ZelavisStorageCoreServiceInput;
   website?: ZelavisWebsiteCoreServiceInput;
 }
 
@@ -1041,6 +1050,41 @@ function createDashboardDevRedirect(
   };
 }
 
+function readStorageMetadataHeaders(
+  headers: Headers | undefined,
+): Record<string, string> | undefined {
+  if (!headers) {
+    return undefined;
+  }
+
+  const metadata: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    if (!key.toLowerCase().startsWith("x-zelavis-meta-")) {
+      return;
+    }
+
+    const name = key.slice("x-zelavis-meta-".length).trim();
+    if (!name) {
+      return;
+    }
+
+    metadata[name] = value;
+  });
+
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
+}
+
+async function readRequestBytes(
+  request: Request | undefined,
+): Promise<Uint8Array> {
+  if (!request) {
+    return new Uint8Array();
+  }
+
+  const body = await request.arrayBuffer();
+  return new Uint8Array(body);
+}
+
 const defaultDashboardClientRoutes = [
   "/agents",
   "/auth",
@@ -1424,6 +1468,7 @@ async function resolveDashboardCoreService(
         name === "dashboard" ||
         name === "auth" ||
         name === "database" ||
+        name === "storage" ||
         name === "website",
       apiPath:
         name === "website"
@@ -1875,6 +1920,149 @@ async function resolveWebsiteCoreService(
   });
 }
 
+async function resolveStorageCoreService(
+  option: ZelavisStorageCoreServiceInput | undefined,
+  context: {
+    rootPath: string;
+    apiPrefix: string;
+    apiVersion: string;
+  },
+): Promise<ZelavisServerService<any> | undefined> {
+  const storageOption = option ?? false;
+
+  if (storageOption === false) {
+    return undefined;
+  }
+
+  const options = storageOption === true ? {} : storageOption;
+  const storage = options.storage;
+
+  if (!storage) {
+    return undefined;
+  }
+
+  return defineServerService({
+    name: "storage",
+    basePath: "/",
+    service: {
+      storage,
+    },
+    api: {
+      v1: [
+        {
+          id: "storage.files.list",
+          method: "GET",
+          path: "/files",
+          handler: async ({ query }) => {
+            try {
+              const prefix = query.get("prefix") ?? undefined;
+              return {
+                status: 200,
+                body: {
+                  files: storage.list ? await storage.list(prefix) : [],
+                },
+              };
+            } catch (error) {
+              return zelavisErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "storage.files.read",
+          method: "GET",
+          path: "/files/*path",
+          handler: async ({ params }) => {
+            try {
+              const path = params.path ?? "";
+              if (!path) {
+                throw new ZelavisValidationError("Storage file path is required.");
+              }
+
+              const file = await storage.get(path);
+              if (!file) {
+                throw new ZelavisValidationError("Storage file not found.");
+              }
+
+              return {
+                status: 200,
+                headers: {
+                  "content-type":
+                    file.contentType ?? "application/octet-stream",
+                  ...(file.size !== undefined
+                    ? { "content-length": String(file.size) }
+                    : {}),
+                },
+                body: file.body,
+              };
+            } catch (error) {
+              return zelavisErrorResponse(error, 404);
+            }
+          },
+        },
+        {
+          id: "storage.files.write",
+          method: "PUT",
+          path: "/files/*path",
+          handler: async ({ params, request, requestHeaders }) => {
+            try {
+              const path = params.path ?? "";
+              if (!path) {
+                throw new ZelavisValidationError("Storage file path is required.");
+              }
+
+              const body = await readRequestBytes(request);
+              const metadata = readStorageMetadataHeaders(requestHeaders);
+              const contentType =
+                requestHeaders?.get("content-type") ?? undefined;
+              const entry = await storage.put({
+                path,
+                body,
+                contentType,
+                metadata,
+              });
+
+              return {
+                status: 200,
+                body: entry,
+              };
+            } catch (error) {
+              return zelavisErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "storage.files.delete",
+          method: "DELETE",
+          path: "/files/*path",
+          handler: async ({ params }) => {
+            try {
+              const path = params.path ?? "";
+              if (!path) {
+                throw new ZelavisValidationError("Storage file path is required.");
+              }
+
+              const deleted = await storage.delete(path);
+              if (!deleted) {
+                throw new ZelavisValidationError("Storage file not found.");
+              }
+
+              return {
+                status: 200,
+                body: {
+                  deleted: true,
+                  path,
+                },
+              };
+            } catch (error) {
+              return zelavisErrorResponse(error, 404);
+            }
+          },
+        },
+      ],
+    },
+  });
+}
+
 function createServicePrefixes(
   services: readonly ZelavisServerService<any>[],
   options: {
@@ -1929,6 +2117,9 @@ export async function zelavis(
   const hasWebsiteService = services.some(
     (service) => service.name === "website",
   );
+  const hasStorageService = services.some(
+    (service) => service.name === "storage",
+  );
   const hasDatabaseService = services.some(
     (service) => service.name === "database",
   );
@@ -1964,14 +2155,26 @@ export async function zelavis(
           ? createDatabaseWebsitePagesStore(resolvedDatabaseApi)
           : undefined,
       });
-  const coreServices = [databaseService, authService, websiteService].filter(
+  const storageService = hasStorageService
+    ? undefined
+    : await resolveStorageCoreService(options.coreServices?.storage, {
+        rootPath,
+        apiPrefix,
+        apiVersion,
+      });
+  const coreServices = [
+    databaseService,
+    authService,
+    websiteService,
+    storageService,
+  ].filter(
     (service): service is ZelavisServerService<any> => Boolean(service),
   );
   const websiteEnabled = hasWebsiteService || Boolean(websiteService);
   const serviceNames = [
     ...(hasDashboardService || options.coreServices?.dashboard === false
-      ? []
-      : ["dashboard"]),
+        ? []
+        : ["dashboard"]),
     ...coreServices.map((service) => service.name),
     ...services.map((service) => service.name),
   ];
@@ -2175,6 +2378,20 @@ function applyPlatformResourceDefaults(
       nextCoreServices.website = {
         ...currentWebsite,
         pagesStore: createFileStorageWebsitePagesStore(resources.files),
+      };
+    }
+  }
+
+  if (nextCoreServices.storage !== false) {
+    const currentStorage =
+      nextCoreServices.storage === true || nextCoreServices.storage === undefined
+        ? {}
+        : nextCoreServices.storage;
+
+    if (!currentStorage.storage && resources.files) {
+      nextCoreServices.storage = {
+        ...currentStorage,
+        storage: resources.files,
       };
     }
   }

@@ -207,3 +207,49 @@ test("zelavisServer parses multipart payloads and preserves repeated response he
     ],
   );
 });
+
+test("zelavisServer prefers an exact route over a wildcard sibling", async () => {
+  const runtime = await zelavisServer({
+    services: [
+      defineServerService({
+        name: "demo",
+        service: {},
+        api: {
+          v1: [
+            {
+              id: "demo.list",
+              method: "GET",
+              path: "/files",
+              handler: () => ({
+                status: 200,
+                body: { route: "list" },
+              }),
+            },
+            {
+              id: "demo.read",
+              method: "GET",
+              path: "/files/*path",
+              handler: ({ params }) => ({
+                status: 200,
+                body: { route: "read", path: params.path },
+              }),
+            },
+          ],
+        },
+      }),
+    ],
+  });
+
+  const listResponse = await runtime.fetch(
+    new Request("http://localhost/demo/files"),
+  );
+  const readResponse = await runtime.fetch(
+    new Request("http://localhost/demo/files/hello.txt"),
+  );
+
+  assert.deepEqual(await listResponse.json(), { route: "list" });
+  assert.deepEqual(await readResponse.json(), {
+    route: "read",
+    path: "hello.txt",
+  });
+});

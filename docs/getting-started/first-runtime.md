@@ -27,6 +27,10 @@ Today, a default `new Zelavis(...)` runtime includes these core services by defa
 - database
 - website
 
+When the selected platform provides file storage, Zelavis can also expose:
+
+- storage
+
 Default root namespace:
 
 ```txt
@@ -37,6 +41,7 @@ Default root namespace:
 /zelavis/api/v1/dashboard/settings
 /zelavis/api/v1/auth
 /zelavis/api/v1/database
+/zelavis/api/v1/storage/files/*
 /zelavis/api/v1/website/pages
 ```
 
@@ -50,6 +55,7 @@ new Zelavis({
     auth: false,
     dashboard: false,
     database: false,
+    storage: false,
     website: false,
   },
 });

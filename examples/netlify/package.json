@@ -1,0 +1,18 @@
+{
+  "name": "@zelavis/example-netlify",
+  "version": "0.1.0",
+  "private": true,
+  "author": "Ivan Jeremic",
+  "license": "MIT",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^10.7.4",
+    "zelavis": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "^5"
+  }
+}

@@ -82,6 +82,7 @@ Each platform preset can contribute runtime resources through `zelavis.platform.
 When you use the high-level `Zelavis` class, these resources are not only visible to adapters. Zelavis also uses them as fallback persistence for core services:
 
 - dashboard settings prefer platform KV, then platform files, then in-memory persistence
+- the storage core service can expose platform file storage through `/zelavis/api/v1/storage/files/*`
 - website pages can persist to platform file storage when no database core service is configured
 
 These resources are not framework adapters and they are not Zelavis services. They are host-level infrastructure capabilities that platform presets can provide to the runtime and to adapters.

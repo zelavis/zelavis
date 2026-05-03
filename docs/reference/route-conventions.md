@@ -14,6 +14,7 @@ With the default runtime settings:
 /zelavis/api/v1/dashboard/settings
 /zelavis/api/v1/auth/*
 /zelavis/api/v1/database/*
+/zelavis/api/v1/storage/files/*
 /zelavis/api/v1/website/pages
 ```
 
@@ -46,8 +47,11 @@ the mounted paths become:
 /admin/api/v2/dashboard/settings
 /admin/api/v2/auth/*
 /admin/api/v2/database/*
+/admin/api/v2/storage/files/*
 /admin/api/v2/website/pages
 ```
+
+The storage routes are present when Zelavis has a file storage resource to expose through the storage core service.
 
 ## Website core service
 

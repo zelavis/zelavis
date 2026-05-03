@@ -78,6 +78,7 @@ By default, Zelavis owns one safe namespace:
 /zelavis/api/v1/dashboard/settings
 /zelavis/api/v1/auth
 /zelavis/api/v1/database
+/zelavis/api/v1/storage/files/*
 /zelavis/api/v1/website/pages
 ```
 
@@ -99,6 +100,7 @@ That moves the dashboard and APIs together:
 /admin/api/v1/dashboard/settings
 /admin/api/v1/auth
 /admin/api/v1/database
+/admin/api/v1/storage/files/*
 /admin/api/v1/website/pages
 ```
 
@@ -110,7 +112,6 @@ directly.
 The runtime now supports both styles:
 
 - explicit framework adapters such as Node, Elysia, Express, Fastify, Hono, and h3
-- host-level platform presets such as Node, Bun, Cloudflare, and Vercel
 - host-level platform presets such as Node, Bun, Cloudflare, Netlify, and Vercel
 - direct Web-handler embedding through `runtime.fetch(...)`
 
@@ -139,6 +140,7 @@ The important split is:
 Platform resources now also feed real core-service persistence in the high-level `Zelavis` class:
 
 - dashboard settings can persist through platform KV or platform files
+- the storage core service can expose platform file storage through the Zelavis API
 - website pages can persist through platform files when no database core service is configured
 
 Dashboard client routes are served as SPA shell routes by the dashboard core
@@ -149,6 +151,15 @@ The dashboard settings endpoint exposes runtime-editable dashboard preferences:
 ```txt
 GET /zelavis/api/v1/dashboard/settings
 PATCH /zelavis/api/v1/dashboard/settings
+```
+
+When a file storage resource exists, Zelavis can also expose a built-in storage core service:
+
+```txt
+GET /zelavis/api/v1/storage/files
+GET /zelavis/api/v1/storage/files/*
+PUT /zelavis/api/v1/storage/files/*
+DELETE /zelavis/api/v1/storage/files/*
 ```
 
 Root path changes are saved as pending settings and report `restartRequired`
@@ -172,7 +183,7 @@ new Zelavis({
 When `devServerUrl` is set, dashboard route requests redirect to the live UI dev
 server instead of serving the embedded built dashboard assets.
 
-The dashboard, auth, database, and website core services are included by default. Disable any of them when you need a smaller server or want to supply replacements:
+The dashboard, auth, database, and website core services are included by default. The storage core service is enabled when Zelavis has a file storage resource to expose. Disable any of them when you need a smaller server or want to supply replacements:
 
 ```ts
 new Zelavis({
@@ -180,6 +191,7 @@ new Zelavis({
     auth: false,
     dashboard: false,
     database: false,
+    storage: false,
     website: false,
   },
 });

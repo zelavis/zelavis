@@ -132,7 +132,7 @@ test("Zelavis merges platform resources and metadata for adapters", async () => 
   assert.equal(capturedPlatform, snapshot);
 });
 
-test("Zelavis platform resources back dashboard settings and website pages", async () => {
+test("Zelavis platform resources back dashboard settings, website pages, and storage service", async () => {
   const { Zelavis, createPlatform } = await import("zelavis");
 
   const kv = new Map();
@@ -184,6 +184,17 @@ test("Zelavis platform resources back dashboard settings and website pages", asy
             delete(path) {
               return files.delete(path);
             },
+            list(prefix) {
+              return [...files.values()]
+                .filter((entry) => (prefix ? entry.path.startsWith(prefix) : true))
+                .map((entry) => ({
+                  path: entry.path,
+                  size: entry.size,
+                  updatedAt: entry.updatedAt,
+                  contentType: entry.contentType,
+                  metadata: entry.metadata,
+                }));
+            },
           },
         },
       };
@@ -224,4 +235,40 @@ test("Zelavis platform resources back dashboard settings and website pages", asy
 
   assert.equal(createPageResponse.status, 201);
   assert.equal(files.has("zelavis/website-pages.json"), true);
+
+  const uploadResponse = await zelavis.fetch(
+    new Request("http://localhost/zelavis/api/v1/storage/files/uploads/hello.txt", {
+      method: "PUT",
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        "x-zelavis-meta-origin": "test",
+      },
+      body: "hello world",
+    }),
+  );
+
+  assert.equal(uploadResponse.status, 200);
+  assert.equal(files.has("uploads/hello.txt"), true);
+
+  const listResponse = await zelavis.fetch(
+    new Request("http://localhost/zelavis/api/v1/storage/files?prefix=uploads/"),
+  );
+  assert.equal(listResponse.status, 200);
+  const listed = await listResponse.json();
+  assert.equal(Array.isArray(listed.files), true);
+  assert.equal(listed.files.some((file) => file.path === "uploads/hello.txt"), true);
+
+  const readResponse = await zelavis.fetch(
+    new Request("http://localhost/zelavis/api/v1/storage/files/uploads/hello.txt"),
+  );
+  assert.equal(readResponse.status, 200);
+  assert.equal(await readResponse.text(), "hello world");
+
+  const deleteResponse = await zelavis.fetch(
+    new Request("http://localhost/zelavis/api/v1/storage/files/uploads/hello.txt", {
+      method: "DELETE",
+    }),
+  );
+  assert.equal(deleteResponse.status, 200);
+  assert.equal(files.has("uploads/hello.txt"), false);
 });
