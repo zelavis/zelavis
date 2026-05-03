@@ -13,9 +13,11 @@ import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import {
+  createDatabaseCollection,
   deleteStorageFile,
   getRuntimeConfig,
   getStorageFileMetadata,
+  insertDatabaseDocument,
   listStorageFiles,
   uploadStorageFile,
 } from "#/lib/runtime-api";
@@ -51,7 +53,9 @@ function StorageRoute() {
   const storageEnabled = config?.services.some((service) => service.name === "storage");
   const [prefix, setPrefix] = useState("");
   const [uploadPath, setUploadPath] = useState("");
-  const [uploadMetadata, setUploadMetadata] = useState("");
+  const [uploadLabel, setUploadLabel] = useState("");
+  const [uploadAltText, setUploadAltText] = useState("");
+  const [uploadPurpose, setUploadPurpose] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | undefined>();
   const [selectedPath, setSelectedPath] = useState<string>();
   const [message, setMessage] = useState<string>();
@@ -77,6 +81,7 @@ function StorageRoute() {
   );
 
   const fileCount = filesResource.data?.files.length ?? 0;
+  const databaseEnabled = config?.services.some((service) => service.name === "database");
   const totalSize = useMemo(
     () =>
       (filesResource.data?.files ?? []).reduce(
@@ -105,21 +110,27 @@ function StorageRoute() {
 
     try {
       const metadata =
-        uploadMetadata.trim().length > 0
-          ? { label: uploadMetadata.trim() }
-          : undefined;
+        Object.fromEntries(
+          Object.entries({
+            label: uploadLabel.trim(),
+            alt: uploadAltText.trim(),
+            purpose: uploadPurpose.trim(),
+          }).filter(([, value]) => value.length > 0),
+        );
       const created = await uploadStorageFile(config, {
         path,
         body: selectedFile,
         contentType: selectedFile.type || "application/octet-stream",
-        metadata,
+        metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
         onProgress: ({ percent }) => setUploadProgress(percent),
       });
 
       await filesResource.reload();
       setSelectedPath(created.file.path);
       setUploadPath("");
-      setUploadMetadata("");
+      setUploadLabel("");
+      setUploadAltText("");
+      setUploadPurpose("");
       setSelectedFile(undefined);
       setUploadProgress(undefined);
       if (fileInputRef.current) {
@@ -150,6 +161,55 @@ function StorageRoute() {
         setSelectedPath(undefined);
       }
       setMessage(`Deleted ${path}.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleInsertSampleDocument() {
+    const reference = metadataResource.data?.reference;
+    if (!config || !databaseEnabled || !reference || busy) {
+      return;
+    }
+
+    setBusy(true);
+    setMessage(undefined);
+    setError(undefined);
+    setCopyMessage(undefined);
+
+    try {
+      try {
+        await createDatabaseCollection(config, {
+          name: "storage_assets",
+          metadata: {
+            createdBy: "zelavis-dashboard",
+          },
+        });
+      } catch (caught) {
+        const message =
+          caught instanceof Error ? caught.message : String(caught);
+        if (!message.toLowerCase().includes("already")) {
+          throw caught;
+        }
+      }
+
+      const title =
+        reference.metadata?.label ||
+        reference.path.split("/").filter(Boolean).at(-1) ||
+        reference.path;
+
+      const document = await insertDatabaseDocument(config, {
+        collection: "storage_assets",
+        data: {
+          title,
+          kind: "asset",
+          file: reference,
+        },
+      });
+
+      setMessage(`Inserted sample document ${document.id} into storage_assets.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -306,9 +366,35 @@ function StorageRoute() {
                   </label>
                   <Input
                     id="storage-label"
-                    value={uploadMetadata}
-                    onChange={(event) => setUploadMetadata(event.target.value)}
+                    value={uploadLabel}
+                    onChange={(event) => setUploadLabel(event.target.value)}
                     placeholder="Hero image"
+                    disabled={busy}
+                  />
+                </div>
+              </div>
+              <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium text-foreground" htmlFor="storage-alt">
+                    Alt text metadata
+                  </label>
+                  <Input
+                    id="storage-alt"
+                    value={uploadAltText}
+                    onChange={(event) => setUploadAltText(event.target.value)}
+                    placeholder="Product hero shot on white background"
+                    disabled={busy}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium text-foreground" htmlFor="storage-purpose">
+                    Purpose metadata
+                  </label>
+                  <Input
+                    id="storage-purpose"
+                    value={uploadPurpose}
+                    onChange={(event) => setUploadPurpose(event.target.value)}
+                    placeholder="product-gallery"
                     disabled={busy}
                   />
                 </div>
@@ -432,9 +518,21 @@ function StorageRoute() {
                 <div className="grid gap-2 rounded-md border bg-background p-4">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-medium text-foreground">Reference JSON</p>
-                    <Button type="button" variant="outline" size="sm" onClick={handleCopyReference}>
-                      Copy JSON
-                    </Button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {databaseEnabled ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleInsertSampleDocument}
+                        >
+                          Insert sample document
+                        </Button>
+                      ) : null}
+                      <Button type="button" variant="outline" size="sm" onClick={handleCopyReference}>
+                        Copy JSON
+                      </Button>
+                    </div>
                   </div>
                   <pre className="overflow-x-auto text-xs leading-6 text-muted-foreground">
                     {JSON.stringify(metadataResource.data.reference, null, 2)}

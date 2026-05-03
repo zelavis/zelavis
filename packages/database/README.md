@@ -38,6 +38,7 @@ Platform adapters should provide durable database drivers later, for example:
 import {
   createDatabase,
   databaseService,
+  documentFileSchema,
   imageFileSchema,
 } from "@zelavis/database";
 import { zelavisServer } from "@zelavis/server";
@@ -77,6 +78,7 @@ await database.schemas.register({
       name: { type: "string", minLength: 1 },
       price: { type: "number", minimum: 0 },
       heroImage: imageFileSchema({ maxSize: 5_000_000 }),
+      specSheet: documentFileSchema({ maxSize: 10_000_000 }),
     },
   },
 });

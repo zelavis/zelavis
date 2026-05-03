@@ -39,7 +39,11 @@ file: {
 or use the small helpers from `@zelavis/database`:
 
 ```ts
-import { fileSchema, imageFileSchema } from "@zelavis/database";
+import {
+  documentFileSchema,
+  fileSchema,
+  imageFileSchema,
+} from "@zelavis/database";
 
 await database.schemas.register({
   collection: "products",
@@ -52,14 +56,22 @@ await database.schemas.register({
     properties: {
       name: { type: "string", minLength: 1 },
       heroImage: imageFileSchema({ maxSize: 5_000_000 }),
-      specSheet: fileSchema({
-        mimeTypes: ["application/pdf"],
-        maxSize: 10_000_000,
+      specSheet: documentFileSchema({ maxSize: 10_000_000 }),
+      attachment: fileSchema({
+        mimeTypes: ["application/octet-stream"],
       }),
     },
   },
 });
 ```
+
+Current helpers:
+
+- `fileSchema(...)`
+- `imageFileSchema(...)`
+- `audioFileSchema(...)`
+- `videoFileSchema(...)`
+- `documentFileSchema(...)`
 
 ## What the file validator checks
 

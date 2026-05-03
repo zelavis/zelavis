@@ -1,6 +1,5 @@
 import type {
   DatabaseFileSchemaDefinition,
-  DatabaseSchemaDefinition,
 } from "./contracts/schemas.js";
 
 export interface CreateDatabaseFileSchemaOptions {
@@ -34,10 +33,50 @@ export function imageFileSchema(
   });
 }
 
-export function mergeObjectProperties(
-  properties: Record<string, DatabaseSchemaDefinition>,
-): Record<string, DatabaseSchemaDefinition> {
-  return Object.fromEntries(
-    Object.entries(properties).map(([key, value]) => [key, value]),
-  );
+export function audioFileSchema(
+  options: Omit<CreateDatabaseFileSchemaOptions, "mimeTypes"> & {
+    mimeTypes?: readonly string[];
+  } = {},
+): DatabaseFileSchemaDefinition {
+  return fileSchema({
+    mimeTypes: options.mimeTypes ?? [
+      "audio/mpeg",
+      "audio/wav",
+      "audio/ogg",
+      "audio/webm",
+    ],
+    maxSize: options.maxSize,
+  });
+}
+
+export function videoFileSchema(
+  options: Omit<CreateDatabaseFileSchemaOptions, "mimeTypes"> & {
+    mimeTypes?: readonly string[];
+  } = {},
+): DatabaseFileSchemaDefinition {
+  return fileSchema({
+    mimeTypes: options.mimeTypes ?? [
+      "video/mp4",
+      "video/webm",
+      "video/ogg",
+      "video/quicktime",
+    ],
+    maxSize: options.maxSize,
+  });
+}
+
+export function documentFileSchema(
+  options: Omit<CreateDatabaseFileSchemaOptions, "mimeTypes"> & {
+    mimeTypes?: readonly string[];
+  } = {},
+): DatabaseFileSchemaDefinition {
+  return fileSchema({
+    mimeTypes: options.mimeTypes ?? [
+      "application/pdf",
+      "text/plain",
+      "application/json",
+      "application/zip",
+    ],
+    maxSize: options.maxSize,
+  });
 }

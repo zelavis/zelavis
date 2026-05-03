@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createDatabase, fileSchema, imageFileSchema } from "../dist/index.js";
+import {
+  audioFileSchema,
+  createDatabase,
+  documentFileSchema,
+  fileSchema,
+  imageFileSchema,
+  videoFileSchema,
+} from "../dist/index.js";
 
 test("database documents support tenant-aware CRUD operations", async () => {
   const database = await createDatabase();
@@ -374,6 +381,23 @@ test("database exports schema helpers for file reference fields", async () => {
     type: "file",
     mimeTypes: ["image/png", "image/jpeg", "image/webp", "image/gif"],
     maxSize: 2048,
+  });
+  assert.deepEqual(audioFileSchema(), {
+    type: "file",
+    mimeTypes: ["audio/mpeg", "audio/wav", "audio/ogg", "audio/webm"],
+  });
+  assert.deepEqual(videoFileSchema(), {
+    type: "file",
+    mimeTypes: ["video/mp4", "video/webm", "video/ogg", "video/quicktime"],
+  });
+  assert.deepEqual(documentFileSchema(), {
+    type: "file",
+    mimeTypes: [
+      "application/pdf",
+      "text/plain",
+      "application/json",
+      "application/zip",
+    ],
   });
 });
 
