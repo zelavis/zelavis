@@ -59,6 +59,7 @@ function StorageRoute() {
   const [busy, setBusy] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number>();
   const [isDragging, setIsDragging] = useState(false);
+  const [copyMessage, setCopyMessage] = useState<string>();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const filesResource = useRuntimeResource(
@@ -166,6 +167,20 @@ function StorageRoute() {
       setUploadPath(file.name);
     }
     setIsDragging(false);
+  }
+
+  async function handleCopyReference() {
+    const reference = metadataResource.data?.reference;
+    if (!reference || typeof navigator === "undefined" || !navigator.clipboard) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(reference, null, 2));
+      setCopyMessage("Copied file reference JSON.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
   }
 
   return (
@@ -415,11 +430,26 @@ function StorageRoute() {
                 </div>
 
                 <div className="grid gap-2 rounded-md border bg-background p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-medium text-foreground">Reference JSON</p>
+                    <Button type="button" variant="outline" size="sm" onClick={handleCopyReference}>
+                      Copy JSON
+                    </Button>
+                  </div>
+                  <pre className="overflow-x-auto text-xs leading-6 text-muted-foreground">
+                    {JSON.stringify(metadataResource.data.reference, null, 2)}
+                  </pre>
+                </div>
+
+                <div className="grid gap-2 rounded-md border bg-background p-4">
                   <p className="text-sm font-medium text-foreground">Metadata</p>
                   <pre className="overflow-x-auto text-xs leading-6 text-muted-foreground">
                     {JSON.stringify(metadataResource.data.file.metadata ?? {}, null, 2)}
                   </pre>
                 </div>
+                {copyMessage ? (
+                  <ResourceNotice title="Clipboard" description={copyMessage} />
+                ) : null}
               </>
             ) : (
               <ResourceNotice

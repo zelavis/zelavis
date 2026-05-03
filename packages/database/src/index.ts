@@ -14,5 +14,6 @@ export * from "./services/event-service.js";
 export * from "./services/document-service.js";
 export * from "./services/projection-service.js";
 export * from "./services/schema-service.js";
+export * from "./schema-helpers.js";
 export * from "./services/time-series-service.js";
 export * from "./storage/in-memory.js";

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createDatabase } from "../dist/index.js";
+import { createDatabase, fileSchema, imageFileSchema } from "../dist/index.js";
 
 test("database documents support tenant-aware CRUD operations", async () => {
   const database = await createDatabase();
@@ -366,6 +366,15 @@ test("database schemas can validate Zelavis file references natively", async () 
       return true;
     },
   );
+});
+
+test("database exports schema helpers for file reference fields", async () => {
+  assert.deepEqual(fileSchema(), { type: "file" });
+  assert.deepEqual(imageFileSchema({ maxSize: 2048 }), {
+    type: "file",
+    mimeTypes: ["image/png", "image/jpeg", "image/webp", "image/gif"],
+    maxSize: 2048,
+  });
 });
 
 test("database deduplicates repeated event appends by idempotency key", async () => {

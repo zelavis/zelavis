@@ -32,7 +32,7 @@ Current non-goals for the first slice include:
 - reads come from projections
 - projections are explicit public contract metadata
 - time-series builds on that explicit model
-- collection schemas can now validate Zelavis-style file references with `type: "file"`
+- collection schemas can now validate Zelavis-style file references with `type: "file"` or helpers such as `imageFileSchema(...)`
 
 ## Related docs
 

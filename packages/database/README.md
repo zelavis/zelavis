@@ -35,7 +35,11 @@ Platform adapters should provide durable database drivers later, for example:
 ## Usage
 
 ```ts
-import { createDatabase, databaseService } from "@zelavis/database";
+import {
+  createDatabase,
+  databaseService,
+  imageFileSchema,
+} from "@zelavis/database";
 import { zelavisServer } from "@zelavis/server";
 
 const database = await createDatabase();
@@ -72,11 +76,7 @@ await database.schemas.register({
     properties: {
       name: { type: "string", minLength: 1 },
       price: { type: "number", minimum: 0 },
-      heroImage: {
-        type: "file",
-        mimeTypes: ["image/png", "image/jpeg"],
-        maxSize: 5_000_000,
-      },
+      heroImage: imageFileSchema({ maxSize: 5_000_000 }),
     },
   },
 });
