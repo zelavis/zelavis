@@ -178,6 +178,21 @@ test('storage is reachable from the core area', async ({ page }, testInfo) => {
   ).toHaveAttribute('aria-current', 'page')
 })
 
+test('users is a top-level item on the first sidebar slide', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await gotoDashboard(page, '/users')
+
+  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const rootSlide = sidebar.locator('.swiper-slide-active').first()
+
+  await expect(rootSlide.getByRole('link', { name: 'Users', exact: true })).toBeVisible()
+  await expect(rootSlide.getByRole('button', { name: 'Core' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Users & accounts' })).toBeVisible()
+})
+
 test('sidebar category rows drill down into sliding panels', async ({
   page,
 }, testInfo) => {

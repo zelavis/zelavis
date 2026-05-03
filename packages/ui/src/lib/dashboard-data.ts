@@ -91,6 +91,11 @@ export const platformNavItems: readonly DashboardNavItem[] = [
     icon: LayoutDashboard,
   },
   {
+    title: "Users",
+    url: "/users",
+    icon: Users,
+  },
+  {
     title: "Core",
     icon: Server,
     items: [
@@ -98,11 +103,6 @@ export const platformNavItems: readonly DashboardNavItem[] = [
         title: "Auth",
         url: "/auth",
         icon: Fingerprint,
-      },
-      {
-        title: "Users",
-        url: "/users",
-        icon: Users,
       },
       {
         title: "Database",
