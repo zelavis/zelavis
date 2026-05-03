@@ -164,17 +164,21 @@ test('overview nav is only active on the overview route', async ({ page }, testI
   )
 })
 
-test('storage is reachable from the core area', async ({ page }, testInfo) => {
+test('storage is a top-level item on the first sidebar slide', async ({
+  page,
+}, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
   await gotoDashboard(page, '/storage')
 
+  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const rootSlide = sidebar.locator('.swiper-slide-active').first()
+
+  await expect(rootSlide.getByRole('link', { name: 'Storage', exact: true })).toBeVisible()
+  await expect(rootSlide.getByRole('button', { name: 'Core' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Storage' })).toBeVisible()
   await expect(
-    page
-      .getByRole('complementary', { name: 'Dashboard navigation' })
-      .getByRole('link', { name: 'Storage', exact: true })
-      .first(),
+    rootSlide.getByRole('link', { name: 'Storage', exact: true }),
   ).toHaveAttribute('aria-current', 'page')
 })
 
@@ -191,6 +195,21 @@ test('users is a top-level item on the first sidebar slide', async ({
   await expect(rootSlide.getByRole('link', { name: 'Users', exact: true })).toBeVisible()
   await expect(rootSlide.getByRole('button', { name: 'Core' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Users & accounts' })).toBeVisible()
+})
+
+test('content is a top-level item on the first sidebar slide', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await gotoDashboard(page, '/content')
+
+  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const rootSlide = sidebar.locator('.swiper-slide-active').first()
+
+  await expect(rootSlide.getByRole('link', { name: 'Content', exact: true })).toBeVisible()
+  await expect(rootSlide.getByRole('button', { name: 'Workspace' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Content Studio' })).toBeVisible()
 })
 
 test('sidebar category rows drill down into sliding panels', async ({

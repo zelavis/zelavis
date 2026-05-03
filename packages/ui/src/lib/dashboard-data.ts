@@ -96,6 +96,16 @@ export const platformNavItems: readonly DashboardNavItem[] = [
     icon: Users,
   },
   {
+    title: "Content",
+    url: "/content",
+    icon: FileText,
+  },
+  {
+    title: "Storage",
+    url: "/storage",
+    icon: Files,
+  },
+  {
     title: "Core",
     icon: Server,
     items: [
@@ -108,11 +118,6 @@ export const platformNavItems: readonly DashboardNavItem[] = [
         title: "Database",
         url: "/database",
         icon: Database,
-      },
-      {
-        title: "Storage",
-        url: "/storage",
-        icon: Files,
       },
     ],
   },
@@ -136,11 +141,6 @@ export const platformNavItems: readonly DashboardNavItem[] = [
             pageLabel: "Builder",
           },
         ],
-      },
-      {
-        title: "Content",
-        url: "/content",
-        icon: FileText,
       },
     ],
   },
