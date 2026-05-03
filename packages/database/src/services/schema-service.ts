@@ -96,6 +96,30 @@ function getValueType(value: unknown): string {
   return typeof value;
 }
 
+function isFileReference(value: unknown): value is {
+  kind: "file";
+  path: string;
+  href: string;
+  metadataHref: string;
+  size?: number;
+  updatedAt?: string;
+  contentType?: string;
+  metadata?: Record<string, string>;
+  checksum?: string;
+} {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  return (
+    candidate.kind === "file" &&
+    typeof candidate.path === "string" &&
+    typeof candidate.href === "string" &&
+    typeof candidate.metadataHref === "string"
+  );
+}
+
 function validateDefinition(
   definition: DatabaseSchemaDefinition,
   value: unknown,
@@ -103,6 +127,40 @@ function validateDefinition(
   issues: DatabaseSchemaValidationIssue[],
 ): void {
   const actualType = getValueType(value);
+
+  if (definition.type === "file") {
+    if (!isFileReference(value)) {
+      issues.push({
+        path,
+        message: `must be file (received ${actualType})`,
+      });
+      return;
+    }
+
+    if (
+      definition.maxSize !== undefined &&
+      value.size !== undefined &&
+      value.size > definition.maxSize
+    ) {
+      issues.push({
+        path,
+        message: `must be <= ${definition.maxSize} bytes`,
+      });
+    }
+
+    if (
+      definition.mimeTypes &&
+      value.contentType &&
+      !definition.mimeTypes.includes(value.contentType)
+    ) {
+      issues.push({
+        path,
+        message: `must use one of ${definition.mimeTypes.join(", ")}`,
+      });
+    }
+
+    return;
+  }
 
   if (actualType !== definition.type) {
     issues.push({

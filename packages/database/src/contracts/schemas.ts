@@ -29,6 +29,12 @@ export interface DatabaseNullSchemaDefinition {
   type: "null";
 }
 
+export interface DatabaseFileSchemaDefinition {
+  type: "file";
+  mimeTypes?: readonly string[];
+  maxSize?: number;
+}
+
 export interface DatabaseArraySchemaDefinition {
   type: "array";
   items: DatabaseSchemaDefinition;
@@ -48,6 +54,7 @@ export type DatabaseSchemaDefinition =
   | DatabaseNumberSchemaDefinition
   | DatabaseBooleanSchemaDefinition
   | DatabaseNullSchemaDefinition
+  | DatabaseFileSchemaDefinition
   | DatabaseArraySchemaDefinition
   | DatabaseObjectSchemaDefinition;
 

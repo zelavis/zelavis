@@ -110,6 +110,7 @@ That is the preferred shape for fetch-native environments such as:
 
 ## Related docs
 
+- [Adapters and Fetch-Native Hosts](../guides/adapters-and-fetch-native.md)
 - [Node Adapter](./node.md)
 - [Platform Presets](../reference/platform-presets.md)
 - [First Runtime](../getting-started/first-runtime.md)

@@ -16,4 +16,5 @@ Each guide should solve one practical problem end to end.
 
 ## Pages
 
+- [Adapters and Fetch-Native Hosts](./adapters-and-fetch-native.md)
 - [Dashboard Development](./dashboard-development.md)

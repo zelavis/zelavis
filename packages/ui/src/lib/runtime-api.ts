@@ -357,6 +357,7 @@ export async function uploadStorageFile(
     body: Blob | ArrayBuffer | Uint8Array | string;
     contentType?: string;
     metadata?: Record<string, string>;
+    onProgress?: (value: { loaded: number; total?: number; percent?: number }) => void;
   },
 ): Promise<{
   file: StorageFile;
@@ -380,6 +381,66 @@ export async function uploadStorageFile(
           ) as ArrayBuffer,
         ])
       : input.body;
+
+  if (typeof window !== "undefined" && typeof XMLHttpRequest !== "undefined") {
+    return new Promise((resolve, reject) => {
+      const request = new XMLHttpRequest()
+      request.open(
+        'PUT',
+        `${config.api.basePath}/storage/files/${encodeStoragePath(input.path)}`,
+      )
+
+      headers.forEach((value, key) => {
+        request.setRequestHeader(key, value)
+      })
+
+      request.responseType = 'json'
+      request.upload.onprogress = (event) => {
+        if (!input.onProgress) {
+          return
+        }
+
+        const total = event.lengthComputable ? event.total : undefined
+        const percent =
+          total && total > 0 ? Math.round((event.loaded / total) * 100) : undefined
+        input.onProgress({
+          loaded: event.loaded,
+          total,
+          percent,
+        })
+      }
+
+      request.onload = () => {
+        const ok = request.status >= 200 && request.status < 300
+        const responseBody =
+          typeof request.response === 'object' && request.response !== null
+            ? request.response
+            : request.responseText
+              ? JSON.parse(request.responseText)
+              : undefined
+
+        if (!ok) {
+          const message =
+            responseBody &&
+            typeof responseBody === 'object' &&
+            'error' in responseBody &&
+            typeof (responseBody as { error?: unknown }).error === 'string'
+              ? (responseBody as { error: string }).error
+              : `Request failed: ${request.status}`
+          reject(new Error(`${message} (${input.path})`))
+          return
+        }
+
+        resolve(responseBody as { file: StorageFile; reference: StorageFileReference })
+      }
+
+      request.onerror = () => {
+        reject(new Error(`Request failed (${input.path})`))
+      }
+
+      request.send(body)
+    })
+  }
 
   const response = await fetch(
     `${config.api.basePath}/storage/files/${encodeStoragePath(input.path)}`,

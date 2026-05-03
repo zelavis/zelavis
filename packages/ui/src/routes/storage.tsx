@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Files, Trash2, Upload } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import {
   DataRow,
@@ -57,6 +57,9 @@ function StorageRoute() {
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number>();
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const filesResource = useRuntimeResource(
     async () =>
@@ -109,6 +112,7 @@ function StorageRoute() {
         body: selectedFile,
         contentType: selectedFile.type || "application/octet-stream",
         metadata,
+        onProgress: ({ percent }) => setUploadProgress(percent),
       });
 
       await filesResource.reload();
@@ -116,11 +120,16 @@ function StorageRoute() {
       setUploadPath("");
       setUploadMetadata("");
       setSelectedFile(undefined);
+      setUploadProgress(undefined);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
       setMessage(`Uploaded ${created.file.path}.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setBusy(false);
+      setUploadProgress(undefined);
     }
   }
 
@@ -145,6 +154,18 @@ function StorageRoute() {
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleDroppedFile(file: File | undefined) {
+    if (!file || busy) {
+      return;
+    }
+
+    setSelectedFile(file);
+    if (!uploadPath.trim()) {
+      setUploadPath(file.name);
+    }
+    setIsDragging(false);
   }
 
   return (
@@ -222,14 +243,47 @@ function StorageRoute() {
                   <label className="text-sm font-medium text-foreground" htmlFor="storage-file">
                     File
                   </label>
-                  <Input
-                    id="storage-file"
-                    type="file"
-                    onChange={(event) =>
-                      setSelectedFile(event.currentTarget.files?.[0] ?? undefined)
-                    }
-                    disabled={busy}
-                  />
+                  <div
+                    className={[
+                      "grid min-h-32 gap-3 rounded-md border border-dashed px-4 py-5 text-sm transition-colors",
+                      isDragging
+                        ? "border-primary bg-primary/5"
+                        : "border-border bg-muted/20",
+                    ].join(" ")}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      setIsDragging(true);
+                    }}
+                    onDragLeave={(event) => {
+                      event.preventDefault();
+                      setIsDragging(false);
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      handleDroppedFile(event.dataTransfer.files?.[0]);
+                    }}
+                  >
+                    <div className="grid gap-1">
+                      <p className="font-medium text-foreground">
+                        Drag a file here or choose one from disk
+                      </p>
+                      <p className="text-muted-foreground">
+                        The upload path stays editable, so you can drop a file and still move it under a prefix like <code>uploads/</code>.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Input
+                        ref={fileInputRef}
+                        id="storage-file"
+                        type="file"
+                        onChange={(event) =>
+                          handleDroppedFile(event.currentTarget.files?.[0] ?? undefined)
+                        }
+                        disabled={busy}
+                      />
+                    </div>
+                  </div>
                 </div>
                 <div className="grid gap-2">
                   <label className="text-sm font-medium text-foreground" htmlFor="storage-label">
@@ -252,9 +306,26 @@ function StorageRoute() {
                     : "Choose a file to upload into the mounted storage service."}
                 </p>
                 <Button type="submit" disabled={busy || !selectedFile}>
-                  {busy ? "Working…" : "Upload file"}
+                  {busy
+                    ? uploadProgress !== undefined
+                      ? `Uploading ${uploadProgress}%`
+                      : "Working…"
+                    : "Upload file"}
                 </Button>
               </div>
+              {busy && uploadProgress !== undefined ? (
+                <div className="grid gap-2">
+                  <div className="h-2 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full bg-primary transition-[width]"
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Uploading to the mounted storage service.
+                  </p>
+                </div>
+              ) : null}
             </form>
 
             {message ? (

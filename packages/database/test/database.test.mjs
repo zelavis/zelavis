@@ -298,6 +298,76 @@ test("database can activate newer schema versions for later writes", async () =>
   ]);
 });
 
+test("database schemas can validate Zelavis file references natively", async () => {
+  const database = await createDatabase({
+    schemas: [
+      {
+        collection: "assets",
+        version: 1,
+        activate: true,
+        document: {
+          type: "object",
+          additionalProperties: false,
+          required: ["title", "file"],
+          properties: {
+            title: { type: "string", minLength: 1 },
+            file: {
+              type: "file",
+              mimeTypes: ["image/png"],
+              maxSize: 1024,
+            },
+          },
+        },
+      },
+    ],
+  });
+
+  await database.documents.createCollection({ name: "assets" });
+
+  const created = await database.documents.insert({
+    collection: "assets",
+    data: {
+      title: "Logo",
+      file: {
+        kind: "file",
+        path: "branding/logo.png",
+        href: "/zelavis/api/v1/storage/files/branding/logo.png",
+        metadataHref:
+          "/zelavis/api/v1/storage/files/branding/logo.png?format=metadata",
+        contentType: "image/png",
+        size: 512,
+        checksum: "abc123",
+      },
+    },
+  });
+
+  assert.equal(created.schemaVersion, 1);
+
+  assert.throws(
+    () =>
+      database.documents.insert({
+        collection: "assets",
+        data: {
+          title: "Too large",
+          file: {
+            kind: "file",
+            path: "branding/manual.pdf",
+            href: "/zelavis/api/v1/storage/files/branding/manual.pdf",
+            metadataHref:
+              "/zelavis/api/v1/storage/files/branding/manual.pdf?format=metadata",
+            contentType: "application/pdf",
+            size: 4096,
+          },
+        },
+      }),
+    (error) => {
+      assert.equal(error.name, "DatabaseSchemaValidationError");
+      assert.match(error.message, /must use one of image\/png/);
+      return true;
+    },
+  );
+});
+
 test("database deduplicates repeated event appends by idempotency key", async () => {
   const database = await createDatabase();
 

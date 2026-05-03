@@ -2,6 +2,18 @@ import type { DatabaseJson, DatabaseJsonObject } from "./json.js";
 
 export type DatabaseTenantId = string;
 
+export interface DatabaseFileReference {
+  kind: "file";
+  path: string;
+  href: string;
+  metadataHref: string;
+  size?: number;
+  updatedAt?: string;
+  contentType?: string;
+  metadata?: Record<string, string>;
+  checksum?: string;
+}
+
 export interface DatabaseCollection {
   name: string;
   tenantId: DatabaseTenantId;

@@ -8,6 +8,8 @@ The document read model is the first built-in projection. A projection registry 
 
 The first time-series slice is now also present as a public contract. Series definitions can declare projection references, event-source filters, mapper functions, and optional definition versions. In-memory queries derive points from the event stream directly, while SQLite-backed drivers can persist mapped samples and query them incrementally.
 
+Collection schemas can also validate Zelavis-style file references natively through `type: "file"`, so documents can carry structured links to the storage service without treating those fields as untyped blobs.
+
 ## Scope
 
 - Tenant-aware document collections.
@@ -70,6 +72,11 @@ await database.schemas.register({
     properties: {
       name: { type: "string", minLength: 1 },
       price: { type: "number", minimum: 0 },
+      heroImage: {
+        type: "file",
+        mimeTypes: ["image/png", "image/jpeg"],
+        maxSize: 5_000_000,
+      },
     },
   },
 });
