@@ -27,4 +27,4 @@ async function main(): Promise<void> {
   console.log(`zelavis Fastify example listening on http://localhost:${port}`);
 }
 
-void main();
+await main();

@@ -2591,10 +2591,6 @@ export class Zelavis<TAdapter extends object = {}> {
           resolved.context.resources,
         ),
       );
-      const maybeBinding = this.adapter as Partial<ZelavisAdapterBinding>;
-      if (typeof maybeBinding.ready === "function") {
-        await maybeBinding.ready();
-      }
       return runtime;
     })();
 

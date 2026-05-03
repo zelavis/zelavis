@@ -10,8 +10,8 @@ function runSetup(command) {
   });
 }
 
-function startProcess(command, args, env) {
-  return spawn(command, args, {
+function startProcess(name, command, args, env) {
+  const child = spawn(command, args, {
     stdio: "inherit",
     shell,
     env: {
@@ -19,6 +19,9 @@ function startProcess(command, args, env) {
       ...env,
     },
   });
+
+  child.__zelavisName = name;
+  return child;
 }
 
 function parsePreferredPort(value, fallback) {
@@ -81,6 +84,7 @@ async function main() {
 
   const children = [
     startProcess(
+      "ui-dev-server",
       "pnpm",
       [
         "--filter",
@@ -98,7 +102,7 @@ async function main() {
         ZELAVIS_UI_BASE_PATH: uiBasePath,
       },
     ),
-    startProcess("pnpm", ["--filter", "@zelavis/example-nodejs", "dev"], {
+    startProcess("node-runtime-example", "pnpm", ["--filter", "@zelavis/example-nodejs", "dev"], {
       PORT: String(backendPort),
       ZELAVIS_UI_DEV_SERVER: uiDashboardRedirectOrigin,
     }),
@@ -123,6 +127,16 @@ async function main() {
   for (const child of children) {
     child.on("exit", (code, signal) => {
       if (!shuttingDown) {
+        const name = child.__zelavisName ?? "child-process";
+        if (code !== 0 || signal) {
+          console.error(
+            `${name} exited before ui:dev could keep running${code !== null ? ` (code ${code})` : ""}${signal ? ` (signal ${signal})` : ""}.`,
+          );
+        } else {
+          console.error(
+            `${name} exited early with code 0. ui:dev expects both the runtime and UI dev server to stay alive.`,
+          );
+        }
         shutdown();
         process.exitCode = code ?? (signal ? 1 : 0);
       }
