@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createPlugin, defineServerService } from "../dist/index.js";
+import {
+  createPlugin,
+  createPluginRegistry,
+  defineServerService,
+} from "../dist/index.js";
 
 test("createPlugin normalizes plugin metadata for developer-facing extensions", () => {
   const service = defineServerService({
@@ -51,4 +55,30 @@ test("createPlugin validates required plugin fields", () => {
       }),
     /string path/,
   );
+});
+
+test("createPluginRegistry normalizes plugin registry entries", () => {
+  const registry = createPluginRegistry([
+    {
+      plugin: {
+        name: "zelavis-ecommerce",
+        menu: {
+          title: "Ecommerce",
+          path: "/commerce",
+          items: [
+            {
+              title: "Orders",
+              path: "/commerce/orders",
+            },
+          ],
+        },
+      },
+      status: "installed",
+      source: "official",
+    },
+  ]);
+
+  assert.equal(registry.length, 1);
+  assert.equal(registry[0].plugin.menu.items[0].title, "Orders");
+  assert.ok(Object.isFrozen(registry));
 });

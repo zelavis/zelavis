@@ -58,12 +58,15 @@ export type DashboardPluginMenuItem = {
   url: DashboardRoutePath;
   icon: LucideIcon;
   pageLabel?: string;
+  items?: readonly DashboardPluginMenuItem[];
 };
 
 export type DashboardWorkspacePluginItem = {
   id: string;
   name: string;
   menu: DashboardPluginMenuItem;
+  status: "installed" | "available";
+  source?: "official" | "community";
 };
 
 export type DashboardSecondaryItem = {
@@ -97,10 +100,12 @@ export const sidebarTeams: readonly DashboardTeamItem[] = [
   },
 ] as const;
 
-export const workspacePluginNavItems: readonly DashboardWorkspacePluginItem[] = [
+export const dashboardPluginRegistryEntries: readonly DashboardWorkspacePluginItem[] = [
   {
     id: "ecommerce",
     name: "Zelavis Ecommerce",
+    status: "installed",
+    source: "official",
     menu: {
       title: "Ecommerce",
       url: "/commerce",
@@ -109,6 +114,10 @@ export const workspacePluginNavItems: readonly DashboardWorkspacePluginItem[] = 
     },
   },
 ] as const;
+
+export const workspacePluginNavItems = dashboardPluginRegistryEntries
+  .filter((plugin) => plugin.status === "installed")
+  .map((plugin) => plugin.menu);
 
 export const platformNavItems: readonly DashboardNavItem[] = [
   {
@@ -173,7 +182,7 @@ export const platformNavItems: readonly DashboardNavItem[] = [
           },
         ],
       },
-      ...workspacePluginNavItems.map((plugin) => plugin.menu),
+      ...workspacePluginNavItems,
     ],
   },
   {
@@ -207,14 +216,12 @@ export const marketplacePackageItems: readonly DashboardPackageItem[] = [
     icon: Boxes,
     pageLabel: "Marketplace",
   },
-  {
-    name: "Official plugins",
-    icon: Package,
-  },
-  {
-    name: "Community plugins",
-    icon: Package,
-  },
+  ...dashboardPluginRegistryEntries.map((plugin) => ({
+    name: plugin.name,
+    url: plugin.status === "installed" ? plugin.menu.url : undefined,
+    icon: plugin.menu.icon ?? Package,
+    pageLabel: plugin.menu.pageLabel,
+  })),
 ] as const;
 
 export const secondaryNavItems: readonly DashboardSecondaryItem[] = [

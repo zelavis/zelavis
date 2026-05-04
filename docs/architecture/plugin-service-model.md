@@ -66,6 +66,12 @@ createPlugin({
   menu: {
     title: "Ecommerce",
     url: "/commerce",
+    items: [
+      {
+        title: "Orders",
+        url: "/commerce/orders",
+      },
+    ],
   },
   setup(plugin) {
     // register services, routes, providers, and plugin capabilities
@@ -78,6 +84,22 @@ Important point:
 - the `menu` object is plugin-owned metadata
 - Zelavis decides how to render that metadata in the current dashboard shell
 - if the dashboard changes later, the plugin contract can stay stable while Zelavis adapts the rendering layer
+
+## Registry direction
+
+Plugins should also be representable through one neutral registry shape:
+
+```ts
+createPluginRegistry([
+  {
+    plugin: ecommercePlugin,
+    status: "installed",
+    source: "official",
+  },
+]);
+```
+
+That gives Marketplace, installed plugin navigation, and future runtime activation a shared model instead of separate ad hoc lists.
 
 ## Current design preference
 

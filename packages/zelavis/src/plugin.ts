@@ -4,6 +4,7 @@ export interface ZelavisPluginMenuDefinition {
   title: string;
   path: string;
   pageLabel?: string;
+  items?: readonly ZelavisPluginMenuDefinition[];
 }
 
 export interface ZelavisPluginDefinition<TContext = unknown> {
@@ -12,6 +13,21 @@ export interface ZelavisPluginDefinition<TContext = unknown> {
   menu?: ZelavisPluginMenuDefinition;
   services?: readonly ZelavisAnyServiceInput[];
   setup?: (context: TContext) => void | Promise<void>;
+}
+
+export interface ZelavisPluginRegistryEntry<TContext = unknown> {
+  plugin: Readonly<ZelavisPluginDefinition<TContext>>;
+  status: "installed" | "available";
+  source?: "official" | "community";
+}
+
+function freezeMenu(
+  menu: ZelavisPluginMenuDefinition,
+): Readonly<ZelavisPluginMenuDefinition> {
+  return Object.freeze({
+    ...menu,
+    items: menu.items?.map(freezeMenu),
+  });
 }
 
 export function createPlugin<TContext = unknown>(
@@ -68,11 +84,54 @@ export function createPlugin<TContext = unknown>(
 
   return Object.freeze({
     ...definition,
-    menu: definition.menu
-      ? Object.freeze({ ...definition.menu })
-      : definition.menu,
+    menu: definition.menu ? freezeMenu(definition.menu) : definition.menu,
     services: definition.services
       ? Object.freeze([...definition.services])
       : definition.services,
   });
+}
+
+export function createPluginRegistry<TContext = unknown>(
+  entries: readonly ZelavisPluginRegistryEntry<TContext>[],
+): readonly Readonly<ZelavisPluginRegistryEntry<TContext>>[] {
+  const seen = new Set<string>();
+
+  return Object.freeze(
+    entries.map((entry) => {
+      if (!entry || typeof entry !== "object") {
+        throw new TypeError("A plugin registry entry object is required.");
+      }
+
+      const plugin = createPlugin(entry.plugin);
+
+      if (seen.has(plugin.name)) {
+        throw new TypeError(
+          `Plugin registry entries must use unique names. Duplicate: ${plugin.name}`,
+        );
+      }
+
+      seen.add(plugin.name);
+
+      if (entry.status !== "installed" && entry.status !== "available") {
+        throw new TypeError(
+          'Plugin registry entries must use status "installed" or "available".',
+        );
+      }
+
+      if (
+        entry.source !== undefined &&
+        entry.source !== "official" &&
+        entry.source !== "community"
+      ) {
+        throw new TypeError(
+          'Plugin registry entries must use source "official" or "community" when provided.',
+        );
+      }
+
+      return Object.freeze({
+        ...entry,
+        plugin,
+      });
+    }),
+  );
 }

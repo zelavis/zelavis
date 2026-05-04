@@ -21,6 +21,7 @@ test("zelavis package exports runtime APIs and adapter subpaths", async () => {
   assert.equal(typeof runtime.Zelavis, "function");
   assert.equal(typeof runtime.createAdapter, "function");
   assert.equal(typeof runtime.createPlugin, "function");
+  assert.equal(typeof runtime.createPluginRegistry, "function");
   assert.equal(typeof runtime.createPlatform, "function");
   assert.equal(typeof runtime.createDatabase, "function");
   assert.equal(typeof runtime.createFileReference, "function");

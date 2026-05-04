@@ -8,7 +8,11 @@ import {
   StatusBadge,
 } from "#/components/DashboardPage";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
-import { marketplacePackageItems, workspacePluginNavItems } from "#/lib/dashboard-data";
+import {
+  dashboardPluginRegistryEntries,
+  marketplacePackageItems,
+  workspacePluginNavItems,
+} from "#/lib/dashboard-data";
 
 const marketplaceRows = [
   {
@@ -87,6 +91,11 @@ function Marketplace() {
             detail="Plugins describe their dashboard entry declaratively through a menu object instead of hardcoding against sidebar internals."
             meta={<StatusBadge state="ready" />}
           />
+          <DataRow
+            label="Nested plugin panels"
+            detail="Plugin menu metadata can grow into nested panel trees without changing the first-slide contract."
+            meta={<StatusBadge state="ready" />}
+          />
         </CardContent>
       </Card>
 
@@ -101,6 +110,14 @@ function Marketplace() {
               label={item.name}
               detail={item.url ? "Current dashboard route available." : "Catalog placeholder."}
               meta={<StatusBadge state={item.url ? "ready" : "planned"} />}
+            />
+          ))}
+          {dashboardPluginRegistryEntries.map((plugin) => (
+            <DataRow
+              key={`${plugin.id}-registry`}
+              label={`${plugin.name} registry entry`}
+              detail={`${plugin.status} · ${plugin.source ?? "unspecified"} · Workspace > ${plugin.menu.title}`}
+              meta={<StatusBadge state={plugin.status === "installed" ? "ready" : "planned"} />}
             />
           ))}
           {marketplaceRows.map((item) => (
