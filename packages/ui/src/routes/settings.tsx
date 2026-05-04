@@ -195,7 +195,7 @@ function Settings() {
         <CardContent className="p-0">
           <DataRow
             label="Mounted services"
-            detail="Inspect core and custom services registered in this runtime."
+            detail="Inspect core runtime services and plugin-provided runtime services registered in this runtime."
             meta={
               <Link
                 to="/services"

@@ -35,6 +35,7 @@ import {
   embeddedDashboardShell,
   type EmbeddedDashboardAsset,
 } from "./generated/dashboard-assets.js";
+export * from "./plugin.js";
 
 export * from "@zelavis/database";
 export {

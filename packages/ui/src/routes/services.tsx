@@ -22,7 +22,7 @@ function Services() {
       <PageHeader
         eyebrow="Services"
         title="Runtime services"
-        description="Core services and official packages share the same service contract."
+        description="Internal runtime services stay mountable through one shared contract, including plugin-provided runtime capabilities."
       />
 
       <Card>
@@ -37,7 +37,7 @@ function Services() {
             <DataRow
               key={service.name}
               label={service.name}
-              detail={`${service.core ? 'core' : 'custom'} · ${service.apiPath}`}
+              detail={`${service.core ? 'core runtime' : 'plugin/custom runtime'} · ${service.apiPath}`}
               meta={<StatusBadge state="ready" />}
             />
           ))}

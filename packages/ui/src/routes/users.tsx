@@ -32,8 +32,8 @@ function UsersRoute() {
       <section className="grid gap-4 md:grid-cols-3">
         <StatCard
           label="Accounts"
-          value="service-backed"
-          detail="managed through AccountService in the auth core"
+          value="auth-backed"
+          detail="managed through the auth core account model"
           icon={Users}
         />
         <StatCard

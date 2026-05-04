@@ -38,9 +38,12 @@ Use scoped packages when building lower-level primitives, adapters, plugins, or 
 
 ```ts
 import { createDatabase } from "@zelavis/database";
+import { createPlugin } from "zelavis";
 import { defineServerService } from "@zelavis/server";
 import { authService } from "@zelavis/auth";
 ```
+
+For installable product capabilities, prefer plugin language in developer-facing APIs. Zelavis now also exports a small `createPlugin(...)` helper for declarative plugin metadata such as dashboard menu ownership.
 
 ## Usage
 
