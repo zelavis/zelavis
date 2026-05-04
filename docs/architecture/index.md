@@ -8,4 +8,5 @@ Architecture docs should describe real current behavior and stable design constr
 
 ## Pages
 
+- [Plugin and Service Model](./plugin-service-model.md)
 - [Website Core Service](./website-core-service.md)

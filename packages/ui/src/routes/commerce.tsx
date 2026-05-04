@@ -13,8 +13,8 @@ function Commerce() {
         description="Products, orders, coupons, payments, and provider plugins."
       />
       <EmptyPanel
-        title="Commerce package not installed"
-        description="Zelavis Ecommerce remains an official installable service."
+        title="Commerce plugin not installed"
+        description="Zelavis Ecommerce remains an official installable plugin."
       />
     </section>
   )

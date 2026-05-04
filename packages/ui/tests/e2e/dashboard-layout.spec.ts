@@ -212,6 +212,33 @@ test('content is a top-level item on the first sidebar slide', async ({
   await expect(page.getByRole('heading', { name: 'Content Studio' })).toBeVisible()
 })
 
+test('marketplace is a top-level item on the first sidebar slide', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await gotoDashboard(page, '/marketplace')
+
+  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const rootSlide = sidebar.locator('.swiper-slide-active').first()
+
+  await expect(rootSlide.getByRole('link', { name: 'Marketplace', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Marketplace' })).toBeVisible()
+})
+
+test('workspace contains plugin-owned entries like ecommerce', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await gotoDashboard(page, '/commerce')
+
+  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  await expect(sidebar.locator('.swiper-slide-active')).toContainText('Workspace')
+  await expect(sidebar.getByRole('link', { name: 'Ecommerce', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Commerce' })).toBeVisible()
+})
+
 test('sidebar category rows drill down into sliding panels', async ({
   page,
 }, testInfo) => {

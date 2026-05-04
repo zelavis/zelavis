@@ -7,7 +7,6 @@ import type { Swiper as SwiperInstance } from "swiper";
 import { Swiper, SwiperSlide } from "swiper/react";
 import "swiper/css";
 
-import { NavProjects } from "#/components/nav-projects";
 import { useDirection } from "#/components/ui/direction";
 import {
   SidebarGroup,
@@ -18,7 +17,6 @@ import {
 } from "#/components/ui/sidebar";
 import type {
   DashboardNavItem,
-  DashboardPackageItem,
 } from "#/lib/dashboard-data";
 
 type NavChildItem = {
@@ -122,10 +120,8 @@ function parseSidebarSearch(value: unknown) {
 
 export function NavMain({
   items,
-  communityProjects = [],
 }: {
   items: readonly DashboardNavItem[];
-  communityProjects?: readonly DashboardPackageItem[];
 }) {
   const navigate = useNavigate({ from: "/" });
   const location = useRouterState({ select: (state) => state.location });
@@ -374,10 +370,6 @@ export function NavMain({
                   })}
                 </SidebarMenu>
               </div>
-
-              {panelIndex === 0 && communityProjects.length > 0 ? (
-                <NavProjects projects={communityProjects} nested />
-              ) : null}
             </div>
           </SwiperSlide>
         ))}

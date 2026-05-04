@@ -53,6 +53,19 @@ export type DashboardPackageItem = {
   pageLabel?: string;
 };
 
+export type DashboardPluginMenuItem = {
+  title: string;
+  url: DashboardRoutePath;
+  icon: LucideIcon;
+  pageLabel?: string;
+};
+
+export type DashboardWorkspacePluginItem = {
+  id: string;
+  name: string;
+  menu: DashboardPluginMenuItem;
+};
+
 export type DashboardSecondaryItem = {
   title: string;
   url: string;
@@ -84,6 +97,19 @@ export const sidebarTeams: readonly DashboardTeamItem[] = [
   },
 ] as const;
 
+export const workspacePluginNavItems: readonly DashboardWorkspacePluginItem[] = [
+  {
+    id: "ecommerce",
+    name: "Zelavis Ecommerce",
+    menu: {
+      title: "Ecommerce",
+      url: "/commerce",
+      icon: Store,
+      pageLabel: "Commerce",
+    },
+  },
+] as const;
+
 export const platformNavItems: readonly DashboardNavItem[] = [
   {
     title: "Overview",
@@ -104,6 +130,11 @@ export const platformNavItems: readonly DashboardNavItem[] = [
     title: "Storage",
     url: "/storage",
     icon: Files,
+  },
+  {
+    title: "Marketplace",
+    url: "/marketplace",
+    icon: Boxes,
   },
   {
     title: "Core",
@@ -142,6 +173,7 @@ export const platformNavItems: readonly DashboardNavItem[] = [
           },
         ],
       },
+      ...workspacePluginNavItems.map((plugin) => plugin.menu),
     ],
   },
   {
@@ -168,76 +200,19 @@ export const platformNavItems: readonly DashboardNavItem[] = [
   },
 ] as const;
 
-export const packageNavItems: readonly DashboardPackageItem[] = [
+export const marketplacePackageItems: readonly DashboardPackageItem[] = [
   {
     name: "Marketplace",
     url: "/marketplace",
     icon: Boxes,
+    pageLabel: "Marketplace",
   },
   {
-    name: "Zelavis Ecommerce",
-    url: "/commerce",
-    icon: Store,
-    pageLabel: "Commerce",
-  },
-  {
-    name: "Placeholder 01",
+    name: "Official plugins",
     icon: Package,
   },
   {
-    name: "Placeholder 02",
-    icon: Package,
-  },
-  {
-    name: "Placeholder 03",
-    icon: Package,
-  },
-  {
-    name: "Placeholder 04",
-    icon: Package,
-  },
-  {
-    name: "Placeholder 05",
-    icon: Package,
-  },
-  {
-    name: "Placeholder 06",
-    icon: Package,
-  },
-  {
-    name: "Placeholder 07",
-    icon: Package,
-  },
-  {
-    name: "Placeholder 08",
-    icon: Package,
-  },
-  {
-    name: "Placeholder 09",
-    icon: Package,
-  },
-  {
-    name: "Placeholder 10",
-    icon: Package,
-  },
-  {
-    name: "Placeholder 11",
-    icon: Package,
-  },
-  {
-    name: "Placeholder 12",
-    icon: Package,
-  },
-  {
-    name: "Placeholder 13",
-    icon: Package,
-  },
-  {
-    name: "Placeholder 14",
-    icon: Package,
-  },
-  {
-    name: "Placeholder 15",
+    name: "Community plugins",
     icon: Package,
   },
 ] as const;
@@ -276,7 +251,7 @@ function flattenPlatformItems(
 
 export const dashboardNavItems = [
   ...flattenPlatformItems(platformNavItems),
-  ...packageNavItems
+  ...marketplacePackageItems
     .filter(
       (item): item is DashboardPackageItem & { url: DashboardRoutePath } =>
         Boolean(item.url),

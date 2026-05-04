@@ -13,7 +13,6 @@ import {
   SidebarHeader,
 } from "#/components/ui/sidebar";
 import {
-  packageNavItems,
   platformNavItems,
   secondaryNavItems,
   sidebarTeams,
@@ -34,7 +33,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <TeamSwitcher teams={sidebarTeams} />
       </SidebarHeader>
       <SidebarContent className="overflow-hidden">
-        <NavMain items={platformNavItems} communityProjects={packageNavItems} />
+        <NavMain items={platformNavItems} />
         <NavSecondary
           title="Help"
           items={secondaryNavItems}
