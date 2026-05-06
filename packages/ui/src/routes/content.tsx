@@ -1,15 +1,14 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
-  ArrowDown,
-  ArrowUp,
   Braces,
+  Copy,
   FileText,
+  GripVertical,
   LayoutList,
+  Pencil,
   Pin,
   PinOff,
   Plus,
-  Copy,
-  Pencil,
   Save,
   X,
 } from "lucide-react";
@@ -29,10 +28,12 @@ import {
   getContentTypeLabel,
   slugifyContentTypeLabel,
 } from "#/lib/content-studio";
+import { createStarterContentTypeSchema } from "#/lib/content-schema";
 import {
   createDatabaseCollection,
   createDatabaseSchema,
   getDashboardSettings,
+  getResolvedDashboardPreferences,
   getRuntimeConfig,
   listDatabaseCollections,
   listDatabaseSchemaCollections,
@@ -59,6 +60,8 @@ function Content() {
   const [duplicatingType, setDuplicatingType] = useState<string>();
   const [duplicateLabel, setDuplicateLabel] = useState("");
   const [duplicateName, setDuplicateName] = useState("");
+  const [draggingPinnedType, setDraggingPinnedType] = useState<string>();
+  const [dragOverPinnedType, setDragOverPinnedType] = useState<string>();
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
@@ -72,7 +75,7 @@ function Content() {
     [config],
   );
 
-  const contentPreferences = settings.data?.preferences?.content;
+  const contentPreferences = getResolvedDashboardPreferences(settings.data).content;
   const contentTypeRows = useMemo(
     () =>
       buildContentTypeRows(
@@ -131,17 +134,7 @@ function Content() {
         collection: collection.name,
         version: 1,
         activate: true,
-        document: {
-          type: "object",
-          additionalProperties: false,
-          required: ["title", "slug"],
-          properties: {
-            title: { type: "string", minLength: 1 },
-            slug: { type: "string", minLength: 1 },
-            excerpt: { type: "string" },
-            status: { type: "string" },
-          },
-        },
+        document: createStarterContentTypeSchema(),
         metadata: {
           createdBy: "content-studio",
         },
@@ -193,33 +186,39 @@ function Content() {
     }
   }
 
-  async function handleMovePinned(name: string, direction: -1 | 1) {
-    if (!config || saving) {
+  async function handleDropPinnedType(targetName: string) {
+    if (!config || saving || !draggingPinnedType || draggingPinnedType === targetName) {
+      setDraggingPinnedType(undefined);
+      setDragOverPinnedType(undefined);
       return;
     }
 
-    const index = pinnedTypes.indexOf(name);
-    const nextIndex = index + direction;
-    if (index === -1 || nextIndex < 0 || nextIndex >= pinnedTypes.length) {
+    const sourceIndex = pinnedTypes.indexOf(draggingPinnedType);
+    const targetIndex = pinnedTypes.indexOf(targetName);
+    if (sourceIndex === -1 || targetIndex === -1) {
+      setDraggingPinnedType(undefined);
+      setDragOverPinnedType(undefined);
       return;
     }
 
     const nextPinnedTypes = [...pinnedTypes];
-    [nextPinnedTypes[index], nextPinnedTypes[nextIndex]] = [
-      nextPinnedTypes[nextIndex],
-      nextPinnedTypes[index],
-    ];
+    const [moved] = nextPinnedTypes.splice(sourceIndex, 1);
+    nextPinnedTypes.splice(targetIndex, 0, moved);
 
     setSaving(true);
     setMessage(undefined);
     setError(undefined);
     try {
       await persistContentPreferences({ pinnedTypes: nextPinnedTypes });
-      setMessage(`Updated pinned order for ${getContentTypeLabel(name, contentPreferences)}.`);
+      setMessage(
+        `Updated pinned order for ${getContentTypeLabel(draggingPinnedType, contentPreferences)}.`,
+      );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setSaving(false);
+      setDraggingPinnedType(undefined);
+      setDragOverPinnedType(undefined);
     }
   }
 
@@ -401,6 +400,9 @@ function Content() {
       <Card>
         <CardHeader>
           <CardTitle>Content types</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Drag pinned rows to reorder the editor-facing priority list.
+          </p>
         </CardHeader>
         <CardContent className="p-0">
           {contentTypeRows.length === 0 ? (
@@ -430,7 +432,43 @@ function Content() {
 
                     return (
                       <Fragment key={row.name}>
-                        <tr key={row.name} className="border-b last:border-b-0">
+                        <tr
+                          key={row.name}
+                          className={cn(
+                            "border-b last:border-b-0",
+                            row.pinned && dragOverPinnedType === row.name && "bg-muted/10",
+                            row.pinned && draggingPinnedType === row.name && "opacity-60",
+                          )}
+                          draggable={row.pinned}
+                          onDragStart={(event) => {
+                            if (!row.pinned) {
+                              return;
+                            }
+                            event.dataTransfer.effectAllowed = "move";
+                            event.dataTransfer.setData("text/plain", row.name);
+                            setDraggingPinnedType(row.name);
+                          }}
+                          onDragOver={(event) => {
+                            if (!row.pinned || !draggingPinnedType) {
+                              return;
+                            }
+                            event.preventDefault();
+                            setDragOverPinnedType(row.name);
+                          }}
+                          onDragLeave={() => {
+                            if (dragOverPinnedType === row.name) {
+                              setDragOverPinnedType(undefined);
+                            }
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            void handleDropPinnedType(row.name);
+                          }}
+                          onDragEnd={() => {
+                            setDraggingPinnedType(undefined);
+                            setDragOverPinnedType(undefined);
+                          }}
+                        >
                           <td className="px-4 py-3">
                             <div className="grid gap-1">
                               <span className="font-medium text-foreground">{row.label}</span>
@@ -451,6 +489,7 @@ function Content() {
                           <td className="px-4 py-3">
                             {row.pinned ? (
                               <div className="flex items-center gap-2 text-muted-foreground">
+                                <GripVertical className="size-4" />
                                 <Pin className="size-4" />
                                 <span>#{pinnedIndex + 1}</span>
                               </div>
@@ -504,28 +543,6 @@ function Content() {
                                   <Pin className="size-4" />
                                 )}
                               </Button>
-                              {row.pinned ? (
-                                <>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    disabled={pinnedIndex <= 0}
-                                    onClick={() => void handleMovePinned(row.name, -1)}
-                                  >
-                                    <ArrowUp className="size-4" />
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    disabled={pinnedIndex === -1 || pinnedIndex >= pinnedTypes.length - 1}
-                                    onClick={() => void handleMovePinned(row.name, 1)}
-                                  >
-                                    <ArrowDown className="size-4" />
-                                  </Button>
-                                </>
-                              ) : null}
                             </div>
                           </td>
                         </tr>

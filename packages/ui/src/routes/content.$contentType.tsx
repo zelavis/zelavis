@@ -6,6 +6,7 @@ import { Card, CardContent } from "#/components/ui/card";
 import { buildContentTypeRows } from "#/lib/content-studio";
 import {
   getDashboardSettings,
+  getResolvedDashboardPreferences,
   getRuntimeConfig,
   listDatabaseCollections,
   listDatabaseSchemaCollections,
@@ -36,7 +37,7 @@ function ContentTypeLayout() {
   const contentType = buildContentTypeRows(
     collections.data ?? [],
     schemaCollections.data ?? [],
-    settings.data?.preferences?.content,
+    getResolvedDashboardPreferences(settings.data).content,
   ).find((row) => row.name === contentTypeName);
 
   return (

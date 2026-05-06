@@ -3,6 +3,11 @@ import { Link, createFileRoute, useParams } from "@tanstack/react-router";
 import { ResourceNotice } from "#/components/DashboardPage";
 import { buttonVariants } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
+import {
+  getContentSchemaFields,
+  getContentSchemaUi,
+  isRichTextSchemaField,
+} from "#/lib/content-schema";
 import { getRuntimeConfig, listDatabaseSchemaVersions } from "#/lib/runtime-api";
 import { useRuntimeResource } from "#/lib/use-runtime-resource";
 import { cn } from "#/lib/utils";
@@ -20,15 +25,7 @@ function ContentTypeFieldsRoute() {
     [config, contentType],
   );
   const activeSchema = schemas.data?.find((schema) => schema.active) ?? schemas.data?.at(-1);
-  const properties =
-    activeSchema?.document &&
-    typeof activeSchema.document === "object" &&
-    activeSchema.document !== null &&
-    "properties" in activeSchema.document &&
-    typeof activeSchema.document.properties === "object" &&
-    activeSchema.document.properties !== null
-      ? Object.entries(activeSchema.document.properties as Record<string, Record<string, unknown>>)
-      : [];
+  const fields = getContentSchemaFields(activeSchema?.document);
 
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
@@ -44,7 +41,7 @@ function ContentTypeFieldsRoute() {
           </Link>
         </CardHeader>
         <CardContent className="p-0">
-          {properties.length === 0 ? (
+          {fields.length === 0 ? (
             <div className="p-4">
               <ResourceNotice
                 title="No schema properties yet"
@@ -58,19 +55,32 @@ function ContentTypeFieldsRoute() {
                   <tr>
                     <th className="px-4 py-3 font-medium">Field</th>
                     <th className="px-4 py-3 font-medium">Type</th>
+                    <th className="px-4 py-3 font-medium">Editor</th>
                     <th className="px-4 py-3 font-medium">Notes</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {properties.map(([name, definition]) => (
-                    <tr key={name} className="border-b last:border-b-0">
-                      <td className="px-4 py-3 font-medium text-foreground">{name}</td>
-                      <td className="px-4 py-3 text-muted-foreground">
-                        {typeof definition.type === "string" ? definition.type : "custom"}
+                  {fields.map((field) => (
+                    <tr key={field.name} className="border-b last:border-b-0">
+                      <td className="px-4 py-3">
+                        <div className="grid gap-1">
+                          <span className="font-medium text-foreground">{field.label}</span>
+                          <span className="text-xs text-muted-foreground">{field.name}</span>
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">
-                        {typeof definition.description === "string"
-                          ? definition.description
+                        {typeof field.definition.type === "string" ? field.definition.type : "custom"}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">
+                        {isRichTextSchemaField(field.name, field.definition)
+                          ? "Lexical rich text"
+                          : getContentSchemaUi(field.definition)?.control === "textarea"
+                            ? "Textarea"
+                            : "Input"}
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">
+                        {field.description
+                          ? field.description
                           : "Managed through the active content schema."}
                       </td>
                     </tr>

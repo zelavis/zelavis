@@ -7,42 +7,60 @@ export type DatabaseSchemaPrimitiveType =
   | "boolean"
   | "null";
 
-export interface DatabaseStringSchemaDefinition {
+export type DatabaseSchemaUiControl = "text" | "textarea" | "rich-text";
+export type DatabaseSchemaUiEditor = "lexical";
+
+export interface DatabaseSchemaUiDefinition {
+  control?: DatabaseSchemaUiControl;
+  editor?: DatabaseSchemaUiEditor;
+  placeholder?: string;
+  rows?: number;
+  helpText?: string;
+}
+
+export interface DatabaseSchemaBaseDefinition {
+  label?: string;
+  description?: string;
+  ui?: DatabaseSchemaUiDefinition;
+}
+
+export interface DatabaseStringSchemaDefinition extends DatabaseSchemaBaseDefinition {
   type: "string";
   minLength?: number;
   maxLength?: number;
   enum?: readonly string[];
+  format?: string;
 }
 
-export interface DatabaseNumberSchemaDefinition {
+export interface DatabaseNumberSchemaDefinition extends DatabaseSchemaBaseDefinition {
   type: "number";
   integer?: boolean;
   minimum?: number;
   maximum?: number;
 }
 
-export interface DatabaseBooleanSchemaDefinition {
+export interface DatabaseBooleanSchemaDefinition extends DatabaseSchemaBaseDefinition {
   type: "boolean";
 }
 
-export interface DatabaseNullSchemaDefinition {
+export interface DatabaseNullSchemaDefinition extends DatabaseSchemaBaseDefinition {
   type: "null";
 }
 
-export interface DatabaseFileSchemaDefinition {
+export interface DatabaseFileSchemaDefinition extends DatabaseSchemaBaseDefinition {
   type: "file";
   mimeTypes?: readonly string[];
   maxSize?: number;
 }
 
-export interface DatabaseArraySchemaDefinition {
+export interface DatabaseArraySchemaDefinition extends DatabaseSchemaBaseDefinition {
   type: "array";
   items: DatabaseSchemaDefinition;
   minItems?: number;
   maxItems?: number;
 }
 
-export interface DatabaseObjectSchemaDefinition {
+export interface DatabaseObjectSchemaDefinition extends DatabaseSchemaBaseDefinition {
   type: "object";
   properties?: Record<string, DatabaseSchemaDefinition>;
   required?: readonly string[];

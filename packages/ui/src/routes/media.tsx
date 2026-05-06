@@ -24,6 +24,7 @@ import { Input } from "#/components/ui/input";
 import {
   deleteStorageFile,
   getDashboardSettings,
+  getResolvedDashboardPreferences,
   getRuntimeConfig,
   getStorageFileMetadata,
   getStorageFileUrl,
@@ -157,7 +158,8 @@ function MediaRoute() {
   );
   const selectedAsset = visibleFiles.find((file) => file.path === selectedPath);
   const selectedAssets = orderedFiles.filter((file) => selectedPaths.includes(file.path));
-  const persistedOrderedPaths = settings.data?.preferences?.media?.orderedPaths ?? [];
+  const persistedOrderedPaths =
+    getResolvedDashboardPreferences(settings.data).media?.orderedPaths ?? [];
 
   useEffect(() => {
     setOrderedPaths((current) => {

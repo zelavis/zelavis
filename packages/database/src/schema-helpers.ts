@@ -1,10 +1,19 @@
 import type {
   DatabaseFileSchemaDefinition,
+  DatabaseStringSchemaDefinition,
 } from "./contracts/schemas.js";
 
 export interface CreateDatabaseFileSchemaOptions {
   mimeTypes?: readonly string[];
   maxSize?: number;
+}
+
+export interface CreateDatabaseRichTextSchemaOptions {
+  minLength?: number;
+  maxLength?: number;
+  label?: string;
+  description?: string;
+  placeholder?: string;
 }
 
 export function fileSchema(
@@ -79,4 +88,22 @@ export function documentFileSchema(
     ],
     maxSize: options.maxSize,
   });
+}
+
+export function richTextHtmlSchema(
+  options: CreateDatabaseRichTextSchemaOptions = {},
+): DatabaseStringSchemaDefinition {
+  return {
+    type: "string",
+    format: "html",
+    ...(options.minLength !== undefined ? { minLength: options.minLength } : {}),
+    ...(options.maxLength !== undefined ? { maxLength: options.maxLength } : {}),
+    ...(options.label ? { label: options.label } : {}),
+    ...(options.description ? { description: options.description } : {}),
+    ui: {
+      control: "rich-text",
+      editor: "lexical",
+      ...(options.placeholder ? { placeholder: options.placeholder } : {}),
+    },
+  };
 }

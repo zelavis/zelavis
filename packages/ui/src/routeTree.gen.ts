@@ -33,6 +33,7 @@ import { Route as BuilderPagesRouteImport } from './routes/builder.pages'
 import { Route as ContentContentTypeIndexRouteImport } from './routes/content.$contentType.index'
 import { Route as ContentContentTypeSettingsRouteImport } from './routes/content.$contentType.settings'
 import { Route as ContentContentTypeFieldsRouteImport } from './routes/content.$contentType.fields'
+import { Route as ContentContentTypeEntryIdRouteImport } from './routes/content.$contentType.$entryId'
 
 const UsersRoute = UsersRouteImport.update({
   id: '/users',
@@ -156,6 +157,12 @@ const ContentContentTypeFieldsRoute =
     path: '/fields',
     getParentRoute: () => ContentContentTypeRoute,
   } as any)
+const ContentContentTypeEntryIdRoute =
+  ContentContentTypeEntryIdRouteImport.update({
+    id: '/$entryId',
+    path: '/$entryId',
+    getParentRoute: () => ContentContentTypeRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -179,6 +186,7 @@ export interface FileRoutesByFullPath {
   '/commerce/products': typeof CommerceProductsRoute
   '/content/$contentType': typeof ContentContentTypeRouteWithChildren
   '/settings/appearance': typeof SettingsAppearanceRoute
+  '/content/$contentType/$entryId': typeof ContentContentTypeEntryIdRoute
   '/content/$contentType/fields': typeof ContentContentTypeFieldsRoute
   '/content/$contentType/settings': typeof ContentContentTypeSettingsRoute
   '/content/$contentType/': typeof ContentContentTypeIndexRoute
@@ -204,6 +212,7 @@ export interface FileRoutesByTo {
   '/commerce/orders': typeof CommerceOrdersRoute
   '/commerce/products': typeof CommerceProductsRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
+  '/content/$contentType/$entryId': typeof ContentContentTypeEntryIdRoute
   '/content/$contentType/fields': typeof ContentContentTypeFieldsRoute
   '/content/$contentType/settings': typeof ContentContentTypeSettingsRoute
   '/content/$contentType': typeof ContentContentTypeIndexRoute
@@ -231,6 +240,7 @@ export interface FileRoutesById {
   '/commerce/products': typeof CommerceProductsRoute
   '/content/$contentType': typeof ContentContentTypeRouteWithChildren
   '/settings/appearance': typeof SettingsAppearanceRoute
+  '/content/$contentType/$entryId': typeof ContentContentTypeEntryIdRoute
   '/content/$contentType/fields': typeof ContentContentTypeFieldsRoute
   '/content/$contentType/settings': typeof ContentContentTypeSettingsRoute
   '/content/$contentType/': typeof ContentContentTypeIndexRoute
@@ -259,6 +269,7 @@ export interface FileRouteTypes {
     | '/commerce/products'
     | '/content/$contentType'
     | '/settings/appearance'
+    | '/content/$contentType/$entryId'
     | '/content/$contentType/fields'
     | '/content/$contentType/settings'
     | '/content/$contentType/'
@@ -284,6 +295,7 @@ export interface FileRouteTypes {
     | '/commerce/orders'
     | '/commerce/products'
     | '/settings/appearance'
+    | '/content/$contentType/$entryId'
     | '/content/$contentType/fields'
     | '/content/$contentType/settings'
     | '/content/$contentType'
@@ -310,6 +322,7 @@ export interface FileRouteTypes {
     | '/commerce/products'
     | '/content/$contentType'
     | '/settings/appearance'
+    | '/content/$contentType/$entryId'
     | '/content/$contentType/fields'
     | '/content/$contentType/settings'
     | '/content/$contentType/'
@@ -502,6 +515,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ContentContentTypeFieldsRouteImport
       parentRoute: typeof ContentContentTypeRoute
     }
+    '/content/$contentType/$entryId': {
+      id: '/content/$contentType/$entryId'
+      path: '/$entryId'
+      fullPath: '/content/$contentType/$entryId'
+      preLoaderRoute: typeof ContentContentTypeEntryIdRouteImport
+      parentRoute: typeof ContentContentTypeRoute
+    }
   }
 }
 
@@ -535,12 +555,14 @@ const CommerceRouteWithChildren = CommerceRoute._addFileChildren(
 )
 
 interface ContentContentTypeRouteChildren {
+  ContentContentTypeEntryIdRoute: typeof ContentContentTypeEntryIdRoute
   ContentContentTypeFieldsRoute: typeof ContentContentTypeFieldsRoute
   ContentContentTypeSettingsRoute: typeof ContentContentTypeSettingsRoute
   ContentContentTypeIndexRoute: typeof ContentContentTypeIndexRoute
 }
 
 const ContentContentTypeRouteChildren: ContentContentTypeRouteChildren = {
+  ContentContentTypeEntryIdRoute: ContentContentTypeEntryIdRoute,
   ContentContentTypeFieldsRoute: ContentContentTypeFieldsRoute,
   ContentContentTypeSettingsRoute: ContentContentTypeSettingsRoute,
   ContentContentTypeIndexRoute: ContentContentTypeIndexRoute,

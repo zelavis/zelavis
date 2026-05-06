@@ -6,6 +6,7 @@ import {
   documentFileSchema,
   fileSchema,
   imageFileSchema,
+  richTextHtmlSchema,
   videoFileSchema,
 } from "../dist/index.js";
 
@@ -398,6 +399,15 @@ test("database exports schema helpers for file reference fields", async () => {
       "application/json",
       "application/zip",
     ],
+  });
+  assert.deepEqual(richTextHtmlSchema({ label: "Content" }), {
+    type: "string",
+    format: "html",
+    label: "Content",
+    ui: {
+      control: "rich-text",
+      editor: "lexical",
+    },
   });
 });
 

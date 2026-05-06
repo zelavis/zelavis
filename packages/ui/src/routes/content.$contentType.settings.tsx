@@ -10,6 +10,7 @@ import {
   createDatabaseCollection,
   createDatabaseSchema,
   getDashboardSettings,
+  getResolvedDashboardPreferences,
   getRuntimeConfig,
   listDatabaseCollections,
   listDatabaseSchemaCollections,
@@ -43,7 +44,7 @@ function ContentTypeSettingsRoute() {
     [collections.data, contentType],
   );
   const [labelDraft, setLabelDraft] = useState(
-    settings.data?.preferences?.content?.labels?.[contentType] ?? contentType,
+    getResolvedDashboardPreferences(settings.data).content?.labels?.[contentType] ?? contentType,
   );
   const [duplicateLabel, setDuplicateLabel] = useState(`${contentType} Copy`);
   const [duplicateName, setDuplicateName] = useState(`${contentType}-copy`);
@@ -53,12 +54,13 @@ function ContentTypeSettingsRoute() {
 
   const activeSchemaVersion =
     schemaCollections.data?.find((entry) => entry.collection === contentType)?.activeVersion ?? null;
-  const pinnedTypes = settings.data?.preferences?.content?.pinnedTypes ?? [];
+  const contentPreferences = getResolvedDashboardPreferences(settings.data).content;
+  const pinnedTypes = contentPreferences?.pinnedTypes ?? [];
   const isPinned = pinnedTypes.includes(contentType);
 
   useEffect(() => {
-    setLabelDraft(settings.data?.preferences?.content?.labels?.[contentType] ?? contentType);
-  }, [contentType, settings.data?.preferences?.content?.labels]);
+    setLabelDraft(contentPreferences?.labels?.[contentType] ?? contentType);
+  }, [contentPreferences?.labels, contentType]);
 
   async function handleSaveLabel() {
     if (!config || !labelDraft.trim() || saving) {

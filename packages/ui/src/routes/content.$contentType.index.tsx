@@ -1,11 +1,12 @@
-import { createFileRoute, useParams } from "@tanstack/react-router";
-import { Copy, Pencil, Plus, Save, X } from "lucide-react";
+import { Link, createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
+import { Copy, Pencil, Plus, Save, SquarePen, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { ResourceNotice } from "#/components/DashboardPage";
-import { Button } from "#/components/ui/button";
+import { Button, buttonVariants } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
+import { createStarterContentEntry } from "#/lib/content-schema";
 import {
   getRuntimeConfig,
   insertDatabaseDocument,
@@ -14,6 +15,7 @@ import {
   type DatabaseDocument,
 } from "#/lib/runtime-api";
 import { useRuntimeResource } from "#/lib/use-runtime-resource";
+import { cn } from "#/lib/utils";
 
 export const Route = createFileRoute("/content/$contentType/")({
   component: ContentTypeEntriesRoute,
@@ -21,6 +23,7 @@ export const Route = createFileRoute("/content/$contentType/")({
 
 function ContentTypeEntriesRoute() {
   const { contentType } = useParams({ from: "/content/$contentType/" });
+  const navigate = useNavigate();
   const runtime = useRuntimeResource(getRuntimeConfig);
   const config = runtime.data;
   const [message, setMessage] = useState<string>();
@@ -51,15 +54,17 @@ function ContentTypeEntriesRoute() {
     try {
       const created = await insertDatabaseDocument(config, {
         collection: contentType,
-        data: {
-          title: "Untitled draft",
-          slug: `draft-${Date.now()}`,
-          excerpt: "",
-          status: "draft",
-        },
+        data: createStarterContentEntry(),
       });
       await entries.reload();
       setMessage(`Created draft entry ${created.id}.`);
+      await navigate({
+        to: "/content/$contentType/$entryId",
+        params: {
+          contentType,
+          entryId: created.id,
+        },
+      });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -181,9 +186,13 @@ function ContentTypeEntriesRoute() {
                           />
                         ) : (
                           <div className="grid gap-1">
-                            <span className="font-medium text-foreground">
+                            <Link
+                              to="/content/$contentType/$entryId"
+                              params={{ contentType, entryId: entry.id }}
+                              className="font-medium text-foreground underline-offset-4 hover:underline"
+                            >
                               {typeof data.title === "string" ? data.title : entry.id}
-                            </span>
+                            </Link>
                             <span className="text-xs text-muted-foreground">{entry.id}</span>
                           </div>
                         )}
@@ -234,6 +243,13 @@ function ContentTypeEntriesRoute() {
                             </>
                           ) : (
                             <>
+                              <Link
+                                to="/content/$contentType/$entryId"
+                                params={{ contentType, entryId: entry.id }}
+                                className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+                              >
+                                <SquarePen className="size-4" />
+                              </Link>
                               <Button
                                 type="button"
                                 size="sm"

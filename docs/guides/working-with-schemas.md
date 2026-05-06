@@ -43,6 +43,7 @@ import {
   documentFileSchema,
   fileSchema,
   imageFileSchema,
+  richTextHtmlSchema,
 } from "@zelavis/database";
 
 await database.schemas.register({
@@ -55,6 +56,10 @@ await database.schemas.register({
     required: ["name", "heroImage"],
     properties: {
       name: { type: "string", minLength: 1 },
+      _content: richTextHtmlSchema({
+        label: "Content",
+        placeholder: "Start writing...",
+      }),
       heroImage: imageFileSchema({ maxSize: 5_000_000 }),
       specSheet: documentFileSchema({ maxSize: 10_000_000 }),
       attachment: fileSchema({
@@ -72,6 +77,9 @@ Current helpers:
 - `audioFileSchema(...)`
 - `videoFileSchema(...)`
 - `documentFileSchema(...)`
+- `richTextHtmlSchema(...)`
+
+`richTextHtmlSchema(...)` is especially useful for content-heavy collections. In the Zelavis dashboard, string fields marked as rich-text HTML are edited with Lexical, while the stored document value remains a plain HTML string.
 
 ## What the file validator checks
 

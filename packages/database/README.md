@@ -40,6 +40,7 @@ import {
   databaseService,
   documentFileSchema,
   imageFileSchema,
+  richTextHtmlSchema,
 } from "@zelavis/database";
 import { zelavisServer } from "@zelavis/server";
 
@@ -77,6 +78,10 @@ await database.schemas.register({
     properties: {
       name: { type: "string", minLength: 1 },
       price: { type: "number", minimum: 0 },
+      _content: richTextHtmlSchema({
+        label: "Content",
+        placeholder: "Start writing...",
+      }),
       heroImage: imageFileSchema({ maxSize: 5_000_000 }),
       specSheet: documentFileSchema({ maxSize: 10_000_000 }),
     },
@@ -89,6 +94,8 @@ await zelavisServer({
 ```
 
 Each `DatabaseDocument` now also carries a `schemaVersion`, which is stored on the event stream and projection rows. If a collection has an active schema, inserts and updates are validated before events are appended.
+
+For editor-facing content models, the package also exports `richTextHtmlSchema(...)`. Zelavis currently uses that schema hint to render Lexical in the dashboard while persisting the field as a plain HTML string in the document itself.
 
 The `database.projections` API currently exposes the built-in `documents` projection and allows registering additional projection definitions as part of the public contract. Custom projection execution and persistent rebuild orchestration are still future work.
 

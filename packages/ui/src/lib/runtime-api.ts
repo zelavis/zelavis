@@ -261,6 +261,15 @@ const fallbackConfig: RuntimeConfig = {
 
 export const EMPTY_DASHBOARD_PREFERENCES: DashboardPreferences = {};
 
+export function getResolvedDashboardPreferences(
+  settings:
+    | Pick<DashboardSettings, "preferences">
+    | { preferences?: DashboardPreferences }
+    | undefined,
+): DashboardPreferences {
+  return settings?.preferences ?? EMPTY_DASHBOARD_PREFERENCES;
+}
+
 function inferRootPath(): string {
   if (typeof window === "undefined") {
     return "";
@@ -787,6 +796,19 @@ export async function queryDatabaseDocuments(
   );
 
   return result.documents;
+}
+
+export async function getDatabaseDocument(
+  config: RuntimeConfig,
+  input: {
+    collection: string;
+    id: string;
+    tenantId?: string;
+  },
+) {
+  return readJson<DatabaseDocument>(
+    `${config.api.basePath}/database/documents/${encodeURIComponent(input.collection)}/${encodeURIComponent(input.id)}${input.tenantId ? `?tenantId=${encodeURIComponent(input.tenantId)}` : ""}`,
+  );
 }
 
 export async function insertDatabaseDocument(

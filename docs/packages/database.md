@@ -33,6 +33,7 @@ Current non-goals for the first slice include:
 - projections are explicit public contract metadata
 - time-series builds on that explicit model
 - collection schemas can now validate Zelavis-style file references with `type: "file"` or helpers such as `imageFileSchema(...)`, `audioFileSchema(...)`, `videoFileSchema(...)`, and `documentFileSchema(...)`
+- editor-facing content models can mark rich-text HTML fields explicitly with `richTextHtmlSchema(...)`, which the dashboard maps to Lexical while the stored value remains plain HTML
 
 ## Related docs
 
