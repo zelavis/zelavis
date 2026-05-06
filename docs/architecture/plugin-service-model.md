@@ -65,11 +65,20 @@ createPlugin({
   name: "zelavis-ecommerce",
   menu: {
     title: "Ecommerce",
-    url: "/commerce",
+    path: "/commerce",
     items: [
       {
         title: "Orders",
-        url: "/commerce/orders",
+        path: "/commerce/orders",
+      },
+      {
+        title: "More",
+        items: [
+          {
+            title: "Customers",
+            path: "/commerce/customers",
+          },
+        ],
       },
     ],
   },
@@ -100,6 +109,60 @@ createPluginRegistry([
 ```
 
 That gives Marketplace, installed plugin navigation, and future runtime activation a shared model instead of separate ad hoc lists.
+
+## ESM loading direction
+
+Zelavis should keep plugin loading 100% inside standard JavaScript and ESM:
+
+- plugin modules should be loaded through dynamic `import()`
+- plugin modules may export a plugin definition directly, as `plugin`, or as `default`
+- loading and registry updates should stay runtime-neutral and avoid Node-only APIs
+
+That means a future runtime can do things like:
+
+```ts
+const plugin = await loadPlugin("zelavis-ecommerce");
+const registry = await loadPluginRegistry([
+  { specifier: "zelavis-ecommerce", status: "installed", source: "official" },
+]);
+```
+
+Important boundary:
+
+- **load/install** can be modeled with ESM imports and registry state
+- **remove/uninstall** should mean removing the plugin from Zelavis registry/config state
+- JavaScript does not offer a standard way to unload an already-imported ESM module from memory, so Zelavis should not pretend otherwise
+
+## Install State And Activation
+
+The runtime model should also stay explicit:
+
+- plugin **catalog metadata** lives in plugin registry entries
+- plugin **install state** lives in a registry store
+- plugin **activation order** is an explicit `order` number
+- plugin **setup** runs in registry order and can register additional services through the setup context
+
+That means install state and activation are related, but not the same thing:
+
+- a plugin can exist in the catalog as `available`
+- a plugin becomes active only when its registry state is `installed`
+- setup should run only for installed plugins
+
+The current runtime direction now reflects that split with:
+
+- `createPluginRegistry(...)`
+- `applyPluginRegistryState(...)`
+- `activatePluginRegistry(...)`
+- runtime plugin registry stores for memory, database, key/value, and file storage
+- plugin setup context carrying only standard data such as root path, API paths, platform summary, and collected services
+
+That platform summary should stay intentionally small:
+
+- `presets`: platform preset names such as `node` or `cloudflare`
+- `resources`: booleans for resource availability such as key/value or file storage
+- `metadata`: plain serializable platform hints
+
+That gives plugins useful context without leaking host-specific APIs into the plugin contract.
 
 ## Current design preference
 
