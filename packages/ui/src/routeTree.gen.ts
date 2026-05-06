@@ -13,6 +13,7 @@ import { Route as UsersRouteImport } from './routes/users'
 import { Route as StorageRouteImport } from './routes/storage'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ServicesRouteImport } from './routes/services'
+import { Route as MediaRouteImport } from './routes/media'
 import { Route as MarketplaceRouteImport } from './routes/marketplace'
 import { Route as DatabaseRouteImport } from './routes/database'
 import { Route as ContentRouteImport } from './routes/content'
@@ -23,6 +24,10 @@ import { Route as AgentsRouteImport } from './routes/agents'
 import { Route as SplatRouteImport } from './routes/$'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
+import { Route as CommerceProductsRouteImport } from './routes/commerce.products'
+import { Route as CommerceOrdersRouteImport } from './routes/commerce.orders'
+import { Route as CommerceCustomersRouteImport } from './routes/commerce.customers'
+import { Route as CommerceCouponsRouteImport } from './routes/commerce.coupons'
 import { Route as BuilderPagesRouteImport } from './routes/builder.pages'
 
 const UsersRoute = UsersRouteImport.update({
@@ -43,6 +48,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const ServicesRoute = ServicesRouteImport.update({
   id: '/services',
   path: '/services',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MediaRoute = MediaRouteImport.update({
+  id: '/media',
+  path: '/media',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MarketplaceRoute = MarketplaceRouteImport.update({
@@ -95,6 +105,26 @@ const SettingsAppearanceRoute = SettingsAppearanceRouteImport.update({
   path: '/appearance',
   getParentRoute: () => SettingsRoute,
 } as any)
+const CommerceProductsRoute = CommerceProductsRouteImport.update({
+  id: '/products',
+  path: '/products',
+  getParentRoute: () => CommerceRoute,
+} as any)
+const CommerceOrdersRoute = CommerceOrdersRouteImport.update({
+  id: '/orders',
+  path: '/orders',
+  getParentRoute: () => CommerceRoute,
+} as any)
+const CommerceCustomersRoute = CommerceCustomersRouteImport.update({
+  id: '/customers',
+  path: '/customers',
+  getParentRoute: () => CommerceRoute,
+} as any)
+const CommerceCouponsRoute = CommerceCouponsRouteImport.update({
+  id: '/coupons',
+  path: '/coupons',
+  getParentRoute: () => CommerceRoute,
+} as any)
 const BuilderPagesRoute = BuilderPagesRouteImport.update({
   id: '/pages',
   path: '/pages',
@@ -107,15 +137,20 @@ export interface FileRoutesByFullPath {
   '/agents': typeof AgentsRoute
   '/auth': typeof AuthRoute
   '/builder': typeof BuilderRouteWithChildren
-  '/commerce': typeof CommerceRoute
+  '/commerce': typeof CommerceRouteWithChildren
   '/content': typeof ContentRoute
   '/database': typeof DatabaseRoute
   '/marketplace': typeof MarketplaceRoute
+  '/media': typeof MediaRoute
   '/services': typeof ServicesRoute
   '/settings': typeof SettingsRouteWithChildren
   '/storage': typeof StorageRoute
   '/users': typeof UsersRoute
   '/builder/pages': typeof BuilderPagesRoute
+  '/commerce/coupons': typeof CommerceCouponsRoute
+  '/commerce/customers': typeof CommerceCustomersRoute
+  '/commerce/orders': typeof CommerceOrdersRoute
+  '/commerce/products': typeof CommerceProductsRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
 }
 export interface FileRoutesByTo {
@@ -124,15 +159,20 @@ export interface FileRoutesByTo {
   '/agents': typeof AgentsRoute
   '/auth': typeof AuthRoute
   '/builder': typeof BuilderRouteWithChildren
-  '/commerce': typeof CommerceRoute
+  '/commerce': typeof CommerceRouteWithChildren
   '/content': typeof ContentRoute
   '/database': typeof DatabaseRoute
   '/marketplace': typeof MarketplaceRoute
+  '/media': typeof MediaRoute
   '/services': typeof ServicesRoute
   '/settings': typeof SettingsRouteWithChildren
   '/storage': typeof StorageRoute
   '/users': typeof UsersRoute
   '/builder/pages': typeof BuilderPagesRoute
+  '/commerce/coupons': typeof CommerceCouponsRoute
+  '/commerce/customers': typeof CommerceCustomersRoute
+  '/commerce/orders': typeof CommerceOrdersRoute
+  '/commerce/products': typeof CommerceProductsRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
 }
 export interface FileRoutesById {
@@ -142,15 +182,20 @@ export interface FileRoutesById {
   '/agents': typeof AgentsRoute
   '/auth': typeof AuthRoute
   '/builder': typeof BuilderRouteWithChildren
-  '/commerce': typeof CommerceRoute
+  '/commerce': typeof CommerceRouteWithChildren
   '/content': typeof ContentRoute
   '/database': typeof DatabaseRoute
   '/marketplace': typeof MarketplaceRoute
+  '/media': typeof MediaRoute
   '/services': typeof ServicesRoute
   '/settings': typeof SettingsRouteWithChildren
   '/storage': typeof StorageRoute
   '/users': typeof UsersRoute
   '/builder/pages': typeof BuilderPagesRoute
+  '/commerce/coupons': typeof CommerceCouponsRoute
+  '/commerce/customers': typeof CommerceCustomersRoute
+  '/commerce/orders': typeof CommerceOrdersRoute
+  '/commerce/products': typeof CommerceProductsRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
 }
 export interface FileRouteTypes {
@@ -165,11 +210,16 @@ export interface FileRouteTypes {
     | '/content'
     | '/database'
     | '/marketplace'
+    | '/media'
     | '/services'
     | '/settings'
     | '/storage'
     | '/users'
     | '/builder/pages'
+    | '/commerce/coupons'
+    | '/commerce/customers'
+    | '/commerce/orders'
+    | '/commerce/products'
     | '/settings/appearance'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -182,11 +232,16 @@ export interface FileRouteTypes {
     | '/content'
     | '/database'
     | '/marketplace'
+    | '/media'
     | '/services'
     | '/settings'
     | '/storage'
     | '/users'
     | '/builder/pages'
+    | '/commerce/coupons'
+    | '/commerce/customers'
+    | '/commerce/orders'
+    | '/commerce/products'
     | '/settings/appearance'
   id:
     | '__root__'
@@ -199,11 +254,16 @@ export interface FileRouteTypes {
     | '/content'
     | '/database'
     | '/marketplace'
+    | '/media'
     | '/services'
     | '/settings'
     | '/storage'
     | '/users'
     | '/builder/pages'
+    | '/commerce/coupons'
+    | '/commerce/customers'
+    | '/commerce/orders'
+    | '/commerce/products'
     | '/settings/appearance'
   fileRoutesById: FileRoutesById
 }
@@ -213,10 +273,11 @@ export interface RootRouteChildren {
   AgentsRoute: typeof AgentsRoute
   AuthRoute: typeof AuthRoute
   BuilderRoute: typeof BuilderRouteWithChildren
-  CommerceRoute: typeof CommerceRoute
+  CommerceRoute: typeof CommerceRouteWithChildren
   ContentRoute: typeof ContentRoute
   DatabaseRoute: typeof DatabaseRoute
   MarketplaceRoute: typeof MarketplaceRoute
+  MediaRoute: typeof MediaRoute
   ServicesRoute: typeof ServicesRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   StorageRoute: typeof StorageRoute
@@ -251,6 +312,13 @@ declare module '@tanstack/react-router' {
       path: '/services'
       fullPath: '/services'
       preLoaderRoute: typeof ServicesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/media': {
+      id: '/media'
+      path: '/media'
+      fullPath: '/media'
+      preLoaderRoute: typeof MediaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/marketplace': {
@@ -323,6 +391,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsAppearanceRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/commerce/products': {
+      id: '/commerce/products'
+      path: '/products'
+      fullPath: '/commerce/products'
+      preLoaderRoute: typeof CommerceProductsRouteImport
+      parentRoute: typeof CommerceRoute
+    }
+    '/commerce/orders': {
+      id: '/commerce/orders'
+      path: '/orders'
+      fullPath: '/commerce/orders'
+      preLoaderRoute: typeof CommerceOrdersRouteImport
+      parentRoute: typeof CommerceRoute
+    }
+    '/commerce/customers': {
+      id: '/commerce/customers'
+      path: '/customers'
+      fullPath: '/commerce/customers'
+      preLoaderRoute: typeof CommerceCustomersRouteImport
+      parentRoute: typeof CommerceRoute
+    }
+    '/commerce/coupons': {
+      id: '/commerce/coupons'
+      path: '/coupons'
+      fullPath: '/commerce/coupons'
+      preLoaderRoute: typeof CommerceCouponsRouteImport
+      parentRoute: typeof CommerceRoute
+    }
     '/builder/pages': {
       id: '/builder/pages'
       path: '/pages'
@@ -344,6 +440,24 @@ const BuilderRouteChildren: BuilderRouteChildren = {
 const BuilderRouteWithChildren =
   BuilderRoute._addFileChildren(BuilderRouteChildren)
 
+interface CommerceRouteChildren {
+  CommerceCouponsRoute: typeof CommerceCouponsRoute
+  CommerceCustomersRoute: typeof CommerceCustomersRoute
+  CommerceOrdersRoute: typeof CommerceOrdersRoute
+  CommerceProductsRoute: typeof CommerceProductsRoute
+}
+
+const CommerceRouteChildren: CommerceRouteChildren = {
+  CommerceCouponsRoute: CommerceCouponsRoute,
+  CommerceCustomersRoute: CommerceCustomersRoute,
+  CommerceOrdersRoute: CommerceOrdersRoute,
+  CommerceProductsRoute: CommerceProductsRoute,
+}
+
+const CommerceRouteWithChildren = CommerceRoute._addFileChildren(
+  CommerceRouteChildren,
+)
+
 interface SettingsRouteChildren {
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
 }
@@ -362,10 +476,11 @@ const rootRouteChildren: RootRouteChildren = {
   AgentsRoute: AgentsRoute,
   AuthRoute: AuthRoute,
   BuilderRoute: BuilderRouteWithChildren,
-  CommerceRoute: CommerceRoute,
+  CommerceRoute: CommerceRouteWithChildren,
   ContentRoute: ContentRoute,
   DatabaseRoute: DatabaseRoute,
   MarketplaceRoute: MarketplaceRoute,
+  MediaRoute: MediaRoute,
   ServicesRoute: ServicesRoute,
   SettingsRoute: SettingsRouteWithChildren,
   StorageRoute: StorageRoute,

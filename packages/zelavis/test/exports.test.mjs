@@ -16,15 +16,22 @@ test("zelavis package exports runtime APIs and adapter subpaths", async () => {
   const cloudflarePlatform = await import("zelavis/platforms/cloudflare");
   const netlifyPlatform = await import("zelavis/platforms/netlify");
   const vercelPlatform = await import("zelavis/platforms/vercel");
+  const s3Storage = await import("zelavis/storage/s3");
 
   assert.equal(typeof runtime.zelavis, "function");
   assert.equal(typeof runtime.Zelavis, "function");
   assert.equal(typeof runtime.createAdapter, "function");
   assert.equal(typeof runtime.createPlugin, "function");
   assert.equal(typeof runtime.createPluginRegistry, "function");
+  assert.equal(typeof runtime.loadPlugin, "function");
+  assert.equal(typeof runtime.loadPluginRegistry, "function");
+  assert.equal(typeof runtime.resolvePluginModule, "function");
+  assert.equal(typeof runtime.removePluginFromRegistry, "function");
   assert.equal(typeof runtime.createPlatform, "function");
   assert.equal(typeof runtime.createDatabase, "function");
   assert.equal(typeof runtime.createFileReference, "function");
+  assert.equal(typeof runtime.createS3CompatibleFileStorage, "function");
+  assert.equal(typeof runtime.resolveS3CacheControlPreset, "function");
   assert.equal(typeof runtime.defineServerService, "function");
   assert.equal("zelavisServer" in runtime, false);
   assert.equal(typeof elysiaAdapter.elysiaAdapter, "function");
@@ -46,6 +53,8 @@ test("zelavis package exports runtime APIs and adapter subpaths", async () => {
   assert.equal(typeof cloudflarePlatform.cloudflarePlatform, "function");
   assert.equal(typeof netlifyPlatform.netlifyPlatform, "function");
   assert.equal(typeof vercelPlatform.vercelPlatform, "function");
+  assert.equal(typeof s3Storage.createS3CompatibleFileStorage, "function");
+  assert.equal(typeof s3Storage.resolveS3CacheControlPreset, "function");
 });
 
 test("Zelavis class can bind a node adapter and accept a node platform preset", async () => {
@@ -59,6 +68,69 @@ test("Zelavis class can bind a node adapter and accept a node platform preset", 
   });
 
   assert.equal(typeof zelavis.adapter.nodeServer, "function");
+});
+
+test("cloudflare platform requires the standard D1 binding when env is provided", async () => {
+  const { cloudflarePlatform } = await import("zelavis/platforms/cloudflare");
+
+  await assert.rejects(
+    () => cloudflarePlatform({ env: {} }).resolve({}),
+    /Missing or invalid Cloudflare D1 binding `ZELAVIS_DB`/,
+  );
+});
+
+test("cloudflare platform infers KV and file resources from standard env bindings", async () => {
+  const { cloudflarePlatform } = await import("zelavis/platforms/cloudflare");
+  const database = {
+    prepare() {
+      return {
+        bind() {
+          return this;
+        },
+        all: async () => ({ results: [], success: true }),
+        run: async () => ({ success: true }),
+      };
+    },
+    async batch() {
+      return [];
+    },
+  };
+
+  const kv = {
+    async get() {
+      return null;
+    },
+    async put() {},
+    async delete() {},
+    async list() {
+      return { keys: [], list_complete: true };
+    },
+  };
+  const bucket = {
+    async get() {
+      return null;
+    },
+    async put() {},
+    async delete() {},
+    async list() {
+      return { objects: [], truncated: false };
+    },
+  };
+
+  const resolved = await cloudflarePlatform({
+    env: {
+      ZELAVIS_DB: database,
+      ZELAVIS_KV: kv,
+      ZELAVIS_FILES: bucket,
+    },
+  }).resolve({
+    coreServices: {
+      database: false,
+    },
+  });
+
+  assert.equal(typeof resolved.resources.kv.get, "function");
+  assert.equal(typeof resolved.resources.files.put, "function");
 });
 
 test("Zelavis merges platform resources and metadata for adapters", async () => {
@@ -206,6 +278,35 @@ test("Zelavis platform resources back dashboard settings, website pages, and sto
 
   const zelavis = new Zelavis({
     platform,
+    plugins: {
+      store: {
+        read() {
+          return [
+            {
+              name: "zelavis-ecommerce",
+              status: "installed",
+              order: 0,
+            },
+          ];
+        },
+        write(entries) {
+          return entries;
+        },
+      },
+    },
+  });
+
+  const commerceHealthResponse = await zelavis.fetch(
+    new Request("http://localhost/zelavis/api/v1/commerce/health"),
+  );
+  const commerceHealth = await commerceHealthResponse.json();
+
+  assert.equal(commerceHealthResponse.status, 200);
+  assert.equal(commerceHealth.plugin, "zelavis-ecommerce");
+  assert.deepEqual(commerceHealth.platform.presets, ["storage-only"]);
+  assert.deepEqual(commerceHealth.platform.resources, {
+    keyValueStore: true,
+    fileStorage: true,
   });
 
   const updateResponse = await zelavis.fetch(

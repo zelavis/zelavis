@@ -60,6 +60,10 @@
     "./platforms/vercel": {
       "types": "./dist/platforms/vercel.d.ts",
       "import": "./dist/platforms/vercel.js"
+    },
+    "./storage/s3": {
+      "types": "./dist/storage/s3.d.ts",
+      "import": "./dist/storage/s3.js"
     }
   },
   "scripts": {

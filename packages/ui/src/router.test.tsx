@@ -23,6 +23,7 @@ test('router rewrites runtime root paths for mounted dashboard routes', () => {
       assetRoot: '/zelavis/assets',
     },
     services: [],
+    plugins: [],
   }
   window.history.replaceState(null, '', '/zelavis/database')
 

@@ -13,6 +13,8 @@ import {
 export interface VercelBlobMetadata {
   pathname: string;
   contentType?: string;
+  cacheControl?: string;
+  contentDisposition?: string;
   size?: number;
   uploadedAt?: Date;
   downloadUrl?: string;
@@ -35,6 +37,8 @@ export interface VercelBlobStore {
       addRandomSuffix?: boolean;
       allowOverwrite?: boolean;
       contentType?: string;
+      cacheControl?: string;
+      contentDisposition?: string;
     },
   ): Promise<VercelBlobMetadata>;
   del(pathname: string): Promise<void>;
@@ -89,6 +93,8 @@ export function createVercelBlobFileStorage(
           size: metadata.size,
           updatedAt: metadata.uploadedAt,
           contentType: metadata.contentType,
+          cacheControl: metadata.cacheControl,
+          contentDisposition: metadata.contentDisposition,
         };
       } catch {
         return undefined;
@@ -100,6 +106,8 @@ export function createVercelBlobFileStorage(
         addRandomSuffix,
         allowOverwrite: true,
         contentType: input.contentType,
+        cacheControl: input.cacheControl,
+        contentDisposition: input.contentDisposition,
       });
 
       return {
@@ -107,6 +115,9 @@ export function createVercelBlobFileStorage(
         size: metadata.size,
         updatedAt: metadata.uploadedAt,
         contentType: metadata.contentType,
+        cacheControl: metadata.cacheControl ?? input.cacheControl,
+        contentDisposition:
+          metadata.contentDisposition ?? input.contentDisposition,
         metadata: input.metadata,
       };
     },
@@ -131,6 +142,8 @@ export function createVercelBlobFileStorage(
             size: blob.size,
             updatedAt: blob.uploadedAt,
             contentType: blob.contentType,
+            cacheControl: blob.cacheControl,
+            contentDisposition: blob.contentDisposition,
           })),
         );
 

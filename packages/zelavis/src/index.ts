@@ -35,7 +35,20 @@ import {
   embeddedDashboardShell,
   type EmbeddedDashboardAsset,
 } from "./generated/dashboard-assets.js";
+import {
+  activatePluginRegistry,
+  applyPluginRegistryState,
+  createPlugin,
+  createPluginRegistry,
+  serializePluginRegistryState,
+  type ZelavisPluginRegistryEntry,
+  type ZelavisPluginRegistryStateEntry,
+  type ZelavisPluginRegistryStore,
+  type ZelavisPluginSetupPlatformContext,
+  type ZelavisPluginSetupContext,
+} from "./plugin.js";
 export * from "./plugin.js";
+export * from "./storage/s3.js";
 
 export * from "@zelavis/database";
 export {
@@ -168,6 +181,71 @@ function parseStoredDashboardSettingsUpdate(
   return update;
 }
 
+function parseStoredPluginRegistryStateEntry(
+  value: unknown,
+): ZelavisPluginRegistryStateEntry {
+  const input = readBodyObject(value);
+  const name = typeof input.name === "string" ? input.name.trim() : "";
+
+  if (!name) {
+    throw new ZelavisValidationError(
+      "Stored plugin registry entries must include a plugin name.",
+    );
+  }
+
+  const entry: ZelavisPluginRegistryStateEntry = { name };
+
+  if ("status" in input) {
+    if (input.status !== "installed" && input.status !== "available") {
+      throw new ZelavisValidationError(
+        'Stored plugin registry status must be "installed" or "available".',
+      );
+    }
+
+    entry.status = input.status;
+  }
+
+  if ("source" in input && input.source !== undefined) {
+    if (input.source !== "official" && input.source !== "community") {
+      throw new ZelavisValidationError(
+        'Stored plugin registry source must be "official" or "community" when provided.',
+      );
+    }
+
+    entry.source = input.source;
+  }
+
+  if ("order" in input && input.order !== undefined) {
+    if (typeof input.order !== "number" || !Number.isInteger(input.order) || input.order < 0) {
+      throw new ZelavisValidationError(
+        "Stored plugin registry order must be a non-negative integer.",
+      );
+    }
+
+    entry.order = input.order;
+  }
+
+  return entry;
+}
+
+function parseStoredPluginRegistryState(
+  value: unknown,
+): ZelavisPluginRegistryStateEntry[] {
+  const input = readBodyObject(value);
+
+  if (!("plugins" in input)) {
+    return [];
+  }
+
+  if (!Array.isArray(input.plugins)) {
+    throw new ZelavisValidationError(
+      "Stored plugin registry state must be an array.",
+    );
+  }
+
+  return input.plugins.map((entry) => parseStoredPluginRegistryStateEntry(entry));
+}
+
 export type ZelavisDatabaseCoreServiceOptions =
   | boolean
   | CreateDatabaseOptions
@@ -220,10 +298,21 @@ export interface ZelavisDashboardSettingsStore {
   ) => Promise<ZelavisDashboardSettingsUpdate> | ZelavisDashboardSettingsUpdate;
 }
 
+export interface ZelavisPluginRegistryOptions {
+  entries?: readonly ZelavisPluginRegistryEntry<ZelavisPluginSetupContext>[];
+  store?: ZelavisPluginRegistryStore;
+}
+
+export interface ZelavisPluginContextOptions {
+  platform?: ZelavisPluginSetupPlatformContext;
+}
+
 export interface ZelavisServerOptions {
   rootPath?: string;
   api?: ZelavisApiOptions;
   services?: readonly ZelavisAnyServiceInput[];
+  plugins?: ZelavisPluginRegistryOptions;
+  pluginContext?: ZelavisPluginContextOptions;
   coreServices?: ZelavisCoreServicesOptions;
   servicePrefixes?: Record<string, string>;
   pathOverrides?: Record<string, string>;
@@ -245,6 +334,8 @@ export interface ZelavisFileStoragePutInput {
   path: string;
   body: string | Uint8Array | ArrayBuffer | Blob | ReadableStream<Uint8Array>;
   contentType?: string;
+  cacheControl?: string;
+  contentDisposition?: string;
   metadata?: Record<string, string>;
 }
 
@@ -253,6 +344,8 @@ export interface ZelavisFileStorageEntry {
   size?: number;
   updatedAt?: Date;
   contentType?: string;
+  cacheControl?: string;
+  contentDisposition?: string;
   metadata?: Record<string, string>;
   checksum?: string;
 }
@@ -269,6 +362,8 @@ export interface ZelavisFileReference {
   size?: number;
   updatedAt?: string;
   contentType?: string;
+  cacheControl?: string;
+  contentDisposition?: string;
   metadata?: Record<string, string>;
   checksum?: string;
 }
@@ -353,9 +448,11 @@ export function createPlatform<TPlatform extends ZelavisPlatformPreset>(
 const DEFAULT_ZELAVIS_STATE_COLLECTION = "zelavis_system";
 const DEFAULT_DASHBOARD_SETTINGS_DOCUMENT_ID = "dashboard.settings";
 const DEFAULT_WEBSITE_PAGES_DOCUMENT_ID = "website.pages";
+const DEFAULT_PLUGIN_REGISTRY_DOCUMENT_ID = "plugins.registry";
 const DEFAULT_PLATFORM_DASHBOARD_SETTINGS_KEY =
   "zelavis/dashboard-settings.json";
 const DEFAULT_PLATFORM_WEBSITE_PAGES_PATH = "zelavis/website-pages.json";
+const DEFAULT_PLATFORM_PLUGIN_REGISTRY_KEY = "zelavis/plugins.json";
 const STORAGE_CHECKSUM_METADATA_KEY = "checksum-sha256";
 
 function readOptionalProcessEnv(name: string): string | undefined {
@@ -532,6 +629,20 @@ function createMemoryWebsitePagesStore(
     write(nextPages) {
       pages = [...nextPages];
       return pages;
+    },
+  };
+}
+
+function createMemoryPluginRegistryStore(
+  initialEntries: readonly ZelavisPluginRegistryStateEntry[],
+): ZelavisPluginRegistryStore {
+  let entries = [...initialEntries];
+
+  return {
+    read: () => entries,
+    write(nextEntries) {
+      entries = [...nextEntries];
+      return entries;
     },
   };
 }
@@ -874,6 +985,43 @@ export function createDatabaseWebsitePagesStore(
   };
 }
 
+export function createDatabasePluginRegistryStore(
+  database: DatabaseApi,
+  options: ZelavisDatabaseDocumentStoreOptions = {},
+): ZelavisPluginRegistryStore {
+  const documentOptions = {
+    collection: options.collection ?? DEFAULT_ZELAVIS_STATE_COLLECTION,
+    documentId: options.documentId ?? DEFAULT_PLUGIN_REGISTRY_DOCUMENT_ID,
+  };
+
+  return {
+    async read() {
+      return readValidatedDatabaseDocumentData(
+        database,
+        documentOptions,
+        parseStoredPluginRegistryState,
+      );
+    },
+    async write(entries) {
+      const normalizedEntries = entries.map((entry) =>
+        parseStoredPluginRegistryStateEntry(entry),
+      );
+
+      await writeDatabaseDocument(database, documentOptions, {
+        kind: "plugin-registry",
+        plugins: normalizedEntries.map((entry) => ({
+          name: entry.name,
+          ...(entry.status ? { status: entry.status } : {}),
+          ...(entry.source ? { source: entry.source } : {}),
+          ...(entry.order !== undefined ? { order: entry.order } : {}),
+        })),
+      });
+
+      return normalizedEntries;
+    },
+  };
+}
+
 export function createKeyValueDashboardSettingsStore(
   store: ZelavisKeyValueStore,
   key = DEFAULT_PLATFORM_DASHBOARD_SETTINGS_KEY,
@@ -970,6 +1118,81 @@ export function createFileStorageWebsitePagesStore(
   };
 }
 
+export function createKeyValuePluginRegistryStore(
+  store: ZelavisKeyValueStore,
+  key = DEFAULT_PLATFORM_PLUGIN_REGISTRY_KEY,
+): ZelavisPluginRegistryStore {
+  return {
+    async read() {
+      const value = await store.get(key);
+      if (!value) {
+        return [];
+      }
+
+      return parseStoredPluginRegistryState(
+        readBodyObject(JSON.parse(value) as unknown),
+      );
+    },
+    async write(entries) {
+      const normalizedEntries = entries.map((entry) =>
+        parseStoredPluginRegistryStateEntry(entry),
+      );
+      await store.set(
+        key,
+        JSON.stringify(
+          {
+            kind: "plugin-registry",
+            plugins: normalizedEntries,
+          },
+          null,
+          2,
+        ),
+      );
+      return normalizedEntries;
+    },
+  };
+}
+
+export function createFileStoragePluginRegistryStore(
+  storage: ZelavisFileStorage,
+  path = DEFAULT_PLATFORM_PLUGIN_REGISTRY_KEY,
+): ZelavisPluginRegistryStore {
+  return {
+    async read() {
+      const file = await storage.get(path);
+      if (!file) {
+        return [];
+      }
+
+      return parseStoredPluginRegistryState(
+        readBodyObject(
+          JSON.parse(new TextDecoder().decode(file.body)) as unknown,
+        ),
+      );
+    },
+    async write(entries) {
+      const normalizedEntries = entries.map((entry) =>
+        parseStoredPluginRegistryStateEntry(entry),
+      );
+
+      await storage.put({
+        path,
+        body: JSON.stringify(
+          {
+            kind: "plugin-registry",
+            plugins: normalizedEntries,
+          },
+          null,
+          2,
+        ),
+        contentType: "application/json; charset=utf-8",
+      });
+
+      return normalizedEntries;
+    },
+  };
+}
+
 function resolveDashboardSettingsStore(
   option: ZelavisDashboardCoreServiceInput | undefined,
   fallbackStore?: ZelavisDashboardSettingsStore,
@@ -989,6 +1212,23 @@ function resolveDashboardSettingsStore(
     fallbackStore ??
     createMemoryDashboardSettingsStore()
   );
+}
+
+function resolvePluginRegistryStore(
+  option: ZelavisPluginRegistryOptions | undefined,
+  fallbackStore: ZelavisPluginRegistryStore,
+): ZelavisPluginRegistryStore {
+  return option?.store ?? fallbackStore;
+}
+
+async function readInitialPluginRegistryState(
+  store: ZelavisPluginRegistryStore,
+): Promise<readonly ZelavisPluginRegistryStateEntry[] | undefined> {
+  try {
+    return await store.read();
+  } catch {
+    return undefined;
+  }
 }
 
 function readDashboardSettingsUpdate(
@@ -1013,6 +1253,54 @@ function readDashboardSettingsUpdate(
       normalizedMessage.charAt(0).toUpperCase() + normalizedMessage.slice(1),
     );
   }
+}
+
+function readDashboardPluginRegistryUpdate(
+  body: unknown,
+): Omit<ZelavisPluginRegistryStateEntry, "name"> {
+  const input = readBodyObject(body);
+  const update: Omit<ZelavisPluginRegistryStateEntry, "name"> = {};
+
+  if ("status" in input) {
+    if (input.status !== "installed" && input.status !== "available") {
+      throw new ZelavisValidationError(
+        'Plugin status must be "installed" or "available".',
+      );
+    }
+
+    update.status = input.status;
+  }
+
+  if ("source" in input) {
+    if (
+      input.source !== undefined &&
+      input.source !== "official" &&
+      input.source !== "community"
+    ) {
+      throw new ZelavisValidationError(
+        'Plugin source must be "official" or "community" when provided.',
+      );
+    }
+
+    update.source = input.source;
+  }
+
+  if ("order" in input) {
+    if (
+      input.order !== undefined &&
+      (typeof input.order !== "number" ||
+        !Number.isInteger(input.order) ||
+        input.order < 0)
+    ) {
+      throw new ZelavisValidationError(
+        "Plugin order must be a non-negative integer when provided.",
+      );
+    }
+
+    update.order = input.order as number | undefined;
+  }
+
+  return update;
 }
 
 function readRequestUrl(request: unknown): string | undefined {
@@ -1178,6 +1466,8 @@ export function createFileReference(
     size: entry.size,
     updatedAt: toIsoDate(entry.updatedAt),
     contentType: entry.contentType,
+    cacheControl: entry.cacheControl,
+    contentDisposition: entry.contentDisposition,
     metadata: entry.metadata,
     checksum: readStorageChecksum(entry),
   };
@@ -1189,14 +1479,122 @@ const defaultDashboardClientRoutes = [
   "/builder",
   "/builder/pages",
   "/commerce",
+  "/commerce/customers",
+  "/commerce/coupons",
+  "/commerce/orders",
+  "/commerce/products",
   "/content",
   "/database",
+  "/media",
   "/marketplace",
   "/services",
   "/settings",
+  "/settings/appearance",
   "/storage",
   "/users",
 ] as const;
+
+const defaultDashboardPluginRegistry = createPluginRegistry([
+  {
+    plugin: createPlugin<ZelavisPluginSetupContext>({
+      name: "zelavis-ecommerce",
+      version: "0.1.0",
+      menu: {
+        title: "Ecommerce",
+        path: "/commerce",
+        pageLabel: "Commerce",
+        items: [
+          {
+            title: "Products",
+            path: "/commerce/products",
+          },
+          {
+            title: "Orders",
+            path: "/commerce/orders",
+          },
+          {
+            title: "More",
+            items: [
+              {
+                title: "Customers",
+                path: "/commerce/customers",
+              },
+              {
+                title: "Coupons",
+                path: "/commerce/coupons",
+              },
+            ],
+          },
+        ],
+      },
+      setup(context) {
+        return {
+          services: [
+            defineServerService({
+              name: "commerce",
+              service: {
+                plugin: context.plugin.name,
+              },
+              api: {
+                v1: [
+                  {
+                    id: "commerce.health",
+                    method: "GET",
+                    path: "/health",
+                    handler: () => ({
+                      status: 200,
+                      body: {
+                        plugin: context.plugin.name,
+                        rootPath: context.rootPath,
+                        apiBasePath: context.api.basePath,
+                        platform: {
+                          presets: context.platform.presets,
+                          resources: context.platform.resources,
+                        },
+                      },
+                    }),
+                  },
+                ],
+              },
+            }),
+          ],
+        };
+      },
+    }),
+    status: "available",
+    source: "official",
+    order: 0,
+  },
+]);
+
+function createPluginSetupPlatformContext(
+  platform?:
+    | Partial<ZelavisPlatformContext>
+    | ZelavisPluginSetupPlatformContext,
+): ZelavisPluginSetupPlatformContext {
+  const resources = platform?.resources;
+  const keyValueStore =
+    resources && "keyValueStore" in resources
+      ? resources.keyValueStore
+      : resources && "kv" in resources
+        ? Boolean(resources.kv)
+        : false;
+  const fileStorage =
+    resources && "fileStorage" in resources
+      ? resources.fileStorage
+      : resources && "files" in resources
+        ? Boolean(resources.files)
+        : false;
+
+  return {
+    presets: Object.freeze([...(platform?.presets ?? [])]),
+    resources: {
+      keyValueStore,
+      fileStorage,
+    },
+    metadata: Object.freeze({ ...(platform?.metadata ?? {}) }),
+  };
+}
 
 interface DashboardAsset {
   path: string;
@@ -1517,6 +1915,10 @@ async function resolveDashboardCoreService(
   context: {
     apiPrefix: string;
     apiVersion: string;
+    pluginRegistry: readonly Readonly<
+      ZelavisPluginRegistryEntry<ZelavisPluginSetupContext>
+    >[];
+    pluginRegistryStore: ZelavisPluginRegistryStore;
     rootPath: string;
     serviceNames: readonly string[];
     settingsStore?: ZelavisDashboardSettingsStore;
@@ -1548,40 +1950,67 @@ async function resolveDashboardCoreService(
         .filter((route) => route !== "/"),
     ),
   ];
-  const config = {
-    name: "zelavis",
-    rootPath,
-    api: {
-      prefix: context.apiPrefix,
-      version: context.apiVersion,
-      basePath: joinPathParts(rootPath, context.apiPrefix, context.apiVersion),
-    },
-    dashboard: {
-      title,
-      clientRoutes,
-      assetRoot: joinPathParts(rootPath, "assets"),
-    },
-    services: context.serviceNames.map((name) => ({
-      name,
-      core:
-        name === "dashboard" ||
-        name === "auth" ||
-        name === "database" ||
-        name === "storage" ||
-        name === "website",
-      apiPath:
-        name === "website"
-          ? "/"
-          : name === "dashboard"
-            ? rootPath
-            : joinPathParts(
-                rootPath,
-                context.apiPrefix,
-                context.apiVersion,
-                name,
-              ),
-    })),
+  const readResolvedPluginRegistry = async () =>
+    applyPluginRegistryState(
+      context.pluginRegistry,
+      await context.pluginRegistryStore.read(),
+    );
+  const createDashboardRuntimeConfig = async () => {
+    const pluginRegistry = await readResolvedPluginRegistry();
+    const serializedPlugins = pluginRegistry.map((entry) => ({
+      name: entry.plugin.name,
+      version: entry.plugin.version,
+      status: entry.status,
+      source: entry.source,
+      order: entry.order,
+      menu: entry.plugin.menu,
+    }));
+
+    return {
+      name: "zelavis",
+      rootPath,
+      api: {
+        prefix: context.apiPrefix,
+        version: context.apiVersion,
+        basePath: joinPathParts(rootPath, context.apiPrefix, context.apiVersion),
+      },
+      dashboard: {
+        title,
+        clientRoutes,
+        assetRoot: joinPathParts(rootPath, "assets"),
+      },
+      services: context.serviceNames.map((name) => ({
+        name,
+        core:
+          name === "dashboard" ||
+          name === "auth" ||
+          name === "database" ||
+          name === "storage" ||
+          name === "website",
+        apiPath:
+          name === "website"
+            ? "/"
+            : name === "dashboard"
+              ? rootPath
+              : joinPathParts(
+                  rootPath,
+                  context.apiPrefix,
+                  context.apiVersion,
+                  name,
+                ),
+      })),
+      plugins: serializedPlugins,
+    };
   };
+  const serializePluginRegistryForDashboard = async () =>
+    (await readResolvedPluginRegistry()).map((entry) => ({
+      name: entry.plugin.name,
+      version: entry.plugin.version,
+      status: entry.status,
+      source: entry.source,
+      order: entry.order,
+      menu: entry.plugin.menu,
+    }));
   const readDashboardSettings = async (): Promise<ZelavisDashboardSettings> => {
     const stored = parseStoredDashboardSettingsUpdate(
       readBodyObject((await settingsStore.read()) ?? {}),
@@ -1615,13 +2044,10 @@ async function resolveDashboardCoreService(
       restartRequired: Boolean(pendingRootPath),
     };
   };
-  const shell = embeddedDashboardShell
-    ? injectDashboardRuntimeConfig(
-        prefixDashboardAssetReferences(embeddedDashboardShell, rootPath),
-        config,
-      )
+  const baseShell = embeddedDashboardShell
+    ? prefixDashboardAssetReferences(embeddedDashboardShell, rootPath)
     : undefined;
-  const shellHandler = ({
+  const shellHandler = async ({
     query,
     request,
   }: {
@@ -1639,7 +2065,7 @@ async function resolveDashboardCoreService(
       );
     }
 
-    if (!shell) {
+    if (!baseShell) {
       return {
         status: 503,
         headers: {
@@ -1656,10 +2082,13 @@ async function resolveDashboardCoreService(
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-cache",
       },
-      body: shell,
+      body: injectDashboardRuntimeConfig(
+        baseShell,
+        await createDashboardRuntimeConfig(),
+      ),
     };
   };
-  const dashboardFallbackHandler = ({
+  const dashboardFallbackHandler = async ({
     params,
     query,
     request,
@@ -1718,7 +2147,7 @@ async function resolveDashboardCoreService(
           id: `dashboard.view${route.replaceAll("/", ".")}`,
           method: "GET" as const,
           path: route,
-          handler: ({
+          handler: async ({
             query,
             request,
           }: {
@@ -1744,10 +2173,86 @@ async function resolveDashboardCoreService(
             context.apiVersion,
             "dashboard/config",
           ),
-          handler: () => ({
+          handler: async () => ({
             status: 200,
-            body: config,
+            body: await createDashboardRuntimeConfig(),
           }),
+        },
+        {
+          id: "dashboard.plugins.read",
+          method: "GET",
+          path: joinPathParts(
+            context.apiPrefix,
+            context.apiVersion,
+            "dashboard/plugins",
+          ),
+          handler: async () => {
+            try {
+              return {
+                status: 200,
+                body: {
+                  plugins: await serializePluginRegistryForDashboard(),
+                },
+              };
+            } catch (error) {
+              return zelavisErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "dashboard.plugins.update",
+          method: "PATCH",
+          path: joinPathParts(
+            context.apiPrefix,
+            context.apiVersion,
+            "dashboard/plugins/:name",
+          ),
+          handler: async ({ body, params }: { body: unknown; params: Record<string, string> }) => {
+            try {
+              const pluginName = params.name?.trim();
+              if (!pluginName) {
+                throw new ZelavisValidationError("Plugin name is required.");
+              }
+
+              const update = readDashboardPluginRegistryUpdate(body);
+              const currentRegistry = await readResolvedPluginRegistry();
+              const nextRegistry = createPluginRegistry(
+                currentRegistry.map((entry) =>
+                  entry.plugin.name === pluginName
+                    ? {
+                        ...entry,
+                        ...(update.status ? { status: update.status } : {}),
+                        ...(update.source !== undefined
+                          ? { source: update.source }
+                          : {}),
+                        ...(update.order !== undefined
+                          ? { order: update.order }
+                          : {}),
+                      }
+                    : entry,
+                ),
+              );
+
+              if (!nextRegistry.some((entry) => entry.plugin.name === pluginName)) {
+                throw new ZelavisValidationError(
+                  `Unknown plugin "${pluginName}".`,
+                );
+              }
+
+              await context.pluginRegistryStore.write(
+                serializePluginRegistryState(nextRegistry),
+              );
+
+              return {
+                status: 200,
+                body: {
+                  plugins: await serializePluginRegistryForDashboard(),
+                },
+              };
+            } catch (error) {
+              return zelavisErrorResponse(error, 400);
+            }
+          },
         },
         {
           id: "dashboard.settings.read",
@@ -2094,14 +2599,16 @@ async function resolveStorageCoreService(
                 return {
                   status: 200,
                   body: {
-                    file: {
-                      path: file.path,
-                      size: file.size,
-                      updatedAt: toIsoDate(file.updatedAt),
-                      contentType: file.contentType,
-                      metadata: file.metadata,
-                      checksum: readStorageChecksum(file),
-                    },
+                  file: {
+                    path: file.path,
+                    size: file.size,
+                    updatedAt: toIsoDate(file.updatedAt),
+                    contentType: file.contentType,
+                    cacheControl: file.cacheControl,
+                    contentDisposition: file.contentDisposition,
+                    metadata: file.metadata,
+                    checksum: readStorageChecksum(file),
+                  },
                     reference: createFileReference(file, {
                       rootPath: context.rootPath,
                       apiPrefix: context.apiPrefix,
@@ -2116,6 +2623,12 @@ async function resolveStorageCoreService(
                 headers: {
                   "content-type":
                     file.contentType ?? "application/octet-stream",
+                  ...(file.cacheControl
+                    ? { "cache-control": file.cacheControl }
+                    : {}),
+                  ...(file.contentDisposition
+                    ? { "content-disposition": file.contentDisposition }
+                    : {}),
                   ...(readStorageChecksum(file)
                     ? {
                         "x-zelavis-checksum-sha256":
@@ -2152,15 +2665,24 @@ async function resolveStorageCoreService(
               );
               const contentType =
                 requestHeaders?.get("content-type") ?? undefined;
+              const cacheControl =
+                requestHeaders?.get("cache-control") ?? undefined;
+              const contentDisposition =
+                requestHeaders?.get("content-disposition") ?? undefined;
               const storedEntry = await storage.put({
                 path,
                 body,
                 contentType,
+                cacheControl,
+                contentDisposition,
                 metadata,
               });
               const entry: ZelavisFileStorageEntry = {
                 ...storedEntry,
                 checksum: readStorageChecksum(storedEntry) ?? checksum,
+                cacheControl: storedEntry.cacheControl ?? cacheControl,
+                contentDisposition:
+                  storedEntry.contentDisposition ?? contentDisposition,
                 metadata:
                   storedEntry.metadata && storedEntry.metadata !== metadata
                     ? {
@@ -2266,6 +2788,9 @@ export async function zelavis(
   const apiPrefix = normalizePath(options.api?.prefix, "/api");
   const apiVersion = normalizePathPart(options.api?.version ?? "v1");
   const services = await Promise.all(options.services ?? []);
+  const basePluginRegistry = createPluginRegistry(
+    options.plugins?.entries ?? defaultDashboardPluginRegistry,
+  );
   const hasAuthService = services.some((service) => service.name === "auth");
   const hasDashboardService = services.some(
     (service) => service.name === "dashboard",
@@ -2294,6 +2819,28 @@ export async function zelavis(
   const resolvedDatabaseApi =
     (providedDatabaseService?.service as DatabaseApi | undefined) ??
     databaseApi;
+  const pluginRegistryStore = resolvePluginRegistryStore(
+    options.plugins,
+    resolvedDatabaseApi
+      ? createDatabasePluginRegistryStore(resolvedDatabaseApi)
+      : createMemoryPluginRegistryStore(
+          serializePluginRegistryState(basePluginRegistry),
+        ),
+  );
+  const pluginRegistry = applyPluginRegistryState(
+    basePluginRegistry,
+    await readInitialPluginRegistryState(pluginRegistryStore),
+  );
+  const activatedPlugins = await activatePluginRegistry(pluginRegistry, {
+    rootPath,
+    api: {
+      prefix: apiPrefix,
+      version: apiVersion,
+      basePath: joinPathParts(rootPath, apiPrefix, apiVersion),
+    },
+    platform: createPluginSetupPlatformContext(options.pluginContext?.platform),
+  });
+  const pluginServices = await Promise.all(activatedPlugins.services);
   const dashboardSettingsStore = resolveDashboardSettingsStore(
     options.coreServices?.dashboard,
     resolvedDatabaseApi
@@ -2323,6 +2870,7 @@ export async function zelavis(
     authService,
     websiteService,
     storageService,
+    ...pluginServices,
   ].filter(
     (service): service is ZelavisServerService<any> => Boolean(service),
   );
@@ -2339,6 +2887,8 @@ export async function zelavis(
     : await resolveDashboardCoreService(options.coreServices?.dashboard, {
         apiPrefix,
         apiVersion,
+        pluginRegistry,
+        pluginRegistryStore,
         rootPath,
         serviceNames,
         settingsStore: dashboardSettingsStore,
@@ -2414,6 +2964,16 @@ function mergeZelavisServerOptions(
   base: ZelavisServerOptions,
   override: ZelavisServerOptions,
 ): ZelavisServerOptions {
+  const pluginEntries = [
+    ...(base.plugins?.entries ?? []),
+    ...(override.plugins?.entries ?? []),
+  ];
+  const pluginStore = override.plugins?.store ?? base.plugins?.store;
+  const pluginContext = {
+    ...(base.pluginContext ?? {}),
+    ...(override.pluginContext ?? {}),
+  };
+
   return {
     ...base,
     ...override,
@@ -2422,6 +2982,15 @@ function mergeZelavisServerOptions(
       ...(override.api ?? {}),
     },
     services: [...(base.services ?? []), ...(override.services ?? [])],
+    plugins:
+      pluginEntries.length > 0 || pluginStore
+        ? {
+            ...(pluginEntries.length > 0 ? { entries: pluginEntries } : {}),
+            ...(pluginStore ? { store: pluginStore } : {}),
+          }
+        : undefined,
+    pluginContext:
+      Object.keys(pluginContext).length > 0 ? pluginContext : undefined,
     coreServices: mergeCoreServicesOptions(
       base.coreServices,
       override.coreServices,
@@ -2499,6 +3068,9 @@ function applyPlatformResourceDefaults(
   const nextCoreServices: ZelavisCoreServicesOptions = {
     ...(options.coreServices ?? {}),
   };
+  const nextPlugins: ZelavisPluginRegistryOptions = {
+    ...(options.plugins ?? {}),
+  };
   const databaseConfigured =
     nextCoreServices.database !== undefined && nextCoreServices.database !== false;
 
@@ -2552,8 +3124,17 @@ function applyPlatformResourceDefaults(
     }
   }
 
+  if (!nextPlugins.store) {
+    nextPlugins.store = resources.kv
+      ? createKeyValuePluginRegistryStore(resources.kv)
+      : resources.files
+        ? createFileStoragePluginRegistryStore(resources.files)
+        : undefined;
+  }
+
   return {
     ...options,
+    plugins: nextPlugins,
     coreServices: nextCoreServices,
   };
 }
@@ -2587,10 +3168,16 @@ export class Zelavis<TAdapter extends object = {}> {
       const resolved = await resolvePlatformState(this.options);
       this.resolvedPlatformContext = resolved.context;
       const runtime = await zelavis(
-        applyPlatformResourceDefaults(
-          resolved.serverOptions,
-          resolved.context.resources,
-        ),
+        {
+          ...applyPlatformResourceDefaults(
+            resolved.serverOptions,
+            resolved.context.resources,
+          ),
+          pluginContext: {
+            ...resolved.serverOptions.pluginContext,
+            platform: createPluginSetupPlatformContext(resolved.context),
+          },
+        },
       );
       return runtime;
     })();

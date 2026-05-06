@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import type * as React from "react";
 import { useMemo, useState } from "react";
-import { Activity, Braces, Database, Table2 } from "lucide-react";
+import { Activity, Braces, Database, FileImage, Files, FileText, Table2, Volume2, Video } from "lucide-react";
 
 import {
   DataRow,
@@ -11,6 +11,14 @@ import {
   StatusBadge,
 } from "#/components/DashboardPage";
 import { Badge } from "#/components/ui/badge";
+import { Input } from "#/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "#/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import {
   type DatabaseTimeSeriesAggregateOperation,
@@ -219,6 +227,145 @@ function TimeSeriesChart({
   );
 }
 
+type FileSchemaTemplateKind =
+  | "image"
+  | "file"
+  | "document"
+  | "audio"
+  | "video";
+
+function createFileSchemaTemplate(kind: FileSchemaTemplateKind) {
+  switch (kind) {
+    case "image":
+      return {
+        type: "file",
+        mimeTypes: ["image/png", "image/jpeg", "image/webp", "image/gif"],
+        maxSize: 5_000_000,
+      };
+    case "document":
+      return {
+        type: "file",
+        mimeTypes: [
+          "application/pdf",
+          "text/plain",
+          "application/json",
+          "application/zip",
+        ],
+        maxSize: 10_000_000,
+      };
+    case "audio":
+      return {
+        type: "file",
+        mimeTypes: ["audio/mpeg", "audio/wav", "audio/ogg", "audio/webm"],
+        maxSize: 20_000_000,
+      };
+    case "video":
+      return {
+        type: "file",
+        mimeTypes: ["video/mp4", "video/webm", "video/ogg", "video/quicktime"],
+        maxSize: 50_000_000,
+      };
+    case "file":
+    default:
+      return {
+        type: "file",
+      };
+  }
+}
+
+function createSampleFileReference(fieldName: string, kind: FileSchemaTemplateKind) {
+  const byKind = {
+    image: {
+      path: `media/${fieldName}.jpg`,
+      contentType: "image/jpeg",
+    },
+    file: {
+      path: `uploads/${fieldName}.bin`,
+      contentType: "application/octet-stream",
+    },
+    document: {
+      path: `documents/${fieldName}.pdf`,
+      contentType: "application/pdf",
+    },
+    audio: {
+      path: `audio/${fieldName}.mp3`,
+      contentType: "audio/mpeg",
+    },
+    video: {
+      path: `video/${fieldName}.mp4`,
+      contentType: "video/mp4",
+    },
+  } as const;
+
+  const chosen = byKind[kind];
+
+  return {
+    kind: "file",
+    path: chosen.path,
+    href: `/zelavis/api/v1/storage/files/${chosen.path}`,
+    metadataHref: `/zelavis/api/v1/storage/files/${chosen.path}?format=metadata`,
+    contentType: chosen.contentType,
+    metadata: {
+      label: fieldName,
+      purpose: "sample-document",
+    },
+  };
+}
+
+function insertFileFieldIntoSchema(input: {
+  schemaJson: string;
+  fieldName: string;
+  kind: FileSchemaTemplateKind;
+  required: boolean;
+}) {
+  const parsed = JSON.parse(input.schemaJson) as Record<string, unknown>;
+
+  if (parsed.type !== "object") {
+    throw new Error("The schema root must be an object before adding a file field.");
+  }
+
+  const properties =
+    parsed.properties && typeof parsed.properties === "object"
+      ? ({ ...(parsed.properties as Record<string, unknown>) })
+      : {};
+
+  if (input.fieldName in properties) {
+    throw new Error(`A schema field named "${input.fieldName}" already exists.`);
+  }
+
+  properties[input.fieldName] = createFileSchemaTemplate(input.kind);
+  parsed.properties = properties;
+
+  const existingRequired = Array.isArray(parsed.required)
+    ? parsed.required.filter((value): value is string => typeof value === "string")
+    : [];
+
+  parsed.required = input.required
+    ? [...new Set([...existingRequired, input.fieldName])]
+    : existingRequired.filter((value) => value !== input.fieldName);
+
+  return JSON.stringify(parsed, null, 2);
+}
+
+function insertFileReferenceIntoSampleDocument(input: {
+  documentJson: string;
+  fieldName: string;
+  kind: FileSchemaTemplateKind;
+}) {
+  const parsed = JSON.parse(input.documentJson) as Record<string, unknown>;
+
+  if (parsed[input.fieldName] !== undefined) {
+    return JSON.stringify(parsed, null, 2);
+  }
+
+  if (typeof parsed.name !== "string") {
+    parsed.name = "Draft item";
+  }
+
+  parsed[input.fieldName] = createSampleFileReference(input.fieldName, input.kind);
+  return JSON.stringify(parsed, null, 2);
+}
+
 function DatabaseRoute() {
   const [selectedCollection, setSelectedCollection] = useState<string>();
   const [selectedSeriesName, setSelectedSeriesName] = useState<string>();
@@ -234,6 +381,10 @@ function DatabaseRoute() {
   const [schemaJson, setSchemaJson] = useState(
     '{\n  "type": "object",\n  "additionalProperties": false,\n  "required": ["name"],\n  "properties": {\n    "name": { "type": "string", "minLength": 1 }\n  }\n}',
   );
+  const [schemaFieldName, setSchemaFieldName] = useState("heroImage");
+  const [schemaFieldKind, setSchemaFieldKind] =
+    useState<FileSchemaTemplateKind>("image");
+  const [schemaFieldRequired, setSchemaFieldRequired] = useState(true);
   const [editingDocumentId, setEditingDocumentId] = useState<string>();
   const [actionMessage, setActionMessage] = useState<string>();
   const [actionError, setActionError] = useState<string>();
@@ -530,6 +681,37 @@ function DatabaseRoute() {
     });
   }
 
+  function handleInsertFileField() {
+    try {
+      const fieldName = schemaFieldName.trim();
+      if (!fieldName) {
+        throw new Error("A schema field name is required.");
+      }
+
+      const nextSchema = insertFileFieldIntoSchema({
+        schemaJson,
+        fieldName,
+        kind: schemaFieldKind,
+        required: schemaFieldRequired,
+      });
+      const nextDocument = insertFileReferenceIntoSampleDocument({
+        documentJson,
+        fieldName,
+        kind: schemaFieldKind,
+      });
+
+      setSchemaJson(nextSchema);
+      setDocumentJson(nextDocument);
+      setActionError(undefined);
+      setActionMessage(
+        `Inserted ${schemaFieldKind} file field "${fieldName}" and prepared a matching sample document.`,
+      );
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+      setActionMessage(undefined);
+    }
+  }
+
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
       <PageHeader
@@ -817,6 +999,66 @@ function DatabaseRoute() {
                       }
                     >
                       Register
+                    </Button>
+                  </div>
+                  <div className="grid gap-3 rounded-md border bg-muted/20 p-3 lg:grid-cols-[minmax(0,1fr)_12rem_auto_auto]">
+                    <Input
+                      value={schemaFieldName}
+                      onChange={(event) => setSchemaFieldName(event.target.value)}
+                      placeholder="heroImage"
+                      disabled={!selected}
+                      aria-label="Schema field name"
+                    />
+                    <Select
+                      value={schemaFieldKind}
+                      onValueChange={(value) =>
+                        setSchemaFieldKind(value as FileSchemaTemplateKind)
+                      }
+                      disabled={!selected}
+                    >
+                      <SelectTrigger aria-label="File field kind" className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="image">
+                          <FileImage className="size-4" />
+                          Image
+                        </SelectItem>
+                        <SelectItem value="file">
+                          <Files className="size-4" />
+                          Generic file
+                        </SelectItem>
+                        <SelectItem value="document">
+                          <FileText className="size-4" />
+                          Document
+                        </SelectItem>
+                        <SelectItem value="audio">
+                          <Volume2 className="size-4" />
+                          Audio
+                        </SelectItem>
+                        <SelectItem value="video">
+                          <Video className="size-4" />
+                          Video
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={schemaFieldRequired}
+                        onChange={(event) => setSchemaFieldRequired(event.target.checked)}
+                        disabled={!selected}
+                      />
+                      Required
+                    </label>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={!selected}
+                      onClick={handleInsertFileField}
+                    >
+                      Insert File Field
                     </Button>
                   </div>
                   <textarea

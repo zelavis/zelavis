@@ -142,6 +142,8 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
 
   async function readStoredMetadata(path: string): Promise<{
     contentType?: string;
+    cacheControl?: string;
+    contentDisposition?: string;
     metadata?: Record<string, string>;
     checksum?: string;
   }> {
@@ -149,6 +151,8 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
       const raw = await readFile(resolveMetadataPath(path), "utf8");
       const parsed = JSON.parse(raw) as {
         contentType?: unknown;
+        cacheControl?: unknown;
+        contentDisposition?: unknown;
         metadata?: unknown;
         checksum?: unknown;
       };
@@ -156,6 +160,12 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
       return {
         contentType:
           typeof parsed.contentType === "string" ? parsed.contentType : undefined,
+        cacheControl:
+          typeof parsed.cacheControl === "string" ? parsed.cacheControl : undefined,
+        contentDisposition:
+          typeof parsed.contentDisposition === "string"
+            ? parsed.contentDisposition
+            : undefined,
         metadata:
           parsed.metadata && typeof parsed.metadata === "object"
             ? (parsed.metadata as Record<string, string>)
@@ -175,13 +185,21 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
     path: string,
     value: {
       contentType?: string;
+      cacheControl?: string;
+      contentDisposition?: string;
       metadata?: Record<string, string>;
       checksum?: string;
     },
   ): Promise<void> {
     const metadataPath = resolveMetadataPath(path);
 
-    if (!value.contentType && !value.metadata && !value.checksum) {
+    if (
+      !value.contentType &&
+      !value.cacheControl &&
+      !value.contentDisposition &&
+      !value.metadata &&
+      !value.checksum
+    ) {
       try {
         await rm(metadataPath);
       } catch (error) {
@@ -207,6 +225,8 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
       size: info.size,
       updatedAt: info.mtime,
       contentType: stored.contentType,
+      cacheControl: stored.cacheControl,
+      contentDisposition: stored.contentDisposition,
       metadata: stored.metadata,
       checksum: stored.checksum,
     };
@@ -229,6 +249,8 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
           size: info.size,
           updatedAt: info.mtime,
           contentType: stored.contentType,
+          cacheControl: stored.cacheControl,
+          contentDisposition: stored.contentDisposition,
           metadata: stored.metadata,
           checksum: stored.checksum,
         };
@@ -249,6 +271,8 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
       await writeFile(filePath, bytes);
       await writeStoredMetadata(normalized, {
         contentType: input.contentType,
+        cacheControl: input.cacheControl,
+        contentDisposition: input.contentDisposition,
         metadata: input.metadata,
         checksum: input.metadata?.["checksum-sha256"],
       });
@@ -260,6 +284,8 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
         size: info.size,
         updatedAt: info.mtime,
         contentType: input.contentType,
+        cacheControl: input.cacheControl,
+        contentDisposition: input.contentDisposition,
         metadata: input.metadata,
         checksum: input.metadata?.["checksum-sha256"],
       };

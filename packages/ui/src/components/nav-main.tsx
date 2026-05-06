@@ -23,6 +23,7 @@ type NavChildItem = {
   title: string;
   url?: string;
   icon?: LucideIcon;
+  pluginOwned?: boolean;
   items?: readonly NavChildItem[];
 };
 
@@ -116,6 +117,12 @@ function parseSidebarSearch(value: unknown) {
   } catch {
     return [];
   }
+}
+
+function itemContainsPluginOwnedEntry(item: NavChildItem): boolean {
+  return Boolean(
+    item.pluginOwned || item.items?.some((child) => itemContainsPluginOwnedEntry(child)),
+  );
 }
 
 export function NavMain({
@@ -369,6 +376,12 @@ export function NavMain({
                     );
                   })}
                 </SidebarMenu>
+                {panel.title === "Workspace" &&
+                !panel.items.some((item) => itemContainsPluginOwnedEntry(item)) ? (
+                  <div className="rounded-md border border-dashed bg-muted/35 px-3 py-3 text-sm text-muted-foreground">
+                    Install a plugin from Marketplace to give Workspace its first plugin area.
+                  </div>
+                ) : null}
               </div>
             </div>
           </SwiperSlide>

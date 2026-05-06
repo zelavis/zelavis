@@ -35,6 +35,8 @@ export interface NetlifyBlobsStore {
     options?: {
       metadata?: Record<string, string>;
       contentType?: string;
+      cacheControl?: string;
+      contentDisposition?: string;
     },
   ): Promise<unknown>;
   delete(key: string): Promise<void>;
@@ -170,25 +172,36 @@ export function createNetlifyBlobsFileStorage(
         body: await toBytes(body),
         size: metadata?.size,
         updatedAt: metadata?.modifiedAt,
+        cacheControl: metadata?.metadata?.cacheControl,
+        contentDisposition: metadata?.metadata?.contentDisposition,
         metadata: metadata?.metadata,
       };
     },
     async put(input): Promise<ZelavisFileStorageEntry> {
       const body = await normalizePutBody(input.body);
+      const customMetadata = {
+        ...(input.metadata ?? {}),
+        ...(input.cacheControl ? { cacheControl: input.cacheControl } : {}),
+        ...(input.contentDisposition
+          ? { contentDisposition: input.contentDisposition }
+          : {}),
+      };
       await store.set(input.path, body, {
-        metadata: input.metadata,
+        metadata: customMetadata,
         contentType: input.contentType,
       });
 
       const listed = await store.list({ prefix: input.path });
-      const metadata = listed.blobs.find((entry) => entry.key === input.path);
+      const listedEntry = listed.blobs.find((entry) => entry.key === input.path);
 
       return {
         path: input.path,
-        size: metadata?.size,
-        updatedAt: metadata?.modifiedAt,
+        size: listedEntry?.size,
+        updatedAt: listedEntry?.modifiedAt,
         contentType: input.contentType,
-        metadata: input.metadata,
+        cacheControl: input.cacheControl,
+        contentDisposition: input.contentDisposition,
+        metadata: listedEntry?.metadata ?? input.metadata,
       };
     },
     async delete(path) {
@@ -211,6 +224,8 @@ export function createNetlifyBlobsFileStorage(
             path: blob.key,
             size: blob.size,
             updatedAt: blob.modifiedAt,
+            cacheControl: blob.metadata?.cacheControl,
+            contentDisposition: blob.metadata?.contentDisposition,
             metadata: blob.metadata,
           })),
         );

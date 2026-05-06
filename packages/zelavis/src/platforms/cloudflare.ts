@@ -63,6 +63,8 @@ export interface CloudflareR2Object {
   uploaded: Date;
   httpMetadata?: {
     contentType?: string;
+    cacheControl?: string;
+    contentDisposition?: string;
   };
   customMetadata?: Record<string, string>;
   body: CloudflareR2ObjectBody;
@@ -76,6 +78,8 @@ export interface CloudflareR2Bucket {
     options?: {
       httpMetadata?: {
         contentType?: string;
+        cacheControl?: string;
+        contentDisposition?: string;
       };
       customMetadata?: Record<string, string>;
     },
@@ -91,6 +95,8 @@ export interface CloudflareR2Bucket {
       uploaded: Date;
       httpMetadata?: {
         contentType?: string;
+        cacheControl?: string;
+        contentDisposition?: string;
       };
       customMetadata?: Record<string, string>;
     }>;
@@ -100,18 +106,30 @@ export interface CloudflareR2Bucket {
 }
 
 export interface CloudflarePlatformOptions {
-  database?: false | {
-    binding: CloudflareD1Binding;
-    defaultTenantId?: string;
-  };
-  kv?: false | {
-    namespace: CloudflareKvNamespace;
-  };
-  files?: false | {
-    bucket: CloudflareR2Bucket;
-  };
+  env: CloudflarePlatformEnv;
+  bindings?: CloudflarePlatformBindingNames;
+  defaultTenantId?: string;
   metadata?: Record<string, unknown>;
 }
+
+export interface CloudflarePlatformEnv {
+  ZELAVIS_DB?: CloudflareD1Binding;
+  ZELAVIS_KV?: CloudflareKvNamespace;
+  ZELAVIS_FILES?: CloudflareR2Bucket;
+  [key: string]: unknown;
+}
+
+export interface CloudflarePlatformBindingNames {
+  database?: string;
+  kv?: string;
+  files?: string;
+}
+
+const DEFAULT_CLOUDFLARE_BINDING_NAMES = Object.freeze({
+  database: "ZELAVIS_DB",
+  kv: "ZELAVIS_KV",
+  files: "ZELAVIS_FILES",
+});
 
 async function toBytes(
   body: ZelavisFileStoragePutInput["body"],
@@ -212,6 +230,8 @@ function createCloudflareFileStorage(bucket: CloudflareR2Bucket): ZelavisFileSto
         size: object.size,
         updatedAt: object.uploaded,
         contentType: object.httpMetadata?.contentType,
+        cacheControl: object.httpMetadata?.cacheControl,
+        contentDisposition: object.httpMetadata?.contentDisposition,
         metadata: object.customMetadata,
       };
     },
@@ -221,6 +241,8 @@ function createCloudflareFileStorage(bucket: CloudflareR2Bucket): ZelavisFileSto
       await bucket.put(input.path, bytes, {
         httpMetadata: {
           contentType: input.contentType,
+          cacheControl: input.cacheControl,
+          contentDisposition: input.contentDisposition,
         },
         customMetadata: input.metadata,
       });
@@ -229,6 +251,8 @@ function createCloudflareFileStorage(bucket: CloudflareR2Bucket): ZelavisFileSto
         path: input.path,
         size: bytes.byteLength,
         contentType: input.contentType,
+        cacheControl: input.cacheControl,
+        contentDisposition: input.contentDisposition,
         metadata: input.metadata,
       };
     },
@@ -252,6 +276,8 @@ function createCloudflareFileStorage(bucket: CloudflareR2Bucket): ZelavisFileSto
             size: object.size,
             updatedAt: object.uploaded,
             contentType: object.httpMetadata?.contentType,
+            cacheControl: object.httpMetadata?.cacheControl,
+            contentDisposition: object.httpMetadata?.contentDisposition,
             metadata: object.customMetadata,
           })),
         );
@@ -290,8 +316,112 @@ function mergeExisting(
   return existing;
 }
 
+function isD1Binding(value: unknown): value is CloudflareD1Binding {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "prepare" in value &&
+    typeof value.prepare === "function" &&
+    "batch" in value &&
+    typeof value.batch === "function"
+  );
+}
+
+function isKvNamespace(value: unknown): value is CloudflareKvNamespace {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "get" in value &&
+    typeof value.get === "function" &&
+    "put" in value &&
+    typeof value.put === "function" &&
+    "delete" in value &&
+    typeof value.delete === "function" &&
+    "list" in value &&
+    typeof value.list === "function"
+  );
+}
+
+function isR2Bucket(value: unknown): value is CloudflareR2Bucket {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "get" in value &&
+    typeof value.get === "function" &&
+    "put" in value &&
+    typeof value.put === "function" &&
+    "delete" in value &&
+    typeof value.delete === "function" &&
+    "list" in value &&
+    typeof value.list === "function"
+  );
+}
+
+function getBindingName(
+  bindings: CloudflarePlatformBindingNames | undefined,
+  key: keyof CloudflarePlatformBindingNames,
+): string {
+  return bindings?.[key] ?? DEFAULT_CLOUDFLARE_BINDING_NAMES[key];
+}
+
+function readBinding(
+  env: CloudflarePlatformEnv | undefined,
+  name: string,
+): unknown {
+  if (!env) {
+    return undefined;
+  }
+
+  return env[name];
+}
+
+function resolveDatabaseBinding(
+  options: CloudflarePlatformOptions,
+): CloudflareD1Binding {
+  const bindingName = getBindingName(options.bindings, "database");
+  const binding = readBinding(options.env, bindingName);
+
+  if (!isD1Binding(binding)) {
+    throw new TypeError(
+      `Missing or invalid Cloudflare D1 binding \`${bindingName}\`. Pass \`cloudflarePlatform({ env })\` with a valid D1 binding or override the binding name through \`bindings.database\`.`,
+    );
+  }
+
+  return binding;
+}
+
+function resolveKvOption(
+  options: CloudflarePlatformOptions,
+): { namespace: CloudflareKvNamespace } | undefined {
+  const namespace = readBinding(
+    options.env,
+    getBindingName(options.bindings, "kv"),
+  );
+
+  return isKvNamespace(namespace)
+    ? {
+        namespace,
+      }
+    : undefined;
+}
+
+function resolveFilesOption(
+  options: CloudflarePlatformOptions,
+): { bucket: CloudflareR2Bucket } | undefined {
+  const bucket = readBinding(
+    options.env,
+    getBindingName(options.bindings, "files"),
+  );
+
+  return isR2Bucket(bucket)
+    ? {
+        bucket,
+      }
+    : undefined;
+}
+
 export function cloudflarePlatform(
-  options: CloudflarePlatformOptions = {},
+  options: CloudflarePlatformOptions,
 ): ZelavisPlatformPreset {
   return createPlatform({
     name: "cloudflare",
@@ -299,11 +429,12 @@ export function cloudflarePlatform(
       constructorOptions: ZelavisConstructorOptions<any>,
     ): Promise<ZelavisResolvedPlatformOptions> {
       const nextCoreServices: Record<string, unknown> = {};
+      const databaseBinding = resolveDatabaseBinding(options);
+      const kvOptions = resolveKvOption(options);
+      const filesOptions = resolveFilesOption(options);
 
       if (
-        constructorOptions.coreServices?.database !== false &&
-        options.database !== false &&
-        options.database
+        constructorOptions.coreServices?.database !== false
       ) {
         const { createCloudflareD1DatabaseDriver } = await import(
           "@zelavis/database-cloudflare-d1"
@@ -311,9 +442,9 @@ export function cloudflarePlatform(
         nextCoreServices.database = mergeExisting(
           constructorOptions.coreServices?.database,
           {
-            defaultTenantId: options.database.defaultTenantId,
+            defaultTenantId: options.defaultTenantId,
             driver: createCloudflareD1DatabaseDriver({
-              database: options.database.binding,
+              database: databaseBinding,
             }),
           },
         );
@@ -322,9 +453,9 @@ export function cloudflarePlatform(
       return {
         coreServices: nextCoreServices,
         resources: {
-          kv: options.kv ? createCloudflareKeyValueStore(options.kv.namespace) : undefined,
-          files: options.files
-            ? createCloudflareFileStorage(options.files.bucket)
+          kv: kvOptions ? createCloudflareKeyValueStore(kvOptions.namespace) : undefined,
+          files: filesOptions
+            ? createCloudflareFileStorage(filesOptions.bucket)
             : undefined,
         },
         metadata: {

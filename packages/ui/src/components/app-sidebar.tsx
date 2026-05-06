@@ -13,10 +13,13 @@ import {
   SidebarHeader,
 } from "#/components/ui/sidebar";
 import {
+  buildPlatformNavItems,
   platformNavItems,
   secondaryNavItems,
   sidebarTeams,
 } from "#/lib/dashboard-data";
+import { getRuntimeConfig } from "#/lib/runtime-api";
+import { useRuntimeResource } from "#/lib/use-runtime-resource";
 
 const data = {
   user: {
@@ -27,13 +30,22 @@ const data = {
 };
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+  const runtime = useRuntimeResource(getRuntimeConfig);
+  const items = React.useMemo(
+    () =>
+      runtime.data
+        ? buildPlatformNavItems(runtime.data.plugins)
+        : platformNavItems,
+    [runtime.data?.plugins],
+  );
+
   return (
     <Sidebar variant="inset" collapsible="icon" {...props}>
       <SidebarHeader>
         <TeamSwitcher teams={sidebarTeams} />
       </SidebarHeader>
       <SidebarContent className="overflow-hidden">
-        <NavMain items={platformNavItems} />
+        <NavMain items={items} />
         <NavSecondary
           title="Help"
           items={secondaryNavItems}

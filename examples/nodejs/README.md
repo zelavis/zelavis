@@ -11,6 +11,7 @@ pnpm --filter @zelavis/example-nodejs dev
 Then open:
 
 - `http://localhost:3000/zelavis`
+- `http://localhost:3000/zelavis/media`
 - `http://localhost:3000/zelavis/storage`
 
 ## Why this example matters

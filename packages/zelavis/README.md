@@ -45,6 +45,44 @@ import { authService } from "@zelavis/auth";
 
 For installable product capabilities, prefer plugin language in developer-facing APIs. Zelavis now also exports a small `createPlugin(...)` helper for declarative plugin metadata such as dashboard menu ownership.
 
+Plugin loading should stay pure ESM. Zelavis also exposes helpers such as `loadPlugin(...)`, `loadPluginRegistry(...)`, `resolvePluginModule(...)`, and `removePluginFromRegistry(...)` so plugin install/load/remove flows can stay inside standard JavaScript module semantics instead of Node-specific loaders.
+
+For runtime composition, Zelavis also supports a plugin registry option with real install state and activation order:
+
+```ts
+import { createPlugin, createPluginRegistry, Zelavis } from "zelavis";
+
+const ecommerce = createPlugin({
+  name: "zelavis-ecommerce",
+  menu: {
+    title: "Ecommerce",
+    path: "/commerce",
+  },
+});
+
+const zelavis = new Zelavis({
+  plugins: {
+    entries: createPluginRegistry([
+      {
+        plugin: ecommerce,
+        status: "installed",
+        source: "official",
+        order: 0,
+      },
+    ]),
+  },
+});
+```
+
+Plugin setup receives standard JavaScript data only:
+
+- mounted `rootPath`
+- API path information
+- platform summary (`presets`, resource availability, metadata)
+- already collected services plus `addService(...)`
+
+That keeps plugin setup runtime-neutral while still giving plugins enough context to register extra services.
+
 ## Usage
 
 ```ts
@@ -146,6 +184,34 @@ Platform resources now also feed real core-service persistence in the high-level
 - the storage core service can expose platform file storage through the Zelavis API
 - website pages can persist through platform files when no database core service is configured
 
+For Cloudflare Workers, pass the worker `env` object to the platform preset and let Zelavis pick up the standard bindings itself:
+
+```ts
+import { Zelavis } from "zelavis";
+import { cloudflarePlatform } from "zelavis/platforms/cloudflare";
+
+export default {
+  fetch(request: Request, env: { ZELAVIS_DB: unknown }, ctx: ExecutionContext) {
+    const zelavis = new Zelavis({
+      platform: cloudflarePlatform({
+        env,
+      }),
+    });
+
+    return zelavis.fetch(request, {
+      platform: {
+        cloudflare: {
+          env,
+          executionContext: ctx,
+        },
+      },
+    });
+  },
+};
+```
+
+`cloudflarePlatform()` expects a D1 binding at `env.ZELAVIS_DB` and will also pick up `env.ZELAVIS_KV` and `env.ZELAVIS_FILES` automatically when they are present. Use `bindings` only when your Cloudflare binding names differ from the Zelavis defaults.
+
 Dashboard client routes are served as SPA shell routes by the dashboard core
 service, so direct visits such as `/zelavis/settings` work in Node and Express.
 
@@ -155,6 +221,15 @@ The dashboard settings endpoint exposes runtime-editable dashboard preferences:
 GET /zelavis/api/v1/dashboard/settings
 PATCH /zelavis/api/v1/dashboard/settings
 ```
+
+The dashboard plugin registry also has runtime endpoints:
+
+```txt
+GET /zelavis/api/v1/dashboard/plugins
+PATCH /zelavis/api/v1/dashboard/plugins/:name
+```
+
+When a plugin registry store is configured, these endpoints read and update real install state instead of a hardcoded list. Dashboard metadata updates immediately, while plugin service activation still applies on runtime boot so install/uninstall stays explicit.
 
 When a file storage resource exists, Zelavis can also expose a built-in storage core service:
 
@@ -167,6 +242,14 @@ DELETE /zelavis/api/v1/storage/files/*
 ```
 
 Writes return file metadata plus a first-class Zelavis file reference, and reads expose the SHA-256 checksum through metadata responses and the `x-zelavis-checksum-sha256` response header when available.
+
+For generic object storage that is not really a hosting platform decision, Zelavis also exposes a first-party S3-compatible helper:
+
+```ts
+import { createS3CompatibleFileStorage } from "zelavis/storage/s3";
+```
+
+Use it when you want the normal Zelavis storage contract, metadata, and file-reference flow on top of an S3-compatible bucket.
 
 Root path changes are saved as pending settings and report `restartRequired`
 because mounted routes cannot move safely while the runtime is already running.

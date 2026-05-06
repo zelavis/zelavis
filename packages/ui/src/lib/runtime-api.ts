@@ -4,6 +4,28 @@ export interface RuntimeService {
   apiPath: string;
 }
 
+export interface RuntimePluginMenuDefinition {
+  title: string;
+  path?: string;
+  pageLabel?: string;
+  items?: readonly RuntimePluginMenuDefinition[];
+}
+
+export interface RuntimePluginRegistryEntry {
+  name: string;
+  version?: string;
+  status: "installed" | "available";
+  source?: "official" | "community";
+  order?: number;
+  menu?: RuntimePluginMenuDefinition;
+}
+
+export interface RuntimePluginRegistryUpdate {
+  status?: "installed" | "available";
+  source?: "official" | "community";
+  order?: number;
+}
+
 export interface RuntimeConfig {
   name: string;
   rootPath: string;
@@ -19,6 +41,7 @@ export interface RuntimeConfig {
     assetRoot: string;
   };
   services: RuntimeService[];
+  plugins: RuntimePluginRegistryEntry[];
 }
 
 export type DashboardThemeMode = "light" | "dark" | "auto";
@@ -57,6 +80,8 @@ export interface StorageFile {
   size?: number;
   updatedAt?: string;
   contentType?: string;
+  cacheControl?: string;
+  contentDisposition?: string;
   metadata?: Record<string, string>;
   checksum?: string;
 }
@@ -69,6 +94,8 @@ export interface StorageFileReference {
   size?: number;
   updatedAt?: string;
   contentType?: string;
+  cacheControl?: string;
+  contentDisposition?: string;
   metadata?: Record<string, string>;
   checksum?: string;
 }
@@ -156,10 +183,17 @@ const fallbackConfig: RuntimeConfig = {
       "/builder",
       "/builder/pages",
       "/commerce",
+      "/commerce/customers",
+      "/commerce/coupons",
+      "/commerce/orders",
+      "/commerce/products",
       "/content",
       "/database",
+      "/media",
+      "/marketplace",
       "/services",
       "/settings",
+      "/settings/appearance",
       "/storage",
       "/users",
     ],
@@ -170,6 +204,42 @@ const fallbackConfig: RuntimeConfig = {
     { name: "auth", core: true, apiPath: "/api/v1/auth" },
     { name: "database", core: true, apiPath: "/api/v1/database" },
     { name: "storage", core: true, apiPath: "/api/v1/storage" },
+  ],
+  plugins: [
+    {
+      name: "zelavis-ecommerce",
+      version: "0.1.0",
+      status: "available",
+      source: "official",
+      menu: {
+        title: "Ecommerce",
+        path: "/commerce",
+        pageLabel: "Commerce",
+        items: [
+          {
+            title: "Products",
+            path: "/commerce/products",
+          },
+          {
+            title: "Orders",
+            path: "/commerce/orders",
+          },
+          {
+            title: "More",
+            items: [
+              {
+                title: "Customers",
+                path: "/commerce/customers",
+              },
+              {
+                title: "Coupons",
+                path: "/commerce/coupons",
+              },
+            ],
+          },
+        ],
+      },
+    },
   ],
 };
 
@@ -199,6 +269,22 @@ function encodeStoragePath(path: string): string {
     .filter(Boolean)
     .map((segment) => encodeURIComponent(segment))
     .join('/')
+}
+
+export function getStorageFileUrl(config: RuntimeConfig, path: string) {
+  return `${config.api.basePath}/storage/files/${encodeStoragePath(path)}`
+}
+
+export function isRenderableImageFile(file: {
+  contentType?: string;
+  path: string;
+}) {
+  const contentType = file.contentType?.toLowerCase()
+  if (contentType?.startsWith('image/')) {
+    return true
+  }
+
+  return /\.(avif|gif|jpe?g|png|svg|webp)$/i.test(file.path)
 }
 
 async function readJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -301,6 +387,32 @@ export async function updateDashboardSettings(
   );
 }
 
+export async function listDashboardPlugins(
+  config: RuntimeConfig,
+): Promise<RuntimePluginRegistryEntry[]> {
+  const result = await readJson<{ plugins: RuntimePluginRegistryEntry[] }>(
+    `${config.api.basePath}/dashboard/plugins`,
+  );
+
+  return result.plugins;
+}
+
+export async function updateDashboardPlugin(
+  config: RuntimeConfig,
+  name: string,
+  input: RuntimePluginRegistryUpdate,
+): Promise<RuntimePluginRegistryEntry[]> {
+  const result = await readJson<{ plugins: RuntimePluginRegistryEntry[] }>(
+    `${config.api.basePath}/dashboard/plugins/${encodeURIComponent(name)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    },
+  );
+
+  return result.plugins;
+}
+
 export async function listWebsitePages(config: RuntimeConfig) {
   const result = await readJson<{ pages: WebsitePage[] }>(
     `${config.api.basePath}/website/pages`,
@@ -356,6 +468,8 @@ export async function uploadStorageFile(
     path: string;
     body: Blob | ArrayBuffer | Uint8Array | string;
     contentType?: string;
+    cacheControl?: string;
+    contentDisposition?: string;
     metadata?: Record<string, string>;
     onProgress?: (value: { loaded: number; total?: number; percent?: number }) => void;
   },
@@ -366,6 +480,12 @@ export async function uploadStorageFile(
   const headers = new Headers();
   if (input.contentType) {
     headers.set("content-type", input.contentType);
+  }
+  if (input.cacheControl) {
+    headers.set("cache-control", input.cacheControl);
+  }
+  if (input.contentDisposition) {
+    headers.set("content-disposition", input.contentDisposition);
   }
 
   for (const [key, value] of Object.entries(input.metadata ?? {})) {

@@ -164,7 +164,7 @@ test('overview nav is only active on the overview route', async ({ page }, testI
   )
 })
 
-test('storage is a top-level item on the first sidebar slide', async ({
+test('storage lives under the core slide for advanced runtime management', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
@@ -172,13 +172,15 @@ test('storage is a top-level item on the first sidebar slide', async ({
   await gotoDashboard(page, '/storage')
 
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
-  const rootSlide = sidebar.locator('.swiper-slide-active').first()
+  const activeSlide = sidebar.locator('.swiper-slide-active').first()
 
-  await expect(rootSlide.getByRole('link', { name: 'Storage', exact: true })).toBeVisible()
-  await expect(rootSlide.getByRole('button', { name: 'Core' })).toBeVisible()
+  await expect(activeSlide.getByRole('button', { name: 'Core' })).toBeVisible()
+  await expect(activeSlide.getByRole('link', { name: 'Auth', exact: true })).toBeVisible()
+  await expect(activeSlide.getByRole('link', { name: 'Database', exact: true })).toBeVisible()
+  await expect(activeSlide.getByRole('link', { name: 'Storage', exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Storage' })).toBeVisible()
   await expect(
-    rootSlide.getByRole('link', { name: 'Storage', exact: true }),
+    activeSlide.getByRole('link', { name: 'Storage', exact: true }),
   ).toHaveAttribute('aria-current', 'page')
 })
 
@@ -212,6 +214,20 @@ test('content is a top-level item on the first sidebar slide', async ({
   await expect(page.getByRole('heading', { name: 'Content Studio' })).toBeVisible()
 })
 
+test('media gallery is a top-level item on the first sidebar slide', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await gotoDashboard(page, '/media')
+
+  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const rootSlide = sidebar.locator('.swiper-slide-active').first()
+
+  await expect(rootSlide.getByRole('link', { name: 'Media Gallery', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Media Gallery' })).toBeVisible()
+})
+
 test('marketplace is a top-level item on the first sidebar slide', async ({
   page,
 }, testInfo) => {
@@ -226,17 +242,42 @@ test('marketplace is a top-level item on the first sidebar slide', async ({
   await expect(page.getByRole('heading', { name: 'Marketplace' })).toBeVisible()
 })
 
-test('workspace contains plugin-owned entries like ecommerce', async ({
+test('marketplace shows promoted official plugins with install actions', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
-  await gotoDashboard(page, '/commerce')
+  await gotoDashboard(page, '/marketplace')
+
+  await expect(page.getByRole('heading', { name: 'Promoted plugins' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Install' }).first()).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Info' }).first()).toBeVisible()
+  await expect(page.getByText('Runtime restart required')).toHaveCount(0)
+})
+
+test('marketplace does not expose ecommerce in workspace before install', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await gotoDashboard(page, '/')
 
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
-  await expect(sidebar.locator('.swiper-slide-active')).toContainText('Workspace')
-  await expect(sidebar.getByRole('link', { name: 'Ecommerce', exact: true })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Commerce' })).toBeVisible()
+  await expect(sidebar.getByRole('button', { name: 'Workspace', exact: true })).toBeVisible()
+  await expect(sidebar.getByRole('button', { name: 'Ecommerce', exact: true })).toHaveCount(0)
+})
+
+test('marketplace info opens a plugin details panel', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await gotoDashboard(page, '/marketplace')
+
+  await page.getByRole('button', { name: 'Info' }).first().click()
+  const sheet = page.getByRole('dialog', { name: 'Zelavis Ecommerce' })
+  await expect(sheet.getByRole('heading', { name: 'Zelavis Ecommerce' })).toBeVisible()
+  await expect(sheet.getByText('Workspace area with nested slides')).toBeVisible()
 })
 
 test('sidebar category rows drill down into sliding panels', async ({

@@ -13,14 +13,21 @@ import {
   Paintbrush,
   PanelsTopLeft,
   Package,
+  ReceiptText,
   Send,
   Server,
   Settings2,
   ShieldCheck,
+  ShoppingBag,
   Store,
+  TicketPercent,
   Users,
   type LucideIcon,
 } from "lucide-react";
+import type {
+  RuntimePluginMenuDefinition,
+  RuntimePluginRegistryEntry,
+} from "#/lib/runtime-api";
 
 export type DashboardRoutePath =
   | "/"
@@ -29,8 +36,13 @@ export type DashboardRoutePath =
   | "/builder"
   | "/builder/pages"
   | "/commerce"
+  | "/commerce/customers"
+  | "/commerce/coupons"
+  | "/commerce/orders"
+  | "/commerce/products"
   | "/content"
   | "/database"
+  | "/media"
   | "/marketplace"
   | "/services"
   | "/settings"
@@ -43,6 +55,7 @@ export type DashboardNavItem = {
   url?: DashboardRoutePath;
   icon: LucideIcon;
   pageLabel?: string;
+  pluginOwned?: boolean;
   items?: readonly DashboardNavItem[];
 };
 
@@ -55,9 +68,10 @@ export type DashboardPackageItem = {
 
 export type DashboardPluginMenuItem = {
   title: string;
-  url: DashboardRoutePath;
+  url?: DashboardRoutePath;
   icon: LucideIcon;
   pageLabel?: string;
+  pluginOwned?: boolean;
   items?: readonly DashboardPluginMenuItem[];
 };
 
@@ -100,129 +114,294 @@ export const sidebarTeams: readonly DashboardTeamItem[] = [
   },
 ] as const;
 
-export const dashboardPluginRegistryEntries: readonly DashboardWorkspacePluginItem[] = [
+const dashboardRoutePaths = new Set<DashboardRoutePath>([
+  "/",
+  "/agents",
+  "/auth",
+  "/builder",
+  "/builder/pages",
+  "/commerce",
+  "/commerce/customers",
+  "/commerce/coupons",
+  "/commerce/orders",
+  "/commerce/products",
+  "/content",
+  "/database",
+  "/media",
+  "/marketplace",
+  "/services",
+  "/settings",
+  "/settings/appearance",
+  "/storage",
+  "/users",
+]);
+
+function toDashboardRoutePath(path: string): DashboardRoutePath | undefined {
+  return dashboardRoutePaths.has(path as DashboardRoutePath)
+    ? (path as DashboardRoutePath)
+    : undefined;
+}
+
+function slugifyPluginName(name: string) {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function getPluginMenuIcon(title: string, path?: string): LucideIcon {
+  switch (path) {
+    case "/commerce":
+      return Store;
+    case "/commerce/products":
+      return ShoppingBag;
+    case "/commerce/orders":
+      return ReceiptText;
+    case "/commerce/customers":
+      return Users;
+    case "/commerce/coupons":
+      return TicketPercent;
+    default:
+      break;
+  }
+
+  switch (title.toLowerCase()) {
+    case "ecommerce":
+      return Store;
+    case "products":
+      return ShoppingBag;
+    case "orders":
+      return ReceiptText;
+    case "customers":
+      return Users;
+    case "coupons":
+      return TicketPercent;
+    case "more":
+      return Package;
+    default:
+      return Package;
+  }
+}
+
+function createDashboardPluginMenuItem(
+  menu: RuntimePluginMenuDefinition,
+): DashboardPluginMenuItem {
+  return {
+    title: menu.title,
+    url: menu.path ? toDashboardRoutePath(menu.path) : undefined,
+    icon: getPluginMenuIcon(menu.title, menu.path),
+    pageLabel: menu.pageLabel,
+    pluginOwned: true,
+    items: menu.items?.map(createDashboardPluginMenuItem),
+  };
+}
+
+export function buildDashboardPluginRegistryEntries(
+  plugins?: readonly RuntimePluginRegistryEntry[],
+): readonly DashboardWorkspacePluginItem[] {
+  return [...(plugins ?? [])]
+    .sort((left, right) => {
+      const leftOrder = left.order ?? Number.MAX_SAFE_INTEGER
+      const rightOrder = right.order ?? Number.MAX_SAFE_INTEGER
+      return leftOrder - rightOrder || left.name.localeCompare(right.name)
+    })
+    .flatMap((plugin) =>
+    plugin.menu
+      ? [
+          {
+            id: slugifyPluginName(plugin.name),
+            name: plugin.name,
+            status: plugin.status,
+            source: plugin.source,
+            menu: createDashboardPluginMenuItem(plugin.menu),
+          },
+        ]
+      : [],
+  )
+}
+
+const defaultRuntimePluginRegistry = [
   {
-    id: "ecommerce",
-    name: "Zelavis Ecommerce",
-    status: "installed",
+    name: "zelavis-ecommerce",
+    version: "0.1.0",
+    status: "available",
     source: "official",
     menu: {
       title: "Ecommerce",
-      url: "/commerce",
-      icon: Store,
+      path: "/commerce",
       pageLabel: "Commerce",
+      items: [
+        {
+          title: "Products",
+          path: "/commerce/products",
+        },
+        {
+          title: "Orders",
+          path: "/commerce/orders",
+        },
+        {
+          title: "More",
+          items: [
+            {
+              title: "Customers",
+              path: "/commerce/customers",
+            },
+            {
+              title: "Coupons",
+              path: "/commerce/coupons",
+            },
+          ],
+        },
+      ],
     },
   },
-] as const;
+] as const satisfies readonly RuntimePluginRegistryEntry[];
 
-export const workspacePluginNavItems = dashboardPluginRegistryEntries
-  .filter((plugin) => plugin.status === "installed")
-  .map((plugin) => plugin.menu);
+export const dashboardPluginRegistryEntries =
+  buildDashboardPluginRegistryEntries(defaultRuntimePluginRegistry);
 
-export const platformNavItems: readonly DashboardNavItem[] = [
-  {
-    title: "Overview",
-    url: "/",
-    icon: LayoutDashboard,
-  },
-  {
-    title: "Users",
-    url: "/users",
-    icon: Users,
-  },
-  {
-    title: "Content",
-    url: "/content",
-    icon: FileText,
-  },
-  {
-    title: "Storage",
-    url: "/storage",
-    icon: Files,
-  },
-  {
-    title: "Marketplace",
-    url: "/marketplace",
-    icon: Boxes,
-  },
-  {
-    title: "Core",
-    icon: Server,
-    items: [
-      {
-        title: "Auth",
-        url: "/auth",
-        icon: Fingerprint,
-      },
-      {
-        title: "Database",
-        url: "/database",
-        icon: Database,
-      },
-    ],
-  },
-  {
-    title: "Workspace",
-    icon: Bot,
-    items: [
-      {
-        title: "Agents",
-        url: "/agents",
-        icon: Bot,
-      },
-      {
-        title: "Builder",
-        icon: PanelsTopLeft,
-        items: [
-          {
-            title: "Pages",
-            url: "/builder/pages",
-            icon: FileText,
-            pageLabel: "Builder",
-          },
-        ],
-      },
-      ...workspacePluginNavItems,
-    ],
-  },
-  {
-    title: "Settings",
-    icon: Settings2,
-    items: [
-      {
-        title: "Runtime",
-        url: "/settings",
-        icon: MonitorCog,
-        pageLabel: "Settings",
-      },
-      {
-        title: "Services",
-        url: "/services",
-        icon: Server,
-      },
-      {
-        title: "Appearance",
-        url: "/settings/appearance",
-        icon: Paintbrush,
-      },
-    ],
-  },
-] as const;
+export function buildWorkspacePluginNavItems(
+  plugins?: readonly RuntimePluginRegistryEntry[],
+): readonly DashboardPluginMenuItem[] {
+  return buildDashboardPluginRegistryEntries(plugins)
+    .filter((plugin) => plugin.status === "installed")
+    .map((plugin) => plugin.menu);
+}
 
-export const marketplacePackageItems: readonly DashboardPackageItem[] = [
-  {
-    name: "Marketplace",
-    url: "/marketplace",
-    icon: Boxes,
-    pageLabel: "Marketplace",
-  },
-  ...dashboardPluginRegistryEntries.map((plugin) => ({
-    name: plugin.name,
-    url: plugin.status === "installed" ? plugin.menu.url : undefined,
-    icon: plugin.menu.icon ?? Package,
-    pageLabel: plugin.menu.pageLabel,
-  })),
-] as const;
+export const workspacePluginNavItems =
+  buildWorkspacePluginNavItems(defaultRuntimePluginRegistry);
+
+export function buildPlatformNavItems(
+  plugins?: readonly RuntimePluginRegistryEntry[],
+): readonly DashboardNavItem[] {
+  const pluginNavItems = buildWorkspacePluginNavItems(plugins);
+
+  return [
+    {
+      title: "Overview",
+      url: "/",
+      icon: LayoutDashboard,
+    },
+    {
+      title: "Users",
+      url: "/users",
+      icon: Users,
+    },
+    {
+      title: "Content",
+      url: "/content",
+      icon: FileText,
+    },
+    {
+      title: "Media Gallery",
+      url: "/media",
+      icon: Files,
+      pageLabel: "Media",
+    },
+    {
+      title: "Marketplace",
+      url: "/marketplace",
+      icon: Boxes,
+    },
+    {
+      title: "Core",
+      icon: Server,
+      items: [
+        {
+          title: "Auth",
+          url: "/auth",
+          icon: Fingerprint,
+        },
+        {
+          title: "Database",
+          url: "/database",
+          icon: Database,
+        },
+        {
+          title: "Storage",
+          url: "/storage",
+          icon: Files,
+        },
+      ],
+    },
+    {
+      title: "Workspace",
+      icon: Bot,
+      items: [
+        {
+          title: "Agents",
+          url: "/agents",
+          icon: Bot,
+        },
+        {
+          title: "Builder",
+          icon: PanelsTopLeft,
+          items: [
+            {
+              title: "Pages",
+              url: "/builder/pages",
+              icon: FileText,
+              pageLabel: "Builder",
+            },
+          ],
+        },
+        ...pluginNavItems,
+      ],
+    },
+    {
+      title: "Settings",
+      icon: Settings2,
+      items: [
+        {
+          title: "Runtime",
+          url: "/settings",
+          icon: MonitorCog,
+          pageLabel: "Settings",
+        },
+        {
+          title: "Services",
+          url: "/services",
+          icon: Server,
+        },
+        {
+          title: "Appearance",
+          url: "/settings/appearance",
+          icon: Paintbrush,
+        },
+      ],
+    },
+  ] as const;
+}
+
+export const platformNavItems = buildPlatformNavItems(
+  defaultRuntimePluginRegistry,
+);
+
+export function buildMarketplacePackageItems(
+  plugins?: readonly RuntimePluginRegistryEntry[],
+): readonly DashboardPackageItem[] {
+  const registryEntries = buildDashboardPluginRegistryEntries(plugins);
+
+  return [
+    {
+      name: "Marketplace",
+      url: "/marketplace",
+      icon: Boxes,
+      pageLabel: "Marketplace",
+    },
+    ...registryEntries.map((plugin) => ({
+      name: plugin.name,
+      url: plugin.status === "installed" ? plugin.menu.url : undefined,
+      icon: plugin.menu.icon ?? Package,
+      pageLabel: plugin.menu.pageLabel,
+    })),
+  ] as const;
+}
+
+export const marketplacePackageItems = buildMarketplacePackageItems(
+  defaultRuntimePluginRegistry,
+);
 
 export const secondaryNavItems: readonly DashboardSecondaryItem[] = [
   {
@@ -256,23 +435,35 @@ function flattenPlatformItems(
   ]);
 }
 
-export const dashboardNavItems = [
-  ...flattenPlatformItems(platformNavItems),
-  ...marketplacePackageItems
-    .filter(
-      (item): item is DashboardPackageItem & { url: DashboardRoutePath } =>
-        Boolean(item.url),
-    )
-    .map((item) => ({
-      to: item.url,
-      label: item.pageLabel ?? item.name,
-      icon: item.icon,
-    })),
-] as const;
+export function buildDashboardNavItems(
+  plugins?: readonly RuntimePluginRegistryEntry[],
+) {
+  return [
+    ...flattenPlatformItems(buildPlatformNavItems(plugins)),
+    ...buildMarketplacePackageItems(plugins)
+      .filter(
+        (item): item is DashboardPackageItem & { url: DashboardRoutePath } =>
+          Boolean(item.url),
+      )
+      .map((item) => ({
+        to: item.url,
+        label: item.pageLabel ?? item.name,
+        icon: item.icon,
+      })),
+  ] as const;
+}
 
-export function getDashboardPageLabel(pathname: string) {
+export const dashboardNavItems = buildDashboardNavItems(
+  defaultRuntimePluginRegistry,
+);
+
+export function getDashboardPageLabel(
+  pathname: string,
+  plugins?: readonly RuntimePluginRegistryEntry[],
+) {
   return (
-    dashboardNavItems.find((item) => item.to === pathname)?.label ?? "Not Found"
+    buildDashboardNavItems(plugins).find((item) => item.to === pathname)
+      ?.label ?? "Not Found"
   );
 }
 

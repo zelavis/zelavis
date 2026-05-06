@@ -90,6 +90,18 @@ When you use the high-level `Zelavis` class, these resources are not only visibl
 
 These resources are not framework adapters and they are not Zelavis services. They are host-level infrastructure capabilities that platform presets can provide to the runtime and to adapters.
 
+## Generic object storage
+
+Not every storage story belongs to a platform preset. S3-compatible object storage is a good example: it is a storage backend, not a hosting platform.
+
+For that case, Zelavis exposes a first-party file-storage helper:
+
+```ts
+import { createS3CompatibleFileStorage } from "zelavis/storage/s3";
+```
+
+Use that helper when you want the Zelavis storage contract on top of an S3-compatible bucket without pretending the host platform itself is "S3".
+
 ## Example
 
 ```ts

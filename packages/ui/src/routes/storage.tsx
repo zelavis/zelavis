@@ -56,6 +56,8 @@ function StorageRoute() {
   const [uploadLabel, setUploadLabel] = useState("");
   const [uploadAltText, setUploadAltText] = useState("");
   const [uploadPurpose, setUploadPurpose] = useState("");
+  const [uploadCacheControl, setUploadCacheControl] = useState("");
+  const [uploadContentDisposition, setUploadContentDisposition] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | undefined>();
   const [selectedPath, setSelectedPath] = useState<string>();
   const [message, setMessage] = useState<string>();
@@ -122,6 +124,8 @@ function StorageRoute() {
         body: selectedFile,
         contentType: selectedFile.type || "application/octet-stream",
         metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+        cacheControl: uploadCacheControl.trim() || undefined,
+        contentDisposition: uploadContentDisposition.trim() || undefined,
         onProgress: ({ percent }) => setUploadProgress(percent),
       });
 
@@ -131,6 +135,8 @@ function StorageRoute() {
       setUploadLabel("");
       setUploadAltText("");
       setUploadPurpose("");
+      setUploadCacheControl("");
+      setUploadContentDisposition("");
       setSelectedFile(undefined);
       setUploadProgress(undefined);
       if (fileInputRef.current) {
@@ -386,6 +392,8 @@ function StorageRoute() {
                     disabled={busy}
                   />
                 </div>
+              </div>
+              <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                 <div className="grid gap-2">
                   <label className="text-sm font-medium text-foreground" htmlFor="storage-purpose">
                     Purpose metadata
@@ -395,6 +403,38 @@ function StorageRoute() {
                     value={uploadPurpose}
                     onChange={(event) => setUploadPurpose(event.target.value)}
                     placeholder="product-gallery"
+                    disabled={busy}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <label
+                    className="text-sm font-medium text-foreground"
+                    htmlFor="storage-cache-control"
+                  >
+                    Cache-Control
+                  </label>
+                  <Input
+                    id="storage-cache-control"
+                    value={uploadCacheControl}
+                    onChange={(event) => setUploadCacheControl(event.target.value)}
+                    placeholder="public, max-age=31536000, immutable"
+                    disabled={busy}
+                  />
+                </div>
+              </div>
+              <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                <div className="grid gap-2">
+                  <label
+                    className="text-sm font-medium text-foreground"
+                    htmlFor="storage-content-disposition"
+                  >
+                    Content-Disposition
+                  </label>
+                  <Input
+                    id="storage-content-disposition"
+                    value={uploadContentDisposition}
+                    onChange={(event) => setUploadContentDisposition(event.target.value)}
+                    placeholder={'inline; filename="hero.jpg"'}
                     disabled={busy}
                   />
                 </div>
@@ -509,6 +549,13 @@ function StorageRoute() {
                   <div className="grid gap-2 text-sm text-muted-foreground">
                     <p>Content type: {metadataResource.data.file.contentType ?? "Unknown"}</p>
                     <p>Size: {formatBytes(metadataResource.data.file.size)}</p>
+                    <p>
+                      Cache-Control: {metadataResource.data.file.cacheControl ?? "Not set"}
+                    </p>
+                    <p>
+                      Content-Disposition:{" "}
+                      {metadataResource.data.file.contentDisposition ?? "Not set"}
+                    </p>
                     <p>
                       Metadata path: {metadataResource.data.reference.metadataHref}
                     </p>

@@ -18,6 +18,8 @@ test("zelavis exposes fetch handlers without requiring a mount adapter", async (
     payload.services.map((service) => service.name),
     ["dashboard", "database", "auth", "website"],
   );
+  assert.equal(payload.plugins[0].name, "zelavis-ecommerce");
+  assert.equal(payload.plugins[0].status, "available");
 });
 
 test("zelavis includes core services by default", async () => {
@@ -30,6 +32,7 @@ test("zelavis includes core services by default", async () => {
   assert.equal(runtime.services.website.name, "website");
   assert.ok(routes.some((route) => route.fullPath === "/*path"));
   assert.ok(routes.some((route) => route.fullPath === "/zelavis"));
+  assert.ok(routes.some((route) => route.fullPath === "/zelavis/commerce/orders"));
   assert.ok(routes.some((route) => route.fullPath === "/zelavis/settings"));
   assert.ok(routes.some((route) => route.fullPath === "/zelavis/*path"));
   assert.ok(
@@ -149,6 +152,62 @@ test("zelavis includes core services by default", async () => {
     configResponse.body.services.map((service) => service.name),
     ["dashboard", "database", "auth", "website"],
   );
+  assert.equal(configResponse.body.plugins.length, 1);
+  assert.equal(configResponse.body.plugins[0].name, "zelavis-ecommerce");
+  assert.equal(configResponse.body.plugins[0].status, "available");
+  assert.equal(configResponse.body.plugins[0].menu.items[0].path, "/commerce/products");
+
+  const pluginsRoute = routes.find(
+    (route) =>
+      route.fullPath === "/zelavis/api/v1/dashboard/plugins" &&
+      route.route.method === "GET",
+  );
+  const pluginsResponse = await pluginsRoute.route.handler({
+    service: pluginsRoute.service.service,
+    params: {},
+    query: new URLSearchParams(),
+    body: undefined,
+    headers: {},
+    request: undefined,
+  });
+
+  assert.equal(pluginsResponse.status, 200);
+  assert.equal(pluginsResponse.body.plugins[0].status, "available");
+
+  const updatePluginRoute = routes.find(
+    (route) =>
+      route.fullPath === "/zelavis/api/v1/dashboard/plugins/:name" &&
+      route.route.method === "PATCH",
+  );
+  const updatePluginResponse = await updatePluginRoute.route.handler({
+    service: updatePluginRoute.service.service,
+    params: { name: "zelavis-ecommerce" },
+    query: new URLSearchParams(),
+    body: {
+      status: "installed",
+      order: 3,
+    },
+    headers: {},
+    request: undefined,
+  });
+
+  assert.equal(updatePluginResponse.status, 200);
+  assert.equal(updatePluginResponse.body.plugins[0].status, "installed");
+  assert.equal(updatePluginResponse.body.plugins[0].order, 3);
+
+  const configResponseAfterPluginUpdate = await configRoute.route.handler({
+    service: configRoute.service.service,
+    params: {},
+    query: new URLSearchParams(),
+    body: undefined,
+    headers: {},
+    request: undefined,
+  });
+
+  assert.equal(
+    configResponseAfterPluginUpdate.body.plugins[0].status,
+    "installed",
+  );
 
   const dashboardSettingsRoute = routes.find(
     (route) =>
@@ -211,6 +270,43 @@ test("zelavis includes core services by default", async () => {
 
   assert.equal(invalidUpdateResponse.status, 400);
   assert.match(invalidUpdateResponse.body.error, /Theme must be/);
+});
+
+test("plugin registry install state controls plugin activation on boot", async () => {
+  const storeState = [
+    {
+      name: "zelavis-ecommerce",
+      status: "installed",
+      order: 0,
+    },
+  ];
+  const runtime = await zelavis({
+    plugins: {
+      store: {
+        read() {
+          return storeState;
+        },
+        write(entries) {
+          storeState.splice(0, storeState.length, ...entries);
+          return entries;
+        },
+      },
+    },
+  });
+
+  assert.ok(
+    runtime.routes.some(
+      (route) => route.fullPath === "/zelavis/api/v1/commerce/health",
+    ),
+  );
+
+  const configResponse = await runtime.fetch(
+    new Request("http://localhost/zelavis/api/v1/dashboard/config"),
+  );
+  const config = await configResponse.json();
+
+  assert.equal(config.plugins[0].status, "installed");
+  assert.ok(config.services.some((service) => service.name === "commerce"));
 });
 
 test("zelavis can disable the database core service", async () => {
