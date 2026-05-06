@@ -1,49 +1,25 @@
+import { Zelavis } from "zelavis";
 import {
-  createCloudflareD1DatabaseDriver,
-  type CloudflareD1Database,
-} from "@zelavis/database-cloudflare-d1";
-import { zelavis } from "zelavis";
+  cloudflarePlatform,
+  type CloudflarePlatformEnv,
+} from "zelavis/platforms/cloudflare";
 
-interface Env {
-  ZELAVIS_DB: CloudflareD1Database;
-}
+type Env = CloudflarePlatformEnv;
 
-let runtimePromise: ReturnType<typeof zelavis> | undefined;
-
-function requireDatabase(env: Env): CloudflareD1Database {
-  const database = env.ZELAVIS_DB;
-
-  if (
-    !database ||
-    typeof database !== "object" ||
-    typeof database.prepare !== "function"
-  ) {
-    throw new TypeError(
-      "Missing or invalid Cloudflare D1 binding `ZELAVIS_DB`. Configure the binding in website/wrangler.jsonc before running the website worker.",
-    );
-  }
-
-  return database;
-}
+let runtimePromise: Promise<Awaited<ReturnType<Zelavis["runtime"]>>> | undefined;
 
 function getRuntime(env: Env) {
   if (runtimePromise) {
     return runtimePromise;
   }
 
-  const database = requireDatabase(env);
-
-  runtimePromise = zelavis({
-    coreServices: {
-      database: {
-        driver: createCloudflareD1DatabaseDriver({
-          database,
-        }),
-        defaultNodeId: "cloudflare",
-      },
-    },
+  const zelavis = new Zelavis({
+    platform: cloudflarePlatform({
+      env,
+    }),
   });
 
+  runtimePromise = zelavis.runtime();
   return runtimePromise;
 }
 

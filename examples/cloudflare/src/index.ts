@@ -1,15 +1,26 @@
 import { Zelavis } from "zelavis";
 import {
   cloudflarePlatform,
-  type CloudflareD1Binding,
-  type CloudflareKvNamespace,
-  type CloudflareR2Bucket,
+  type CloudflarePlatformEnv,
 } from "zelavis/platforms/cloudflare";
 
-interface Env {
-  ZELAVIS_DB?: CloudflareD1Binding;
-  ZELAVIS_KV?: CloudflareKvNamespace;
-  ZELAVIS_FILES?: CloudflareR2Bucket;
+type Env = CloudflarePlatformEnv;
+
+let runtimePromise: Promise<Awaited<ReturnType<Zelavis["runtime"]>>> | undefined;
+
+function getRuntime(env: Env) {
+  if (runtimePromise) {
+    return runtimePromise;
+  }
+
+  const zelavis = new Zelavis({
+    platform: cloudflarePlatform({
+      env,
+    }),
+  });
+
+  runtimePromise = zelavis.runtime();
+  return runtimePromise;
 }
 
 export default {
@@ -28,27 +39,9 @@ export default {
       return new Response("Not Found", { status: 404 });
     }
 
-    const zelavis = new Zelavis({
-      platform: cloudflarePlatform({
-        database: env.ZELAVIS_DB
-          ? {
-              binding: env.ZELAVIS_DB,
-            }
-          : false,
-        kv: env.ZELAVIS_KV
-          ? {
-              namespace: env.ZELAVIS_KV,
-            }
-          : false,
-        files: env.ZELAVIS_FILES
-          ? {
-              bucket: env.ZELAVIS_FILES,
-            }
-          : false,
-      }),
-    });
+    const runtime = await getRuntime(env);
 
-    return zelavis.fetch(request, {
+    return runtime.fetch(request, {
       platform: {
         cloudflare: {
           env,

@@ -491,21 +491,51 @@ function createSchema(database: BunSqliteDatabase): void {
       );
   `);
 
-  const eventColumns = database
-    .prepare(`PRAGMA table_info(events)`)
-    .all() as Array<{ name: string }>;
-
-  if (!eventColumns.some((column) => column.name === "idempotency_key")) {
-    throw new Error(
-      "Outdated SQLite schema detected for the events table. Delete the existing database file and recreate it with the current Zelavis schema.",
-    );
-  }
+  ensureColumn(
+    database,
+    "collections",
+    "document_count",
+    "INTEGER NOT NULL DEFAULT 0",
+  );
+  ensureColumn(database, "collections", "metadata_json", "TEXT");
+  ensureColumn(
+    database,
+    "documents",
+    "schema_version",
+    "INTEGER NOT NULL DEFAULT 1",
+  );
+  ensureColumn(database, "events", "idempotency_key", "TEXT");
+  ensureColumn(
+    database,
+    "events",
+    "schema_version",
+    "INTEGER NOT NULL DEFAULT 1",
+  );
+  ensureColumn(database, "schemas", "metadata_json", "TEXT");
+  ensureColumn(database, "schemas", "is_active", "INTEGER NOT NULL DEFAULT 0");
 
   database.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS events_tenant_idempotency_idx
       ON events (tenant_id, idempotency_key)
       WHERE idempotency_key IS NOT NULL;
   `);
+}
+
+function ensureColumn(
+  database: BunSqliteDatabase,
+  table: string,
+  column: string,
+  definition: string,
+): void {
+  const columns = database
+    .prepare(`PRAGMA table_info(${table})`)
+    .all() as Array<{ name: string }>;
+
+  if (columns.some((current) => current.name === column)) {
+    return;
+  }
+
+  database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
 function payloadText(value: unknown): string {

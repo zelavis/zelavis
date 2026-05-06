@@ -9,7 +9,7 @@ It does not need a dedicated Cloudflare adapter helper because Cloudflare Worker
 - the worker can still keep its own host routes like `/hello`
 - Zelavis stays mounted at `/zelavis/*`
 - the built-in dashboard works at the edge too
-- `cloudflarePlatform()` can carry D1, KV, and R2 bindings into Zelavis as one platform preset
+- `cloudflarePlatform({ env })` infers the standard Cloudflare bindings for D1, KV, and R2
 
 ## Run
 
@@ -20,6 +20,9 @@ pnpm run example:cloudflare
 ```
 
 Wrangler serves the worker locally at `http://localhost:8787` by default.
+The example includes a local `ZELAVIS_DB` D1 binding in
+`wrangler.jsonc`, so the dashboard should report the `cloudflare-d1`
+driver during local development.
 
 Then open:
 
@@ -30,3 +33,5 @@ Then open:
 ## Key file
 
 - `src/index.ts` exports the standard Cloudflare module worker shape: `export default { async fetch(request, env, ctx) { ... } }`
+- `src/index.ts` passes the whole worker `env` object into `cloudflarePlatform({ env })`, so the platform preset owns Cloudflare binding discovery
+- `wrangler.jsonc` defines the local D1 binding used by `wrangler dev`

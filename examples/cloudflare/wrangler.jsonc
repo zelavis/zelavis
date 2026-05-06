@@ -3,4 +3,15 @@
   "name": "zelavis-cloudflare-example",
   "main": "src/index.ts",
   "compatibility_date": "2026-04-25",
+  // This local binding lets `wrangler dev` inject `env.ZELAVIS_DB` during
+  // development so the example uses the real Cloudflare D1 adapter instead of
+  // silently falling back to the in-memory database.
+  "d1_databases": [
+    {
+      "binding": "ZELAVIS_DB",
+      "database_name": "zelavis-cloudflare-example-local",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "preview_database_id": "00000000-0000-0000-0000-000000000000",
+    },
+  ],
 }
