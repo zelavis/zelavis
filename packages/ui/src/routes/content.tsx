@@ -72,7 +72,7 @@ function Content() {
     [config],
   );
 
-  const contentPreferences = settings.data?.preferences.content;
+  const contentPreferences = settings.data?.preferences?.content;
   const contentTypeRows = useMemo(
     () =>
       buildContentTypeRows(

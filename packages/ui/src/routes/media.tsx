@@ -157,7 +157,7 @@ function MediaRoute() {
   );
   const selectedAsset = visibleFiles.find((file) => file.path === selectedPath);
   const selectedAssets = orderedFiles.filter((file) => selectedPaths.includes(file.path));
-  const persistedOrderedPaths = settings.data?.preferences.media?.orderedPaths ?? [];
+  const persistedOrderedPaths = settings.data?.preferences?.media?.orderedPaths ?? [];
 
   useEffect(() => {
     setOrderedPaths((current) => {

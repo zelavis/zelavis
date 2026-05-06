@@ -36,7 +36,7 @@ function ContentTypeLayout() {
   const contentType = buildContentTypeRows(
     collections.data ?? [],
     schemaCollections.data ?? [],
-    settings.data?.preferences.content,
+    settings.data?.preferences?.content,
   ).find((row) => row.name === contentTypeName);
 
   return (

@@ -43,7 +43,7 @@ function ContentTypeSettingsRoute() {
     [collections.data, contentType],
   );
   const [labelDraft, setLabelDraft] = useState(
-    settings.data?.preferences.content?.labels?.[contentType] ?? contentType,
+    settings.data?.preferences?.content?.labels?.[contentType] ?? contentType,
   );
   const [duplicateLabel, setDuplicateLabel] = useState(`${contentType} Copy`);
   const [duplicateName, setDuplicateName] = useState(`${contentType}-copy`);
@@ -53,12 +53,12 @@ function ContentTypeSettingsRoute() {
 
   const activeSchemaVersion =
     schemaCollections.data?.find((entry) => entry.collection === contentType)?.activeVersion ?? null;
-  const pinnedTypes = settings.data?.preferences.content?.pinnedTypes ?? [];
+  const pinnedTypes = settings.data?.preferences?.content?.pinnedTypes ?? [];
   const isPinned = pinnedTypes.includes(contentType);
 
   useEffect(() => {
-    setLabelDraft(settings.data?.preferences.content?.labels?.[contentType] ?? contentType);
-  }, [contentType, settings.data?.preferences.content?.labels]);
+    setLabelDraft(settings.data?.preferences?.content?.labels?.[contentType] ?? contentType);
+  }, [contentType, settings.data?.preferences?.content?.labels]);
 
   async function handleSaveLabel() {
     if (!config || !labelDraft.trim() || saving) {
