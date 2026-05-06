@@ -23,12 +23,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import {
   deleteStorageFile,
+  getDashboardSettings,
   getRuntimeConfig,
   getStorageFileMetadata,
   getStorageFileUrl,
   isRenderableImageFile,
   listStorageFiles,
   type StorageFile,
+  updateDashboardSettings,
   uploadStorageFile,
 } from "#/lib/runtime-api";
 import { useRuntimeResource } from "#/lib/use-runtime-resource";
@@ -88,6 +90,10 @@ function MediaRoute() {
   const runtime = useRuntimeResource(getRuntimeConfig);
   const config = runtime.data;
   const storageEnabled = config?.services.some((service) => service.name === "storage");
+  const settings = useRuntimeResource(
+    async () => (config ? getDashboardSettings(config) : undefined),
+    [config],
+  );
   const [prefix, setPrefix] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [labelFilter, setLabelFilter] = useState("");
@@ -151,11 +157,13 @@ function MediaRoute() {
   );
   const selectedAsset = visibleFiles.find((file) => file.path === selectedPath);
   const selectedAssets = orderedFiles.filter((file) => selectedPaths.includes(file.path));
+  const persistedOrderedPaths = settings.data?.preferences.media?.orderedPaths ?? [];
 
   useEffect(() => {
     setOrderedPaths((current) => {
+      const baseline = current.length > 0 ? current : persistedOrderedPaths;
       const visibleSet = new Set(filteredFiles.map((file) => file.path));
-      const retained = current.filter((path) => visibleSet.has(path));
+      const retained = baseline.filter((path) => visibleSet.has(path));
       const missing = filteredFiles
         .map((file) => file.path)
         .filter((path) => !retained.includes(path));
@@ -164,7 +172,27 @@ function MediaRoute() {
     setSelectedPaths((current) =>
       current.filter((path) => filteredFiles.some((file) => file.path === path)),
     );
-  }, [filteredFiles]);
+  }, [filteredFiles, persistedOrderedPaths]);
+
+  async function persistMediaOrder(nextOrderedPaths: string[]) {
+    if (!config) {
+      return;
+    }
+
+    const mergedOrderedPaths = [
+      ...nextOrderedPaths,
+      ...persistedOrderedPaths.filter((path) => !nextOrderedPaths.includes(path)),
+    ];
+
+    await updateDashboardSettings(config, {
+      preferences: {
+        media: {
+          orderedPaths: mergedOrderedPaths,
+        },
+      },
+    });
+    await settings.reload();
+  }
 
   async function handleUpload(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -337,16 +365,24 @@ function MediaRoute() {
       return;
     }
 
+    let nextOrderedPaths: string[] | undefined;
     setOrderedPaths((current) => {
       const next = current.filter((path) => path !== draggedAssetPath);
       const targetIndex = next.indexOf(beforePath);
       if (targetIndex === -1) {
-        return [...next, draggedAssetPath];
+        nextOrderedPaths = [...next, draggedAssetPath];
+        return nextOrderedPaths;
       }
 
       next.splice(targetIndex, 0, draggedAssetPath);
+      nextOrderedPaths = next;
       return next;
     });
+    if (nextOrderedPaths) {
+      void persistMediaOrder(nextOrderedPaths).catch((caught) => {
+        setError(caught instanceof Error ? caught.message : String(caught));
+      });
+    }
   }
 
   return (
@@ -513,7 +549,7 @@ function MediaRoute() {
                     Drag a file here or choose one from disk
                   </p>
                   <p className="text-muted-foreground">
-                    This keeps the editor flow lightweight while still writing into the storage core.
+                    This keeps the editor flow lightweight while still writing into the storage core. Reordering the gallery persists through Zelavis runtime settings.
                   </p>
                 </div>
                 <Input

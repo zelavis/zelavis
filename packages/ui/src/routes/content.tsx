@@ -1,6 +1,19 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { Braces, FileText, LayoutList, Plus } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Braces,
+  FileText,
+  LayoutList,
+  Pin,
+  PinOff,
+  Plus,
+  Copy,
+  Pencil,
+  Save,
+  X,
+} from "lucide-react";
+import { Fragment, useMemo, useState } from "react";
 
 import {
   PageHeader,
@@ -12,13 +25,19 @@ import { Button, buttonVariants } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import {
+  buildContentTypeRows,
+  getContentTypeLabel,
+  slugifyContentTypeLabel,
+} from "#/lib/content-studio";
+import {
   createDatabaseCollection,
   createDatabaseSchema,
+  getDashboardSettings,
   getRuntimeConfig,
-  insertDatabaseDocument,
   listDatabaseCollections,
   listDatabaseSchemaCollections,
-  queryDatabaseDocuments,
+  listDatabaseSchemaVersions,
+  updateDashboardSettings,
 } from "#/lib/runtime-api";
 import { useRuntimeResource } from "#/lib/use-runtime-resource";
 import { cn } from "#/lib/utils";
@@ -28,9 +47,18 @@ export const Route = createFileRoute("/content")({ component: Content });
 function Content() {
   const runtime = useRuntimeResource(getRuntimeConfig);
   const config = runtime.data;
+  const settings = useRuntimeResource(
+    async () => (config ? getDashboardSettings(config) : undefined),
+    [config],
+  );
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [contentTypeLabel, setContentTypeLabel] = useState("");
   const [contentTypeName, setContentTypeName] = useState("");
-  const [selectedContentType, setSelectedContentType] = useState<string>();
+  const [editingLabelFor, setEditingLabelFor] = useState<string>();
+  const [labelDraft, setLabelDraft] = useState("");
+  const [duplicatingType, setDuplicatingType] = useState<string>();
+  const [duplicateLabel, setDuplicateLabel] = useState("");
+  const [duplicateName, setDuplicateName] = useState("");
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
@@ -43,28 +71,39 @@ function Content() {
     async () => (config ? listDatabaseSchemaCollections(config) : []),
     [config],
   );
-  const selectedType = useMemo(
-    () => selectedContentType ?? collections.data?.[0]?.name,
-    [collections.data, selectedContentType],
-  );
-  const entries = useRuntimeResource(
-    async () => (config && selectedType ? queryDatabaseDocuments(config, selectedType) : []),
-    [config, selectedType],
-  );
 
-  const contentTypeRows = useMemo(() => {
-    const schemaMap = new Map(
-      (schemaCollections.data ?? []).map((entry) => [entry.collection, entry] as const),
-    );
+  const contentPreferences = settings.data?.preferences.content;
+  const contentTypeRows = useMemo(
+    () =>
+      buildContentTypeRows(
+        collections.data ?? [],
+        schemaCollections.data ?? [],
+        contentPreferences,
+      ),
+    [collections.data, contentPreferences, schemaCollections.data],
+  );
+  const pinnedTypes = contentPreferences?.pinnedTypes ?? [];
 
-    return (collections.data ?? []).map((collection) => ({
-      name: collection.name,
-      documentCount: collection.documentCount,
-      tenantId: collection.tenantId,
-      activeVersion: schemaMap.get(collection.name)?.activeVersion ?? null,
-      versions: schemaMap.get(collection.name)?.versions ?? [],
-    }));
-  }, [collections.data, schemaCollections.data]);
+  async function persistContentPreferences(
+    update: {
+      pinnedTypes?: string[];
+      labels?: Record<string, string>;
+    },
+  ) {
+    if (!config) {
+      return;
+    }
+
+    await updateDashboardSettings(config, {
+      preferences: {
+        content: {
+          ...(update.pinnedTypes ? { pinnedTypes: update.pinnedTypes } : {}),
+          ...(update.labels ? { labels: update.labels } : {}),
+        },
+      },
+    });
+    await settings.reload();
+  }
 
   async function handleCreateContentType(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -73,13 +112,16 @@ function Content() {
       return;
     }
 
+    const normalizedLabel = contentTypeLabel.trim() || contentTypeName.trim();
+    const normalizedName = slugifyContentTypeLabel(contentTypeName) || contentTypeName.trim();
+
     setSaving(true);
     setMessage(undefined);
     setError(undefined);
 
     try {
       const collection = await createDatabaseCollection(config, {
-        name: contentTypeName.trim(),
+        name: normalizedName,
         metadata: {
           surface: "content-studio",
           kind: "content-type",
@@ -105,11 +147,19 @@ function Content() {
         },
       });
 
+      if (normalizedLabel !== collection.name) {
+        await persistContentPreferences({
+          labels: {
+            [collection.name]: normalizedLabel,
+          },
+        });
+      }
+
       await Promise.all([collections.reload(), schemaCollections.reload()]);
-      setSelectedContentType(collection.name);
+      setContentTypeLabel("");
       setContentTypeName("");
       setShowCreateForm(false);
-      setMessage(`Created content type ${collection.name} with starter schema v1.`);
+      setMessage(`Created content type ${normalizedLabel} (${collection.name}) with starter schema v1.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -117,27 +167,139 @@ function Content() {
     }
   }
 
-  async function handleCreateDraftEntry() {
-    if (!config || !selectedType || saving) {
+  async function handlePinToggle(name: string) {
+    if (!config || saving) {
+      return;
+    }
+
+    const nextPinnedTypes = pinnedTypes.includes(name)
+      ? pinnedTypes.filter((entry) => entry !== name)
+      : [...pinnedTypes, name];
+
+    setSaving(true);
+    setMessage(undefined);
+    setError(undefined);
+    try {
+      await persistContentPreferences({ pinnedTypes: nextPinnedTypes });
+      setMessage(
+        pinnedTypes.includes(name)
+          ? `Removed ${getContentTypeLabel(name, contentPreferences)} from pinned content types.`
+          : `Pinned ${getContentTypeLabel(name, contentPreferences)} to the top of Content Studio.`,
+      );
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleMovePinned(name: string, direction: -1 | 1) {
+    if (!config || saving) {
+      return;
+    }
+
+    const index = pinnedTypes.indexOf(name);
+    const nextIndex = index + direction;
+    if (index === -1 || nextIndex < 0 || nextIndex >= pinnedTypes.length) {
+      return;
+    }
+
+    const nextPinnedTypes = [...pinnedTypes];
+    [nextPinnedTypes[index], nextPinnedTypes[nextIndex]] = [
+      nextPinnedTypes[nextIndex],
+      nextPinnedTypes[index],
+    ];
+
+    setSaving(true);
+    setMessage(undefined);
+    setError(undefined);
+    try {
+      await persistContentPreferences({ pinnedTypes: nextPinnedTypes });
+      setMessage(`Updated pinned order for ${getContentTypeLabel(name, contentPreferences)}.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleSaveLabel(name: string) {
+    const normalizedLabel = labelDraft.trim();
+    if (!config || !normalizedLabel || saving) {
       return;
     }
 
     setSaving(true);
     setMessage(undefined);
     setError(undefined);
-
     try {
-      const created = await insertDatabaseDocument(config, {
-        collection: selectedType,
-        data: {
-          title: "Untitled draft",
-          slug: `draft-${Date.now()}`,
-          excerpt: "",
-          status: "draft",
+      await persistContentPreferences({
+        labels: {
+          [name]: normalizedLabel,
         },
       });
-      await Promise.all([collections.reload(), entries.reload()]);
-      setMessage(`Created draft entry ${created.id} in ${selectedType}.`);
+      setEditingLabelFor(undefined);
+      setLabelDraft("");
+      setMessage(`Updated content type label for ${name}.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDuplicateType(sourceName: string) {
+    if (!config || !duplicateName.trim() || saving) {
+      return;
+    }
+
+    const nextName = slugifyContentTypeLabel(duplicateName) || duplicateName.trim();
+    const nextLabel = duplicateLabel.trim() || duplicateName.trim();
+
+    setSaving(true);
+    setMessage(undefined);
+    setError(undefined);
+
+    try {
+      const sourceSchemas = await listDatabaseSchemaVersions(config, sourceName);
+      const activeSchema =
+        sourceSchemas.find((schema) => schema.active) ?? sourceSchemas.at(-1);
+
+      const created = await createDatabaseCollection(config, {
+        name: nextName,
+        metadata: {
+          surface: "content-studio",
+          kind: "content-type",
+          duplicatedFrom: sourceName,
+        },
+      });
+
+      if (activeSchema) {
+        await createDatabaseSchema(config, {
+          collection: created.name,
+          version: 1,
+          activate: true,
+          document: activeSchema.document,
+          metadata: {
+            ...(activeSchema.metadata ?? {}),
+            duplicatedFrom: sourceName,
+          },
+        });
+      }
+
+      if (nextLabel !== created.name) {
+        await persistContentPreferences({
+          labels: {
+            [created.name]: nextLabel,
+          },
+        });
+      }
+
+      await Promise.all([collections.reload(), schemaCollections.reload()]);
+      setDuplicatingType(undefined);
+      setDuplicateLabel("");
+      setDuplicateName("");
+      setMessage(`Duplicated ${sourceName} into ${created.name}.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -150,7 +312,7 @@ function Content() {
       <PageHeader
         eyebrow="Content"
         title="Content Studio"
-        description="Editor-facing content types sit here, while the lower-level database service stays under Core. This is the friendlier surface for managing structured content models."
+        description="Editor-facing content types live here. Pinned types stay at the top, while the lower-level document model remains available under Core > Database."
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -163,6 +325,7 @@ function Content() {
             </Button>
             <Link
               to="/database"
+              search={{ sidebar: "Core" }}
               className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
             >
               Open Core Database
@@ -198,23 +361,35 @@ function Content() {
             <CardTitle>New content type</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4 p-4">
-            <form
-              className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]"
-              onSubmit={handleCreateContentType}
-            >
-              <Input
-                value={contentTypeName}
-                onChange={(event) => setContentTypeName(event.target.value)}
-                placeholder="articles"
-                disabled={saving}
-                aria-label="Content type name"
-              />
-              <Button type="submit" disabled={!contentTypeName.trim() || saving}>
-                + Content Type
-              </Button>
+            <form className="grid gap-3" onSubmit={handleCreateContentType}>
+              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                <Input
+                  value={contentTypeLabel}
+                  onChange={(event) => {
+                    const nextLabel = event.target.value;
+                    setContentTypeLabel(nextLabel);
+                    if (!contentTypeName.trim()) {
+                      setContentTypeName(slugifyContentTypeLabel(nextLabel));
+                    }
+                  }}
+                  placeholder="Articles"
+                  disabled={saving}
+                  aria-label="Content type label"
+                />
+                <Input
+                  value={contentTypeName}
+                  onChange={(event) => setContentTypeName(event.target.value)}
+                  placeholder="articles"
+                  disabled={saving}
+                  aria-label="Content type collection name"
+                />
+                <Button type="submit" disabled={!contentTypeName.trim() || saving}>
+                  + Content Type
+                </Button>
+              </div>
             </form>
             <p className="text-sm text-muted-foreground">
-              This creates the collection and a starter schema in one step, so the content type appears here immediately.
+              The label is editor-facing. The collection name stays the durable slug used by the lower-level database service.
             </p>
           </CardContent>
         </Card>
@@ -240,139 +415,205 @@ function Content() {
               <table className="w-full text-sm">
                 <thead className="border-b bg-muted/20 text-left text-muted-foreground">
                   <tr>
-                    <th className="px-4 py-3 font-medium">Name</th>
+                    <th className="px-4 py-3 font-medium">Type</th>
                     <th className="px-4 py-3 font-medium">Entries</th>
-                    <th className="px-4 py-3 font-medium">Active schema</th>
-                    <th className="px-4 py-3 font-medium">Versions</th>
+                    <th className="px-4 py-3 font-medium">Schema</th>
+                    <th className="px-4 py-3 font-medium">Pinned</th>
                     <th className="px-4 py-3 font-medium">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {contentTypeRows.map((row) => (
-                    <tr
-                      key={row.name}
-                      className={[
-                        "border-b last:border-b-0",
-                        selectedType === row.name ? "bg-muted/20" : "",
-                      ].join(" ")}
-                    >
-                      <td className="px-4 py-3">
-                        <button
-                          type="button"
-                          className="grid gap-1 text-left"
-                          onClick={() => setSelectedContentType(row.name)}
-                        >
-                          <span className="font-medium text-foreground">{row.name}</span>
-                          <span className="text-xs text-muted-foreground">
-                            tenant {row.tenantId}
-                          </span>
-                        </button>
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground">{row.documentCount}</td>
-                      <td className="px-4 py-3">
-                        <StatusBadge
-                          state={row.activeVersion ? "ready" : "planned"}
-                        />
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground">
-                        {row.versions.length > 0 ? row.versions.join(", ") : "No schemas"}
-                      </td>
-                      <td className="px-4 py-3">
-                        <Link
-                          to="/database"
-                          search={{ sidebar: "Core" }}
-                          className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
-                        >
-                          Manage
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                  {contentTypeRows.map((row) => {
+                    const isEditingLabel = editingLabelFor === row.name;
+                    const isDuplicating = duplicatingType === row.name;
+                    const pinnedIndex = pinnedTypes.indexOf(row.name);
 
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between gap-3">
-          <div>
-            <CardTitle>{selectedType ? `${selectedType} entries` : "Entries"}</CardTitle>
-          </div>
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => void handleCreateDraftEntry()}
-            disabled={!selectedType || saving}
-          >
-            <Plus className="size-4" />
-            New Entry
-          </Button>
-        </CardHeader>
-        <CardContent className="p-0">
-          {!selectedType ? (
-            <div className="p-4">
-              <ResourceNotice
-                title="Select a content type"
-                description="Choose a content type above to browse its entries from the editor-facing surface."
-              />
-            </div>
-          ) : entries.data && entries.data.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="border-b bg-muted/20 text-left text-muted-foreground">
-                  <tr>
-                    <th className="px-4 py-3 font-medium">Title</th>
-                    <th className="px-4 py-3 font-medium">Status</th>
-                    <th className="px-4 py-3 font-medium">Slug</th>
-                    <th className="px-4 py-3 font-medium">Updated</th>
-                    <th className="px-4 py-3 font-medium">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {entries.data.map((entry) => {
-                    const data = entry.data as Record<string, unknown>;
                     return (
-                      <tr key={entry.id} className="border-b last:border-b-0">
-                        <td className="px-4 py-3">
-                          <div className="grid gap-1">
-                            <span className="font-medium text-foreground">
-                              {typeof data.title === "string" ? data.title : entry.id}
-                            </span>
-                            <span className="text-xs text-muted-foreground">{entry.id}</span>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-muted-foreground">
-                          {typeof data.status === "string" ? data.status : "draft"}
-                        </td>
-                        <td className="px-4 py-3 text-muted-foreground">
-                          {typeof data.slug === "string" ? data.slug : "—"}
-                        </td>
-                        <td className="px-4 py-3 text-muted-foreground">
-                          {new Date(entry.updatedAt).toLocaleString()}
-                        </td>
-                        <td className="px-4 py-3">
-                          <Link
-                            to="/database"
-                            search={{ sidebar: "Core" }}
-                            className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
-                          >
-                            Open Raw View
-                          </Link>
-                        </td>
-                      </tr>
+                      <Fragment key={row.name}>
+                        <tr key={row.name} className="border-b last:border-b-0">
+                          <td className="px-4 py-3">
+                            <div className="grid gap-1">
+                              <span className="font-medium text-foreground">{row.label}</span>
+                              <span className="text-xs text-muted-foreground">
+                                {row.name} · tenant {row.tenantId}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-muted-foreground">{row.documentCount}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <StatusBadge state={row.activeVersion ? "ready" : "planned"} />
+                              <span className="text-muted-foreground">
+                                {row.activeVersion ? `v${row.activeVersion}` : "No active schema"}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            {row.pinned ? (
+                              <div className="flex items-center gap-2 text-muted-foreground">
+                                <Pin className="size-4" />
+                                <span>#{pinnedIndex + 1}</span>
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Link
+                                to="/content/$contentType"
+                                params={{ contentType: row.name }}
+                                className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+                              >
+                                Open
+                              </Link>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  setEditingLabelFor(row.name);
+                                  setLabelDraft(row.label);
+                                  setDuplicatingType(undefined);
+                                }}
+                              >
+                                <Pencil className="size-4" />
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  setDuplicatingType(row.name);
+                                  setDuplicateLabel(`${row.label} Copy`);
+                                  setDuplicateName(`${row.name}-copy`);
+                                  setEditingLabelFor(undefined);
+                                }}
+                              >
+                                <Copy className="size-4" />
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => void handlePinToggle(row.name)}
+                              >
+                                {row.pinned ? (
+                                  <PinOff className="size-4" />
+                                ) : (
+                                  <Pin className="size-4" />
+                                )}
+                              </Button>
+                              {row.pinned ? (
+                                <>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={pinnedIndex <= 0}
+                                    onClick={() => void handleMovePinned(row.name, -1)}
+                                  >
+                                    <ArrowUp className="size-4" />
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={pinnedIndex === -1 || pinnedIndex >= pinnedTypes.length - 1}
+                                    onClick={() => void handleMovePinned(row.name, 1)}
+                                  >
+                                    <ArrowDown className="size-4" />
+                                  </Button>
+                                </>
+                              ) : null}
+                            </div>
+                          </td>
+                        </tr>
+                        {isEditingLabel ? (
+                          <tr key={`${row.name}-edit`} className="border-b bg-muted/10">
+                            <td colSpan={5} className="px-4 py-3">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Input
+                                  value={labelDraft}
+                                  onChange={(event) => setLabelDraft(event.target.value)}
+                                  className="max-w-sm"
+                                  aria-label={`Editor label for ${row.name}`}
+                                />
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => void handleSaveLabel(row.name)}
+                                  disabled={!labelDraft.trim() || saving}
+                                >
+                                  <Save className="size-4" />
+                                  Save label
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    setEditingLabelFor(undefined);
+                                    setLabelDraft("");
+                                  }}
+                                >
+                                  <X className="size-4" />
+                                  Cancel
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
+                        {isDuplicating ? (
+                          <tr key={`${row.name}-duplicate`} className="border-b bg-muted/10">
+                            <td colSpan={5} className="px-4 py-3">
+                              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto]">
+                                <Input
+                                  value={duplicateLabel}
+                                  onChange={(event) => setDuplicateLabel(event.target.value)}
+                                  placeholder="Articles Copy"
+                                  aria-label={`Duplicate label for ${row.name}`}
+                                />
+                                <Input
+                                  value={duplicateName}
+                                  onChange={(event) => setDuplicateName(event.target.value)}
+                                  placeholder="articles-copy"
+                                  aria-label={`Duplicate collection name for ${row.name}`}
+                                />
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => void handleDuplicateType(row.name)}
+                                  disabled={!duplicateName.trim() || saving}
+                                >
+                                  <Copy className="size-4" />
+                                  Duplicate
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    setDuplicatingType(undefined);
+                                    setDuplicateLabel("");
+                                    setDuplicateName("");
+                                  }}
+                                >
+                                  <X className="size-4" />
+                                  Cancel
+                                </Button>
+                              </div>
+                              <p className="mt-2 text-xs text-muted-foreground">
+                                Duplicate creates a new content type with the current active schema. Entries stay separate.
+                              </p>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
                     );
                   })}
                 </tbody>
               </table>
-            </div>
-          ) : (
-            <div className="p-4">
-              <ResourceNotice
-                title="No entries yet"
-                description="Create a draft entry here or manage lower-level document edits from Core > Database."
-              />
             </div>
           )}
         </CardContent>

@@ -46,12 +46,27 @@ export interface RuntimeConfig {
 
 export type DashboardThemeMode = "light" | "dark" | "auto";
 
+export interface DashboardContentPreferences {
+  pinnedTypes?: string[];
+  labels?: Record<string, string>;
+}
+
+export interface DashboardMediaPreferences {
+  orderedPaths?: string[];
+}
+
+export interface DashboardPreferences {
+  content?: DashboardContentPreferences;
+  media?: DashboardMediaPreferences;
+}
+
 export interface DashboardSettings {
   rootPath: string;
   pendingRootPath?: string;
   apiBasePath: string;
   theme: DashboardThemeMode;
   pageBuilderEnabled: boolean;
+  preferences: DashboardPreferences;
   persistence: "runtime" | "read-only";
   editable: {
     rootPath: boolean;
@@ -65,6 +80,7 @@ export interface DashboardSettingsUpdate {
   rootPath?: string;
   theme?: DashboardThemeMode;
   pageBuilderEnabled?: boolean;
+  preferences?: DashboardPreferences;
 }
 
 export interface WebsitePage {
@@ -242,6 +258,8 @@ const fallbackConfig: RuntimeConfig = {
     },
   ],
 };
+
+export const EMPTY_DASHBOARD_PREFERENCES: DashboardPreferences = {};
 
 function inferRootPath(): string {
   if (typeof window === "undefined") {

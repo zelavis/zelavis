@@ -228,6 +228,7 @@ test("zelavis includes core services by default", async () => {
   assert.equal(dashboardSettingsResponse.body.apiBasePath, "/zelavis/api/v1");
   assert.equal(dashboardSettingsResponse.body.persistence, "runtime");
   assert.equal(dashboardSettingsResponse.body.restartRequired, false);
+  assert.deepEqual(dashboardSettingsResponse.body.preferences, {});
   assert.deepEqual(dashboardSettingsResponse.body.editable, {
     rootPath: true,
     theme: true,
@@ -246,6 +247,17 @@ test("zelavis includes core services by default", async () => {
     body: {
       rootPath: "/admin",
       theme: "dark",
+      preferences: {
+        content: {
+          pinnedTypes: ["articles"],
+          labels: {
+            articles: "Articles",
+          },
+        },
+        media: {
+          orderedPaths: ["media/hero.jpg"],
+        },
+      },
     },
     headers: {},
     request: undefined,
@@ -256,6 +268,17 @@ test("zelavis includes core services by default", async () => {
   assert.equal(updateResponse.body.pendingRootPath, "/admin");
   assert.equal(updateResponse.body.theme, "dark");
   assert.equal(updateResponse.body.restartRequired, true);
+  assert.deepEqual(updateResponse.body.preferences, {
+    content: {
+      pinnedTypes: ["articles"],
+      labels: {
+        articles: "Articles",
+      },
+    },
+    media: {
+      orderedPaths: ["media/hero.jpg"],
+    },
+  });
 
   const invalidUpdateResponse = await updateRoute.route.handler({
     service: updateRoute.service.service,

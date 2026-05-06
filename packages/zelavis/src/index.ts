@@ -178,7 +178,129 @@ function parseStoredDashboardSettingsUpdate(
     update.pageBuilderEnabled = input.pageBuilderEnabled;
   }
 
+  if ("preferences" in input) {
+    update.preferences = parseStoredDashboardPreferences(input.preferences);
+  }
+
   return update;
+}
+
+function parseStoredDashboardContentPreferences(
+  value: unknown,
+): ZelavisDashboardContentPreferences {
+  const input = readBodyObject(value);
+  const preferences: ZelavisDashboardContentPreferences = {};
+
+  if ("pinnedTypes" in input) {
+    if (!Array.isArray(input.pinnedTypes)) {
+      throw new ZelavisValidationError(
+        "Stored dashboard content pinned types must be an array.",
+      );
+    }
+
+    preferences.pinnedTypes = input.pinnedTypes.map((entry) => {
+      if (typeof entry !== "string" || !entry.trim()) {
+        throw new ZelavisValidationError(
+          "Stored dashboard content pinned types must contain non-empty strings.",
+        );
+      }
+
+      return entry.trim();
+    });
+  }
+
+  if ("labels" in input) {
+    const labels = readBodyObject(input.labels);
+    preferences.labels = Object.fromEntries(
+      Object.entries(labels)
+        .filter(([, label]) => label !== undefined)
+        .map(([key, label]) => {
+          if (typeof label !== "string" || !label.trim()) {
+            throw new ZelavisValidationError(
+              "Stored dashboard content labels must be non-empty strings.",
+            );
+          }
+
+          return [key, label.trim()] as const;
+        }),
+    );
+  }
+
+  return preferences;
+}
+
+function parseStoredDashboardMediaPreferences(
+  value: unknown,
+): ZelavisDashboardMediaPreferences {
+  const input = readBodyObject(value);
+  const preferences: ZelavisDashboardMediaPreferences = {};
+
+  if ("orderedPaths" in input) {
+    if (!Array.isArray(input.orderedPaths)) {
+      throw new ZelavisValidationError(
+        "Stored dashboard media ordered paths must be an array.",
+      );
+    }
+
+    preferences.orderedPaths = input.orderedPaths.map((entry) => {
+      if (typeof entry !== "string" || !entry.trim()) {
+        throw new ZelavisValidationError(
+          "Stored dashboard media ordered paths must contain non-empty strings.",
+        );
+      }
+
+      return entry.trim();
+    });
+  }
+
+  return preferences;
+}
+
+function parseStoredDashboardPreferences(
+  value: unknown,
+): ZelavisDashboardPreferences {
+  const input = readBodyObject(value);
+  const preferences: ZelavisDashboardPreferences = {};
+
+  if ("content" in input && input.content !== undefined) {
+    preferences.content = parseStoredDashboardContentPreferences(input.content);
+  }
+
+  if ("media" in input && input.media !== undefined) {
+    preferences.media = parseStoredDashboardMediaPreferences(input.media);
+  }
+
+  return preferences;
+}
+
+function serializeDashboardPreferences(
+  preferences: ZelavisDashboardPreferences | undefined,
+): DatabaseJsonObject | undefined {
+  if (!preferences) {
+    return undefined;
+  }
+
+  const content =
+    preferences.content &&
+    (preferences.content.pinnedTypes || preferences.content.labels)
+      ? {
+          ...(preferences.content.pinnedTypes
+            ? { pinnedTypes: [...preferences.content.pinnedTypes] }
+            : {}),
+          ...(preferences.content.labels
+            ? { labels: { ...preferences.content.labels } }
+            : {}),
+        }
+      : undefined;
+  const media =
+    preferences.media?.orderedPaths
+      ? { orderedPaths: [...preferences.media.orderedPaths] }
+      : undefined;
+
+  return {
+    ...(content ? { content } : {}),
+    ...(media ? { media } : {}),
+  } satisfies DatabaseJsonObject;
 }
 
 function parseStoredPluginRegistryStateEntry(
@@ -267,12 +389,27 @@ export interface ZelavisApiOptions {
 
 export type ZelavisDashboardThemeMode = "light" | "dark" | "auto";
 
+export interface ZelavisDashboardContentPreferences {
+  pinnedTypes?: string[];
+  labels?: Record<string, string>;
+}
+
+export interface ZelavisDashboardMediaPreferences {
+  orderedPaths?: string[];
+}
+
+export interface ZelavisDashboardPreferences {
+  content?: ZelavisDashboardContentPreferences;
+  media?: ZelavisDashboardMediaPreferences;
+}
+
 export interface ZelavisDashboardSettings {
   rootPath: string;
   pendingRootPath?: string;
   apiBasePath: string;
   theme: ZelavisDashboardThemeMode;
   pageBuilderEnabled: boolean;
+  preferences: ZelavisDashboardPreferences;
   persistence: "runtime" | "read-only";
   editable: {
     rootPath: boolean;
@@ -286,6 +423,7 @@ export interface ZelavisDashboardSettingsUpdate {
   rootPath?: string;
   theme?: ZelavisDashboardThemeMode;
   pageBuilderEnabled?: boolean;
+  preferences?: ZelavisDashboardPreferences;
 }
 
 export interface ZelavisDashboardSettingsStore {
@@ -603,16 +741,72 @@ function zelavisErrorResponse(error: unknown, fallback = 500) {
   return createMappedJsonErrorResponse(error, zelavisErrorRules, fallback);
 }
 
+function mergeDashboardPreferences(
+  base: ZelavisDashboardPreferences | undefined,
+  update: ZelavisDashboardPreferences | undefined,
+): ZelavisDashboardPreferences | undefined {
+  if (!update) {
+    return base;
+  }
+
+  if (!base) {
+    return update;
+  }
+
+  return {
+    ...base,
+    ...(update.content
+      ? {
+          content: {
+            ...base.content,
+            ...update.content,
+            ...(update.content.labels
+              ? {
+                  labels: {
+                    ...(base.content?.labels ?? {}),
+                    ...update.content.labels,
+                  },
+                }
+              : {}),
+          },
+        }
+      : {}),
+    ...(update.media
+      ? {
+          media: {
+            ...base.media,
+            ...update.media,
+          },
+        }
+      : {}),
+  };
+}
+
+function mergeDashboardSettingsUpdate(
+  base: ZelavisDashboardSettingsUpdate,
+  update: ZelavisDashboardSettingsUpdate,
+): ZelavisDashboardSettingsUpdate {
+  return {
+    ...base,
+    ...update,
+    ...(update.preferences
+      ? {
+          preferences: mergeDashboardPreferences(
+            base.preferences,
+            update.preferences,
+          ),
+        }
+      : {}),
+  };
+}
+
 function createMemoryDashboardSettingsStore(): ZelavisDashboardSettingsStore {
   let settings: ZelavisDashboardSettingsUpdate = {};
 
   return {
     read: () => settings,
     write(update) {
-      settings = {
-        ...settings,
-        ...update,
-      };
+      settings = mergeDashboardSettingsUpdate(settings, update);
 
       return settings;
     },
@@ -940,14 +1134,21 @@ export function createDatabaseDashboardSettingsStore(
       );
     },
     async write(update) {
-      const next = {
-        ...((await this.read()) ?? {}),
-        ...update,
-      };
+      const next = mergeDashboardSettingsUpdate(
+        (await this.read()) ?? {},
+        update,
+      );
 
       await writeDatabaseDocument(database, documentOptions, {
         kind: "dashboard-settings",
-        ...next,
+        ...(next.rootPath !== undefined ? { rootPath: next.rootPath } : {}),
+        ...(next.theme !== undefined ? { theme: next.theme } : {}),
+        ...(next.pageBuilderEnabled !== undefined
+          ? { pageBuilderEnabled: next.pageBuilderEnabled }
+          : {}),
+        ...(next.preferences
+          ? { preferences: serializeDashboardPreferences(next.preferences) }
+          : {}),
       });
 
       return next;
@@ -1038,8 +1239,9 @@ export function createKeyValueDashboardSettingsStore(
       );
     },
     async write(update) {
-      const normalized = parseStoredDashboardSettingsUpdate(
-        readBodyObject(update),
+      const normalized = mergeDashboardSettingsUpdate(
+        (await this.read()) ?? {},
+        parseStoredDashboardSettingsUpdate(readBodyObject(update)),
       );
       await store.set(key, JSON.stringify(normalized));
       return normalized;
@@ -1065,8 +1267,9 @@ export function createFileStorageDashboardSettingsStore(
       );
     },
     async write(update) {
-      const normalized = parseStoredDashboardSettingsUpdate(
-        readBodyObject(update),
+      const normalized = mergeDashboardSettingsUpdate(
+        (await this.read()) ?? {},
+        parseStoredDashboardSettingsUpdate(readBodyObject(update)),
       );
       await storage.put({
         path,
@@ -2024,6 +2227,7 @@ async function resolveDashboardCoreService(
     const pageBuilderEnabled = isBoolean(stored.pageBuilderEnabled)
       ? stored.pageBuilderEnabled
       : false;
+    const preferences = stored.preferences ?? {};
 
     return {
       rootPath,
@@ -2035,6 +2239,7 @@ async function resolveDashboardCoreService(
       ),
       theme,
       pageBuilderEnabled,
+      preferences,
       persistence: "runtime",
       editable: {
         rootPath: true,

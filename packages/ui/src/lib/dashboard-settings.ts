@@ -2,6 +2,7 @@ import type {
   DashboardSettings as RuntimeDashboardSettings,
   RuntimeConfig,
 } from "#/lib/runtime-api";
+import { EMPTY_DASHBOARD_PREFERENCES } from "#/lib/runtime-api";
 import type { ThemeMode } from "#/lib/theme";
 
 export type DashboardSettings = RuntimeDashboardSettings;
@@ -11,6 +12,7 @@ export const DEFAULT_DASHBOARD_SETTINGS: DashboardSettings = {
   apiBasePath: "/zelavis/api/v1",
   theme: "auto",
   pageBuilderEnabled: false,
+  preferences: EMPTY_DASHBOARD_PREFERENCES,
   persistence: "read-only",
   editable: {
     rootPath: false,
@@ -53,6 +55,7 @@ export function createDashboardSettings(
       (rootPath === "/" ? "/api/v1" : `${rootPath}/api/v1`),
     theme,
     pageBuilderEnabled: false,
+    preferences: EMPTY_DASHBOARD_PREFERENCES,
     persistence: "read-only",
     editable: {
       rootPath: false,

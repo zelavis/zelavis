@@ -24,11 +24,15 @@ import { Route as AgentsRouteImport } from './routes/agents'
 import { Route as SplatRouteImport } from './routes/$'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
+import { Route as ContentContentTypeRouteImport } from './routes/content.$contentType'
 import { Route as CommerceProductsRouteImport } from './routes/commerce.products'
 import { Route as CommerceOrdersRouteImport } from './routes/commerce.orders'
 import { Route as CommerceCustomersRouteImport } from './routes/commerce.customers'
 import { Route as CommerceCouponsRouteImport } from './routes/commerce.coupons'
 import { Route as BuilderPagesRouteImport } from './routes/builder.pages'
+import { Route as ContentContentTypeIndexRouteImport } from './routes/content.$contentType.index'
+import { Route as ContentContentTypeSettingsRouteImport } from './routes/content.$contentType.settings'
+import { Route as ContentContentTypeFieldsRouteImport } from './routes/content.$contentType.fields'
 
 const UsersRoute = UsersRouteImport.update({
   id: '/users',
@@ -105,6 +109,11 @@ const SettingsAppearanceRoute = SettingsAppearanceRouteImport.update({
   path: '/appearance',
   getParentRoute: () => SettingsRoute,
 } as any)
+const ContentContentTypeRoute = ContentContentTypeRouteImport.update({
+  id: '/$contentType',
+  path: '/$contentType',
+  getParentRoute: () => ContentRoute,
+} as any)
 const CommerceProductsRoute = CommerceProductsRouteImport.update({
   id: '/products',
   path: '/products',
@@ -130,6 +139,23 @@ const BuilderPagesRoute = BuilderPagesRouteImport.update({
   path: '/pages',
   getParentRoute: () => BuilderRoute,
 } as any)
+const ContentContentTypeIndexRoute = ContentContentTypeIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ContentContentTypeRoute,
+} as any)
+const ContentContentTypeSettingsRoute =
+  ContentContentTypeSettingsRouteImport.update({
+    id: '/settings',
+    path: '/settings',
+    getParentRoute: () => ContentContentTypeRoute,
+  } as any)
+const ContentContentTypeFieldsRoute =
+  ContentContentTypeFieldsRouteImport.update({
+    id: '/fields',
+    path: '/fields',
+    getParentRoute: () => ContentContentTypeRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -138,7 +164,7 @@ export interface FileRoutesByFullPath {
   '/auth': typeof AuthRoute
   '/builder': typeof BuilderRouteWithChildren
   '/commerce': typeof CommerceRouteWithChildren
-  '/content': typeof ContentRoute
+  '/content': typeof ContentRouteWithChildren
   '/database': typeof DatabaseRoute
   '/marketplace': typeof MarketplaceRoute
   '/media': typeof MediaRoute
@@ -151,7 +177,11 @@ export interface FileRoutesByFullPath {
   '/commerce/customers': typeof CommerceCustomersRoute
   '/commerce/orders': typeof CommerceOrdersRoute
   '/commerce/products': typeof CommerceProductsRoute
+  '/content/$contentType': typeof ContentContentTypeRouteWithChildren
   '/settings/appearance': typeof SettingsAppearanceRoute
+  '/content/$contentType/fields': typeof ContentContentTypeFieldsRoute
+  '/content/$contentType/settings': typeof ContentContentTypeSettingsRoute
+  '/content/$contentType/': typeof ContentContentTypeIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -160,7 +190,7 @@ export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
   '/builder': typeof BuilderRouteWithChildren
   '/commerce': typeof CommerceRouteWithChildren
-  '/content': typeof ContentRoute
+  '/content': typeof ContentRouteWithChildren
   '/database': typeof DatabaseRoute
   '/marketplace': typeof MarketplaceRoute
   '/media': typeof MediaRoute
@@ -174,6 +204,9 @@ export interface FileRoutesByTo {
   '/commerce/orders': typeof CommerceOrdersRoute
   '/commerce/products': typeof CommerceProductsRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
+  '/content/$contentType/fields': typeof ContentContentTypeFieldsRoute
+  '/content/$contentType/settings': typeof ContentContentTypeSettingsRoute
+  '/content/$contentType': typeof ContentContentTypeIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -183,7 +216,7 @@ export interface FileRoutesById {
   '/auth': typeof AuthRoute
   '/builder': typeof BuilderRouteWithChildren
   '/commerce': typeof CommerceRouteWithChildren
-  '/content': typeof ContentRoute
+  '/content': typeof ContentRouteWithChildren
   '/database': typeof DatabaseRoute
   '/marketplace': typeof MarketplaceRoute
   '/media': typeof MediaRoute
@@ -196,7 +229,11 @@ export interface FileRoutesById {
   '/commerce/customers': typeof CommerceCustomersRoute
   '/commerce/orders': typeof CommerceOrdersRoute
   '/commerce/products': typeof CommerceProductsRoute
+  '/content/$contentType': typeof ContentContentTypeRouteWithChildren
   '/settings/appearance': typeof SettingsAppearanceRoute
+  '/content/$contentType/fields': typeof ContentContentTypeFieldsRoute
+  '/content/$contentType/settings': typeof ContentContentTypeSettingsRoute
+  '/content/$contentType/': typeof ContentContentTypeIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -220,7 +257,11 @@ export interface FileRouteTypes {
     | '/commerce/customers'
     | '/commerce/orders'
     | '/commerce/products'
+    | '/content/$contentType'
     | '/settings/appearance'
+    | '/content/$contentType/fields'
+    | '/content/$contentType/settings'
+    | '/content/$contentType/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -243,6 +284,9 @@ export interface FileRouteTypes {
     | '/commerce/orders'
     | '/commerce/products'
     | '/settings/appearance'
+    | '/content/$contentType/fields'
+    | '/content/$contentType/settings'
+    | '/content/$contentType'
   id:
     | '__root__'
     | '/'
@@ -264,7 +308,11 @@ export interface FileRouteTypes {
     | '/commerce/customers'
     | '/commerce/orders'
     | '/commerce/products'
+    | '/content/$contentType'
     | '/settings/appearance'
+    | '/content/$contentType/fields'
+    | '/content/$contentType/settings'
+    | '/content/$contentType/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -274,7 +322,7 @@ export interface RootRouteChildren {
   AuthRoute: typeof AuthRoute
   BuilderRoute: typeof BuilderRouteWithChildren
   CommerceRoute: typeof CommerceRouteWithChildren
-  ContentRoute: typeof ContentRoute
+  ContentRoute: typeof ContentRouteWithChildren
   DatabaseRoute: typeof DatabaseRoute
   MarketplaceRoute: typeof MarketplaceRoute
   MediaRoute: typeof MediaRoute
@@ -391,6 +439,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsAppearanceRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/content/$contentType': {
+      id: '/content/$contentType'
+      path: '/$contentType'
+      fullPath: '/content/$contentType'
+      preLoaderRoute: typeof ContentContentTypeRouteImport
+      parentRoute: typeof ContentRoute
+    }
     '/commerce/products': {
       id: '/commerce/products'
       path: '/products'
@@ -426,6 +481,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BuilderPagesRouteImport
       parentRoute: typeof BuilderRoute
     }
+    '/content/$contentType/': {
+      id: '/content/$contentType/'
+      path: '/'
+      fullPath: '/content/$contentType/'
+      preLoaderRoute: typeof ContentContentTypeIndexRouteImport
+      parentRoute: typeof ContentContentTypeRoute
+    }
+    '/content/$contentType/settings': {
+      id: '/content/$contentType/settings'
+      path: '/settings'
+      fullPath: '/content/$contentType/settings'
+      preLoaderRoute: typeof ContentContentTypeSettingsRouteImport
+      parentRoute: typeof ContentContentTypeRoute
+    }
+    '/content/$contentType/fields': {
+      id: '/content/$contentType/fields'
+      path: '/fields'
+      fullPath: '/content/$contentType/fields'
+      preLoaderRoute: typeof ContentContentTypeFieldsRouteImport
+      parentRoute: typeof ContentContentTypeRoute
+    }
   }
 }
 
@@ -458,6 +534,32 @@ const CommerceRouteWithChildren = CommerceRoute._addFileChildren(
   CommerceRouteChildren,
 )
 
+interface ContentContentTypeRouteChildren {
+  ContentContentTypeFieldsRoute: typeof ContentContentTypeFieldsRoute
+  ContentContentTypeSettingsRoute: typeof ContentContentTypeSettingsRoute
+  ContentContentTypeIndexRoute: typeof ContentContentTypeIndexRoute
+}
+
+const ContentContentTypeRouteChildren: ContentContentTypeRouteChildren = {
+  ContentContentTypeFieldsRoute: ContentContentTypeFieldsRoute,
+  ContentContentTypeSettingsRoute: ContentContentTypeSettingsRoute,
+  ContentContentTypeIndexRoute: ContentContentTypeIndexRoute,
+}
+
+const ContentContentTypeRouteWithChildren =
+  ContentContentTypeRoute._addFileChildren(ContentContentTypeRouteChildren)
+
+interface ContentRouteChildren {
+  ContentContentTypeRoute: typeof ContentContentTypeRouteWithChildren
+}
+
+const ContentRouteChildren: ContentRouteChildren = {
+  ContentContentTypeRoute: ContentContentTypeRouteWithChildren,
+}
+
+const ContentRouteWithChildren =
+  ContentRoute._addFileChildren(ContentRouteChildren)
+
 interface SettingsRouteChildren {
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
 }
@@ -477,7 +579,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthRoute: AuthRoute,
   BuilderRoute: BuilderRouteWithChildren,
   CommerceRoute: CommerceRouteWithChildren,
-  ContentRoute: ContentRoute,
+  ContentRoute: ContentRouteWithChildren,
   DatabaseRoute: DatabaseRoute,
   MarketplaceRoute: MarketplaceRoute,
   MediaRoute: MediaRoute,

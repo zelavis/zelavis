@@ -20,6 +20,15 @@ interface ZelavisDashboardSettings {
   apiBasePath: string;
   theme: "light" | "dark" | "auto";
   pageBuilderEnabled: boolean;
+  preferences: {
+    content?: {
+      pinnedTypes?: string[];
+      labels?: Record<string, string>;
+    };
+    media?: {
+      orderedPaths?: string[];
+    };
+  };
   persistence: "runtime" | "read-only";
   editable: {
     rootPath: boolean;
@@ -39,6 +48,15 @@ interface ZelavisDashboardSettingsUpdate {
   rootPath?: string;
   theme?: "light" | "dark" | "auto";
   pageBuilderEnabled?: boolean;
+  preferences?: {
+    content?: {
+      pinnedTypes?: string[];
+      labels?: Record<string, string>;
+    };
+    media?: {
+      orderedPaths?: string[];
+    };
+  };
 }
 ```
 
@@ -49,6 +67,9 @@ The endpoint returns the full normalized settings object after the update is wri
 - `rootPath` updates are stored as pending settings and set `restartRequired: true` until the runtime restarts with the new mounted path.
 - `pendingRootPath` only appears when the stored root path differs from the active mounted root path.
 - `pageBuilderEnabled` is only editable when the website core service is available.
+- `preferences.content.pinnedTypes` keeps editor-facing content types pinned and ordered at the top of the dashboard Content screen.
+- `preferences.content.labels` stores editor-facing labels while the lower-level database collection slug stays unchanged.
+- `preferences.media.orderedPaths` persists Media Gallery ordering through the runtime-backed dashboard settings store.
 - Persistence depends on the configured settings store. In-memory fallback behavior is runtime-local.
 
 ## Related docs
