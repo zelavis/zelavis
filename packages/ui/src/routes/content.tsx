@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
   Braces,
   Copy,
@@ -46,6 +46,7 @@ import { cn } from "#/lib/utils";
 export const Route = createFileRoute("/content")({ component: Content });
 
 function Content() {
+  const navigate = useNavigate();
   const runtime = useRuntimeResource(getRuntimeConfig);
   const config = runtime.data;
   const settings = useRuntimeResource(
@@ -153,6 +154,10 @@ function Content() {
       setContentTypeName("");
       setShowCreateForm(false);
       setMessage(`Created content type ${normalizedLabel} (${collection.name}) with starter schema v1.`);
+      void navigate({
+        to: "/content/$contentType/edit",
+        params: { contentType: collection.name },
+      });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -499,13 +504,20 @@ function Content() {
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex flex-wrap items-center gap-2">
-                              <Link
-                                to="/content/$contentType"
-                                params={{ contentType: row.name }}
-                                className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
-                              >
-                                Open
-                              </Link>
+              <Link
+                to="/content/$contentType"
+                params={{ contentType: row.name }}
+                className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+              >
+                Entries
+              </Link>
+              <Link
+                to="/content/$contentType/edit"
+                params={{ contentType: row.name }}
+                className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+              >
+                Edit
+              </Link>
                               <Button
                                 type="button"
                                 size="sm"

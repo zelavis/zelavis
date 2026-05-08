@@ -1,4 +1,4 @@
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import {
   flexRender,
   getCoreRowModel,
@@ -11,67 +11,28 @@ import {
   type VisibilityState,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import type * as React from "react";
+import { ChevronLeft, ChevronRight, Database, Search, Table2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Braces, ChevronLeft, ChevronRight, Database, FileImage, Files, FileText, Search, Table2, Volume2, Video } from "lucide-react";
 
 import {
-  DataRow,
   PageHeader,
   ResourceNotice,
   StatCard,
-  StatusBadge,
 } from "#/components/DashboardPage";
-import { Badge } from "#/components/ui/badge";
+import { Button } from "#/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "#/components/ui/select";
-import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
-import {
-  type DatabaseTimeSeriesAggregateOperation,
-  type DatabaseTimeSeriesSummary,
-  type DatabaseStoredCollectionSchema,
-  type DatabaseTimeSeriesPoint,
-  activateDatabaseSchemaVersion,
-  createDatabaseSchema,
-  listDatabaseTimeSeries,
   getDatabaseHealth,
   getRuntimeConfig,
-  deleteDatabaseDocument,
-  createDatabaseCollection,
-  listDatabaseSchemaCollections,
-  listDatabaseSchemaVersions,
-  insertDatabaseDocument,
-  queryDatabaseTimeSeriesAggregate,
-  queryDatabaseTimeSeriesRange,
   listDatabaseCollections,
   queryDatabaseDocuments,
-  seedDemoDatabase,
   updateDatabaseDocument,
 } from "#/lib/runtime-api";
 import { useRuntimeResource } from "#/lib/use-runtime-resource";
-import { Button, buttonVariants } from "#/components/ui/button";
 import { cn } from "#/lib/utils";
 
 export const Route = createFileRoute("/database")({ component: DatabaseRoute });
-
-function formatTimeSeriesTimestamp(value: number | string) {
-  const timestamp = typeof value === "number" ? value : Date.parse(value);
-  if (Number.isNaN(timestamp)) {
-    return String(value);
-  }
-
-  return new Date(timestamp).toLocaleString();
-}
-
-function readTimeSeriesTimestamp(value: number | string) {
-  return typeof value === "number" ? value : Date.parse(value);
-}
 
 function renderRawCellValue(value: unknown) {
   if (value === undefined) {
@@ -90,6 +51,7 @@ function renderRawCellValue(value: unknown) {
 }
 
 function RawDocumentsExplorer(props: {
+  collection: string;
   rows: Array<{
     id: string;
     version: number;
@@ -99,8 +61,6 @@ function RawDocumentsExplorer(props: {
   columns: string[];
   selectedDocumentId?: string;
   onSelectDocument: (id: string) => void;
-  onEditDocument: (id: string) => void;
-  onDeleteDocument: (id: string) => void;
   onSaveDocument: (id: string, rawJson: string) => Promise<void>;
 }) {
   const [globalFilter, setGlobalFilter] = useState("");
@@ -160,33 +120,8 @@ function RawDocumentsExplorer(props: {
         header: "Updated",
         cell: ({ row }) => new Date(row.original.updatedAt).toLocaleString(),
       },
-      {
-        id: "actions",
-        header: "Actions",
-        enableHiding: false,
-        cell: ({ row }) => (
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => props.onEditDocument(row.original.id)}
-            >
-              Edit
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => props.onDeleteDocument(row.original.id)}
-            >
-              Delete
-            </Button>
-          </div>
-        ),
-      },
     ],
-    [props.columns, props.onDeleteDocument, props.onEditDocument, props.onSelectDocument],
+    [props.columns, props.onSelectDocument],
   );
 
   const table = useReactTable({
@@ -209,7 +144,7 @@ function RawDocumentsExplorer(props: {
     initialState: {
       pagination: {
         pageIndex: 0,
-        pageSize: 15,
+        pageSize: 18,
       },
     },
   });
@@ -219,7 +154,7 @@ function RawDocumentsExplorer(props: {
     count: visibleRows.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 58,
-    overscan: 6,
+    overscan: 8,
   });
 
   const selectedDocument = props.rows.find(
@@ -238,7 +173,7 @@ function RawDocumentsExplorer(props: {
   }, [selectedDocument]);
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_320px]">
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_360px]">
       <div className="grid gap-4">
         <div className="grid gap-3 rounded-md border bg-muted/15 p-3">
           <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
@@ -247,7 +182,7 @@ function RawDocumentsExplorer(props: {
               <Input
                 value={globalFilter}
                 onChange={(event) => setGlobalFilter(event.target.value)}
-                placeholder="Filter documents and visible cells"
+                placeholder={`Filter ${props.collection} rows and visible cells`}
                 className="pl-9"
               />
             </label>
@@ -296,16 +231,15 @@ function RawDocumentsExplorer(props: {
         </div>
 
         <div className="overflow-hidden rounded-md border">
-          <div className="grid grid-cols-[180px_repeat(auto-fit,minmax(140px,1fr))] border-b bg-muted/20 text-left text-sm text-muted-foreground">
+          <div className="grid grid-cols-[180px_repeat(auto-fit,minmax(160px,1fr))] border-b bg-muted/20 text-left text-sm text-muted-foreground">
             {table.getFlatHeaders().map((header, index) => (
               <button
                 key={header.id}
                 type="button"
                 className={cn(
-                  "px-4 py-3 font-medium text-left",
+                  "px-4 py-3 text-left font-medium",
                   header.column.getCanSort() && "cursor-pointer select-none hover:text-foreground",
                   index === 0 && "sticky left-0 z-10 bg-muted/20",
-                  header.id === "actions" && "sticky right-0 z-10 bg-muted/20",
                 )}
                 onClick={header.column.getToggleSortingHandler()}
               >
@@ -320,7 +254,7 @@ function RawDocumentsExplorer(props: {
               </button>
             ))}
           </div>
-          <div ref={scrollRef} className="max-h-[32rem] overflow-auto">
+          <div ref={scrollRef} className="max-h-[38rem] overflow-auto">
             <div
               style={{
                 height: `${virtualizer.getTotalSize()}px`,
@@ -337,7 +271,7 @@ function RawDocumentsExplorer(props: {
                   <div
                     key={row.id}
                     className={cn(
-                      "grid grid-cols-[180px_repeat(auto-fit,minmax(140px,1fr))] border-b text-sm",
+                      "grid grid-cols-[180px_repeat(auto-fit,minmax(160px,1fr))] border-b text-sm",
                       props.selectedDocumentId === row.original.id && "bg-accent/30",
                     )}
                     style={{
@@ -354,7 +288,6 @@ function RawDocumentsExplorer(props: {
                         className={cn(
                           "px-4 py-3",
                           index === 0 && "sticky left-0 bg-background",
-                          cell.column.id === "actions" && "sticky right-0 bg-background",
                         )}
                       >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -382,8 +315,8 @@ function RawDocumentsExplorer(props: {
               <textarea
                 value={detailDraft}
                 onChange={(event) => setDetailDraft(event.target.value)}
-                rows={16}
-                className="min-h-64 rounded-md border bg-muted/20 p-4 font-mono text-xs leading-6 text-muted-foreground"
+                rows={18}
+                className="min-h-72 rounded-md border bg-muted/20 p-4 font-mono text-xs leading-6 text-muted-foreground"
                 spellCheck={false}
               />
               {detailError ? (
@@ -423,7 +356,7 @@ function RawDocumentsExplorer(props: {
           ) : (
             <ResourceNotice
               title="Select a row"
-              description="This detail pane is the low-level view of a raw database record."
+              description="Core > Database now stays a raw browser. Pick a row to inspect or patch the JSON directly."
             />
           )}
         </CardContent>
@@ -432,353 +365,12 @@ function RawDocumentsExplorer(props: {
   );
 }
 
-function TimeSeriesChart({
-  points,
-}: {
-  points: readonly DatabaseTimeSeriesPoint[];
-}) {
-  if (points.length === 0) {
-    return (
-      <div className="flex h-64 items-center justify-center rounded-md border border-dashed bg-muted/20 text-sm text-muted-foreground">
-        No samples available for the current range.
-      </div>
-    );
-  }
-
-  const ordered = [...points].sort(
-    (left, right) =>
-      readTimeSeriesTimestamp(left.timestamp) -
-      readTimeSeriesTimestamp(right.timestamp),
-  );
-  const values = ordered.map((point) => point.value);
-  const timestamps = ordered.map((point) =>
-    readTimeSeriesTimestamp(point.timestamp),
-  );
-  const minValue = Math.min(...values);
-  const maxValue = Math.max(...values);
-  const minTimestamp = Math.min(...timestamps);
-  const maxTimestamp = Math.max(...timestamps);
-  const width = 720;
-  const height = 240;
-  const paddingX = 20;
-  const paddingY = 18;
-  const plotWidth = width - paddingX * 2;
-  const plotHeight = height - paddingY * 2;
-  const valueSpan = maxValue - minValue || 1;
-  const timeSpan = maxTimestamp - minTimestamp || 1;
-
-  const path = ordered
-    .map((point, index) => {
-      const x =
-        paddingX +
-        ((readTimeSeriesTimestamp(point.timestamp) - minTimestamp) / timeSpan) *
-          plotWidth;
-      const y =
-        height - paddingY - ((point.value - minValue) / valueSpan) * plotHeight;
-
-      return `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
-    })
-    .join(" ");
-
-  const area = `${path} L${width - paddingX},${height - paddingY} L${paddingX},${height - paddingY} Z`;
-  const midValue = minValue + valueSpan / 2;
-  const ticks = [maxValue, midValue, minValue];
-
-  return (
-    <div className="grid gap-3">
-      <div className="grid gap-3 md:grid-cols-4">
-        <div className="rounded-md border bg-muted/20 px-3 py-2">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">
-            Latest
-          </p>
-          <p className="mt-1 text-sm font-medium">
-            {ordered[ordered.length - 1]?.value}
-          </p>
-        </div>
-        <div className="rounded-md border bg-muted/20 px-3 py-2">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">
-            Min
-          </p>
-          <p className="mt-1 text-sm font-medium">{minValue}</p>
-        </div>
-        <div className="rounded-md border bg-muted/20 px-3 py-2">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">
-            Max
-          </p>
-          <p className="mt-1 text-sm font-medium">{maxValue}</p>
-        </div>
-        <div className="rounded-md border bg-muted/20 px-3 py-2">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">
-            Samples
-          </p>
-          <p className="mt-1 text-sm font-medium">{ordered.length}</p>
-        </div>
-      </div>
-
-      <div className="rounded-md border bg-linear-to-b from-muted/10 to-transparent p-3">
-        <svg
-          viewBox={`0 0 ${width} ${height}`}
-          className="h-64 w-full overflow-visible"
-          role="img"
-          aria-label="Time-series chart"
-        >
-          {ticks.map((tick) => {
-            const y =
-              height - paddingY - ((tick - minValue) / valueSpan) * plotHeight;
-
-            return (
-              <g key={tick}>
-                <line
-                  x1={paddingX}
-                  x2={width - paddingX}
-                  y1={y}
-                  y2={y}
-                  stroke="currentColor"
-                  strokeOpacity="0.12"
-                />
-                <text
-                  x={paddingX}
-                  y={Math.max(12, y - 6)}
-                  fontSize="11"
-                  fill="currentColor"
-                  opacity="0.6"
-                >
-                  {tick.toFixed(2).replace(/\.00$/, "")}
-                </text>
-              </g>
-            );
-          })}
-
-          <path d={area} fill="var(--color-chart-1)" fillOpacity="0.12" />
-          <path
-            d={path}
-            fill="none"
-            stroke="var(--color-chart-1)"
-            strokeWidth="3"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-
-          {ordered.map((point, index) => {
-            const x =
-              paddingX +
-              ((readTimeSeriesTimestamp(point.timestamp) - minTimestamp) /
-                timeSpan) *
-                plotWidth;
-            const y =
-              height -
-              paddingY -
-              ((point.value - minValue) / valueSpan) * plotHeight;
-
-            return (
-              <g key={`${String(point.timestamp)}:${index}`}>
-                <circle
-                  cx={x}
-                  cy={y}
-                  r="4"
-                  fill="var(--background)"
-                  stroke="var(--color-chart-1)"
-                  strokeWidth="2"
-                />
-                <title>
-                  {`${formatTimeSeriesTimestamp(point.timestamp)} · ${point.value}`}
-                </title>
-              </g>
-            );
-          })}
-        </svg>
-
-        <div className="mt-2 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-          <span>{formatTimeSeriesTimestamp(ordered[0].timestamp)}</span>
-          <span>
-            {formatTimeSeriesTimestamp(ordered[ordered.length - 1].timestamp)}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-type FileSchemaTemplateKind =
-  | "image"
-  | "file"
-  | "document"
-  | "audio"
-  | "video";
-
-function createFileSchemaTemplate(kind: FileSchemaTemplateKind) {
-  switch (kind) {
-    case "image":
-      return {
-        type: "file",
-        mimeTypes: ["image/png", "image/jpeg", "image/webp", "image/gif"],
-        maxSize: 5_000_000,
-      };
-    case "document":
-      return {
-        type: "file",
-        mimeTypes: [
-          "application/pdf",
-          "text/plain",
-          "application/json",
-          "application/zip",
-        ],
-        maxSize: 10_000_000,
-      };
-    case "audio":
-      return {
-        type: "file",
-        mimeTypes: ["audio/mpeg", "audio/wav", "audio/ogg", "audio/webm"],
-        maxSize: 20_000_000,
-      };
-    case "video":
-      return {
-        type: "file",
-        mimeTypes: ["video/mp4", "video/webm", "video/ogg", "video/quicktime"],
-        maxSize: 50_000_000,
-      };
-    case "file":
-    default:
-      return {
-        type: "file",
-      };
-  }
-}
-
-function createSampleFileReference(fieldName: string, kind: FileSchemaTemplateKind) {
-  const byKind = {
-    image: {
-      path: `media/${fieldName}.jpg`,
-      contentType: "image/jpeg",
-    },
-    file: {
-      path: `uploads/${fieldName}.bin`,
-      contentType: "application/octet-stream",
-    },
-    document: {
-      path: `documents/${fieldName}.pdf`,
-      contentType: "application/pdf",
-    },
-    audio: {
-      path: `audio/${fieldName}.mp3`,
-      contentType: "audio/mpeg",
-    },
-    video: {
-      path: `video/${fieldName}.mp4`,
-      contentType: "video/mp4",
-    },
-  } as const;
-
-  const chosen = byKind[kind];
-
-  return {
-    kind: "file",
-    path: chosen.path,
-    href: `/zelavis/api/v1/storage/files/${chosen.path}`,
-    metadataHref: `/zelavis/api/v1/storage/files/${chosen.path}?format=metadata`,
-    contentType: chosen.contentType,
-    metadata: {
-      label: fieldName,
-      purpose: "sample-document",
-    },
-  };
-}
-
-function insertFileFieldIntoSchema(input: {
-  schemaJson: string;
-  fieldName: string;
-  kind: FileSchemaTemplateKind;
-  required: boolean;
-}) {
-  const parsed = JSON.parse(input.schemaJson) as Record<string, unknown>;
-
-  if (parsed.type !== "object") {
-    throw new Error("The schema root must be an object before adding a file field.");
-  }
-
-  const properties =
-    parsed.properties && typeof parsed.properties === "object"
-      ? ({ ...(parsed.properties as Record<string, unknown>) })
-      : {};
-
-  if (input.fieldName in properties) {
-    throw new Error(`A schema field named "${input.fieldName}" already exists.`);
-  }
-
-  properties[input.fieldName] = createFileSchemaTemplate(input.kind);
-  parsed.properties = properties;
-
-  const existingRequired = Array.isArray(parsed.required)
-    ? parsed.required.filter((value): value is string => typeof value === "string")
-    : [];
-
-  parsed.required = input.required
-    ? [...new Set([...existingRequired, input.fieldName])]
-    : existingRequired.filter((value) => value !== input.fieldName);
-
-  return JSON.stringify(parsed, null, 2);
-}
-
-function insertFileReferenceIntoSampleDocument(input: {
-  documentJson: string;
-  fieldName: string;
-  kind: FileSchemaTemplateKind;
-}) {
-  const parsed = JSON.parse(input.documentJson) as Record<string, unknown>;
-
-  if (parsed[input.fieldName] !== undefined) {
-    return JSON.stringify(parsed, null, 2);
-  }
-
-  if (typeof parsed.name !== "string") {
-    parsed.name = "Draft item";
-  }
-
-  parsed[input.fieldName] = createSampleFileReference(input.fieldName, input.kind);
-  return JSON.stringify(parsed, null, 2);
-}
-
 function DatabaseRoute() {
   const [selectedCollection, setSelectedCollection] = useState<string>();
-  const [selectedSeriesName, setSelectedSeriesName] = useState<string>();
-  const [contentTab, setContentTab] = useState<"documents" | "schema">("documents");
-  const [collectionName, setCollectionName] = useState("");
-  const [documentId, setDocumentId] = useState("");
-  const [documentJson, setDocumentJson] = useState(
-    '{\n  "name": "Draft item"\n}',
-  );
-  const [schemaVersion, setSchemaVersion] = useState("1");
-  const [schemaJson, setSchemaJson] = useState(
-    '{\n  "type": "object",\n  "additionalProperties": false,\n  "required": ["name"],\n  "properties": {\n    "name": { "type": "string", "minLength": 1 }\n  }\n}',
-  );
-  const [schemaFieldName, setSchemaFieldName] = useState("heroImage");
-  const [schemaFieldKind, setSchemaFieldKind] =
-    useState<FileSchemaTemplateKind>("image");
-  const [schemaFieldRequired, setSchemaFieldRequired] = useState(true);
-  const [editingDocumentId, setEditingDocumentId] = useState<string>();
   const [selectedDocumentId, setSelectedDocumentId] = useState<string>();
   const [actionMessage, setActionMessage] = useState<string>();
   const [actionError, setActionError] = useState<string>();
-  const [saving, setSaving] = useState(false);
-  const [rangeStart, setRangeStart] = useState("");
-  const [rangeEnd, setRangeEnd] = useState("");
-  const [rangeLimit, setRangeLimit] = useState("25");
-  const [rangeOrder, setRangeOrder] = useState<"asc" | "desc">("desc");
-  const [rangeRequest, setRangeRequest] = useState({
-    start: "",
-    end: "",
-    limit: "25",
-    order: "desc" as "asc" | "desc",
-  });
-  const [aggregateStart, setAggregateStart] = useState("");
-  const [aggregateEnd, setAggregateEnd] = useState("");
-  const [aggregateOp, setAggregateOp] =
-    useState<DatabaseTimeSeriesAggregateOperation>("avg");
-  const [aggregateRequest, setAggregateRequest] = useState({
-    start: "",
-    end: "",
-    op: "avg" as DatabaseTimeSeriesAggregateOperation,
-  });
+
   const runtime = useRuntimeResource(getRuntimeConfig);
   const config = runtime.data;
   const health = useRuntimeResource(
@@ -798,79 +390,11 @@ function DatabaseRoute() {
       config && selected ? queryDatabaseDocuments(config, selected) : [],
     [config, selected],
   );
-  const schemaCollections = useRuntimeResource(
-    async () => (config ? listDatabaseSchemaCollections(config) : []),
-    [config],
-  );
-  const schemaVersions = useRuntimeResource(
-    async () =>
-      config && selected ? listDatabaseSchemaVersions(config, selected) : [],
-    [config, selected],
-  );
-  const timeseries = useRuntimeResource(
-    async () => (config ? listDatabaseTimeSeries(config) : []),
-    [config],
-  );
-  const selectedSeries = useMemo(
-    () => selectedSeriesName ?? timeseries.data?.[0]?.name,
-    [selectedSeriesName, timeseries.data],
-  );
-  const rangePoints = useRuntimeResource(
-    async () =>
-      config && selectedSeries
-        ? queryDatabaseTimeSeriesRange(config, {
-            series: selectedSeries,
-            start: rangeRequest.start || undefined,
-            end: rangeRequest.end || undefined,
-            limit:
-              rangeRequest.limit.trim().length > 0
-                ? Number(rangeRequest.limit)
-                : undefined,
-            order: rangeRequest.order,
-          })
-        : [],
-    [
-      config,
-      selectedSeries,
-      rangeRequest.start,
-      rangeRequest.end,
-      rangeRequest.limit,
-      rangeRequest.order,
-    ],
-  );
-  const aggregateValue = useRuntimeResource(
-    async () =>
-      config && selectedSeries
-        ? queryDatabaseTimeSeriesAggregate(config, {
-            series: selectedSeries,
-            op: aggregateRequest.op,
-            start: aggregateRequest.start || undefined,
-            end: aggregateRequest.end || undefined,
-          })
-        : undefined,
-    [
-      config,
-      selectedSeries,
-      aggregateRequest.op,
-      aggregateRequest.start,
-      aggregateRequest.end,
-    ],
-  );
-  const databaseHealth = health.data;
-  const collectionRows = collections.data ?? [];
+
   const documentRows = documents.data ?? [];
-  const schemaCollectionRows = schemaCollections.data ?? [];
-  const schemaVersionRows = schemaVersions.data ?? [];
-  const seriesRows = timeseries.data ?? [];
-  const editingDocument = documentRows.find(
-    (document) => document.id === editingDocumentId,
-  );
-  const activeSchemaSummary = schemaCollectionRows.find(
-    (collection) => collection.collection === selected,
-  );
-  const activeSeriesSummary = seriesRows.find(
-    (series) => series.name === selectedSeries,
-  );
+  const collectionRows = collections.data ?? [];
+  const databaseHealth = health.data;
+
   const documentColumns = useMemo(() => {
     const keys = new Set<string>();
     for (const document of documentRows) {
@@ -896,264 +420,25 @@ function DatabaseRoute() {
     }
   }, [documentRows, selectedDocumentId]);
 
-  async function runAction(action: () => Promise<void>) {
-    setSaving(true);
-    setActionError(undefined);
-    setActionMessage(undefined);
-
-    try {
-      await action();
-      collections.reload();
-      documents.reload();
-      schemaCollections.reload();
-      schemaVersions.reload();
-      timeseries.reload();
-      rangePoints.reload();
-      aggregateValue.reload();
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function handleRunRange(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (
-      rangeLimit.trim().length > 0 &&
-      !Number.isInteger(Number(rangeLimit.trim()))
-    ) {
-      setActionError("Range limit must be a whole number.");
-      return;
-    }
-
-    setActionError(undefined);
-    setRangeRequest({
-      start: rangeStart.trim(),
-      end: rangeEnd.trim(),
-      limit: rangeLimit.trim(),
-      order: rangeOrder,
-    });
-  }
-
-  function handleRunAggregate(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setActionError(undefined);
-    setAggregateRequest({
-      start: aggregateStart.trim(),
-      end: aggregateEnd.trim(),
-      op: aggregateOp,
-    });
-  }
-
-  async function handleCreateCollection(
-    event: React.FormEvent<HTMLFormElement>,
-  ) {
-    event.preventDefault();
-    if (!config || !collectionName.trim()) {
-      return;
-    }
-
-    await runAction(async () => {
-      const collection = await createDatabaseCollection(config, {
-        name: collectionName.trim(),
-      });
-      setSelectedCollection(collection.name);
-      setCollectionName("");
-      setActionMessage(`Created ${collection.name}`);
-    });
-  }
-
-  async function handleInsertDocument(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!config || !selected) {
-      return;
-    }
-
-    await runAction(async () => {
-      const document = await insertDatabaseDocument(config, {
-        collection: selected,
-        id: documentId.trim(),
-        data: JSON.parse(documentJson) as Record<string, unknown>,
-      });
-      setDocumentId("");
-      setActionMessage(`Inserted ${document.id}`);
-    });
-  }
-
-  async function handleEditDocument(documentIdToEdit: string) {
-    const document = documentRows.find((item) => item.id === documentIdToEdit);
-    if (!document) {
-      return;
-    }
-
-    setEditingDocumentId(document.id);
-    setSelectedDocumentId(document.id);
-    setDocumentId(document.id);
-    setDocumentJson(JSON.stringify(document.data, null, 2));
-  }
-
-  async function handleUpdateDocument(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!config || !selected || !editingDocumentId) {
-      return;
-    }
-
-    await runAction(async () => {
-      const document = await updateDatabaseDocument(config, {
-        collection: selected,
-        id: editingDocumentId,
-        data: JSON.parse(documentJson) as Record<string, unknown>,
-      });
-      setActionMessage(`Updated ${document.id}`);
-      setEditingDocumentId(undefined);
-      setDocumentId("");
-      setDocumentJson('{\n  "name": "Draft item"\n}');
-    });
-  }
-
-  async function handleDeleteDocument(documentIdToDelete: string) {
-    if (!config || !selected) {
-      return;
-    }
-
-    await runAction(async () => {
-      await deleteDatabaseDocument(config, {
-        collection: selected,
-        id: documentIdToDelete,
-      });
-      if (editingDocumentId === documentIdToDelete) {
-        setEditingDocumentId(undefined);
-        setDocumentId("");
-        setDocumentJson('{\n  "name": "Draft item"\n}');
-      }
-      if (selectedDocumentId === documentIdToDelete) {
-        setSelectedDocumentId(undefined);
-      }
-      setActionMessage(`Deleted ${documentIdToDelete}`);
-    });
-  }
-
-  async function handleSeedDemo() {
-    if (!config) {
-      return;
-    }
-
-    await runAction(async () => {
-      await seedDemoDatabase(config);
-      setSelectedCollection("products");
-      setActionMessage("Seeded demo products");
-    });
-  }
-
-  async function handleCreateSchema(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!config || !selected) {
-      return;
-    }
-
-    await runAction(async () => {
-      const created = await createDatabaseSchema(config, {
-        collection: selected,
-        version: Number(schemaVersion),
-        document: JSON.parse(schemaJson) as Record<string, unknown>,
-        activate: schemaVersionRows.length === 0,
-      });
-      setActionMessage(`Registered schema v${created.version} for ${selected}`);
-    });
-  }
-
-  async function handleActivateSchema(schema: DatabaseStoredCollectionSchema) {
-    if (!config) {
-      return;
-    }
-
-    await runAction(async () => {
-      await activateDatabaseSchemaVersion(config, {
-        collection: schema.collection,
-        version: schema.version,
-      });
-      setActionMessage(
-        `Activated schema v${schema.version} for ${schema.collection}`,
-      );
-    });
-  }
-
-  function handleInsertFileField() {
-    try {
-      const fieldName = schemaFieldName.trim();
-      if (!fieldName) {
-        throw new Error("A schema field name is required.");
-      }
-
-      const nextSchema = insertFileFieldIntoSchema({
-        schemaJson,
-        fieldName,
-        kind: schemaFieldKind,
-        required: schemaFieldRequired,
-      });
-      const nextDocument = insertFileReferenceIntoSampleDocument({
-        documentJson,
-        fieldName,
-        kind: schemaFieldKind,
-      });
-
-      setSchemaJson(nextSchema);
-      setDocumentJson(nextDocument);
-      setActionError(undefined);
-      setActionMessage(
-        `Inserted ${schemaFieldKind} file field "${fieldName}" and prepared a matching sample document.`,
-      );
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : String(error));
-      setActionMessage(undefined);
-    }
-  }
-
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
       <PageHeader
         eyebrow="Database"
         title="Core Database"
-        description="This is the low-level data surface. Content modeling and friendly field building now live under Content Studio, while Core > Database stays blunt and infrastructure-facing."
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
-            {selected ? (
-              <Link
-                to="/content/$contentType/fields"
-                params={{ contentType: selected }}
-                className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
-              >
-                Open Content Fields
-              </Link>
-            ) : null}
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={!config || saving}
-              onClick={handleSeedDemo}
-            >
-              Seed Demo
-            </Button>
-          </div>
-        }
+        description="This page is now intentionally blunt: a raw collection browser for advanced users. Content modeling and collection editing live under Content."
       />
 
       <section className="grid gap-4 md:grid-cols-3">
         <StatCard
-          label="Documents"
-          value={
-            databaseHealth?.capabilities.documents ? "enabled" : "checking"
-          }
-          detail={`${collectionRows.length} collections visible`}
-          icon={Braces}
+          label="Collections"
+          value={String(collectionRows.length)}
+          detail="Low-level collections visible to the runtime"
+          icon={Database}
         />
         <StatCard
-          label="SQL"
-          value={databaseHealth?.capabilities.sql ? "enabled" : "capability"}
-          detail="available when the adapter supports it"
+          label="Rows"
+          value={String(documentRows.length)}
+          detail={selected ? `${selected} currently loaded` : "Choose a collection"}
           icon={Table2}
         />
         <StatCard
@@ -1164,638 +449,76 @@ function DatabaseRoute() {
         />
       </section>
 
-      <section className="grid gap-4 lg:grid-cols-[minmax(280px,0.45fr)_minmax(0,1fr)]">
-        <Card>
-          <CardHeader>
-            <CardTitle>Collections</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4 p-4">
-            <form className="flex gap-2" onSubmit={handleCreateCollection}>
-              <input
-                value={collectionName}
-                onChange={(event) => setCollectionName(event.target.value)}
-                placeholder="collection name"
-                className="min-w-0 flex-1 rounded-md border bg-background px-3 py-2 text-sm"
-              />
-              <Button
-                type="submit"
-                size="sm"
-                disabled={!config || saving || !collectionName.trim()}
-              >
-                Create
-              </Button>
-            </form>
+      {actionMessage ? <ResourceNotice title="Done" description={actionMessage} /> : null}
+      {actionError ? <ResourceNotice title="Action failed" description={actionError} /> : null}
 
-            {actionMessage ? (
-              <ResourceNotice title="Done" description={actionMessage} />
-            ) : null}
-            {actionError ? (
-              <ResourceNotice title="Action failed" description={actionError} />
-            ) : null}
-
-            <div className="overflow-hidden rounded-md border">
-              {collectionRows.map((collection) => (
-                <button
-                  key={`${collection.tenantId}:${collection.name}`}
-                  type="button"
-                  onClick={() => setSelectedCollection(collection.name)}
-                  className="block w-full border-b px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-accent"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="truncate text-sm font-medium">
-                      {collection.name}
-                    </span>
-                    <StatusBadge
-                      state={
-                        selected === collection.name ? "ready" : "available"
-                      }
-                    />
-                  </div>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {collection.documentCount} documents · {collection.tenantId}
-                  </p>
-                </button>
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between gap-3">
+          <div className="grid gap-1">
+            <CardTitle>Raw collections</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Use Content Studio for content-type creation, schema editing, and friendly field building.
+            </p>
+          </div>
+          <div className="flex min-w-[16rem] flex-col gap-2 sm:min-w-[20rem]">
+            <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Collection
+            </label>
+            <select
+              value={selected ?? ""}
+              onChange={(event) => setSelectedCollection(event.target.value)}
+              className="h-10 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              {(collectionRows ?? []).map((collection) => (
+                <option key={collection.name} value={collection.name}>
+                  {collection.name}
+                </option>
               ))}
-              {collectionRows.length === 0 ? (
-                <div className="p-4">
-                  <ResourceNotice
-                    title={
-                      collections.loading
-                        ? "Loading collections"
-                        : "No collections yet"
-                    }
-                    description={
-                      collections.error
-                        ? "The database collections endpoint is not reachable from this dashboard session."
-                        : "Create a collection through the database API to browse documents here."
-                    }
-                  />
-                </div>
-              ) : null}
-            </div>
-          </CardContent>
-        </Card>
+            </select>
+          </div>
+        </CardHeader>
+        <CardContent className="p-4">
+          {!selected ? (
+            <ResourceNotice
+              title="No collections yet"
+              description="Create a content type under Content Studio first, then inspect the raw collection here."
+            />
+          ) : documentRows.length === 0 ? (
+            <ResourceNotice
+              title="No rows in this collection"
+              description={`The collection ${selected} exists but does not have any rows yet.`}
+            />
+          ) : (
+            <RawDocumentsExplorer
+              collection={selected}
+              rows={documentRows}
+              columns={documentColumns}
+              selectedDocumentId={selectedDocumentId}
+              onSelectDocument={setSelectedDocumentId}
+              onSaveDocument={async (id, rawJson) => {
+                if (!config || !selected) {
+                  return;
+                }
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between gap-3">
-              <span>
-                {contentTab === "documents"
-                  ? (selected ?? "Documents")
-                  : selected
-                    ? `${selected} schema builder`
-                    : "Schema builder"}
-              </span>
-              <div className="flex items-center gap-2">
-                {contentTab === "documents" && selected ? (
-                  <Badge variant="outline">limit 25</Badge>
-                ) : null}
-                {contentTab === "schema" && selected ? (
-                  <Badge variant="outline">
-                    {activeSchemaSummary?.activeVersion
-                      ? `active v${activeSchemaSummary.activeVersion}`
-                      : "no active schema"}
-                  </Badge>
-                ) : null}
-              </div>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4 p-4">
-            <div className="inline-flex w-full rounded-md border bg-muted/30 p-1">
-              <button
-                type="button"
-                onClick={() => setContentTab("documents")}
-                className={`flex-1 rounded-sm px-3 py-2 text-sm font-medium transition-colors ${
-                  contentTab === "documents"
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                aria-pressed={contentTab === "documents"}
-              >
-                Documents
-              </button>
-              <button
-                type="button"
-                onClick={() => setContentTab("schema")}
-                className={`flex-1 rounded-sm px-3 py-2 text-sm font-medium transition-colors ${
-                  contentTab === "schema"
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                aria-pressed={contentTab === "schema"}
-              >
-                Raw Schema
-              </button>
-            </div>
-
-            {contentTab === "documents" ? (
-              <>
-                <form
-                  className="grid gap-3"
-                  onSubmit={
-                    editingDocument
-                      ? handleUpdateDocument
-                      : handleInsertDocument
-                  }
-                >
-                  <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                    <input
-                      value={documentId}
-                      onChange={(event) => setDocumentId(event.target.value)}
-                      placeholder="optional document id"
-                      className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm"
-                      disabled={!selected || Boolean(editingDocument)}
-                    />
-                    <Button
-                      type="submit"
-                      size="sm"
-                      disabled={!config || !selected || saving}
-                    >
-                      {editingDocument ? "Update" : "Insert"}
-                    </Button>
-                  </div>
-                  <textarea
-                    value={documentJson}
-                    onChange={(event) => setDocumentJson(event.target.value)}
-                    className="min-h-28 resize-y rounded-md border bg-background px-3 py-2 font-mono text-sm"
-                    spellCheck={false}
-                    disabled={!selected}
-                  />
-                  {editingDocument ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        setEditingDocumentId(undefined);
-                        setDocumentId("");
-                        setDocumentJson('{\n  "name": "Draft item"\n}');
-                      }}
-                    >
-                      Cancel Edit
-                    </Button>
-                  ) : null}
-                </form>
-
-                <div className="rounded-md border">
-                  <div className="border-b bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
-                    Documents are shown here as raw rows. This is intentionally closer to a table browser than the friendlier Content surface.
-                  </div>
-                  {documentRows.length > 0 ? (
-                    <div className="p-4">
-                      <RawDocumentsExplorer
-                        rows={documentRows}
-                        columns={documentColumns}
-                        selectedDocumentId={selectedDocumentId}
-                        onSelectDocument={setSelectedDocumentId}
-                        onEditDocument={(id) => void handleEditDocument(id)}
-                        onDeleteDocument={(id) => void handleDeleteDocument(id)}
-                        onSaveDocument={async (id, rawJson) => {
-                          if (!config || !selected) {
-                            return;
-                          }
-                          await updateDatabaseDocument(config, {
-                            collection: selected,
-                            id,
-                            data: JSON.parse(rawJson) as Record<string, unknown>,
-                          });
-                          await documents.reload();
-                          setActionMessage(`Updated ${id}`);
-                        }}
-                      />
-                    </div>
-                  ) : null}
-                  {documentRows.length === 0 ? (
-                    <div className="p-4">
-                      <ResourceNotice
-                        title={
-                          documents.loading && selected
-                            ? "Loading documents"
-                            : "No documents selected"
-                        }
-                        description={
-                          selected
-                            ? "This collection is empty or the query endpoint returned no documents."
-                            : "Select a collection to query documents."
-                        }
-                      />
-                    </div>
-                  ) : null}
-                </div>
-              </>
-            ) : (
-              <>
-                <form className="grid gap-3" onSubmit={handleCreateSchema}>
-                  <div className="rounded-md border bg-muted/20 p-3">
-                    <p className="text-sm font-medium text-foreground">Content modeling moved</p>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      For a CMS-style field builder, use Content Studio. This Core screen keeps the raw schema JSON and version history visible for low-level inspection and manual edits.
-                    </p>
-                    {selected ? (
-                      <div className="mt-3">
-                        <Link
-                          to="/content/$contentType/fields"
-                          params={{ contentType: selected }}
-                          className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
-                        >
-                          Open friendly field builder
-                        </Link>
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                    <input
-                      value={schemaVersion}
-                      onChange={(event) => setSchemaVersion(event.target.value)}
-                      inputMode="numeric"
-                      placeholder="schema version"
-                      className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm"
-                      disabled={!selected}
-                    />
-                    <Button
-                      type="submit"
-                      size="sm"
-                      disabled={
-                        !config ||
-                        !selected ||
-                        saving ||
-                        !Number.isInteger(Number(schemaVersion))
-                      }
-                    >
-                      Register
-                    </Button>
-                  </div>
-                  <div className="grid gap-3 rounded-md border bg-muted/20 p-3 lg:grid-cols-[minmax(0,1fr)_12rem_auto_auto]">
-                    <Input
-                      value={schemaFieldName}
-                      onChange={(event) => setSchemaFieldName(event.target.value)}
-                      placeholder="heroImage"
-                      disabled={!selected}
-                      aria-label="Schema field name"
-                    />
-                    <Select
-                      value={schemaFieldKind}
-                      onValueChange={(value) =>
-                        setSchemaFieldKind(value as FileSchemaTemplateKind)
-                      }
-                      disabled={!selected}
-                    >
-                      <SelectTrigger aria-label="File field kind" className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="image">
-                          <FileImage className="size-4" />
-                          Image
-                        </SelectItem>
-                        <SelectItem value="file">
-                          <Files className="size-4" />
-                          Generic file
-                        </SelectItem>
-                        <SelectItem value="document">
-                          <FileText className="size-4" />
-                          Document
-                        </SelectItem>
-                        <SelectItem value="audio">
-                          <Volume2 className="size-4" />
-                          Audio
-                        </SelectItem>
-                        <SelectItem value="video">
-                          <Video className="size-4" />
-                          Video
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <input
-                        type="checkbox"
-                        checked={schemaFieldRequired}
-                        onChange={(event) => setSchemaFieldRequired(event.target.checked)}
-                        disabled={!selected}
-                      />
-                      Required
-                    </label>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={!selected}
-                      onClick={handleInsertFileField}
-                    >
-                      Insert File Field
-                    </Button>
-                  </div>
-                  <textarea
-                    value={schemaJson}
-                    onChange={(event) => setSchemaJson(event.target.value)}
-                    className="min-h-40 resize-y rounded-md border bg-background px-3 py-2 font-mono text-sm"
-                    spellCheck={false}
-                    disabled={!selected}
-                  />
-                </form>
-
-                <div className="grid gap-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <h3 className="text-sm font-semibold">
-                      {selected
-                        ? `${selected} schema versions`
-                        : "Schema versions"}
-                    </h3>
-                    {selected ? (
-                      <Badge variant="secondary">
-                        {schemaVersionRows.length} versions
-                      </Badge>
-                    ) : null}
-                  </div>
-
-                  <div className="overflow-hidden rounded-md border">
-                    {schemaVersionRows.map((schema) => (
-                      <DataRow
-                        key={`${schema.collection}:${schema.version}`}
-                        label={`v${schema.version}`}
-                        detail={JSON.stringify(schema.document)}
-                        meta={
-                          <div className="flex items-center gap-2">
-                            <Badge
-                              variant={schema.active ? "default" : "secondary"}
-                            >
-                              {schema.active ? "active" : "inactive"}
-                            </Badge>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              disabled={schema.active}
-                              onClick={() => void handleActivateSchema(schema)}
-                            >
-                              Activate
-                            </Button>
-                          </div>
-                        }
-                      />
-                    ))}
-                    {schemaVersionRows.length === 0 ? (
-                      <div className="p-4">
-                        <ResourceNotice
-                          title={
-                            selected ? "No schemas yet" : "Select a collection"
-                          }
-                          description={
-                            selected
-                              ? "Register raw schema versions here when you need direct control over the low-level contract."
-                              : "Choose a collection to view and manage schema versions."
-                          }
-                        />
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      </section>
-
-      <section className="grid gap-4 lg:grid-cols-[minmax(300px,0.45fr)_minmax(0,1fr)]">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between gap-3">
-              <span>Time-series definitions</span>
-              <Badge variant="outline">{seriesRows.length} series</Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4 p-4">
-            <div className="overflow-hidden rounded-md border">
-              {seriesRows.map((series: DatabaseTimeSeriesSummary) => (
-                <button
-                  key={series.name}
-                  type="button"
-                  onClick={() => setSelectedSeriesName(series.name)}
-                  className="block w-full border-b px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-accent"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="truncate text-sm font-medium">
-                      {series.name}
-                    </span>
-                    <StatusBadge
-                      state={
-                        selectedSeries === series.name ? "ready" : "available"
-                      }
-                    />
-                  </div>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {series.description ?? "No description"}
-                  </p>
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    {series.version !== undefined ? (
-                      <Badge variant="secondary">
-                        v{String(series.version)}
-                      </Badge>
-                    ) : null}
-                    {series.projection ? (
-                      <Badge variant="outline">{series.projection}</Badge>
-                    ) : null}
-                  </div>
-                </button>
-              ))}
-              {seriesRows.length === 0 ? (
-                <div className="p-4">
-                  <ResourceNotice
-                    title={
-                      timeseries.loading
-                        ? "Loading time-series"
-                        : "No time-series definitions"
-                    }
-                    description={
-                      timeseries.error
-                        ? "The time-series endpoint is not reachable from this dashboard session."
-                        : "Register series definitions in the runtime to inspect derived samples here."
-                    }
-                  />
-                </div>
-              ) : null}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between gap-3">
-              <span>{selectedSeries ?? "Time-series inspector"}</span>
-              {selectedSeries ? (
-                <Badge variant="outline">
-                  {activeSeriesSummary?.projection ?? "mapped from events"}
-                </Badge>
-              ) : null}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-6 p-4">
-            {selectedSeries ? (
-              <>
-                <section className="grid gap-3 rounded-md border p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <h3 className="text-sm font-semibold">Range query</h3>
-                      <p className="text-sm text-muted-foreground">
-                        Inspect recent mapped samples for the selected series.
-                      </p>
-                    </div>
-                    <Badge variant="secondary">
-                      {rangePoints.data?.length ?? 0} points
-                    </Badge>
-                  </div>
-
-                  <form
-                    className="grid gap-3 md:grid-cols-4"
-                    onSubmit={handleRunRange}
-                  >
-                    <input
-                      value={rangeStart}
-                      onChange={(event) => setRangeStart(event.target.value)}
-                      placeholder="start timestamp"
-                      className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm"
-                    />
-                    <input
-                      value={rangeEnd}
-                      onChange={(event) => setRangeEnd(event.target.value)}
-                      placeholder="end timestamp"
-                      className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm"
-                    />
-                    <input
-                      value={rangeLimit}
-                      onChange={(event) => setRangeLimit(event.target.value)}
-                      inputMode="numeric"
-                      placeholder="limit"
-                      className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm"
-                    />
-                    <div className="flex gap-2">
-                      <select
-                        value={rangeOrder}
-                        onChange={(event) =>
-                          setRangeOrder(
-                            event.target.value === "asc" ? "asc" : "desc",
-                          )
-                        }
-                        className="min-w-0 flex-1 rounded-md border bg-background px-3 py-2 text-sm"
-                      >
-                        <option value="desc">Newest first</option>
-                        <option value="asc">Oldest first</option>
-                      </select>
-                      <Button type="submit" size="sm" disabled={!config}>
-                        Load
-                      </Button>
-                    </div>
-                  </form>
-
-                  <TimeSeriesChart points={rangePoints.data ?? []} />
-
-                  <div className="overflow-hidden rounded-md border">
-                    {rangePoints.data?.map((point, index) => (
-                      <DataRow
-                        key={`${String(point.timestamp)}:${index}`}
-                        label={formatTimeSeriesTimestamp(point.timestamp)}
-                        detail={JSON.stringify({
-                          value: point.value,
-                          tags: point.tags,
-                          fields: point.fields,
-                        })}
-                        meta={<Badge variant="secondary">{point.value}</Badge>}
-                      />
-                    ))}
-                    {!rangePoints.loading &&
-                    (rangePoints.data?.length ?? 0) === 0 ? (
-                      <div className="p-4">
-                        <ResourceNotice
-                          title="No samples returned"
-                          description="Adjust the range filters or add more matching events to inspect this series."
-                        />
-                      </div>
-                    ) : null}
-                    {rangePoints.error ? (
-                      <div className="p-4">
-                        <ResourceNotice
-                          title="Range query failed"
-                          description={rangePoints.error.message}
-                        />
-                      </div>
-                    ) : null}
-                  </div>
-                </section>
-
-                <section className="grid gap-3 rounded-md border p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <h3 className="text-sm font-semibold">Aggregate query</h3>
-                      <p className="text-sm text-muted-foreground">
-                        Run a simple aggregate over the selected series.
-                      </p>
-                    </div>
-                    <div className="inline-flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm">
-                      <Activity className="size-4 text-muted-foreground" />
-                      <span className="font-medium">
-                        {aggregateValue.data === undefined
-                          ? "—"
-                          : String(aggregateValue.data)}
-                      </span>
-                    </div>
-                  </div>
-
-                  <form
-                    className="grid gap-3 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1fr)_auto]"
-                    onSubmit={handleRunAggregate}
-                  >
-                    <select
-                      value={aggregateOp}
-                      onChange={(event) =>
-                        setAggregateOp(
-                          event.target
-                            .value as DatabaseTimeSeriesAggregateOperation,
-                        )
-                      }
-                      className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm"
-                    >
-                      <option value="avg">avg</option>
-                      <option value="sum">sum</option>
-                      <option value="min">min</option>
-                      <option value="max">max</option>
-                      <option value="count">count</option>
-                    </select>
-                    <input
-                      value={aggregateStart}
-                      onChange={(event) =>
-                        setAggregateStart(event.target.value)
-                      }
-                      placeholder="start timestamp"
-                      className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm"
-                    />
-                    <input
-                      value={aggregateEnd}
-                      onChange={(event) => setAggregateEnd(event.target.value)}
-                      placeholder="end timestamp"
-                      className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm"
-                    />
-                    <Button type="submit" size="sm" disabled={!config}>
-                      Run
-                    </Button>
-                  </form>
-
-                  {aggregateValue.error ? (
-                    <ResourceNotice
-                      title="Aggregate query failed"
-                      description={aggregateValue.error.message}
-                    />
-                  ) : null}
-                </section>
-              </>
-            ) : (
-              <ResourceNotice
-                title="No series selected"
-                description="Choose a registered time-series definition to inspect recent samples and aggregates."
-              />
-            )}
-          </CardContent>
-        </Card>
-      </section>
+                try {
+                  await updateDatabaseDocument(config, {
+                    collection: selected,
+                    id,
+                    data: JSON.parse(rawJson) as Record<string, unknown>,
+                  });
+                  await documents.reload();
+                  setActionError(undefined);
+                  setActionMessage(`Updated ${id} in ${selected}.`);
+                } catch (error) {
+                  setActionMessage(undefined);
+                  setActionError(error instanceof Error ? error.message : String(error));
+                  throw error;
+                }
+              }}
+            />
+          )}
+        </CardContent>
+      </Card>
     </section>
   );
 }

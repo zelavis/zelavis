@@ -93,6 +93,13 @@ function ContentTypeLayout() {
                 Fields
               </Link>
               <Link
+                to="/content/$contentType/edit"
+                params={{ contentType: contentType.name }}
+                className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+              >
+                Edit Type
+              </Link>
+              <Link
                 to="/content/$contentType/settings"
                 params={{ contentType: contentType.name }}
                 className={cn(buttonVariants({ size: "sm", variant: "outline" }))}

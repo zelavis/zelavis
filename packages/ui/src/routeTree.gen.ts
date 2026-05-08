@@ -33,6 +33,7 @@ import { Route as BuilderPagesRouteImport } from './routes/builder.pages'
 import { Route as ContentContentTypeIndexRouteImport } from './routes/content.$contentType.index'
 import { Route as ContentContentTypeSettingsRouteImport } from './routes/content.$contentType.settings'
 import { Route as ContentContentTypeFieldsRouteImport } from './routes/content.$contentType.fields'
+import { Route as ContentContentTypeEditRouteImport } from './routes/content.$contentType.edit'
 import { Route as ContentContentTypeEntryIdRouteImport } from './routes/content.$contentType.$entryId'
 
 const UsersRoute = UsersRouteImport.update({
@@ -157,6 +158,11 @@ const ContentContentTypeFieldsRoute =
     path: '/fields',
     getParentRoute: () => ContentContentTypeRoute,
   } as any)
+const ContentContentTypeEditRoute = ContentContentTypeEditRouteImport.update({
+  id: '/edit',
+  path: '/edit',
+  getParentRoute: () => ContentContentTypeRoute,
+} as any)
 const ContentContentTypeEntryIdRoute =
   ContentContentTypeEntryIdRouteImport.update({
     id: '/$entryId',
@@ -187,6 +193,7 @@ export interface FileRoutesByFullPath {
   '/content/$contentType': typeof ContentContentTypeRouteWithChildren
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/content/$contentType/$entryId': typeof ContentContentTypeEntryIdRoute
+  '/content/$contentType/edit': typeof ContentContentTypeEditRoute
   '/content/$contentType/fields': typeof ContentContentTypeFieldsRoute
   '/content/$contentType/settings': typeof ContentContentTypeSettingsRoute
   '/content/$contentType/': typeof ContentContentTypeIndexRoute
@@ -213,6 +220,7 @@ export interface FileRoutesByTo {
   '/commerce/products': typeof CommerceProductsRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/content/$contentType/$entryId': typeof ContentContentTypeEntryIdRoute
+  '/content/$contentType/edit': typeof ContentContentTypeEditRoute
   '/content/$contentType/fields': typeof ContentContentTypeFieldsRoute
   '/content/$contentType/settings': typeof ContentContentTypeSettingsRoute
   '/content/$contentType': typeof ContentContentTypeIndexRoute
@@ -241,6 +249,7 @@ export interface FileRoutesById {
   '/content/$contentType': typeof ContentContentTypeRouteWithChildren
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/content/$contentType/$entryId': typeof ContentContentTypeEntryIdRoute
+  '/content/$contentType/edit': typeof ContentContentTypeEditRoute
   '/content/$contentType/fields': typeof ContentContentTypeFieldsRoute
   '/content/$contentType/settings': typeof ContentContentTypeSettingsRoute
   '/content/$contentType/': typeof ContentContentTypeIndexRoute
@@ -270,6 +279,7 @@ export interface FileRouteTypes {
     | '/content/$contentType'
     | '/settings/appearance'
     | '/content/$contentType/$entryId'
+    | '/content/$contentType/edit'
     | '/content/$contentType/fields'
     | '/content/$contentType/settings'
     | '/content/$contentType/'
@@ -296,6 +306,7 @@ export interface FileRouteTypes {
     | '/commerce/products'
     | '/settings/appearance'
     | '/content/$contentType/$entryId'
+    | '/content/$contentType/edit'
     | '/content/$contentType/fields'
     | '/content/$contentType/settings'
     | '/content/$contentType'
@@ -323,6 +334,7 @@ export interface FileRouteTypes {
     | '/content/$contentType'
     | '/settings/appearance'
     | '/content/$contentType/$entryId'
+    | '/content/$contentType/edit'
     | '/content/$contentType/fields'
     | '/content/$contentType/settings'
     | '/content/$contentType/'
@@ -515,6 +527,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ContentContentTypeFieldsRouteImport
       parentRoute: typeof ContentContentTypeRoute
     }
+    '/content/$contentType/edit': {
+      id: '/content/$contentType/edit'
+      path: '/edit'
+      fullPath: '/content/$contentType/edit'
+      preLoaderRoute: typeof ContentContentTypeEditRouteImport
+      parentRoute: typeof ContentContentTypeRoute
+    }
     '/content/$contentType/$entryId': {
       id: '/content/$contentType/$entryId'
       path: '/$entryId'
@@ -556,6 +575,7 @@ const CommerceRouteWithChildren = CommerceRoute._addFileChildren(
 
 interface ContentContentTypeRouteChildren {
   ContentContentTypeEntryIdRoute: typeof ContentContentTypeEntryIdRoute
+  ContentContentTypeEditRoute: typeof ContentContentTypeEditRoute
   ContentContentTypeFieldsRoute: typeof ContentContentTypeFieldsRoute
   ContentContentTypeSettingsRoute: typeof ContentContentTypeSettingsRoute
   ContentContentTypeIndexRoute: typeof ContentContentTypeIndexRoute
@@ -563,6 +583,7 @@ interface ContentContentTypeRouteChildren {
 
 const ContentContentTypeRouteChildren: ContentContentTypeRouteChildren = {
   ContentContentTypeEntryIdRoute: ContentContentTypeEntryIdRoute,
+  ContentContentTypeEditRoute: ContentContentTypeEditRoute,
   ContentContentTypeFieldsRoute: ContentContentTypeFieldsRoute,
   ContentContentTypeSettingsRoute: ContentContentTypeSettingsRoute,
   ContentContentTypeIndexRoute: ContentContentTypeIndexRoute,
