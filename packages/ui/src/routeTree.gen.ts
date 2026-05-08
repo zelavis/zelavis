@@ -24,6 +24,7 @@ import { Route as AgentsRouteImport } from './routes/agents'
 import { Route as SplatRouteImport } from './routes/$'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
+import { Route as ContentNewRouteImport } from './routes/content.new'
 import { Route as ContentContentTypeRouteImport } from './routes/content.$contentType'
 import { Route as CommerceProductsRouteImport } from './routes/commerce.products'
 import { Route as CommerceOrdersRouteImport } from './routes/commerce.orders'
@@ -111,6 +112,11 @@ const SettingsAppearanceRoute = SettingsAppearanceRouteImport.update({
   path: '/appearance',
   getParentRoute: () => SettingsRoute,
 } as any)
+const ContentNewRoute = ContentNewRouteImport.update({
+  id: '/new',
+  path: '/new',
+  getParentRoute: () => ContentRoute,
+} as any)
 const ContentContentTypeRoute = ContentContentTypeRouteImport.update({
   id: '/$contentType',
   path: '/$contentType',
@@ -191,6 +197,7 @@ export interface FileRoutesByFullPath {
   '/commerce/orders': typeof CommerceOrdersRoute
   '/commerce/products': typeof CommerceProductsRoute
   '/content/$contentType': typeof ContentContentTypeRouteWithChildren
+  '/content/new': typeof ContentNewRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/content/$contentType/$entryId': typeof ContentContentTypeEntryIdRoute
   '/content/$contentType/edit': typeof ContentContentTypeEditRoute
@@ -218,6 +225,7 @@ export interface FileRoutesByTo {
   '/commerce/customers': typeof CommerceCustomersRoute
   '/commerce/orders': typeof CommerceOrdersRoute
   '/commerce/products': typeof CommerceProductsRoute
+  '/content/new': typeof ContentNewRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/content/$contentType/$entryId': typeof ContentContentTypeEntryIdRoute
   '/content/$contentType/edit': typeof ContentContentTypeEditRoute
@@ -247,6 +255,7 @@ export interface FileRoutesById {
   '/commerce/orders': typeof CommerceOrdersRoute
   '/commerce/products': typeof CommerceProductsRoute
   '/content/$contentType': typeof ContentContentTypeRouteWithChildren
+  '/content/new': typeof ContentNewRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/content/$contentType/$entryId': typeof ContentContentTypeEntryIdRoute
   '/content/$contentType/edit': typeof ContentContentTypeEditRoute
@@ -277,6 +286,7 @@ export interface FileRouteTypes {
     | '/commerce/orders'
     | '/commerce/products'
     | '/content/$contentType'
+    | '/content/new'
     | '/settings/appearance'
     | '/content/$contentType/$entryId'
     | '/content/$contentType/edit'
@@ -304,6 +314,7 @@ export interface FileRouteTypes {
     | '/commerce/customers'
     | '/commerce/orders'
     | '/commerce/products'
+    | '/content/new'
     | '/settings/appearance'
     | '/content/$contentType/$entryId'
     | '/content/$contentType/edit'
@@ -332,6 +343,7 @@ export interface FileRouteTypes {
     | '/commerce/orders'
     | '/commerce/products'
     | '/content/$contentType'
+    | '/content/new'
     | '/settings/appearance'
     | '/content/$contentType/$entryId'
     | '/content/$contentType/edit'
@@ -464,6 +476,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsAppearanceRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/content/new': {
+      id: '/content/new'
+      path: '/new'
+      fullPath: '/content/new'
+      preLoaderRoute: typeof ContentNewRouteImport
+      parentRoute: typeof ContentRoute
+    }
     '/content/$contentType': {
       id: '/content/$contentType'
       path: '/$contentType'
@@ -594,10 +613,12 @@ const ContentContentTypeRouteWithChildren =
 
 interface ContentRouteChildren {
   ContentContentTypeRoute: typeof ContentContentTypeRouteWithChildren
+  ContentNewRoute: typeof ContentNewRoute
 }
 
 const ContentRouteChildren: ContentRouteChildren = {
   ContentContentTypeRoute: ContentContentTypeRouteWithChildren,
+  ContentNewRoute: ContentNewRoute,
 }
 
 const ContentRouteWithChildren =

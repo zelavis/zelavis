@@ -7,11 +7,12 @@ import {
   getSortedRowModel,
   useReactTable,
   type ColumnDef,
+  type ColumnPinningState,
   type SortingState,
   type VisibilityState,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ChevronLeft, ChevronRight, Database, Search, Table2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Database, Pin, Search, Table2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -66,6 +67,9 @@ function RawDocumentsExplorer(props: {
   const [globalFilter, setGlobalFilter] = useState("");
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const [sorting, setSorting] = useState<SortingState>([]);
+  const [columnPinning, setColumnPinning] = useState<ColumnPinningState>({
+    left: ["id"],
+  });
   const [detailDraft, setDetailDraft] = useState("");
   const [detailError, setDetailError] = useState<string>();
   const [savingDetail, setSavingDetail] = useState(false);
@@ -131,16 +135,19 @@ function RawDocumentsExplorer(props: {
       globalFilter,
       columnVisibility,
       sorting,
+      columnPinning,
     },
     globalFilterFn: (row, _columnId, filterValue) =>
       row.original.searchText.includes(String(filterValue).toLowerCase()),
     onGlobalFilterChange: setGlobalFilter,
     onColumnVisibilityChange: setColumnVisibility,
     onSortingChange: setSorting,
+    onColumnPinningChange: setColumnPinning,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     getSortedRowModel: getSortedRowModel(),
+    columnResizeMode: "onChange",
     initialState: {
       pagination: {
         pageIndex: 0,
@@ -225,6 +232,21 @@ function RawDocumentsExplorer(props: {
                     onChange={column.getToggleVisibilityHandler()}
                   />
                   {String(column.columnDef.header)}
+                  {column.id !== "id" ? (
+                    <button
+                      type="button"
+                      className={cn(
+                        "rounded-sm border px-1 py-0.5 text-[10px]",
+                        column.getIsPinned() && "border-primary text-primary",
+                      )}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        column.pin(column.getIsPinned() ? false : "left");
+                      }}
+                    >
+                      <Pin className="size-3" />
+                    </button>
+                  ) : null}
                 </label>
               ))}
           </div>
@@ -232,16 +254,23 @@ function RawDocumentsExplorer(props: {
 
         <div className="overflow-hidden rounded-md border">
           <div className="grid grid-cols-[180px_repeat(auto-fit,minmax(160px,1fr))] border-b bg-muted/20 text-left text-sm text-muted-foreground">
-            {table.getFlatHeaders().map((header, index) => (
+            {table.getFlatHeaders().map((header) => (
               <button
                 key={header.id}
                 type="button"
                 className={cn(
-                  "px-4 py-3 text-left font-medium",
+                  "relative px-4 py-3 text-left font-medium",
                   header.column.getCanSort() && "cursor-pointer select-none hover:text-foreground",
-                  index === 0 && "sticky left-0 z-10 bg-muted/20",
+                  header.column.getIsPinned() && "sticky z-10 bg-muted/20 shadow-[1px_0_0_0_var(--border)]",
                 )}
                 onClick={header.column.getToggleSortingHandler()}
+                style={{
+                  width: header.getSize(),
+                  minWidth: header.getSize(),
+                  left: header.column.getIsPinned()
+                    ? `${header.column.getStart("left")}px`
+                    : undefined,
+                }}
               >
                 <span className="inline-flex items-center gap-2">
                   {flexRender(header.column.columnDef.header, header.getContext())}
@@ -251,6 +280,19 @@ function RawDocumentsExplorer(props: {
                       ? "↓"
                       : null}
                 </span>
+                {header.column.getCanResize() ? (
+                  <span
+                    role="separator"
+                    aria-orientation="vertical"
+                    className="absolute right-0 top-0 h-full w-1 cursor-col-resize select-none bg-transparent hover:bg-border"
+                    onDoubleClick={(event) => {
+                      event.stopPropagation();
+                      header.column.resetSize();
+                    }}
+                    onMouseDown={header.getResizeHandler()}
+                    onTouchStart={header.getResizeHandler()}
+                  />
+                ) : null}
               </button>
             ))}
           </div>
@@ -282,13 +324,20 @@ function RawDocumentsExplorer(props: {
                       transform: `translateY(${virtualRow.start}px)`,
                     }}
                   >
-                    {row.getVisibleCells().map((cell, index) => (
+                    {row.getVisibleCells().map((cell) => (
                       <div
                         key={cell.id}
                         className={cn(
                           "px-4 py-3",
-                          index === 0 && "sticky left-0 bg-background",
+                          cell.column.getIsPinned() && "sticky z-10 bg-background shadow-[1px_0_0_0_var(--border)]",
                         )}
+                        style={{
+                          width: cell.column.getSize(),
+                          minWidth: cell.column.getSize(),
+                          left: cell.column.getIsPinned()
+                            ? `${cell.column.getStart("left")}px`
+                            : undefined,
+                        }}
                       >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </div>

@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   Braces,
   Copy,
@@ -28,7 +28,6 @@ import {
   getContentTypeLabel,
   slugifyContentTypeLabel,
 } from "#/lib/content-studio";
-import { createStarterContentTypeSchema } from "#/lib/content-schema";
 import {
   createDatabaseCollection,
   createDatabaseSchema,
@@ -46,16 +45,12 @@ import { cn } from "#/lib/utils";
 export const Route = createFileRoute("/content")({ component: Content });
 
 function Content() {
-  const navigate = useNavigate();
   const runtime = useRuntimeResource(getRuntimeConfig);
   const config = runtime.data;
   const settings = useRuntimeResource(
     async () => (config ? getDashboardSettings(config) : undefined),
     [config],
   );
-  const [showCreateForm, setShowCreateForm] = useState(false);
-  const [contentTypeLabel, setContentTypeLabel] = useState("");
-  const [contentTypeName, setContentTypeName] = useState("");
   const [editingLabelFor, setEditingLabelFor] = useState<string>();
   const [labelDraft, setLabelDraft] = useState("");
   const [duplicatingType, setDuplicatingType] = useState<string>();
@@ -107,62 +102,6 @@ function Content() {
       },
     });
     await settings.reload();
-  }
-
-  async function handleCreateContentType(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (!config || !contentTypeName.trim() || saving) {
-      return;
-    }
-
-    const normalizedLabel = contentTypeLabel.trim() || contentTypeName.trim();
-    const normalizedName = slugifyContentTypeLabel(contentTypeName) || contentTypeName.trim();
-
-    setSaving(true);
-    setMessage(undefined);
-    setError(undefined);
-
-    try {
-      const collection = await createDatabaseCollection(config, {
-        name: normalizedName,
-        metadata: {
-          surface: "content-studio",
-          kind: "content-type",
-        },
-      });
-      await createDatabaseSchema(config, {
-        collection: collection.name,
-        version: 1,
-        activate: true,
-        document: createStarterContentTypeSchema(),
-        metadata: {
-          createdBy: "content-studio",
-        },
-      });
-
-      if (normalizedLabel !== collection.name) {
-        await persistContentPreferences({
-          labels: {
-            [collection.name]: normalizedLabel,
-          },
-        });
-      }
-
-      await Promise.all([collections.reload(), schemaCollections.reload()]);
-      setContentTypeLabel("");
-      setContentTypeName("");
-      setShowCreateForm(false);
-      setMessage(`Created content type ${normalizedLabel} (${collection.name}) with starter schema v1.`);
-      void navigate({
-        to: "/content/$contentType/edit",
-        params: { contentType: collection.name },
-      });
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setSaving(false);
-    }
   }
 
   async function handlePinToggle(name: string) {
@@ -319,14 +258,13 @@ function Content() {
         description="Editor-facing content types live here. Pinned types stay at the top, while the lower-level document model remains available under Core > Database."
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => setShowCreateForm((current) => !current)}
+            <Link
+              to="/content/new"
+              className={cn(buttonVariants({ size: "sm" }))}
             >
               <Plus className="size-4" />
               Create new Content Type
-            </Button>
+            </Link>
             <Link
               to="/database"
               search={{ sidebar: "Core" }}
@@ -358,46 +296,6 @@ function Content() {
           icon={FileText}
         />
       </div>
-
-      {showCreateForm ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>New content type</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4 p-4">
-            <form className="grid gap-3" onSubmit={handleCreateContentType}>
-              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-                <Input
-                  value={contentTypeLabel}
-                  onChange={(event) => {
-                    const nextLabel = event.target.value;
-                    setContentTypeLabel(nextLabel);
-                    if (!contentTypeName.trim()) {
-                      setContentTypeName(slugifyContentTypeLabel(nextLabel));
-                    }
-                  }}
-                  placeholder="Articles"
-                  disabled={saving}
-                  aria-label="Content type label"
-                />
-                <Input
-                  value={contentTypeName}
-                  onChange={(event) => setContentTypeName(event.target.value)}
-                  placeholder="articles"
-                  disabled={saving}
-                  aria-label="Content type collection name"
-                />
-                <Button type="submit" disabled={!contentTypeName.trim() || saving}>
-                  + Content Type
-                </Button>
-              </div>
-            </form>
-            <p className="text-sm text-muted-foreground">
-              The label is editor-facing. The collection name stays the durable slug used by the lower-level database service.
-            </p>
-          </CardContent>
-        </Card>
-      ) : null}
 
       {message ? <ResourceNotice title="Done" description={message} /> : null}
       {error ? <ResourceNotice title="Action failed" description={error} /> : null}

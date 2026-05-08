@@ -1,5 +1,5 @@
 import { Link, createFileRoute, useParams } from "@tanstack/react-router";
-import { Save } from "lucide-react";
+import { ChevronDown, ChevronUp, Plus, Save, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { DataRow, ResourceNotice } from "#/components/DashboardPage";
@@ -18,6 +18,7 @@ import {
 } from "#/lib/content-schema";
 import {
   getDatabaseDocument,
+  queryDatabaseDocuments,
   getRuntimeConfig,
   getStorageFileUrl,
   listDatabaseSchemaVersions,
@@ -120,6 +121,16 @@ function ContentEntryEditorRoute() {
       const value = documentData[field.name];
       if (field.definition.type === "boolean") {
         nextDraft[field.name] = Boolean(value);
+        continue;
+      }
+
+      if (
+        field.definition.type === "array" ||
+        (field.definition.type === "string" &&
+          typeof field.definition.format === "string" &&
+          field.definition.format === "collection-reference")
+      ) {
+        nextDraft[field.name] = value;
         continue;
       }
 
@@ -355,6 +366,29 @@ function SchemaFieldInput(props: {
 
   if (
     props.definition.type === "string" &&
+    typeof props.definition.format === "string" &&
+    props.definition.format === "collection-reference"
+  ) {
+    return (
+      <RelationFieldInput
+        definition={props.definition}
+        value={typeof props.value === "string" ? props.value : ""}
+        onChange={props.onChange}
+      />
+    );
+  }
+
+  if (props.definition.type === "array") {
+    return (
+      <RepeaterFieldInput
+        value={Array.isArray(props.value) ? props.value : []}
+        onChange={props.onChange}
+      />
+    );
+  }
+
+  if (
+    props.definition.type === "string" &&
     Array.isArray(props.definition.enum) &&
     props.definition.enum.every((value) => typeof value === "string")
   ) {
@@ -404,5 +438,133 @@ function SchemaFieldInput(props: {
       onChange={(event) => props.onChange(event.target.value)}
       placeholder={props.placeholder}
     />
+  );
+}
+
+function RelationFieldInput(props: {
+  definition: ContentSchemaDefinition;
+  value: string;
+  onChange: (value: unknown) => void;
+}) {
+  const runtime = useRuntimeResource(getRuntimeConfig);
+  const config = runtime.data;
+  const relationCollection =
+    typeof props.definition.relation === "object" &&
+    props.definition.relation &&
+    typeof (props.definition.relation as { collection?: unknown }).collection === "string"
+      ? (props.definition.relation as { collection: string }).collection
+      : undefined;
+
+  const relatedDocuments = useRuntimeResource(
+    async () =>
+      config && relationCollection
+        ? queryDatabaseDocuments(config, relationCollection)
+        : [],
+    [config, relationCollection],
+  );
+
+  return (
+    <div className="grid gap-2">
+      <select
+        value={props.value}
+        onChange={(event) => props.onChange(event.target.value)}
+        className="h-10 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      >
+        <option value="">Select related entry…</option>
+        {(relatedDocuments.data ?? []).map((document) => (
+          <option key={document.id} value={document.id}>
+            {String(document.data.title ?? document.data.name ?? document.id)}
+          </option>
+        ))}
+      </select>
+      <p className="text-xs font-normal text-muted-foreground">
+        {relationCollection
+          ? `Links to entries in ${relationCollection}.`
+          : "No relation target collection configured yet."}
+      </p>
+    </div>
+  );
+}
+
+function RepeaterFieldInput(props: {
+  value: unknown[];
+  onChange: (value: unknown) => void;
+}) {
+  const [error, setError] = useState<string>();
+
+  function updateItem(index: number, rawValue: string) {
+    try {
+      const next = [...props.value];
+      next[index] = rawValue.trim().length > 0 ? JSON.parse(rawValue) : {};
+      setError(undefined);
+      props.onChange(next);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  function moveItem(index: number, direction: -1 | 1) {
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= props.value.length) {
+      return;
+    }
+
+    const next = [...props.value];
+    [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+    props.onChange(next);
+  }
+
+  return (
+    <div className="grid gap-3 rounded-md border bg-muted/10 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-medium text-foreground">Repeater items</p>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => props.onChange([...(props.value ?? []), {}])}
+        >
+          <Plus className="size-4" />
+          Add item
+        </Button>
+      </div>
+      {props.value.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No items yet. Add the first repeatable item above.
+        </p>
+      ) : (
+        props.value.map((item, index) => (
+          <div key={index} className="grid gap-2 rounded-md border bg-background p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-sm font-medium text-foreground">Item {index + 1}</span>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" size="sm" variant="outline" onClick={() => moveItem(index, -1)}>
+                  <ChevronUp className="size-4" />
+                </Button>
+                <Button type="button" size="sm" variant="outline" onClick={() => moveItem(index, 1)}>
+                  <ChevronDown className="size-4" />
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => props.onChange(props.value.filter((_, itemIndex) => itemIndex !== index))}
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              </div>
+            </div>
+            <textarea
+              value={JSON.stringify(item ?? {}, null, 2)}
+              onChange={(event) => updateItem(index, event.target.value)}
+              rows={8}
+              className="rounded-md border bg-muted/20 px-3 py-2 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              spellCheck={false}
+            />
+          </div>
+        ))
+      )}
+      {error ? <ResourceNotice title="Invalid repeater item" description={error} /> : null}
+    </div>
   );
 }
