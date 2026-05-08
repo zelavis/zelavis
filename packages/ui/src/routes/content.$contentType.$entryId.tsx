@@ -88,6 +88,27 @@ function ContentEntryEditorRoute() {
         : [],
     [config, media.data?.files],
   );
+  const fileItems = useMemo(
+    () =>
+      config
+        ? (media.data?.files ?? []).slice(0, 16).map((file) => ({
+            href: getStorageFileUrl(config, file.path),
+            label:
+              typeof file.metadata?.label === "string"
+                ? file.metadata.label
+                : file.path.split("/").pop() ?? file.path,
+            meta: [
+              file.contentType,
+              typeof file.metadata?.purpose === "string"
+                ? file.metadata.purpose
+                : undefined,
+            ]
+              .filter(Boolean)
+              .join(" · "),
+          }))
+        : [],
+    [config, media.data?.files],
+  );
 
   useEffect(() => {
     if (!entry.data || fields.length === 0) {
@@ -213,6 +234,7 @@ function ContentEntryEditorRoute() {
                 definition={field.definition}
                 value={draft[field.name]}
                 mediaItems={mediaItems}
+                fileItems={fileItems}
                 onChange={(value) => updateDraftValue(field.name, value)}
               />
             ))
@@ -258,6 +280,7 @@ function SchemaFieldEditor(props: {
   definition: ContentSchemaDefinition;
   value: unknown;
   mediaItems: Array<{ src: string; altText: string; label: string }>;
+  fileItems: Array<{ href: string; label: string; meta: string }>;
   onChange: (value: unknown) => void;
 }) {
   const ui = getContentSchemaUi(props.definition);
@@ -283,6 +306,7 @@ function SchemaFieldEditor(props: {
         placeholder={placeholder}
         value={props.value}
         mediaItems={props.mediaItems}
+        fileItems={props.fileItems}
         onChange={props.onChange}
       />
       {props.definition.type === "file" ? (
@@ -300,6 +324,7 @@ function SchemaFieldInput(props: {
   placeholder: string;
   value: unknown;
   mediaItems: Array<{ src: string; altText: string; label: string }>;
+  fileItems: Array<{ href: string; label: string; meta: string }>;
   onChange: (value: unknown) => void;
 }) {
   if (props.definition.type === "boolean") {
@@ -323,6 +348,7 @@ function SchemaFieldInput(props: {
         onChange={props.onChange}
         placeholder={props.placeholder}
         mediaItems={props.mediaItems}
+        fileItems={props.fileItems}
       />
     );
   }

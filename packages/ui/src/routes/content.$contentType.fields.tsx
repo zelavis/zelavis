@@ -1,5 +1,5 @@
 import { Link, createFileRoute, useParams } from "@tanstack/react-router";
-import { PencilLine, Plus, Save, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, PencilLine, Plus, Save, SquarePen, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { ResourceNotice } from "#/components/DashboardPage";
@@ -13,7 +13,9 @@ import {
   getContentSchemaUi,
   insertFieldIntoSchemaDocument,
   isRichTextSchemaField,
+  moveFieldInSchemaDocument,
   removeFieldFromSchemaDocument,
+  updateFieldInSchemaDocument,
   type ContentFieldBuilderKind,
   type ContentSchemaDefinition,
 } from "#/lib/content-schema";
@@ -62,9 +64,17 @@ function ContentTypeFieldsRoute() {
   const [newFieldName, setNewFieldName] = useState("");
   const [newFieldLabel, setNewFieldLabel] = useState("");
   const [newFieldDescription, setNewFieldDescription] = useState("");
+  const [newFieldGroup, setNewFieldGroup] = useState("Content");
   const [newFieldKind, setNewFieldKind] =
     useState<ContentFieldBuilderKind>("text");
   const [newFieldRequired, setNewFieldRequired] = useState(false);
+  const [editingFieldName, setEditingFieldName] = useState<string>();
+  const [editingFieldLabel, setEditingFieldLabel] = useState("");
+  const [editingFieldDescription, setEditingFieldDescription] = useState("");
+  const [editingFieldGroup, setEditingFieldGroup] = useState("Content");
+  const [editingFieldKind, setEditingFieldKind] =
+    useState<ContentFieldBuilderKind>("text");
+  const [editingFieldRequired, setEditingFieldRequired] = useState(false);
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
@@ -83,6 +93,17 @@ function ContentTypeFieldsRoute() {
     () => getContentSchemaFields(schemaDraft),
     [schemaDraft],
   );
+  const fieldGroups = useMemo(() => {
+    const grouped = new Map<string, typeof fields>();
+    for (const field of fields) {
+      const group = getContentSchemaUi(field.definition)?.group?.trim() || "Content";
+      const existing = grouped.get(group) ?? [];
+      existing.push(field);
+      grouped.set(group, existing);
+    }
+
+    return Array.from(grouped.entries());
+  }, [fields]);
   const selectedField = fields.find((field) => field.name === selectedFieldName) ?? fields[0];
 
   useEffect(() => {
@@ -100,6 +121,7 @@ function ContentTypeFieldsRoute() {
     setNewFieldName("");
     setNewFieldLabel("");
     setNewFieldDescription("");
+    setNewFieldGroup("Content");
     setNewFieldKind("text");
     setNewFieldRequired(false);
   }
@@ -116,6 +138,7 @@ function ContentTypeFieldsRoute() {
           name: newFieldName,
           label: newFieldLabel,
           description: newFieldDescription,
+          group: newFieldGroup,
           kind: newFieldKind,
           required: newFieldRequired,
         },
@@ -143,6 +166,63 @@ function ContentTypeFieldsRoute() {
     setSchemaDraft(nextDocument);
     setError(undefined);
     setMessage(`Removed field "${fieldName}" from the draft schema.`);
+  }
+
+  function beginEditingField(fieldName: string) {
+    const field = fields.find((entry) => entry.name === fieldName);
+    if (!field) {
+      return;
+    }
+
+    setEditingFieldName(field.name);
+    setEditingFieldLabel(field.label);
+    setEditingFieldDescription(field.description ?? "");
+    setEditingFieldGroup(getContentSchemaUi(field.definition)?.group?.trim() || "Content");
+    setEditingFieldKind(inferFieldKind(field.name, field.definition));
+    setEditingFieldRequired(field.required);
+  }
+
+  function handleSaveFieldEdits() {
+    if (!schemaDraft || !editingFieldName) {
+      return;
+    }
+
+    try {
+      const nextDocument = updateFieldInSchemaDocument({
+        document: schemaDraft,
+        fieldName: editingFieldName,
+        field: {
+          name: editingFieldName,
+          label: editingFieldLabel,
+          description: editingFieldDescription,
+          group: editingFieldGroup,
+          kind: editingFieldKind,
+          required: editingFieldRequired,
+        },
+      });
+      setSchemaDraft(nextDocument);
+      setMessage(`Updated field "${editingFieldName}".`);
+      setError(undefined);
+      setEditingFieldName(undefined);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+      setMessage(undefined);
+    }
+  }
+
+  function handleMoveField(fieldName: string, direction: -1 | 1) {
+    if (!schemaDraft) {
+      return;
+    }
+
+    const nextDocument = moveFieldInSchemaDocument({
+      document: schemaDraft,
+      fieldName,
+      direction,
+    });
+    setSchemaDraft(nextDocument);
+    setError(undefined);
+    setMessage(`Reordered field "${fieldName}".`);
   }
 
   async function handleSaveSchema() {
@@ -198,27 +278,39 @@ function ContentTypeFieldsRoute() {
             />
           ) : (
             <>
-              <div className="grid gap-2">
-                {fields.map((field) => (
-                  <button
-                    key={field.name}
-                    type="button"
-                    onClick={() => setSelectedFieldName(field.name)}
-                    className={cn(
-                      "grid gap-1 rounded-md border px-3 py-3 text-left transition-colors hover:bg-accent",
-                      selectedField?.name === field.name && "border-primary bg-accent/50",
-                    )}
-                  >
+              <div className="grid gap-4">
+                {fieldGroups.map(([group, groupedFields]) => (
+                  <div key={group} className="grid gap-2">
                     <div className="flex items-center justify-between gap-3">
-                      <span className="font-medium text-foreground">{field.label}</span>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        {group}
+                      </p>
                       <span className="text-xs text-muted-foreground">
-                        {field.required ? "Required" : "Optional"}
+                        {groupedFields.length} fields
                       </span>
                     </div>
-                    <span className="text-xs text-muted-foreground">
-                      {field.name} · {renderFieldType(field.definition)}
-                    </span>
-                  </button>
+                    {groupedFields.map((field) => (
+                      <button
+                        key={field.name}
+                        type="button"
+                        onClick={() => setSelectedFieldName(field.name)}
+                        className={cn(
+                          "grid gap-1 rounded-md border px-3 py-3 text-left transition-colors hover:bg-accent",
+                          selectedField?.name === field.name && "border-primary bg-accent/50",
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-medium text-foreground">{field.label}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {field.required ? "Required" : "Optional"}
+                          </span>
+                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          {field.name} · {renderFieldType(field.definition)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
                 ))}
               </div>
 
@@ -243,6 +335,12 @@ function ContentTypeFieldsRoute() {
                     placeholder="Optional field help text"
                     rows={3}
                     className="rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  />
+                  <Input
+                    value={newFieldGroup}
+                    onChange={(event) => setNewFieldGroup(event.target.value)}
+                    placeholder="Content"
+                    aria-label="Field group"
                   />
                   <select
                     value={newFieldKind}
@@ -294,7 +392,7 @@ function ContentTypeFieldsRoute() {
           </Button>
         </CardHeader>
         <CardContent className="grid gap-4 p-4">
-          {!schemaDraft || !selectedField ? (
+                  {!schemaDraft || !selectedField ? (
             <ResourceNotice
               title="Pick or create a field"
               description="Fields added here become the editor-facing model for this content type. Core > Database stays the lower-level data surface."
@@ -322,6 +420,35 @@ function ContentTypeFieldsRoute() {
                     Remove
                   </Button>
                 </div>
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleMoveField(selectedField.name, -1)}
+                  >
+                    <ArrowUp className="size-4" />
+                    Move up
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleMoveField(selectedField.name, 1)}
+                  >
+                    <ArrowDown className="size-4" />
+                    Move down
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => beginEditingField(selectedField.name)}
+                  >
+                    <SquarePen className="size-4" />
+                    Edit field
+                  </Button>
+                </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   <FieldPropertyCard
                     label="Editor"
@@ -338,6 +465,10 @@ function ContentTypeFieldsRoute() {
                   <FieldPropertyCard
                     label="Required"
                     value={selectedField.required ? "Yes" : "No"}
+                  />
+                  <FieldPropertyCard
+                    label="Group"
+                    value={getContentSchemaUi(selectedField.definition)?.group ?? "Content"}
                   />
                   <FieldPropertyCard
                     label="Schema type"
@@ -398,6 +529,66 @@ function ContentTypeFieldsRoute() {
                   }), null, 2)}
                 </pre>
               </div>
+              {editingFieldName ? (
+                <div className="rounded-md border bg-muted/15 p-4">
+                  <p className="text-sm font-medium text-foreground">Edit field</p>
+                  <div className="mt-3 grid gap-3">
+                    <Input
+                      value={editingFieldLabel}
+                      onChange={(event) => setEditingFieldLabel(event.target.value)}
+                      placeholder="Field label"
+                      aria-label="Edit field label"
+                    />
+                    <textarea
+                      value={editingFieldDescription}
+                      onChange={(event) => setEditingFieldDescription(event.target.value)}
+                      rows={3}
+                      placeholder="Field description"
+                      className="rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    />
+                    <Input
+                      value={editingFieldGroup}
+                      onChange={(event) => setEditingFieldGroup(event.target.value)}
+                      placeholder="Content"
+                      aria-label="Edit field group"
+                    />
+                    <select
+                      value={editingFieldKind}
+                      onChange={(event) =>
+                        setEditingFieldKind(event.target.value as ContentFieldBuilderKind)
+                      }
+                      className="h-10 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    >
+                      {fieldTypeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <label className="flex items-center gap-3 text-sm text-foreground">
+                      <Switch
+                        checked={editingFieldRequired}
+                        onCheckedChange={setEditingFieldRequired}
+                      />
+                      Required field
+                    </label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button type="button" size="sm" onClick={handleSaveFieldEdits}>
+                        <Save className="size-4" />
+                        Save field
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setEditingFieldName(undefined)}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </>
           )}
         </CardContent>

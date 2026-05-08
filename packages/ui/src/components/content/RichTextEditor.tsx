@@ -1,14 +1,16 @@
 import { $generateHtmlFromNodes, $generateNodesFromDOM } from "@lexical/html";
+import { LinkNode, TOGGLE_LINK_COMMAND } from "@lexical/link";
 import { INSERT_ORDERED_LIST_COMMAND, INSERT_UNORDERED_LIST_COMMAND, ListItemNode, ListNode } from "@lexical/list";
 import { $setBlocksType } from "@lexical/selection";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
+import { LinkPlugin } from "@lexical/react/LexicalLinkPlugin";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
-import { QuoteNode } from "@lexical/rich-text";
+import { $createHeadingNode, HeadingNode, QuoteNode } from "@lexical/rich-text";
 import {
   $createParagraphNode,
   $createTextNode,
@@ -21,10 +23,15 @@ import {
 } from "lexical";
 import {
   Bold,
+  Heading2,
+  Heading3,
   ImagePlus,
   Italic,
+  Link2,
   List,
   ListOrdered,
+  MessageSquareQuote,
+  Paperclip,
   Pilcrow,
   Quote,
   Underline,
@@ -33,6 +40,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
+import { $createCalloutNode, CalloutNode } from "./CalloutNode";
+import { $createFileCardNode, FileCardNode } from "./FileCardNode";
 import { $createImageNode, ImageNode } from "./ImageNode";
 
 function normalizeHtml(value: string): string {
@@ -95,11 +104,14 @@ function HtmlSyncPlugin(props: {
 
 function ToolbarPlugin(props: {
   mediaItems: Array<{ src: string; altText: string; label: string }>;
+  fileItems: Array<{ href: string; label: string; meta: string }>;
 }) {
   const [editor] = useLexicalComposerContext();
   const [showMediaPanel, setShowMediaPanel] = useState(false);
+  const [showFilePanel, setShowFilePanel] = useState(false);
   const [imageUrl, setImageUrl] = useState("");
   const [imageAlt, setImageAlt] = useState("");
+  const [linkUrl, setLinkUrl] = useState("");
 
   function insertParagraphBreak() {
     editor.update(() => {
@@ -107,6 +119,35 @@ function ToolbarPlugin(props: {
       if ($isRangeSelection(selection)) {
         $setBlocksType(selection, () => $createParagraphNode());
       }
+    });
+  }
+
+  function insertHeading(tag: "h2" | "h3") {
+    editor.update(() => {
+      const selection = $getSelection();
+      if ($isRangeSelection(selection)) {
+        $setBlocksType(selection, () => $createHeadingNode(tag));
+      }
+    });
+  }
+
+  function applyLink() {
+    editor.dispatchCommand(
+      TOGGLE_LINK_COMMAND,
+      linkUrl.trim().length > 0 ? linkUrl.trim() : null,
+    );
+    setLinkUrl("");
+  }
+
+  function insertCallout() {
+    editor.update(() => {
+      $insertNodes([
+        $createCalloutNode({
+          title: "Editor note",
+          body: "Use this block for standout context, summaries, or handoff notes.",
+        }),
+        $createParagraphNode(),
+      ]);
     });
   }
 
@@ -123,6 +164,15 @@ function ToolbarPlugin(props: {
       const paragraph = $createParagraphNode();
       paragraph.append(imageNode);
       $insertNodes([paragraph, $createParagraphNode()]);
+    });
+  }
+
+  function insertFileCard(item: { href: string; label: string; meta: string }) {
+    editor.update(() => {
+      $insertNodes([
+        $createFileCardNode(item),
+        $createParagraphNode(),
+      ]);
     });
   }
 
@@ -155,6 +205,16 @@ function ToolbarPlugin(props: {
           icon={<ListOrdered className="size-4" />}
         />
         <ToolbarIconButton
+          label="H2"
+          onClick={() => insertHeading("h2")}
+          icon={<Heading2 className="size-4" />}
+        />
+        <ToolbarIconButton
+          label="H3"
+          onClick={() => insertHeading("h3")}
+          icon={<Heading3 className="size-4" />}
+        />
+        <ToolbarIconButton
           label="Quote"
           onClick={() =>
             editor.update(() => {
@@ -167,6 +227,16 @@ function ToolbarPlugin(props: {
           icon={<Quote className="size-4" />}
         />
         <ToolbarIconButton
+          label="Link"
+          onClick={applyLink}
+          icon={<Link2 className="size-4" />}
+        />
+        <ToolbarIconButton
+          label="Callout"
+          onClick={insertCallout}
+          icon={<MessageSquareQuote className="size-4" />}
+        />
+        <ToolbarIconButton
           label="Paragraph"
           onClick={insertParagraphBreak}
           icon={<Pilcrow className="size-4" />}
@@ -176,6 +246,23 @@ function ToolbarPlugin(props: {
           onClick={() => setShowMediaPanel((current) => !current)}
           icon={<ImagePlus className="size-4" />}
         />
+        <ToolbarIconButton
+          label="File Card"
+          onClick={() => setShowFilePanel((current) => !current)}
+          icon={<Paperclip className="size-4" />}
+        />
+      </div>
+
+      <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
+        <Input
+          value={linkUrl}
+          onChange={(event) => setLinkUrl(event.target.value)}
+          placeholder="https://…"
+          aria-label="Link URL"
+        />
+        <Button type="button" size="sm" variant="outline" onClick={applyLink}>
+          Apply link
+        </Button>
       </div>
 
       <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
@@ -237,6 +324,31 @@ function ToolbarPlugin(props: {
           )}
         </div>
       ) : null}
+
+      {showFilePanel ? (
+        <div className="grid gap-2 rounded-md border bg-background p-3">
+          <p className="text-sm font-medium text-foreground">Insert file card</p>
+          {props.fileItems.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No stored files available yet. Upload one in Media Gallery or Core &gt; Storage first.
+            </p>
+          ) : (
+            <div className="grid gap-2">
+              {props.fileItems.map((item) => (
+                <button
+                  key={item.href}
+                  type="button"
+                  onClick={() => insertFileCard(item)}
+                  className="grid gap-1 rounded-md border p-3 text-left transition-colors hover:bg-accent"
+                >
+                  <span className="text-sm font-medium text-foreground">{item.label}</span>
+                  <span className="text-xs text-muted-foreground">{item.meta}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -259,11 +371,21 @@ export function RichTextEditor(props: {
   onChange: (value: string) => void;
   placeholder?: string;
   mediaItems?: Array<{ src: string; altText: string; label: string }>;
+  fileItems?: Array<{ href: string; label: string; meta: string }>;
 }) {
   const initialConfig = useMemo(
     () => ({
       namespace: "zelavis-content-editor",
-      nodes: [QuoteNode, ListNode, ListItemNode, ImageNode],
+      nodes: [
+        HeadingNode,
+        QuoteNode,
+        ListNode,
+        ListItemNode,
+        LinkNode,
+        ImageNode,
+        CalloutNode,
+        FileCardNode,
+      ],
       onError(error: Error) {
         throw error;
       },
@@ -277,7 +399,10 @@ export function RichTextEditor(props: {
   return (
     <LexicalComposer initialConfig={initialConfig}>
       <div className="grid gap-3">
-        <ToolbarPlugin mediaItems={props.mediaItems ?? []} />
+        <ToolbarPlugin
+          mediaItems={props.mediaItems ?? []}
+          fileItems={props.fileItems ?? []}
+        />
         <div className="relative">
           <RichTextPlugin
             contentEditable={
@@ -292,6 +417,7 @@ export function RichTextEditor(props: {
           />
         </div>
         <HistoryPlugin />
+        <LinkPlugin />
         <HtmlSyncPlugin value={props.value} onChange={props.onChange} />
       </div>
     </LexicalComposer>

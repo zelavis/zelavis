@@ -1,7 +1,17 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
+import {
+  flexRender,
+  getCoreRowModel,
+  getFilteredRowModel,
+  getPaginationRowModel,
+  useReactTable,
+  type ColumnDef,
+  type VisibilityState,
+} from "@tanstack/react-table";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import type * as React from "react";
-import { useMemo, useState } from "react";
-import { Activity, Braces, Database, FileImage, Files, FileText, Table2, Volume2, Video } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Activity, Braces, ChevronLeft, ChevronRight, Database, FileImage, Files, FileText, Search, Table2, Volume2, Video } from "lucide-react";
 
 import {
   DataRow,
@@ -75,6 +85,272 @@ function renderRawCellValue(value: unknown) {
   }
 
   return JSON.stringify(value);
+}
+
+function RawDocumentsExplorer(props: {
+  rows: Array<{
+    id: string;
+    version: number;
+    updatedAt: string;
+    data: Record<string, unknown>;
+  }>;
+  columns: string[];
+  selectedDocumentId?: string;
+  onSelectDocument: (id: string) => void;
+  onEditDocument: (id: string) => void;
+  onDeleteDocument: (id: string) => void;
+}) {
+  const [globalFilter, setGlobalFilter] = useState("");
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  const tableData = useMemo(
+    () =>
+      props.rows.map((row) => ({
+        ...row,
+        searchText: `${row.id} ${props.columns
+          .map((column) => renderRawCellValue(row.data[column]))
+          .join(" ")}`.toLowerCase(),
+      })),
+    [props.columns, props.rows],
+  );
+
+  const columns = useMemo<ColumnDef<(typeof tableData)[number]>[]>(
+    () => [
+      {
+        accessorKey: "id",
+        header: "ID",
+        cell: ({ row }) => (
+          <button
+            type="button"
+            onClick={() => props.onSelectDocument(row.original.id)}
+            className="font-mono text-xs text-foreground underline-offset-4 hover:underline"
+          >
+            {row.original.id}
+          </button>
+        ),
+        enableHiding: false,
+      },
+      ...props.columns.map(
+        (column): ColumnDef<(typeof tableData)[number]> => ({
+          id: column,
+          header: column,
+          accessorFn: (row) => renderRawCellValue(row.data[column]),
+          cell: ({ getValue }) => (
+            <span className="line-clamp-2 text-muted-foreground">
+              {String(getValue() ?? "—")}
+            </span>
+          ),
+        }),
+      ),
+      {
+        accessorKey: "version",
+        header: "Version",
+        cell: ({ row }) => `v${row.original.version}`,
+      },
+      {
+        accessorKey: "updatedAt",
+        header: "Updated",
+        cell: ({ row }) => new Date(row.original.updatedAt).toLocaleString(),
+      },
+      {
+        id: "actions",
+        header: "Actions",
+        enableHiding: false,
+        cell: ({ row }) => (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => props.onEditDocument(row.original.id)}
+            >
+              Edit
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => props.onDeleteDocument(row.original.id)}
+            >
+              Delete
+            </Button>
+          </div>
+        ),
+      },
+    ],
+    [props.columns, props.onDeleteDocument, props.onEditDocument, props.onSelectDocument],
+  );
+
+  const table = useReactTable({
+    data: tableData,
+    columns,
+    state: {
+      globalFilter,
+      columnVisibility,
+    },
+    globalFilterFn: (row, _columnId, filterValue) =>
+      row.original.searchText.includes(String(filterValue).toLowerCase()),
+    onGlobalFilterChange: setGlobalFilter,
+    onColumnVisibilityChange: setColumnVisibility,
+    getCoreRowModel: getCoreRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    initialState: {
+      pagination: {
+        pageIndex: 0,
+        pageSize: 15,
+      },
+    },
+  });
+
+  const visibleRows = table.getRowModel().rows;
+  const virtualizer = useVirtualizer({
+    count: visibleRows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 58,
+    overscan: 6,
+  });
+
+  const selectedDocument = props.rows.find(
+    (document) => document.id === props.selectedDocumentId,
+  );
+
+  return (
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_320px]">
+      <div className="grid gap-4">
+        <div className="grid gap-3 rounded-md border bg-muted/15 p-3">
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+            <label className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={globalFilter}
+                onChange={(event) => setGlobalFilter(event.target.value)}
+                placeholder="Filter documents and visible cells"
+                className="pl-9"
+              />
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => table.previousPage()}
+                disabled={!table.getCanPreviousPage()}
+              >
+                <ChevronLeft className="size-4" />
+              </Button>
+              <span className="text-sm text-muted-foreground">
+                Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount() || 1}
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => table.nextPage()}
+                disabled={!table.getCanNextPage()}
+              >
+                <ChevronRight className="size-4" />
+              </Button>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {table
+              .getAllLeafColumns()
+              .filter((column) => column.getCanHide())
+              .map((column) => (
+                <label
+                  key={column.id}
+                  className="flex items-center gap-2 rounded-md border bg-background px-2 py-1 text-xs text-muted-foreground"
+                >
+                  <input
+                    type="checkbox"
+                    checked={column.getIsVisible()}
+                    onChange={column.getToggleVisibilityHandler()}
+                  />
+                  {String(column.columnDef.header)}
+                </label>
+              ))}
+          </div>
+        </div>
+
+        <div className="overflow-hidden rounded-md border">
+          <div className="grid grid-cols-[180px_repeat(auto-fit,minmax(140px,1fr))] border-b bg-muted/20 text-left text-sm text-muted-foreground">
+            {table.getFlatHeaders().map((header) => (
+              <div key={header.id} className="px-4 py-3 font-medium">
+                {flexRender(header.column.columnDef.header, header.getContext())}
+              </div>
+            ))}
+          </div>
+          <div ref={scrollRef} className="max-h-[32rem] overflow-auto">
+            <div
+              style={{
+                height: `${virtualizer.getTotalSize()}px`,
+                position: "relative",
+              }}
+            >
+              {virtualizer.getVirtualItems().map((virtualRow) => {
+                const row = visibleRows[virtualRow.index];
+                if (!row) {
+                  return null;
+                }
+
+                return (
+                  <div
+                    key={row.id}
+                    className={cn(
+                      "grid grid-cols-[180px_repeat(auto-fit,minmax(140px,1fr))] border-b text-sm",
+                      props.selectedDocumentId === row.original.id && "bg-accent/30",
+                    )}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      transform: `translateY(${virtualRow.start}px)`,
+                    }}
+                  >
+                    {row.getVisibleCells().map((cell) => (
+                      <div
+                        key={cell.id}
+                        className="px-4 py-3"
+                      >
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Row details</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3 p-4">
+          {selectedDocument ? (
+            <>
+              <p className="text-sm font-medium text-foreground">{selectedDocument.id}</p>
+              <p className="text-xs text-muted-foreground">
+                v{selectedDocument.version} · {new Date(selectedDocument.updatedAt).toLocaleString()}
+              </p>
+              <pre className="overflow-x-auto rounded-md border bg-muted/20 p-4 text-xs leading-6 text-muted-foreground">
+                {JSON.stringify(selectedDocument.data, null, 2)}
+              </pre>
+            </>
+          ) : (
+            <ResourceNotice
+              title="Select a row"
+              description="This detail pane is the low-level view of a raw database record."
+            />
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
 }
 
 function TimeSeriesChart({
@@ -401,6 +677,7 @@ function DatabaseRoute() {
     useState<FileSchemaTemplateKind>("image");
   const [schemaFieldRequired, setSchemaFieldRequired] = useState(true);
   const [editingDocumentId, setEditingDocumentId] = useState<string>();
+  const [selectedDocumentId, setSelectedDocumentId] = useState<string>();
   const [actionMessage, setActionMessage] = useState<string>();
   const [actionError, setActionError] = useState<string>();
   const [saving, setSaving] = useState(false);
@@ -526,6 +803,20 @@ function DatabaseRoute() {
     return Array.from(keys).sort((left, right) => left.localeCompare(right));
   }, [documentRows]);
 
+  useEffect(() => {
+    if (documentRows.length === 0) {
+      setSelectedDocumentId(undefined);
+      return;
+    }
+
+    if (
+      !selectedDocumentId ||
+      !documentRows.some((document) => document.id === selectedDocumentId)
+    ) {
+      setSelectedDocumentId(documentRows[0]?.id);
+    }
+  }, [documentRows, selectedDocumentId]);
+
   async function runAction(action: () => Promise<void>) {
     setSaving(true);
     setActionError(undefined);
@@ -619,6 +910,7 @@ function DatabaseRoute() {
     }
 
     setEditingDocumentId(document.id);
+    setSelectedDocumentId(document.id);
     setDocumentId(document.id);
     setDocumentJson(JSON.stringify(document.data, null, 2));
   }
@@ -656,6 +948,9 @@ function DatabaseRoute() {
         setEditingDocumentId(undefined);
         setDocumentId("");
         setDocumentJson('{\n  "name": "Draft item"\n}');
+      }
+      if (selectedDocumentId === documentIdToDelete) {
+        setSelectedDocumentId(undefined);
       }
       setActionMessage(`Deleted ${documentIdToDelete}`);
     });
@@ -968,58 +1263,15 @@ function DatabaseRoute() {
                     Documents are shown here as raw rows. This is intentionally closer to a table browser than the friendlier Content surface.
                   </div>
                   {documentRows.length > 0 ? (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead className="border-b bg-muted/10 text-left text-muted-foreground">
-                          <tr>
-                            <th className="px-4 py-3 font-medium">ID</th>
-                            {documentColumns.map((column) => (
-                              <th key={column} className="px-4 py-3 font-medium">
-                                {column}
-                              </th>
-                            ))}
-                            <th className="px-4 py-3 font-medium">Version</th>
-                            <th className="px-4 py-3 font-medium">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {documentRows.map((document) => (
-                            <tr key={document.id} className="border-b last:border-b-0">
-                              <td className="px-4 py-3 font-mono text-xs text-foreground">
-                                {document.id}
-                              </td>
-                              {documentColumns.map((column) => (
-                                <td key={`${document.id}:${column}`} className="px-4 py-3 text-muted-foreground">
-                                  {renderRawCellValue(document.data[column])}
-                                </td>
-                              ))}
-                              <td className="px-4 py-3">
-                                <Badge variant="secondary">v{document.version}</Badge>
-                              </td>
-                              <td className="px-4 py-3">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => handleEditDocument(document.id)}
-                                  >
-                                    Edit
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => void handleDeleteDocument(document.id)}
-                                  >
-                                    Delete
-                                  </Button>
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                    <div className="p-4">
+                      <RawDocumentsExplorer
+                        rows={documentRows}
+                        columns={documentColumns}
+                        selectedDocumentId={selectedDocumentId}
+                        onSelectDocument={setSelectedDocumentId}
+                        onEditDocument={(id) => void handleEditDocument(id)}
+                        onDeleteDocument={(id) => void handleDeleteDocument(id)}
+                      />
                     </div>
                   ) : null}
                   {documentRows.length === 0 ? (

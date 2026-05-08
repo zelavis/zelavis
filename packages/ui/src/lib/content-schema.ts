@@ -20,6 +20,7 @@ export interface ContentSchemaUiDefinition {
   placeholder?: string;
   rows?: number;
   helpText?: string;
+  group?: string;
 }
 
 export interface ContentSchemaDefinition {
@@ -50,6 +51,7 @@ export interface ContentFieldBuilderInput {
   description?: string;
   kind: ContentFieldBuilderKind;
   required?: boolean;
+  group?: string;
 }
 
 function humanizeFieldName(name: string): string {
@@ -233,6 +235,7 @@ function createFileFieldDefinition(kind: Extract<ContentFieldBuilderKind, "file"
 export function createContentFieldDefinition(
   input: ContentFieldBuilderInput,
 ): ContentSchemaDefinition {
+  const uiGroup = input.group?.trim();
   const shared = {
     ...(input.label?.trim() ? { label: input.label.trim() } : {}),
     ...(input.description?.trim() ? { description: input.description.trim() } : {}),
@@ -243,6 +246,7 @@ export function createContentFieldDefinition(
       return {
         type: "string",
         ...shared,
+        ...(uiGroup ? { ui: { group: uiGroup } } : {}),
       };
     case "long-text":
       return {
@@ -251,6 +255,7 @@ export function createContentFieldDefinition(
         ui: {
           control: "textarea",
           rows: 5,
+          ...(uiGroup ? { group: uiGroup } : {}),
         },
       };
     case "rich-text":
@@ -262,28 +267,33 @@ export function createContentFieldDefinition(
           control: "rich-text",
           editor: "lexical",
           placeholder: "Start writing...",
+          ...(uiGroup ? { group: uiGroup } : {}),
         },
       };
     case "number":
       return {
         type: "number",
         ...shared,
+        ...(uiGroup ? { ui: { group: uiGroup } } : {}),
       };
     case "boolean":
       return {
         type: "boolean",
         ...shared,
+        ...(uiGroup ? { ui: { group: uiGroup } } : {}),
       };
     case "status":
       return {
         type: "string",
         ...shared,
         enum: ["draft", "review", "published"],
+        ...(uiGroup ? { ui: { group: uiGroup } } : {}),
       };
     case "json":
       return {
         type: "object",
         ...shared,
+        ...(uiGroup ? { ui: { group: uiGroup } } : {}),
       };
     case "file":
     case "image":
@@ -293,11 +303,13 @@ export function createContentFieldDefinition(
       return {
         ...createFileFieldDefinition(input.kind),
         ...shared,
+        ...(uiGroup ? { ui: { group: uiGroup } } : {}),
       };
     default:
       return {
         type: "string",
         ...shared,
+        ...(uiGroup ? { ui: { group: uiGroup } } : {}),
       };
   }
 }
@@ -338,6 +350,56 @@ export function insertFieldIntoSchemaDocument(input: {
     ? [...new Set([...required, fieldName])]
     : required.filter((value) => value !== fieldName);
 
+  return nextDocument;
+}
+
+export function updateFieldInSchemaDocument(input: {
+  document: Record<string, unknown>;
+  fieldName: string;
+  field: ContentFieldBuilderInput;
+}): Record<string, unknown> {
+  const nextDocument = structuredClone(input.document) as Record<string, unknown>;
+  const properties =
+    nextDocument.properties && typeof nextDocument.properties === "object"
+      ? ({ ...(nextDocument.properties as Record<string, unknown>) })
+      : {};
+
+  if (!(input.fieldName in properties)) {
+    throw new Error(`The field "${input.fieldName}" does not exist.`);
+  }
+
+  properties[input.fieldName] = createContentFieldDefinition(input.field);
+  nextDocument.properties = properties;
+
+  const required = Array.isArray(nextDocument.required)
+    ? (nextDocument.required.filter(
+        (value): value is string => typeof value === "string",
+      ) as string[])
+    : [];
+
+  nextDocument.required = input.field.required
+    ? [...new Set([...required, input.fieldName])]
+    : required.filter((value) => value !== input.fieldName);
+
+  return nextDocument;
+}
+
+export function moveFieldInSchemaDocument(input: {
+  document: Record<string, unknown>;
+  fieldName: string;
+  direction: -1 | 1;
+}): Record<string, unknown> {
+  const nextDocument = structuredClone(input.document) as Record<string, unknown>;
+  const entries = Object.entries(getContentSchemaProperties(nextDocument));
+  const index = entries.findIndex(([name]) => name === input.fieldName);
+  const nextIndex = index + input.direction;
+  if (index === -1 || nextIndex < 0 || nextIndex >= entries.length) {
+    return nextDocument;
+  }
+
+  const reordered = [...entries];
+  [reordered[index], reordered[nextIndex]] = [reordered[nextIndex], reordered[index]];
+  nextDocument.properties = Object.fromEntries(reordered);
   return nextDocument;
 }
 
