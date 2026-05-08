@@ -156,7 +156,7 @@ function ContentTypeEntriesRoute() {
           <div className="p-4">
             <ResourceNotice
               title="No entries yet"
-              description="Create a draft entry here. This stays editor-facing while Core > Database keeps the raw document surface."
+              description="Create a draft entry."
             />
           </div>
         ) : (

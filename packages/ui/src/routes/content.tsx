@@ -1,10 +1,7 @@
 import { Outlet, createFileRoute, Link, useLocation } from "@tanstack/react-router";
 import {
-  Braces,
   Copy,
-  FileText,
   GripVertical,
-  LayoutList,
   Pencil,
   Pin,
   PinOff,
@@ -17,7 +14,6 @@ import { Fragment, useMemo, useState } from "react";
 import {
   PageHeader,
   ResourceNotice,
-  StatCard,
   StatusBadge,
 } from "#/components/DashboardPage";
 import { Button, buttonVariants } from "#/components/ui/button";
@@ -262,7 +258,6 @@ function Content() {
       <PageHeader
         eyebrow="Content"
         title="Content Studio"
-        description="Editor-facing content types live here. Pinned types stay at the top, while the lower-level document model remains available under Core > Database."
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Link
@@ -283,43 +278,19 @@ function Content() {
         }
       />
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <StatCard
-          label="Content types"
-          value={String(contentTypeRows.length)}
-          detail="Collections visible through the content-facing layer"
-          icon={LayoutList}
-        />
-        <StatCard
-          label="Schemas"
-          value={String(contentTypeRows.filter((row) => row.activeVersion).length)}
-          detail="Rows already carrying an active schema version"
-          icon={Braces}
-        />
-        <StatCard
-          label="Entries"
-          value={String(contentTypeRows.reduce((sum, row) => sum + row.documentCount, 0))}
-          detail="Documents across the visible content types"
-          icon={FileText}
-        />
-      </div>
-
       {message ? <ResourceNotice title="Done" description={message} /> : null}
       {error ? <ResourceNotice title="Action failed" description={error} /> : null}
 
       <Card>
         <CardHeader>
           <CardTitle>Content types</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Drag pinned rows to reorder the editor-facing priority list.
-          </p>
         </CardHeader>
         <CardContent className="p-0">
           {contentTypeRows.length === 0 ? (
             <div className="p-4">
               <ResourceNotice
                 title="No content types yet"
-                description="Create the first content type here or use the lower-level database screen if you need raw collection control."
+                description="Create your first content type."
               />
             </div>
           ) : (

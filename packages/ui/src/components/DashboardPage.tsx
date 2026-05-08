@@ -14,7 +14,7 @@ import { cn } from "#/lib/utils";
 interface PageHeaderProps {
   eyebrow: string;
   title: string;
-  description: string;
+  description?: string;
   actions?: React.ReactNode;
 }
 
@@ -43,9 +43,11 @@ export function PageHeader({
         <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
           {title}
         </h1>
-        <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
-          {description}
-        </p>
+        {description ? (
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
+            {description}
+          </p>
+        ) : null}
       </div>
       {actions ? (
         <div className="flex items-center gap-2">{actions}</div>

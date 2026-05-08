@@ -45,11 +45,6 @@ function ContentTypeLayout() {
       <PageHeader
         eyebrow="Content"
         title={contentType?.label ?? contentTypeName}
-        description={
-          contentType
-            ? `${contentType.documentCount} entries, schema ${contentType.activeVersion ? `v${contentType.activeVersion}` : "not active yet"}, collection ${contentType.name}.`
-            : `Editor-facing content-type workspace for ${contentTypeName}.`
-        }
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Link
@@ -72,7 +67,7 @@ function ContentTypeLayout() {
       {!contentType ? (
         <ResourceNotice
           title="Unknown content type"
-          description={`No content type named ${contentTypeName} is currently visible in this runtime.`}
+          description={`No content type named ${contentTypeName} is available.`}
         />
       ) : (
         <>

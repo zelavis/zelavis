@@ -308,9 +308,6 @@ function ContentTypeEditorRoute() {
       <Card>
         <CardHeader>
           <CardTitle>Collection editor</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            This is the advanced content-type editor. Friendly field modeling lives under Fields, while this screen keeps raw schema JSON and sample document wiring available.
-          </p>
         </CardHeader>
         <CardContent className="grid gap-4 p-4">
           {message ? <ResourceNotice title="Done" description={message} /> : null}
@@ -406,7 +403,7 @@ function ContentTypeEditorRoute() {
             ) : (
               <ResourceNotice
                 title="No schemas yet"
-                description="Register the first raw schema version here, or start with the friendlier field builder and come back when you want direct JSON control."
+                description="Register the first schema version."
               />
             )}
           </CardContent>

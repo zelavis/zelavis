@@ -198,9 +198,6 @@ function ContentEntryEditorRoute() {
         <CardHeader className="flex flex-row items-center justify-between gap-3">
           <div className="grid gap-1">
             <CardTitle>Edit entry</CardTitle>
-            <p className="text-sm text-muted-foreground">
-              This editor follows the active content schema. Rich-text fields use Lexical when the schema asks for it.
-            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Link
@@ -222,17 +219,17 @@ function ContentEntryEditorRoute() {
           {!activeSchema ? (
             <ResourceNotice
               title="No active schema"
-              description="This editor needs an active schema for the content type. Activate one under Fields or Core > Database first."
+              description="Activate a schema first."
             />
           ) : !entry.data ? (
             <ResourceNotice
               title="Loading entry"
-              description="Fetching the current document so the schema-driven editor can bind the right fields."
+              description="Loading the current document."
             />
           ) : fields.length === 0 ? (
             <ResourceNotice
               title="No fields in schema"
-              description="The active schema does not expose any properties yet."
+              description="Add fields to this schema first."
             />
           ) : (
             fields.map((field) => (
@@ -272,11 +269,6 @@ function ContentEntryEditorRoute() {
                 : "Loading…"
             }
           />
-          <div className="border-t p-4">
-            <p className="text-sm text-muted-foreground">
-              The default `_content` field is stored as HTML today, while the dashboard uses Lexical as the editing surface. That keeps the runtime portable and still gives editors a real rich-text experience.
-            </p>
-          </div>
         </CardContent>
       </Card>
     </div>

@@ -12,26 +12,15 @@ import {
   type VisibilityState,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ChevronLeft, ChevronRight, Database, Pin, Search, Table2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Pin, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import {
-  PageHeader,
-  ResourceNotice,
-  StatCard,
-} from "#/components/DashboardPage";
+import { PageHeader, ResourceNotice } from "#/components/DashboardPage";
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "#/components/ui/sheet";
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "#/components/ui/sheet";
-import {
-  getDatabaseHealth,
   getRuntimeConfig,
   listDatabaseCollections,
   queryDatabaseDocuments,
@@ -321,7 +310,8 @@ function RawDocumentsExplorer(props: {
                 className={cn(
                   "relative px-4 py-3 text-left font-medium",
                   header.column.getCanSort() && "cursor-pointer select-none hover:text-foreground",
-                  header.column.getIsPinned() && "sticky z-10 bg-muted/20 shadow-[1px_0_0_0_var(--border)]",
+                  header.column.getIsPinned() &&
+                    "sticky z-10 bg-muted/20 shadow-[1px_0_0_0_var(--border)]",
                 )}
                 onClick={header.column.getToggleSortingHandler()}
                 style={{
@@ -389,7 +379,8 @@ function RawDocumentsExplorer(props: {
                         key={cell.id}
                         className={cn(
                           "px-4 py-3",
-                          cell.column.getIsPinned() && "sticky z-10 bg-background shadow-[1px_0_0_0_var(--border)]",
+                          cell.column.getIsPinned() &&
+                            "sticky z-10 bg-background shadow-[1px_0_0_0_var(--border)]",
                         )}
                         style={{
                           width: cell.column.getSize(),
@@ -414,16 +405,14 @@ function RawDocumentsExplorer(props: {
         <SheetContent side="right" className="w-full sm:max-w-xl">
           <SheetHeader>
             <SheetTitle>Row details</SheetTitle>
-            <SheetDescription>
-              Inspect and patch the raw JSON for the selected record without squeezing the grid width.
-            </SheetDescription>
           </SheetHeader>
           <div className="grid gap-3 overflow-auto px-4 pb-4">
             {selectedDocument ? (
               <>
                 <p className="text-sm font-medium text-foreground">{selectedDocument.id}</p>
                 <p className="text-xs text-muted-foreground">
-                  v{selectedDocument.version} · {new Date(selectedDocument.updatedAt).toLocaleString()}
+                  v{selectedDocument.version} ·{" "}
+                  {new Date(selectedDocument.updatedAt).toLocaleString()}
                 </p>
                 <textarea
                   value={detailDraft}
@@ -469,7 +458,7 @@ function RawDocumentsExplorer(props: {
             ) : (
               <ResourceNotice
                 title="Select a row"
-                description="Core > Database now stays a raw browser. Pick a row to inspect or patch the JSON directly."
+                description="Pick a row to inspect or patch its JSON."
               />
             )}
           </div>
@@ -487,10 +476,6 @@ function DatabaseRoute() {
 
   const runtime = useRuntimeResource(getRuntimeConfig);
   const config = runtime.data;
-  const health = useRuntimeResource(
-    async () => (config ? getDatabaseHealth(config) : undefined),
-    [config],
-  );
   const collections = useRuntimeResource(
     async () => (config ? listDatabaseCollections(config) : []),
     [config],
@@ -500,14 +485,12 @@ function DatabaseRoute() {
     [collections.data, selectedCollection],
   );
   const documents = useRuntimeResource(
-    async () =>
-      config && selected ? queryDatabaseDocuments(config, selected) : [],
+    async () => (config && selected ? queryDatabaseDocuments(config, selected) : []),
     [config, selected],
   );
 
   const documentRows = documents.data ?? [];
   const collectionRows = collections.data ?? [];
-  const databaseHealth = health.data;
 
   const documentColumns = useMemo(() => {
     const keys = new Set<string>();
@@ -536,44 +519,14 @@ function DatabaseRoute() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Database"
-        title="Core Database"
-        description="This page is now intentionally blunt: a raw collection browser for advanced users. Content modeling and collection editing live under Content."
-      />
-
-      <section className="grid gap-4 md:grid-cols-3">
-        <StatCard
-          label="Collections"
-          value={String(collectionRows.length)}
-          detail="Low-level collections visible to the runtime"
-          icon={Database}
-        />
-        <StatCard
-          label="Rows"
-          value={String(documentRows.length)}
-          detail={selected ? `${selected} currently loaded` : "Choose a collection"}
-          icon={Table2}
-        />
-        <StatCard
-          label="Driver"
-          value={databaseHealth?.driver ?? "checking"}
-          detail={`tenant ${databaseHealth?.defaultTenantId ?? "default"}`}
-          icon={Database}
-        />
-      </section>
+      <PageHeader eyebrow="Database" title="Core Database" />
 
       {actionMessage ? <ResourceNotice title="Done" description={actionMessage} /> : null}
       {actionError ? <ResourceNotice title="Action failed" description={actionError} /> : null}
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3">
-          <div className="grid gap-1">
-            <CardTitle>Raw collections</CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Use Content Studio for content-type creation, schema editing, and friendly field building.
-            </p>
-          </div>
+          <CardTitle>Raw collections</CardTitle>
           <div className="flex min-w-[16rem] flex-col gap-2 sm:min-w-[20rem]">
             <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Collection
@@ -595,12 +548,12 @@ function DatabaseRoute() {
           {!selected ? (
             <ResourceNotice
               title="No collections yet"
-              description="Create a content type under Content Studio first, then inspect the raw collection here."
+              description="No collections available."
             />
           ) : documentRows.length === 0 ? (
             <ResourceNotice
               title="No rows in this collection"
-              description={`The collection ${selected} exists but does not have any rows yet.`}
+              description={`The collection ${selected} does not have any rows yet.`}
             />
           ) : (
             <RawDocumentsExplorer

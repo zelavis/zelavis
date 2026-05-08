@@ -99,7 +99,6 @@ function NewContentTypeRoute() {
       <PageHeader
         eyebrow="Content"
         title="New Content Type"
-        description="Create the content type first, then land directly in the advanced editor for schema and sample-document setup."
         actions={
           <a
             href="/zelavis/content"

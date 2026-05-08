@@ -308,7 +308,7 @@ function ContentTypeFieldsRoute() {
           {!schemaDraft ? (
             <ResourceNotice
               title="No active schema"
-              description="This content type needs an active schema before the field builder can edit it."
+              description="Activate a schema to edit fields."
             />
           ) : (
             <>
@@ -455,10 +455,10 @@ function ContentTypeFieldsRoute() {
           </Button>
         </CardHeader>
         <CardContent className="grid gap-4 p-4">
-                  {!schemaDraft || !selectedField ? (
+          {!schemaDraft || !selectedField ? (
             <ResourceNotice
               title="Pick or create a field"
-              description="Fields added here become the editor-facing model for this content type. Core > Database stays the lower-level data surface."
+              description="Select a field to edit it."
             />
           ) : (
             <>
@@ -715,9 +715,6 @@ function ContentTypeFieldsRoute() {
         <CardContent className="grid gap-3 p-4">
           {schemaDraft ? (
             <>
-              <p className="text-sm text-muted-foreground">
-                This stays transparent on purpose. The friendly field builder writes ordinary schema JSON, then Core &gt; Database can still inspect the raw shape.
-              </p>
               <pre className="overflow-x-auto rounded-md border bg-muted/25 p-4 text-xs leading-6 text-muted-foreground">
                 {JSON.stringify(schemaDraft, null, 2)}
               </pre>
@@ -725,7 +722,7 @@ function ContentTypeFieldsRoute() {
           ) : (
             <ResourceNotice
               title="No active schema"
-              description="Once this content type has an active schema, it will show up here alongside the field builder."
+              description="Save a schema version to preview it here."
             />
           )}
         </CardContent>
