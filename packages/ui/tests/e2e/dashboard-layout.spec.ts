@@ -214,6 +214,19 @@ test('content is a top-level item on the first sidebar slide', async ({
   await expect(page.getByRole('heading', { name: 'Content Studio' })).toBeVisible()
 })
 
+test('content can navigate to the dedicated new content type route', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await gotoDashboard(page, '/content')
+
+  await page.getByRole('link', { name: 'Create new Content Type' }).click()
+
+  await expect(page).toHaveURL(/\/content\/new$/)
+  await expect(page.getByRole('heading', { name: 'New Content Type' })).toBeVisible()
+})
+
 test('media gallery is a top-level item on the first sidebar slide', async ({
   page,
 }, testInfo) => {

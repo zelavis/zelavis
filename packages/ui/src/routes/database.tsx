@@ -24,6 +24,13 @@ import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "#/components/ui/sheet";
+import {
   getDatabaseHealth,
   getRuntimeConfig,
   listDatabaseCollections,
@@ -70,10 +77,13 @@ function RawDocumentsExplorer(props: {
   const [columnPinning, setColumnPinning] = useState<ColumnPinningState>({
     left: ["id"],
   });
+  const [columnSizing, setColumnSizing] = useState<Record<string, number>>({});
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [detailDraft, setDetailDraft] = useState("");
   const [detailError, setDetailError] = useState<string>();
   const [savingDetail, setSavingDetail] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const storageKey = `zelavis:database-grid:${props.collection}`;
 
   const tableData = useMemo(
     () =>
@@ -136,6 +146,7 @@ function RawDocumentsExplorer(props: {
       columnVisibility,
       sorting,
       columnPinning,
+      columnSizing,
     },
     globalFilterFn: (row, _columnId, filterValue) =>
       row.original.searchText.includes(String(filterValue).toLowerCase()),
@@ -143,6 +154,7 @@ function RawDocumentsExplorer(props: {
     onColumnVisibilityChange: setColumnVisibility,
     onSortingChange: setSorting,
     onColumnPinningChange: setColumnPinning,
+    onColumnSizingChange: setColumnSizing,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
@@ -172,15 +184,63 @@ function RawDocumentsExplorer(props: {
     if (!selectedDocument) {
       setDetailDraft("");
       setDetailError(undefined);
+      setDrawerOpen(false);
       return;
     }
 
     setDetailDraft(JSON.stringify(selectedDocument.data, null, 2));
     setDetailError(undefined);
+    setDrawerOpen(true);
   }, [selectedDocument]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (!raw) {
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as {
+        columnVisibility?: VisibilityState;
+        columnPinning?: ColumnPinningState;
+        columnSizing?: Record<string, number>;
+      };
+
+      if (parsed.columnVisibility) {
+        setColumnVisibility(parsed.columnVisibility);
+      }
+      if (parsed.columnPinning) {
+        setColumnPinning(parsed.columnPinning);
+      }
+      if (parsed.columnSizing) {
+        setColumnSizing(parsed.columnSizing);
+      }
+    } catch {
+      // Ignore corrupt persisted grid preferences.
+    }
+  }, [storageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        columnVisibility,
+        columnPinning,
+        columnSizing,
+      }),
+    );
+  }, [columnPinning, columnSizing, columnVisibility, storageKey]);
+
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_360px]">
+    <div className="grid gap-4">
       <div className="grid gap-4">
         <div className="grid gap-3 rounded-md border bg-muted/15 p-3">
           <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
@@ -350,66 +410,71 @@ function RawDocumentsExplorer(props: {
         </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Row details</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-3 p-4">
-          {selectedDocument ? (
-            <>
-              <p className="text-sm font-medium text-foreground">{selectedDocument.id}</p>
-              <p className="text-xs text-muted-foreground">
-                v{selectedDocument.version} · {new Date(selectedDocument.updatedAt).toLocaleString()}
-              </p>
-              <textarea
-                value={detailDraft}
-                onChange={(event) => setDetailDraft(event.target.value)}
-                rows={18}
-                className="min-h-72 rounded-md border bg-muted/20 p-4 font-mono text-xs leading-6 text-muted-foreground"
-                spellCheck={false}
-              />
-              {detailError ? (
-                <ResourceNotice title="Save failed" description={detailError} />
-              ) : null}
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={async () => {
-                    setSavingDetail(true);
-                    setDetailError(undefined);
-                    try {
-                      await props.onSaveDocument(selectedDocument.id, detailDraft);
-                    } catch (error) {
-                      setDetailError(error instanceof Error ? error.message : String(error));
-                    } finally {
-                      setSavingDetail(false);
+      <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
+        <SheetContent side="right" className="w-full sm:max-w-xl">
+          <SheetHeader>
+            <SheetTitle>Row details</SheetTitle>
+            <SheetDescription>
+              Inspect and patch the raw JSON for the selected record without squeezing the grid width.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="grid gap-3 overflow-auto px-4 pb-4">
+            {selectedDocument ? (
+              <>
+                <p className="text-sm font-medium text-foreground">{selectedDocument.id}</p>
+                <p className="text-xs text-muted-foreground">
+                  v{selectedDocument.version} · {new Date(selectedDocument.updatedAt).toLocaleString()}
+                </p>
+                <textarea
+                  value={detailDraft}
+                  onChange={(event) => setDetailDraft(event.target.value)}
+                  rows={18}
+                  className="min-h-72 rounded-md border bg-muted/20 p-4 font-mono text-xs leading-6 text-muted-foreground"
+                  spellCheck={false}
+                />
+                {detailError ? (
+                  <ResourceNotice title="Save failed" description={detailError} />
+                ) : null}
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={async () => {
+                      setSavingDetail(true);
+                      setDetailError(undefined);
+                      try {
+                        await props.onSaveDocument(selectedDocument.id, detailDraft);
+                      } catch (error) {
+                        setDetailError(error instanceof Error ? error.message : String(error));
+                      } finally {
+                        setSavingDetail(false);
+                      }
+                    }}
+                    disabled={savingDetail}
+                  >
+                    Save Row
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      setDetailDraft(JSON.stringify(selectedDocument.data, null, 2))
                     }
-                  }}
-                  disabled={savingDetail}
-                >
-                  Save Row
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() =>
-                    setDetailDraft(JSON.stringify(selectedDocument.data, null, 2))
-                  }
-                >
-                  Reset
-                </Button>
-              </div>
-            </>
-          ) : (
-            <ResourceNotice
-              title="Select a row"
-              description="Core > Database now stays a raw browser. Pick a row to inspect or patch the JSON directly."
-            />
-          )}
-        </CardContent>
-      </Card>
+                  >
+                    Reset
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <ResourceNotice
+                title="Select a row"
+                description="Core > Database now stays a raw browser. Pick a row to inspect or patch the JSON directly."
+              />
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

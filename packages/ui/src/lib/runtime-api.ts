@@ -204,6 +204,7 @@ const fallbackConfig: RuntimeConfig = {
       "/commerce/orders",
       "/commerce/products",
       "/content",
+      "/content/new",
       "/database",
       "/media",
       "/marketplace",

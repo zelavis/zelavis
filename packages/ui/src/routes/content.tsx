@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { Outlet, createFileRoute, Link, useLocation } from "@tanstack/react-router";
 import {
   Braces,
   Copy,
@@ -45,6 +45,9 @@ import { cn } from "#/lib/utils";
 export const Route = createFileRoute("/content")({ component: Content });
 
 function Content() {
+  const pathname = useLocation({
+    select: (location) => location.pathname,
+  });
   const runtime = useRuntimeResource(getRuntimeConfig);
   const config = runtime.data;
   const settings = useRuntimeResource(
@@ -82,6 +85,10 @@ function Content() {
     [collections.data, contentPreferences, schemaCollections.data],
   );
   const pinnedTypes = contentPreferences?.pinnedTypes ?? [];
+
+  if (pathname !== "/content") {
+    return <Outlet />;
+  }
 
   async function persistContentPreferences(
     update: {

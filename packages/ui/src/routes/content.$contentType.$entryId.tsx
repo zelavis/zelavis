@@ -462,18 +462,31 @@ function RelationFieldInput(props: {
         : [],
     [config, relationCollection],
   );
+  const [search, setSearch] = useState("");
+  const options = (relatedDocuments.data ?? []).filter((document) => {
+    const label = String(document.data.title ?? document.data.name ?? document.id).toLowerCase();
+    const slug = String(document.data.slug ?? "").toLowerCase();
+    const query = search.trim().toLowerCase();
+    return query.length === 0 || label.includes(query) || slug.includes(query) || document.id.toLowerCase().includes(query);
+  });
 
   return (
     <div className="grid gap-2">
+      <Input
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+        placeholder="Search related entries"
+      />
       <select
         value={props.value}
         onChange={(event) => props.onChange(event.target.value)}
         className="h-10 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       >
         <option value="">Select related entry…</option>
-        {(relatedDocuments.data ?? []).map((document) => (
+        {options.map((document) => (
           <option key={document.id} value={document.id}>
             {String(document.data.title ?? document.data.name ?? document.id)}
+            {document.data.slug ? ` · ${String(document.data.slug)}` : ""}
           </option>
         ))}
       </select>
@@ -490,17 +503,10 @@ function RepeaterFieldInput(props: {
   value: unknown[];
   onChange: (value: unknown) => void;
 }) {
-  const [error, setError] = useState<string>();
-
-  function updateItem(index: number, rawValue: string) {
-    try {
-      const next = [...props.value];
-      next[index] = rawValue.trim().length > 0 ? JSON.parse(rawValue) : {};
-      setError(undefined);
-      props.onChange(next);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    }
+  function updateItem(index: number, nextItem: Record<string, string>) {
+    const next = [...props.value];
+    next[index] = nextItem;
+    props.onChange(next);
   }
 
   function moveItem(index: number, direction: -1 | 1) {
@@ -554,17 +560,82 @@ function RepeaterFieldInput(props: {
                 </Button>
               </div>
             </div>
-            <textarea
-              value={JSON.stringify(item ?? {}, null, 2)}
-              onChange={(event) => updateItem(index, event.target.value)}
-              rows={8}
-              className="rounded-md border bg-muted/20 px-3 py-2 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-              spellCheck={false}
+            <RepeaterObjectEditor
+              value={typeof item === "object" && item && !Array.isArray(item) ? (item as Record<string, unknown>) : {}}
+              onChange={(nextItem) => updateItem(index, nextItem)}
             />
           </div>
         ))
       )}
-      {error ? <ResourceNotice title="Invalid repeater item" description={error} /> : null}
+    </div>
+  );
+}
+
+function RepeaterObjectEditor(props: {
+  value: Record<string, unknown>;
+  onChange: (value: Record<string, string>) => void;
+}) {
+  const entries = Object.entries(props.value).map(([key, value]) => ({
+    key,
+    value: typeof value === "string" ? value : JSON.stringify(value),
+  }));
+
+  function commit(entriesToCommit: Array<{ key: string; value: string }>) {
+    const next: Record<string, string> = {};
+    for (const entry of entriesToCommit) {
+      if (entry.key.trim()) {
+        next[entry.key.trim()] = entry.value;
+      }
+    }
+    props.onChange(next);
+  }
+
+  const safeEntries = entries.length > 0 ? entries : [{ key: "", value: "" }];
+
+  return (
+    <div className="grid gap-2">
+      {safeEntries.map((entry, index) => (
+        <div key={`${entry.key}:${index}`} className="grid gap-2 md:grid-cols-[minmax(0,0.35fr)_minmax(0,0.65fr)_auto]">
+          <Input
+            value={entry.key}
+            onChange={(event) => {
+              const next = [...safeEntries];
+              next[index] = { ...entry, key: event.target.value };
+              commit(next);
+            }}
+            placeholder="field"
+          />
+          <Input
+            value={entry.value}
+            onChange={(event) => {
+              const next = [...safeEntries];
+              next[index] = { ...entry, value: event.target.value };
+              commit(next);
+            }}
+            placeholder="value"
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              const next = safeEntries.filter((_, entryIndex) => entryIndex !== index);
+              commit(next);
+            }}
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        </div>
+      ))}
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={() => commit([...safeEntries, { key: "", value: "" }])}
+      >
+        <Plus className="size-4" />
+        Add field
+      </Button>
     </div>
   );
 }

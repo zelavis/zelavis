@@ -41,6 +41,7 @@ export type DashboardRoutePath =
   | "/commerce/orders"
   | "/commerce/products"
   | "/content"
+  | "/content/new"
   | "/database"
   | "/media"
   | "/marketplace"
@@ -126,6 +127,7 @@ const dashboardRoutePaths = new Set<DashboardRoutePath>([
   "/commerce/orders",
   "/commerce/products",
   "/content",
+  "/content/new",
   "/database",
   "/media",
   "/marketplace",
