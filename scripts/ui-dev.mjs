@@ -38,6 +38,96 @@ function parsePreferredPort(value, fallback) {
   return port;
 }
 
+function listListeningPids(port) {
+  try {
+    const output = execSync(`lsof -ti tcp:${port} -sTCP:LISTEN`, {
+      stdio: ["ignore", "pipe", "ignore"],
+      env: process.env,
+    })
+      .toString()
+      .trim();
+
+    return output
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((value) => Number(value))
+      .filter((value) => Number.isInteger(value) && value > 0);
+  } catch {
+    return [];
+  }
+}
+
+async function probeUrl(url) {
+  try {
+    const response = await fetch(url, {
+      redirect: "manual",
+      headers: {
+        accept: "text/html,application/json",
+      },
+    });
+    const contentType = response.headers.get("content-type") ?? "";
+    const text =
+      response.status >= 500 || contentType.includes("application/json")
+        ? await response.text()
+        : "";
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      contentType,
+      text,
+      location: response.headers.get("location"),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      contentType: "",
+      text: error instanceof Error ? error.message : String(error),
+      location: null,
+    };
+  }
+}
+
+async function recycleUnhealthyPreferredPort(input) {
+  const pids = listListeningPids(input.port);
+  if (pids.length === 0) {
+    return false;
+  }
+
+  const probe = await probeUrl(input.url);
+  const healthy =
+    input.kind === "ui"
+      ? probe.status === 200 && probe.contentType.includes("text/html")
+      : probe.status === 307 &&
+        typeof probe.location === "string" &&
+        probe.location.includes("/zelavis");
+
+  if (healthy) {
+    return false;
+  }
+
+  console.warn(
+    `Detected an unhealthy ${input.kind} dev server on port ${input.port}; reclaiming the preferred port.`,
+  );
+  if (probe.status || probe.text) {
+    console.warn(
+      `Probe ${input.url} -> ${probe.status || "unreachable"}${probe.text ? ` (${probe.text.slice(0, 160)})` : ""}`,
+    );
+  }
+
+  for (const pid of pids) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      // Ignore stale PID races.
+    }
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  return true;
+}
+
 async function main() {
   const preferredBackendPort = parsePreferredPort(process.env.PORT, 3000);
   const preferredUiPort = parsePreferredPort(process.env.ZELAVIS_UI_PORT, 3001);
@@ -48,6 +138,17 @@ async function main() {
   runSetup(
     "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/database build && pnpm --filter @zelavis/database-node-sqlite build && pnpm --filter @zelavis/auth build && pnpm --filter zelavis build:runtime",
   );
+
+  await recycleUnhealthyPreferredPort({
+    kind: "backend",
+    port: preferredBackendPort,
+    url: `http://127.0.0.1:${preferredBackendPort}/zelavis`,
+  });
+  await recycleUnhealthyPreferredPort({
+    kind: "ui",
+    port: preferredUiPort,
+    url: `http://127.0.0.1:${preferredUiPort}${uiBasePath}`,
+  });
 
   const backendPort = await getPort({
     port: portNumbers(

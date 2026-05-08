@@ -114,7 +114,7 @@ test('mobile dashboard captures a stable stacked header', async ({ page }, testI
 
   await gotoDashboard(page, '/database')
   await expect(page.getByRole('button', { name: 'Toggle Sidebar' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Multi-model database' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Core Database' })).toBeVisible()
 
   const pageOverflow = await page.evaluate(
     () => document.documentElement.scrollWidth - window.innerWidth,
@@ -149,7 +149,7 @@ test('overview nav is only active on the overview route', async ({ page }, testI
 
   await gotoDashboard(page, '/database')
 
-  await expect(page.getByRole('heading', { name: 'Multi-model database' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Core Database' })).toBeVisible()
   await expect(
     page.getByRole('complementary', { name: 'Dashboard navigation' }).locator('.swiper-slide-active'),
   ).toContainText('Core')

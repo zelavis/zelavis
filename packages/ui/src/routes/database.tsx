@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { Link, createFileRoute } from "@tanstack/react-router";
 import type * as React from "react";
 import { useMemo, useState } from "react";
 import { Activity, Braces, Database, FileImage, Files, FileText, Table2, Volume2, Video } from "lucide-react";
@@ -43,7 +43,8 @@ import {
   updateDatabaseDocument,
 } from "#/lib/runtime-api";
 import { useRuntimeResource } from "#/lib/use-runtime-resource";
-import { Button } from "#/components/ui/button";
+import { Button, buttonVariants } from "#/components/ui/button";
+import { cn } from "#/lib/utils";
 
 export const Route = createFileRoute("/database")({ component: DatabaseRoute });
 
@@ -58,6 +59,22 @@ function formatTimeSeriesTimestamp(value: number | string) {
 
 function readTimeSeriesTimestamp(value: number | string) {
   return typeof value === "number" ? value : Date.parse(value);
+}
+
+function renderRawCellValue(value: unknown) {
+  if (value === undefined) {
+    return "—";
+  }
+
+  if (value === null) {
+    return "null";
+  }
+
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  return JSON.stringify(value);
 }
 
 function TimeSeriesChart({
@@ -369,9 +386,7 @@ function insertFileReferenceIntoSampleDocument(input: {
 function DatabaseRoute() {
   const [selectedCollection, setSelectedCollection] = useState<string>();
   const [selectedSeriesName, setSelectedSeriesName] = useState<string>();
-  const [contentTab, setContentTab] = useState<"documents" | "schema">(
-    "documents",
-  );
+  const [contentTab, setContentTab] = useState<"documents" | "schema">("documents");
   const [collectionName, setCollectionName] = useState("");
   const [documentId, setDocumentId] = useState("");
   const [documentJson, setDocumentJson] = useState(
@@ -500,6 +515,16 @@ function DatabaseRoute() {
   const activeSeriesSummary = seriesRows.find(
     (series) => series.name === selectedSeries,
   );
+  const documentColumns = useMemo(() => {
+    const keys = new Set<string>();
+    for (const document of documentRows) {
+      for (const key of Object.keys(document.data)) {
+        keys.add(key);
+      }
+    }
+
+    return Array.from(keys).sort((left, right) => left.localeCompare(right));
+  }, [documentRows]);
 
   async function runAction(action: () => Promise<void>) {
     setSaving(true);
@@ -716,18 +741,29 @@ function DatabaseRoute() {
     <section className="mx-auto grid w-full max-w-7xl gap-6">
       <PageHeader
         eyebrow="Database"
-        title="Multi-model database"
-        description="Document storage first, SQL capability preserved for adapters and adapters."
+        title="Core Database"
+        description="This is the low-level data surface. Content modeling and friendly field building now live under Content Studio, while Core > Database stays blunt and infrastructure-facing."
         actions={
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={!config || saving}
-            onClick={handleSeedDemo}
-          >
-            Seed Demo
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {selected ? (
+              <Link
+                to="/content/$contentType/fields"
+                params={{ contentType: selected }}
+                className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+              >
+                Open Content Fields
+              </Link>
+            ) : null}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={!config || saving}
+              onClick={handleSeedDemo}
+            >
+              Seed Demo
+            </Button>
+          </div>
         }
       />
 
@@ -874,7 +910,7 @@ function DatabaseRoute() {
                 }`}
                 aria-pressed={contentTab === "schema"}
               >
-                Schema Builder
+                Raw Schema
               </button>
             </div>
 
@@ -927,37 +963,65 @@ function DatabaseRoute() {
                   ) : null}
                 </form>
 
-                <div className="overflow-hidden rounded-md border">
-                  {documentRows.map((document) => (
-                    <DataRow
-                      key={document.id}
-                      label={document.id}
-                      detail={JSON.stringify(document.data)}
-                      meta={
-                        <div className="flex items-center gap-2">
-                          <Badge variant="secondary">v{document.version}</Badge>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleEditDocument(document.id)}
-                          >
-                            Edit
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() =>
-                              void handleDeleteDocument(document.id)
-                            }
-                          >
-                            Delete
-                          </Button>
-                        </div>
-                      }
-                    />
-                  ))}
+                <div className="rounded-md border">
+                  <div className="border-b bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+                    Documents are shown here as raw rows. This is intentionally closer to a table browser than the friendlier Content surface.
+                  </div>
+                  {documentRows.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="border-b bg-muted/10 text-left text-muted-foreground">
+                          <tr>
+                            <th className="px-4 py-3 font-medium">ID</th>
+                            {documentColumns.map((column) => (
+                              <th key={column} className="px-4 py-3 font-medium">
+                                {column}
+                              </th>
+                            ))}
+                            <th className="px-4 py-3 font-medium">Version</th>
+                            <th className="px-4 py-3 font-medium">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {documentRows.map((document) => (
+                            <tr key={document.id} className="border-b last:border-b-0">
+                              <td className="px-4 py-3 font-mono text-xs text-foreground">
+                                {document.id}
+                              </td>
+                              {documentColumns.map((column) => (
+                                <td key={`${document.id}:${column}`} className="px-4 py-3 text-muted-foreground">
+                                  {renderRawCellValue(document.data[column])}
+                                </td>
+                              ))}
+                              <td className="px-4 py-3">
+                                <Badge variant="secondary">v{document.version}</Badge>
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleEditDocument(document.id)}
+                                  >
+                                    Edit
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => void handleDeleteDocument(document.id)}
+                                  >
+                                    Delete
+                                  </Button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
                   {documentRows.length === 0 ? (
                     <div className="p-4">
                       <ResourceNotice
@@ -979,6 +1043,23 @@ function DatabaseRoute() {
             ) : (
               <>
                 <form className="grid gap-3" onSubmit={handleCreateSchema}>
+                  <div className="rounded-md border bg-muted/20 p-3">
+                    <p className="text-sm font-medium text-foreground">Content modeling moved</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      For a CMS-style field builder, use Content Studio. This Core screen keeps the raw schema JSON and version history visible for low-level inspection and manual edits.
+                    </p>
+                    {selected ? (
+                      <div className="mt-3">
+                        <Link
+                          to="/content/$contentType/fields"
+                          params={{ contentType: selected }}
+                          className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+                        >
+                          Open friendly field builder
+                        </Link>
+                      </div>
+                    ) : null}
+                  </div>
                   <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
                     <input
                       value={schemaVersion}
@@ -1118,7 +1199,7 @@ function DatabaseRoute() {
                           }
                           description={
                             selected
-                              ? "Register a collection schema to enforce write-time validation and track active versions."
+                              ? "Register raw schema versions here when you need direct control over the low-level contract."
                               : "Choose a collection to view and manage schema versions."
                           }
                         />

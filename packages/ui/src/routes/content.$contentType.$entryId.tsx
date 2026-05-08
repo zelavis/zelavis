@@ -19,7 +19,9 @@ import {
 import {
   getDatabaseDocument,
   getRuntimeConfig,
+  getStorageFileUrl,
   listDatabaseSchemaVersions,
+  listStorageFiles,
   updateDatabaseDocument,
 } from "#/lib/runtime-api";
 import { useRuntimeResource } from "#/lib/use-runtime-resource";
@@ -49,6 +51,10 @@ function ContentEntryEditorRoute() {
         : undefined,
     [config, contentType, entryId],
   );
+  const media = useRuntimeResource(
+    async () => (config ? listStorageFiles(config) : { files: [], references: [] }),
+    [config],
+  );
   const [draft, setDraft] = useState<Record<string, unknown>>({});
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
@@ -60,6 +66,28 @@ function ContentEntryEditorRoute() {
     [activeSchema?.document],
   );
   const documentData = (entry.data?.data ?? {}) as Record<string, unknown>;
+  const mediaItems = useMemo(
+    () =>
+      config
+        ? (media.data?.files ?? [])
+            .filter((file) => file.contentType?.startsWith("image/"))
+            .slice(0, 12)
+            .map((file) => ({
+              src: getStorageFileUrl(config, file.path),
+              altText:
+                typeof file.metadata?.alt === "string"
+                  ? file.metadata.alt
+                  : typeof file.metadata?.label === "string"
+                    ? file.metadata.label
+                    : file.path,
+              label:
+                typeof file.metadata?.label === "string"
+                  ? file.metadata.label
+                  : file.path.split("/").pop() ?? file.path,
+            }))
+        : [],
+    [config, media.data?.files],
+  );
 
   useEffect(() => {
     if (!entry.data || fields.length === 0) {
@@ -184,6 +212,7 @@ function ContentEntryEditorRoute() {
                 required={field.required}
                 definition={field.definition}
                 value={draft[field.name]}
+                mediaItems={mediaItems}
                 onChange={(value) => updateDraftValue(field.name, value)}
               />
             ))
@@ -228,6 +257,7 @@ function SchemaFieldEditor(props: {
   required: boolean;
   definition: ContentSchemaDefinition;
   value: unknown;
+  mediaItems: Array<{ src: string; altText: string; label: string }>;
   onChange: (value: unknown) => void;
 }) {
   const ui = getContentSchemaUi(props.definition);
@@ -252,6 +282,7 @@ function SchemaFieldEditor(props: {
         definition={props.definition}
         placeholder={placeholder}
         value={props.value}
+        mediaItems={props.mediaItems}
         onChange={props.onChange}
       />
       {props.definition.type === "file" ? (
@@ -268,6 +299,7 @@ function SchemaFieldInput(props: {
   definition: ContentSchemaDefinition;
   placeholder: string;
   value: unknown;
+  mediaItems: Array<{ src: string; altText: string; label: string }>;
   onChange: (value: unknown) => void;
 }) {
   if (props.definition.type === "boolean") {
@@ -290,6 +322,7 @@ function SchemaFieldInput(props: {
         value={typeof props.value === "string" ? props.value : ""}
         onChange={props.onChange}
         placeholder={props.placeholder}
+        mediaItems={props.mediaItems}
       />
     );
   }

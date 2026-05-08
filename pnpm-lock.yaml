@@ -485,10 +485,16 @@ importers:
       '@lexical/html':
         specifier: ^0.44.0
         version: 0.44.0
+      '@lexical/list':
+        specifier: ^0.44.0
+        version: 0.44.0
       '@lexical/react':
         specifier: ^0.44.0
         version: 0.44.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(yjs@13.6.30)
       '@lexical/rich-text':
+        specifier: ^0.44.0
+        version: 0.44.0
+      '@lexical/selection':
         specifier: ^0.44.0
         version: 0.44.0
       '@t3-oss/env-core':

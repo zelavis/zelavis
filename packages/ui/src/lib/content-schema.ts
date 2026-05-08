@@ -1,5 +1,18 @@
 export type ContentSchemaControl = "text" | "textarea" | "rich-text";
 export type ContentSchemaEditor = "lexical";
+export type ContentFieldBuilderKind =
+  | "text"
+  | "long-text"
+  | "rich-text"
+  | "number"
+  | "boolean"
+  | "status"
+  | "file"
+  | "image"
+  | "audio"
+  | "video"
+  | "document"
+  | "json";
 
 export interface ContentSchemaUiDefinition {
   control?: ContentSchemaControl;
@@ -29,6 +42,14 @@ export interface ContentSchemaField {
   description?: string;
   required: boolean;
   definition: ContentSchemaDefinition;
+}
+
+export interface ContentFieldBuilderInput {
+  name: string;
+  label?: string;
+  description?: string;
+  kind: ContentFieldBuilderKind;
+  required?: boolean;
 }
 
 function humanizeFieldName(name: string): string {
@@ -164,6 +185,183 @@ export function createStarterContentEntry(timestamp = Date.now()): Record<string
     _content: "",
     status: "draft",
   };
+}
+
+function createFileFieldDefinition(kind: Extract<ContentFieldBuilderKind, "file" | "image" | "audio" | "video" | "document">): ContentSchemaDefinition {
+  switch (kind) {
+    case "image":
+      return {
+        type: "file",
+        label: "Image",
+        mimeTypes: ["image/png", "image/jpeg", "image/webp", "image/gif"],
+        maxSize: 5_000_000,
+      };
+    case "audio":
+      return {
+        type: "file",
+        label: "Audio",
+        mimeTypes: ["audio/mpeg", "audio/wav", "audio/ogg", "audio/webm"],
+        maxSize: 20_000_000,
+      };
+    case "video":
+      return {
+        type: "file",
+        label: "Video",
+        mimeTypes: ["video/mp4", "video/webm", "video/ogg", "video/quicktime"],
+        maxSize: 50_000_000,
+      };
+    case "document":
+      return {
+        type: "file",
+        label: "Document",
+        mimeTypes: [
+          "application/pdf",
+          "text/plain",
+          "application/json",
+          "application/zip",
+        ],
+        maxSize: 10_000_000,
+      };
+    case "file":
+    default:
+      return {
+        type: "file",
+      };
+  }
+}
+
+export function createContentFieldDefinition(
+  input: ContentFieldBuilderInput,
+): ContentSchemaDefinition {
+  const shared = {
+    ...(input.label?.trim() ? { label: input.label.trim() } : {}),
+    ...(input.description?.trim() ? { description: input.description.trim() } : {}),
+  };
+
+  switch (input.kind) {
+    case "text":
+      return {
+        type: "string",
+        ...shared,
+      };
+    case "long-text":
+      return {
+        type: "string",
+        ...shared,
+        ui: {
+          control: "textarea",
+          rows: 5,
+        },
+      };
+    case "rich-text":
+      return {
+        type: "string",
+        format: "html",
+        ...shared,
+        ui: {
+          control: "rich-text",
+          editor: "lexical",
+          placeholder: "Start writing...",
+        },
+      };
+    case "number":
+      return {
+        type: "number",
+        ...shared,
+      };
+    case "boolean":
+      return {
+        type: "boolean",
+        ...shared,
+      };
+    case "status":
+      return {
+        type: "string",
+        ...shared,
+        enum: ["draft", "review", "published"],
+      };
+    case "json":
+      return {
+        type: "object",
+        ...shared,
+      };
+    case "file":
+    case "image":
+    case "audio":
+    case "video":
+    case "document":
+      return {
+        ...createFileFieldDefinition(input.kind),
+        ...shared,
+      };
+    default:
+      return {
+        type: "string",
+        ...shared,
+      };
+  }
+}
+
+export function insertFieldIntoSchemaDocument(input: {
+  document: Record<string, unknown>;
+  field: ContentFieldBuilderInput;
+}): Record<string, unknown> {
+  const nextDocument = structuredClone(input.document) as Record<string, unknown>;
+  if (nextDocument.type !== "object") {
+    throw new Error("The schema root must be an object.");
+  }
+
+  const fieldName = input.field.name.trim();
+  if (!fieldName) {
+    throw new Error("A field name is required.");
+  }
+
+  const properties =
+    nextDocument.properties && typeof nextDocument.properties === "object"
+      ? ({ ...(nextDocument.properties as Record<string, unknown>) })
+      : {};
+
+  if (fieldName in properties) {
+    throw new Error(`A field named "${fieldName}" already exists.`);
+  }
+
+  properties[fieldName] = createContentFieldDefinition(input.field);
+  nextDocument.properties = properties;
+
+  const required = Array.isArray(nextDocument.required)
+    ? (nextDocument.required.filter(
+        (value): value is string => typeof value === "string",
+      ) as string[])
+    : [];
+
+  nextDocument.required = input.field.required
+    ? [...new Set([...required, fieldName])]
+    : required.filter((value) => value !== fieldName);
+
+  return nextDocument;
+}
+
+export function removeFieldFromSchemaDocument(input: {
+  document: Record<string, unknown>;
+  fieldName: string;
+}): Record<string, unknown> {
+  const nextDocument = structuredClone(input.document) as Record<string, unknown>;
+  const properties =
+    nextDocument.properties && typeof nextDocument.properties === "object"
+      ? ({ ...(nextDocument.properties as Record<string, unknown>) })
+      : {};
+
+  delete properties[input.fieldName];
+  nextDocument.properties = properties;
+
+  const required = Array.isArray(nextDocument.required)
+    ? (nextDocument.required.filter(
+        (value): value is string => typeof value === "string",
+      ) as string[])
+    : [];
+
+  nextDocument.required = required.filter((value) => value !== input.fieldName);
+  return nextDocument;
 }
 
 export function normalizeSchemaFieldValue(
