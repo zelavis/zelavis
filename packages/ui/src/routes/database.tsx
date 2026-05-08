@@ -4,8 +4,10 @@ import {
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
+  getSortedRowModel,
   useReactTable,
   type ColumnDef,
+  type SortingState,
   type VisibilityState,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -99,9 +101,14 @@ function RawDocumentsExplorer(props: {
   onSelectDocument: (id: string) => void;
   onEditDocument: (id: string) => void;
   onDeleteDocument: (id: string) => void;
+  onSaveDocument: (id: string, rawJson: string) => Promise<void>;
 }) {
   const [globalFilter, setGlobalFilter] = useState("");
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const [detailDraft, setDetailDraft] = useState("");
+  const [detailError, setDetailError] = useState<string>();
+  const [savingDetail, setSavingDetail] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const tableData = useMemo(
@@ -188,14 +195,17 @@ function RawDocumentsExplorer(props: {
     state: {
       globalFilter,
       columnVisibility,
+      sorting,
     },
     globalFilterFn: (row, _columnId, filterValue) =>
       row.original.searchText.includes(String(filterValue).toLowerCase()),
     onGlobalFilterChange: setGlobalFilter,
     onColumnVisibilityChange: setColumnVisibility,
+    onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
+    getSortedRowModel: getSortedRowModel(),
     initialState: {
       pagination: {
         pageIndex: 0,
@@ -215,6 +225,17 @@ function RawDocumentsExplorer(props: {
   const selectedDocument = props.rows.find(
     (document) => document.id === props.selectedDocumentId,
   );
+
+  useEffect(() => {
+    if (!selectedDocument) {
+      setDetailDraft("");
+      setDetailError(undefined);
+      return;
+    }
+
+    setDetailDraft(JSON.stringify(selectedDocument.data, null, 2));
+    setDetailError(undefined);
+  }, [selectedDocument]);
 
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_320px]">
@@ -276,10 +297,27 @@ function RawDocumentsExplorer(props: {
 
         <div className="overflow-hidden rounded-md border">
           <div className="grid grid-cols-[180px_repeat(auto-fit,minmax(140px,1fr))] border-b bg-muted/20 text-left text-sm text-muted-foreground">
-            {table.getFlatHeaders().map((header) => (
-              <div key={header.id} className="px-4 py-3 font-medium">
-                {flexRender(header.column.columnDef.header, header.getContext())}
-              </div>
+            {table.getFlatHeaders().map((header, index) => (
+              <button
+                key={header.id}
+                type="button"
+                className={cn(
+                  "px-4 py-3 font-medium text-left",
+                  header.column.getCanSort() && "cursor-pointer select-none hover:text-foreground",
+                  index === 0 && "sticky left-0 z-10 bg-muted/20",
+                  header.id === "actions" && "sticky right-0 z-10 bg-muted/20",
+                )}
+                onClick={header.column.getToggleSortingHandler()}
+              >
+                <span className="inline-flex items-center gap-2">
+                  {flexRender(header.column.columnDef.header, header.getContext())}
+                  {header.column.getIsSorted() === "asc"
+                    ? "↑"
+                    : header.column.getIsSorted() === "desc"
+                      ? "↓"
+                      : null}
+                </span>
+              </button>
             ))}
           </div>
           <div ref={scrollRef} className="max-h-[32rem] overflow-auto">
@@ -310,10 +348,14 @@ function RawDocumentsExplorer(props: {
                       transform: `translateY(${virtualRow.start}px)`,
                     }}
                   >
-                    {row.getVisibleCells().map((cell) => (
+                    {row.getVisibleCells().map((cell, index) => (
                       <div
                         key={cell.id}
-                        className="px-4 py-3"
+                        className={cn(
+                          "px-4 py-3",
+                          index === 0 && "sticky left-0 bg-background",
+                          cell.column.id === "actions" && "sticky right-0 bg-background",
+                        )}
                       >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </div>
@@ -337,9 +379,46 @@ function RawDocumentsExplorer(props: {
               <p className="text-xs text-muted-foreground">
                 v{selectedDocument.version} · {new Date(selectedDocument.updatedAt).toLocaleString()}
               </p>
-              <pre className="overflow-x-auto rounded-md border bg-muted/20 p-4 text-xs leading-6 text-muted-foreground">
-                {JSON.stringify(selectedDocument.data, null, 2)}
-              </pre>
+              <textarea
+                value={detailDraft}
+                onChange={(event) => setDetailDraft(event.target.value)}
+                rows={16}
+                className="min-h-64 rounded-md border bg-muted/20 p-4 font-mono text-xs leading-6 text-muted-foreground"
+                spellCheck={false}
+              />
+              {detailError ? (
+                <ResourceNotice title="Save failed" description={detailError} />
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={async () => {
+                    setSavingDetail(true);
+                    setDetailError(undefined);
+                    try {
+                      await props.onSaveDocument(selectedDocument.id, detailDraft);
+                    } catch (error) {
+                      setDetailError(error instanceof Error ? error.message : String(error));
+                    } finally {
+                      setSavingDetail(false);
+                    }
+                  }}
+                  disabled={savingDetail}
+                >
+                  Save Row
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    setDetailDraft(JSON.stringify(selectedDocument.data, null, 2))
+                  }
+                >
+                  Reset
+                </Button>
+              </div>
             </>
           ) : (
             <ResourceNotice
@@ -1271,6 +1350,18 @@ function DatabaseRoute() {
                         onSelectDocument={setSelectedDocumentId}
                         onEditDocument={(id) => void handleEditDocument(id)}
                         onDeleteDocument={(id) => void handleDeleteDocument(id)}
+                        onSaveDocument={async (id, rawJson) => {
+                          if (!config || !selected) {
+                            return;
+                          }
+                          await updateDatabaseDocument(config, {
+                            collection: selected,
+                            id,
+                            data: JSON.parse(rawJson) as Record<string, unknown>,
+                          });
+                          await documents.reload();
+                          setActionMessage(`Updated ${id}`);
+                        }}
                       />
                     </div>
                   ) : null}

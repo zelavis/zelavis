@@ -40,6 +40,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "#/components/ui/sheet";
 import { $createCalloutNode, CalloutNode } from "./CalloutNode";
 import { $createFileCardNode, FileCardNode } from "./FileCardNode";
 import { $createImageNode, ImageNode } from "./ImageNode";
@@ -293,62 +300,82 @@ function ToolbarPlugin(props: {
         </Button>
       </div>
 
-      {showMediaPanel ? (
-        <div className="grid gap-2 rounded-md border bg-background p-3">
-          <p className="text-sm font-medium text-foreground">Embed from Media Gallery</p>
-          {props.mediaItems.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No image files available yet. Upload one in Media Gallery first or paste a direct URL above.
-            </p>
-          ) : (
-            <div className="grid gap-2 sm:grid-cols-2">
-              {props.mediaItems.map((item) => (
-                <button
-                  key={item.src}
-                  type="button"
-                  onClick={() => insertImage(item.src, item.altText)}
-                  className="grid gap-2 rounded-md border p-2 text-left transition-colors hover:bg-accent"
-                >
-                  <img
-                    src={item.src}
-                    alt={item.altText}
-                    className="h-24 w-full rounded-md object-cover"
-                  />
-                  <div className="grid gap-0.5">
-                    <span className="text-sm font-medium text-foreground">{item.label}</span>
-                    <span className="truncate text-xs text-muted-foreground">{item.altText || item.src}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      ) : null}
+      <Sheet open={showMediaPanel} onOpenChange={setShowMediaPanel}>
+        <SheetContent side="right" className="w-full sm:max-w-xl">
+          <SheetHeader>
+            <SheetTitle>Embed from Media Gallery</SheetTitle>
+            <SheetDescription>
+              Pick an uploaded image and drop it into the current rich-text field.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="grid gap-3 overflow-auto px-4 pb-4">
+            {props.mediaItems.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No image files available yet. Upload one in Media Gallery first or paste a direct URL above.
+              </p>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {props.mediaItems.map((item) => (
+                  <button
+                    key={item.src}
+                    type="button"
+                    onClick={() => {
+                      insertImage(item.src, item.altText);
+                      setShowMediaPanel(false);
+                    }}
+                    className="grid gap-2 rounded-md border p-2 text-left transition-colors hover:bg-accent"
+                  >
+                    <img
+                      src={item.src}
+                      alt={item.altText}
+                      className="h-24 w-full rounded-md object-cover"
+                    />
+                    <div className="grid gap-0.5">
+                      <span className="text-sm font-medium text-foreground">{item.label}</span>
+                      <span className="truncate text-xs text-muted-foreground">{item.altText || item.src}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
 
-      {showFilePanel ? (
-        <div className="grid gap-2 rounded-md border bg-background p-3">
-          <p className="text-sm font-medium text-foreground">Insert file card</p>
-          {props.fileItems.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No stored files available yet. Upload one in Media Gallery or Core &gt; Storage first.
-            </p>
-          ) : (
-            <div className="grid gap-2">
-              {props.fileItems.map((item) => (
-                <button
-                  key={item.href}
-                  type="button"
-                  onClick={() => insertFileCard(item)}
-                  className="grid gap-1 rounded-md border p-3 text-left transition-colors hover:bg-accent"
-                >
-                  <span className="text-sm font-medium text-foreground">{item.label}</span>
-                  <span className="text-xs text-muted-foreground">{item.meta}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      ) : null}
+      <Sheet open={showFilePanel} onOpenChange={setShowFilePanel}>
+        <SheetContent side="right" className="w-full sm:max-w-xl">
+          <SheetHeader>
+            <SheetTitle>Insert file card</SheetTitle>
+            <SheetDescription>
+              Insert a linked card for an uploaded file without leaving the editor.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="grid gap-3 overflow-auto px-4 pb-4">
+            {props.fileItems.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No stored files available yet. Upload one in Media Gallery or Core &gt; Storage first.
+              </p>
+            ) : (
+              <div className="grid gap-2">
+                {props.fileItems.map((item) => (
+                  <button
+                    key={item.href}
+                    type="button"
+                    onClick={() => {
+                      insertFileCard(item);
+                      setShowFilePanel(false);
+                    }}
+                    className="grid gap-1 rounded-md border p-3 text-left transition-colors hover:bg-accent"
+                  >
+                    <span className="text-sm font-medium text-foreground">{item.label}</span>
+                    <span className="text-xs text-muted-foreground">{item.meta}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

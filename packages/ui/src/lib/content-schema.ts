@@ -7,6 +7,8 @@ export type ContentFieldBuilderKind =
   | "number"
   | "boolean"
   | "status"
+  | "relation"
+  | "repeater"
   | "file"
   | "image"
   | "audio"
@@ -21,6 +23,7 @@ export interface ContentSchemaUiDefinition {
   rows?: number;
   helpText?: string;
   group?: string;
+  relationCollection?: string;
 }
 
 export interface ContentSchemaDefinition {
@@ -52,6 +55,10 @@ export interface ContentFieldBuilderInput {
   kind: ContentFieldBuilderKind;
   required?: boolean;
   group?: string;
+  placeholder?: string;
+  helpText?: string;
+  rows?: number;
+  relationCollection?: string;
 }
 
 function humanizeFieldName(name: string): string {
@@ -232,10 +239,21 @@ function createFileFieldDefinition(kind: Extract<ContentFieldBuilderKind, "file"
   }
 }
 
+function createUiDefinition(input: ContentFieldBuilderInput): ContentSchemaUiDefinition | undefined {
+  const ui: ContentSchemaUiDefinition = {
+    ...(input.group?.trim() ? { group: input.group.trim() } : {}),
+    ...(input.placeholder?.trim() ? { placeholder: input.placeholder.trim() } : {}),
+    ...(input.helpText?.trim() ? { helpText: input.helpText.trim() } : {}),
+    ...(typeof input.rows === "number" && input.rows > 0 ? { rows: input.rows } : {}),
+  };
+
+  return Object.keys(ui).length > 0 ? ui : undefined;
+}
+
 export function createContentFieldDefinition(
   input: ContentFieldBuilderInput,
 ): ContentSchemaDefinition {
-  const uiGroup = input.group?.trim();
+  const ui = createUiDefinition(input);
   const shared = {
     ...(input.label?.trim() ? { label: input.label.trim() } : {}),
     ...(input.description?.trim() ? { description: input.description.trim() } : {}),
@@ -246,7 +264,7 @@ export function createContentFieldDefinition(
       return {
         type: "string",
         ...shared,
-        ...(uiGroup ? { ui: { group: uiGroup } } : {}),
+        ...(ui ? { ui } : {}),
       };
     case "long-text":
       return {
@@ -254,8 +272,8 @@ export function createContentFieldDefinition(
         ...shared,
         ui: {
           control: "textarea",
-          rows: 5,
-          ...(uiGroup ? { group: uiGroup } : {}),
+          rows: input.rows ?? 5,
+          ...ui,
         },
       };
     case "rich-text":
@@ -266,34 +284,58 @@ export function createContentFieldDefinition(
         ui: {
           control: "rich-text",
           editor: "lexical",
-          placeholder: "Start writing...",
-          ...(uiGroup ? { group: uiGroup } : {}),
+          placeholder: input.placeholder?.trim() || "Start writing...",
+          ...ui,
         },
       };
     case "number":
       return {
         type: "number",
         ...shared,
-        ...(uiGroup ? { ui: { group: uiGroup } } : {}),
+        ...(ui ? { ui } : {}),
       };
     case "boolean":
       return {
         type: "boolean",
         ...shared,
-        ...(uiGroup ? { ui: { group: uiGroup } } : {}),
+        ...(ui ? { ui } : {}),
       };
     case "status":
       return {
         type: "string",
         ...shared,
         enum: ["draft", "review", "published"],
-        ...(uiGroup ? { ui: { group: uiGroup } } : {}),
+        ...(ui ? { ui } : {}),
+      };
+    case "relation":
+      return {
+        type: "string",
+        format: "collection-reference",
+        ...shared,
+        relation: {
+          collection: input.relationCollection?.trim() || "entries",
+        },
+        ...(ui ? { ui } : {}),
+      };
+    case "repeater":
+      return {
+        type: "array",
+        ...shared,
+        items: {
+          type: "object",
+          additionalProperties: true,
+        },
+        ui: {
+          control: "textarea",
+          rows: input.rows ?? 10,
+          ...ui,
+        },
       };
     case "json":
       return {
         type: "object",
         ...shared,
-        ...(uiGroup ? { ui: { group: uiGroup } } : {}),
+        ...(ui ? { ui } : {}),
       };
     case "file":
     case "image":
@@ -303,13 +345,13 @@ export function createContentFieldDefinition(
       return {
         ...createFileFieldDefinition(input.kind),
         ...shared,
-        ...(uiGroup ? { ui: { group: uiGroup } } : {}),
+        ...(ui ? { ui } : {}),
       };
     default:
       return {
         type: "string",
         ...shared,
-        ...(uiGroup ? { ui: { group: uiGroup } } : {}),
+        ...(ui ? { ui } : {}),
       };
   }
 }

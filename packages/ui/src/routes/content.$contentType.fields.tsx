@@ -42,6 +42,8 @@ const fieldTypeOptions: Array<{
   { value: "number", label: "Number", description: "Numeric field for counts and prices." },
   { value: "boolean", label: "Boolean", description: "True/false switch." },
   { value: "status", label: "Status", description: "Draft, review, and published states." },
+  { value: "relation", label: "Relation", description: "Reference another content collection." },
+  { value: "repeater", label: "Repeater", description: "Repeatable list of structured items." },
   { value: "image", label: "Image", description: "Image file reference." },
   { value: "document", label: "Document", description: "PDF, text, JSON, or zip reference." },
   { value: "audio", label: "Audio", description: "Audio file reference." },
@@ -68,6 +70,10 @@ function ContentTypeFieldsRoute() {
   const [newFieldKind, setNewFieldKind] =
     useState<ContentFieldBuilderKind>("text");
   const [newFieldRequired, setNewFieldRequired] = useState(false);
+  const [newFieldPlaceholder, setNewFieldPlaceholder] = useState("");
+  const [newFieldHelpText, setNewFieldHelpText] = useState("");
+  const [newFieldRows, setNewFieldRows] = useState("5");
+  const [newFieldRelationCollection, setNewFieldRelationCollection] = useState("");
   const [editingFieldName, setEditingFieldName] = useState<string>();
   const [editingFieldLabel, setEditingFieldLabel] = useState("");
   const [editingFieldDescription, setEditingFieldDescription] = useState("");
@@ -75,6 +81,10 @@ function ContentTypeFieldsRoute() {
   const [editingFieldKind, setEditingFieldKind] =
     useState<ContentFieldBuilderKind>("text");
   const [editingFieldRequired, setEditingFieldRequired] = useState(false);
+  const [editingFieldPlaceholder, setEditingFieldPlaceholder] = useState("");
+  const [editingFieldHelpText, setEditingFieldHelpText] = useState("");
+  const [editingFieldRows, setEditingFieldRows] = useState("5");
+  const [editingFieldRelationCollection, setEditingFieldRelationCollection] = useState("");
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
@@ -124,6 +134,10 @@ function ContentTypeFieldsRoute() {
     setNewFieldGroup("Content");
     setNewFieldKind("text");
     setNewFieldRequired(false);
+    setNewFieldPlaceholder("");
+    setNewFieldHelpText("");
+    setNewFieldRows("5");
+    setNewFieldRelationCollection("");
   }
 
   function handleAddField() {
@@ -141,6 +155,10 @@ function ContentTypeFieldsRoute() {
           group: newFieldGroup,
           kind: newFieldKind,
           required: newFieldRequired,
+          placeholder: newFieldPlaceholder,
+          helpText: newFieldHelpText,
+          rows: Number.isFinite(Number(newFieldRows)) ? Number(newFieldRows) : undefined,
+          relationCollection: newFieldRelationCollection,
         },
       });
       setSchemaDraft(nextDocument);
@@ -180,6 +198,16 @@ function ContentTypeFieldsRoute() {
     setEditingFieldGroup(getContentSchemaUi(field.definition)?.group?.trim() || "Content");
     setEditingFieldKind(inferFieldKind(field.name, field.definition));
     setEditingFieldRequired(field.required);
+    setEditingFieldPlaceholder(getContentSchemaUi(field.definition)?.placeholder ?? "");
+    setEditingFieldHelpText(getContentSchemaUi(field.definition)?.helpText ?? "");
+    setEditingFieldRows(String(getContentSchemaUi(field.definition)?.rows ?? 5));
+    setEditingFieldRelationCollection(
+      typeof field.definition.relation === "object" &&
+        field.definition.relation &&
+        typeof (field.definition.relation as { collection?: unknown }).collection === "string"
+        ? ((field.definition.relation as { collection: string }).collection)
+        : "",
+    );
   }
 
   function handleSaveFieldEdits() {
@@ -198,6 +226,12 @@ function ContentTypeFieldsRoute() {
           group: editingFieldGroup,
           kind: editingFieldKind,
           required: editingFieldRequired,
+          placeholder: editingFieldPlaceholder,
+          helpText: editingFieldHelpText,
+          rows: Number.isFinite(Number(editingFieldRows))
+            ? Number(editingFieldRows)
+            : undefined,
+          relationCollection: editingFieldRelationCollection,
         },
       });
       setSchemaDraft(nextDocument);
@@ -355,6 +389,35 @@ function ContentTypeFieldsRoute() {
                       </option>
                     ))}
                   </select>
+                  <Input
+                    value={newFieldPlaceholder}
+                    onChange={(event) => setNewFieldPlaceholder(event.target.value)}
+                    placeholder="Placeholder"
+                    aria-label="Field placeholder"
+                  />
+                  <Input
+                    value={newFieldHelpText}
+                    onChange={(event) => setNewFieldHelpText(event.target.value)}
+                    placeholder="Help text shown to editors"
+                    aria-label="Field help text"
+                  />
+                  {newFieldKind === "long-text" || newFieldKind === "json" || newFieldKind === "repeater" ? (
+                    <Input
+                      value={newFieldRows}
+                      onChange={(event) => setNewFieldRows(event.target.value)}
+                      placeholder="Rows"
+                      inputMode="numeric"
+                      aria-label="Field rows"
+                    />
+                  ) : null}
+                  {newFieldKind === "relation" ? (
+                    <Input
+                      value={newFieldRelationCollection}
+                      onChange={(event) => setNewFieldRelationCollection(event.target.value)}
+                      placeholder="posts"
+                      aria-label="Related collection"
+                    />
+                  ) : null}
                   <label className="flex items-center gap-3 text-sm text-foreground">
                     <Switch
                       checked={newFieldRequired}
@@ -475,6 +538,14 @@ function ContentTypeFieldsRoute() {
                     value={String(selectedField.definition.type ?? "custom")}
                   />
                   <FieldPropertyCard
+                    label="Placeholder"
+                    value={getContentSchemaUi(selectedField.definition)?.placeholder ?? "None"}
+                  />
+                  <FieldPropertyCard
+                    label="Help text"
+                    value={getContentSchemaUi(selectedField.definition)?.helpText ?? "None"}
+                  />
+                  <FieldPropertyCard
                     label="Description"
                     value={
                       selectedField.description ??
@@ -512,6 +583,20 @@ function ContentTypeFieldsRoute() {
                       {typeof selectedField.definition.maxSize === "number"
                         ? ` · max ${selectedField.definition.maxSize.toLocaleString()} bytes`
                         : ""}
+                    </p>
+                  </div>
+                ) : null}
+                {inferFieldKind(selectedField.name, selectedField.definition) === "relation" ? (
+                  <div className="mt-4 rounded-md border bg-background p-3">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Relation target
+                    </p>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      {typeof selectedField.definition.relation === "object" &&
+                      selectedField.definition.relation &&
+                      typeof (selectedField.definition.relation as { collection?: unknown }).collection === "string"
+                        ? (selectedField.definition.relation as { collection: string }).collection
+                        : "No collection set"}
                     </p>
                   </div>
                 ) : null}
@@ -565,6 +650,35 @@ function ContentTypeFieldsRoute() {
                         </option>
                       ))}
                     </select>
+                    <Input
+                      value={editingFieldPlaceholder}
+                      onChange={(event) => setEditingFieldPlaceholder(event.target.value)}
+                      placeholder="Field placeholder"
+                      aria-label="Edit field placeholder"
+                    />
+                    <Input
+                      value={editingFieldHelpText}
+                      onChange={(event) => setEditingFieldHelpText(event.target.value)}
+                      placeholder="Field help text"
+                      aria-label="Edit field help text"
+                    />
+                    {editingFieldKind === "long-text" || editingFieldKind === "json" || editingFieldKind === "repeater" ? (
+                      <Input
+                        value={editingFieldRows}
+                        onChange={(event) => setEditingFieldRows(event.target.value)}
+                        placeholder="Rows"
+                        inputMode="numeric"
+                        aria-label="Edit field rows"
+                      />
+                    ) : null}
+                    {editingFieldKind === "relation" ? (
+                      <Input
+                        value={editingFieldRelationCollection}
+                        onChange={(event) => setEditingFieldRelationCollection(event.target.value)}
+                        placeholder="posts"
+                        aria-label="Edit related collection"
+                      />
+                    ) : null}
                     <label className="flex items-center gap-3 text-sm text-foreground">
                       <Switch
                         checked={editingFieldRequired}
@@ -654,6 +768,18 @@ function inferFieldKind(
 
   if (definition.type === "file") {
     return renderFieldType(definition) as ContentFieldBuilderKind;
+  }
+
+  if (
+    definition.type === "string" &&
+    typeof definition.format === "string" &&
+    definition.format === "collection-reference"
+  ) {
+    return "relation";
+  }
+
+  if (definition.type === "array") {
+    return "repeater";
   }
 
   if (definition.type === "string" && getContentSchemaUi(definition)?.control === "textarea") {
