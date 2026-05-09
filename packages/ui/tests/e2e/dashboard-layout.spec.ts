@@ -150,18 +150,12 @@ test('overview nav is only active on the overview route', async ({ page }, testI
   await gotoDashboard(page, '/database')
 
   await expect(page.getByRole('heading', { name: 'Core Database' })).toBeVisible()
-  await expect(
-    page.getByRole('complementary', { name: 'Dashboard navigation' }).locator('.swiper-slide-active'),
-  ).toContainText('Core')
-  await expect(
-    page
-      .getByRole('complementary', { name: 'Dashboard navigation' })
-      .getByRole('link', { name: 'Database', exact: true })
-      .first(),
-  ).toHaveAttribute(
-    'aria-current',
-    'page',
-  )
+  const activeSlide = page
+    .getByRole('complementary', { name: 'Dashboard navigation' })
+    .locator('.swiper-slide-active')
+    .first()
+
+  await expect(activeSlide.getByRole('button', { name: 'Database' })).toBeVisible()
 })
 
 test('storage lives under the core slide for advanced runtime management', async ({
@@ -176,7 +170,7 @@ test('storage lives under the core slide for advanced runtime management', async
 
   await expect(activeSlide.getByRole('button', { name: 'Core' })).toBeVisible()
   await expect(activeSlide.getByRole('link', { name: 'Auth', exact: true })).toBeVisible()
-  await expect(activeSlide.getByRole('link', { name: 'Database', exact: true })).toBeVisible()
+  await expect(activeSlide.getByRole('button', { name: 'Database', exact: true })).toBeVisible()
   await expect(activeSlide.getByRole('link', { name: 'Storage', exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Storage' })).toBeVisible()
   await expect(
@@ -301,14 +295,19 @@ test('sidebar category rows drill down into sliding panels', async ({
   await gotoDashboard(page, '/')
   await page.getByRole('button', { name: 'Core' }).click()
 
-  await expect(page.getByRole('link', { name: 'Database', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Database', exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Auth', exact: true })).toBeVisible()
 
-  await page.getByRole('button', { name: 'Core' }).click()
+  await page.getByRole('button', { name: 'Database', exact: true }).click()
+  await expect(
+    page.getByRole('complementary', { name: 'Dashboard navigation' }).locator('.swiper-slide-active'),
+  ).toContainText('Database')
+
+  await page.getByRole('button', { name: 'Database' }).click()
   await expect(
     page
       .getByRole('complementary', { name: 'Dashboard navigation' })
-      .getByRole('link', { name: 'Overview' }),
+      .getByRole('button', { name: 'Core', exact: true }),
   ).toBeVisible()
 })
 
@@ -390,11 +389,7 @@ test('sidebar route panels restore from the current route on refresh', async ({
 
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
 
-  await expect(sidebar.getByRole('button', { name: 'Core' })).toBeVisible()
-  await expect(sidebar.getByRole('link', { name: 'Database', exact: true })).toHaveAttribute(
-    'aria-current',
-    'page',
-  )
+  await expect(sidebar.getByRole('button', { name: 'Database' })).toBeVisible()
 })
 
 test('sidebar has one internal link per dashboard route', async ({
@@ -408,7 +403,10 @@ test('sidebar has one internal link per dashboard route', async ({
     .getByRole('complementary', { name: 'Dashboard navigation' })
     .locator('a[href^="/"]')
     .evaluateAll((links) =>
-      links.map((link) => new URL(link.getAttribute('href') ?? '/', window.location.href).pathname),
+      links.map((link) => {
+        const url = new URL(link.getAttribute('href') ?? '/', window.location.href)
+        return `${url.pathname}${url.search}`
+      }),
     )
 
   expect(internalHrefs).toEqual(Array.from(new Set(internalHrefs)))

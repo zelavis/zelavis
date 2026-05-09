@@ -18,7 +18,7 @@ import {
   secondaryNavItems,
   sidebarTeams,
 } from "#/lib/dashboard-data";
-import { getRuntimeConfig } from "#/lib/runtime-api";
+import { getRuntimeConfig, listDatabaseCollections } from "#/lib/runtime-api";
 import { useRuntimeResource } from "#/lib/use-runtime-resource";
 
 const data = {
@@ -31,12 +31,16 @@ const data = {
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const runtime = useRuntimeResource(getRuntimeConfig);
+  const databaseCollections = useRuntimeResource(
+    async () => (runtime.data ? listDatabaseCollections(runtime.data) : []),
+    [runtime.data],
+  );
   const items = React.useMemo(
     () =>
       runtime.data
-        ? buildPlatformNavItems(runtime.data.plugins)
+        ? buildPlatformNavItems(runtime.data.plugins, databaseCollections.data)
         : platformNavItems,
-    [runtime.data?.plugins],
+    [databaseCollections.data, runtime.data?.plugins],
   );
 
   return (

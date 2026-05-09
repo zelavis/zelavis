@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   flexRender,
   getCoreRowModel,
@@ -29,7 +29,13 @@ import {
 import { useRuntimeResource } from "#/lib/use-runtime-resource";
 import { cn } from "#/lib/utils";
 
-export const Route = createFileRoute("/database")({ component: DatabaseRoute });
+export const Route = createFileRoute("/database")({
+  validateSearch: (search) => ({
+    ...(typeof search.sidebar === "string" ? { sidebar: search.sidebar } : {}),
+    ...(typeof search.table === "string" ? { table: search.table } : {}),
+  }),
+  component: DatabaseRoute,
+});
 
 function renderRawCellValue(value: unknown) {
   if (value === undefined) {
@@ -60,6 +66,13 @@ function RawDocumentsExplorer(props: {
   onSelectDocument: (id: string) => void;
   onSaveDocument: (id: string, rawJson: string) => Promise<void>;
 }) {
+  type SavedDatabaseView = {
+    name: string;
+    columnVisibility: VisibilityState;
+    columnPinning: ColumnPinningState;
+    columnSizing: Record<string, number>;
+    sorting: SortingState;
+  };
   const [globalFilter, setGlobalFilter] = useState("");
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -71,8 +84,12 @@ function RawDocumentsExplorer(props: {
   const [detailDraft, setDetailDraft] = useState("");
   const [detailError, setDetailError] = useState<string>();
   const [savingDetail, setSavingDetail] = useState(false);
+  const [savedViews, setSavedViews] = useState<SavedDatabaseView[]>([]);
+  const [selectedViewName, setSelectedViewName] = useState("");
+  const [viewNameDraft, setViewNameDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const storageKey = `zelavis:database-grid:${props.collection}`;
+  const viewsStorageKey = `zelavis:database-grid-views:${props.collection}`;
 
   const tableData = useMemo(
     () =>
@@ -218,6 +235,25 @@ function RawDocumentsExplorer(props: {
       return;
     }
 
+    try {
+      const raw = window.localStorage.getItem(viewsStorageKey);
+      if (!raw) {
+        setSavedViews([]);
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as SavedDatabaseView[];
+      setSavedViews(Array.isArray(parsed) ? parsed : []);
+    } catch {
+      setSavedViews([]);
+    }
+  }, [viewsStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
     window.localStorage.setItem(
       storageKey,
       JSON.stringify({
@@ -227,6 +263,57 @@ function RawDocumentsExplorer(props: {
       }),
     );
   }, [columnPinning, columnSizing, columnVisibility, storageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(viewsStorageKey, JSON.stringify(savedViews));
+  }, [savedViews, viewsStorageKey]);
+
+  function saveCurrentView() {
+    const trimmedName = viewNameDraft.trim();
+    if (!trimmedName) {
+      return;
+    }
+
+    const nextView: SavedDatabaseView = {
+      name: trimmedName,
+      columnVisibility,
+      columnPinning,
+      columnSizing,
+      sorting,
+    };
+
+    setSavedViews((current) => {
+      const withoutDuplicate = current.filter((view) => view.name !== trimmedName);
+      return [...withoutDuplicate, nextView].sort((left, right) =>
+        left.name.localeCompare(right.name),
+      );
+    });
+    setSelectedViewName(trimmedName);
+  }
+
+  function applySavedView(name: string) {
+    setSelectedViewName(name);
+    const view = savedViews.find((entry) => entry.name === name);
+    if (!view) {
+      return;
+    }
+
+    setColumnVisibility(view.columnVisibility);
+    setColumnPinning(view.columnPinning);
+    setColumnSizing(view.columnSizing);
+    setSorting(view.sorting);
+  }
+
+  function deleteSavedView(name: string) {
+    setSavedViews((current) => current.filter((view) => view.name !== name));
+    if (selectedViewName === name) {
+      setSelectedViewName("");
+    }
+  }
 
   return (
     <div className="grid gap-4">
@@ -265,6 +352,39 @@ function RawDocumentsExplorer(props: {
                 <ChevronRight className="size-4" />
               </Button>
             </div>
+          </div>
+          <div className="grid gap-3 md:grid-cols-[minmax(0,12rem)_minmax(0,14rem)_auto_auto]">
+            <select
+              value={selectedViewName}
+              onChange={(event) => applySavedView(event.target.value)}
+              className="h-10 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              aria-label="Saved database view"
+            >
+              <option value="">Saved views</option>
+              {savedViews.map((view) => (
+                <option key={view.name} value={view.name}>
+                  {view.name}
+                </option>
+              ))}
+            </select>
+            <Input
+              value={viewNameDraft}
+              onChange={(event) => setViewNameDraft(event.target.value)}
+              placeholder="Save current as..."
+              aria-label="Database view name"
+            />
+            <Button type="button" size="sm" variant="outline" onClick={saveCurrentView}>
+              Save View
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={!selectedViewName}
+              onClick={() => deleteSavedView(selectedViewName)}
+            >
+              Delete View
+            </Button>
           </div>
           <div className="flex flex-wrap gap-2">
             {table
@@ -469,7 +589,8 @@ function RawDocumentsExplorer(props: {
 }
 
 function DatabaseRoute() {
-  const [selectedCollection, setSelectedCollection] = useState<string>();
+  const navigate = useNavigate({ from: "/database" });
+  const search = Route.useSearch();
   const [selectedDocumentId, setSelectedDocumentId] = useState<string>();
   const [actionMessage, setActionMessage] = useState<string>();
   const [actionError, setActionError] = useState<string>();
@@ -481,8 +602,8 @@ function DatabaseRoute() {
     [config],
   );
   const selected = useMemo(
-    () => selectedCollection ?? collections.data?.[0]?.name,
-    [collections.data, selectedCollection],
+    () => search.table ?? collections.data?.[0]?.name,
+    [collections.data, search.table],
   );
   const documents = useRuntimeResource(
     async () => (config && selected ? queryDatabaseDocuments(config, selected) : []),
@@ -490,8 +611,6 @@ function DatabaseRoute() {
   );
 
   const documentRows = documents.data ?? [];
-  const collectionRows = collections.data ?? [];
-
   const documentColumns = useMemo(() => {
     const keys = new Set<string>();
     for (const document of documentRows) {
@@ -502,6 +621,20 @@ function DatabaseRoute() {
 
     return Array.from(keys).sort((left, right) => left.localeCompare(right));
   }, [documentRows]);
+
+  useEffect(() => {
+    if (!selected || search.table === selected) {
+      return;
+    }
+
+    void navigate({
+      replace: true,
+      search: (previous) => ({
+        ...previous,
+        table: selected,
+      }),
+    });
+  }, [navigate, search.table, selected]);
 
   useEffect(() => {
     if (documentRows.length === 0) {
@@ -526,23 +659,7 @@ function DatabaseRoute() {
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3">
-          <CardTitle>Raw collections</CardTitle>
-          <div className="flex min-w-[16rem] flex-col gap-2 sm:min-w-[20rem]">
-            <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Collection
-            </label>
-            <select
-              value={selected ?? ""}
-              onChange={(event) => setSelectedCollection(event.target.value)}
-              className="h-10 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-            >
-              {(collectionRows ?? []).map((collection) => (
-                <option key={collection.name} value={collection.name}>
-                  {collection.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          <CardTitle>{selected ? `Table: ${selected}` : "Tables"}</CardTitle>
         </CardHeader>
         <CardContent className="p-4">
           {!selected ? (

@@ -16,12 +16,14 @@ import {
   SidebarMenuItem,
 } from "#/components/ui/sidebar";
 import type {
+  DashboardNavSearch,
   DashboardNavItem,
 } from "#/lib/dashboard-data";
 
 type NavChildItem = {
   title: string;
   url?: string;
+  search?: DashboardNavSearch;
   icon?: LucideIcon;
   pluginOwned?: boolean;
   items?: readonly NavChildItem[];
@@ -47,31 +49,40 @@ function panelSearchValue(trail: NavPanel[]) {
 function itemContainsPath(
   item: DashboardNavItem | NavChildItem,
   pathname: string,
+  search?: Record<string, unknown>,
 ): boolean {
+  const routeMatches =
+    item.url === pathname &&
+    (!item.search ||
+      Object.entries(item.search).every(
+        ([key, value]) => value === undefined || search?.[key] === value,
+      ));
+
   return (
-    item.url === pathname ||
-    Boolean(item.items?.some((child) => itemContainsPath(child, pathname)))
+    routeMatches ||
+    Boolean(item.items?.some((child) => itemContainsPath(child, pathname, search)))
   );
 }
 
 function findActiveTrail(
   items: readonly DashboardNavItem[],
   pathname: string,
+  search?: Record<string, unknown>,
 ): NavPanel[] {
   for (const item of items) {
-    if (!item.items?.length || !itemContainsPath(item, pathname)) {
+    if (!item.items?.length || !itemContainsPath(item, pathname, search)) {
       continue;
     }
 
     const panels: NavPanel[] = [{ title: item.title, items: item.items }];
     let current: NavChildItem | undefined = item.items.find(
-      (child) => child.items?.length && itemContainsPath(child, pathname),
+      (child) => child.items?.length && itemContainsPath(child, pathname, search),
     );
 
     while (current?.items?.length) {
       panels.push({ title: current.title, items: current.items });
       current = current.items.find(
-        (child) => child.items?.length && itemContainsPath(child, pathname),
+        (child) => child.items?.length && itemContainsPath(child, pathname, search),
       );
     }
 
@@ -134,6 +145,7 @@ export function NavMain({
   const location = useRouterState({ select: (state) => state.location });
   const pathname = location.pathname;
   const sidebarSearch = location.search.sidebar;
+  const locationSearch = location.search as Record<string, unknown>;
   const direction = useDirection();
   const [swiper, setSwiper] = React.useState<SwiperInstance>();
   const hasSyncedInitialSlideRef = React.useRef(false);
@@ -142,7 +154,7 @@ export function NavMain({
   const panelContentRefs = React.useRef<Array<HTMLDivElement | null>>([]);
   const [hideScrollbars, setHideScrollbars] = React.useState(false);
   const [trail, setTrail] = React.useState<NavPanel[]>(() => {
-    const routeTrail = findActiveTrail(items, pathname);
+    const routeTrail = findActiveTrail(items, pathname, locationSearch);
 
     if (routeTrail.length > 0) {
       return routeTrail;
@@ -172,7 +184,7 @@ export function NavMain({
   React.useEffect(() => {
     clearBackAnimation();
 
-    const routeTrail = findActiveTrail(items, pathname);
+    const routeTrail = findActiveTrail(items, pathname, locationSearch);
 
     if (routeTrail.length > 0) {
       setTrail(routeTrail);
@@ -180,7 +192,7 @@ export function NavMain({
     }
 
     setTrail(findTrailByTitles(items, parseSidebarSearch(sidebarSearch)));
-  }, [items, pathname, sidebarSearch, syncSidebarSearch]);
+  }, [items, locationSearch, pathname, sidebarSearch, syncSidebarSearch]);
 
   React.useEffect(() => {
     if (!swiper) {
@@ -345,7 +357,7 @@ export function NavMain({
 
                   {panel.items.map((item) => {
                     const hasChildren = Boolean(item.items?.length);
-                    const isActive = itemContainsPath(item, pathname);
+                    const isActive = itemContainsPath(item, pathname, locationSearch);
                     const Icon = item.icon;
 
                     return (
@@ -364,7 +376,12 @@ export function NavMain({
                           </SidebarMenuButton>
                         ) : item.url ? (
                           <SidebarMenuButton
-                            render={<Link to={item.url} />}
+                            render={
+                              <Link
+                                to={item.url as never}
+                                search={item.search as never}
+                              />
+                            }
                             isActive={isActive}
                             tooltip={item.title}
                           >

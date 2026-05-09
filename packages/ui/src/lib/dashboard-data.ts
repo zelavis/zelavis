@@ -51,9 +51,15 @@ export type DashboardRoutePath =
   | "/storage"
   | "/users";
 
+export type DashboardNavSearch = {
+  table?: string;
+  sidebar?: string;
+};
+
 export type DashboardNavItem = {
   title: string;
   url?: DashboardRoutePath;
+  search?: DashboardNavSearch;
   icon: LucideIcon;
   pageLabel?: string;
   pluginOwned?: boolean;
@@ -70,6 +76,7 @@ export type DashboardPackageItem = {
 export type DashboardPluginMenuItem = {
   title: string;
   url?: DashboardRoutePath;
+  search?: DashboardNavSearch;
   icon: LucideIcon;
   pageLabel?: string;
   pluginOwned?: boolean;
@@ -276,8 +283,26 @@ export const workspacePluginNavItems =
 
 export function buildPlatformNavItems(
   plugins?: readonly RuntimePluginRegistryEntry[],
+  databaseCollections?: readonly { name: string }[],
 ): readonly DashboardNavItem[] {
   const pluginNavItems = buildWorkspacePluginNavItems(plugins);
+  const databaseItems =
+    databaseCollections && databaseCollections.length > 0
+      ? databaseCollections.map((collection) => ({
+          title: collection.name,
+          url: "/database" as const,
+          search: { table: collection.name },
+          icon: Database,
+          pageLabel: "Database",
+        }))
+      : [
+          {
+            title: "Tables",
+            url: "/database" as const,
+            icon: Database,
+            pageLabel: "Database",
+          },
+        ];
 
   return [
     {
@@ -317,8 +342,8 @@ export function buildPlatformNavItems(
         },
         {
           title: "Database",
-          url: "/database",
           icon: Database,
+          items: databaseItems,
         },
         {
           title: "Storage",
@@ -463,6 +488,10 @@ export function getDashboardPageLabel(
   pathname: string,
   plugins?: readonly RuntimePluginRegistryEntry[],
 ) {
+  if (pathname.startsWith("/database/")) {
+    return "Database";
+  }
+
   return (
     buildDashboardNavItems(plugins).find((item) => item.to === pathname)
       ?.label ?? "Not Found"
