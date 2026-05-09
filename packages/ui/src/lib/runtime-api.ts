@@ -154,6 +154,17 @@ export interface DatabaseSchemaCollectionSummary {
   versions: number[];
 }
 
+export interface DatabaseSystemTableSummary {
+  name:
+    | "_collections"
+    | "_documents"
+    | "_events"
+    | "_schemas"
+    | "_time_series_checkpoints"
+    | "_time_series_points";
+  physicalName: string;
+}
+
 export interface DatabaseStoredCollectionSchema {
   collection: string;
   version: number;
@@ -797,6 +808,33 @@ export async function queryDatabaseDocuments(
   );
 
   return result.documents;
+}
+
+export async function listDatabaseSystemTables(config: RuntimeConfig) {
+  const result = await readJson<{ tables: DatabaseSystemTableSummary[] }>(
+    `${config.api.basePath}/database/sql/system/tables`,
+  );
+
+  return result.tables;
+}
+
+export async function queryDatabaseSystemTable(
+  config: RuntimeConfig,
+  table: DatabaseSystemTableSummary["name"],
+  options?: { limit?: number },
+) {
+  const params = new URLSearchParams();
+  if (typeof options?.limit === "number") {
+    params.set("limit", String(options.limit));
+  }
+
+  const suffix = params.size > 0 ? `?${params.toString()}` : "";
+  const result = await readJson<{
+    table: DatabaseSystemTableSummary["name"];
+    rows: Record<string, unknown>[];
+  }>(`${config.api.basePath}/database/sql/system/${encodeURIComponent(table)}${suffix}`);
+
+  return result.rows;
 }
 
 export async function getDatabaseDocument(

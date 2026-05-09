@@ -13,6 +13,7 @@ import {
   Paintbrush,
   PanelsTopLeft,
   Package,
+  Pencil,
   ReceiptText,
   Send,
   Server,
@@ -28,6 +29,7 @@ import type {
   RuntimePluginMenuDefinition,
   RuntimePluginRegistryEntry,
 } from "#/lib/runtime-api";
+import type { ContentTypeRow } from "#/lib/content-studio";
 
 export type DashboardRoutePath =
   | "/"
@@ -42,6 +44,10 @@ export type DashboardRoutePath =
   | "/commerce/products"
   | "/content"
   | "/content/new"
+  | `/content/${string}`
+  | `/content/${string}/edit`
+  | `/content/${string}/fields`
+  | `/content/${string}/settings`
   | "/database"
   | "/media"
   | "/marketplace"
@@ -53,6 +59,13 @@ export type DashboardRoutePath =
 
 export type DashboardNavSearch = {
   table?: string;
+  systemTable?:
+    | "_collections"
+    | "_documents"
+    | "_events"
+    | "_schemas"
+    | "_time_series_checkpoints"
+    | "_time_series_points";
   sidebar?: string;
 };
 
@@ -284,25 +297,120 @@ export const workspacePluginNavItems =
 export function buildPlatformNavItems(
   plugins?: readonly RuntimePluginRegistryEntry[],
   databaseCollections?: readonly { name: string }[],
+  contentTypes?: readonly ContentTypeRow[],
 ): readonly DashboardNavItem[] {
   const pluginNavItems = buildWorkspacePluginNavItems(plugins);
   const databaseItems =
-    databaseCollections && databaseCollections.length > 0
-      ? databaseCollections.map((collection) => ({
-          title: collection.name,
-          url: "/database" as const,
-          search: { table: collection.name },
-          icon: Database,
-          pageLabel: "Database",
-        }))
-      : [
-          {
-            title: "Tables",
+    [
+      ...(databaseCollections && databaseCollections.length > 0
+        ? databaseCollections.map((collection) => ({
+            title: collection.name,
             url: "/database" as const,
+            search: { table: collection.name },
+            icon: Database,
+            pageLabel: "Database",
+          }))
+        : [
+            {
+              title: "Tables",
+              url: "/database" as const,
+              icon: Database,
+              pageLabel: "Database",
+            },
+          ]),
+      {
+        title: "System Tables",
+        icon: Server,
+        items: [
+          {
+            title: "_collections",
+            url: "/database" as const,
+            search: { systemTable: "_collections" },
             icon: Database,
             pageLabel: "Database",
           },
-        ];
+          {
+            title: "_documents",
+            url: "/database" as const,
+            search: { systemTable: "_documents" },
+            icon: Database,
+            pageLabel: "Database",
+          },
+          {
+            title: "_events",
+            url: "/database" as const,
+            search: { systemTable: "_events" },
+            icon: Database,
+            pageLabel: "Database",
+          },
+          {
+            title: "_schemas",
+            url: "/database" as const,
+            search: { systemTable: "_schemas" },
+            icon: Database,
+            pageLabel: "Database",
+          },
+          {
+            title: "_time_series_checkpoints",
+            url: "/database" as const,
+            search: { systemTable: "_time_series_checkpoints" },
+            icon: Database,
+            pageLabel: "Database",
+          },
+          {
+            title: "_time_series_points",
+            url: "/database" as const,
+            search: { systemTable: "_time_series_points" },
+            icon: Database,
+            pageLabel: "Database",
+          },
+        ],
+      },
+    ] as const;
+  const contentItems: readonly DashboardNavItem[] = [
+    {
+      title: "All Content Types",
+      url: "/content",
+      icon: FileText,
+      pageLabel: "Content",
+    },
+    {
+      title: "Add Content Type",
+      url: "/content/new",
+      icon: Package,
+      pageLabel: "Content",
+    },
+    ...((contentTypes ?? []).map((contentType) => ({
+      title: contentType.label,
+      icon: FileText,
+      items: [
+        {
+          title: "Entries",
+          url: `/content/${contentType.name}` as DashboardRoutePath,
+          icon: FileText,
+          pageLabel: "Content",
+        },
+        {
+          title: "Fields",
+          url: `/content/${contentType.name}/fields` as DashboardRoutePath,
+          icon: Package,
+          pageLabel: "Content",
+        },
+        {
+          title: "Type Editor",
+          url: `/content/${contentType.name}/edit` as DashboardRoutePath,
+          icon: Pencil,
+          pageLabel: "Content",
+        },
+        {
+          title: "Type Settings",
+          url: `/content/${contentType.name}/settings` as DashboardRoutePath,
+          icon: Settings2,
+          pageLabel: "Content",
+        },
+      ],
+    })) as readonly DashboardNavItem[]),
+  ];
 
   return [
     {
@@ -317,8 +425,8 @@ export function buildPlatformNavItems(
     },
     {
       title: "Content",
-      url: "/content",
       icon: FileText,
+      items: contentItems,
     },
     {
       title: "Media Gallery",

@@ -13,12 +13,21 @@ import {
   SidebarHeader,
 } from "#/components/ui/sidebar";
 import {
+  buildContentTypeRows,
+} from "#/lib/content-studio";
+import {
   buildPlatformNavItems,
   platformNavItems,
   secondaryNavItems,
   sidebarTeams,
 } from "#/lib/dashboard-data";
-import { getRuntimeConfig, listDatabaseCollections } from "#/lib/runtime-api";
+import {
+  getDashboardSettings,
+  getResolvedDashboardPreferences,
+  getRuntimeConfig,
+  listDatabaseCollections,
+  listDatabaseSchemaCollections,
+} from "#/lib/runtime-api";
 import { useRuntimeResource } from "#/lib/use-runtime-resource";
 
 const data = {
@@ -31,16 +40,37 @@ const data = {
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const runtime = useRuntimeResource(getRuntimeConfig);
+  const settings = useRuntimeResource(
+    async () => (runtime.data ? getDashboardSettings(runtime.data) : undefined),
+    [runtime.data],
+  );
   const databaseCollections = useRuntimeResource(
     async () => (runtime.data ? listDatabaseCollections(runtime.data) : []),
     [runtime.data],
   );
+  const schemaCollections = useRuntimeResource(
+    async () => (runtime.data ? listDatabaseSchemaCollections(runtime.data) : []),
+    [runtime.data],
+  );
+  const contentTypes = React.useMemo(
+    () =>
+      buildContentTypeRows(
+        databaseCollections.data ?? [],
+        schemaCollections.data ?? [],
+        getResolvedDashboardPreferences(settings.data).content,
+      ),
+    [databaseCollections.data, schemaCollections.data, settings.data],
+  );
   const items = React.useMemo(
     () =>
       runtime.data
-        ? buildPlatformNavItems(runtime.data.plugins, databaseCollections.data)
+        ? buildPlatformNavItems(
+            runtime.data.plugins,
+            databaseCollections.data,
+            contentTypes,
+          )
         : platformNavItems,
-    [databaseCollections.data, runtime.data?.plugins],
+    [contentTypes, databaseCollections.data, runtime.data?.plugins],
   );
 
   return (

@@ -121,6 +121,57 @@ function readRequiredNumber(value: unknown, name: string): number {
   return value;
 }
 
+function readOptionalPositiveInteger(value: unknown, fallback: number) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+
+  const number = Number(value);
+  if (!Number.isInteger(number) || number <= 0) {
+    throw new TypeError("Expected a positive integer.");
+  }
+
+  return number;
+}
+
+const systemTableMap = {
+  _collections: "collections",
+  _documents: "documents",
+  _events: "events",
+  _schemas: "schemas",
+  _time_series_checkpoints: "time_series_checkpoints",
+  _time_series_points: "time_series_points",
+} as const;
+
+type DatabaseSystemTableName = keyof typeof systemTableMap;
+
+function readSystemTableName(value: unknown): DatabaseSystemTableName {
+  if (typeof value === "string" && value in systemTableMap) {
+    return value as DatabaseSystemTableName;
+  }
+
+  throw new TypeError("Unknown system table.");
+}
+
+function systemTableOrderBy(table: DatabaseSystemTableName) {
+  switch (table) {
+    case "_collections":
+      return "tenant_id ASC, name ASC";
+    case "_documents":
+      return "updated_at DESC, id ASC";
+    case "_events":
+      return "sequence DESC";
+    case "_schemas":
+      return "collection_name ASC, version DESC";
+    case "_time_series_checkpoints":
+      return "updated_at DESC";
+    case "_time_series_points":
+      return "timestamp_ms DESC, point_index DESC";
+    default:
+      return "1";
+  }
+}
+
 function readSchemaDefinition(value: unknown): DatabaseObjectSchemaDefinition {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError("A schema document definition is required.");
@@ -192,7 +243,82 @@ export function createDatabaseServerService(
       createDatabaseDocumentsServerService(database),
       createDatabaseSchemasServerService(database),
       createDatabaseTimeSeriesServerService(database),
+      createDatabaseSqlServerService(database),
     ],
+  });
+}
+
+export function createDatabaseSqlServerService(
+  database: DatabaseApi,
+): ZelavisServerService<DatabaseApi> {
+  return defineServerService({
+    name: "sql",
+    basePath: "sql",
+    service: database,
+    api: {
+      v1: [
+        {
+          id: "database.sql.systemTables.list",
+          method: "GET",
+          path: "/system/tables",
+          handler: ({ service }) => {
+            if (!service.sql) {
+              return {
+                status: 501,
+                body: {
+                  error: "SQL capability is not available for this database driver.",
+                },
+              };
+            }
+
+            return {
+              body: {
+                tables: Object.entries(systemTableMap).map(([name, physicalName]) => ({
+                  name,
+                  physicalName,
+                })),
+              },
+            };
+          },
+        },
+        {
+          id: "database.sql.systemTables.query",
+          method: "GET",
+          path: "/system/:table",
+          handler: async ({ service, params, query }) => {
+            if (!service.sql) {
+              return {
+                status: 501,
+                body: {
+                  error: "SQL capability is not available for this database driver.",
+                },
+              };
+            }
+
+            try {
+              const table = readSystemTableName(params.table);
+              const limit = Math.min(
+                readOptionalPositiveInteger(query.get("limit"), 100),
+                500,
+              );
+              const rows = await service.sql.query({
+                statement: `SELECT * FROM ${systemTableMap[table]} ORDER BY ${systemTableOrderBy(table)} LIMIT ?`,
+                parameters: [limit],
+              });
+
+              return {
+                body: {
+                  table,
+                  rows: rows.rows,
+                },
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+      ],
+    },
   });
 }
 

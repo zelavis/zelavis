@@ -92,14 +92,14 @@ function ContentTypeLayout() {
                 params={{ contentType: contentType.name }}
                 className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
               >
-                Edit Type
+                Type Editor
               </Link>
               <Link
                 to="/content/$contentType/settings"
                 params={{ contentType: contentType.name }}
                 className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
               >
-                Settings
+                Type Settings
               </Link>
               <div className="ml-auto flex items-center gap-2 text-sm text-muted-foreground">
                 <StatusBadge state={contentType.activeVersion ? "ready" : "planned"} />

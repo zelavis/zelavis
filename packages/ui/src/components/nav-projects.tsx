@@ -44,7 +44,7 @@ export function NavProjects({
           return (
             <SidebarMenuItem key={item.name}>
               <SidebarMenuButton
-                render={<Link to={item.url} />}
+                render={<Link to={item.url as never} />}
                 isActive={pathname === item.url}
               >
                 <item.icon />

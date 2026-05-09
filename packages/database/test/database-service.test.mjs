@@ -15,7 +15,7 @@ test("databaseService exposes database routes through the existing service contr
   assert.equal(runtime.services.database.services[0].name, "documents");
   assert.equal(runtime.services.database.services[1].name, "schemas");
   assert.equal(runtime.services.database.services[2].name, "timeseries");
-  assert.equal(runtime.routes.length, 16);
+  assert.equal(runtime.routes.length, 18);
   assert.deepEqual(
     runtime.routes.map((route) => route.fullPath),
     [
@@ -35,6 +35,8 @@ test("databaseService exposes database routes through the existing service contr
       "/api/database/timeseries/series",
       "/api/database/timeseries/:series/range",
       "/api/database/timeseries/:series/aggregate",
+      "/api/database/sql/system/tables",
+      "/api/database/sql/system/:table",
     ],
   );
 });

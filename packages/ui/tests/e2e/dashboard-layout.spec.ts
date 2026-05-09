@@ -201,11 +201,28 @@ test('content is a top-level item on the first sidebar slide', async ({
   await gotoDashboard(page, '/content')
 
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
-  const rootSlide = sidebar.locator('.swiper-slide-active').first()
+  const activeSlide = sidebar.locator('.swiper-slide-active').first()
 
-  await expect(rootSlide.getByRole('link', { name: 'Content', exact: true })).toBeVisible()
-  await expect(rootSlide.getByRole('button', { name: 'Workspace' })).toBeVisible()
+  await expect(activeSlide.getByRole('button', { name: 'Content', exact: true })).toBeVisible()
+  await expect(
+    activeSlide.getByRole('link', { name: 'All Content Types', exact: true }),
+  ).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Content Studio' })).toBeVisible()
+})
+
+test('database slide lists logical tables and system tables', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await gotoDashboard(page, '/database?systemTable=_documents')
+
+  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const activeSlide = sidebar.locator('.swiper-slide-active').first()
+
+  await expect(activeSlide.getByRole('button', { name: 'System Tables', exact: true })).toBeVisible()
+  await expect(activeSlide.getByRole('link', { name: '_documents', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Core Database' })).toBeVisible()
 })
 
 test('content can navigate to the dedicated new content type route', async ({

@@ -23,6 +23,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "#/components/ui/sh
 import {
   getRuntimeConfig,
   listDatabaseCollections,
+  queryDatabaseSystemTable,
   queryDatabaseDocuments,
   updateDatabaseDocument,
 } from "#/lib/runtime-api";
@@ -33,6 +34,9 @@ export const Route = createFileRoute("/database")({
   validateSearch: (search) => ({
     ...(typeof search.sidebar === "string" ? { sidebar: search.sidebar } : {}),
     ...(typeof search.table === "string" ? { table: search.table } : {}),
+    ...(typeof search.systemTable === "string"
+      ? { systemTable: search.systemTable }
+      : {}),
   }),
   component: DatabaseRoute,
 });
@@ -57,14 +61,16 @@ function RawDocumentsExplorer(props: {
   collection: string;
   rows: Array<{
     id: string;
-    version: number;
-    updatedAt: string;
+    version?: number;
+    updatedAt?: string;
     data: Record<string, unknown>;
   }>;
   columns: string[];
+  readOnly?: boolean;
+  showDocumentMeta?: boolean;
   selectedDocumentId?: string;
   onSelectDocument: (id: string) => void;
-  onSaveDocument: (id: string, rawJson: string) => Promise<void>;
+  onSaveDocument?: (id: string, rawJson: string) => Promise<void>;
 }) {
   type SavedDatabaseView = {
     name: string;
@@ -72,6 +78,7 @@ function RawDocumentsExplorer(props: {
     columnPinning: ColumnPinningState;
     columnSizing: Record<string, number>;
     sorting: SortingState;
+    globalFilter: string;
   };
   const [globalFilter, setGlobalFilter] = useState("");
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
@@ -130,18 +137,26 @@ function RawDocumentsExplorer(props: {
           ),
         }),
       ),
-      {
-        accessorKey: "version",
-        header: "Version",
-        cell: ({ row }) => `v${row.original.version}`,
-      },
-      {
-        accessorKey: "updatedAt",
-        header: "Updated",
-        cell: ({ row }) => new Date(row.original.updatedAt).toLocaleString(),
-      },
+      ...(props.showDocumentMeta === false
+        ? []
+        : [
+            {
+              accessorKey: "version",
+              header: "Version",
+              cell: ({ row }: { row: { original: (typeof tableData)[number] } }) =>
+                row.original.version === undefined ? "—" : `v${row.original.version}`,
+            },
+            {
+              accessorKey: "updatedAt",
+              header: "Updated",
+              cell: ({ row }: { row: { original: (typeof tableData)[number] } }) =>
+                row.original.updatedAt
+                  ? new Date(row.original.updatedAt).toLocaleString()
+                  : "—",
+            },
+          ]),
     ],
-    [props.columns, props.onSelectDocument],
+    [props.columns, props.onSelectDocument, props.showDocumentMeta],
   );
 
   const table = useReactTable({
@@ -214,6 +229,7 @@ function RawDocumentsExplorer(props: {
         columnVisibility?: VisibilityState;
         columnPinning?: ColumnPinningState;
         columnSizing?: Record<string, number>;
+        globalFilter?: string;
       };
 
       if (parsed.columnVisibility) {
@@ -224,6 +240,9 @@ function RawDocumentsExplorer(props: {
       }
       if (parsed.columnSizing) {
         setColumnSizing(parsed.columnSizing);
+      }
+      if (typeof parsed.globalFilter === "string") {
+        setGlobalFilter(parsed.globalFilter);
       }
     } catch {
       // Ignore corrupt persisted grid preferences.
@@ -260,9 +279,10 @@ function RawDocumentsExplorer(props: {
         columnVisibility,
         columnPinning,
         columnSizing,
+        globalFilter,
       }),
     );
-  }, [columnPinning, columnSizing, columnVisibility, storageKey]);
+  }, [columnPinning, columnSizing, columnVisibility, globalFilter, storageKey]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -284,6 +304,7 @@ function RawDocumentsExplorer(props: {
       columnPinning,
       columnSizing,
       sorting,
+      globalFilter,
     };
 
     setSavedViews((current) => {
@@ -306,6 +327,7 @@ function RawDocumentsExplorer(props: {
     setColumnPinning(view.columnPinning);
     setColumnSizing(view.columnSizing);
     setSorting(view.sorting);
+    setGlobalFilter(view.globalFilter);
   }
 
   function deleteSavedView(name: string) {
@@ -530,10 +552,14 @@ function RawDocumentsExplorer(props: {
             {selectedDocument ? (
               <>
                 <p className="text-sm font-medium text-foreground">{selectedDocument.id}</p>
-                <p className="text-xs text-muted-foreground">
-                  v{selectedDocument.version} ·{" "}
-                  {new Date(selectedDocument.updatedAt).toLocaleString()}
-                </p>
+                {props.showDocumentMeta === false ? null : (
+                  <p className="text-xs text-muted-foreground">
+                    {selectedDocument.version === undefined ? "—" : `v${selectedDocument.version}`} ·{" "}
+                    {selectedDocument.updatedAt
+                      ? new Date(selectedDocument.updatedAt).toLocaleString()
+                      : "—"}
+                  </p>
+                )}
                 <textarea
                   value={detailDraft}
                   onChange={(event) => setDetailDraft(event.target.value)}
@@ -544,36 +570,41 @@ function RawDocumentsExplorer(props: {
                 {detailError ? (
                   <ResourceNotice title="Save failed" description={detailError} />
                 ) : null}
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={async () => {
-                      setSavingDetail(true);
-                      setDetailError(undefined);
-                      try {
-                        await props.onSaveDocument(selectedDocument.id, detailDraft);
-                      } catch (error) {
-                        setDetailError(error instanceof Error ? error.message : String(error));
-                      } finally {
-                        setSavingDetail(false);
+                {props.readOnly ? null : (
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={async () => {
+                        if (!props.onSaveDocument) {
+                          return;
+                        }
+                        setSavingDetail(true);
+                        setDetailError(undefined);
+                        try {
+                          await props.onSaveDocument(selectedDocument.id, detailDraft);
+                        } catch (error) {
+                          setDetailError(error instanceof Error ? error.message : String(error));
+                        } finally {
+                          setSavingDetail(false);
+                        }
+                      }}
+                      disabled={savingDetail}
+                    >
+                      Save Row
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        setDetailDraft(JSON.stringify(selectedDocument.data, null, 2))
                       }
-                    }}
-                    disabled={savingDetail}
-                  >
-                    Save Row
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() =>
-                      setDetailDraft(JSON.stringify(selectedDocument.data, null, 2))
-                    }
-                  >
-                    Reset
-                  </Button>
-                </div>
+                    >
+                      Reset
+                    </Button>
+                  </div>
+                )}
               </>
             ) : (
               <ResourceNotice
@@ -605,25 +636,55 @@ function DatabaseRoute() {
     () => search.table ?? collections.data?.[0]?.name,
     [collections.data, search.table],
   );
+  const selectedSystemTable = search.systemTable as
+    | "_collections"
+    | "_documents"
+    | "_events"
+    | "_schemas"
+    | "_time_series_checkpoints"
+    | "_time_series_points"
+    | undefined;
   const documents = useRuntimeResource(
     async () => (config && selected ? queryDatabaseDocuments(config, selected) : []),
     [config, selected],
   );
+  const systemRowsResource = useRuntimeResource(
+    async () =>
+      config && selectedSystemTable
+        ? queryDatabaseSystemTable(config, selectedSystemTable, { limit: 100 })
+        : [],
+    [config, selectedSystemTable],
+  );
 
   const documentRows = documents.data ?? [];
+  const systemRows = useMemo(
+    () =>
+      (systemRowsResource.data ?? []).map((row, index) => ({
+        id:
+          typeof row.sequence === "number"
+            ? String(row.sequence)
+            : typeof row.id === "string"
+              ? row.id
+              : typeof row.name === "string"
+                ? row.name
+                : `${selectedSystemTable ?? "row"}:${index}`,
+        data: row,
+      })),
+    [selectedSystemTable, systemRowsResource.data],
+  );
   const documentColumns = useMemo(() => {
     const keys = new Set<string>();
-    for (const document of documentRows) {
+    for (const document of selectedSystemTable ? systemRows : documentRows) {
       for (const key of Object.keys(document.data)) {
         keys.add(key);
       }
     }
 
     return Array.from(keys).sort((left, right) => left.localeCompare(right));
-  }, [documentRows]);
+  }, [documentRows, selectedSystemTable, systemRows]);
 
   useEffect(() => {
-    if (!selected || search.table === selected) {
+    if (selectedSystemTable || !selected || search.table === selected) {
       return;
     }
 
@@ -634,21 +695,22 @@ function DatabaseRoute() {
         table: selected,
       }),
     });
-  }, [navigate, search.table, selected]);
+  }, [navigate, search.table, selected, selectedSystemTable]);
 
   useEffect(() => {
-    if (documentRows.length === 0) {
+    const activeRows = selectedSystemTable ? systemRows : documentRows;
+    if (activeRows.length === 0) {
       setSelectedDocumentId(undefined);
       return;
     }
 
     if (
       !selectedDocumentId ||
-      !documentRows.some((document) => document.id === selectedDocumentId)
+      !activeRows.some((document) => document.id === selectedDocumentId)
     ) {
-      setSelectedDocumentId(documentRows[0]?.id);
+      setSelectedDocumentId(activeRows[0]?.id);
     }
-  }, [documentRows, selectedDocumentId]);
+  }, [documentRows, selectedDocumentId, selectedSystemTable, systemRows]);
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
@@ -659,10 +721,42 @@ function DatabaseRoute() {
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3">
-          <CardTitle>{selected ? `Table: ${selected}` : "Tables"}</CardTitle>
+          <CardTitle>
+            {selectedSystemTable
+              ? `System Table: ${selectedSystemTable}`
+              : selected
+                ? `Collection: ${selected}`
+                : "Tables"}
+          </CardTitle>
         </CardHeader>
         <CardContent className="p-4">
-          {!selected ? (
+          {selectedSystemTable ? (
+            systemRowsResource.error ? (
+              <ResourceNotice
+                title="Could not read this system table"
+                description={
+                  systemRowsResource.error instanceof Error
+                    ? systemRowsResource.error.message
+                    : String(systemRowsResource.error)
+                }
+              />
+            ) : systemRows.length === 0 ? (
+              <ResourceNotice
+                title="No rows in this system table"
+                description={`The system table ${selectedSystemTable} is empty or unavailable.`}
+              />
+            ) : (
+              <RawDocumentsExplorer
+                collection={selectedSystemTable}
+                rows={systemRows}
+                columns={documentColumns}
+                readOnly
+                showDocumentMeta={false}
+                selectedDocumentId={selectedDocumentId}
+                onSelectDocument={setSelectedDocumentId}
+              />
+            )
+          ) : !selected ? (
             <ResourceNotice
               title="No collections yet"
               description="No collections available."
@@ -677,6 +771,7 @@ function DatabaseRoute() {
               collection={selected}
               rows={documentRows}
               columns={documentColumns}
+              showDocumentMeta
               selectedDocumentId={selectedDocumentId}
               onSelectDocument={setSelectedDocumentId}
               onSaveDocument={async (id, rawJson) => {
