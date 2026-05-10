@@ -1,14 +1,21 @@
-import type { ZelavisAnyServiceInput } from "@zelavis/server";
+import {
+  defineServerService,
+  type ZelavisAnyServiceInput,
+  type ZelavisServerRoute,
+  type ZelavisServerService,
+  type ZelavisServerServiceMenuDefinition,
+} from "@zelavis/server";
 
-export interface ZelavisPluginMenuDefinition {
-  title: string;
-  path?: string;
-  pageLabel?: string;
-  items?: readonly ZelavisPluginMenuDefinition[];
-}
+export type ZelavisPluginMenuDefinition = ZelavisServerServiceMenuDefinition;
 
-export interface ZelavisPluginDefinition<TContext = unknown> {
+export interface ZelavisPluginDefinition<
+  TContext = unknown,
+  TService = unknown,
+> {
   name: string;
+  basePath?: string;
+  api?: Record<string, readonly ZelavisServerRoute<TService>[]>;
+  service?: TService;
   version?: string;
   menu?: ZelavisPluginMenuDefinition;
   services?: readonly ZelavisAnyServiceInput[];
@@ -172,12 +179,21 @@ export function createPlugin<TContext = unknown>(
     throw new TypeError("Plugin services must be provided as an array.");
   }
 
-  return Object.freeze({
-    ...definition,
+  const normalized = defineServerService({
+    name: definition.name,
+    basePath: definition.basePath,
+    api: definition.api ?? {},
+    service: definition.service as unknown,
     menu: definition.menu ? freezeMenu(definition.menu) : definition.menu,
     services: definition.services
       ? Object.freeze([...definition.services])
       : definition.services,
+  }) as ZelavisServerService<unknown> & ZelavisPluginDefinition<TContext>;
+
+  return Object.freeze({
+    ...normalized,
+    version: definition.version,
+    setup: definition.setup,
   });
 }
 
@@ -382,8 +398,16 @@ export async function activatePluginRegistry<
   const addServices = (services: readonly ZelavisAnyServiceInput[]) => {
     activatedServices.push(...services);
   };
+  const shouldMountPlugin = (plugin: ZelavisPluginDefinition<TContext>) =>
+    plugin.basePath !== undefined ||
+    plugin.service !== undefined ||
+    Object.values(plugin.api ?? {}).some((routes) => routes.length > 0);
 
   for (const entry of installedPlugins) {
+    if (shouldMountPlugin(entry.plugin)) {
+      addService(entry.plugin as unknown as ZelavisAnyServiceInput);
+    }
+
     if (entry.plugin.services?.length) {
       addServices(entry.plugin.services);
     }

@@ -26,6 +26,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type {
+  RuntimeService,
+  RuntimeServiceMenuDefinition,
   RuntimePluginMenuDefinition,
   RuntimePluginRegistryEntry,
 } from "#/lib/runtime-api";
@@ -74,6 +76,7 @@ export type DashboardNavItem = {
   url?: DashboardRoutePath;
   search?: DashboardNavSearch;
   icon: LucideIcon;
+  panelLabel?: string;
   pageLabel?: string;
   pluginOwned?: boolean;
   items?: readonly DashboardNavItem[];
@@ -91,6 +94,7 @@ export type DashboardPluginMenuItem = {
   url?: DashboardRoutePath;
   search?: DashboardNavSearch;
   icon: LucideIcon;
+  panelLabel?: string;
   pageLabel?: string;
   pluginOwned?: boolean;
   items?: readonly DashboardPluginMenuItem[];
@@ -214,8 +218,38 @@ function createDashboardPluginMenuItem(
     url: menu.path ? toDashboardRoutePath(menu.path) : undefined,
     icon: getPluginMenuIcon(menu.title, menu.path),
     pageLabel: menu.pageLabel,
+    panelLabel: menu.panelLabel,
     pluginOwned: true,
     items: menu.items?.map(createDashboardPluginMenuItem),
+  };
+}
+
+function getServiceMenuIcon(title: string, serviceName?: string): LucideIcon {
+  switch (serviceName ?? title.toLowerCase()) {
+    case "auth":
+      return Fingerprint;
+    case "database":
+      return Database;
+    case "storage":
+      return Files;
+    case "website":
+      return PanelsTopLeft;
+    default:
+      return Server;
+  }
+}
+
+function createDashboardServiceMenuItem(
+  menu: RuntimeServiceMenuDefinition,
+  serviceName?: string,
+): DashboardNavItem {
+  return {
+    title: menu.title,
+    url: menu.path ? toDashboardRoutePath(menu.path) : undefined,
+    icon: getServiceMenuIcon(menu.title, serviceName),
+    pageLabel: menu.pageLabel,
+    panelLabel: menu.panelLabel,
+    items: menu.items?.map((item) => createDashboardServiceMenuItem(item, serviceName)),
   };
 }
 
@@ -294,79 +328,117 @@ export function buildWorkspacePluginNavItems(
 export const workspacePluginNavItems =
   buildWorkspacePluginNavItems(defaultRuntimePluginRegistry);
 
+const defaultRuntimeServices: readonly RuntimeService[] = [
+  { name: "dashboard", core: true, apiPath: "/" },
+  {
+    name: "auth",
+    core: true,
+    apiPath: "/api/v1/auth",
+    menu: {
+      title: "Auth",
+      path: "/auth",
+    },
+  },
+  {
+    name: "database",
+    core: true,
+    apiPath: "/api/v1/database",
+    menu: {
+      title: "Database",
+      panelLabel: "Tables",
+      items: [
+        {
+          title: "System Tables",
+          panelLabel: "System Tables",
+          items: [
+            { title: "_collections", path: "/database" },
+            { title: "_documents", path: "/database" },
+            { title: "_events", path: "/database" },
+            { title: "_schemas", path: "/database" },
+            { title: "_time_series_checkpoints", path: "/database" },
+            { title: "_time_series_points", path: "/database" },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    name: "storage",
+    core: true,
+    apiPath: "/api/v1/storage",
+    menu: {
+      title: "Storage",
+      path: "/storage",
+    },
+  },
+] as const;
+
 export function buildPlatformNavItems(
+  services?: readonly RuntimeService[],
   plugins?: readonly RuntimePluginRegistryEntry[],
   databaseCollections?: readonly { name: string }[],
   contentTypes?: readonly ContentTypeRow[],
 ): readonly DashboardNavItem[] {
   const pluginNavItems = buildWorkspacePluginNavItems(plugins);
-  const databaseItems =
-    [
-      ...(databaseCollections && databaseCollections.length > 0
-        ? databaseCollections.map((collection) => ({
-            title: collection.name,
-            url: "/database" as const,
-            search: { table: collection.name },
-            icon: Database,
-            pageLabel: "Database",
-          }))
-        : [
-            {
-              title: "Tables",
-              url: "/database" as const,
-              icon: Database,
-              pageLabel: "Database",
-            },
-          ]),
-      {
-        title: "System Tables",
-        icon: Server,
+  const coreServiceNavItems = (services ?? [])
+    .filter(
+      (service) =>
+        service.core && service.name !== "dashboard" && service.name !== "website",
+    )
+    .map((service) => {
+      const baseMenu = service.menu
+        ? createDashboardServiceMenuItem(service.menu, service.name)
+        : {
+            title: service.name,
+            icon: getServiceMenuIcon(service.name, service.name),
+          };
+
+      if (service.name !== "database") {
+        return baseMenu;
+      }
+
+      const systemTableItems =
+        baseMenu.items?.find((item) => item.title === "System Tables")?.items ?? [];
+
+      return {
+        ...baseMenu,
+        panelLabel: baseMenu.panelLabel ?? "Tables",
         items: [
-          {
-            title: "_collections",
-            url: "/database" as const,
-            search: { systemTable: "_collections" },
-            icon: Database,
-            pageLabel: "Database",
-          },
-          {
-            title: "_documents",
-            url: "/database" as const,
-            search: { systemTable: "_documents" },
-            icon: Database,
-            pageLabel: "Database",
-          },
-          {
-            title: "_events",
-            url: "/database" as const,
-            search: { systemTable: "_events" },
-            icon: Database,
-            pageLabel: "Database",
-          },
-          {
-            title: "_schemas",
-            url: "/database" as const,
-            search: { systemTable: "_schemas" },
-            icon: Database,
-            pageLabel: "Database",
-          },
-          {
-            title: "_time_series_checkpoints",
-            url: "/database" as const,
-            search: { systemTable: "_time_series_checkpoints" },
-            icon: Database,
-            pageLabel: "Database",
-          },
-          {
-            title: "_time_series_points",
-            url: "/database" as const,
-            search: { systemTable: "_time_series_points" },
-            icon: Database,
-            pageLabel: "Database",
-          },
+          ...(databaseCollections && databaseCollections.length > 0
+            ? databaseCollections.map((collection) => ({
+                title: collection.name,
+                url: "/database" as const,
+                search: { table: collection.name },
+                icon: Database,
+                pageLabel: "Database",
+              }))
+            : [
+                {
+                  title: "Tables",
+                  url: "/database" as const,
+                  icon: Database,
+                  pageLabel: "Database",
+                },
+              ]),
+          ...(systemTableItems.length > 0
+            ? [
+                {
+                  title: "System Tables",
+                  icon: Server,
+                  panelLabel: "System Tables",
+                  items: systemTableItems.map((item) => ({
+                    ...item,
+                    url: "/database" as const,
+                    search: { systemTable: item.title as DashboardNavSearch["systemTable"] },
+                    icon: Database,
+                    pageLabel: "Database",
+                  })),
+                },
+              ]
+            : []),
         ],
-      },
-    ] as const;
+      };
+    });
   const contentItems: readonly DashboardNavItem[] = [
     {
       title: "All Content Types",
@@ -383,6 +455,7 @@ export function buildPlatformNavItems(
     ...((contentTypes ?? []).map((contentType) => ({
       title: contentType.label,
       icon: FileText,
+      panelLabel: "Views",
       items: [
         {
           title: "Entries",
@@ -426,6 +499,7 @@ export function buildPlatformNavItems(
     {
       title: "Content",
       icon: FileText,
+      panelLabel: "Content Types",
       items: contentItems,
     },
     {
@@ -442,23 +516,7 @@ export function buildPlatformNavItems(
     {
       title: "Core",
       icon: Server,
-      items: [
-        {
-          title: "Auth",
-          url: "/auth",
-          icon: Fingerprint,
-        },
-        {
-          title: "Database",
-          icon: Database,
-          items: databaseItems,
-        },
-        {
-          title: "Storage",
-          url: "/storage",
-          icon: Files,
-        },
-      ],
+      items: coreServiceNavItems,
     },
     {
       title: "Workspace",
@@ -510,6 +568,7 @@ export function buildPlatformNavItems(
 }
 
 export const platformNavItems = buildPlatformNavItems(
+  defaultRuntimeServices,
   defaultRuntimePluginRegistry,
 );
 
@@ -571,10 +630,11 @@ function flattenPlatformItems(
 }
 
 export function buildDashboardNavItems(
+  services?: readonly RuntimeService[],
   plugins?: readonly RuntimePluginRegistryEntry[],
 ) {
   return [
-    ...flattenPlatformItems(buildPlatformNavItems(plugins)),
+    ...flattenPlatformItems(buildPlatformNavItems(services, plugins)),
     ...buildMarketplacePackageItems(plugins)
       .filter(
         (item): item is DashboardPackageItem & { url: DashboardRoutePath } =>
@@ -589,11 +649,13 @@ export function buildDashboardNavItems(
 }
 
 export const dashboardNavItems = buildDashboardNavItems(
+  defaultRuntimeServices,
   defaultRuntimePluginRegistry,
 );
 
 export function getDashboardPageLabel(
   pathname: string,
+  services?: readonly RuntimeService[],
   plugins?: readonly RuntimePluginRegistryEntry[],
 ) {
   if (pathname.startsWith("/database/")) {
@@ -601,7 +663,7 @@ export function getDashboardPageLabel(
   }
 
   return (
-    buildDashboardNavItems(plugins).find((item) => item.to === pathname)
+    buildDashboardNavItems(services, plugins).find((item) => item.to === pathname)
       ?.label ?? "Not Found"
   );
 }

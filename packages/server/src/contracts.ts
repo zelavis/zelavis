@@ -27,11 +27,20 @@ export interface ZelavisServerRoute<TService = unknown> {
   ) => Promise<ZelavisRouteResponse> | ZelavisRouteResponse;
 }
 
+export interface ZelavisServerServiceMenuDefinition {
+  title: string;
+  path?: string;
+  pageLabel?: string;
+  panelLabel?: string;
+  items?: readonly ZelavisServerServiceMenuDefinition[];
+}
+
 export interface ZelavisServerService<TService = unknown> {
   name: string;
   basePath?: string;
   api: Record<string, readonly ZelavisServerRoute<TService>[]>;
   service: TService;
+  menu?: ZelavisServerServiceMenuDefinition;
   services?: readonly ZelavisAnyServiceInput[];
 }
 

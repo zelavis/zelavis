@@ -35,6 +35,10 @@ export function createAuthServerService(auth: AuthApi): ZelavisServerService<Aut
   return defineServerService({
     name: "auth",
     basePath: "/auth",
+    menu: {
+      title: "Auth",
+      path: "/auth",
+    },
     service: auth,
     api: {
       v1: [

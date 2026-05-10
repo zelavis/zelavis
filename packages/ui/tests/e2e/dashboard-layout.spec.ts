@@ -204,6 +204,7 @@ test('content is a top-level item on the first sidebar slide', async ({
   const activeSlide = sidebar.locator('.swiper-slide-active').first()
 
   await expect(activeSlide.getByRole('button', { name: 'Content', exact: true })).toBeVisible()
+  await expect(activeSlide.getByText('Content Types', { exact: true })).toBeVisible()
   await expect(
     activeSlide.getByRole('link', { name: 'All Content Types', exact: true }),
   ).toBeVisible()
@@ -215,14 +216,48 @@ test('database slide lists logical tables and system tables', async ({
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
+  await gotoDashboard(page, '/database')
+
+  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const tablesSlide = sidebar.locator('.swiper-slide-active').first()
+
+  await expect(
+    tablesSlide.locator('[data-slot="sidebar-group-label"]', {
+      hasText: 'Tables',
+    }),
+  ).toBeVisible()
+
+  await gotoDashboard(page, '/database?systemTable=_documents')
+
+  const systemTablesSlide = sidebar.locator('.swiper-slide-active').first()
+
+  await expect(
+    systemTablesSlide.locator('[data-slot="sidebar-group-label"]', {
+      hasText: 'System Tables',
+    }),
+  ).toBeVisible()
+  await expect(systemTablesSlide.getByRole('button', { name: 'System Tables', exact: true })).toBeVisible()
+  await expect(systemTablesSlide.getByRole('link', { name: '_documents', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Core Database' })).toBeVisible()
+})
+
+test('database direct system table routes restore the matching sidebar slide', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
   await gotoDashboard(page, '/database?systemTable=_documents')
 
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
   const activeSlide = sidebar.locator('.swiper-slide-active').first()
 
-  await expect(activeSlide.getByRole('button', { name: 'System Tables', exact: true })).toBeVisible()
   await expect(activeSlide.getByRole('link', { name: '_documents', exact: true })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Core Database' })).toBeVisible()
+  await expect(
+    activeSlide.locator('[data-slot="sidebar-group-label"]', {
+      hasText: 'System Tables',
+    }),
+  ).toBeVisible()
+  await expect(page).toHaveURL(/systemTable=_documents/)
 })
 
 test('content can navigate to the dedicated new content type route', async ({

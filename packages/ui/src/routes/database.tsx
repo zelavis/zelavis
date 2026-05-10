@@ -37,6 +37,7 @@ export const Route = createFileRoute("/database")({
     ...(typeof search.systemTable === "string"
       ? { systemTable: search.systemTable }
       : {}),
+    ...(typeof search.view === "string" ? { view: search.view } : {}),
   }),
   component: DatabaseRoute,
 });
@@ -66,14 +67,46 @@ function RawDocumentsExplorer(props: {
     data: Record<string, unknown>;
   }>;
   columns: string[];
+  target:
+    | {
+        kind: "table";
+        table: string;
+      }
+    | {
+        kind: "systemTable";
+        systemTable: string;
+      };
   readOnly?: boolean;
   showDocumentMeta?: boolean;
   selectedDocumentId?: string;
+  activeSavedViewName?: string;
   onSelectDocument: (id: string) => void;
   onSaveDocument?: (id: string, rawJson: string) => Promise<void>;
+  onSavedViewNameChange?: (name?: string) => void;
+  onActivateSavedViewTarget?: (
+    target:
+      | {
+          kind: "table";
+          table: string;
+        }
+      | {
+          kind: "systemTable";
+          systemTable: string;
+        },
+    viewName?: string,
+  ) => void;
 }) {
   type SavedDatabaseView = {
     name: string;
+    target:
+      | {
+          kind: "table";
+          table: string;
+        }
+      | {
+          kind: "systemTable";
+          systemTable: string;
+        };
     columnVisibility: VisibilityState;
     columnPinning: ColumnPinningState;
     columnSizing: Record<string, number>;
@@ -92,11 +125,10 @@ function RawDocumentsExplorer(props: {
   const [detailError, setDetailError] = useState<string>();
   const [savingDetail, setSavingDetail] = useState(false);
   const [savedViews, setSavedViews] = useState<SavedDatabaseView[]>([]);
-  const [selectedViewName, setSelectedViewName] = useState("");
   const [viewNameDraft, setViewNameDraft] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const storageKey = `zelavis:database-grid:${props.collection}`;
-  const viewsStorageKey = `zelavis:database-grid-views:${props.collection}`;
+  const viewsStorageKey = "zelavis:database-grid-views";
 
   const tableData = useMemo(
     () =>
@@ -300,6 +332,7 @@ function RawDocumentsExplorer(props: {
 
     const nextView: SavedDatabaseView = {
       name: trimmedName,
+      target: props.target,
       columnVisibility,
       columnPinning,
       columnSizing,
@@ -313,16 +346,10 @@ function RawDocumentsExplorer(props: {
         left.name.localeCompare(right.name),
       );
     });
-    setSelectedViewName(trimmedName);
+    props.onSavedViewNameChange?.(trimmedName);
   }
 
-  function applySavedView(name: string) {
-    setSelectedViewName(name);
-    const view = savedViews.find((entry) => entry.name === name);
-    if (!view) {
-      return;
-    }
-
+  function loadSavedViewIntoState(view: SavedDatabaseView) {
     setColumnVisibility(view.columnVisibility);
     setColumnPinning(view.columnPinning);
     setColumnSizing(view.columnSizing);
@@ -330,12 +357,67 @@ function RawDocumentsExplorer(props: {
     setGlobalFilter(view.globalFilter);
   }
 
+  function applySavedView(name: string) {
+    props.onSavedViewNameChange?.(name || undefined);
+    const view = savedViews.find((entry) => entry.name === name);
+    if (!view) {
+      return;
+    }
+
+    const currentTargetKey =
+      props.target.kind === "table"
+        ? `table:${props.target.table}`
+        : `system:${props.target.systemTable}`;
+    const viewTargetKey =
+      view.target.kind === "table"
+        ? `table:${view.target.table}`
+        : `system:${view.target.systemTable}`;
+
+    if (currentTargetKey !== viewTargetKey) {
+      props.onActivateSavedViewTarget?.(view.target, view.name);
+      return;
+    }
+
+    loadSavedViewIntoState(view);
+  }
+
   function deleteSavedView(name: string) {
     setSavedViews((current) => current.filter((view) => view.name !== name));
-    if (selectedViewName === name) {
-      setSelectedViewName("");
+    if (props.activeSavedViewName === name) {
+      props.onSavedViewNameChange?.(undefined);
     }
   }
+
+  useEffect(() => {
+    if (!props.activeSavedViewName) {
+      return;
+    }
+
+    const view = savedViews.find((entry) => entry.name === props.activeSavedViewName);
+    if (!view) {
+      return;
+    }
+
+    const currentTargetKey =
+      props.target.kind === "table"
+        ? `table:${props.target.table}`
+        : `system:${props.target.systemTable}`;
+    const viewTargetKey =
+      view.target.kind === "table"
+        ? `table:${view.target.table}`
+        : `system:${view.target.systemTable}`;
+
+    if (currentTargetKey !== viewTargetKey) {
+      return;
+    }
+
+    loadSavedViewIntoState(view);
+  }, [props.activeSavedViewName, props.target, savedViews]);
+
+  const currentResultCount = table.getRowModel().rows.length;
+  const totalRowCount = tableData.length;
+  const currentViewTargetLabel =
+    props.target.kind === "table" ? props.target.table : props.target.systemTable;
 
   return (
     <div className="grid gap-4">
@@ -364,6 +446,9 @@ function RawDocumentsExplorer(props: {
               <span className="text-sm text-muted-foreground">
                 Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount() || 1}
               </span>
+              <span className="rounded-md border bg-background px-2 py-1 text-xs text-muted-foreground">
+                {currentResultCount}/{totalRowCount} rows
+              </span>
               <Button
                 type="button"
                 size="sm"
@@ -377,7 +462,7 @@ function RawDocumentsExplorer(props: {
           </div>
           <div className="grid gap-3 md:grid-cols-[minmax(0,12rem)_minmax(0,14rem)_auto_auto]">
             <select
-              value={selectedViewName}
+              value={props.activeSavedViewName ?? ""}
               onChange={(event) => applySavedView(event.target.value)}
               className="h-10 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               aria-label="Saved database view"
@@ -385,7 +470,10 @@ function RawDocumentsExplorer(props: {
               <option value="">Saved views</option>
               {savedViews.map((view) => (
                 <option key={view.name} value={view.name}>
-                  {view.name}
+                  {view.name}{" "}
+                  {view.target.kind === "table"
+                    ? `(${view.target.table})`
+                    : `(${view.target.systemTable})`}
                 </option>
               ))}
             </select>
@@ -402,11 +490,19 @@ function RawDocumentsExplorer(props: {
               type="button"
               size="sm"
               variant="outline"
-              disabled={!selectedViewName}
-              onClick={() => deleteSavedView(selectedViewName)}
+              disabled={!props.activeSavedViewName}
+              onClick={() => deleteSavedView(props.activeSavedViewName ?? "")}
             >
               Delete View
             </Button>
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+            <span className="rounded-md border bg-background px-2 py-1">
+              {props.readOnly ? "Read-only system table" : "Writable logical table"}
+            </span>
+            <span className="rounded-md border bg-background px-2 py-1">
+              View target: {currentViewTargetLabel}
+            </span>
           </div>
           <div className="flex flex-wrap gap-2">
             {table
@@ -644,6 +740,11 @@ function DatabaseRoute() {
     | "_time_series_checkpoints"
     | "_time_series_points"
     | undefined;
+  const activeViewName = search.view;
+  const desiredSidebar =
+    selectedSystemTable !== undefined
+      ? "Core/Database/System Tables"
+      : "Core/Database";
   const documents = useRuntimeResource(
     async () => (config && selected ? queryDatabaseDocuments(config, selected) : []),
     [config, selected],
@@ -693,9 +794,24 @@ function DatabaseRoute() {
       search: (previous) => ({
         ...previous,
         table: selected,
+        systemTable: undefined,
       }),
     });
   }, [navigate, search.table, selected, selectedSystemTable]);
+
+  useEffect(() => {
+    if (search.sidebar === desiredSidebar) {
+      return;
+    }
+
+    void navigate({
+      replace: true,
+      search: (previous) => ({
+        ...previous,
+        sidebar: desiredSidebar,
+      }),
+    });
+  }, [desiredSidebar, navigate, search.sidebar]);
 
   useEffect(() => {
     const activeRows = selectedSystemTable ? systemRows : documentRows;
@@ -721,13 +837,26 @@ function DatabaseRoute() {
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3">
-          <CardTitle>
-            {selectedSystemTable
-              ? `System Table: ${selectedSystemTable}`
-              : selected
-                ? `Collection: ${selected}`
-                : "Tables"}
-          </CardTitle>
+          <div className="grid gap-2">
+            <CardTitle>
+              {selectedSystemTable
+                ? `System Table: ${selectedSystemTable}`
+                : selected
+                  ? `Collection: ${selected}`
+                  : "Tables"}
+            </CardTitle>
+            <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+              <span className="rounded-md border bg-muted/20 px-2 py-1">
+                {selectedSystemTable ? "System table" : "Logical table"}
+              </span>
+              <span className="rounded-md border bg-muted/20 px-2 py-1">
+                {selectedSystemTable ? systemRows.length : documentRows.length} rows loaded
+              </span>
+              <span className="rounded-md border bg-muted/20 px-2 py-1">
+                {selectedSystemTable ? "SQL read-only" : "Document service"}
+              </span>
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="p-4">
           {selectedSystemTable ? (
@@ -748,12 +877,38 @@ function DatabaseRoute() {
             ) : (
               <RawDocumentsExplorer
                 collection={selectedSystemTable}
+                target={{
+                  kind: "systemTable",
+                  systemTable: selectedSystemTable,
+                }}
                 rows={systemRows}
                 columns={documentColumns}
                 readOnly
                 showDocumentMeta={false}
                 selectedDocumentId={selectedDocumentId}
+                activeSavedViewName={activeViewName}
                 onSelectDocument={setSelectedDocumentId}
+                onSavedViewNameChange={(view) => {
+                  void navigate({
+                    replace: true,
+                    search: (previous) => ({
+                      ...previous,
+                      view,
+                    }),
+                  });
+                }}
+                onActivateSavedViewTarget={(target, viewName) => {
+                  void navigate({
+                    replace: true,
+                    search: (previous) => ({
+                      ...previous,
+                      table: target.kind === "table" ? target.table : undefined,
+                      systemTable:
+                        target.kind === "systemTable" ? target.systemTable : undefined,
+                      view: viewName ?? previous.view,
+                    }),
+                  });
+                }}
               />
             )
           ) : !selected ? (
@@ -767,14 +922,40 @@ function DatabaseRoute() {
               description={`The collection ${selected} does not have any rows yet.`}
             />
           ) : (
-            <RawDocumentsExplorer
-              collection={selected}
-              rows={documentRows}
-              columns={documentColumns}
-              showDocumentMeta
-              selectedDocumentId={selectedDocumentId}
-              onSelectDocument={setSelectedDocumentId}
-              onSaveDocument={async (id, rawJson) => {
+              <RawDocumentsExplorer
+                collection={selected}
+                target={{
+                  kind: "table",
+                  table: selected,
+                }}
+                rows={documentRows}
+                columns={documentColumns}
+                showDocumentMeta
+                selectedDocumentId={selectedDocumentId}
+                activeSavedViewName={activeViewName}
+                onSelectDocument={setSelectedDocumentId}
+                onSavedViewNameChange={(view) => {
+                  void navigate({
+                    replace: true,
+                    search: (previous) => ({
+                      ...previous,
+                      view,
+                    }),
+                  });
+                }}
+                onActivateSavedViewTarget={(target, viewName) => {
+                  void navigate({
+                    replace: true,
+                    search: (previous) => ({
+                      ...previous,
+                      table: target.kind === "table" ? target.table : undefined,
+                      systemTable:
+                        target.kind === "systemTable" ? target.systemTable : undefined,
+                      view: viewName ?? previous.view,
+                    }),
+                  });
+                }}
+                onSaveDocument={async (id, rawJson) => {
                 if (!config || !selected) {
                   return;
                 }

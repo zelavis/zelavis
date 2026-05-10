@@ -25,12 +25,14 @@ type NavChildItem = {
   url?: string;
   search?: DashboardNavSearch;
   icon?: LucideIcon;
+  panelLabel?: string;
   pluginOwned?: boolean;
   items?: readonly NavChildItem[];
 };
 
 type NavPanel = {
   title: string;
+  panelLabel?: string;
   items: readonly NavChildItem[];
 };
 
@@ -74,13 +76,23 @@ function findActiveTrail(
       continue;
     }
 
-    const panels: NavPanel[] = [{ title: item.title, items: item.items }];
+    const panels: NavPanel[] = [
+      {
+        title: item.title,
+        panelLabel: item.panelLabel,
+        items: item.items,
+      },
+    ];
     let current: NavChildItem | undefined = item.items.find(
       (child) => child.items?.length && itemContainsPath(child, pathname, search),
     );
 
     while (current?.items?.length) {
-      panels.push({ title: current.title, items: current.items });
+      panels.push({
+        title: current.title,
+        panelLabel: current.panelLabel,
+        items: current.items,
+      });
       current = current.items.find(
         (child) => child.items?.length && itemContainsPath(child, pathname, search),
       );
@@ -108,7 +120,11 @@ function findTrailByTitles(
       return [];
     }
 
-    panels.push({ title: match.title, items: match.items });
+    panels.push({
+      title: match.title,
+      panelLabel: match.panelLabel,
+      items: match.items,
+    });
     currentItems = match.items;
   }
 
@@ -264,8 +280,8 @@ export function NavMain({
     }, duration);
   }
 
-  function openPanel(title: string, panelItems: readonly NavChildItem[]) {
-    const nextTrail = [...trail, { title, items: panelItems }];
+  function openPanel(panel: NavPanel) {
+    const nextTrail = [...trail, panel];
     const nextIndex = nextTrail.length;
 
     clearBackAnimation();
@@ -344,6 +360,8 @@ export function NavMain({
               <div className="flex min-h-0 w-full shrink-0 flex-col gap-1">
                 {panelIndex === 0 ? (
                   <SidebarGroupLabel>Platform</SidebarGroupLabel>
+                ) : panel.panelLabel ? (
+                  <SidebarGroupLabel>{panel.panelLabel}</SidebarGroupLabel>
                 ) : null}
                 <SidebarMenu>
                   {panelIndex > 0 ? (
@@ -367,7 +385,11 @@ export function NavMain({
                             isActive={isActive}
                             tooltip={item.title}
                             onClick={() =>
-                              openPanel(item.title, item.items ?? [])
+                              openPanel({
+                                title: item.title,
+                                panelLabel: item.panelLabel,
+                                items: item.items ?? [],
+                              })
                             }
                           >
                             {Icon ? <Icon /> : null}

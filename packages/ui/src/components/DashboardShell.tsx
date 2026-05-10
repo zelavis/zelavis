@@ -28,7 +28,11 @@ function UtilityHeader() {
     select: (state) => state.location.pathname,
   });
   const runtime = useRuntimeResource(getRuntimeConfig);
-  const pageLabel = getDashboardPageLabel(pathname, runtime.data?.plugins);
+  const pageLabel = getDashboardPageLabel(
+    pathname,
+    runtime.data?.services,
+    runtime.data?.plugins,
+  );
 
   return (
     <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">

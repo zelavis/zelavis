@@ -2123,7 +2123,7 @@ async function resolveDashboardCoreService(
     >[];
     pluginRegistryStore: ZelavisPluginRegistryStore;
     rootPath: string;
-    serviceNames: readonly string[];
+    services: readonly ZelavisServerService<any>[];
     settingsStore?: ZelavisDashboardSettingsStore;
     websiteEnabled: boolean;
   },
@@ -2146,6 +2146,7 @@ async function resolveDashboardCoreService(
     options.devServerUrl ?? readOptionalProcessEnv("ZELAVIS_UI_DEV_SERVER"),
   );
   const assets = devServerUrl ? [] : collectDashboardAssets();
+  const finalServicesForDashboard = context.services;
   const clientRoutes = [
     ...new Set(
       (options.clientRoutes ?? defaultDashboardClientRoutes)
@@ -2182,25 +2183,26 @@ async function resolveDashboardCoreService(
         clientRoutes,
         assetRoot: joinPathParts(rootPath, "assets"),
       },
-      services: context.serviceNames.map((name) => ({
-        name,
+      services: finalServicesForDashboard.map((service) => ({
+        name: service.name,
         core:
-          name === "dashboard" ||
-          name === "auth" ||
-          name === "database" ||
-          name === "storage" ||
-          name === "website",
+          service.name === "dashboard" ||
+          service.name === "auth" ||
+          service.name === "database" ||
+          service.name === "storage" ||
+          service.name === "website",
         apiPath:
-          name === "website"
+          service.name === "website"
             ? "/"
-            : name === "dashboard"
+            : service.name === "dashboard"
               ? rootPath
               : joinPathParts(
                   rootPath,
                   context.apiPrefix,
                   context.apiVersion,
-                  name,
+                  service.name,
                 ),
+        menu: service.menu,
       })),
       plugins: serializedPlugins,
     };
@@ -2753,6 +2755,10 @@ async function resolveStorageCoreService(
   return defineServerService({
     name: "storage",
     basePath: "/",
+    menu: {
+      title: "Storage",
+      path: "/storage",
+    },
     service: {
       storage,
     },
@@ -3080,12 +3086,19 @@ export async function zelavis(
     (service): service is ZelavisServerService<any> => Boolean(service),
   );
   const websiteEnabled = hasWebsiteService || Boolean(websiteService);
-  const serviceNames = [
+  const servicesForDashboard = [
     ...(hasDashboardService || options.coreServices?.dashboard === false
-        ? []
-        : ["dashboard"]),
-    ...coreServices.map((service) => service.name),
-    ...services.map((service) => service.name),
+      ? []
+      : [
+          defineServerService({
+            name: "dashboard",
+            basePath: "/",
+            service: {},
+            api: { v1: [] },
+          }),
+        ]),
+    ...coreServices,
+    ...services,
   ];
   const dashboardService = hasDashboardService
     ? undefined
@@ -3095,11 +3108,11 @@ export async function zelavis(
         pluginRegistry,
         pluginRegistryStore,
         rootPath,
-        serviceNames,
+        services: servicesForDashboard,
         settingsStore: dashboardSettingsStore,
         websiteEnabled,
       });
-  const finalServices = [...coreServices, ...services, dashboardService].filter(
+  const finalServices = [dashboardService, ...coreServices, ...services].filter(
     (service): service is ZelavisServerService<any> => Boolean(service),
   );
   const mountPrefix = websiteEnabled ? "/" : rootPath;

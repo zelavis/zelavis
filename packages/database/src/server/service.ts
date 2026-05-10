@@ -221,6 +221,42 @@ export function createDatabaseServerService(
   return defineServerService({
     name: "database",
     basePath: "database",
+    menu: {
+      title: "Database",
+      panelLabel: "Tables",
+      items: [
+        {
+          title: "System Tables",
+          panelLabel: "System Tables",
+          items: [
+            {
+              title: "_collections",
+              path: "/database",
+            },
+            {
+              title: "_documents",
+              path: "/database",
+            },
+            {
+              title: "_events",
+              path: "/database",
+            },
+            {
+              title: "_schemas",
+              path: "/database",
+            },
+            {
+              title: "_time_series_checkpoints",
+              path: "/database",
+            },
+            {
+              title: "_time_series_points",
+              path: "/database",
+            },
+          ],
+        },
+      ],
+    },
     service: database,
     api: {
       v1: [

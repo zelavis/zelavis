@@ -65,12 +65,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     () =>
       runtime.data
         ? buildPlatformNavItems(
+            runtime.data.services,
             runtime.data.plugins,
             databaseCollections.data,
             contentTypes,
           )
         : platformNavItems,
-    [contentTypes, databaseCollections.data, runtime.data?.plugins],
+    [contentTypes, databaseCollections.data, runtime.data?.plugins, runtime.data?.services],
   );
 
   return (

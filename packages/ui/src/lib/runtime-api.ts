@@ -1,13 +1,23 @@
+export interface RuntimeServiceMenuDefinition {
+  title: string;
+  path?: string;
+  pageLabel?: string;
+  panelLabel?: string;
+  items?: readonly RuntimeServiceMenuDefinition[];
+}
+
 export interface RuntimeService {
   name: string;
   core: boolean;
   apiPath: string;
+  menu?: RuntimeServiceMenuDefinition;
 }
 
 export interface RuntimePluginMenuDefinition {
   title: string;
   path?: string;
   pageLabel?: string;
+  panelLabel?: string;
   items?: readonly RuntimePluginMenuDefinition[];
 }
 
@@ -229,9 +239,47 @@ const fallbackConfig: RuntimeConfig = {
   },
   services: [
     { name: "dashboard", core: true, apiPath: "/" },
-    { name: "auth", core: true, apiPath: "/api/v1/auth" },
-    { name: "database", core: true, apiPath: "/api/v1/database" },
-    { name: "storage", core: true, apiPath: "/api/v1/storage" },
+    {
+      name: "auth",
+      core: true,
+      apiPath: "/api/v1/auth",
+      menu: {
+        title: "Auth",
+        path: "/auth",
+      },
+    },
+    {
+      name: "database",
+      core: true,
+      apiPath: "/api/v1/database",
+      menu: {
+        title: "Database",
+        panelLabel: "Tables",
+        items: [
+          {
+            title: "System Tables",
+            panelLabel: "System Tables",
+            items: [
+              { title: "_collections", path: "/database" },
+              { title: "_documents", path: "/database" },
+              { title: "_events", path: "/database" },
+              { title: "_schemas", path: "/database" },
+              { title: "_time_series_checkpoints", path: "/database" },
+              { title: "_time_series_points", path: "/database" },
+            ],
+          },
+        ],
+      },
+    },
+    {
+      name: "storage",
+      core: true,
+      apiPath: "/api/v1/storage",
+      menu: {
+        title: "Storage",
+        path: "/storage",
+      },
+    },
   ],
   plugins: [
     {
@@ -270,6 +318,25 @@ const fallbackConfig: RuntimeConfig = {
     },
   ],
 };
+
+const fallbackServicesByName = new Map(
+  fallbackConfig.services.map((service) => [service.name, service] as const),
+);
+
+function normalizeRuntimeServices(
+  services: readonly RuntimeService[],
+): RuntimeService[] {
+  return services.map((service) => {
+    const fallback = fallbackServicesByName.get(service.name);
+
+    return {
+      ...fallback,
+      ...service,
+      apiPath: service.apiPath,
+      menu: service.menu ?? fallback?.menu,
+    };
+  });
+}
 
 export const EMPTY_DASHBOARD_PREFERENCES: DashboardPreferences = {};
 
@@ -370,6 +437,9 @@ export async function getRuntimeConfig(): Promise<RuntimeConfig> {
   if (typeof window !== "undefined" && window.__ZELAVIS_RUNTIME_CONFIG__) {
     return {
       ...window.__ZELAVIS_RUNTIME_CONFIG__,
+      services: normalizeRuntimeServices(
+        window.__ZELAVIS_RUNTIME_CONFIG__.services ?? [],
+      ),
       configSource: "embedded",
     };
   }
@@ -383,6 +453,7 @@ export async function getRuntimeConfig(): Promise<RuntimeConfig> {
     );
     return {
       ...config,
+      services: normalizeRuntimeServices(config.services ?? []),
       configSource: "endpoint",
     };
   } catch {
@@ -394,13 +465,15 @@ export async function getRuntimeConfig(): Promise<RuntimeConfig> {
         ...fallbackConfig.api,
         basePath: `${fallbackRootPath}/api/v1`,
       },
-      services: fallbackConfig.services.map((service) => ({
-        ...service,
-        apiPath:
-          service.name === "dashboard"
-            ? fallbackRootPath || "/"
-            : `${fallbackRootPath}/api/v1/${service.name}`,
-      })),
+      services: normalizeRuntimeServices(
+        fallbackConfig.services.map((service) => ({
+          ...service,
+          apiPath:
+            service.name === "dashboard"
+              ? fallbackRootPath || "/"
+              : `${fallbackRootPath}/api/v1/${service.name}`,
+        })),
+      ),
     };
   }
 }
