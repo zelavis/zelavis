@@ -4,31 +4,31 @@ import {
   type ZelavisServerErrorStatusRule,
   type ZelavisServerService,
 } from "@zelavis/server";
-import type { DatabaseApi } from "../core/types.js";
+import type { DatabaseApi } from "./core/types.js";
 import type {
   DatabaseDocumentFilter,
   DatabaseDocumentSort,
-} from "../contracts/documents.js";
-import type { DatabaseJsonObject } from "../contracts/json.js";
+} from "./contracts/documents.js";
+import type { DatabaseJsonObject } from "./contracts/json.js";
 import type {
   DatabaseCollectionSchema,
   DatabaseObjectSchemaDefinition,
-} from "../contracts/schemas.js";
+} from "./contracts/schemas.js";
 import type {
   DatabaseTimeSeriesAggregateOperation,
   DatabaseTimeSeriesRangeInput,
-} from "../contracts/api.js";
+} from "./contracts/api.js";
 import {
   DatabaseEventIdempotencyConflictError,
-} from "../contracts/events.js";
-import { DatabaseSchemaValidationError } from "../contracts/schemas.js";
+} from "./contracts/events.js";
+import { DatabaseSchemaValidationError } from "./contracts/schemas.js";
 import {
   DatabaseConflictError,
   DatabaseDomainError,
   DatabaseNotFoundError,
   DatabaseRevisionMismatchError,
   DatabaseValidationError,
-} from "../core/errors.js";
+} from "./core/errors.js";
 
 function readBodyObject(body: unknown): Record<string, unknown> {
   if (!body || typeof body !== "object" || Array.isArray(body)) {

@@ -66,9 +66,9 @@ The pattern is:
 For example:
 
 - database package factory:
-  [packages/database/src/server/service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/database/src/server/service.ts)
+  [packages/database/src/database-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/database/src/database-service.ts)
 - low-level service helper:
-  [packages/server/src/core/define-server-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/server/src/core/define-server-service.ts)
+  [packages/server/src/core/define-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/server/src/core/define-service.ts)
 - high-level runtime assembly:
   [packages/zelavis/src/index.ts](/Users/ivanjeremicx/Projects/zelavis/packages/zelavis/src/index.ts)
 

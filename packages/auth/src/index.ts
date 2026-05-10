@@ -1,5 +1,6 @@
 export * from "./contracts/credential-provider.js";
 export * from "./contracts/repositories.js";
+export * from "./auth-service.js";
 export * from "./core/create-auth.js";
 export * from "./core/define-auth-plugin.js";
 export * from "./core/errors.js";
@@ -10,6 +11,5 @@ export * from "./services/authentication-service.js";
 export * from "./services/credential-service.js";
 export * from "./services/session-service.js";
 export * from "./storage/in-memory.js";
-export * from "./server/service.js";
 export * from "./server/plugins.js";
 export * from "./server/auth-service.js";

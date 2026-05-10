@@ -93,6 +93,11 @@ await zelavisServer({
 });
 ```
 
+The main service-definition entrypoint lives in
+[packages/database/src/database-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/database/src/database-service.ts),
+so package authors can open one obvious file and see the `defineService({ ... })`
+surface immediately.
+
 Each `DatabaseDocument` now also carries a `schemaVersion`, which is stored on the event stream and projection rows. If a collection has an active schema, inserts and updates are validated before events are appended.
 
 For editor-facing content models, the package also exports `richTextHtmlSchema(...)`. Zelavis currently uses that schema hint to render Lexical in the dashboard while persisting the field as a plain HTML string in the document itself.

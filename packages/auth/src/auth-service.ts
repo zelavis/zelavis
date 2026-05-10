@@ -4,12 +4,12 @@ import {
   type ZelavisServerErrorStatusRule,
   type ZelavisServerService,
 } from "@zelavis/server";
-import type { AuthApi } from "../core/types.js";
+import type { AuthApi } from "./core/types.js";
 import {
   AuthDomainError,
   AuthNotFoundError,
   AuthValidationError,
-} from "../core/errors.js";
+} from "./core/errors.js";
 
 const authErrorRules: readonly ZelavisServerErrorStatusRule[] = [
   {

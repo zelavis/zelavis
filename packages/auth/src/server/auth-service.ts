@@ -1,7 +1,7 @@
 import type { CreateAuthOptions } from "../core/create-auth.js";
 import { createAuth } from "../core/create-auth.js";
 import type { AuthApi } from "../core/types.js";
-import { createAuthServerService } from "./service.js";
+import { createAuthServerService } from "../auth-service.js";
 import type { AuthServerService, AuthServicePlugin } from "./plugins.js";
 
 export interface AuthServiceOptions {

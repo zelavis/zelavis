@@ -9,7 +9,7 @@ export * from "./core/create-database.js";
 export * from "./core/define-database-driver.js";
 export * from "./core/errors.js";
 export * from "./core/types.js";
-export * from "./server/service.js";
+export * from "./database-service.js";
 export * from "./services/event-service.js";
 export * from "./services/document-service.js";
 export * from "./services/projection-service.js";
