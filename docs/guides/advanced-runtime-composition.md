@@ -60,7 +60,7 @@ There is no separate `defineCoreService(...)` helper today.
 The pattern is:
 
 1. A package exposes a normal server-service factory.
-2. That factory uses `defineServerService(...)`.
+2. That factory uses `defineService(...)`.
 3. The high-level `zelavis(...)` runtime decides when to call that factory and include the result as a built-in core service.
 
 For example:
@@ -75,7 +75,7 @@ For example:
 Concretely:
 
 - `@zelavis/database` exports `createDatabaseServerService(database)`
-- that function returns `defineServerService({ ... })`
+- that function returns `defineService({ ... })`
 - then `zelavis(...)` calls `resolveDatabaseCoreService(...)`, wraps the returned database API with `createDatabaseServerService(...)`, and adds it to the built-in core service list
 
 The same shape is used for auth, dashboard, website, and storage.

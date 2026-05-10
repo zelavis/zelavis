@@ -18,7 +18,7 @@ import {
 } from "@zelavis/database";
 import {
   createMappedJsonErrorResponse,
-  defineServerService,
+  defineService,
   zelavisServer as mountZelavisServer,
   type ZelavisServerErrorStatusRule,
   type ZelavisAnyServiceInput,
@@ -52,7 +52,7 @@ export * from "./storage/s3.js";
 
 export * from "@zelavis/database";
 export {
-  defineServerService,
+  defineService,
   type ZelavisAnyServiceInput,
   type ZelavisServerErrorHandler,
   type ZelavisServerRoute,
@@ -1743,7 +1743,7 @@ const defaultDashboardPluginRegistry = createPluginRegistry([
       setup(context) {
         return {
           services: [
-            defineServerService({
+            defineService({
               name: "commerce",
               service: {
                 plugin: context.plugin.name,
@@ -2344,7 +2344,7 @@ async function resolveDashboardCoreService(
     return shellHandler({ query, request });
   };
 
-  return defineServerService({
+  return defineService({
     name: "dashboard",
     basePath: "/",
     menu: {
@@ -2580,7 +2580,7 @@ async function resolveWebsiteCoreService(
     );
   }
 
-  return defineServerService({
+  return defineService({
     name: "website",
     basePath: "/",
     menu: {
@@ -2772,7 +2772,7 @@ async function resolveStorageCoreService(
     return undefined;
   }
 
-  return defineServerService({
+  return defineService({
     name: "storage",
     basePath: "/",
     menu: {
@@ -3112,7 +3112,7 @@ export async function zelavis(
     ...(hasDashboardService || options.coreServices?.dashboard === false
       ? []
       : [
-          defineServerService({
+          defineService({
             name: "dashboard",
             basePath: "/",
             service: {},

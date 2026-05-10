@@ -76,12 +76,12 @@ Use these when you are working directly with `zelavisServer(...)` or custom serv
 Typical usage:
 
 ```ts
-import { defineServerService, zelavisServer } from "@zelavis/server";
+import { defineService, zelavisServer } from "@zelavis/server";
 import { nodeAdapter } from "@zelavis/server/adapters/node";
 
 const runtime = await zelavisServer({
   services: [
-    defineServerService({
+    defineService({
       name: "health",
       api: {
         v1: [

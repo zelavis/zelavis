@@ -51,7 +51,7 @@ This keeps the first slide stable and prevents dashboard sprawl.
 
 A good current TypeScript direction is:
 
-- keep `defineServerService(...)` for the internal runtime contract
+- keep `defineService(...)` for the internal runtime contract
 - expose one shared public plugin builder: `definePlugin(...)`
 - version that contract explicitly with `ZELAVIS_PLUGIN_V1`
 - let plugin definitions carry declarative dashboard metadata such as `menu: { ... }` so plugins are not locked to one dashboard implementation detail

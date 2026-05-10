@@ -5,7 +5,7 @@ import {
   applyPluginRegistryState,
   definePlugin,
   createPluginRegistry,
-  defineServerService,
+  defineService,
   loadPlugin,
   loadPluginRegistry,
   removePluginFromRegistry,
@@ -15,7 +15,7 @@ import {
 } from "../dist/index.js";
 
 test("definePlugin normalizes plugin metadata for developer-facing extensions", () => {
-  const service = defineServerService({
+  const service = defineService({
     name: "commerce",
     service: {},
     api: {
@@ -298,12 +298,12 @@ test("applyPluginRegistryState overlays stored install state and order", () => {
 
 test("activatePluginRegistry runs installed plugins in order and collects services", async () => {
   const activationOrder = [];
-  const firstService = defineServerService({
+  const firstService = defineService({
     name: "first-plugin-service",
     service: {},
     api: { v1: [] },
   });
-  const secondService = defineServerService({
+  const secondService = defineService({
     name: "second-plugin-service",
     service: {},
     api: { v1: [] },

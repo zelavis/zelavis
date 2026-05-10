@@ -1,5 +1,5 @@
 import {
-  defineServerService,
+  defineService,
   type ZelavisAnyServiceInput,
   type ZelavisServerRoute,
   type ZelavisServerService,
@@ -219,7 +219,7 @@ export function definePlugin<TContext = unknown>(
     throw new TypeError("Plugin services must be provided as an array.");
   }
 
-  const normalized = defineServerService({
+  const normalized = defineService({
     name: definition.name,
     basePath: definition.basePath,
     api: definition.api ?? {},

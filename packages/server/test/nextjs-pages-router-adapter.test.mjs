@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import test from "node:test";
-import { defineServerService, zelavisServer } from "../dist/index.js";
+import { defineService, zelavisServer } from "../dist/index.js";
 import { nextjsPagesRouterAdapter } from "../dist/adapters/nextjs-pages-router.js";
 
 function listen(server) {
@@ -30,7 +30,7 @@ function close(server) {
 test("nextjsPagesRouterAdapter rewrites the API route path back to the mounted path", async () => {
   const runtime = await zelavisServer({
     services: [
-      defineServerService({
+      defineService({
         name: "demo",
         service: {},
         api: {
@@ -90,7 +90,7 @@ test("nextjsPagesRouterAdapter rewrites the API route path back to the mounted p
 test("nextjsPagesRouterAdapter preserves repeated headers and HEAD fallback", async () => {
   const runtime = await zelavisServer({
     services: [
-      defineServerService({
+      defineService({
         name: "demo",
         service: {},
         api: {

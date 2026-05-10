@@ -8,7 +8,7 @@ Packages expose server services through a shared contract, and adapters mount or
 
 ## Core ideas
 
-- packages export services with `defineServerService(...)`
+- packages export services with `defineService(...)`
 - services can compose nested services
 - `zelavisServer(...)` resolves routes once and exposes reusable runtime handlers
 - adapters adapt the resolved runtime to framework-specific shapes

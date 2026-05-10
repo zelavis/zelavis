@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { defineServerService, zelavisServer } from "../dist/index.js";
+import { defineService, zelavisServer } from "../dist/index.js";
 
 test("zelavisServer resolves promised services and returns service map plus routes", async () => {
   const serviceApi = { version: "test" };
   const service = Promise.resolve(
-    defineServerService({
+    defineService({
       name: "orders",
       service: serviceApi,
       api: {
@@ -43,7 +43,7 @@ test("zelavisServer resolves promised services and returns service map plus rout
 
 test("zelavisServer resolves promised nested services without adding them to the top-level service map", async () => {
   const child = Promise.resolve(
-    defineServerService({
+    defineService({
       name: "child",
       service: { nested: true },
       api: {
@@ -58,7 +58,7 @@ test("zelavisServer resolves promised nested services without adding them to the
       },
     }),
   );
-  const parent = defineServerService({
+  const parent = defineService({
     name: "parent",
     service: { root: true },
     api: {},
@@ -78,7 +78,7 @@ test("zelavisServer resolves promised nested services without adding them to the
 test("zelavisServer exposes fetch and plain handlers without requiring a mount adapter", async () => {
   const runtime = await zelavisServer({
     services: [
-      defineServerService({
+      defineService({
         name: "demo",
         service: { label: "plain" },
         api: {
@@ -148,7 +148,7 @@ test("zelavisServer exposes fetch and plain handlers without requiring a mount a
 test("zelavisServer parses multipart payloads and preserves repeated response headers", async () => {
   const runtime = await zelavisServer({
     services: [
-      defineServerService({
+      defineService({
         name: "demo",
         service: {},
         api: {
@@ -211,7 +211,7 @@ test("zelavisServer parses multipart payloads and preserves repeated response he
 test("zelavisServer prefers an exact route over a wildcard sibling", async () => {
   const runtime = await zelavisServer({
     services: [
-      defineServerService({
+      defineService({
         name: "demo",
         service: {},
         api: {

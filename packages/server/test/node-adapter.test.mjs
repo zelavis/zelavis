@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { defineServerService, zelavisServer } from "../dist/index.js";
+import { defineService, zelavisServer } from "../dist/index.js";
 import { nodeAdapter } from "../dist/adapters/node.js";
 
 function listen(server) {
@@ -30,7 +30,7 @@ test("nodeAdapter creates a native HTTP server and passes normalized request con
   const serviceApi = { label: "demo-service" };
   const runtime = await zelavisServer({
     services: [
-      defineServerService({
+      defineService({
         name: "demo",
         service: serviceApi,
         api: {
@@ -128,7 +128,7 @@ test("nodeAdapter returns 404 for unmatched routes", async () => {
 test("nodeAdapter supports HEAD fallback, binary bodies, and repeated set-cookie headers", async () => {
   const runtime = await zelavisServer({
     services: [
-      defineServerService({
+      defineService({
         name: "demo",
         service: {},
         api: {
@@ -217,7 +217,7 @@ test("nodeAdapter supports HEAD fallback, binary bodies, and repeated set-cookie
 test("nodeAdapter supports trailing wildcard route params", async () => {
   const runtime = await zelavisServer({
     services: [
-      defineServerService({
+      defineService({
         name: "demo",
         service: {},
         api: {
@@ -255,7 +255,7 @@ test("nodeAdapter supports trailing wildcard route params", async () => {
 test("nodeAdapter uses the configured error handler", async () => {
   const runtime = await zelavisServer({
     services: [
-      defineServerService({
+      defineService({
         name: "demo",
         service: {},
         api: {

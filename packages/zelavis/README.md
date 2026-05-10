@@ -49,7 +49,7 @@ Use scoped packages when building lower-level primitives, adapters, plugins, or 
 ```ts
 import { createDatabase } from "@zelavis/database";
 import { createPlugin } from "zelavis";
-import { defineServerService } from "@zelavis/server";
+import { defineService } from "@zelavis/server";
 import { authService } from "@zelavis/auth";
 ```
 

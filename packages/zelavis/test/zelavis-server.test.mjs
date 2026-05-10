@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createDatabase, defineServerService, zelavis } from "../dist/index.js";
+import { createDatabase, defineService, zelavis } from "../dist/index.js";
 
 test("zelavis exposes fetch handlers without requiring a mount adapter", async () => {
   const runtime = await zelavis({});
@@ -565,7 +565,7 @@ test("zelavis can disable all core services", async () => {
 });
 
 test("zelavis does not duplicate an explicitly provided database service", async () => {
-  const databaseService = defineServerService({
+  const databaseService = defineService({
     name: "database",
     service: { custom: true },
     api: {
@@ -594,7 +594,7 @@ test("zelavis does not duplicate an explicitly provided database service", async
 });
 
 test("zelavis does not duplicate an explicitly provided auth service", async () => {
-  const authService = defineServerService({
+  const authService = defineService({
     name: "auth",
     service: { custom: true },
     api: {

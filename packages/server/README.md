@@ -6,7 +6,7 @@ It is intended to be the common adapter layer for platform packages such as `@ze
 
 ## Core ideas
 
-- Packages export server services with `defineServerService({ name, api: { v1: [...] } })`.
+- Packages export server services with `defineService({ name, api: { v1: [...] } })`.
 - Services may compose nested `services`, and nested services are mounted below the parent service path.
 - `zelavisServer({ services })` resolves routes once and exposes reusable runtime handlers.
 - Route prefixes and per-endpoint path overrides are applied before dispatch.

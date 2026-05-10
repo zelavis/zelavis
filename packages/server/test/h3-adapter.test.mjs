@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { H3 } from "h3";
-import { defineServerService, zelavisServer } from "../dist/index.js";
+import { defineService, zelavisServer } from "../dist/index.js";
 import { h3Adapter } from "../dist/adapters/h3.js";
 
 test("h3Adapter preserves full external paths and falls through for host routes", async () => {
@@ -11,7 +11,7 @@ test("h3Adapter preserves full external paths and falls through for host routes"
 
   const runtime = await zelavisServer({
     services: [
-      defineServerService({
+      defineService({
         name: "demo",
         service: { label: "demo-service" },
         api: {

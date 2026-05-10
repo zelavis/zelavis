@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { defineServerService, resolveMountedEndpoints } from "../dist/index.js";
+import { defineService, resolveMountedEndpoints } from "../dist/index.js";
 
 const noopHandler = () => ({ status: 204 });
 
 function createService(overrides = {}) {
-  return defineServerService({
+  return defineService({
     name: "catalog",
     basePath: "/commerce/",
     service: { id: "catalog-api" },
@@ -91,7 +91,7 @@ test("resolveMountedEndpoints skips services without routes for the selected ver
 });
 
 test("resolveMountedEndpoints recursively mounts nested services", () => {
-  const service = defineServerService({
+  const service = defineService({
     name: "database",
     basePath: "database",
     service: {},
@@ -106,7 +106,7 @@ test("resolveMountedEndpoints recursively mounts nested services", () => {
       ],
     },
     services: [
-      defineServerService({
+      defineService({
         name: "documents",
         basePath: "documents",
         service: {},

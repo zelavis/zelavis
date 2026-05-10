@@ -1,6 +1,6 @@
 import {
   createMappedJsonErrorResponse,
-  defineServerService,
+  defineService,
   type ZelavisServerErrorStatusRule,
   type ZelavisServerService,
 } from "@zelavis/server";
@@ -218,7 +218,7 @@ function databaseErrorResponse(error: unknown, fallback = 500) {
 export function createDatabaseServerService(
   database: DatabaseApi,
 ): ZelavisServerService<DatabaseApi> {
-  return defineServerService({
+  return defineService({
     name: "database",
     basePath: "database",
     menu: {
@@ -288,7 +288,7 @@ export function createDatabaseServerService(
 export function createDatabaseSqlServerService(
   database: DatabaseApi,
 ): ZelavisServerService<DatabaseApi> {
-  return defineServerService({
+  return defineService({
     name: "sql",
     basePath: "sql",
     service: database,
@@ -362,7 +362,7 @@ export function createDatabaseSqlServerService(
 export function createDatabaseDocumentsServerService(
   database: DatabaseApi,
 ): ZelavisServerService<DatabaseApi> {
-  return defineServerService({
+  return defineService({
     name: "documents",
     basePath: "documents",
     service: database,
@@ -526,7 +526,7 @@ export function createDatabaseDocumentsServerService(
 export function createDatabaseSchemasServerService(
   database: DatabaseApi,
 ): ZelavisServerService<DatabaseApi> {
-  return defineServerService({
+  return defineService({
     name: "schemas",
     basePath: "schemas",
     service: database,
@@ -633,7 +633,7 @@ export function createDatabaseSchemasServerService(
 export function createDatabaseTimeSeriesServerService(
   database: DatabaseApi,
 ): ZelavisServerService<DatabaseApi> {
-  return defineServerService({
+  return defineService({
     name: "timeseries",
     basePath: "timeseries",
     service: database,

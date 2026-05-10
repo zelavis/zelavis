@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import Fastify from "fastify";
-import { defineServerService, zelavisServer } from "../dist/index.js";
+import { defineService, zelavisServer } from "../dist/index.js";
 import { fastifyAdapter } from "../dist/adapters/fastify.js";
 
 test("fastifyAdapter mounts Zelavis as a Fastify plugin and preserves normalized request context", async () => {
@@ -12,7 +12,7 @@ test("fastifyAdapter mounts Zelavis as a Fastify plugin and preserves normalized
 
   const runtime = await zelavisServer({
     services: [
-      defineServerService({
+      defineService({
         name: "demo",
         service: serviceApi,
         api: {
@@ -90,7 +90,7 @@ test("fastifyAdapter preserves binary bodies, repeated headers, and HEAD fallbac
   const app = Fastify();
   const runtime = await zelavisServer({
     services: [
-      defineServerService({
+      defineService({
         name: "demo",
         service: {},
         api: {
@@ -158,7 +158,7 @@ test("fastifyAdapter uses the configured error handler", async () => {
   const app = Fastify();
   const runtime = await zelavisServer({
     services: [
-      defineServerService({
+      defineService({
         name: "demo",
         service: {},
         api: {

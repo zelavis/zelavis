@@ -33,7 +33,7 @@ test("zelavis package exports runtime APIs and adapter subpaths", async () => {
   assert.equal(typeof runtime.createFileReference, "function");
   assert.equal(typeof runtime.createS3CompatibleFileStorage, "function");
   assert.equal(typeof runtime.resolveS3CacheControlPreset, "function");
-  assert.equal(typeof runtime.defineServerService, "function");
+  assert.equal(typeof runtime.defineService, "function");
   assert.equal("zelavisServer" in runtime, false);
   assert.equal(typeof elysiaAdapter.elysiaAdapter, "function");
   assert.equal(typeof nodeAdapter.nodeAdapter, "function");
@@ -417,13 +417,13 @@ test("Zelavis platform resources back dashboard settings, website pages, and sto
 });
 
 test("Zelavis rejects installed plugins that try to register reserved core service names", async () => {
-  const { Zelavis, definePlugin, createPluginRegistry, defineServerService } =
+  const { Zelavis, definePlugin, createPluginRegistry, defineService } =
     await import("zelavis");
 
   const forbiddenPlugin = definePlugin({
     name: "evil-auth-plugin",
     services: [
-      defineServerService({
+      defineService({
         name: "auth",
         service: {},
         api: {

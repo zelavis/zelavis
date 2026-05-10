@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Elysia } from "elysia";
-import { defineServerService, zelavisServer } from "../dist/index.js";
+import { defineService, zelavisServer } from "../dist/index.js";
 import { elysiaAdapter } from "../dist/adapters/elysia.js";
 
 test("elysiaAdapter mounts Zelavis as an Elysia plugin and preserves normalized request context", async () => {
   const serviceApi = { label: "demo-service" };
   const runtime = await zelavisServer({
     services: [
-      defineServerService({
+      defineService({
         name: "demo",
         service: serviceApi,
         api: {
@@ -82,7 +82,7 @@ test("elysiaAdapter mounts Zelavis as an Elysia plugin and preserves normalized 
 test("elysiaAdapter preserves binary bodies, repeated headers, and HEAD fallback", async () => {
   const runtime = await zelavisServer({
     services: [
-      defineServerService({
+      defineService({
         name: "demo",
         service: {},
         api: {
@@ -152,7 +152,7 @@ test("elysiaAdapter preserves binary bodies, repeated headers, and HEAD fallback
 test("elysiaAdapter uses the configured error handler", async () => {
   const runtime = await zelavisServer({
     services: [
-      defineServerService({
+      defineService({
         name: "demo",
         service: {},
         api: {
