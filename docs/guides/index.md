@@ -19,4 +19,5 @@ Each guide should solve one practical problem end to end.
 - [Adapters and Fetch-Native Hosts](./adapters-and-fetch-native.md)
 - [Dashboard Development](./dashboard-development.md)
 - [File Storage Flow](./file-storage-flow.md)
+- [Service and Plugin Authoring](./service-and-plugin-authoring.md)
 - [Working with Schemas](./working-with-schemas.md)

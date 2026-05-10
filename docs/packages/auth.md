@@ -31,3 +31,4 @@ Official method plugins currently include:
 
 - [zelavis](./zelavis.md)
 - [@zelavis/server](./server.md)
+- [Service and Plugin Authoring](../guides/service-and-plugin-authoring.md)

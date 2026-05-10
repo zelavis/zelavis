@@ -43,6 +43,7 @@ Until then, keep `docs/` as the single current source of truth.
 - [Installation](./getting-started/installation.md)
 - [First Runtime](./getting-started/first-runtime.md)
 - [Advanced Runtime Composition](./guides/advanced-runtime-composition.md)
+- [Service and Plugin Authoring](./guides/service-and-plugin-authoring.md)
 - [Dashboard Development](./guides/dashboard-development.md)
 - [zelavis package](./packages/zelavis.md)
 - [Node adapter](./adapters/node.md)

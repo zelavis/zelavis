@@ -30,3 +30,4 @@ This package is the transport boundary that keeps domain packages mountable with
 
 - [zelavis](./zelavis.md)
 - [Node adapter](../adapters/node.md)
+- [Service and Plugin Authoring](../guides/service-and-plugin-authoring.md)

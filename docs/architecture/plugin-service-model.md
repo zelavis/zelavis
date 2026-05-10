@@ -187,6 +187,7 @@ For possible alternatives:
 
 ## Related docs
 
+- [Service and Plugin Authoring](../guides/service-and-plugin-authoring.md)
 - [Website Core Service](./website-core-service.md)
 - [Adapter Entry Points](../adapters/entry-points.md)
 - [Marketplace](../adapters/index.md)
