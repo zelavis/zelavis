@@ -2,7 +2,7 @@ import {
   createMappedJsonErrorResponse,
   defineService,
   type ZelavisServerErrorStatusRule,
-  type ZelavisServerService,
+  type ZelavisService,
 } from "@zelavis/server";
 import type { AuthApi } from "./core/types.js";
 import {
@@ -31,7 +31,9 @@ function authErrorResponse(error: unknown, fallback = 500) {
   return createMappedJsonErrorResponse(error, authErrorRules, fallback);
 }
 
-export function createAuthServerService(auth: AuthApi): ZelavisServerService<AuthApi> {
+export type AuthServiceDefinition = ZelavisService<AuthApi>;
+
+export function defineAuthService(auth: AuthApi): AuthServiceDefinition {
   return defineService({
     name: "auth",
     basePath: "/auth",

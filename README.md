@@ -172,7 +172,7 @@ Current architecture includes:
 - An in-memory driver for development and tests.
 - An optional SQL capability contract plus a Bun SQLite adapter via `@zelavis/database-bun-sqlite`.
 - An optional SQL capability contract plus a Node SQLite adapter via `@zelavis/database-node-sqlite`.
-- `databaseService(database)` for mounting database routes through `@zelavis/server`, with documents exposed as a nested service.
+- `defineDatabaseService(database)` for mounting database routes through `@zelavis/server`, with documents exposed as a nested service.
 
 The core implementation is intentionally portable and does not depend on `unstorage` or native SQLite bindings. Durable database drivers should be supplied by platform adapters such as `@zelavis/database-bun-sqlite`, `@zelavis/database-node-sqlite`, or future `@zelavis/adapter-cloudflare` and `@zelavis/adapter-turso` packages.
 

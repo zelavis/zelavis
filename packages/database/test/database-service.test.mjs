@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createDatabase, databaseService } from "../dist/index.js";
+import { createDatabase, defineDatabaseService } from "../dist/index.js";
 import { zelavisServer } from "../../server/dist/index.js";
 
 test("databaseService exposes database routes through the existing service contract", async () => {
   const database = await createDatabase();
 
   const runtime = await zelavisServer({
-    services: [databaseService(database)],
+    services: [defineDatabaseService(database)],
     prefix: "/api",
   });
 
@@ -43,7 +43,7 @@ test("databaseService exposes database routes through the existing service contr
 
 test("databaseService returns API errors for duplicate collections", async () => {
   const database = await createDatabase();
-  const service = databaseService(database);
+  const service = defineDatabaseService(database);
   const documents = await service.services[0];
   const createCollection = documents.api.v1.find(
     (route) => route.id === "database.collections.create",
@@ -93,7 +93,7 @@ test("database projection registration surfaces domain conflicts", async () => {
 
 test("databaseService can register and activate collection schemas", async () => {
   const database = await createDatabase();
-  const service = databaseService(database);
+  const service = defineDatabaseService(database);
   const schemas = await service.services[1];
   const registerSchema = schemas.api.v1.find(
     (route) => route.id === "database.schemas.register",
@@ -195,7 +195,7 @@ test("databaseService returns 400 for schema validation failures", async () => {
     },
   });
 
-  const service = databaseService(database);
+  const service = defineDatabaseService(database);
   const documents = await service.services[0];
   const insertDocument = documents.api.v1.find(
     (route) => route.id === "database.documents.insert",
@@ -264,7 +264,7 @@ test("databaseService exposes time-series list, range, and aggregate routes", as
     data: { timestamp: "2026-01-01T00:02:00.000Z", value: 30 },
   });
 
-  const service = databaseService(database);
+  const service = defineDatabaseService(database);
   const timeseries = await service.services[2];
   const listSeries = timeseries.api.v1.find(
     (route) => route.id === "database.timeseries.list",

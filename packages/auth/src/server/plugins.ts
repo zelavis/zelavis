@@ -1,8 +1,5 @@
-import type { ZelavisServerService } from "@zelavis/server";
-import type { AuthApi } from "../core/types.js";
-
-export type AuthServerService = ZelavisServerService<AuthApi>;
+import type { AuthServiceDefinition } from "../auth-service.js";
 
 export type AuthServicePlugin =
-  | ((service: AuthServerService) => AuthServerService)
-  | ((service: AuthServerService) => Promise<AuthServerService>);
+  | ((service: AuthServiceDefinition) => AuthServiceDefinition)
+  | ((service: AuthServiceDefinition) => Promise<AuthServiceDefinition>);

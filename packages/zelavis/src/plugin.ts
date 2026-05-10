@@ -2,14 +2,14 @@ import {
   defineService,
   type ZelavisAnyServiceInput,
   type ZelavisServerRoute,
-  type ZelavisServerService,
-  type ZelavisServerServiceMenuDefinition,
+  type ZelavisService,
+  type ZelavisServiceMenuDefinition,
 } from "@zelavis/server";
 
 export const ZELAVIS_PLUGIN_V1 = "ZELAVIS_PLUGIN_V1" as const;
 export type ZelavisPluginContractVersion = typeof ZELAVIS_PLUGIN_V1;
 export type ZelavisPluginMenuDefinition = Omit<
-  ZelavisServerServiceMenuDefinition,
+  ZelavisServiceMenuDefinition,
   "surface" | "items"
 > & {
   items?: readonly ZelavisPluginMenuDefinition[];
@@ -228,7 +228,7 @@ export function definePlugin<TContext = unknown>(
     services: definition.services
       ? Object.freeze([...definition.services])
       : definition.services,
-  }) as ZelavisServerService<unknown> & ZelavisPluginDefinition<TContext>;
+  }) as ZelavisService<unknown> & ZelavisPluginDefinition<TContext>;
 
   return Object.freeze({
     ...normalized,

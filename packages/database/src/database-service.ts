@@ -2,7 +2,7 @@ import {
   createMappedJsonErrorResponse,
   defineService,
   type ZelavisServerErrorStatusRule,
-  type ZelavisServerService,
+  type ZelavisService,
 } from "@zelavis/server";
 import type { DatabaseApi } from "./core/types.js";
 import type {
@@ -215,9 +215,11 @@ function databaseErrorResponse(error: unknown, fallback = 500) {
   return createMappedJsonErrorResponse(error, databaseErrorRules, fallback);
 }
 
-export function createDatabaseServerService(
+export type DatabaseServiceDefinition = ZelavisService<DatabaseApi>;
+
+export function defineDatabaseService(
   database: DatabaseApi,
-): ZelavisServerService<DatabaseApi> {
+): DatabaseServiceDefinition {
   return defineService({
     name: "database",
     basePath: "database",
@@ -277,17 +279,17 @@ export function createDatabaseServerService(
       ],
     },
     services: [
-      createDatabaseDocumentsServerService(database),
-      createDatabaseSchemasServerService(database),
-      createDatabaseTimeSeriesServerService(database),
-      createDatabaseSqlServerService(database),
+      defineDatabaseDocumentsService(database),
+      defineDatabaseSchemasService(database),
+      defineDatabaseTimeSeriesService(database),
+      defineDatabaseSqlService(database),
     ],
   });
 }
 
-export function createDatabaseSqlServerService(
+export function defineDatabaseSqlService(
   database: DatabaseApi,
-): ZelavisServerService<DatabaseApi> {
+): ZelavisService<DatabaseApi> {
   return defineService({
     name: "sql",
     basePath: "sql",
@@ -359,9 +361,9 @@ export function createDatabaseSqlServerService(
   });
 }
 
-export function createDatabaseDocumentsServerService(
+export function defineDatabaseDocumentsService(
   database: DatabaseApi,
-): ZelavisServerService<DatabaseApi> {
+): ZelavisService<DatabaseApi> {
   return defineService({
     name: "documents",
     basePath: "documents",
@@ -523,9 +525,9 @@ export function createDatabaseDocumentsServerService(
   });
 }
 
-export function createDatabaseSchemasServerService(
+export function defineDatabaseSchemasService(
   database: DatabaseApi,
-): ZelavisServerService<DatabaseApi> {
+): ZelavisService<DatabaseApi> {
   return defineService({
     name: "schemas",
     basePath: "schemas",
@@ -630,9 +632,9 @@ export function createDatabaseSchemasServerService(
   });
 }
 
-export function createDatabaseTimeSeriesServerService(
+export function defineDatabaseTimeSeriesService(
   database: DatabaseApi,
-): ZelavisServerService<DatabaseApi> {
+): ZelavisService<DatabaseApi> {
   return defineService({
     name: "timeseries",
     basePath: "timeseries",
@@ -697,10 +699,4 @@ export function createDatabaseTimeSeriesServerService(
       ],
     },
   });
-}
-
-export function databaseService(
-  database: DatabaseApi,
-): ZelavisServerService<DatabaseApi> {
-  return createDatabaseServerService(database);
 }

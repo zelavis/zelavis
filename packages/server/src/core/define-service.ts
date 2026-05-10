@@ -1,7 +1,7 @@
-import type { ZelavisServerService } from "../contracts.js";
+import type { ZelavisService } from "../contracts.js";
 
 export function defineService<TService>(
-  definition: ZelavisServerService<TService>,
-): ZelavisServerService<TService> {
+  definition: ZelavisService<TService>,
+): ZelavisService<TService> {
   return definition;
 }

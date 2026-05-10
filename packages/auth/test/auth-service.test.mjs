@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createAuth, createAuthServerService } from "../dist/index.js";
+import { createAuth, defineAuthService } from "../dist/index.js";
 
 test("authService returns 400 for invalid account creation input", async () => {
   const auth = await createAuth();
-  const service = createAuthServerService(auth);
+  const service = defineAuthService(auth);
   const createAccount = service.api.v1.find(
     (route) => route.id === "auth.accounts.create",
   );
@@ -26,7 +26,7 @@ test("authService returns 400 for invalid account creation input", async () => {
 
 test("authService returns 404 for unknown authentication providers", async () => {
   const auth = await createAuth();
-  const service = createAuthServerService(auth);
+  const service = defineAuthService(auth);
   const authenticate = service.api.v1.find(
     (route) => route.id === "auth.authenticate",
   );

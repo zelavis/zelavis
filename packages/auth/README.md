@@ -59,7 +59,7 @@ const result = await auth.authentication.authenticate("email-password", {
 
 `@zelavis/auth` exports a server service surface:
 
-- `createAuthServerService(auth)`
+- `defineAuthService(auth)`
 - `authService({ authOptions, plugins })`
 
 The main service-definition entrypoint lives in

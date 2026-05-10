@@ -74,9 +74,9 @@ For example:
 
 Concretely:
 
-- `@zelavis/database` exports `createDatabaseServerService(database)`
+- `@zelavis/database` exports `defineDatabaseService(database)`
 - that function returns `defineService({ ... })`
-- then `zelavis(...)` calls `resolveDatabaseCoreService(...)`, wraps the returned database API with `createDatabaseServerService(...)`, and adds it to the built-in core service list
+- then `zelavis(...)` calls `resolveDatabaseCoreService(...)`, wraps the returned database API with `defineDatabaseService(...)`, and adds it to the built-in core service list
 
 The same shape is used for auth, dashboard, website, and storage.
 

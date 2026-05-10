@@ -6,7 +6,7 @@ import type {
   ZelavisServerOptions,
   ZelavisServerPlainHandler,
   ZelavisServerRuntime,
-  ZelavisServerService,
+  ZelavisService,
 } from "../contracts.js";
 import {
   createZelavisDispatcher,
@@ -17,13 +17,13 @@ import { resolveMountedEndpoints } from "./resolve-endpoints.js";
 
 async function resolveServiceInput<TService = unknown>(
   input: ZelavisServiceInput<TService>,
-): Promise<ZelavisServerService<TService>>;
+): Promise<ZelavisService<TService>>;
 async function resolveServiceInput(
   input: ZelavisAnyServiceInput,
-): Promise<ZelavisServerService<any>>;
+): Promise<ZelavisService<any>>;
 async function resolveServiceInput(
   input: ZelavisAnyServiceInput,
-): Promise<ZelavisServerService<any>> {
+): Promise<ZelavisService<any>> {
   const service = await input;
 
   if (!service.services?.length) {
@@ -41,9 +41,9 @@ async function resolveServiceInput(
 }
 
 function toServiceMap<TService = unknown>(
-  services: readonly ZelavisServerService<TService>[],
-): Record<string, ZelavisServerService<any>> {
-  const result: Record<string, ZelavisServerService<any>> = {};
+  services: readonly ZelavisService<TService>[],
+): Record<string, ZelavisService<any>> {
+  const result: Record<string, ZelavisService<any>> = {};
 
   for (const service of services) {
     result[service.name] = service;

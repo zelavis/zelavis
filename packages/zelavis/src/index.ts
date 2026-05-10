@@ -7,7 +7,7 @@ import {
 } from "@zelavis/auth";
 import {
   createDatabase,
-  createDatabaseServerService,
+  defineDatabaseService,
   DatabaseConflictError,
   DatabaseRevisionMismatchError,
   DatabaseValidationError,
@@ -28,7 +28,7 @@ import {
   type ZelavisServerFetchHandler,
   type ZelavisServerPlainHandler,
   type ZelavisServerRuntime,
-  type ZelavisServerService,
+  type ZelavisService,
 } from "@zelavis/server";
 import {
   embeddedDashboardAssets,
@@ -57,7 +57,7 @@ export {
   type ZelavisServerErrorHandler,
   type ZelavisServerRoute,
   type ZelavisServerRuntime,
-  type ZelavisServerService,
+  type ZelavisService,
 } from "@zelavis/server";
 
 export type ZelavisAuthCoreServiceOptions = boolean | AuthServiceOptions;
@@ -2113,7 +2113,7 @@ async function resolveDatabaseCoreService(
 
 async function resolveAuthCoreService(
   option: ZelavisAuthCoreServiceOptions | undefined,
-): Promise<ZelavisServerService<any> | undefined> {
+): Promise<ZelavisService<any> | undefined> {
   const authOption = option ?? true;
 
   if (authOption === false) {
@@ -2133,11 +2133,11 @@ async function resolveDashboardCoreService(
     >[];
     pluginRegistryStore: ZelavisPluginRegistryStore;
     rootPath: string;
-    services: readonly ZelavisServerService<any>[];
+    services: readonly ZelavisService<any>[];
     settingsStore?: ZelavisDashboardSettingsStore;
     websiteEnabled: boolean;
   },
-): Promise<ZelavisServerService<any> | undefined> {
+): Promise<ZelavisService<any> | undefined> {
   const dashboardOption = option ?? true;
 
   if (dashboardOption === false) {
@@ -2549,7 +2549,7 @@ async function resolveWebsiteCoreService(
     apiVersion: string;
     pagesStore?: ZelavisWebsitePagesStore;
   },
-): Promise<ZelavisServerService<any> | undefined> {
+): Promise<ZelavisService<any> | undefined> {
   const websiteOption = option ?? true;
 
   if (websiteOption === false) {
@@ -2758,7 +2758,7 @@ async function resolveStorageCoreService(
     apiPrefix: string;
     apiVersion: string;
   },
-): Promise<ZelavisServerService<any> | undefined> {
+): Promise<ZelavisService<any> | undefined> {
   const storageOption = option ?? false;
 
   if (storageOption === false) {
@@ -2974,7 +2974,7 @@ async function resolveStorageCoreService(
 }
 
 function createServicePrefixes(
-  services: readonly ZelavisServerService<any>[],
+  services: readonly ZelavisService<any>[],
   options: {
     rootPath: string;
     mountPrefix: string;
@@ -3046,7 +3046,7 @@ export async function zelavis(
     ? undefined
     : await resolveDatabaseCoreService(options.coreServices?.database);
   const databaseService = databaseApi
-    ? createDatabaseServerService(databaseApi)
+    ? defineDatabaseService(databaseApi)
     : undefined;
   const resolvedDatabaseApi =
     (providedDatabaseService?.service as DatabaseApi | undefined) ??
@@ -3105,7 +3105,7 @@ export async function zelavis(
     storageService,
     ...pluginServices,
   ].filter(
-    (service): service is ZelavisServerService<any> => Boolean(service),
+    (service): service is ZelavisService<any> => Boolean(service),
   );
   const websiteEnabled = hasWebsiteService || Boolean(websiteService);
   const servicesForDashboard = [
@@ -3135,7 +3135,7 @@ export async function zelavis(
         websiteEnabled,
       });
   const finalServices = [dashboardService, ...coreServices, ...services].filter(
-    (service): service is ZelavisServerService<any> => Boolean(service),
+    (service): service is ZelavisService<any> => Boolean(service),
   );
   const mountPrefix = websiteEnabled ? "/" : rootPath;
 
@@ -3180,7 +3180,7 @@ function assertNoInternalConstructorOptions(
 }
 
 function assertNoReservedPluginServiceNames(
-  services: readonly ZelavisServerService<any>[],
+  services: readonly ZelavisService<any>[],
 ): void {
   const reserved = services
     .map((service) => service.name)

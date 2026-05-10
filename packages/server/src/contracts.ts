@@ -27,34 +27,34 @@ export interface ZelavisServerRoute<TService = unknown> {
   ) => Promise<ZelavisRouteResponse> | ZelavisRouteResponse;
 }
 
-export interface ZelavisServerServiceMenuDefinition {
+export interface ZelavisServiceMenuDefinition {
   title: string;
   path?: string;
   pageLabel?: string;
   panelLabel?: string;
   surface?: "root" | "core" | "workspace" | "settings";
-  items?: readonly ZelavisServerServiceMenuDefinition[];
+  items?: readonly ZelavisServiceMenuDefinition[];
 }
 
-export interface ZelavisServerService<TService = unknown> {
+export interface ZelavisService<TService = unknown> {
   name: string;
   basePath?: string;
   api: Record<string, readonly ZelavisServerRoute<TService>[]>;
   service: TService;
-  menu?: ZelavisServerServiceMenuDefinition;
+  menu?: ZelavisServiceMenuDefinition;
   services?: readonly ZelavisAnyServiceInput[];
 }
 
 export type ZelavisServiceInput<TService = unknown> =
-  | ZelavisServerService<TService>
-  | Promise<ZelavisServerService<TService>>;
+  | ZelavisService<TService>
+  | Promise<ZelavisService<TService>>;
 
 export type ZelavisAnyServiceInput =
-  | ZelavisServerService<any>
-  | Promise<ZelavisServerService<any>>;
+  | ZelavisService<any>
+  | Promise<ZelavisService<any>>;
 
 export interface ZelavisResolvedRoute<TService = unknown> {
-  service: ZelavisServerService<TService>;
+  service: ZelavisService<TService>;
   route: ZelavisServerRoute<TService>;
   fullPath: string;
 }
@@ -128,7 +128,7 @@ export interface ZelavisServerOptions<
 }
 
 export interface ZelavisServerRuntime<TService = unknown> {
-  services: Record<string, ZelavisServerService<any>>;
+  services: Record<string, ZelavisService<any>>;
   routes: readonly ZelavisResolvedRoute<TService>[];
   dispatch: ZelavisServerDispatchHandler<TService>;
   fetch: ZelavisServerFetchHandler<TService>;

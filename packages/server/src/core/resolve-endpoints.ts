@@ -2,7 +2,7 @@ import type {
   ZelavisResolvedRoute,
   ZelavisServiceInput,
   ZelavisServerMountOptions,
-  ZelavisServerService,
+  ZelavisService,
 } from "../contracts.js";
 
 function normalizePathPart(part: string | undefined): string {
@@ -48,7 +48,7 @@ function joinPathParts(
 }
 
 export function resolveMountedEndpoints<TContext = unknown>(
-  services: readonly ZelavisServerService<TContext>[],
+  services: readonly ZelavisService<TContext>[],
   options: Pick<
     ZelavisServerMountOptions<TContext>,
     "prefix" | "version" | "servicePrefixes" | "pathOverrides"
@@ -57,7 +57,7 @@ export function resolveMountedEndpoints<TContext = unknown>(
   const resolved: ZelavisResolvedRoute<TContext>[] = [];
   const version = options.version ?? "v1";
 
-  function visitService(service: ZelavisServerService<TContext>, prefix: string | undefined): void {
+  function visitService(service: ZelavisService<TContext>, prefix: string | undefined): void {
     const routes = service.api[version];
     const servicePrefix = options.servicePrefixes?.[service.name] ?? service.basePath ?? service.name;
     const nextPrefix = joinPathParts(prefix, servicePrefix, "/");
@@ -82,7 +82,7 @@ export function resolveMountedEndpoints<TContext = unknown>(
         );
       }
 
-      visitService(child as ZelavisServerService<TContext>, nextPrefix);
+      visitService(child as ZelavisService<TContext>, nextPrefix);
     }
   }
 
@@ -95,6 +95,6 @@ export function resolveMountedEndpoints<TContext = unknown>(
 
 function isPromiseLike<TContext>(
   value: ZelavisServiceInput<TContext>,
-): value is Promise<ZelavisServerService<TContext>> {
-  return Boolean(value && typeof (value as Promise<ZelavisServerService<TContext>>).then === "function");
+): value is Promise<ZelavisService<TContext>> {
+  return Boolean(value && typeof (value as Promise<ZelavisService<TContext>>).then === "function");
 }

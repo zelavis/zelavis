@@ -89,7 +89,7 @@ await database.schemas.register({
 });
 
 await zelavisServer({
-  services: [databaseService(database)],
+  services: [defineDatabaseService(database)],
 });
 ```
 
