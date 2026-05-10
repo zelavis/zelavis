@@ -7,7 +7,7 @@
   "packageManager": "pnpm@10.33.0",
   "scripts": {
     "audit:security": "pnpm audit --audit-level=moderate",
-    "build": "pnpm -r --filter './packages/*' --filter './packages/*/adapters/*' --filter './packages/*/plugins/*' --if-present build",
+    "build": "pnpm -r --filter './packages/*' --filter './packages/plugins/*' --filter './packages/*/adapters/*' --filter './packages/*/plugins/*' --if-present build",
     "check": "pnpm run typecheck",
     "ci:runtime": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/ecommerce build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/database build && pnpm check && pnpm --filter zelavis test",
     "ci:ui": "pnpm --filter @zelavis/ui typecheck && ZELAVIS_UI_BASE_PATH=/zelavis/ pnpm --filter @zelavis/ui exec playwright test --project=desktop",

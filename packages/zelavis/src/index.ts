@@ -38,10 +38,11 @@ import {
 import {
   activatePluginRegistry,
   applyPluginRegistryState,
-  definePlugin,
   createPluginRegistry,
+  loadPluginRegistry,
   serializePluginRegistryState,
   type ZelavisPluginRegistryEntry,
+  type ZelavisPluginRegistryModuleEntry,
   type ZelavisPluginRegistryStateEntry,
   type ZelavisPluginRegistryStore,
   type ZelavisPluginSetupPlatformContext,
@@ -1707,78 +1708,14 @@ const defaultDashboardClientRoutes = [
   "/users",
 ] as const;
 
-const defaultDashboardPluginRegistry = createPluginRegistry([
+const defaultDashboardPluginRegistryModules = [
   {
-    plugin: definePlugin<ZelavisPluginSetupContext>({
-      name: "zelavis-ecommerce",
-      version: "0.1.0",
-      menu: {
-        title: "Ecommerce",
-        path: "/commerce",
-        pageLabel: "Commerce",
-        items: [
-          {
-            title: "Products",
-            path: "/commerce/products",
-          },
-          {
-            title: "Orders",
-            path: "/commerce/orders",
-          },
-          {
-            title: "More",
-            items: [
-              {
-                title: "Customers",
-                path: "/commerce/customers",
-              },
-              {
-                title: "Coupons",
-                path: "/commerce/coupons",
-              },
-            ],
-          },
-        ],
-      },
-      setup(context) {
-        return {
-          services: [
-            defineService({
-              name: "commerce",
-              service: {
-                plugin: context.plugin.name,
-              },
-              api: {
-                v1: [
-                  {
-                    id: "commerce.health",
-                    method: "GET",
-                    path: "/health",
-                    handler: () => ({
-                      status: 200,
-                      body: {
-                        plugin: context.plugin.name,
-                        rootPath: context.rootPath,
-                        apiBasePath: context.api.basePath,
-                        platform: {
-                          presets: context.platform.presets,
-                          resources: context.platform.resources,
-                        },
-                      },
-                    }),
-                  },
-                ],
-              },
-            }),
-          ],
-        };
-      },
-    }),
+    specifier: "@zelavis/plugin-ecommerce",
     status: "available",
     source: "official",
     order: 0,
   },
-]);
+] as const satisfies readonly ZelavisPluginRegistryModuleEntry[];
 
 function createPluginSetupPlatformContext(
   platform?:
@@ -3020,9 +2957,12 @@ export async function zelavis(
   const apiPrefix = normalizePath(options.api?.prefix, "/api");
   const apiVersion = normalizePathPart(options.api?.version ?? "v1");
   const services = await Promise.all(options.services ?? []);
-  const basePluginRegistry = createPluginRegistry(
-    options.plugins?.entries ?? defaultDashboardPluginRegistry,
-  );
+  const basePluginRegistry =
+    options.plugins?.entries !== undefined
+      ? createPluginRegistry(options.plugins.entries)
+      : await loadPluginRegistry<ZelavisPluginSetupContext>(
+          defaultDashboardPluginRegistryModules,
+        );
   const hasAuthService = services.some((service) => service.name === "auth");
   const hasDashboardService = services.some(
     (service) => service.name === "dashboard",
