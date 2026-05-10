@@ -32,6 +32,8 @@ const zelavis = new Zelavis({
 const server = await zelavis.adapter.nodeServer();
 ```
 
+This is the normal application-facing path. Prefer it unless you explicitly need to assemble runtime services by hand.
+
 ## Platform preset entry points
 
 Use these when you want Zelavis to pick host-level database, KV, dashboard settings, or file-storage defaults for a runtime environment:
@@ -97,6 +99,8 @@ const runtime = await zelavisServer({
 
 const server = nodeAdapter(runtime);
 ```
+
+Treat this layer as infrastructure-facing. It is the right tool for custom runtime assembly, but not the default recommendation for app code.
 
 ## When not to use an adapter
 

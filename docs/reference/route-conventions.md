@@ -38,6 +38,8 @@ new Zelavis({
 });
 ```
 
+That example uses the preferred high-level entrypoint. Use the lower-level `zelavis(...)` function only when you need internal runtime composition controls in addition to route customization.
+
 the mounted paths become:
 
 ```txt

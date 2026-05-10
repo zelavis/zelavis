@@ -28,6 +28,24 @@ const zelavis = new Zelavis({
 });
 ```
 
+Treat this as the normal public API.
+
+## High-level vs low-level
+
+Prefer these layers in order:
+
+1. `new Zelavis(...)` for application/runtime work
+2. `await zelavis(...)` when you intentionally need advanced runtime composition
+3. scoped packages like `@zelavis/server` for primitive-level infrastructure
+
+The lower-level `zelavis()` function still exists, but it now intentionally owns the internal runtime controls such as:
+
+- `coreServices`
+- direct `services`
+- path and mount overrides
+
+The `Zelavis` class is the safer product-facing entrypoint and does not accept those internal knobs.
+
 ## Default behavior
 
 By default, Zelavis owns one safe namespace under `/zelavis` and includes dashboard, auth, database, and website core services.

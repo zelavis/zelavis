@@ -18,6 +18,8 @@ const server = await zelavis.adapter.nodeServer();
 server.listen(3000);
 ```
 
+This is the preferred application-facing shape. Reach for `await zelavis(...)` only when you deliberately want lower-level runtime composition.
+
 ## What you get by default
 
 Today, a default `new Zelavis(...)` runtime includes these core services by default:

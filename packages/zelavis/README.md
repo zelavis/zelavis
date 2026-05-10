@@ -6,6 +6,16 @@ Use this package when building an application or service with Zelavis and you wa
 
 Today, that mostly means auth, database, website delivery, server mounting, and dashboard delivery under one runtime entry point.
 
+## Entry point preference
+
+Use the package in this order:
+
+1. `new Zelavis(...)` for application/runtime code
+2. `await zelavis(...)` only when you intentionally need low-level runtime composition
+3. scoped packages like `@zelavis/server` when you are building primitives, tests, or custom infrastructure
+
+The class is the safe batteries-included API. The function is the advanced escape hatch.
+
 ## Import split
 
 Use `Zelavis` for application and runtime code:
@@ -83,6 +93,8 @@ Plugin setup receives standard JavaScript data only:
 
 That keeps plugin setup runtime-neutral while still giving plugins enough context to register extra services.
 
+Use the lower-level `zelavis(...)` function only when you need internal runtime controls such as `coreServices`, direct `services`, or path/mount overrides.
+
 ## Usage
 
 ```ts
@@ -110,6 +122,11 @@ const response = await zelavis.fetch(
 ```
 
 `new Zelavis(...)` is the guarded high-level entrypoint. It accepts app-facing options such as adapters, platforms, root path, plugin registry state, and error handling. Internal runtime knobs like `services`, `coreServices`, and path overrides stay on the lower-level `zelavis(...)` function.
+
+That split is intentional:
+
+- the class is for real application code
+- the function is for advanced composition and internal/runtime-facing work
 
 By default, Zelavis owns one safe namespace:
 
