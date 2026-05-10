@@ -74,6 +74,27 @@ Use these boundaries consistently:
 - `adapters` for framework bindings and external runtime adapters such as Express, Hono, or Node-specific mounting
 - `plugins` for optional domain/provider capabilities such as auth methods or payment providers
 
+### New package checklist
+
+When creating a new core package, service package, or plugin package:
+
+1. Put the real definition in one obvious named top-level file under `src/`.
+   - service package examples:
+     - `src/auth-service.ts`
+     - `src/database-service.ts`
+   - plugin package examples:
+     - `src/ecommerce-plugin.ts`
+     - `src/stripe-plugin.ts`
+2. Keep `src/index.ts` small and make it re-export the named definition file.
+3. Use `defineService(...)` for mounted runtime services.
+4. Use `definePlugin(...)` for package-local plugin contracts.
+5. Keep orchestration helpers only when they add real behavior.
+   - good: `authService(...)` because it creates auth and applies service plugins
+   - bad: pass-through aliases that only rename another function
+6. Update the package README so it points directly to the named definition file.
+7. Add or update tests around the real definition entrypoint, not only convenience wrappers.
+8. Do not hide the main definition in nested files like `src/server/service.ts` or `src/core/define-plugin.ts` unless there is a strong reason and the user explicitly wants that shape.
+
 ### For core platform work
 
 - Treat auth, database, server/runtime composition, and admin UX as the primary building blocks.

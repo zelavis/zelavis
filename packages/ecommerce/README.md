@@ -35,6 +35,14 @@ The main plugin-definition entrypoint lives in
 [packages/ecommerce/src/ecommerce-plugin.ts](/Users/ivanjeremicx/Projects/zelavis/packages/ecommerce/src/ecommerce-plugin.ts),
 so package authors can immediately see the `definePlugin({ ... })` shape in one place.
 
+Important boundary:
+
+- this `definePlugin(...)` is local to `@zelavis/ecommerce`
+- it defines ecommerce provider plugins against `EcommerceApi`
+- it is not the high-level `zelavis` runtime plugin contract
+
+That separation is intentional. `@zelavis/ecommerce` stays independently usable and does not depend on the high-level `zelavis` package just to define payment-provider plugins.
+
 ## Example
 
 ```ts
