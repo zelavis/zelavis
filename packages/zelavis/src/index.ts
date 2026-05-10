@@ -38,7 +38,7 @@ import {
 import {
   activatePluginRegistry,
   applyPluginRegistryState,
-  createPlugin,
+  definePlugin,
   createPluginRegistry,
   serializePluginRegistryState,
   type ZelavisPluginRegistryEntry,
@@ -1699,7 +1699,7 @@ const defaultDashboardClientRoutes = [
 
 const defaultDashboardPluginRegistry = createPluginRegistry([
   {
-    plugin: createPlugin<ZelavisPluginSetupContext>({
+    plugin: definePlugin<ZelavisPluginSetupContext>({
       name: "zelavis-ecommerce",
       version: "0.1.0",
       menu: {
@@ -2337,6 +2337,10 @@ async function resolveDashboardCoreService(
   return defineServerService({
     name: "dashboard",
     basePath: "/",
+    menu: {
+      title: "Dashboard",
+      path: "/",
+    },
     service: {
       title,
       subtitle,
@@ -2568,6 +2572,11 @@ async function resolveWebsiteCoreService(
   return defineServerService({
     name: "website",
     basePath: "/",
+    menu: {
+      title: "Website",
+      path: "/builder/pages",
+      pageLabel: "Builder",
+    },
     service: {
       pages: [],
     },

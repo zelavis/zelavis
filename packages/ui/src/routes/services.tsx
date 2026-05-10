@@ -20,16 +20,15 @@ function Services() {
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
       <PageHeader
-        eyebrow="Services"
-        title="Runtime services"
-        description="Internal runtime services stay mountable through one shared contract, including plugin-provided runtime capabilities."
+        eyebrow="Plugins"
+        title="Runtime plugins"
       />
 
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Boxes className="size-4" />
-            Mounted and Available
+            Mounted runtime pieces
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
@@ -37,7 +36,7 @@ function Services() {
             <DataRow
               key={service.name}
               label={service.name}
-              detail={`${service.core ? 'core runtime' : 'plugin/custom runtime'} · ${service.apiPath}`}
+              detail={`${service.core ? 'core plugin' : 'plugin/custom runtime'} · ${service.apiPath}`}
               meta={<StatusBadge state="ready" />}
             />
           ))}

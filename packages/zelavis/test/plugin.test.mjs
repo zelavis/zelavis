@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   activatePluginRegistry,
   applyPluginRegistryState,
-  createPlugin,
+  definePlugin,
   createPluginRegistry,
   defineServerService,
   loadPlugin,
@@ -11,9 +11,10 @@ import {
   removePluginFromRegistry,
   resolvePluginModule,
   serializePluginRegistryState,
+  ZELAVIS_PLUGIN_V1,
 } from "../dist/index.js";
 
-test("createPlugin normalizes plugin metadata for developer-facing extensions", () => {
+test("definePlugin normalizes plugin metadata for developer-facing extensions", () => {
   const service = defineServerService({
     name: "commerce",
     service: {},
@@ -22,7 +23,7 @@ test("createPlugin normalizes plugin metadata for developer-facing extensions", 
     },
   });
 
-  const plugin = createPlugin({
+  const plugin = definePlugin({
     name: "zelavis-ecommerce",
     version: "1.0.0",
     menu: {
@@ -34,6 +35,7 @@ test("createPlugin normalizes plugin metadata for developer-facing extensions", 
   });
 
   assert.equal(plugin.name, "zelavis-ecommerce");
+  assert.equal(plugin.contractVersion, ZELAVIS_PLUGIN_V1);
   assert.equal(plugin.menu.title, "Ecommerce");
   assert.equal(plugin.menu.path, "/commerce");
   assert.equal(plugin.services.length, 1);
@@ -42,10 +44,10 @@ test("createPlugin normalizes plugin metadata for developer-facing extensions", 
   assert.ok(Object.isFrozen(plugin.services));
 });
 
-test("createPlugin validates required plugin fields", () => {
+test("definePlugin validates required plugin fields", () => {
   assert.throws(
     () =>
-      createPlugin({
+      definePlugin({
         name: "",
       }),
     /string name/,
@@ -53,7 +55,7 @@ test("createPlugin validates required plugin fields", () => {
 
   assert.throws(
     () =>
-      createPlugin({
+      definePlugin({
         name: "broken-plugin",
         menu: {
           title: "Broken",
@@ -61,6 +63,15 @@ test("createPlugin validates required plugin fields", () => {
         },
       }),
     /path must be a string/,
+  );
+
+  assert.throws(
+    () =>
+      definePlugin({
+        name: "future-plugin",
+        contractVersion: "ZELAVIS_PLUGIN_V2",
+      }),
+    /Unsupported plugin contract version/,
   );
 });
 
@@ -90,8 +101,8 @@ test("createPluginRegistry normalizes plugin registry entries", () => {
   assert.ok(Object.isFrozen(registry));
 });
 
-test("createPlugin allows nested menu groups without a fake path", () => {
-  const plugin = createPlugin({
+test("definePlugin allows nested menu groups without a fake path", () => {
+  const plugin = definePlugin({
     name: "zelavis-ecommerce",
     menu: {
       title: "Ecommerce",
@@ -287,7 +298,7 @@ test("activatePluginRegistry runs installed plugins in order and collects servic
 
   const registry = createPluginRegistry([
     {
-      plugin: createPlugin({
+      plugin: definePlugin({
         name: "second",
         setup(context) {
           activationOrder.push(context.plugin.name);
@@ -298,7 +309,7 @@ test("activatePluginRegistry runs installed plugins in order and collects servic
       order: 2,
     },
     {
-      plugin: createPlugin({
+      plugin: definePlugin({
         name: "first",
         services: [firstService],
         setup(context) {
@@ -309,7 +320,7 @@ test("activatePluginRegistry runs installed plugins in order and collects servic
       order: 0,
     },
     {
-      plugin: createPlugin({
+      plugin: definePlugin({
         name: "available-only",
       }),
       status: "available",
@@ -347,7 +358,7 @@ test("activatePluginRegistry exposes standard platform context to plugin setup",
 
   const registry = createPluginRegistry([
     {
-      plugin: createPlugin({
+      plugin: definePlugin({
         name: "platform-aware",
         setup(context) {
           seenPlatform = context.platform;

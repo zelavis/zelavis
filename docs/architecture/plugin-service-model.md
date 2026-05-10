@@ -47,22 +47,25 @@ This keeps the first slide stable and prevents dashboard sprawl.
 
 ## TypeScript direction
 
-A good long-term TypeScript direction is:
+A good current TypeScript direction is:
 
 - keep `defineServerService(...)` for the internal runtime contract
-- keep package-specific plugin helpers where needed today
-- introduce a unified higher-level `createPlugin(...)` or `definePlugin(...)` only when Zelavis has one shared cross-package plugin contract to normalize against
-- let that higher-level helper accept declarative dashboard metadata such as `menu: { ... }` so plugins are not locked to one dashboard implementation detail
+- expose one shared public plugin builder: `definePlugin(...)`
+- version that contract explicitly with `ZELAVIS_PLUGIN_V1`
+- let plugin definitions carry declarative dashboard metadata such as `menu: { ... }` so plugins are not locked to one dashboard implementation detail
 
-That future helper should be about developer ergonomics and metadata, not about replacing the internal service contract.
+That builder should be about developer ergonomics and metadata, not about replacing the internal service contract.
 
 ## Suggested plugin shape
 
 The current DX direction should lean declarative:
 
 ```ts
-createPlugin({
+import { definePlugin, ZELAVIS_PLUGIN_V1 } from "zelavis";
+
+definePlugin({
   name: "zelavis-ecommerce",
+  contractVersion: ZELAVIS_PLUGIN_V1,
   menu: {
     title: "Ecommerce",
     path: "/commerce",

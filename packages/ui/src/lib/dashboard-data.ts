@@ -135,7 +135,7 @@ export const sidebarTeams: readonly DashboardTeamItem[] = [
   {
     name: "Core",
     logo: Database,
-    plan: "Services",
+    plan: "Plugins",
   },
 ] as const;
 
@@ -329,7 +329,15 @@ export const workspacePluginNavItems =
   buildWorkspacePluginNavItems(defaultRuntimePluginRegistry);
 
 const defaultRuntimeServices: readonly RuntimeService[] = [
-  { name: "dashboard", core: true, apiPath: "/" },
+  {
+    name: "dashboard",
+    core: true,
+    apiPath: "/",
+    menu: {
+      title: "Dashboard",
+      path: "/",
+    },
+  },
   {
     name: "auth",
     core: true,
@@ -369,6 +377,16 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
     menu: {
       title: "Storage",
       path: "/storage",
+    },
+  },
+  {
+    name: "website",
+    core: true,
+    apiPath: "/",
+    menu: {
+      title: "Website",
+      path: "/builder/pages",
+      pageLabel: "Builder",
     },
   },
 ] as const;
@@ -553,7 +571,7 @@ export function buildPlatformNavItems(
           pageLabel: "Settings",
         },
         {
-          title: "Services",
+          title: "Plugins",
           url: "/services",
           icon: Server,
         },

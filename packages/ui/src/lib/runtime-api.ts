@@ -238,7 +238,15 @@ const fallbackConfig: RuntimeConfig = {
     assetRoot: "/assets",
   },
   services: [
-    { name: "dashboard", core: true, apiPath: "/" },
+    {
+      name: "dashboard",
+      core: true,
+      apiPath: "/",
+      menu: {
+        title: "Dashboard",
+        path: "/",
+      },
+    },
     {
       name: "auth",
       core: true,
@@ -278,6 +286,16 @@ const fallbackConfig: RuntimeConfig = {
       menu: {
         title: "Storage",
         path: "/storage",
+      },
+    },
+    {
+      name: "website",
+      core: true,
+      apiPath: "/",
+      menu: {
+        title: "Website",
+        path: "/builder/pages",
+        pageLabel: "Builder",
       },
     },
   ],

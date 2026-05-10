@@ -6,6 +6,8 @@ import {
   type ZelavisServerServiceMenuDefinition,
 } from "@zelavis/server";
 
+export const ZELAVIS_PLUGIN_V1 = "ZELAVIS_PLUGIN_V1" as const;
+export type ZelavisPluginContractVersion = typeof ZELAVIS_PLUGIN_V1;
 export type ZelavisPluginMenuDefinition = ZelavisServerServiceMenuDefinition;
 
 export interface ZelavisPluginDefinition<
@@ -13,6 +15,7 @@ export interface ZelavisPluginDefinition<
   TService = unknown,
 > {
   name: string;
+  contractVersion?: ZelavisPluginContractVersion;
   basePath?: string;
   api?: Record<string, readonly ZelavisServerRoute<TService>[]>;
   service?: TService;
@@ -26,6 +29,13 @@ export interface ZelavisPluginDefinition<
     | ZelavisPluginSetupResult
     | Promise<void | ZelavisPluginSetupResult>;
 }
+
+export type ZelavisPluginV1Definition<
+  TContext = unknown,
+  TService = unknown,
+> = ZelavisPluginDefinition<TContext, TService> & {
+  contractVersion?: typeof ZELAVIS_PLUGIN_V1;
+};
 
 export interface ZelavisPluginRegistryEntry<TContext = unknown> {
   plugin: Readonly<ZelavisPluginDefinition<TContext>>;
@@ -112,8 +122,8 @@ function freezeMenu(
   });
 }
 
-export function createPlugin<TContext = unknown>(
-  definition: ZelavisPluginDefinition<TContext>,
+export function definePlugin<TContext = unknown>(
+  definition: ZelavisPluginV1Definition<TContext>,
 ): Readonly<ZelavisPluginDefinition<TContext>> {
   if (!definition || typeof definition !== "object") {
     throw new TypeError("A plugin definition object is required.");
@@ -121,6 +131,16 @@ export function createPlugin<TContext = unknown>(
 
   if (!definition.name || typeof definition.name !== "string") {
     throw new TypeError("A plugin must include a string name.");
+  }
+
+  if (
+    "contractVersion" in definition &&
+    definition.contractVersion !== undefined &&
+    definition.contractVersion !== ZELAVIS_PLUGIN_V1
+  ) {
+    throw new TypeError(
+      `Unsupported plugin contract version. Expected ${ZELAVIS_PLUGIN_V1}.`,
+    );
   }
 
   if (
@@ -192,6 +212,7 @@ export function createPlugin<TContext = unknown>(
 
   return Object.freeze({
     ...normalized,
+    contractVersion: ZELAVIS_PLUGIN_V1,
     version: definition.version,
     setup: definition.setup,
   });
@@ -208,7 +229,7 @@ export function createPluginRegistry<TContext = unknown>(
         throw new TypeError("A plugin registry entry object is required.");
       }
 
-      const plugin = createPlugin(entry.plugin);
+      const plugin = definePlugin(entry.plugin);
 
       if (seen.has(plugin.name)) {
         throw new TypeError(
@@ -259,15 +280,15 @@ export function resolvePluginModule<TContext = unknown>(
   }
 
   if ("name" in module) {
-    return createPlugin(module as ZelavisPluginDefinition<TContext>);
+    return definePlugin(module as ZelavisPluginDefinition<TContext>);
   }
 
   if ("plugin" in module && module.plugin !== undefined) {
-    return createPlugin(module.plugin as ZelavisPluginDefinition<TContext>);
+    return definePlugin(module.plugin as ZelavisPluginDefinition<TContext>);
   }
 
   if ("default" in module && module.default !== undefined) {
-    return createPlugin(module.default as ZelavisPluginDefinition<TContext>);
+    return definePlugin(module.default as ZelavisPluginDefinition<TContext>);
   }
 
   throw new TypeError(

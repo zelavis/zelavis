@@ -77,7 +77,7 @@ function Settings() {
       <PageHeader
         eyebrow="Settings"
         title="Runtime Settings"
-        description="Root path, API version, and enabled core services."
+        description="Root path, API version, and enabled core plugins."
         actions={
           <Button
             type="submit"
@@ -103,7 +103,7 @@ function Settings() {
             detail={config?.configSource ?? 'checking'}
           />
           <DataRow
-            label="Core services"
+            label="Core plugins"
             detail={
               config?.services
                 .filter((service) => service.core)
@@ -189,13 +189,13 @@ function Settings() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Boxes className="size-4" />
-            Runtime Services
+            Runtime Plugins
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <DataRow
-            label="Mounted services"
-            detail="Inspect core runtime services and plugin-provided runtime services registered in this runtime."
+            label="Mounted plugins"
+            detail="Inspect core plugins and plugin-provided runtime pieces registered in this runtime."
             meta={
               <Link
                 to="/services"
