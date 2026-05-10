@@ -93,7 +93,7 @@ Plugin setup receives standard JavaScript data only:
 
 That keeps plugin setup runtime-neutral while still giving plugins enough context to register extra services.
 
-Use the lower-level `zelavis(...)` function only when you need internal runtime controls such as `coreServices`, direct `services`, or path/mount overrides.
+Use the lower-level `zelavis(...)` function only when you need internal runtime controls such as `coreServices`, direct `services`, or path/mount overrides. See [Advanced Runtime Composition](../../docs/guides/advanced-runtime-composition.md) for the focused version of that story.
 
 ## Usage
 

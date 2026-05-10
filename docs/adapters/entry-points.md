@@ -102,6 +102,8 @@ const server = nodeAdapter(runtime);
 
 Treat this layer as infrastructure-facing. It is the right tool for custom runtime assembly, but not the default recommendation for app code.
 
+For the high-level-vs-low-level split around `new Zelavis(...)` and `await zelavis(...)`, see [Advanced Runtime Composition](../guides/advanced-runtime-composition.md).
+
 ## When not to use an adapter
 
 If the host already speaks the standard Web `Request`/`Response` model, use `runtime.fetch(request)` directly instead of wrapping it in a framework adapter.

@@ -46,6 +46,8 @@ The lower-level `zelavis()` function still exists, but it now intentionally owns
 
 The `Zelavis` class is the safer product-facing entrypoint and does not accept those internal knobs.
 
+For the focused lower-level story, see [Advanced Runtime Composition](../guides/advanced-runtime-composition.md).
+
 ## Default behavior
 
 By default, Zelavis owns one safe namespace under `/zelavis` and includes dashboard, auth, database, and website core services.
