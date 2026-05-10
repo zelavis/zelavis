@@ -554,14 +554,17 @@ export interface ZelavisResolvedPlatformOptions
 export interface ZelavisPlatformPreset {
   name: string;
   resolve(
-    options: ZelavisConstructorOptions<any>,
+    options: ZelavisOptions<any>,
   ):
     | Promise<ZelavisResolvedPlatformOptions>
     | ZelavisResolvedPlatformOptions;
 }
 
-export interface ZelavisConstructorOptions<TAdapter extends object = object>
-  extends ZelavisServerOptions {
+export interface ZelavisOptions<TAdapter extends object = object> {
+  rootPath?: string;
+  api?: ZelavisApiOptions;
+  plugins?: ZelavisPluginRegistryOptions;
+  onError?: ZelavisServerErrorHandler;
   adapter?: ZelavisAdapterFactory<TAdapter>;
   platform?: ZelavisPlatformPreset | readonly ZelavisPlatformPreset[];
 }
@@ -592,6 +595,13 @@ const DEFAULT_PLATFORM_DASHBOARD_SETTINGS_KEY =
 const DEFAULT_PLATFORM_WEBSITE_PAGES_PATH = "zelavis/website-pages.json";
 const DEFAULT_PLATFORM_PLUGIN_REGISTRY_KEY = "zelavis/plugins.json";
 const STORAGE_CHECKSUM_METADATA_KEY = "checksum-sha256";
+const RESERVED_CORE_SERVICE_NAMES = new Set([
+  "auth",
+  "dashboard",
+  "database",
+  "storage",
+  "website",
+]);
 
 function readOptionalProcessEnv(name: string): string | undefined {
   const runtimeProcess = (
@@ -3063,6 +3073,7 @@ export async function zelavis(
     platform: createPluginSetupPlatformContext(options.pluginContext?.platform),
   });
   const pluginServices = await Promise.all(activatedPlugins.services);
+  assertNoReservedPluginServiceNames(pluginServices);
   const dashboardSettingsStore = resolveDashboardSettingsStore(
     options.coreServices?.dashboard,
     resolvedDatabaseApi
@@ -3145,6 +3156,43 @@ export async function zelavis(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function assertNoInternalConstructorOptions(
+  options: ZelavisOptions<any>,
+): void {
+  const raw = options as Record<string, unknown>;
+  const forbiddenKeys = [
+    "services",
+    "coreServices",
+    "pluginContext",
+    "servicePrefixes",
+    "pathOverrides",
+  ].filter((key) => raw[key] !== undefined);
+
+  if (forbiddenKeys.length === 0) {
+    return;
+  }
+
+  throw new TypeError(
+    `new Zelavis(...) does not accept internal runtime options (${forbiddenKeys.join(", ")}). Use zelavis(...) for low-level service composition.`,
+  );
+}
+
+function assertNoReservedPluginServiceNames(
+  services: readonly ZelavisServerService<any>[],
+): void {
+  const reserved = services
+    .map((service) => service.name)
+    .filter((name) => RESERVED_CORE_SERVICE_NAMES.has(name));
+
+  if (reserved.length === 0) {
+    return;
+  }
+
+  throw new TypeError(
+    `Plugins cannot register reserved core service names: ${reserved.join(", ")}.`,
+  );
 }
 
 function mergeMaybeRecord<TValue>(
@@ -3256,7 +3304,7 @@ function mergePlatformMetadata(
 }
 
 async function resolvePlatformState(
-  options: ZelavisConstructorOptions<any>,
+  options: ZelavisOptions<any>,
 ): Promise<{
   serverOptions: ZelavisServerOptions;
   context: ZelavisPlatformContext;
@@ -3370,7 +3418,7 @@ function applyPlatformResourceDefaults(
 
 export class Zelavis<TAdapter extends object = {}> {
   readonly adapter: TAdapter;
-  private readonly options: ZelavisConstructorOptions<TAdapter>;
+  private readonly options: ZelavisOptions<TAdapter>;
   private runtimePromise?: Promise<ZelavisServerRuntime<unknown>>;
   private resolvedPlatformContext: ZelavisPlatformContext = {
     presets: [],
@@ -3378,7 +3426,8 @@ export class Zelavis<TAdapter extends object = {}> {
     metadata: {},
   };
 
-  constructor(options: ZelavisConstructorOptions<TAdapter> = {}) {
+  constructor(options: ZelavisOptions<TAdapter> = {}) {
+    assertNoInternalConstructorOptions(options);
     this.options = options;
     this.adapter = options.adapter
       ? options.adapter.bind({

@@ -109,6 +109,8 @@ const response = await zelavis.fetch(
 );
 ```
 
+`new Zelavis(...)` is the guarded high-level entrypoint. It accepts app-facing options such as adapters, platforms, root path, plugin registry state, and error handling. Internal runtime knobs like `services`, `coreServices`, and path overrides stay on the lower-level `zelavis(...)` function.
+
 By default, Zelavis owns one safe namespace:
 
 ```txt
@@ -260,7 +262,9 @@ with your own storage. For the built-in Node file-backed store, import
 For local dashboard work, point Zelavis at the mounted dashboard base URL of a running UI dev server:
 
 ```ts
-new Zelavis({
+import { zelavis } from "zelavis";
+
+await zelavis({
   coreServices: {
     dashboard: {
       devServerUrl: "http://127.0.0.1:3001/zelavis",
@@ -275,7 +279,9 @@ server instead of serving the embedded built dashboard assets.
 The dashboard, auth, database, and website core services are included by default. The storage core service is enabled when Zelavis has a file storage resource to expose. Disable any of them when you need a smaller server or want to supply replacements:
 
 ```ts
-new Zelavis({
+import { zelavis } from "zelavis";
+
+await zelavis({
   coreServices: {
     auth: false,
     dashboard: false,
@@ -290,8 +296,9 @@ Configure the built-in auth service when the defaults are not enough:
 
 ```ts
 import { emailPasswordPlugin } from "@zelavis/auth-email-password";
+import { zelavis } from "zelavis";
 
-new Zelavis({
+await zelavis({
   coreServices: {
     auth: {
       authOptions: {
@@ -310,7 +317,9 @@ new Zelavis({
 Configure the built-in database service when the defaults are not enough:
 
 ```ts
-new Zelavis({
+import { zelavis } from "zelavis";
+
+await zelavis({
   coreServices: {
     database: {
       defaultTenantId: "acme",

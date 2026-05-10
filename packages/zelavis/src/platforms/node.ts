@@ -2,7 +2,7 @@ import { join, resolve } from "node:path";
 import { createBetterSqlite3DatabaseDriver } from "@zelavis/database-node-sqlite";
 import {
   createPlatform,
-  type ZelavisConstructorOptions,
+  type ZelavisOptions,
   type ZelavisPlatformPreset,
   type ZelavisResolvedPlatformOptions,
 } from "../index.js";
@@ -33,64 +33,8 @@ export interface NodePlatformOptions {
   };
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function normalizeDataDirectory(path: string | undefined): string {
   return resolve(path?.trim() ? path : ".zelavis");
-}
-
-function shouldConfigureDatabase(
-  options: ZelavisConstructorOptions<any>,
-): boolean {
-  return options.coreServices?.database !== false;
-}
-
-function shouldConfigureDashboard(
-  options: ZelavisConstructorOptions<any>,
-): boolean {
-  return options.coreServices?.dashboard !== false;
-}
-
-function mergeDatabaseCoreService(
-  existing: ZelavisConstructorOptions<any>["coreServices"] extends infer _T
-    ? unknown
-    : never,
-  next: Record<string, unknown>,
-) {
-  if (existing === undefined || existing === true) {
-    return next;
-  }
-
-  if (isObject(existing)) {
-    return {
-      ...next,
-      ...existing,
-    };
-  }
-
-  return existing;
-}
-
-function mergeDashboardCoreService(
-  existing: ZelavisConstructorOptions<any>["coreServices"] extends infer _T
-    ? unknown
-    : never,
-  next: Record<string, unknown>,
-) {
-  if (existing === undefined || existing === true) {
-    return next;
-  }
-
-  if (isObject(existing)) {
-    return {
-      ...next,
-      ...existing,
-    };
-  }
-
-  return existing;
 }
 
 export function nodePlatform(
@@ -99,45 +43,36 @@ export function nodePlatform(
   return createPlatform({
     name: "node",
     async resolve(
-      constructorOptions: ZelavisConstructorOptions<any>,
+      _constructorOptions: ZelavisOptions<any>,
     ): Promise<ZelavisResolvedPlatformOptions> {
       const dataDirectory = normalizeDataDirectory(options.dataDirectory);
       const nextCoreServices: Record<string, unknown> = {};
 
-      if (shouldConfigureDatabase(constructorOptions) && options.database !== false) {
+      if (options.database !== false) {
         const databaseOptions = options.database ?? {};
-        nextCoreServices.database = mergeDatabaseCoreService(
-          constructorOptions.coreServices?.database,
-          {
+        nextCoreServices.database = {
+          defaultTenantId: databaseOptions.defaultTenantId,
+          driver: createBetterSqlite3DatabaseDriver({
+            filename: databaseOptions.filename
+              ? resolve(databaseOptions.filename)
+              : join(dataDirectory, "zelavis.sqlite"),
+            readonly: databaseOptions.readonly,
+            fileMustExist: databaseOptions.fileMustExist,
             defaultTenantId: databaseOptions.defaultTenantId,
-            driver: createBetterSqlite3DatabaseDriver({
-              filename: databaseOptions.filename
-                ? resolve(databaseOptions.filename)
-                : join(dataDirectory, "zelavis.sqlite"),
-              readonly: databaseOptions.readonly,
-              fileMustExist: databaseOptions.fileMustExist,
-              defaultTenantId: databaseOptions.defaultTenantId,
-              pragma: databaseOptions.pragma,
-            }),
-          },
-        );
+            pragma: databaseOptions.pragma,
+          }),
+        };
       }
 
-      if (
-        shouldConfigureDashboard(constructorOptions) &&
-        options.dashboard !== false
-      ) {
+      if (options.dashboard !== false) {
         const dashboardOptions = options.dashboard ?? {};
-        nextCoreServices.dashboard = mergeDashboardCoreService(
-          constructorOptions.coreServices?.dashboard,
-          {
-            settingsStore: createFileDashboardSettingsStore(
-              dashboardOptions.settingsFile
-                ? resolve(dashboardOptions.settingsFile)
-                : join(dataDirectory, "dashboard-settings.json"),
-            ),
-          },
-        );
+        nextCoreServices.dashboard = {
+          settingsStore: createFileDashboardSettingsStore(
+            dashboardOptions.settingsFile
+              ? resolve(dashboardOptions.settingsFile)
+              : join(dataDirectory, "dashboard-settings.json"),
+          ),
+        };
       }
 
       return {

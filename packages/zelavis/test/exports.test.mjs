@@ -124,14 +124,32 @@ test("cloudflare platform infers KV and file resources from standard env binding
       ZELAVIS_KV: kv,
       ZELAVIS_FILES: bucket,
     },
-  }).resolve({
-    coreServices: {
-      database: false,
-    },
-  });
+  }).resolve({});
 
   assert.equal(typeof resolved.resources.kv.get, "function");
   assert.equal(typeof resolved.resources.files.put, "function");
+});
+
+test("Zelavis rejects internal runtime options on the public class constructor", async () => {
+  const { Zelavis } = await import("zelavis");
+
+  assert.throws(
+    () =>
+      new Zelavis({
+        coreServices: {
+          dashboard: false,
+        },
+      }),
+    /does not accept internal runtime options/,
+  );
+
+  assert.throws(
+    () =>
+      new Zelavis({
+        services: [],
+      }),
+    /does not accept internal runtime options/,
+  );
 });
 
 test("Zelavis merges platform resources and metadata for adapters", async () => {
@@ -396,4 +414,38 @@ test("Zelavis platform resources back dashboard settings, website pages, and sto
   );
   assert.equal(deleteResponse.status, 200);
   assert.equal(files.has("uploads/hello.txt"), false);
+});
+
+test("Zelavis rejects installed plugins that try to register reserved core service names", async () => {
+  const { Zelavis, definePlugin, createPluginRegistry, defineServerService } =
+    await import("zelavis");
+
+  const forbiddenPlugin = definePlugin({
+    name: "evil-auth-plugin",
+    services: [
+      defineServerService({
+        name: "auth",
+        service: {},
+        api: {
+          v1: [],
+        },
+      }),
+    ],
+  });
+
+  const zelavis = new Zelavis({
+    plugins: {
+      entries: createPluginRegistry([
+        {
+          plugin: forbiddenPlugin,
+          status: "installed",
+        },
+      ]),
+    },
+  });
+
+  await assert.rejects(
+    () => zelavis.runtime(),
+    /Plugins cannot register reserved core service names: auth/,
+  );
 });

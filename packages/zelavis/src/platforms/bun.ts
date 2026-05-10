@@ -1,7 +1,7 @@
 import { join, resolve } from "node:path";
 import {
   createPlatform,
-  type ZelavisConstructorOptions,
+  type ZelavisOptions,
   type ZelavisPlatformPreset,
   type ZelavisResolvedPlatformOptions,
 } from "../index.js";
@@ -35,30 +35,8 @@ export interface BunPlatformOptions {
   kv?: false | BunPlatformKeyValueOptions;
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function normalizeDataDirectory(path: string | undefined): string {
   return resolve(path?.trim() ? path : ".zelavis");
-}
-
-function mergeExisting(
-  existing: unknown,
-  next: Record<string, unknown>,
-): unknown {
-  if (existing === undefined || existing === true) {
-    return next;
-  }
-
-  if (isObject(existing)) {
-    return {
-      ...next,
-      ...existing,
-    };
-  }
-
-  return existing;
 }
 
 export function bunPlatform(
@@ -67,50 +45,38 @@ export function bunPlatform(
   return createPlatform({
     name: "bun",
     async resolve(
-      constructorOptions: ZelavisConstructorOptions<any>,
+      _constructorOptions: ZelavisOptions<any>,
     ): Promise<ZelavisResolvedPlatformOptions> {
       const dataDirectory = normalizeDataDirectory(options.dataDirectory);
       const nextCoreServices: Record<string, unknown> = {};
 
-      if (
-        constructorOptions.coreServices?.database !== false &&
-        options.database !== false
-      ) {
+      if (options.database !== false) {
         const { createBunSqliteDatabaseDriver } = await import(
           "@zelavis/database-bun-sqlite"
         );
         const databaseOptions = options.database ?? {};
-        nextCoreServices.database = mergeExisting(
-          constructorOptions.coreServices?.database,
-          {
+        nextCoreServices.database = {
+          defaultTenantId: databaseOptions.defaultTenantId,
+          driver: createBunSqliteDatabaseDriver({
+            filename: databaseOptions.filename
+              ? resolve(databaseOptions.filename)
+              : join(dataDirectory, "zelavis.sqlite"),
+            readonly: databaseOptions.readonly,
+            create: databaseOptions.create,
             defaultTenantId: databaseOptions.defaultTenantId,
-            driver: createBunSqliteDatabaseDriver({
-              filename: databaseOptions.filename
-                ? resolve(databaseOptions.filename)
-                : join(dataDirectory, "zelavis.sqlite"),
-              readonly: databaseOptions.readonly,
-              create: databaseOptions.create,
-              defaultTenantId: databaseOptions.defaultTenantId,
-            }),
-          },
-        );
+          }),
+        };
       }
 
-      if (
-        constructorOptions.coreServices?.dashboard !== false &&
-        options.dashboard !== false
-      ) {
+      if (options.dashboard !== false) {
         const dashboardOptions = options.dashboard ?? {};
-        nextCoreServices.dashboard = mergeExisting(
-          constructorOptions.coreServices?.dashboard,
-          {
-            settingsStore: createFileDashboardSettingsStore(
-              dashboardOptions.settingsFile
-                ? resolve(dashboardOptions.settingsFile)
-                : join(dataDirectory, "dashboard-settings.json"),
-            ),
-          },
-        );
+        nextCoreServices.dashboard = {
+          settingsStore: createFileDashboardSettingsStore(
+            dashboardOptions.settingsFile
+              ? resolve(dashboardOptions.settingsFile)
+              : join(dataDirectory, "dashboard-settings.json"),
+          ),
+        };
       }
 
       return {

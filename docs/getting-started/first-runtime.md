@@ -51,7 +51,9 @@ The website core service also mounts public website pages at `/`, while still re
 ## Disable built-in services when needed
 
 ```ts
-new Zelavis({
+import { zelavis } from "zelavis";
+
+await zelavis({
   coreServices: {
     auth: false,
     dashboard: false,

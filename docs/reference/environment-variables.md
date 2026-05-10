@@ -11,7 +11,9 @@ Used by the `zelavis` dashboard core service when you want dashboard requests to
 Equivalent code-level option:
 
 ```ts
-new Zelavis({
+import { zelavis } from "zelavis";
+
+await zelavis({
   coreServices: {
     dashboard: {
       devServerUrl: "http://127.0.0.1:3001/zelavis",

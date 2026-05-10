@@ -1,6 +1,6 @@
 import {
   createPlatform,
-  type ZelavisConstructorOptions,
+  type ZelavisOptions,
   type ZelavisFileStorage,
   type ZelavisFileStorageEntry,
   type ZelavisFileStorageObject,
@@ -179,15 +179,11 @@ export function vercelPlatform(
   return createPlatform({
     name: "vercel",
     async resolve(
-      constructorOptions: ZelavisConstructorOptions<any>,
+      _constructorOptions: ZelavisOptions<any>,
     ): Promise<ZelavisResolvedPlatformOptions> {
       const nextCoreServices: Record<string, unknown> = {};
 
-      if (
-        constructorOptions.coreServices?.database !== false &&
-        options.database !== false &&
-        options.database !== undefined
-      ) {
+      if (options.database !== false && options.database !== undefined) {
         nextCoreServices.database = options.database as Record<string, unknown>;
       }
 

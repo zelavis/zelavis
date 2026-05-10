@@ -1,6 +1,6 @@
 import {
   createPlatform,
-  type ZelavisConstructorOptions,
+  type ZelavisOptions,
   type ZelavisFileStorage,
   type ZelavisFileStorageEntry,
   type ZelavisFileStorageObject,
@@ -294,28 +294,6 @@ function createCloudflareFileStorage(bucket: CloudflareR2Bucket): ZelavisFileSto
   };
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function mergeExisting(
-  existing: unknown,
-  next: Record<string, unknown>,
-): unknown {
-  if (existing === undefined || existing === true) {
-    return next;
-  }
-
-  if (isObject(existing)) {
-    return {
-      ...next,
-      ...existing,
-    };
-  }
-
-  return existing;
-}
-
 function isD1Binding(value: unknown): value is CloudflareD1Binding {
   return (
     typeof value === "object" &&
@@ -426,28 +404,23 @@ export function cloudflarePlatform(
   return createPlatform({
     name: "cloudflare",
     async resolve(
-      constructorOptions: ZelavisConstructorOptions<any>,
+      _constructorOptions: ZelavisOptions<any>,
     ): Promise<ZelavisResolvedPlatformOptions> {
       const nextCoreServices: Record<string, unknown> = {};
       const databaseBinding = resolveDatabaseBinding(options);
       const kvOptions = resolveKvOption(options);
       const filesOptions = resolveFilesOption(options);
 
-      if (
-        constructorOptions.coreServices?.database !== false
-      ) {
+      {
         const { createCloudflareD1DatabaseDriver } = await import(
           "@zelavis/database-cloudflare-d1"
         );
-        nextCoreServices.database = mergeExisting(
-          constructorOptions.coreServices?.database,
-          {
-            defaultTenantId: options.defaultTenantId,
-            driver: createCloudflareD1DatabaseDriver({
-              database: databaseBinding,
-            }),
-          },
-        );
+        nextCoreServices.database = {
+          defaultTenantId: options.defaultTenantId,
+          driver: createCloudflareD1DatabaseDriver({
+            database: databaseBinding,
+          }),
+        };
       }
 
       return {
