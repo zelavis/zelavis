@@ -5,7 +5,7 @@ export interface EcommercePlugin {
   setup(api: EcommerceApi): void | Promise<void>;
 }
 
-export function definePlugin(plugin: EcommercePlugin): Readonly<EcommercePlugin> {
+export function defineEcommercePlugin(plugin: EcommercePlugin): Readonly<EcommercePlugin> {
   if (!plugin || typeof plugin !== "object") {
     throw new TypeError("A plugin definition object is required.");
   }

@@ -1,7 +1,7 @@
 import {
   type BillingSubscription,
   type CancelSubscriptionInput,
-  definePlugin,
+  defineEcommercePlugin,
   type CapturePaymentInput,
   type CreatePaymentInput,
   type CreateSubscriptionInput,
@@ -424,7 +424,7 @@ export function createStripePaymentProvider(options: StripePluginOptions = {}): 
 }
 
 export function stripePlugin(options: StripePluginOptions = {}) {
-  return definePlugin({
+  return defineEcommercePlugin({
     name: "stripe",
     setup(api) {
       api.payments.registerProvider("stripe", createStripePaymentProvider(options));

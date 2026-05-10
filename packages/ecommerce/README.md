@@ -22,7 +22,7 @@ This package is intended to sit below a storefront, admin panel, CMS plugin, or 
 ## Initial surface
 
 - `createEcommerce(options)`
-- `definePlugin(plugin)`
+- `defineEcommercePlugin(plugin)`
 - `@zelavis/ecommerce-stripe`
 - `CustomerService`
 - `CouponService`
@@ -33,11 +33,11 @@ This package is intended to sit below a storefront, admin panel, CMS plugin, or 
 
 The main plugin-definition entrypoint lives in
 [packages/ecommerce/src/ecommerce-plugin.ts](/Users/ivanjeremicx/Projects/zelavis/packages/ecommerce/src/ecommerce-plugin.ts),
-so package authors can immediately see the `definePlugin({ ... })` shape in one place.
+so package authors can immediately see the `defineEcommercePlugin({ ... })` shape in one place.
 
 Important boundary:
 
-- this `definePlugin(...)` is local to `@zelavis/ecommerce`
+- this `defineEcommercePlugin(...)` is local to `@zelavis/ecommerce`
 - it defines ecommerce provider plugins against `EcommerceApi`
 - it is not the high-level `zelavis` runtime plugin contract
 
@@ -46,9 +46,9 @@ That separation is intentional. `@zelavis/ecommerce` stays independently usable 
 ## Example
 
 ```ts
-import { createEcommerce, definePlugin } from "@zelavis/ecommerce";
+import { createEcommerce, defineEcommercePlugin } from "@zelavis/ecommerce";
 
-const stripePlugin = definePlugin({
+const stripePlugin = defineEcommercePlugin({
   name: "stripe",
   setup(api) {
     api.payments.registerProvider("stripe", {

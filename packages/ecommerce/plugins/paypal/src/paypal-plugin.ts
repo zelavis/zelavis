@@ -13,7 +13,7 @@ import {
 import {
   type BillingSubscription,
   type CancelSubscriptionInput,
-  definePlugin,
+  defineEcommercePlugin,
   type CapturePaymentInput,
   type CreatePaymentInput,
   type CreateSubscriptionInput,
@@ -697,7 +697,7 @@ export function createPayPalPaymentProvider(
 }
 
 export function paypalPlugin(options: PayPalPluginOptions = {}) {
-  return definePlugin({
+  return defineEcommercePlugin({
     name: "paypal",
     setup(api) {
       api.payments.registerProvider("paypal", createPayPalPaymentProvider(options));

@@ -89,17 +89,19 @@ It is the package's concrete service-definition entrypoint:
 - defines routes
 - composes nested services when needed
 
-## Rule 4: Use `definePlugin(...)` for plugin definitions
+## Rule 4: Use the package-appropriate plugin builder
 
-`definePlugin(...)` is the plugin-side equivalent.
+For runtime and marketplace plugins, use the high-level Zelavis `definePlugin(...)`.
+
+For lower-level domain packages, use a package-local builder when the package needs to stay independently usable.
 
 A package-level plugin definition file should look like this:
 
 ```ts
-import { definePlugin } from "@zelavis/ecommerce";
+import { defineEcommercePlugin } from "@zelavis/ecommerce";
 
 export function stripePlugin() {
-  return definePlugin({
+  return defineEcommercePlugin({
     name: "stripe",
     setup(api) {
       // register provider behavior
@@ -109,6 +111,20 @@ export function stripePlugin() {
 ```
 
 The named file should show the real plugin options and setup behavior immediately.
+
+Use the high-level Zelavis builder for official marketplace/runtime plugins:
+
+```ts
+import { definePlugin, ZELAVIS_PLUGIN_V1 } from "zelavis";
+
+export const zelavisEcommercePlugin = definePlugin({
+  name: "zelavis-ecommerce",
+  contractVersion: ZELAVIS_PLUGIN_V1,
+  setup(context) {
+    // register runtime-mounted services and plugin metadata
+  },
+});
+```
 
 ## Rule 5: Keep orchestration helpers only when they add real value
 
@@ -183,6 +199,7 @@ Prefer these names:
 - `defineAuthService(...)`
 - `defineDatabaseService(...)`
 - `definePlugin(...)`
+- `defineEcommercePlugin(...)`
 - `stripePlugin(...)`
 - `paypalPlugin(...)`
 
