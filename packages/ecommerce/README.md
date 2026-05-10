@@ -31,6 +31,10 @@ This package is intended to sit below a storefront, admin panel, CMS plugin, or 
 - `PaymentService`
 - `createInMemoryRepositories()`
 
+The main plugin-definition entrypoint lives in
+[packages/ecommerce/src/ecommerce-plugin.ts](/Users/ivanjeremicx/Projects/zelavis/packages/ecommerce/src/ecommerce-plugin.ts),
+so package authors can immediately see the `definePlugin({ ... })` shape in one place.
+
 ## Example
 
 ```ts

@@ -1,4 +1,4 @@
-import type { EcommerceApi } from "./types.js";
+import type { EcommerceApi } from "./core/types.js";
 
 export interface EcommercePlugin {
   name: string;

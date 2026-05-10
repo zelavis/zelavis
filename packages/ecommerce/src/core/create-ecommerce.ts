@@ -5,7 +5,7 @@ import { OrderService } from "../services/order-service.js";
 import { PaymentService } from "../services/payment-service.js";
 import { ProductService } from "../services/product-service.js";
 import { createInMemoryRepositories } from "../storage/in-memory.js";
-import type { EcommercePlugin } from "./define-plugin.js";
+import type { EcommercePlugin } from "../ecommerce-plugin.js";
 import type { EcommerceApi } from "./types.js";
 
 export interface CreateEcommerceOptions {
