@@ -253,6 +253,12 @@ function createDashboardServiceMenuItem(
   };
 }
 
+type DashboardServiceSurface = NonNullable<RuntimeServiceMenuDefinition["surface"]>;
+
+function getServiceMenuSurface(service: RuntimeService): DashboardServiceSurface {
+  return service.menu?.surface ?? "core";
+}
+
 export function buildDashboardPluginRegistryEntries(
   plugins?: readonly RuntimePluginRegistryEntry[],
 ): readonly DashboardWorkspacePluginItem[] {
@@ -320,6 +326,9 @@ export const dashboardPluginRegistryEntries =
 export function buildWorkspacePluginNavItems(
   plugins?: readonly RuntimePluginRegistryEntry[],
 ): readonly DashboardPluginMenuItem[] {
+  // Installable plugins intentionally get exactly one root workspace area.
+  // Any nested navigation must live under that one root item so first-slide
+  // ownership stays reserved for built-in product surfaces and core services.
   return buildDashboardPluginRegistryEntries(plugins)
     .filter((plugin) => plugin.status === "installed")
     .map((plugin) => plugin.menu);
@@ -398,11 +407,8 @@ export function buildPlatformNavItems(
   contentTypes?: readonly ContentTypeRow[],
 ): readonly DashboardNavItem[] {
   const pluginNavItems = buildWorkspacePluginNavItems(plugins);
-  const coreServiceNavItems = (services ?? [])
-    .filter(
-      (service) =>
-        service.core && service.name !== "dashboard" && service.name !== "website",
-    )
+  const serviceNavItems = (services ?? [])
+    .filter((service) => service.core && service.name !== "dashboard")
     .map((service) => {
       const baseMenu = service.menu
         ? createDashboardServiceMenuItem(service.menu, service.name)
@@ -412,51 +418,69 @@ export function buildPlatformNavItems(
           };
 
       if (service.name !== "database") {
-        return baseMenu;
+        return {
+          item: baseMenu,
+          surface: getServiceMenuSurface(service),
+        };
       }
 
       const systemTableItems =
         baseMenu.items?.find((item) => item.title === "System Tables")?.items ?? [];
 
       return {
-        ...baseMenu,
-        panelLabel: baseMenu.panelLabel ?? "Tables",
-        items: [
-          ...(databaseCollections && databaseCollections.length > 0
-            ? databaseCollections.map((collection) => ({
-                title: collection.name,
-                url: "/database" as const,
-                search: { table: collection.name },
-                icon: Database,
-                pageLabel: "Database",
-              }))
-            : [
-                {
-                  title: "Tables",
+        item: {
+          ...baseMenu,
+          panelLabel: baseMenu.panelLabel ?? "Tables",
+          items: [
+            ...(databaseCollections && databaseCollections.length > 0
+              ? databaseCollections.map((collection) => ({
+                  title: collection.name,
                   url: "/database" as const,
+                  search: { table: collection.name },
                   icon: Database,
                   pageLabel: "Database",
-                },
-              ]),
-          ...(systemTableItems.length > 0
-            ? [
-                {
-                  title: "System Tables",
-                  icon: Server,
-                  panelLabel: "System Tables",
-                  items: systemTableItems.map((item) => ({
-                    ...item,
+                }))
+              : [
+                  {
+                    title: "Tables",
                     url: "/database" as const,
-                    search: { systemTable: item.title as DashboardNavSearch["systemTable"] },
                     icon: Database,
                     pageLabel: "Database",
-                  })),
-                },
-              ]
-            : []),
-        ],
+                  },
+                ]),
+            ...(systemTableItems.length > 0
+              ? [
+                  {
+                    title: "System Tables",
+                    icon: Server,
+                    panelLabel: "System Tables",
+                    items: systemTableItems.map((item) => ({
+                      ...item,
+                      url: "/database" as const,
+                      search: { systemTable: item.title as DashboardNavSearch["systemTable"] },
+                      icon: Database,
+                      pageLabel: "Database",
+                    })),
+                  },
+                ]
+              : []),
+          ],
+        },
+        surface: getServiceMenuSurface(service),
       };
     });
+  const rootServiceNavItems = serviceNavItems
+    .filter((entry) => entry.surface === "root")
+    .map((entry) => entry.item);
+  const coreServiceNavItems = serviceNavItems
+    .filter((entry) => entry.surface === "core" && entry.item.title !== "Website")
+    .map((entry) => entry.item);
+  const workspaceServiceNavItems = serviceNavItems
+    .filter((entry) => entry.surface === "workspace")
+    .map((entry) => entry.item);
+  const settingsServiceNavItems = serviceNavItems
+    .filter((entry) => entry.surface === "settings")
+    .map((entry) => entry.item);
   const contentItems: readonly DashboardNavItem[] = [
     {
       title: "All Content Types",
@@ -526,6 +550,7 @@ export function buildPlatformNavItems(
       icon: Files,
       pageLabel: "Media",
     },
+    ...rootServiceNavItems,
     {
       title: "Marketplace",
       url: "/marketplace",
@@ -557,6 +582,7 @@ export function buildPlatformNavItems(
             },
           ],
         },
+        ...workspaceServiceNavItems,
         ...pluginNavItems,
       ],
     },
@@ -580,6 +606,7 @@ export function buildPlatformNavItems(
           url: "/settings/appearance",
           icon: Paintbrush,
         },
+        ...settingsServiceNavItems,
       ],
     },
   ] as const;

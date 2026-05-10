@@ -2340,6 +2340,7 @@ async function resolveDashboardCoreService(
     menu: {
       title: "Dashboard",
       path: "/",
+      surface: "root",
     },
     service: {
       title,
@@ -2767,6 +2768,7 @@ async function resolveStorageCoreService(
     menu: {
       title: "Storage",
       path: "/storage",
+      surface: "core",
     },
     service: {
       storage,

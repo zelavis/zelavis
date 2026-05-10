@@ -223,6 +223,7 @@ export function createDatabaseServerService(
     basePath: "database",
     menu: {
       title: "Database",
+      surface: "core",
       panelLabel: "Tables",
       items: [
         {

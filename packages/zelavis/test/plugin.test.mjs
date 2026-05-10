@@ -73,6 +73,19 @@ test("definePlugin validates required plugin fields", () => {
       }),
     /Unsupported plugin contract version/,
   );
+
+  assert.throws(
+    () =>
+      definePlugin({
+        name: "surface-plugin",
+        menu: {
+          title: "Surface",
+          path: "/surface",
+          surface: "root",
+        },
+      }),
+    /cannot declare a dashboard surface/,
+  );
 });
 
 test("createPluginRegistry normalizes plugin registry entries", () => {

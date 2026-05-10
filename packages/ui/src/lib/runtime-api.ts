@@ -3,6 +3,7 @@ export interface RuntimeServiceMenuDefinition {
   path?: string;
   pageLabel?: string;
   panelLabel?: string;
+  surface?: "root" | "core" | "workspace" | "settings";
   items?: readonly RuntimeServiceMenuDefinition[];
 }
 
@@ -245,6 +246,7 @@ const fallbackConfig: RuntimeConfig = {
       menu: {
         title: "Dashboard",
         path: "/",
+        surface: "root",
       },
     },
     {
@@ -254,6 +256,7 @@ const fallbackConfig: RuntimeConfig = {
       menu: {
         title: "Auth",
         path: "/auth",
+        surface: "core",
       },
     },
     {
@@ -262,6 +265,7 @@ const fallbackConfig: RuntimeConfig = {
       apiPath: "/api/v1/database",
       menu: {
         title: "Database",
+        surface: "core",
         panelLabel: "Tables",
         items: [
           {
@@ -286,6 +290,7 @@ const fallbackConfig: RuntimeConfig = {
       menu: {
         title: "Storage",
         path: "/storage",
+        surface: "core",
       },
     },
     {

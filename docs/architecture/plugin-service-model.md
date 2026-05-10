@@ -42,6 +42,8 @@ The dashboard should reflect that split:
 - Each installed plugin gets exactly one root entry under `Workspace`.
 - Each plugin may own unlimited nested sidebar slides inside its own workspace area.
 - Plugin-owned dashboard navigation should be declared through a plain menu object such as `menu: { ... }`, not by reaching into sidebar internals directly.
+- Core services may declare a service-only menu `surface` such as `root`, `core`, `workspace`, or `settings`.
+- Plugin menus must not declare a `surface`; Zelavis always mounts them under `Workspace`.
 
 This keeps the first slide stable and prevents dashboard sprawl.
 

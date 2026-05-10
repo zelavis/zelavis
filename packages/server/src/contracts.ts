@@ -32,6 +32,7 @@ export interface ZelavisServerServiceMenuDefinition {
   path?: string;
   pageLabel?: string;
   panelLabel?: string;
+  surface?: "root" | "core" | "workspace" | "settings";
   items?: readonly ZelavisServerServiceMenuDefinition[];
 }
 

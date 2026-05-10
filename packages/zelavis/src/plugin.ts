@@ -8,7 +8,12 @@ import {
 
 export const ZELAVIS_PLUGIN_V1 = "ZELAVIS_PLUGIN_V1" as const;
 export type ZelavisPluginContractVersion = typeof ZELAVIS_PLUGIN_V1;
-export type ZelavisPluginMenuDefinition = ZelavisServerServiceMenuDefinition;
+export type ZelavisPluginMenuDefinition = Omit<
+  ZelavisServerServiceMenuDefinition,
+  "surface" | "items"
+> & {
+  items?: readonly ZelavisPluginMenuDefinition[];
+};
 
 export interface ZelavisPluginDefinition<
   TContext = unknown,
@@ -122,6 +127,19 @@ function freezeMenu(
   });
 }
 
+function validatePluginMenu(
+  menu: ZelavisPluginMenuDefinition,
+  path = menu.title,
+): void {
+  if ("surface" in menu) {
+    throw new TypeError(
+      `Plugin menu metadata for "${path}" cannot declare a dashboard surface. Installed plugins always mount under Workspace.`,
+    );
+  }
+
+  menu.items?.forEach((item) => validatePluginMenu(item, `${path} > ${item.title}`));
+}
+
 export function definePlugin<TContext = unknown>(
   definition: ZelavisPluginV1Definition<TContext>,
 ): Readonly<ZelavisPluginDefinition<TContext>> {
@@ -181,6 +199,8 @@ export function definePlugin<TContext = unknown>(
         "Plugin menu metadata must include a path or nested items.",
       );
     }
+
+    validatePluginMenu(definition.menu);
   }
 
   if (

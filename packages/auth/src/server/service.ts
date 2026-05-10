@@ -38,6 +38,7 @@ export function createAuthServerService(auth: AuthApi): ZelavisServerService<Aut
     menu: {
       title: "Auth",
       path: "/auth",
+      surface: "core",
     },
     service: auth,
     api: {
