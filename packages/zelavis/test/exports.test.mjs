@@ -328,6 +328,94 @@ test("Zelavis platform resources back dashboard settings, website pages, and sto
     fileStorage: true,
   });
 
+  const createCustomerResponse = await zelavis.fetch(
+    new Request("http://localhost/zelavis/api/v1/commerce/customers", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        email: "shopper@example.com",
+        firstName: "Shop",
+        lastName: "Per",
+      }),
+    }),
+  );
+  const createdCustomer = await createCustomerResponse.json();
+
+  assert.equal(createCustomerResponse.status, 201);
+  assert.equal(createdCustomer.email, "shopper@example.com");
+  assert.equal(typeof createdCustomer.id, "string");
+
+  const createProductResponse = await zelavis.fetch(
+    new Request("http://localhost/zelavis/api/v1/commerce/products", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        title: "Starter Hoodie",
+        price: {
+          amount: 5900,
+          currency: "USD",
+        },
+      }),
+    }),
+  );
+  const createdProduct = await createProductResponse.json();
+
+  assert.equal(createProductResponse.status, 201);
+  assert.equal(createdProduct.title, "Starter Hoodie");
+  assert.equal(createdProduct.slug, "starter-hoodie");
+
+  const listProductsResponse = await zelavis.fetch(
+    new Request("http://localhost/zelavis/api/v1/commerce/products"),
+  );
+  const listedProducts = await listProductsResponse.json();
+
+  assert.equal(listProductsResponse.status, 200);
+  assert.equal(listedProducts.length, 1);
+  assert.equal(listedProducts[0].id, createdProduct.id);
+
+  const createOrderResponse = await zelavis.fetch(
+    new Request("http://localhost/zelavis/api/v1/commerce/orders", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        customerId: createdCustomer.id,
+        items: [
+          {
+            productId: createdProduct.id,
+            quantity: 2,
+            unitPrice: 5900,
+          },
+        ],
+        totals: {
+          subtotal: 11800,
+          discountTotal: 0,
+          taxTotal: 0,
+          grandTotal: 11800,
+          currency: "USD",
+        },
+      }),
+    }),
+  );
+  const createdOrder = await createOrderResponse.json();
+
+  assert.equal(createOrderResponse.status, 201);
+  assert.equal(createdOrder.customerId, createdCustomer.id);
+  assert.equal(createdOrder.items.length, 1);
+
+  const listPaymentProvidersResponse = await zelavis.fetch(
+    new Request("http://localhost/zelavis/api/v1/commerce/payments/providers"),
+  );
+  const paymentProviders = await listPaymentProvidersResponse.json();
+
+  assert.equal(listPaymentProvidersResponse.status, 200);
+  assert.deepEqual(paymentProviders.providers, []);
+
   const updateResponse = await zelavis.fetch(
     new Request("http://localhost/zelavis/api/v1/dashboard/settings", {
       method: "PATCH",
