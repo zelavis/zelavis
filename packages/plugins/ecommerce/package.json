@@ -35,6 +35,7 @@
     "url": "https://github.com/zelavis/zelavis/issues"
   },
   "dependencies": {
+    "@zelavis/database": "workspace:*",
     "@zelavis/server": "workspace:*"
   },
   "peerDependencies": {

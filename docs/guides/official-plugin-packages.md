@@ -43,6 +43,7 @@ An official plugin package may still have its own lower-level extension system i
   - `zelavisEcommercePlugin`
 - lower-level child/provider plugin contract:
   - `defineEcommercePlugin(...)`
+  - child plugins explicitly target the `payments` extension point of `zelavis-ecommerce`
 
 That lower-level contract is for extending the ecommerce domain itself, such as payment providers. It is not the same as a top-level marketplace plugin.
 

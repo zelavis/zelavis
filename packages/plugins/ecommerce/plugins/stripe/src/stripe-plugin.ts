@@ -426,6 +426,7 @@ export function createStripePaymentProvider(options: StripePluginOptions = {}): 
 export function stripePlugin(options: StripePluginOptions = {}) {
   return defineEcommercePlugin({
     name: "stripe",
+    extensionPoint: "payments",
     setup(api) {
       api.payments.registerProvider("stripe", createStripePaymentProvider(options));
     },

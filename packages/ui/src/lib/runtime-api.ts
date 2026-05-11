@@ -102,6 +102,102 @@ export interface WebsitePage {
   description?: string;
 }
 
+export interface CommerceCustomer {
+  id: string;
+  accountId?: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CommerceCoupon {
+  code: string;
+  description?: string;
+  discountType: "percentage" | "fixed";
+  discountValue: number;
+  active: boolean;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CommerceProduct {
+  id: string;
+  slug: string;
+  title: string;
+  description?: string;
+  price: {
+    amount: number;
+    currency: string;
+  };
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CommerceOrder {
+  id: string;
+  customerId: string;
+  items: Array<{
+    productId: string;
+    quantity: number;
+    unitPrice: number;
+  }>;
+  couponCodes: string[];
+  status: "draft" | "pending" | "paid" | "cancelled" | "fulfilled";
+  totals: {
+    subtotal: number;
+    discountTotal: number;
+    taxTotal: number;
+    grandTotal: number;
+    currency: string;
+  };
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CommercePaymentAttempt {
+  id: string;
+  orderId: string;
+  provider: string;
+  amount: number;
+  currency: string;
+  status: "requires_action" | "authorized" | "captured" | "failed" | "refunded";
+  reference?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CommerceSubscription {
+  id: string;
+  customerId: string;
+  provider: string;
+  amount: number;
+  currency: string;
+  interval: "day" | "week" | "month" | "year";
+  intervalCount: number;
+  status: "pending" | "active" | "past_due" | "cancelled" | "expired" | "failed";
+  cancelAtPeriodEnd: boolean;
+  currentPeriodStart?: string;
+  currentPeriodEnd?: string;
+  reference?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CommerceProvider {
+  name: string;
+  extensionPoint: "payments";
+  targetPlugin: "zelavis-ecommerce";
+  childPlugin: boolean;
+}
+
 export interface StorageFile {
   path: string;
   size?: number;
@@ -742,6 +838,105 @@ export async function getDatabaseHealth(config: RuntimeConfig) {
 
 export async function listAuthProviders(config: RuntimeConfig) {
   return readJson<string[]>(`${config.api.basePath}/auth/providers`);
+}
+
+export async function listCommerceProducts(config: RuntimeConfig) {
+  return readJson<CommerceProduct[]>(`${config.api.basePath}/commerce/products`);
+}
+
+export async function createCommerceProduct(
+  config: RuntimeConfig,
+  input: {
+    title: string;
+    slug?: string;
+    description?: string;
+    price: {
+      amount: number;
+      currency: string;
+    };
+  },
+) {
+  return readJson<CommerceProduct>(`${config.api.basePath}/commerce/products`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function listCommerceCustomers(config: RuntimeConfig) {
+  return readJson<CommerceCustomer[]>(`${config.api.basePath}/commerce/customers`);
+}
+
+export async function createCommerceCustomer(
+  config: RuntimeConfig,
+  input: {
+    email: string;
+    firstName?: string;
+    lastName?: string;
+    accountId?: string;
+  },
+) {
+  return readJson<CommerceCustomer>(`${config.api.basePath}/commerce/customers`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function listCommerceCoupons(config: RuntimeConfig) {
+  return readJson<CommerceCoupon[]>(`${config.api.basePath}/commerce/coupons`);
+}
+
+export async function createCommerceCoupon(
+  config: RuntimeConfig,
+  input: {
+    code: string;
+    description?: string;
+    discountType: "percentage" | "fixed";
+    discountValue: number;
+    active?: boolean;
+  },
+) {
+  return readJson<CommerceCoupon>(`${config.api.basePath}/commerce/coupons`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function listCommerceOrders(config: RuntimeConfig) {
+  return readJson<CommerceOrder[]>(`${config.api.basePath}/commerce/orders`);
+}
+
+export async function createCommerceOrder(
+  config: RuntimeConfig,
+  input: {
+    customerId: string;
+    items: CommerceOrder["items"];
+    couponCodes?: string[];
+    totals: CommerceOrder["totals"];
+  },
+) {
+  return readJson<CommerceOrder>(`${config.api.basePath}/commerce/orders`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function listCommerceProviders(config: RuntimeConfig) {
+  const result = await readJson<{ providers: CommerceProvider[] }>(
+    `${config.api.basePath}/commerce/payments/providers`,
+  );
+  return result.providers;
+}
+
+export async function listCommercePaymentAttempts(config: RuntimeConfig) {
+  return readJson<CommercePaymentAttempt[]>(
+    `${config.api.basePath}/commerce/payments/attempts`,
+  );
+}
+
+export async function listCommerceSubscriptions(config: RuntimeConfig) {
+  return readJson<CommerceSubscription[]>(
+    `${config.api.basePath}/commerce/subscriptions`,
+  );
 }
 
 export async function listDatabaseCollections(config: RuntimeConfig) {

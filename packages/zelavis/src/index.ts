@@ -3011,6 +3011,9 @@ export async function zelavis(
       basePath: joinPathParts(rootPath, apiPrefix, apiVersion),
     },
     platform: createPluginSetupPlatformContext(options.pluginContext?.platform),
+    core: {
+      ...(resolvedDatabaseApi ? { database: resolvedDatabaseApi } : {}),
+    },
   });
   const pluginServices = await Promise.all(activatedPlugins.services);
   assertNoReservedPluginServiceNames(pluginServices);

@@ -347,6 +347,7 @@ test("activatePluginRegistry runs installed plugins in order and collects servic
       version: "v1",
       basePath: "/zelavis/api/v1",
     },
+    core: {},
     platform: {
       presets: ["node"],
       resources: {
@@ -389,6 +390,7 @@ test("activatePluginRegistry exposes standard platform context to plugin setup",
       version: "v1",
       basePath: "/zelavis/api/v1",
     },
+    core: {},
     platform: {
       presets: ["cloudflare", "d1"],
       resources: {

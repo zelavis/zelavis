@@ -226,8 +226,9 @@ test("Zelavis merges platform resources and metadata for adapters", async () => 
   assert.equal(capturedPlatform, snapshot);
 });
 
-test("Zelavis platform resources back dashboard settings, website pages, and storage service", async () => {
-  const { Zelavis, createPlatform } = await import("zelavis");
+test("Zelavis platform resources back dashboard settings, website pages, storage service, and ecommerce persistence", async () => {
+  const { Zelavis, createPlatform, createDatabase, zelavis: createZelavis } =
+    await import("zelavis");
 
   const kv = new Map();
   const files = new Map();
@@ -415,6 +416,78 @@ test("Zelavis platform resources back dashboard settings, website pages, and sto
 
   assert.equal(listPaymentProvidersResponse.status, 200);
   assert.deepEqual(paymentProviders.providers, []);
+
+  const databaseBacked = await createDatabase();
+  const firstRuntime = await createZelavis({
+    coreServices: {
+      database: databaseBacked,
+    },
+    plugins: {
+      store: {
+        read() {
+          return [
+            {
+              name: "zelavis-ecommerce",
+              status: "installed",
+              order: 0,
+            },
+          ];
+        },
+        write(entries) {
+          return entries;
+        },
+      },
+    },
+  });
+
+  const persistedProductResponse = await firstRuntime.fetch(
+    new Request("http://localhost/zelavis/api/v1/commerce/products", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        title: "Persisted Mug",
+        price: {
+          amount: 2400,
+          currency: "USD",
+        },
+      }),
+    }),
+  );
+
+  assert.equal(persistedProductResponse.status, 201);
+
+  const secondRuntime = await createZelavis({
+    coreServices: {
+      database: databaseBacked,
+    },
+    plugins: {
+      store: {
+        read() {
+          return [
+            {
+              name: "zelavis-ecommerce",
+              status: "installed",
+              order: 0,
+            },
+          ];
+        },
+        write(entries) {
+          return entries;
+        },
+      },
+    },
+  });
+
+  const persistedProductListResponse = await secondRuntime.fetch(
+    new Request("http://localhost/zelavis/api/v1/commerce/products"),
+  );
+  const persistedProducts = await persistedProductListResponse.json();
+
+  assert.equal(persistedProductListResponse.status, 200);
+  assert.equal(persistedProducts.length, 1);
+  assert.equal(persistedProducts[0].title, "Persisted Mug");
 
   const updateResponse = await zelavis.fetch(
     new Request("http://localhost/zelavis/api/v1/dashboard/settings", {

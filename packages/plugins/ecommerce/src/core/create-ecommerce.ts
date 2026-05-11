@@ -4,7 +4,7 @@ import { CustomerService } from "../services/customer-service.js";
 import { OrderService } from "../services/order-service.js";
 import { PaymentService } from "../services/payment-service.js";
 import { ProductService } from "../services/product-service.js";
-import { createInMemoryRepositories } from "../storage/in-memory.js";
+import { createInMemoryEcommerceRepositories } from "../repositories/in-memory.js";
 import type { EcommercePlugin } from "../ecommerce-plugin.js";
 import type { EcommerceApi } from "./types.js";
 
@@ -15,7 +15,7 @@ export interface CreateEcommerceOptions {
 }
 
 export async function createEcommerce(options: CreateEcommerceOptions = {}): Promise<EcommerceApi> {
-  const repositories = createInMemoryRepositories(options.repositories);
+  const repositories = createInMemoryEcommerceRepositories(options.repositories);
   const customers = new CustomerService(repositories.customers);
   const coupons = new CouponService(repositories.coupons);
   const products = new ProductService(repositories.products);
@@ -28,6 +28,7 @@ export async function createEcommerce(options: CreateEcommerceOptions = {}): Pro
   const api: EcommerceApi = {
     context: {
       config: options.config ?? {},
+      childPlugins: Object.freeze([...(options.plugins ?? [])]),
     },
     repositories,
     customers,

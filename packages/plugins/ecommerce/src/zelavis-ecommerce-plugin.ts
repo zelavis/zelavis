@@ -9,11 +9,13 @@ import {
   type ZelavisPluginSetupContext,
 } from "zelavis/plugin";
 import { createEcommerce } from "./core/create-ecommerce.js";
+import { createDatabaseEcommerceRepositories } from "./repositories/database.js";
 import type {
   Coupon,
   Order,
   Product,
 } from "./domain/entities.js";
+import type { DatabaseApi } from "@zelavis/database";
 import type { CreateCouponInput } from "./services/coupon-service.js";
 import type { CreateCustomerInput } from "./services/customer-service.js";
 import type { CreateOrderInput } from "./services/order-service.js";
@@ -112,6 +114,16 @@ function createCommerceErrorResponse(error: unknown, fallback = 400) {
 
 function createNotFoundResponse(label: string, value: string) {
   return createJsonErrorResponse(404, new Error(`${label} ${value} was not found.`));
+}
+
+function isDatabaseApi(value: unknown): value is DatabaseApi {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "documents" in value &&
+      "schemas" in value &&
+      "events" in value,
+  );
 }
 
 function parseProductInput(body: unknown): CreateProductInput {
@@ -317,7 +329,11 @@ export const zelavisEcommercePlugin = definePlugin<ZelavisPluginSetupContext>({
     ],
   },
   async setup(context) {
-    const commerce = await createEcommerce();
+    const commerce = await createEcommerce({
+      repositories: isDatabaseApi(context.core.database)
+        ? createDatabaseEcommerceRepositories(context.core.database)
+        : undefined,
+    });
 
     return {
       services: [
@@ -515,7 +531,18 @@ export const zelavisEcommercePlugin = definePlugin<ZelavisPluginSetupContext>({
                 handler: ({ service }) => ({
                   status: 200,
                   body: {
-                    providers: service.payments.listProviders(),
+                    providers: service.payments.listProviders().map((name) => {
+                      const childPlugin = service.context.childPlugins.find(
+                        (plugin) => plugin.name === name,
+                      );
+
+                      return {
+                        name,
+                        extensionPoint: childPlugin?.extensionPoint ?? "payments",
+                        targetPlugin: childPlugin?.targetPlugin ?? "zelavis-ecommerce",
+                        childPlugin: childPlugin?.childPlugin ?? true,
+                      };
+                    }),
                   },
                 }),
               },

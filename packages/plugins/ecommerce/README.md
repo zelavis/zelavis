@@ -16,6 +16,7 @@ There is no separate old ecommerce base package anymore.
 - [packages/plugins/ecommerce/src/zelavis-ecommerce-plugin.ts](/Users/ivanjeremicx/Projects/zelavis/packages/plugins/ecommerce/src/zelavis-ecommerce-plugin.ts)
 - [packages/plugins/ecommerce/src/core/create-ecommerce.ts](/Users/ivanjeremicx/Projects/zelavis/packages/plugins/ecommerce/src/core/create-ecommerce.ts)
 - [packages/plugins/ecommerce/src/ecommerce-plugin.ts](/Users/ivanjeremicx/Projects/zelavis/packages/plugins/ecommerce/src/ecommerce-plugin.ts)
+- [packages/plugins/ecommerce/src/repositories/database.ts](/Users/ivanjeremicx/Projects/zelavis/packages/plugins/ecommerce/src/repositories/database.ts)
 
 ## Usage
 
@@ -35,6 +36,7 @@ import {
   - appears in the dashboard/plugin system
 - `createEcommerce(...)`
   - the low-level commerce API for direct programmatic use
+  - defaults to in-memory repositories unless you provide your own repositories
 - `defineEcommercePlugin(...)`
   - lower-level child/provider plugin contract for extending the commerce API
   - used by payment providers such as Stripe and PayPal
@@ -49,6 +51,7 @@ There are two plugin layers here on purpose:
 2. `defineEcommercePlugin(...)` from `@zelavis/ecommerce`
    - lower-level commerce provider plugins
    - examples: Stripe and PayPal payment providers
+   - explicit child-plugin contract targeting the `payments` extension point of `zelavis-ecommerce`
 
 That means `@zelavis/ecommerce` is both:
 
@@ -56,6 +59,22 @@ That means `@zelavis/ecommerce` is both:
 - the home for its child provider plugin system
 
 The provider layer extends the ecommerce domain API. It is not the same thing as a top-level Zelavis marketplace plugin.
+
+## Persistence
+
+The official runtime plugin persists through Zelavis primitives when they are available:
+
+- if Zelavis database core is enabled, `zelavisEcommercePlugin` stores commerce entities in Zelavis database collections
+- if no database core is enabled, the low-level `createEcommerce(...)` API falls back to in-memory repositories
+
+The current database-backed collections are:
+
+- `commerce_products`
+- `commerce_customers`
+- `commerce_orders`
+- `commerce_coupons`
+- `commerce_payment_attempts`
+- `commerce_subscriptions`
 
 ## Runtime routes
 

@@ -22,6 +22,13 @@ Sometimes yes, but not always in the same way.
 - Ecommerce provider plugins extend the ecommerce API surface through plugin registration.
 - Installable dashboard/runtime features may eventually expose one runtime-mounted service as part of how the plugin is activated.
 
+That lower-level provider layer benefits from explicit extension points.
+
+Current example:
+
+- `zelavis-ecommerce` is the top-level marketplace/runtime plugin
+- payment providers such as Stripe or PayPal are child plugins targeting the ecommerce `payments` extension point
+
 So the safe model is:
 
 > A plugin may register or compose one or more internal services, but the plugin itself is the user-facing extension unit.

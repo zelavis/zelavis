@@ -385,6 +385,9 @@ importers:
 
   packages/plugins/ecommerce:
     dependencies:
+      '@zelavis/database':
+        specifier: workspace:*
+        version: link:../../database
       '@zelavis/server':
         specifier: workspace:*
         version: link:../../server

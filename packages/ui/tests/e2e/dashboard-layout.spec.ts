@@ -491,7 +491,7 @@ test('desktop sidebar collapses to a rail and expands content', async ({
   expect(collapsedHeader?.x).toBeLessThan(expandedHeader?.x ?? 0)
 })
 
-test('services are reachable from the settings area', async ({
+test('plugins are reachable from the settings area', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
@@ -499,13 +499,13 @@ test('services are reachable from the settings area', async ({
   await gotoDashboard(page, '/settings')
 
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
-  await expect(sidebar.getByRole('link', { name: 'Services', exact: true })).toBeVisible()
+  await expect(sidebar.getByRole('link', { name: 'Plugins', exact: true })).toBeVisible()
   await page
     .locator('[data-slot="card"]')
-    .filter({ hasText: 'Runtime Services' })
+    .filter({ hasText: 'Runtime Plugins' })
     .getByRole('link', { name: 'Open' })
     .click()
-  await expect(page.getByRole('heading', { name: 'Runtime services' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Runtime plugins' })).toBeVisible()
   await expect(page).toHaveURL(/\/services$/)
 })
 

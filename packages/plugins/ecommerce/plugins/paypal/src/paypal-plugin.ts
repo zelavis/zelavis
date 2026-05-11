@@ -699,6 +699,7 @@ export function createPayPalPaymentProvider(
 export function paypalPlugin(options: PayPalPluginOptions = {}) {
   return defineEcommercePlugin({
     name: "paypal",
+    extensionPoint: "payments",
     setup(api) {
       api.payments.registerProvider("paypal", createPayPalPaymentProvider(options));
     },

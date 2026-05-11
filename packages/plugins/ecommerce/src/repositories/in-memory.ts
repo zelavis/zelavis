@@ -4,8 +4,8 @@ import type {
   EcommerceRepositories,
   OrderRepository,
   PaymentAttemptRepository,
-  SubscriptionRepository,
   ProductRepository,
+  SubscriptionRepository,
 } from "../contracts/repositories.js";
 import type {
   BillingSubscription,
@@ -148,7 +148,7 @@ class InMemorySubscriptionRepository implements SubscriptionRepository {
   }
 }
 
-export function createInMemoryRepositories(
+export function createInMemoryEcommerceRepositories(
   overrides: Partial<EcommerceRepositories> = {},
 ): EcommerceRepositories {
   return {

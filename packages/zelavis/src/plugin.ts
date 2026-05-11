@@ -107,12 +107,17 @@ export interface ZelavisPluginSetupPlatformContext {
   metadata: Readonly<Record<string, unknown>>;
 }
 
+export interface ZelavisPluginSetupCoreContext {
+  database?: unknown;
+}
+
 export interface ZelavisPluginSetupContext {
   plugin: Readonly<ZelavisPluginDefinition<ZelavisPluginSetupContext>>;
   registry: readonly Readonly<ZelavisPluginRegistryEntry<ZelavisPluginSetupContext>>[];
   rootPath: string;
   api: ZelavisPluginSetupApiContext;
   platform: ZelavisPluginSetupPlatformContext;
+  core: ZelavisPluginSetupCoreContext;
   services: readonly ZelavisAnyServiceInput[];
   addService: (service: ZelavisAnyServiceInput) => void;
   addServices: (services: readonly ZelavisAnyServiceInput[]) => void;
