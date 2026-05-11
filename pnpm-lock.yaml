@@ -383,67 +383,6 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/ecommerce:
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
-  packages/ecommerce/adapters/express:
-    dependencies:
-      '@zelavis/ecommerce':
-        specifier: workspace:*
-        version: link:../..
-    devDependencies:
-      '@types/express':
-        specifier: ^5.0.0
-        version: 5.0.6
-      express:
-        specifier: ^5.0.0
-        version: 5.2.1
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
-  packages/ecommerce/adapters/hono:
-    dependencies:
-      '@zelavis/ecommerce':
-        specifier: workspace:*
-        version: link:../..
-    devDependencies:
-      hono:
-        specifier: ^4.12.16
-        version: 4.12.16
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
-  packages/ecommerce/plugins/paypal:
-    dependencies:
-      '@paypal/paypal-server-sdk':
-        specifier: ^2.3.0
-        version: 2.3.0
-      '@zelavis/ecommerce':
-        specifier: workspace:*
-        version: link:../..
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
-  packages/ecommerce/plugins/stripe:
-    dependencies:
-      '@zelavis/ecommerce':
-        specifier: workspace:*
-        version: link:../..
-      stripe:
-        specifier: ^20.4.0
-        version: 20.4.0(@types/node@24.11.0)
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
   packages/plugins/ecommerce:
     dependencies:
       '@zelavis/server':
@@ -456,6 +395,32 @@ importers:
       zelavis:
         specifier: workspace:*
         version: link:../../zelavis
+
+  packages/plugins/ecommerce/plugins/paypal:
+    dependencies:
+      '@paypal/paypal-server-sdk':
+        specifier: ^2.3.0
+        version: 2.3.0
+      '@zelavis/ecommerce':
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+
+  packages/plugins/ecommerce/plugins/stripe:
+    dependencies:
+      '@zelavis/ecommerce':
+        specifier: workspace:*
+        version: link:../..
+      stripe:
+        specifier: ^20.4.0
+        version: 20.4.0(@types/node@24.11.0)
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
 
   packages/server:
     devDependencies:
@@ -640,7 +605,7 @@ importers:
       '@zelavis/database-node-sqlite':
         specifier: workspace:*
         version: link:../database/adapters/node-sqlite
-      '@zelavis/plugin-ecommerce':
+      '@zelavis/ecommerce':
         specifier: workspace:*
         version: link:../plugins/ecommerce
       '@zelavis/server':

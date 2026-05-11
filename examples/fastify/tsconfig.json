@@ -12,12 +12,12 @@
     "paths": {
       "@zelavis/auth": ["packages/auth/src/index.ts"],
       "@zelavis/database": ["packages/database/src/index.ts"],
-      "@zelavis/ecommerce": ["packages/ecommerce/src/index.ts"],
+      "@zelavis/ecommerce": ["packages/plugins/ecommerce/src/index.ts"],
       "@zelavis/ecommerce-paypal": [
-        "packages/ecommerce/plugins/paypal/src/index.ts"
+        "packages/plugins/ecommerce/plugins/paypal/src/index.ts"
       ],
       "@zelavis/ecommerce-stripe": [
-        "packages/ecommerce/plugins/stripe/src/index.ts"
+        "packages/plugins/ecommerce/plugins/stripe/src/index.ts"
       ],
       "@zelavis/server": ["packages/server/src/index.ts"],
       "@zelavis/server/adapters/fastify": [

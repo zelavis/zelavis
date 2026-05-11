@@ -1,8 +1,8 @@
 {
-  "name": "@zelavis/ecommerce-express",
+  "name": "@zelavis/ecommerce-paypal",
   "version": "0.1.0-alpha.1",
   "private": false,
-  "description": "Express adapter for @zelavis/ecommerce.",
+  "description": "PayPal payment provider plugin for @zelavis/ecommerce.",
   "author": "Ivan Jeremic",
   "license": "MIT",
   "type": "module",
@@ -28,27 +28,24 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/zelavis/zelavis.git",
-    "directory": "packages/ecommerce/adapters/express"
+    "directory": "packages/plugins/ecommerce/plugins/paypal"
   },
-  "homepage": "https://github.com/zelavis/zelavis/tree/main/packages/ecommerce/adapters/express#readme",
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/packages/plugins/ecommerce/plugins/paypal#readme",
   "bugs": {
     "url": "https://github.com/zelavis/zelavis/issues"
   },
   "dependencies": {
+    "@paypal/paypal-server-sdk": "^2.3.0",
     "@zelavis/ecommerce": "workspace:*"
   },
-  "peerDependencies": {
-    "express": "^4.18.0 || ^5.0.0"
-  },
   "devDependencies": {
-    "@types/express": "^5.0.0",
-    "express": "^5.0.0",
     "typescript": "^5.9.0"
   },
   "keywords": [
-    "express",
+    "paypal",
     "commerce",
     "ecommerce",
-    "adapter"
+    "payments",
+    "plugin"
   ]
 }

@@ -36,33 +36,33 @@ Packages live in [packages/](packages).
 
 Current packages:
 
-- [packages/zelavis](packages/zelavis)  
+- [packages/zelavis](packages/zelavis)
   The high-level runtime package. It composes core services such as auth, database, and dashboard delivery, and re-exports server adapters.
-- [packages/database](packages/database)  
+- [packages/database](packages/database)
   A document-first, tenant-aware database core with an in-memory driver, optional SQL capability, and a mountable server service.
 - [packages/database/adapters/bun-sqlite](packages/database/adapters/bun-sqlite)
   A Bun SQLite adapter package for `@zelavis/database` using the built-in `bun:sqlite` module.
 - [packages/database/adapters/node-sqlite](packages/database/adapters/node-sqlite)
   A Node.js SQLite adapter package for `@zelavis/database` using `better-sqlite3`.
-- [packages/auth](packages/auth)  
+- [packages/auth](packages/auth)
   A low-level authentication core for accounts, credentials, sessions, and opt-in auth method plugins.
-- [packages/server](packages/server)  
+- [packages/server](packages/server)
   Shared endpoint contracts and framework adapters that mount service APIs from Zelavis packages.
-- [packages/ui](packages/ui)  
+- [packages/ui](packages/ui)
   The admin/dashboard frontend used by the high-level runtime.
-- [packages/ecommerce](packages/ecommerce)  
+- [packages/plugins/ecommerce](packages/plugins/ecommerce)
   An optional low-level ecommerce core for building custom commerce platforms, CMS plugins, and embedded commerce workflows.
-- [packages/ecommerce/adapters/express](packages/ecommerce/adapters/express)
+- []()
   An Express adapter package for exposing the ecommerce core over HTTP.
-- [packages/ecommerce/adapters/hono](packages/ecommerce/adapters/hono)
+- []()
   A Hono adapter package for exposing the ecommerce core over HTTP.
-- [packages/ecommerce/plugins/stripe](packages/ecommerce/plugins/stripe)  
+- [packages/plugins/ecommerce/plugins/stripe](packages/plugins/ecommerce/plugins/stripe)
   A Stripe payment provider plugin for `@zelavis/ecommerce`.
-- [packages/ecommerce/plugins/paypal](packages/ecommerce/plugins/paypal)  
+- [packages/plugins/ecommerce/plugins/paypal](packages/plugins/ecommerce/plugins/paypal)
   A PayPal payment provider plugin for `@zelavis/ecommerce`.
-- [packages/auth/plugins/email-password](packages/auth/plugins/email-password)  
+- [packages/auth/plugins/email-password](packages/auth/plugins/email-password)
   An email/password auth plugin for `@zelavis/auth`.
-- [packages/auth/plugins/username-password](packages/auth/plugins/username-password)  
+- [packages/auth/plugins/username-password](packages/auth/plugins/username-password)
   A username/password auth plugin for `@zelavis/auth`.
 
 ## Runtime Defaults
@@ -196,7 +196,7 @@ Current architecture includes:
 - Repository contracts that isolate persistence from business logic.
 - In-memory repository implementations for development and tests.
 - A plugin-oriented payment layer for providers such as Stripe, PayPal, and others.
-- Optional framework adapters exposed as separate adapter packages such as `@zelavis/ecommerce-express` and `@zelavis/ecommerce-hono`.
+
 
 This package is meant to support use cases such as:
 

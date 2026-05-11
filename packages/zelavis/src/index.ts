@@ -1710,7 +1710,7 @@ const defaultDashboardClientRoutes = [
 
 const defaultDashboardPluginRegistryModules = [
   {
-    specifier: "@zelavis/plugin-ecommerce",
+    specifier: "@zelavis/ecommerce",
     status: "available",
     source: "official",
     order: 0,

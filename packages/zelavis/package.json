@@ -74,7 +74,7 @@
     "build": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/database build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/ui build && node scripts/copy-dashboard.mjs && tsc -p tsconfig.json",
     "build:runtime": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "pnpm run build && pnpm --filter @zelavis/plugin-ecommerce build && node --test test/*.test.mjs"
+    "test": "pnpm run build && pnpm --filter @zelavis/ecommerce build && node --test test/*.test.mjs"
   },
   "files": [
     "dist"
@@ -97,7 +97,7 @@
     "@zelavis/database-bun-sqlite": "workspace:*",
     "@zelavis/database-cloudflare-d1": "workspace:*",
     "@zelavis/database-node-sqlite": "workspace:*",
-    "@zelavis/plugin-ecommerce": "workspace:*",
+    "@zelavis/ecommerce": "workspace:*",
     "@zelavis/server": "workspace:*"
   },
   "devDependencies": {
