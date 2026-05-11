@@ -15,6 +15,11 @@ export type ZelavisPluginMenuDefinition = Omit<
   items?: readonly ZelavisPluginMenuDefinition[];
 };
 
+export interface ZelavisPluginExtensionTarget {
+  plugin: string;
+  extensionPoint: string;
+}
+
 export interface ZelavisPluginDefinition<
   TContext = unknown,
   TService = unknown,
@@ -27,6 +32,7 @@ export interface ZelavisPluginDefinition<
   version?: string;
   menu?: ZelavisPluginMenuDefinition;
   services?: readonly ZelavisAnyServiceInput[];
+  extends?: ZelavisPluginExtensionTarget;
   setup?: (
     context: TContext,
   ) =>
@@ -118,6 +124,7 @@ export interface ZelavisPluginSetupContext {
   api: ZelavisPluginSetupApiContext;
   platform: ZelavisPluginSetupPlatformContext;
   core: ZelavisPluginSetupCoreContext;
+  children: readonly Readonly<ZelavisPluginDefinition>[];
   services: readonly ZelavisAnyServiceInput[];
   addService: (service: ZelavisAnyServiceInput) => void;
   addServices: (services: readonly ZelavisAnyServiceInput[]) => void;
@@ -224,6 +231,36 @@ export function definePlugin<TContext = unknown>(
     throw new TypeError("Plugin services must be provided as an array.");
   }
 
+  if ("extends" in definition && definition.extends !== undefined) {
+    if (!definition.extends || typeof definition.extends !== "object") {
+      throw new TypeError("Plugin extension target must be an object.");
+    }
+
+    if (
+      !definition.extends.plugin ||
+      typeof definition.extends.plugin !== "string"
+    ) {
+      throw new TypeError(
+        "Plugin extension target must include a parent plugin name.",
+      );
+    }
+
+    if (
+      !definition.extends.extensionPoint ||
+      typeof definition.extends.extensionPoint !== "string"
+    ) {
+      throw new TypeError(
+        "Plugin extension target must include an extension point.",
+      );
+    }
+
+    if (definition.menu !== undefined) {
+      throw new TypeError(
+        "Child plugins cannot declare top-level dashboard menu metadata.",
+      );
+    }
+  }
+
   const normalized = defineService({
     name: definition.name,
     basePath: definition.basePath,
@@ -239,6 +276,9 @@ export function definePlugin<TContext = unknown>(
     ...normalized,
     contractVersion: ZELAVIS_PLUGIN_V1,
     version: definition.version,
+    extends: definition.extends
+      ? Object.freeze({ ...definition.extends })
+      : definition.extends,
     setup: definition.setup,
   });
 }
@@ -424,7 +464,10 @@ export async function activatePluginRegistry<
   TContext extends ZelavisPluginSetupContext = ZelavisPluginSetupContext,
 >(
   registry: readonly Readonly<ZelavisPluginRegistryEntry<TContext>>[],
-  context: Omit<TContext, "plugin" | "registry" | "services" | "addService" | "addServices">,
+  context: Omit<
+    TContext,
+    "plugin" | "registry" | "children" | "services" | "addService" | "addServices"
+  >,
 ): Promise<{
   registry: readonly Readonly<ZelavisPluginRegistryEntry<TContext>>[];
   services: readonly ZelavisAnyServiceInput[];
@@ -450,6 +493,14 @@ export async function activatePluginRegistry<
     Object.values(plugin.api ?? {}).some((routes) => routes.length > 0);
 
   for (const entry of installedPlugins) {
+    if (entry.plugin.extends) {
+      continue;
+    }
+
+    const children = installedPlugins
+      .map((installed) => installed.plugin)
+      .filter((plugin) => plugin.extends?.plugin === entry.plugin.name);
+
     if (shouldMountPlugin(entry.plugin)) {
       addService(entry.plugin as unknown as ZelavisAnyServiceInput);
     }
@@ -468,6 +519,7 @@ export async function activatePluginRegistry<
       registry: registry as readonly Readonly<
         ZelavisPluginRegistryEntry<ZelavisPluginSetupContext>
       >[],
+      children,
       services: activatedServices,
       addService,
       addServices,

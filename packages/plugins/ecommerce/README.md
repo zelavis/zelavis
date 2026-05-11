@@ -6,7 +6,7 @@ This package is now the single home for Zelavis ecommerce:
 
 - the official Zelavis runtime plugin `zelavisEcommercePlugin`
 - the low-level commerce domain API via `createEcommerce(...)`
-- provider extension points such as `defineEcommercePlugin(...)`
+- child plugin extension points such as `payments`
 - provider packages such as Stripe and PayPal
 
 There is no separate old ecommerce base package anymore.
@@ -23,9 +23,9 @@ There is no separate old ecommerce base package anymore.
 ```ts
 import {
   createEcommerce,
-  defineEcommercePlugin,
   zelavisEcommercePlugin,
 } from "@zelavis/ecommerce";
+import { definePlugin } from "zelavis/plugin";
 ```
 
 ## Included layers
@@ -37,28 +37,48 @@ import {
 - `createEcommerce(...)`
   - the low-level commerce API for direct programmatic use
   - defaults to in-memory repositories unless you provide your own repositories
-- `defineEcommercePlugin(...)`
-  - lower-level child/provider plugin contract for extending the commerce API
-  - used by payment providers such as Stripe and PayPal
+- child payment provider plugins
+  - use the normal Zelavis `definePlugin(...)` contract
+  - declare `extends: { plugin: "zelavis-ecommerce", extensionPoint: "payments" }`
+  - receive the ecommerce API in setup when the parent ecommerce plugin activates
 
 ## Layering
 
-There are two plugin layers here on purpose:
+There is one plugin builder:
 
-1. `definePlugin(...)` from `zelavis/plugin`
-   - top-level Zelavis runtime and marketplace plugins
-   - example: `zelavisEcommercePlugin`
-2. `defineEcommercePlugin(...)` from `@zelavis/ecommerce`
-   - lower-level commerce provider plugins
-   - examples: Stripe and PayPal payment providers
-   - explicit child-plugin contract targeting the `payments` extension point of `zelavis-ecommerce`
+```ts
+import { definePlugin } from "zelavis/plugin";
+```
+
+The top-level ecommerce plugin uses it:
+
+```ts
+export const zelavisEcommercePlugin = definePlugin({
+  name: "zelavis-ecommerce",
+});
+```
+
+Payment providers use the same builder, but declare that they extend ecommerce:
+
+```ts
+export const stripePlugin = definePlugin({
+  name: "stripe",
+  extends: {
+    plugin: "zelavis-ecommerce",
+    extensionPoint: "payments",
+  },
+  setup(api) {
+    api.payments.registerProvider("stripe", provider);
+  },
+});
+```
 
 That means `@zelavis/ecommerce` is both:
 
 - the official Zelavis ecommerce plugin package
 - the home for its child provider plugin system
 
-The provider layer extends the ecommerce domain API. It is not the same thing as a top-level Zelavis marketplace plugin.
+The provider layer extends the ecommerce domain API. It is installed through the same plugin registry, but it activates through its parent plugin rather than as an independent top-level workspace plugin.
 
 ## Persistence
 

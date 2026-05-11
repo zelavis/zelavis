@@ -6,6 +6,7 @@ import {
 } from "@zelavis/server";
 import {
   definePlugin,
+  type ZelavisPluginDefinition,
   type ZelavisPluginSetupContext,
 } from "zelavis/plugin";
 import { createEcommerce } from "./core/create-ecommerce.js";
@@ -20,6 +21,7 @@ import type { CreateCouponInput } from "./services/coupon-service.js";
 import type { CreateCustomerInput } from "./services/customer-service.js";
 import type { CreateOrderInput } from "./services/order-service.js";
 import type { CreateProductInput } from "./services/product-service.js";
+import type { EcommercePlugin } from "./ecommerce-plugin.js";
 
 const commerceErrorRules: readonly ZelavisServerErrorStatusRule[] = [
   {
@@ -123,6 +125,16 @@ function isDatabaseApi(value: unknown): value is DatabaseApi {
       "documents" in value &&
       "schemas" in value &&
       "events" in value,
+  );
+}
+
+function isEcommercePaymentPlugin(
+  plugin: Readonly<ZelavisPluginDefinition<any>>,
+): plugin is EcommercePlugin {
+  return (
+    plugin.extends?.plugin === "zelavis-ecommerce" &&
+    plugin.extends.extensionPoint === "payments" &&
+    typeof plugin.setup === "function"
   );
 }
 
@@ -329,7 +341,11 @@ export const zelavisEcommercePlugin = definePlugin<ZelavisPluginSetupContext>({
     ],
   },
   async setup(context) {
+    const paymentPlugins = context.children.filter(
+      isEcommercePaymentPlugin,
+    ) as readonly EcommercePlugin[];
     const commerce = await createEcommerce({
+      plugins: paymentPlugins,
       repositories: isDatabaseApi(context.core.database)
         ? createDatabaseEcommerceRepositories(context.core.database)
         : undefined,
@@ -538,9 +554,11 @@ export const zelavisEcommercePlugin = definePlugin<ZelavisPluginSetupContext>({
 
                       return {
                         name,
-                        extensionPoint: childPlugin?.extensionPoint ?? "payments",
-                        targetPlugin: childPlugin?.targetPlugin ?? "zelavis-ecommerce",
-                        childPlugin: childPlugin?.childPlugin ?? true,
+                        extensionPoint:
+                          childPlugin?.extends.extensionPoint ?? "payments",
+                        parentPlugin:
+                          childPlugin?.extends.plugin ?? "zelavis-ecommerce",
+                        childPlugin: true,
                       };
                     }),
                   },

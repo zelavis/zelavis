@@ -13,14 +13,15 @@ import {
 import {
   type BillingSubscription,
   type CancelSubscriptionInput,
-  defineEcommercePlugin,
   type CapturePaymentInput,
   type CreatePaymentInput,
   type CreateSubscriptionInput,
+  type EcommerceApi,
   type PaymentAttempt,
   type PaymentProvider,
   type RefundPaymentInput,
 } from "@zelavis/ecommerce";
+import { definePlugin } from "zelavis/plugin";
 
 const ZERO_DECIMAL_CURRENCIES = new Set([
   "BIF",
@@ -697,9 +698,12 @@ export function createPayPalPaymentProvider(
 }
 
 export function paypalPlugin(options: PayPalPluginOptions = {}) {
-  return defineEcommercePlugin({
+  return definePlugin<EcommerceApi>({
     name: "paypal",
-    extensionPoint: "payments",
+    extends: {
+      plugin: "zelavis-ecommerce",
+      extensionPoint: "payments",
+    },
     setup(api) {
       api.payments.registerProvider("paypal", createPayPalPaymentProvider(options));
     },

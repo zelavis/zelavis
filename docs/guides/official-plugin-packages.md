@@ -33,22 +33,22 @@ packages/plugins/example/
 - `index.ts`
   - re-exports the package surface
 
-## Nested provider or child plugin systems
+## Child plugin extension points
 
-An official plugin package may still have its own lower-level extension system inside it.
+An official plugin package may expose child plugin extension points.
 
 `@zelavis/ecommerce` is the current example:
 
 - top-level Zelavis plugin:
   - `zelavisEcommercePlugin`
-- lower-level child/provider plugin contract:
-  - `defineEcommercePlugin(...)`
-  - child plugins explicitly target the `payments` extension point of `zelavis-ecommerce`
+- child payment provider plugins:
+  - use the normal `definePlugin(...)` builder
+  - declare `extends: { plugin: "zelavis-ecommerce", extensionPoint: "payments" }`
 
-That lower-level contract is for extending the ecommerce domain itself, such as payment providers. It is not the same as a top-level marketplace plugin.
+That child plugin metadata is for extending the ecommerce domain itself, such as payment providers. A child plugin can be installed through the same registry, but it activates through its parent plugin instead of appearing as an independent top-level workspace plugin.
 
 ## Rule of thumb
 
 - use `definePlugin(...)` for top-level Zelavis plugins
-- use package-local plugin builders only when a domain package needs its own internal extension model
-- keep the two layers named clearly so contributors can tell which plugin system they are looking at
+- use `definePlugin(...)` with `extends` for child plugins
+- keep parent plugin extension points named clearly so contributors can tell where a child plugin belongs

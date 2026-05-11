@@ -38,8 +38,12 @@
     "@paypal/paypal-server-sdk": "^2.3.0",
     "@zelavis/ecommerce": "workspace:*"
   },
+  "peerDependencies": {
+    "zelavis": "*"
+  },
   "devDependencies": {
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "zelavis": "workspace:*"
   },
   "keywords": [
     "paypal",

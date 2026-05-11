@@ -62,6 +62,7 @@ A good current TypeScript direction is:
 - expose one shared public plugin builder: `definePlugin(...)`
 - version that contract explicitly with `ZELAVIS_PLUGIN_V1`
 - let plugin definitions carry declarative dashboard metadata such as `menu: { ... }` so plugins are not locked to one dashboard implementation detail
+- let child plugins declare `extends: { plugin, extensionPoint }` instead of inventing package-local plugin builders
 
 That builder should be about developer ergonomics and metadata, not about replacing the internal service contract.
 
@@ -99,6 +100,26 @@ definePlugin({
   },
 });
 ```
+
+Child plugins use the same builder but target a parent extension point:
+
+```ts
+import { definePlugin } from "zelavis/plugin";
+import type { EcommerceApi } from "@zelavis/ecommerce";
+
+definePlugin<EcommerceApi>({
+  name: "stripe",
+  extends: {
+    plugin: "zelavis-ecommerce",
+    extensionPoint: "payments",
+  },
+  setup(api) {
+    api.payments.registerProvider("stripe", provider);
+  },
+});
+```
+
+Installed child plugins are collected for their parent. They do not activate as independent top-level workspace plugins.
 
 Important point:
 

@@ -10,7 +10,7 @@ import type { EcommerceApi } from "./types.js";
 
 export interface CreateEcommerceOptions {
   config?: Record<string, unknown>;
-  plugins?: EcommercePlugin[];
+  plugins?: readonly EcommercePlugin[];
   repositories?: Partial<EcommerceRepositories>;
 }
 
@@ -39,7 +39,7 @@ export async function createEcommerce(options: CreateEcommerceOptions = {}): Pro
   };
 
   for (const plugin of options.plugins ?? []) {
-    await plugin.setup(api);
+    await plugin.setup?.(api);
   }
 
   return api;

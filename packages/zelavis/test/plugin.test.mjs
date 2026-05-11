@@ -86,6 +86,48 @@ test("definePlugin validates required plugin fields", () => {
       }),
     /cannot declare a dashboard surface/,
   );
+
+  assert.throws(
+    () =>
+      definePlugin({
+        name: "stripe",
+        extends: {
+          plugin: "",
+          extensionPoint: "payments",
+        },
+      }),
+    /parent plugin name/,
+  );
+
+  assert.throws(
+    () =>
+      definePlugin({
+        name: "stripe",
+        extends: {
+          plugin: "zelavis-ecommerce",
+          extensionPoint: "payments",
+        },
+        menu: {
+          title: "Stripe",
+          path: "/stripe",
+        },
+      }),
+    /Child plugins cannot declare top-level dashboard menu metadata/,
+  );
+});
+
+test("definePlugin supports child plugin extension metadata", () => {
+  const plugin = definePlugin({
+    name: "stripe",
+    extends: {
+      plugin: "zelavis-ecommerce",
+      extensionPoint: "payments",
+    },
+  });
+
+  assert.equal(plugin.extends.plugin, "zelavis-ecommerce");
+  assert.equal(plugin.extends.extensionPoint, "payments");
+  assert.ok(Object.isFrozen(plugin.extends));
 });
 
 test("createPluginRegistry normalizes plugin registry entries", () => {
@@ -365,6 +407,62 @@ test("activatePluginRegistry runs installed plugins in order and collects servic
     activated.services.map((service) => service.name),
     ["first-plugin-service", "second-plugin-service"],
   );
+});
+
+test("activatePluginRegistry gives child plugins to their parent without activating them directly", async () => {
+  const activationOrder = [];
+  let seenChildren = [];
+
+  const registry = createPluginRegistry([
+    {
+      plugin: definePlugin({
+        name: "stripe",
+        extends: {
+          plugin: "zelavis-ecommerce",
+          extensionPoint: "payments",
+        },
+        setup() {
+          activationOrder.push("stripe");
+        },
+      }),
+      status: "installed",
+      order: 0,
+    },
+    {
+      plugin: definePlugin({
+        name: "zelavis-ecommerce",
+        setup(context) {
+          activationOrder.push("zelavis-ecommerce");
+          seenChildren = context.children;
+        },
+      }),
+      status: "installed",
+      order: 1,
+    },
+  ]);
+
+  await activatePluginRegistry(registry, {
+    rootPath: "/zelavis",
+    api: {
+      prefix: "/api",
+      version: "v1",
+      basePath: "/zelavis/api/v1",
+    },
+    core: {},
+    platform: {
+      presets: [],
+      resources: {
+        keyValueStore: false,
+        fileStorage: false,
+      },
+      metadata: {},
+    },
+  });
+
+  assert.deepEqual(activationOrder, ["zelavis-ecommerce"]);
+  assert.equal(seenChildren.length, 1);
+  assert.equal(seenChildren[0].name, "stripe");
+  assert.equal(seenChildren[0].extends.extensionPoint, "payments");
 });
 
 test("activatePluginRegistry exposes standard platform context to plugin setup", async () => {

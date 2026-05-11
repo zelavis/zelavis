@@ -38,8 +38,12 @@
     "@zelavis/ecommerce": "workspace:*",
     "stripe": "^20.4.0"
   },
+  "peerDependencies": {
+    "zelavis": "*"
+  },
   "devDependencies": {
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "zelavis": "workspace:*"
   },
   "keywords": [
     "stripe",
