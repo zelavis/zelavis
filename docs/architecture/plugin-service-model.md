@@ -76,6 +76,13 @@ import { definePlugin, ZELAVIS_PLUGIN_V1 } from "zelavis";
 definePlugin({
   name: "zelavis-ecommerce",
   contractVersion: ZELAVIS_PLUGIN_V1,
+  extensionPoints: [
+    {
+      name: "payments",
+      policy: "reviewed",
+      allowedPlugins: ["stripe", "paypal"],
+    },
+  ],
   menu: {
     title: "Ecommerce",
     path: "/commerce",
@@ -120,6 +127,14 @@ definePlugin<EcommerceApi>({
 ```
 
 Installed child plugins are collected for their parent. They do not activate as independent top-level workspace plugins.
+
+Parent plugins own their extension-point policy:
+
+- `open` accepts any installed child plugin targeting that extension point
+- `reviewed` accepts only child plugins listed by the parent
+- `private` is the default and also accepts only listed child plugins
+
+For ecommerce payments, the current policy is `reviewed`, with Stripe and PayPal allowed by the official ecommerce package. A future `XYZ Payments` child plugin would need the parent plugin to add it to that list before activation.
 
 Important point:
 
@@ -187,6 +202,7 @@ The current runtime direction now reflects that split with:
 - `applyPluginRegistryState(...)`
 - `activatePluginRegistry(...)`
 - runtime plugin registry stores for memory, database, key/value, and file storage
+- parent-owned extension point policies for child plugins
 - plugin setup context carrying only standard data such as root path, API paths, platform summary, and collected services
 
 That platform summary should stay intentionally small:

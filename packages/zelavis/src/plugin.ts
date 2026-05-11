@@ -20,6 +20,14 @@ export interface ZelavisPluginExtensionTarget {
   extensionPoint: string;
 }
 
+export type ZelavisPluginExtensionPolicy = "open" | "reviewed" | "private";
+
+export interface ZelavisPluginExtensionPointDefinition {
+  name: string;
+  policy?: ZelavisPluginExtensionPolicy;
+  allowedPlugins?: readonly string[];
+}
+
 export interface ZelavisPluginDefinition<
   TContext = unknown,
   TService = unknown,
@@ -33,6 +41,7 @@ export interface ZelavisPluginDefinition<
   menu?: ZelavisPluginMenuDefinition;
   services?: readonly ZelavisAnyServiceInput[];
   extends?: ZelavisPluginExtensionTarget;
+  extensionPoints?: readonly ZelavisPluginExtensionPointDefinition[];
   setup?: (
     context: TContext,
   ) =>
@@ -152,6 +161,104 @@ function validatePluginMenu(
   menu.items?.forEach((item) => validatePluginMenu(item, `${path} > ${item.title}`));
 }
 
+function freezeExtensionPoint(
+  extensionPoint: ZelavisPluginExtensionPointDefinition,
+): Readonly<ZelavisPluginExtensionPointDefinition> {
+  return Object.freeze({
+    ...extensionPoint,
+    allowedPlugins: extensionPoint.allowedPlugins
+      ? Object.freeze([...extensionPoint.allowedPlugins])
+      : extensionPoint.allowedPlugins,
+  });
+}
+
+function validateExtensionPoints(
+  extensionPoints: readonly ZelavisPluginExtensionPointDefinition[],
+): void {
+  const seen = new Set<string>();
+
+  for (const extensionPoint of extensionPoints) {
+    if (!extensionPoint || typeof extensionPoint !== "object") {
+      throw new TypeError("Plugin extension points must be objects.");
+    }
+
+    if (!extensionPoint.name || typeof extensionPoint.name !== "string") {
+      throw new TypeError("Plugin extension points must include a string name.");
+    }
+
+    if (seen.has(extensionPoint.name)) {
+      throw new TypeError(
+        `Plugin extension points must use unique names. Duplicate: ${extensionPoint.name}`,
+      );
+    }
+
+    seen.add(extensionPoint.name);
+
+    if (
+      extensionPoint.policy !== undefined &&
+      extensionPoint.policy !== "open" &&
+      extensionPoint.policy !== "reviewed" &&
+      extensionPoint.policy !== "private"
+    ) {
+      throw new TypeError(
+        'Plugin extension point policy must be "open", "reviewed", or "private".',
+      );
+    }
+
+    if (
+      extensionPoint.allowedPlugins !== undefined &&
+      !Array.isArray(extensionPoint.allowedPlugins)
+    ) {
+      throw new TypeError("Plugin extension point allowed plugins must be an array.");
+    }
+
+    for (const pluginName of extensionPoint.allowedPlugins ?? []) {
+      if (!pluginName || typeof pluginName !== "string") {
+        throw new TypeError(
+          "Plugin extension point allowed plugins must be string plugin names.",
+        );
+      }
+    }
+  }
+}
+
+function getExtensionPoint(
+  parent: ZelavisPluginDefinition,
+  extensionPointName: string,
+): ZelavisPluginExtensionPointDefinition | undefined {
+  return parent.extensionPoints?.find(
+    (extensionPoint) => extensionPoint.name === extensionPointName,
+  );
+}
+
+export function isPluginExtensionAllowed(
+  parent: Readonly<ZelavisPluginRegistryEntry<any>>,
+  child: Readonly<ZelavisPluginRegistryEntry<any>>,
+): boolean {
+  const target = child.plugin.extends;
+
+  if (!target || target.plugin !== parent.plugin.name) {
+    return false;
+  }
+
+  const extensionPoint = getExtensionPoint(
+    parent.plugin,
+    target.extensionPoint,
+  );
+
+  if (!extensionPoint) {
+    return false;
+  }
+
+  const policy = extensionPoint.policy ?? "private";
+
+  if (policy === "open") {
+    return true;
+  }
+
+  return extensionPoint.allowedPlugins?.includes(child.plugin.name) ?? false;
+}
+
 export function definePlugin<TContext = unknown>(
   definition: ZelavisPluginV1Definition<TContext>,
 ): Readonly<ZelavisPluginDefinition<TContext>> {
@@ -261,6 +368,17 @@ export function definePlugin<TContext = unknown>(
     }
   }
 
+  if (
+    "extensionPoints" in definition &&
+    definition.extensionPoints !== undefined
+  ) {
+    if (!Array.isArray(definition.extensionPoints)) {
+      throw new TypeError("Plugin extension points must be provided as an array.");
+    }
+
+    validateExtensionPoints(definition.extensionPoints);
+  }
+
   const normalized = defineService({
     name: definition.name,
     basePath: definition.basePath,
@@ -279,6 +397,9 @@ export function definePlugin<TContext = unknown>(
     extends: definition.extends
       ? Object.freeze({ ...definition.extends })
       : definition.extends,
+    extensionPoints: definition.extensionPoints
+      ? Object.freeze(definition.extensionPoints.map(freezeExtensionPoint))
+      : definition.extensionPoints,
     setup: definition.setup,
   });
 }
@@ -498,8 +619,8 @@ export async function activatePluginRegistry<
     }
 
     const children = installedPlugins
-      .map((installed) => installed.plugin)
-      .filter((plugin) => plugin.extends?.plugin === entry.plugin.name);
+      .filter((installed) => isPluginExtensionAllowed(entry, installed))
+      .map((installed) => installed.plugin);
 
     if (shouldMountPlugin(entry.plugin)) {
       addService(entry.plugin as unknown as ZelavisAnyServiceInput);

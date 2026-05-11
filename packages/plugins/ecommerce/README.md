@@ -55,6 +55,13 @@ The top-level ecommerce plugin uses it:
 ```ts
 export const zelavisEcommercePlugin = definePlugin({
   name: "zelavis-ecommerce",
+  extensionPoints: [
+    {
+      name: "payments",
+      policy: "reviewed",
+      allowedPlugins: ["stripe", "paypal"],
+    },
+  ],
 });
 ```
 
@@ -79,6 +86,8 @@ That means `@zelavis/ecommerce` is both:
 - the home for its child provider plugin system
 
 The provider layer extends the ecommerce domain API. It is installed through the same plugin registry, but it activates through its parent plugin rather than as an independent top-level workspace plugin.
+
+The `payments` extension point is currently `reviewed`. The official ecommerce package accepts Stripe and PayPal. Other payment providers should be added to that allowlist by the parent plugin package before they activate.
 
 ## Persistence
 

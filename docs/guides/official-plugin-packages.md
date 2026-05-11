@@ -47,8 +47,20 @@ An official plugin package may expose child plugin extension points.
 
 That child plugin metadata is for extending the ecommerce domain itself, such as payment providers. A child plugin can be installed through the same registry, but it activates through its parent plugin instead of appearing as an independent top-level workspace plugin.
 
+Parent plugins declare the policy for each extension point:
+
+- `open`
+  - any installed child plugin can target the extension point
+- `reviewed`
+  - only child plugins listed by the parent are accepted
+- `private`
+  - default policy; also requires the parent to list accepted child plugins
+
+`zelavis-ecommerce` currently marks `payments` as `reviewed` and allows the official Stripe and PayPal child plugins. That keeps the marketplace safe while we are still learning what third-party review should look like.
+
 ## Rule of thumb
 
 - use `definePlugin(...)` for top-level Zelavis plugins
 - use `definePlugin(...)` with `extends` for child plugins
 - keep parent plugin extension points named clearly so contributors can tell where a child plugin belongs
+- let parent plugins own child-plugin policy until the marketplace review model is mature

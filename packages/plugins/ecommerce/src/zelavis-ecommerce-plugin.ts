@@ -312,6 +312,13 @@ function parseOrderInput(body: unknown): CreateOrderInput {
 export const zelavisEcommercePlugin = definePlugin<ZelavisPluginSetupContext>({
   name: "zelavis-ecommerce",
   version: "0.1.0",
+  extensionPoints: [
+    {
+      name: "payments",
+      policy: "reviewed",
+      allowedPlugins: ["stripe", "paypal"],
+    },
+  ],
   menu: {
     title: "Ecommerce",
     path: "/commerce",

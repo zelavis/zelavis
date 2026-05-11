@@ -11,6 +11,7 @@ import {
   removePluginFromRegistry,
   resolvePluginModule,
   serializePluginRegistryState,
+  isPluginExtensionAllowed,
   ZELAVIS_PLUGIN_V1,
 } from "../dist/index.js";
 
@@ -26,6 +27,13 @@ test("definePlugin normalizes plugin metadata for developer-facing extensions", 
   const plugin = definePlugin({
     name: "zelavis-ecommerce",
     version: "1.0.0",
+    extensionPoints: [
+      {
+        name: "payments",
+        policy: "reviewed",
+        allowedPlugins: ["stripe"],
+      },
+    ],
     menu: {
       title: "Ecommerce",
       path: "/commerce",
@@ -38,10 +46,15 @@ test("definePlugin normalizes plugin metadata for developer-facing extensions", 
   assert.equal(plugin.contractVersion, ZELAVIS_PLUGIN_V1);
   assert.equal(plugin.menu.title, "Ecommerce");
   assert.equal(plugin.menu.path, "/commerce");
+  assert.equal(plugin.extensionPoints[0].name, "payments");
+  assert.equal(plugin.extensionPoints[0].policy, "reviewed");
+  assert.deepEqual(plugin.extensionPoints[0].allowedPlugins, ["stripe"]);
   assert.equal(plugin.services.length, 1);
   assert.ok(Object.isFrozen(plugin));
   assert.ok(Object.isFrozen(plugin.menu));
   assert.ok(Object.isFrozen(plugin.services));
+  assert.ok(Object.isFrozen(plugin.extensionPoints));
+  assert.ok(Object.isFrozen(plugin.extensionPoints[0].allowedPlugins));
 });
 
 test("definePlugin validates required plugin fields", () => {
@@ -114,6 +127,36 @@ test("definePlugin validates required plugin fields", () => {
       }),
     /Child plugins cannot declare top-level dashboard menu metadata/,
   );
+
+  assert.throws(
+    () =>
+      definePlugin({
+        name: "zelavis-ecommerce",
+        extensionPoints: [
+          {
+            name: "payments",
+            policy: "chaos",
+          },
+        ],
+      }),
+    /policy must be "open", "reviewed", or "private"/,
+  );
+
+  assert.throws(
+    () =>
+      definePlugin({
+        name: "zelavis-ecommerce",
+        extensionPoints: [
+          {
+            name: "payments",
+          },
+          {
+            name: "payments",
+          },
+        ],
+      }),
+    /unique names/,
+  );
 });
 
 test("definePlugin supports child plugin extension metadata", () => {
@@ -128,6 +171,60 @@ test("definePlugin supports child plugin extension metadata", () => {
   assert.equal(plugin.extends.plugin, "zelavis-ecommerce");
   assert.equal(plugin.extends.extensionPoint, "payments");
   assert.ok(Object.isFrozen(plugin.extends));
+});
+
+test("isPluginExtensionAllowed applies parent extension point policies", () => {
+  const parent = {
+    plugin: definePlugin({
+      name: "zelavis-ecommerce",
+      extensionPoints: [
+        {
+          name: "payments",
+          policy: "reviewed",
+          allowedPlugins: ["stripe"],
+        },
+        {
+          name: "shipping",
+          policy: "open",
+        },
+      ],
+    }),
+    status: "installed",
+  };
+  const stripe = {
+    plugin: definePlugin({
+      name: "stripe",
+      extends: {
+        plugin: "zelavis-ecommerce",
+        extensionPoint: "payments",
+      },
+    }),
+    status: "installed",
+  };
+  const xyz = {
+    plugin: definePlugin({
+      name: "xyz-payments",
+      extends: {
+        plugin: "zelavis-ecommerce",
+        extensionPoint: "payments",
+      },
+    }),
+    status: "installed",
+  };
+  const shipping = {
+    plugin: definePlugin({
+      name: "ship-fast",
+      extends: {
+        plugin: "zelavis-ecommerce",
+        extensionPoint: "shipping",
+      },
+    }),
+    status: "installed",
+  };
+
+  assert.equal(isPluginExtensionAllowed(parent, stripe), true);
+  assert.equal(isPluginExtensionAllowed(parent, xyz), false);
+  assert.equal(isPluginExtensionAllowed(parent, shipping), true);
 });
 
 test("createPluginRegistry normalizes plugin registry entries", () => {
@@ -431,6 +528,13 @@ test("activatePluginRegistry gives child plugins to their parent without activat
     {
       plugin: definePlugin({
         name: "zelavis-ecommerce",
+        extensionPoints: [
+          {
+            name: "payments",
+            policy: "reviewed",
+            allowedPlugins: ["stripe"],
+          },
+        ],
         setup(context) {
           activationOrder.push("zelavis-ecommerce");
           seenChildren = context.children;
@@ -463,6 +567,64 @@ test("activatePluginRegistry gives child plugins to their parent without activat
   assert.equal(seenChildren.length, 1);
   assert.equal(seenChildren[0].name, "stripe");
   assert.equal(seenChildren[0].extends.extensionPoint, "payments");
+});
+
+test("activatePluginRegistry withholds child plugins rejected by parent policy", async () => {
+  let seenChildren = [];
+
+  const registry = createPluginRegistry([
+    {
+      plugin: definePlugin({
+        name: "xyz-payments",
+        extends: {
+          plugin: "zelavis-ecommerce",
+          extensionPoint: "payments",
+        },
+        setup() {
+          throw new Error("Rejected child plugins should not activate.");
+        },
+      }),
+      status: "installed",
+      order: 0,
+    },
+    {
+      plugin: definePlugin({
+        name: "zelavis-ecommerce",
+        extensionPoints: [
+          {
+            name: "payments",
+            policy: "reviewed",
+            allowedPlugins: ["stripe"],
+          },
+        ],
+        setup(context) {
+          seenChildren = context.children;
+        },
+      }),
+      status: "installed",
+      order: 1,
+    },
+  ]);
+
+  await activatePluginRegistry(registry, {
+    rootPath: "/zelavis",
+    api: {
+      prefix: "/api",
+      version: "v1",
+      basePath: "/zelavis/api/v1",
+    },
+    core: {},
+    platform: {
+      presets: [],
+      resources: {
+        keyValueStore: false,
+        fileStorage: false,
+      },
+      metadata: {},
+    },
+  });
+
+  assert.deepEqual(seenChildren, []);
 });
 
 test("activatePluginRegistry exposes standard platform context to plugin setup", async () => {
