@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   activatePluginRegistry,
   applyPluginRegistryState,
+  definePluginCatalog,
+  definePluginCatalogEntry,
   definePlugin,
   createPluginRegistry,
   defineService,
@@ -225,6 +227,83 @@ test("isPluginExtensionAllowed applies parent extension point policies", () => {
   assert.equal(isPluginExtensionAllowed(parent, stripe), true);
   assert.equal(isPluginExtensionAllowed(parent, xyz), false);
   assert.equal(isPluginExtensionAllowed(parent, shipping), true);
+});
+
+test("definePluginCatalogEntry normalizes marketplace metadata", () => {
+  const entry = definePluginCatalogEntry({
+    name: "stripe",
+    package: "@zelavis/ecommerce-stripe",
+    publisher: "zelavis",
+    source: "official",
+    extends: {
+      plugin: "zelavis-ecommerce",
+      extensionPoint: "payments",
+    },
+    compatibility: {
+      zelavis: "^1.0.0",
+      parentPlugin: "^1.0.0",
+    },
+    links: {
+      repository: "https://github.com/zelavis/zelavis",
+    },
+    tags: ["payments", "stripe"],
+  });
+
+  assert.equal(entry.reviewStatus, "official");
+  assert.equal(entry.verified, true);
+  assert.equal(entry.extends.plugin, "zelavis-ecommerce");
+  assert.equal(entry.compatibility.zelavis, "^1.0.0");
+  assert.equal(entry.links.repository, "https://github.com/zelavis/zelavis");
+  assert.deepEqual(entry.tags, ["payments", "stripe"]);
+  assert.ok(Object.isFrozen(entry));
+  assert.ok(Object.isFrozen(entry.extends));
+  assert.ok(Object.isFrozen(entry.compatibility));
+  assert.ok(Object.isFrozen(entry.links));
+  assert.ok(Object.isFrozen(entry.tags));
+});
+
+test("definePluginCatalog validates marketplace entries", () => {
+  assert.throws(
+    () =>
+      definePluginCatalogEntry({
+        name: "broken",
+        package: "@example/broken",
+        publisher: "example",
+        source: "unknown",
+      }),
+    /source must be "official" or "community"/,
+  );
+
+  assert.throws(
+    () =>
+      definePluginCatalogEntry({
+        name: "broken",
+        package: "@example/broken",
+        publisher: "example",
+        source: "community",
+        reviewStatus: "mystery",
+      }),
+    /reviewStatus must be "official", "reviewed", "unreviewed", or "blocked"/,
+  );
+
+  assert.throws(
+    () =>
+      definePluginCatalog([
+        {
+          name: "analytics",
+          package: "@example/analytics",
+          publisher: "example",
+          source: "community",
+        },
+        {
+          name: "analytics",
+          package: "@example/analytics-two",
+          publisher: "example",
+          source: "community",
+        },
+      ]),
+    /unique names/,
+  );
 });
 
 test("createPluginRegistry normalizes plugin registry entries", () => {

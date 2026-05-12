@@ -64,3 +64,7 @@ Parent plugins declare the policy for each extension point:
 - use `definePlugin(...)` with `extends` for child plugins
 - keep parent plugin extension points named clearly so contributors can tell where a child plugin belongs
 - let parent plugins own child-plugin policy until the marketplace review model is mature
+- keep official plugin source in this repo, and keep community plugin source in author-owned repositories
+- describe community plugins through Marketplace catalog metadata instead of importing their source into the monorepo
+
+See [Plugin Marketplace Catalog](../reference/plugin-marketplace-catalog.md) for the catalog metadata contract and hosting recommendation.

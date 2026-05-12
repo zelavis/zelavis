@@ -64,6 +64,44 @@ export interface ZelavisPluginRegistryEntry<TContext = unknown> {
   order?: number;
 }
 
+export type ZelavisPluginCatalogSource = "official" | "community";
+export type ZelavisPluginCatalogReviewStatus =
+  | "official"
+  | "reviewed"
+  | "unreviewed"
+  | "blocked";
+
+export interface ZelavisPluginCatalogCompatibility {
+  zelavis?: string;
+  parentPlugin?: string;
+  plugin?: string;
+}
+
+export interface ZelavisPluginCatalogLinks {
+  homepage?: string;
+  repository?: string;
+  documentation?: string;
+  issues?: string;
+}
+
+export interface ZelavisPluginCatalogEntry {
+  name: string;
+  package: string;
+  publisher: string;
+  source: ZelavisPluginCatalogSource;
+  title?: string;
+  summary?: string;
+  description?: string;
+  version?: string;
+  reviewStatus?: ZelavisPluginCatalogReviewStatus;
+  verified?: boolean;
+  extends?: ZelavisPluginExtensionTarget;
+  compatibility?: ZelavisPluginCatalogCompatibility;
+  links?: ZelavisPluginCatalogLinks;
+  license?: string;
+  tags?: readonly string[];
+}
+
 export type ZelavisPluginModule<TContext = unknown> =
   | Readonly<ZelavisPluginDefinition<TContext>>
   | {
@@ -231,6 +269,63 @@ function getExtensionPoint(
   );
 }
 
+function validateOptionalString(
+  value: unknown,
+  fieldName: string,
+): asserts value is string | undefined {
+  if (value !== undefined && typeof value !== "string") {
+    throw new TypeError(`${fieldName} must be a string when provided.`);
+  }
+}
+
+function freezeCatalogCompatibility(
+  compatibility: ZelavisPluginCatalogCompatibility,
+): Readonly<ZelavisPluginCatalogCompatibility> {
+  validateOptionalString(
+    compatibility.zelavis,
+    "Plugin catalog compatibility zelavis",
+  );
+  validateOptionalString(
+    compatibility.parentPlugin,
+    "Plugin catalog compatibility parentPlugin",
+  );
+  validateOptionalString(
+    compatibility.plugin,
+    "Plugin catalog compatibility plugin",
+  );
+
+  return Object.freeze({ ...compatibility });
+}
+
+function freezeCatalogLinks(
+  links: ZelavisPluginCatalogLinks,
+): Readonly<ZelavisPluginCatalogLinks> {
+  validateOptionalString(links.homepage, "Plugin catalog link homepage");
+  validateOptionalString(links.repository, "Plugin catalog link repository");
+  validateOptionalString(links.documentation, "Plugin catalog link documentation");
+  validateOptionalString(links.issues, "Plugin catalog link issues");
+
+  return Object.freeze({ ...links });
+}
+
+function validateExtensionTarget(target: ZelavisPluginExtensionTarget): void {
+  if (!target || typeof target !== "object") {
+    throw new TypeError("Plugin extension target must be an object.");
+  }
+
+  if (!target.plugin || typeof target.plugin !== "string") {
+    throw new TypeError(
+      "Plugin extension target must include a parent plugin name.",
+    );
+  }
+
+  if (!target.extensionPoint || typeof target.extensionPoint !== "string") {
+    throw new TypeError(
+      "Plugin extension target must include an extension point.",
+    );
+  }
+}
+
 export function isPluginExtensionAllowed(
   parent: Readonly<ZelavisPluginRegistryEntry<any>>,
   child: Readonly<ZelavisPluginRegistryEntry<any>>,
@@ -257,6 +352,124 @@ export function isPluginExtensionAllowed(
   }
 
   return extensionPoint.allowedPlugins?.includes(child.plugin.name) ?? false;
+}
+
+export function definePluginCatalogEntry(
+  entry: ZelavisPluginCatalogEntry,
+): Readonly<ZelavisPluginCatalogEntry> {
+  if (!entry || typeof entry !== "object") {
+    throw new TypeError("A plugin catalog entry object is required.");
+  }
+
+  if (!entry.name || typeof entry.name !== "string") {
+    throw new TypeError("A plugin catalog entry must include a string name.");
+  }
+
+  if (!entry.package || typeof entry.package !== "string") {
+    throw new TypeError("A plugin catalog entry must include a string package.");
+  }
+
+  if (!entry.publisher || typeof entry.publisher !== "string") {
+    throw new TypeError("A plugin catalog entry must include a string publisher.");
+  }
+
+  if (entry.source !== "official" && entry.source !== "community") {
+    throw new TypeError(
+      'A plugin catalog entry source must be "official" or "community".',
+    );
+  }
+
+  if (
+    entry.reviewStatus !== undefined &&
+    entry.reviewStatus !== "official" &&
+    entry.reviewStatus !== "reviewed" &&
+    entry.reviewStatus !== "unreviewed" &&
+    entry.reviewStatus !== "blocked"
+  ) {
+    throw new TypeError(
+      'A plugin catalog entry reviewStatus must be "official", "reviewed", "unreviewed", or "blocked".',
+    );
+  }
+
+  validateOptionalString(entry.title, "Plugin catalog entry title");
+  validateOptionalString(entry.summary, "Plugin catalog entry summary");
+  validateOptionalString(entry.description, "Plugin catalog entry description");
+  validateOptionalString(entry.version, "Plugin catalog entry version");
+  validateOptionalString(entry.license, "Plugin catalog entry license");
+
+  if (entry.verified !== undefined && typeof entry.verified !== "boolean") {
+    throw new TypeError(
+      "A plugin catalog entry verified field must be boolean when provided.",
+    );
+  }
+
+  if (entry.extends !== undefined) {
+    validateExtensionTarget(entry.extends);
+  }
+
+  if (entry.compatibility !== undefined) {
+    if (!entry.compatibility || typeof entry.compatibility !== "object") {
+      throw new TypeError(
+        "A plugin catalog entry compatibility field must be an object.",
+      );
+    }
+  }
+
+  if (entry.links !== undefined) {
+    if (!entry.links || typeof entry.links !== "object") {
+      throw new TypeError("A plugin catalog entry links field must be an object.");
+    }
+  }
+
+  if (entry.tags !== undefined && !Array.isArray(entry.tags)) {
+    throw new TypeError("A plugin catalog entry tags field must be an array.");
+  }
+
+  for (const tag of entry.tags ?? []) {
+    if (!tag || typeof tag !== "string") {
+      throw new TypeError("A plugin catalog entry tags must be strings.");
+    }
+  }
+
+  return Object.freeze({
+    ...entry,
+    reviewStatus:
+      entry.reviewStatus ??
+      (entry.source === "official" ? "official" : "unreviewed"),
+    verified: entry.verified ?? (entry.source === "official"),
+    extends: entry.extends ? Object.freeze({ ...entry.extends }) : entry.extends,
+    compatibility: entry.compatibility
+      ? freezeCatalogCompatibility(entry.compatibility)
+      : entry.compatibility,
+    links: entry.links ? freezeCatalogLinks(entry.links) : entry.links,
+    tags: entry.tags ? Object.freeze([...entry.tags]) : entry.tags,
+  });
+}
+
+export function definePluginCatalog(
+  entries: readonly ZelavisPluginCatalogEntry[],
+): readonly Readonly<ZelavisPluginCatalogEntry>[] {
+  if (!Array.isArray(entries)) {
+    throw new TypeError("A plugin catalog must be an array.");
+  }
+
+  const seen = new Set<string>();
+
+  return Object.freeze(
+    entries.map((entry) => {
+      const normalized = definePluginCatalogEntry(entry);
+
+      if (seen.has(normalized.name)) {
+        throw new TypeError(
+          `Plugin catalog entries must use unique names. Duplicate: ${normalized.name}`,
+        );
+      }
+
+      seen.add(normalized.name);
+
+      return normalized;
+    }),
+  );
 }
 
 export function definePlugin<TContext = unknown>(
@@ -339,27 +552,7 @@ export function definePlugin<TContext = unknown>(
   }
 
   if ("extends" in definition && definition.extends !== undefined) {
-    if (!definition.extends || typeof definition.extends !== "object") {
-      throw new TypeError("Plugin extension target must be an object.");
-    }
-
-    if (
-      !definition.extends.plugin ||
-      typeof definition.extends.plugin !== "string"
-    ) {
-      throw new TypeError(
-        "Plugin extension target must include a parent plugin name.",
-      );
-    }
-
-    if (
-      !definition.extends.extensionPoint ||
-      typeof definition.extends.extensionPoint !== "string"
-    ) {
-      throw new TypeError(
-        "Plugin extension target must include an extension point.",
-      );
-    }
+    validateExtensionTarget(definition.extends);
 
     if (definition.menu !== undefined) {
       throw new TypeError(

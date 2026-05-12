@@ -185,7 +185,8 @@ Important boundary:
 
 The runtime model should also stay explicit:
 
-- plugin **catalog metadata** lives in plugin registry entries
+- plugin **catalog metadata** lives in Marketplace catalog entries
+- plugin **runtime metadata** lives in plugin registry entries
 - plugin **install state** lives in a registry store
 - plugin **activation order** is an explicit `order` number
 - plugin **setup** runs in registry order and can register additional services through the setup context
@@ -199,6 +200,8 @@ That means install state and activation are related, but not the same thing:
 The current runtime direction now reflects that split with:
 
 - `createPluginRegistry(...)`
+- `definePluginCatalogEntry(...)`
+- `definePluginCatalog(...)`
 - `applyPluginRegistryState(...)`
 - `activatePluginRegistry(...)`
 - runtime plugin registry stores for memory, database, key/value, and file storage
