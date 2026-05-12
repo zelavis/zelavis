@@ -50,15 +50,15 @@ Current packages:
   Shared endpoint contracts and framework adapters that mount service APIs from Zelavis packages.
 - [packages/ui](packages/ui)
   The admin/dashboard frontend used by the high-level runtime.
-- [packages/plugins/ecommerce](packages/plugins/ecommerce)
+- [plugins/ecommerce](plugins/ecommerce)
   An optional low-level ecommerce core for building custom commerce platforms, CMS plugins, and embedded commerce workflows.
 - []()
   An Express adapter package for exposing the ecommerce core over HTTP.
 - []()
   A Hono adapter package for exposing the ecommerce core over HTTP.
-- [packages/plugins/ecommerce/plugins/stripe](packages/plugins/ecommerce/plugins/stripe)
+- [plugins/ecommerce/plugins/stripe](plugins/ecommerce/plugins/stripe)
   A Stripe payment provider plugin for `@zelavis/ecommerce`.
-- [packages/plugins/ecommerce/plugins/paypal](packages/plugins/ecommerce/plugins/paypal)
+- [plugins/ecommerce/plugins/paypal](plugins/ecommerce/plugins/paypal)
   A PayPal payment provider plugin for `@zelavis/ecommerce`.
 - [packages/auth/plugins/email-password](packages/auth/plugins/email-password)
   An email/password auth plugin for `@zelavis/auth`.

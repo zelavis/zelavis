@@ -1,8 +1,8 @@
 packages:
   - "packages/*"
-  - "packages/plugins/*"
-  - "packages/plugins/*/adapters/*"
-  - "packages/plugins/*/plugins/*"
+  - "plugins/*"
+  - "plugins/*/adapters/*"
+  - "plugins/*/plugins/*"
   - "packages/*/adapters/*"
   - "packages/*/plugins/*"
   - "examples/*"

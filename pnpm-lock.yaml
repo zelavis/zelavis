@@ -383,54 +383,6 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/plugins/ecommerce:
-    dependencies:
-      '@zelavis/database':
-        specifier: workspace:*
-        version: link:../../database
-      '@zelavis/server':
-        specifier: workspace:*
-        version: link:../../server
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      zelavis:
-        specifier: workspace:*
-        version: link:../../zelavis
-
-  packages/plugins/ecommerce/plugins/paypal:
-    dependencies:
-      '@paypal/paypal-server-sdk':
-        specifier: ^2.3.0
-        version: 2.3.0
-      '@zelavis/ecommerce':
-        specifier: workspace:*
-        version: link:../..
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      zelavis:
-        specifier: workspace:*
-        version: link:../../../../zelavis
-
-  packages/plugins/ecommerce/plugins/stripe:
-    dependencies:
-      '@zelavis/ecommerce':
-        specifier: workspace:*
-        version: link:../..
-      stripe:
-        specifier: ^20.4.0
-        version: 20.4.0(@types/node@24.11.0)
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      zelavis:
-        specifier: workspace:*
-        version: link:../../../../zelavis
-
   packages/server:
     devDependencies:
       '@types/express':
@@ -616,7 +568,7 @@ importers:
         version: link:../database/adapters/node-sqlite
       '@zelavis/ecommerce':
         specifier: workspace:*
-        version: link:../plugins/ecommerce
+        version: link:../../plugins/ecommerce
       '@zelavis/server':
         specifier: workspace:*
         version: link:../server
@@ -642,6 +594,54 @@ importers:
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
+
+  plugins/ecommerce:
+    dependencies:
+      '@zelavis/database':
+        specifier: workspace:*
+        version: link:../../packages/database
+      '@zelavis/server':
+        specifier: workspace:*
+        version: link:../../packages/server
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      zelavis:
+        specifier: workspace:*
+        version: link:../../packages/zelavis
+
+  plugins/ecommerce/plugins/paypal:
+    dependencies:
+      '@paypal/paypal-server-sdk':
+        specifier: ^2.3.0
+        version: 2.3.0
+      '@zelavis/ecommerce':
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      zelavis:
+        specifier: workspace:*
+        version: link:../../../../packages/zelavis
+
+  plugins/ecommerce/plugins/stripe:
+    dependencies:
+      '@zelavis/ecommerce':
+        specifier: workspace:*
+        version: link:../..
+      stripe:
+        specifier: ^20.4.0
+        version: 20.4.0(@types/node@24.11.0)
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      zelavis:
+        specifier: workspace:*
+        version: link:../../../../packages/zelavis
 
   website:
     dependencies:
@@ -2573,7 +2573,6 @@ packages:
   '@tanstack/react-start@1.167.65':
     resolution: {integrity: sha512-vCGga3RECeR4VpSVuXIU/+zxak5f2qdpUXdZ2yrgcwwKoYPtatdJm6zjS0Py7UOecRqLqMtSeuOjowBJ1higWQ==}
     engines: {node: '>=22.12.0'}
-    hasBin: true
     peerDependencies:
       '@rsbuild/core': ^2.0.0
       '@vitejs/plugin-rsc': '*'
@@ -4971,7 +4970,6 @@ packages:
   node-domexception@1.0.0:
     resolution: {integrity: sha512-/jKZoMpw0F8GRwl4/eLROPA3cfcXtLApP0QzLmUT/HuPCZWyB7IY9ZrMeKw2O/nFIqPQB3PVM9aYm0F312AXDQ==}
     engines: {node: '>=10.5.0'}
-    deprecated: Use your platform's native DOMException instead
 
   node-exports-info@1.6.0:
     resolution: {integrity: sha512-pyFS63ptit/P5WqUkt+UUfe+4oevH+bFeIiPPdfb0pFeYEu/1ELnJu5l+5EcTKYL5M7zaAa7S8ddywgXypqKCw==}
@@ -5240,7 +5238,6 @@ packages:
   prebuild-install@7.1.3:
     resolution: {integrity: sha512-8Mf2cbV7x1cXPUILADGI3wuhfqWvtiLA1iclTDbFRZkgRQS0NqsPZphna9V+HyTEadheuPmjaJMsbzKQFOzLug==}
     engines: {node: '>=10'}
-    deprecated: No longer maintained. Please contact the author of the relevant native addon; alternatives are available.
     hasBin: true
 
   prelude-ls@1.2.1:
@@ -6179,7 +6176,6 @@ packages:
   whatwg-encoding@3.1.1:
     resolution: {integrity: sha512-6qN4hJdMwfYBtE3YBTTHhoeuUrDBPZmbQaxWAqSALV/MeEnR5z1xd8UKud2RAkFoPkmB+hli1TZSnyi84xz1vQ==}
     engines: {node: '>=18'}
-    deprecated: Use @exodus/bytes instead for a more spec-conformant and faster implementation
 
   whatwg-mimetype@4.0.0:
     resolution: {integrity: sha512-QaKxh0eNIi2mE9p2vEdzfagOKHCcj1pJ56EEHGQOVxp8r9/iszLUUV7v89x9O1p/T+NlTM5W7jW6+cz4Fq1YVg==}

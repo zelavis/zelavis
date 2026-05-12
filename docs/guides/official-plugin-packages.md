@@ -1,6 +1,6 @@
 # Official Plugin Packages
 
-Official Zelavis plugin packages live under `packages/plugins/*`.
+Official Zelavis plugin packages live under `plugins/*`.
 
 These packages are first-party marketplace/runtime plugins written by the Zelavis team. They use the top-level `definePlugin(...)` contract from `zelavis/plugin`.
 
@@ -15,14 +15,14 @@ An official plugin package is a top-level Zelavis plugin:
 
 Example:
 
-- [packages/plugins/ecommerce](/Users/ivanjeremicx/Projects/zelavis/packages/plugins/ecommerce)
+- [plugins/ecommerce](/Users/ivanjeremicx/Projects/zelavis/plugins/ecommerce)
 
 ## Recommended structure
 
 Use one obvious named file for the top-level plugin definition:
 
 ```text
-packages/plugins/example/
+plugins/example/
   src/
     index.ts
     zelavis-example-plugin.ts

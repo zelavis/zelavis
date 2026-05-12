@@ -34,14 +34,15 @@ The repo still contains domain packages such as `@zelavis/ecommerce`, but they a
 
 ## Repo Structure
 
-- `packages/*` contains workspace packages.
+- `packages/*` contains core platform workspace packages.
+- `plugins/*` contains official user-installable Zelavis plugins.
 - `packages/zelavis` is the high-level runtime package that composes core services.
 - `packages/server` defines the shared service and route mounting model.
 - `packages/database` contains the document-first database core and server-facing database service.
 - `packages/auth` contains the low-level auth core and auth method plugins.
 - `packages/ui` contains the admin/dashboard UI used by the runtime package.
 - `packages/*/adapters/*` contains framework or external-system adapters.
-- `packages/*/plugins/*` contains optional capability/provider/plugin packages.
+- `packages/*/plugins/*` contains package-local capability/provider plugins for core services.
 - `examples/*` contains runnable example workspace packages.
 - `docs/archive/*` is historical material and should not drive current product decisions unless explicitly revived.
 

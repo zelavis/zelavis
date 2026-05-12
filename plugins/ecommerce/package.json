@@ -28,9 +28,9 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/zelavis/zelavis.git",
-    "directory": "packages/plugins/ecommerce"
+    "directory": "plugins/ecommerce"
   },
-  "homepage": "https://github.com/zelavis/zelavis/tree/main/packages/plugins/ecommerce#readme",
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/plugins/ecommerce#readme",
   "bugs": {
     "url": "https://github.com/zelavis/zelavis/issues"
   },

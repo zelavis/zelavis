@@ -75,7 +75,7 @@ Recommended layout:
 - `zelavis/zelavis`
   - core runtime
   - dashboard
-  - official first-party plugins under `packages/plugins/*`
+  - official first-party plugins under `plugins/*`
 - `zelavis/plugin-catalog`
   - reviewed Marketplace metadata
   - package names, publishers, links, compatibility, review status

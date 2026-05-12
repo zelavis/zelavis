@@ -44,9 +44,10 @@ The ecommerce package is still useful, but it should be treated as an optional d
 
 ## Repo layout
 
-- `packages/*` contains workspace packages.
+- `packages/*` contains core platform workspace packages.
+- `plugins/*` contains official user-installable Zelavis plugins.
 - `packages/*/adapters/*` contains framework or external runtime adapters.
-- `packages/*/plugins/*` contains optional capability/provider packages.
+- `packages/*/plugins/*` contains package-local capability/provider packages.
 - `examples/*` contains runnable example workspace packages.
 - `docs/archive/*` is historical material and should not be treated as current source of truth unless explicitly revived.
 

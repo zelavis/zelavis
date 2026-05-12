@@ -13,10 +13,10 @@ There is no separate old ecommerce base package anymore.
 
 ## Main entrypoints
 
-- [packages/plugins/ecommerce/src/zelavis-ecommerce-plugin.ts](/Users/ivanjeremicx/Projects/zelavis/packages/plugins/ecommerce/src/zelavis-ecommerce-plugin.ts)
-- [packages/plugins/ecommerce/src/core/create-ecommerce.ts](/Users/ivanjeremicx/Projects/zelavis/packages/plugins/ecommerce/src/core/create-ecommerce.ts)
-- [packages/plugins/ecommerce/src/ecommerce-plugin.ts](/Users/ivanjeremicx/Projects/zelavis/packages/plugins/ecommerce/src/ecommerce-plugin.ts)
-- [packages/plugins/ecommerce/src/repositories/database.ts](/Users/ivanjeremicx/Projects/zelavis/packages/plugins/ecommerce/src/repositories/database.ts)
+- [plugins/ecommerce/src/zelavis-ecommerce-plugin.ts](/Users/ivanjeremicx/Projects/zelavis/plugins/ecommerce/src/zelavis-ecommerce-plugin.ts)
+- [plugins/ecommerce/src/core/create-ecommerce.ts](/Users/ivanjeremicx/Projects/zelavis/plugins/ecommerce/src/core/create-ecommerce.ts)
+- [plugins/ecommerce/src/ecommerce-plugin.ts](/Users/ivanjeremicx/Projects/zelavis/plugins/ecommerce/src/ecommerce-plugin.ts)
+- [plugins/ecommerce/src/repositories/database.ts](/Users/ivanjeremicx/Projects/zelavis/plugins/ecommerce/src/repositories/database.ts)
 
 ## Usage
 

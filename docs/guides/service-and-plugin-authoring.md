@@ -21,8 +21,8 @@ For plugin packages, the plugin definition should also live in a named file near
 
 Examples:
 
-- [packages/plugins/ecommerce/src/ecommerce-plugin.ts](/Users/ivanjeremicx/Projects/zelavis/packages/plugins/ecommerce/src/ecommerce-plugin.ts)
-- [packages/plugins/ecommerce/plugins/stripe/src/stripe-plugin.ts](/Users/ivanjeremicx/Projects/zelavis/packages/plugins/ecommerce/plugins/stripe/src/stripe-plugin.ts)
+- [plugins/ecommerce/src/ecommerce-plugin.ts](/Users/ivanjeremicx/Projects/zelavis/plugins/ecommerce/src/ecommerce-plugin.ts)
+- [plugins/ecommerce/plugins/stripe/src/stripe-plugin.ts](/Users/ivanjeremicx/Projects/zelavis/plugins/ecommerce/plugins/stripe/src/stripe-plugin.ts)
 - [packages/auth/plugins/email-password/src/email-password-plugin.ts](/Users/ivanjeremicx/Projects/zelavis/packages/auth/plugins/email-password/src/email-password-plugin.ts)
 
 Avoid hiding the real definition under paths like:
