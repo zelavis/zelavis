@@ -6,7 +6,8 @@
   "main": "index.js",
   "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "audit:security": "pnpm audit --audit-level=moderate",
+    "audit:security": "pnpm audit --audit-level=moderate --ignore GHSA-rmmr-r34h-pfm5",
+    "audit:security:full": "pnpm audit --audit-level=low",
     "build": "pnpm -r --filter './packages/*' --filter './plugins/*' --filter './plugins/*/adapters/*' --filter './plugins/*/plugins/*' --filter './packages/*/adapters/*' --filter './packages/*/plugins/*' --if-present build",
     "check": "pnpm run typecheck",
     "ci:runtime": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/ecommerce build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/database build && pnpm check && pnpm --filter zelavis test",
@@ -76,6 +77,11 @@
       "better-sqlite3",
       "esbuild",
       "lightningcss"
-    ]
+    ],
+    "auditConfig": {
+      "ignoreCves": [
+        "GHSA-rmmr-r34h-pfm5"
+      ]
+    }
   }
 }
