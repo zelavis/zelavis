@@ -3,10 +3,14 @@ import {
   nextjsPagesRouterAdapter as bindNextjsPagesRouterRuntime,
   type NextjsPagesRouterAdapterOptions,
 } from "@zelavis/server/adapters/nextjs-pages-router";
-import type { ZelavisAdapterBinding } from "../index.js";
-import { createRuntimeBackedAdapter } from "./_shared.js";
+import type { ZelavisAdapterBinding, ZelavisAdapterPlatform } from "../index.js";
+import { defineAdapter } from "../index.js";
 
 export type { NextjsPagesRouterAdapterOptions };
+
+export interface ZelavisNextjsPagesRouterAdapterOptions {
+  platform?: ZelavisAdapterPlatform;
+}
 
 export interface ZelavisNextjsPagesRouterBinding extends ZelavisAdapterBinding {
   nextjsPagesRouterHandler(
@@ -14,18 +18,21 @@ export interface ZelavisNextjsPagesRouterBinding extends ZelavisAdapterBinding {
   ): NextApiHandler;
 }
 
-export function nextjsPagesRouterAdapter() {
-  return createRuntimeBackedAdapter<ZelavisNextjsPagesRouterBinding>(
-    "nextjs-pages-router",
-    ({ getRuntime }) => ({
+export function nextjsPagesRouterAdapter(
+  options: ZelavisNextjsPagesRouterAdapterOptions = {},
+) {
+  return defineAdapter<ZelavisNextjsPagesRouterBinding>({
+    name: "nextjs-pages-router",
+    platform: options.platform,
+    mount: ({ getRuntime }) => ({
       async ready() {
         await getRuntime();
       },
       nextjsPagesRouterHandler(
-        options: NextjsPagesRouterAdapterOptions = {},
+        handlerOptions: NextjsPagesRouterAdapterOptions = {},
       ) {
-        return bindNextjsPagesRouterRuntime(getRuntime(), options);
+        return bindNextjsPagesRouterRuntime(getRuntime(), handlerOptions);
       },
     }),
-  );
+  });
 }

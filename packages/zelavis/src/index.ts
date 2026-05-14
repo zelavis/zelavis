@@ -561,13 +561,44 @@ export interface ZelavisPlatformPreset {
     | ZelavisResolvedPlatformOptions;
 }
 
+export type ZelavisAdapterPlatform =
+  | ((
+      options: ZelavisOptions<any>,
+    ) =>
+      | Promise<ZelavisResolvedPlatformOptions>
+      | ZelavisResolvedPlatformOptions)
+  | {
+      resolve(
+        options: ZelavisOptions<any>,
+      ):
+        | Promise<ZelavisResolvedPlatformOptions>
+        | ZelavisResolvedPlatformOptions;
+    };
+
+export interface ZelavisAdapterDefinition<TBinding extends object = object> {
+  name: string;
+  platform?: ZelavisAdapterPlatform;
+  mount?:
+    | ((context: ZelavisAdapterRuntimeContext) => TBinding)
+    | { bind(context: ZelavisAdapterRuntimeContext): TBinding };
+}
+
+export interface ZelavisAdapter<TBinding extends object = object> {
+  name: string;
+  resolve?(
+    options: ZelavisOptions<any>,
+  ):
+    | Promise<ZelavisResolvedPlatformOptions>
+    | ZelavisResolvedPlatformOptions;
+  bind?(context: ZelavisAdapterRuntimeContext): TBinding;
+}
+
 export interface ZelavisOptions<TAdapter extends object = object> {
   rootPath?: string;
   api?: ZelavisApiOptions;
   plugins?: ZelavisPluginRegistryOptions;
   onError?: ZelavisServerErrorHandler;
-  adapter?: ZelavisAdapterFactory<TAdapter>;
-  platform?: ZelavisPlatformPreset | readonly ZelavisPlatformPreset[];
+  adapter?: ZelavisAdapter<TAdapter>;
 }
 
 export interface ZelavisDatabaseDocumentStoreOptions {
@@ -585,6 +616,30 @@ export function createPlatform<TPlatform extends ZelavisPlatformPreset>(
   platform: TPlatform,
 ): TPlatform {
   return platform;
+}
+
+export function defineAdapter<TBinding extends object = object>(
+  definition: ZelavisAdapterDefinition<TBinding>,
+): ZelavisAdapter<TBinding> {
+  return {
+    name: definition.name,
+    resolve: definition.platform
+      ? typeof definition.platform === "function"
+        ? definition.platform
+        : (options) =>
+            (
+              definition.platform as ZelavisPlatformPreset
+            ).resolve(options)
+      : undefined,
+    bind: definition.mount
+      ? typeof definition.mount === "function"
+        ? definition.mount
+        : (context) =>
+            (
+              definition.mount as ZelavisAdapterFactory<TBinding>
+            ).bind(context)
+      : undefined,
+  };
 }
 
 const DEFAULT_ZELAVIS_STATE_COLLECTION = "zelavis_system";
@@ -3252,25 +3307,20 @@ async function resolvePlatformState(
   serverOptions: ZelavisServerOptions;
   context: ZelavisPlatformContext;
 }> {
-  const platforms = options.platform
-    ? Array.isArray(options.platform)
-      ? options.platform
-      : [options.platform]
-    : [];
   let resolved: ZelavisServerOptions = {};
   let resources: ZelavisPlatformResources = {};
   let metadata: Record<string, unknown> = {};
   const presets: string[] = [];
 
-  for (const platform of platforms) {
-    const next = await platform.resolve(options);
-    presets.push(platform.name);
+  if (options.adapter?.resolve) {
+    const next = await options.adapter.resolve(options);
+    presets.push(options.adapter.name);
     resolved = mergeZelavisServerOptions(resolved, next);
     resources = mergePlatformResources(resources, next.resources);
     metadata = mergePlatformMetadata(metadata, next.metadata);
   }
 
-  const { adapter: _adapter, platform: _platform, ...serverOptions } = options;
+  const { adapter: _adapter, ...serverOptions } = options;
   return {
     serverOptions: mergeZelavisServerOptions(resolved, serverOptions),
     context: {
@@ -3372,7 +3422,7 @@ export class Zelavis<TAdapter extends object = {}> {
   constructor(options: ZelavisOptions<TAdapter> = {}) {
     assertNoInternalConstructorOptions(options);
     this.options = options;
-    this.adapter = options.adapter
+    this.adapter = options.adapter?.bind
       ? options.adapter.bind({
           getRuntime: () => this.runtime(),
           getPlatform: () => this.platform,

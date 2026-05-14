@@ -1,72 +1,106 @@
-# Adapters and Fetch-Native Hosts
+# Adapters
 
-Zelavis has two different outer integration layers:
+Every Zelavis setup uses exactly one adapter. The adapter tells Zelavis two things:
 
-- framework adapters
-- platform presets
+- How to mount into the host environment (framework middleware, HTTP server, or nothing for fetch-native hosts)
+- What host infrastructure to use (database, KV, file storage)
 
-And there is one more important possibility:
+Both concerns live in one object and come from one import path.
 
-- no adapter at all
-
-That last case is correct whenever the host already speaks the standard Web `Request` and `Response` model.
+```ts
+import { zelavisExpress, zelavisNode } from "zelavis/adapters";
+```
 
 ## The short rule
 
-Use an adapter when the host gives you framework-specific request and response objects.
+Pick the adapter that matches your host:
 
-Use `zelavis.fetch(request)` directly when the host already gives you a standard Web `Request` and expects a standard Web `Response`.
-
-Use a platform preset when you want Zelavis to pick host-level infrastructure defaults such as database, KV, dashboard settings storage, or file storage.
+| Host | Adapter |
+|---|---|
+| Standalone Node HTTP server | `zelavisNodeServer({ platform: zelavisNode() })` |
+| Express | `zelavisExpress({ platform: zelavisNode() })` |
+| Fastify | `zelavisFastify({ platform: zelavisNode() })` |
+| Hono on Node | `zelavisHono({ platform: zelavisNode() })` |
+| Hono on Cloudflare Workers | `zelavisHono({ platform: zelavisCloudflare({ env }) })` |
+| Next.js App Router | `zelavisVercel()` |
+| Cloudflare Workers | `zelavisCloudflare({ env })` |
+| Vercel | `zelavisVercel()` |
+| Netlify | `zelavisNetlify({ kv, files })` |
+| Bun fetch handler | `zelavisBun()` |
+| Any fetch-native host | `zelavisFetch()` |
 
 ## Framework adapters
 
-Framework adapters answer:
+Framework adapters answer: *how does Zelavis mount into this host?*
 
-> How does Zelavis mount into this host framework naturally?
-
-Examples:
-
-- Express middleware
-- Fastify plugin
-- Hono middleware
-- Next.js Pages Router handler
-
-Typical usage:
+They accept an optional `platform` option that contributes host infrastructure. Without a `platform`, Zelavis has no infrastructure opinions — useful when you supply your own database and storage configuration directly.
 
 ```ts
-import express from "express";
 import { Zelavis } from "zelavis";
-import { expressAdapter } from "zelavis/adapters/express";
-import { nodePlatform } from "zelavis/platforms/node";
+import { zelavisExpress, zelavisNode } from "zelavis/adapters";
 
 const zelavis = new Zelavis({
-  adapter: expressAdapter(),
-  platform: nodePlatform(),
+  adapter: zelavisExpress({ platform: zelavisNode() }),
 });
 
 const app = express();
 app.use(zelavis.adapter.expressMiddleware());
+app.listen(3000);
 ```
+
+Available framework adapters: `zelavisExpress`, `zelavisHono`, `zelavisFastify`, `zelavisH3`, `zelavisElysia`, `zelavisNodeServer`, `zelavisNextjsPagesRouter`.
 
 ## Fetch-native hosts
 
-Some hosts already expose the Web-standard `Request` and `Response` model directly.
+Some hosts already speak the Web-standard `Request` → `Response` model directly: Cloudflare Workers, Bun, Next.js App Router route handlers, and similar runtimes. These hosts do not need a framework adapter for mounting — you call `zelavis.fetch(request)` directly.
 
-Examples:
-
-- Cloudflare Workers
-- Web-standard server runtimes
-- Next.js App Router route handlers
-
-In those environments, the cleanest integration is:
+The platform adapter still applies for infrastructure:
 
 ```ts
 import { Zelavis } from "zelavis";
-import { vercelPlatform } from "zelavis/platforms/vercel";
+import { zelavisCloudflare } from "zelavis/adapters";
 
 const zelavis = new Zelavis({
-  platform: vercelPlatform(),
+  adapter: zelavisCloudflare({ env }),
+});
+
+export default {
+  async fetch(request, env, ctx) {
+    return zelavis.fetch(request, ctx);
+  },
+};
+```
+
+## The fetch adapter
+
+`zelavisFetch()` is the explicit form for a fetch-native host with no platform opinions. Use it when the host is already fetch-native and you are wiring up Zelavis infrastructure manually through the `Zelavis` constructor options.
+
+```ts
+import { Zelavis } from "zelavis";
+import { zelavisFetch } from "zelavis/adapters";
+
+const zelavis = new Zelavis({
+  adapter: zelavisFetch(),
+  coreServices: { database: myCustomDriver },
+});
+
+export default {
+  fetch(request) {
+    return zelavis.fetch(request);
+  },
+};
+```
+
+## Platform-only adapters
+
+Some adapters only contribute infrastructure and have no framework mounting logic. Cloudflare, Vercel, Netlify, Node, and Bun platform adapters work this way — they provide storage defaults and you call `zelavis.fetch(request)` yourself.
+
+```ts
+import { Zelavis } from "zelavis";
+import { zelavisVercel } from "zelavis/adapters";
+
+const zelavis = new Zelavis({
+  adapter: zelavisVercel(),
 });
 
 export async function GET(request: Request) {
@@ -74,75 +108,55 @@ export async function GET(request: Request) {
 }
 ```
 
-There is no missing adapter there. The host already matches Zelavis' fetch interface.
+## Composing framework and platform
 
-## Why Next.js App Router does not need an adapter
-
-This has been the main source of confusion.
-
-Next.js is a framework.
-Vercel is a platform.
-
-Those are different decisions.
-
-When Zelavis runs inside a Next.js App Router route on Vercel:
-
-- `vercelPlatform()` is the platform choice
-- App Router route handlers are the host shape
-- App Router handlers are already fetch-native
-
-So the integration can be:
+Framework adapters accept a `platform` option so you can pair any supported framework with any supported platform:
 
 ```ts
+import { zelavisHono, zelavisCloudflare } from "zelavis/adapters";
+
+// Hono running on Cloudflare Workers
 new Zelavis({
-  platform: vercelPlatform(),
+  adapter: zelavisHono({ platform: zelavisCloudflare({ env }) }),
 });
 ```
 
-followed by:
-
 ```ts
-return zelavis.fetch(request);
+import { zelavisExpress, zelavisNode } from "zelavis/adapters";
+
+// Express running on a Node VPS
+new Zelavis({
+  adapter: zelavisExpress({ platform: zelavisNode() }),
+});
 ```
 
-That does not break the adapter story. It means this host already speaks the native Zelavis runtime contract.
+## Defining custom adapters
 
-## Why Next.js Pages Router still has an adapter
+Use `defineAdapter` to build your own adapter. The `mount` option handles framework mounting and the `platform` option contributes infrastructure resolution. Both are optional.
 
-Pages Router does not expose the same fetch-native shape as App Router.
+```ts
+import { defineAdapter } from "zelavis";
 
-That older API uses framework-specific request and response objects, so Zelavis needs a bridge:
+const myAdapter = defineAdapter({
+  name: "my-host",
+  platform: (options) => ({
+    resources: {
+      kv: myKvStore,
+      files: myFileStorage,
+    },
+  }),
+  mount: ({ getRuntime }) => ({
+    async myHandler(request) {
+      const runtime = await getRuntime();
+      return runtime.fetch(request);
+    },
+  }),
+});
+```
 
-- `nextjsPagesRouterAdapter()`
-
-That is exactly what framework adapters are for.
-
-## Platform presets
-
-Platform presets answer:
-
-> What storage and host defaults should Zelavis use here?
-
-Examples:
-
-- `nodePlatform()`
-- `bunPlatform()`
-- `cloudflarePlatform()`
-- `netlifyPlatform()`
-- `vercelPlatform()`
-
-These do not decide how Express or Next.js mount requests. They decide host-level infrastructure defaults.
-
-## Mental model
-
-Use this split:
-
-- `adapter` = framework mounting shape
-- `platform` = host infrastructure defaults
-- `fetch()` directly = no adapter needed because the host is already native
+The `platform` option can be a function or an object with a `resolve` method. The `mount` option can be a function or an object with a `bind` method. Both forms are equivalent.
 
 ## Related docs
 
 - [Adapter Entry Points](../adapters/entry-points.md)
-- [Platform Presets](../reference/platform-presets.md)
 - [First Runtime](../getting-started/first-runtime.md)

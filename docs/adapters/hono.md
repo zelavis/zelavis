@@ -8,34 +8,48 @@ Use the Hono adapter when Zelavis should be mounted into an existing Hono applic
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { Zelavis } from "zelavis";
-import { honoAdapter } from "zelavis/adapters/hono";
-import { nodePlatform } from "zelavis/platforms/node";
+import { zelavisHono, zelavisNode } from "zelavis/adapters";
 
 const app = new Hono();
 const zelavis = new Zelavis({
-  adapter: honoAdapter(),
-  platform: nodePlatform(),
+  adapter: zelavisHono({ platform: zelavisNode() }),
 });
 
 app.use(zelavis.adapter.honoMiddleware());
 
-serve({
-  fetch: app.fetch,
-  port: 3000,
+serve({ fetch: app.fetch, port: 3000 });
+```
+
+## Hono on Cloudflare Workers
+
+Hono is fetch-native on Cloudflare Workers. Swap the platform adapter and the rest stays the same:
+
+```ts
+import { zelavisHono, zelavisCloudflare } from "zelavis/adapters";
+
+const zelavis = new Zelavis({
+  adapter: zelavisHono({ platform: zelavisCloudflare({ env }) }),
 });
+```
+
+## Options
+
+```ts
+zelavisHono({
+  platform?: ZelavisAdapterPlatform;
+})
 ```
 
 ## Good fit
 
-- Hono apps running on Node.js
-- apps that already use Hono middleware and route composition
-- cases where Zelavis should share an app with custom Hono endpoints
+- Hono apps running on Node.js or Cloudflare Workers
+- Apps that already use Hono middleware and route composition
+- Cases where Zelavis should share an app with custom Hono endpoints
 
 ## Notes
 
 - Hono remains the outer app boundary.
-- Zelavis routes stay Web-standard internally and are adapted into Hono’s middleware shape.
-- For fetch-native environments, `runtime.fetch(request)` can still be simpler than mounting an adapter.
+- Zelavis routes stay Web-standard internally and are adapted into Hono's middleware shape.
 
 ## Related docs
 

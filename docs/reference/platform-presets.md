@@ -1,128 +1,141 @@
-# Platform Presets
+# Platform Adapters
 
-Platform presets describe host-level infrastructure defaults for Zelavis.
+Platform adapters contribute host-level infrastructure defaults to Zelavis: database drivers, KV stores, file storage, and dashboard settings persistence.
 
-They are separate from framework adapters.
+They are regular adapters and come from the same `zelavis/adapters` entry point as framework adapters. The distinction is purely functional — platform adapters provide `resolve` logic for infrastructure and have no framework mounting logic.
 
-- framework adapters decide how Zelavis plugs into Express, Fastify, Hono, Next.js Pages Router, and similar framework shapes
-- platform presets decide which storage and runtime defaults a host environment should provide
+## Import
 
-That split matters because the same framework can run on different platforms. For example, Next.js can run on a Node VPS or on Vercel, so `nextjs` is a framework concern while `node` and `vercel` are platform concerns.
-
-## Current platform entry points
-
-```txt
-zelavis/platforms/node
-zelavis/platforms/bun
-zelavis/platforms/cloudflare
-zelavis/platforms/netlify
-zelavis/platforms/vercel
+```ts
+import {
+  zelavisNode,
+  zelavisBun,
+  zelavisCloudflare,
+  zelavisVercel,
+  zelavisNetlify,
+} from "zelavis/adapters";
 ```
 
-## Current behavior
+## Available platform adapters
 
-### `nodePlatform()`
+### `zelavisNode(options?)`
 
-Provides a Node-oriented default runtime story:
+Node-oriented defaults:
 
 - `better-sqlite3` database driver
-- file-backed dashboard settings store
-- in-memory KV store
-- local file storage rooted in the Zelavis data directory
+- File-backed dashboard settings store
+- In-memory KV store
+- Local file storage rooted in the Zelavis data directory
 
-### `bunPlatform()`
+```ts
+import { zelavisExpress, zelavisNode } from "zelavis/adapters";
 
-Provides a Bun-oriented default runtime story:
+new Zelavis({
+  adapter: zelavisExpress({
+    platform: zelavisNode({ dataDirectory: ".zelavis" }),
+  }),
+});
+```
+
+### `zelavisBun(options?)`
+
+Bun-oriented defaults:
 
 - Bun SQLite database driver
-- file-backed dashboard settings store
-- in-memory KV store
-- local file storage rooted in the Zelavis data directory
+- File-backed dashboard settings store
+- In-memory KV store
+- Local file storage rooted in the Zelavis data directory
 
-### `cloudflarePlatform()`
+```ts
+import { zelavisBun } from "zelavis/adapters";
 
-Provides Cloudflare-oriented bindings when you pass them in:
+const zelavis = new Zelavis({ adapter: zelavisBun() });
 
-- D1 for the database
-- KV for key/value storage
-- R2 for file storage
+export default { fetch: (req) => zelavis.fetch(req) };
+```
 
-This preset does not guess binding names. You pass the Worker bindings explicitly from `env`.
+### `zelavisCloudflare({ env, bindings? })`
 
-### `vercelPlatform()`
+Cloudflare-oriented bindings. Pass the Worker `env` object and the platform discovers the standard Zelavis bindings (`ZELAVIS_DB`, `ZELAVIS_KV`, `ZELAVIS_FILES`):
 
-Provides a Vercel-shaped platform slot for the current architecture.
+- D1 database driver
+- KV namespace as the KV store
+- R2 bucket as file storage
 
-Today it is intentionally lighter than Node or Cloudflare:
+```ts
+import { zelavisCloudflare } from "zelavis/adapters";
 
-- it can carry injected database configuration
-- it can carry injected KV and file storage resources
-- it does not yet choose one default Vercel database or blob product automatically
+const zelavis = new Zelavis({
+  adapter: zelavisCloudflare({ env }),
+});
 
-That keeps the Vercel story honest until Zelavis has stronger first-party opinions there.
+export default {
+  async fetch(request, env, ctx) {
+    return zelavis.fetch(request, ctx);
+  },
+};
+```
 
-For file storage, Vercel Blob is the natural fit. Zelavis can wrap a Vercel Blob client through `createVercelBlobFileStorage(...)` and use it as the platform file storage resource.
+The `env` object is passed at call time. Cloudflare Workers inject bindings at request time, so `zelavisCloudflare({ env })` captures them via closure before the adapter is used.
 
-When Zelavis is hosted inside a Next.js App Router route on Vercel, that example does not need a separate Next.js adapter. App Router route handlers are already fetch-native, so `zelavis.fetch(request)` is the direct integration point. The separate `nextjs-pages-router` adapter remains useful for the older Pages Router shape, where Zelavis needs to adapt framework-specific request and response objects.
+Custom binding names can be overridden through the `bindings` option.
 
-### `netlifyPlatform()`
+### `zelavisVercel(options?)`
 
-Provides a Netlify-shaped platform slot.
+Vercel-shaped platform slot. Accepts injected database configuration, KV store, and file storage. Does not pick one default Vercel product automatically — you supply the resources explicitly.
 
-Netlify Blobs is a good fit here because Netlify documents it as a store for blobs, unstructured data, and even simple key/value or lightweight database patterns. Zelavis can wrap a Netlify Blobs store through:
+For file storage, Vercel Blob is the natural fit via `createVercelBlobFileStorage(...)`.
 
-- `createNetlifyBlobsKeyValueStore(...)`
-- `createNetlifyBlobsFileStorage(...)`
+```ts
+import { zelavisVercel } from "zelavis/adapters";
+
+const zelavis = new Zelavis({
+  adapter: zelavisVercel({
+    files: { blobStore: myVercelBlobClient },
+  }),
+});
+
+export async function GET(request: Request) {
+  return zelavis.fetch(request);
+}
+```
+
+### `zelavisNetlify(options?)`
+
+Netlify-shaped platform slot. Netlify Blobs is the natural fit for both KV and file storage:
+
+```ts
+import { getStore } from "@netlify/blobs";
+import { zelavisNetlify } from "zelavis/adapters";
+
+const zelavis = new Zelavis({
+  adapter: zelavisNetlify({
+    kv: { blobsStore: getStore("zelavis-kv") },
+    files: { blobsStore: getStore("zelavis-files") },
+  }),
+});
+```
 
 ## Platform resources
 
-Each platform preset can contribute runtime resources through `zelavis.platform.resources`:
+Platform adapters contribute runtime resources through `zelavis.platform.resources`:
 
-- `kv`
-- `files`
+- `kv` — used for dashboard settings persistence
+- `files` — used for file storage and website page persistence
 
-When you use the high-level `Zelavis` class, these resources are not only visible to adapters. Zelavis also uses them as fallback persistence for core services:
-
-- dashboard settings prefer platform KV, then platform files, then in-memory persistence
-- the storage core service can expose platform file storage through `/zelavis/api/v1/storage/files/*`
-- the storage core service can also expose metadata and file references through `/zelavis/api/v1/storage/files/*?format=metadata`
-- website pages can persist to platform file storage when no database core service is configured
-
-These resources are not framework adapters and they are not Zelavis services. They are host-level infrastructure capabilities that platform presets can provide to the runtime and to adapters.
+These resources are not Zelavis services. They are host-level infrastructure capabilities. The Zelavis runtime uses them as fallback persistence when no explicit service configuration is provided.
 
 ## Generic object storage
 
-Not every storage story belongs to a platform preset. S3-compatible object storage is a good example: it is a storage backend, not a hosting platform.
-
-For that case, Zelavis exposes a first-party file-storage helper:
+S3-compatible object storage is not a platform preset — it is a storage backend. Use the first-party helper:
 
 ```ts
 import { createS3CompatibleFileStorage } from "zelavis/storage/s3";
 ```
 
-Use that helper when you want the Zelavis storage contract on top of an S3-compatible bucket without pretending the host platform itself is "S3".
+Pass the result as the `files` resource when constructing your adapter.
 
-## Example
+## Related docs
 
-```ts
-import { Zelavis } from "zelavis";
-import { expressAdapter } from "zelavis/adapters/express";
-import { nodePlatform } from "zelavis/platforms/node";
-
-const zelavis = new Zelavis({
-  adapter: expressAdapter(),
-  platform: nodePlatform({
-    dataDirectory: ".zelavis",
-  }),
-});
-```
-
-## Design rule
-
-Use a framework adapter when the question is:
-
-- "How does Zelavis mount into this framework?"
-
-Use a platform preset when the question is:
-
-- "What storage and host defaults should Zelavis use in this runtime environment?"
+- [Adapters and Fetch-Native Hosts](../guides/adapters-and-fetch-native.md)
+- [Adapter Entry Points](../adapters/entry-points.md)

@@ -1,9 +1,9 @@
 import { getStore } from "@netlify/blobs";
 import { Zelavis } from "zelavis";
-import { netlifyPlatform } from "zelavis/platforms/netlify";
+import { zelavisNetlify } from "zelavis/adapters";
 
 const zelavis = new Zelavis({
-  platform: netlifyPlatform({
+  adapter: zelavisNetlify({
     kv: {
       blobsStore: getStore("zelavis-kv"),
     },

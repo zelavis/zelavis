@@ -7,27 +7,30 @@ Use the Fastify adapter when Zelavis should be mounted as a Fastify plugin insid
 ```ts
 import Fastify from "fastify";
 import { Zelavis } from "zelavis";
-import { fastifyAdapter } from "zelavis/adapters/fastify";
-import { nodePlatform } from "zelavis/platforms/node";
+import { zelavisFastify, zelavisNode } from "zelavis/adapters";
 
 const app = Fastify();
 const zelavis = new Zelavis({
-  adapter: fastifyAdapter(),
-  platform: nodePlatform(),
+  adapter: zelavisFastify({ platform: zelavisNode() }),
 });
 
 await app.register(zelavis.adapter.fastifyPlugin());
-await app.listen({
-  port: 3000,
-  host: "127.0.0.1",
-});
+await app.listen({ port: 3000, host: "127.0.0.1" });
+```
+
+## Options
+
+```ts
+zelavisFastify({
+  platform?: ZelavisAdapterPlatform;
+})
 ```
 
 ## Good fit
 
-- existing Fastify services
-- apps that want Fastify plugins and hooks around Zelavis
-- self-hosted deployments using one Fastify process
+- Existing Fastify services
+- Apps that want Fastify plugins and hooks around Zelavis
+- Self-hosted deployments using one Fastify process
 
 ## Notes
 

@@ -1,14 +1,14 @@
-This example shows a minimal Vercel-style Next.js App Router setup using `vercelPlatform()`.
+This example shows a minimal Vercel-style Next.js App Router setup using `zelavisVercel()`.
 
 ## What it demonstrates
 
 - Zelavis mounted under `/zelavis`
-- `vercelPlatform()` providing file storage through Vercel Blob
+- `zelavisVercel()` providing file storage through Vercel Blob
 - the new storage core service exposed at `/zelavis/api/v1/storage/files/*`
 
 ## Key files
 
-- `lib/zelavis.ts` creates `new Zelavis({ platform: vercelPlatform(...) })`
+- `lib/zelavis.ts` creates `new Zelavis({ adapter: zelavisVercel(...) })`
 - `app/zelavis/[[...path]]/route.ts` forwards all mounted requests into Zelavis
 
 ## Notes

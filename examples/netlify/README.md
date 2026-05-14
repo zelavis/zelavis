@@ -1,4 +1,4 @@
-This example shows a small Netlify-oriented fetch handler using `netlifyPlatform()`.
+This example shows a small Netlify-oriented fetch handler using `zelavisNetlify()`.
 
 ## What it demonstrates
 
@@ -9,7 +9,7 @@ This example shows a small Netlify-oriented fetch handler using `netlifyPlatform
 
 ## Key file
 
-- `index.ts` wires `getStore("zelavis-kv")` and `getStore("zelavis-files")` into `netlifyPlatform()`
+- `index.ts` wires `getStore("zelavis-kv")` and `getStore("zelavis-files")` into `zelavisNetlify()`
 
 ## Notes
 

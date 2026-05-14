@@ -17,6 +17,10 @@
       "types": "./dist/plugin.d.ts",
       "import": "./dist/plugin.js"
     },
+    "./adapters": {
+      "types": "./dist/adapters/index.d.ts",
+      "import": "./dist/adapters/index.js"
+    },
     "./adapters/elysia": {
       "types": "./dist/adapters/elysia.d.ts",
       "import": "./dist/adapters/elysia.js"

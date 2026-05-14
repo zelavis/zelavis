@@ -16,8 +16,8 @@ Then open:
 
 ## Why this example matters
 
-- it uses `nodePlatform()` for the host defaults
-- it uses `nodeAdapter()` for the Node server mount shape
+- it uses `zelavisNodeServer({ platform: zelavisNode() })` as a single unified adapter
+- `zelavisNode()` provides the Node infrastructure defaults; `zelavisNodeServer()` owns the HTTP server mount
 - it is the easiest local setup for trying the storage service and copying a Zelavis file reference into a database schema field
 
 ## File-reference workflow

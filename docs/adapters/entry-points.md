@@ -1,44 +1,93 @@
 # Adapter Entry Points
 
-Zelavis currently exposes framework adapter entry points from both the high-level `zelavis` package and the lower-level `@zelavis/server` package.
+All Zelavis adapters — framework adapters, platform adapters, and the fetch-native adapter — come from a single entry point:
 
-At the high level, framework adapters are now paired with platform presets. The framework adapter decides how Zelavis plugs into Express, Fastify, Hono, and so on. The platform preset decides host-level defaults such as database or local storage choices.
+```ts
+import { ... } from "zelavis/adapters";
+```
 
-## High-level runtime adapters
+## Available adapters
 
-Use these when you want the default Zelavis runtime plus a framework-specific mount helper:
+### Framework adapters
+
+Framework adapters mount Zelavis into an existing host framework. Each accepts an optional `platform` option for pairing with a platform adapter.
 
 ```txt
-zelavis/adapters/node
-zelavis/adapters/express
-zelavis/adapters/fastify
-zelavis/adapters/hono
-zelavis/adapters/h3
-zelavis/adapters/elysia
-zelavis/adapters/nextjs-pages-router
+zelavisExpress       — Express middleware
+zelavisHono          — Hono middleware
+zelavisFastify       — Fastify plugin
+zelavisH3            — h3 handler
+zelavisElysia        — Elysia plugin
+zelavisNodeServer    — standalone Node HTTP server
+zelavisNextjsPagesRouter — Next.js Pages Router API handler
 ```
 
 Typical usage:
 
 ```ts
 import { Zelavis } from "zelavis";
-import { nodeAdapter } from "zelavis/adapters/node";
-import { nodePlatform } from "zelavis/platforms/node";
+import { zelavisNodeServer, zelavisNode } from "zelavis/adapters";
 
 const zelavis = new Zelavis({
-  adapter: nodeAdapter(),
-  platform: nodePlatform(),
+  adapter: zelavisNodeServer({ platform: zelavisNode() }),
 });
+
 const server = await zelavis.adapter.nodeServer();
 ```
 
-This is the normal application-facing path. Prefer it unless you explicitly need to assemble runtime services by hand.
+### Platform adapters
 
-## Platform preset entry points
-
-Use these when you want Zelavis to pick host-level database, KV, dashboard settings, or file-storage defaults for a runtime environment:
+Platform adapters contribute host-level infrastructure: database, KV, file storage. They work standalone (for fetch-native hosts) or as the `platform` option inside a framework adapter.
 
 ```txt
+zelavisNode          — Node.js defaults (SQLite, local file storage)
+zelavisBun           — Bun defaults (Bun SQLite, local file storage)
+zelavisCloudflare    — Cloudflare Workers (D1, KV, R2)
+zelavisVercel        — Vercel (injected resources)
+zelavisNetlify       — Netlify (Netlify Blobs)
+```
+
+Typical usage for a fetch-native host:
+
+```ts
+import { Zelavis } from "zelavis";
+import { zelavisVercel } from "zelavis/adapters";
+
+const zelavis = new Zelavis({
+  adapter: zelavisVercel(),
+});
+
+export async function GET(request: Request) {
+  return zelavis.fetch(request);
+}
+```
+
+### Fetch adapter
+
+`zelavisFetch()` is the explicit fetch-native adapter with no platform opinions. Use it when the host is fetch-native and you supply all infrastructure directly through `Zelavis` constructor options.
+
+```ts
+import { Zelavis } from "zelavis";
+import { zelavisFetch } from "zelavis/adapters";
+
+const zelavis = new Zelavis({
+  adapter: zelavisFetch(),
+  coreServices: { database: myDriver },
+});
+```
+
+## Individual deep imports
+
+The individual adapter paths remain available for cases where you want a single adapter without the full barrel:
+
+```txt
+zelavis/adapters/express
+zelavis/adapters/hono
+zelavis/adapters/fastify
+zelavis/adapters/h3
+zelavis/adapters/elysia
+zelavis/adapters/node
+zelavis/adapters/nextjs-pages-router
 zelavis/platforms/node
 zelavis/platforms/bun
 zelavis/platforms/cloudflare
@@ -46,22 +95,9 @@ zelavis/platforms/netlify
 zelavis/platforms/vercel
 ```
 
-Typical usage:
-
-```ts
-import { Zelavis } from "zelavis";
-import { expressAdapter } from "zelavis/adapters/express";
-import { nodePlatform } from "zelavis/platforms/node";
-
-const zelavis = new Zelavis({
-  adapter: expressAdapter(),
-  platform: nodePlatform(),
-});
-```
-
 ## Lower-level server adapters
 
-Use these when you are working directly with `zelavisServer(...)` or custom server services:
+The `@zelavis/server` package exposes lower-level adapters for custom runtime assembly:
 
 ```txt
 @zelavis/server/adapters/node
@@ -79,45 +115,36 @@ Typical usage:
 import { defineService, zelavisServer } from "@zelavis/server";
 import { nodeAdapter } from "@zelavis/server/adapters/node";
 
-const runtime = await zelavisServer({
-  services: [
-    defineService({
-      name: "health",
-      api: {
-        v1: [
-          {
-            id: "health.read",
-            method: "GET",
-            path: "/health",
-            handler: () => ({ status: 200, body: { ok: true } }),
-          },
-        ],
-      },
-    }),
-  ],
-});
-
+const runtime = await zelavisServer({ services: [...] });
 const server = nodeAdapter(runtime);
 ```
 
-Treat this layer as infrastructure-facing. It is the right tool for custom runtime assembly, but not the default recommendation for app code.
+Treat this layer as infrastructure-facing. It is the right tool for custom runtime assembly, not the default recommendation for application code.
 
-For the high-level-vs-low-level split around `new Zelavis(...)` and `await zelavis(...)`, see [Advanced Runtime Composition](../guides/advanced-runtime-composition.md).
+## defineAdapter
 
-## When not to use an adapter
+To build a custom adapter, use `defineAdapter` from the main `zelavis` package:
 
-If the host already speaks the standard Web `Request`/`Response` model, use `runtime.fetch(request)` directly instead of wrapping it in a framework adapter.
+```ts
+import { defineAdapter } from "zelavis";
 
-That is the preferred shape for fetch-native environments such as:
-
-- Cloudflare Workers
-- Next.js App Router route handlers
-- other Web-standard server runtimes
+const myAdapter = defineAdapter({
+  name: "my-host",
+  platform: (options) => ({
+    resources: { kv: myStore },
+  }),
+  mount: ({ getRuntime }) => ({
+    async myHandler(request) {
+      const runtime = await getRuntime();
+      return runtime.fetch(request);
+    },
+  }),
+});
+```
 
 ## Related docs
 
-- [Adapters and Fetch-Native Hosts](../guides/adapters-and-fetch-native.md)
-- [Node Adapter](./node.md)
-- [Platform Presets](../reference/platform-presets.md)
+- [Adapters Guide](../guides/adapters-and-fetch-native.md)
+- [Platform Adapters](../reference/platform-presets.md)
 - [First Runtime](../getting-started/first-runtime.md)
 - [@zelavis/server](../packages/server.md)

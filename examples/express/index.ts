@@ -1,7 +1,6 @@
 import express from "express";
 import { Zelavis } from "zelavis";
-import { expressAdapter } from "zelavis/adapters/express";
-import { nodePlatform } from "zelavis/platforms/node";
+import { zelavisExpress, zelavisNode } from "zelavis/adapters";
 
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
@@ -13,8 +12,7 @@ async function main(): Promise<void> {
   app.use(express.json());
 
   const zelavis = new Zelavis({
-    adapter: expressAdapter(),
-    platform: nodePlatform(),
+    adapter: zelavisExpress({ platform: zelavisNode() }),
     onError: ({ error }) => ({
       status: 400,
       body: { error: error instanceof Error ? error.message : "Unknown error" },
