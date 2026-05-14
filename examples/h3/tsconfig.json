@@ -8,28 +8,44 @@
     "esModuleInterop": true,
     "noEmit": true,
     "baseUrl": "../..",
-    "typeRoots": ["packages/server/node_modules/@types", "node_modules/@types"],
+    "typeRoots": [
+      "packages/server/node_modules/@types",
+      "node_modules/@types"
+    ],
     "paths": {
-      "@zelavis/auth": ["packages/auth/src/index.ts"],
-      "@zelavis/database": ["packages/database/src/index.ts"],
-      "@zelavis/ecommerce": ["plugins/ecommerce/src/index.ts"],
+      "@zelavis/auth": [
+        "packages/auth/src/index.ts"
+      ],
+      "@zelavis/database": [
+        "packages/database/src/index.ts"
+      ],
+      "@zelavis/ecommerce": [
+        "plugins/ecommerce/src/index.ts"
+      ],
       "@zelavis/ecommerce-paypal": [
         "plugins/ecommerce/plugins/paypal/src/index.ts"
       ],
       "@zelavis/ecommerce-stripe": [
         "plugins/ecommerce/plugins/stripe/src/index.ts"
       ],
-      "@zelavis/server": ["packages/server/src/index.ts"],
+      "@zelavis/server": [
+        "packages/server/src/index.ts"
+      ],
       "@zelavis/server/adapters/h3": [
         "packages/server/src/adapters/h3.ts"
       ],
-      "zelavis": ["packages/zelavis/src/index.ts"],
-      "zelavis/platforms/node": [
-        "packages/zelavis/src/platforms/node.ts"
+      "zelavis": [
+        "packages/zelavis/src/index.ts"
       ],
-      "zelavis/adapters/h3": ["packages/zelavis/src/adapters/h3.ts"],
-      "zelavis/adapters/node": ["packages/zelavis/src/adapters/node.ts"]
+      "zelavis/adapters/node": [
+        "packages/zelavis/src/adapters/node.ts"
+      ],
+      "zelavis/h3": [
+        "packages/zelavis/src/h3/index.ts"
+      ]
     }
   },
-  "include": ["index.ts"]
+  "include": [
+    "index.ts"
+  ]
 }

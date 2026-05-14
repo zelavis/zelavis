@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2017",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
@@ -15,10 +19,17 @@
     "incremental": true,
     "baseUrl": "../..",
     "paths": {
-      "@/*": ["examples/nextjs-pages-router/*"],
-      "zelavis": ["packages/zelavis/src/index.ts"],
-      "zelavis/adapters/nextjs-pages-router": [
-        "packages/zelavis/src/adapters/nextjs-pages-router.ts"
+      "@/*": [
+        "examples/nextjs-pages-router/*"
+      ],
+      "zelavis": [
+        "packages/zelavis/src/index.ts"
+      ],
+      "zelavis/adapters/node": [
+        "packages/zelavis/src/adapters/node.ts"
+      ],
+      "zelavis/nextjs/pages": [
+        "packages/zelavis/src/nextjs/pages/index.ts"
       ]
     }
   },
@@ -30,5 +41,7 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules"
+  ]
 }

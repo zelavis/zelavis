@@ -1,14 +1,14 @@
 import { Zelavis } from "zelavis";
-import { zelavisNextjsPagesRouter, zelavisNode } from "zelavis/adapters";
+import { nodeAdapter } from "zelavis/adapters/node";
 
 const zelavis = new Zelavis({
-  adapter: zelavisNextjsPagesRouter({ platform: zelavisNode() }),
+  adapter: nodeAdapter(),
 });
-
-export function getZelavisRuntime() {
-  return zelavis.runtime();
-}
 
 export function getZelavis() {
   return zelavis;
+}
+
+export function getZelavisRuntime() {
+  return zelavis.runtime();
 }

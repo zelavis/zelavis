@@ -104,21 +104,21 @@ export interface CloudflareR2Bucket {
   }>;
 }
 
-export interface CloudflarePlatformOptions {
-  env: CloudflarePlatformEnv;
-  bindings?: CloudflarePlatformBindingNames;
+export interface CloudflareAdapterOptions {
+  env: CloudflareAdapterEnv;
+  bindings?: CloudflareAdapterBindingNames;
   defaultTenantId?: string;
   metadata?: Record<string, unknown>;
 }
 
-export interface CloudflarePlatformEnv {
+export interface CloudflareAdapterEnv {
   ZELAVIS_DB?: CloudflareD1Binding;
   ZELAVIS_KV?: CloudflareKvNamespace;
   ZELAVIS_FILES?: CloudflareR2Bucket;
   [key: string]: unknown;
 }
 
-export interface CloudflarePlatformBindingNames {
+export interface CloudflareAdapterBindingNames {
   database?: string;
   kv?: string;
   files?: string;
@@ -335,14 +335,14 @@ function isR2Bucket(value: unknown): value is CloudflareR2Bucket {
 }
 
 function getBindingName(
-  bindings: CloudflarePlatformBindingNames | undefined,
-  key: keyof CloudflarePlatformBindingNames,
+  bindings: CloudflareAdapterBindingNames | undefined,
+  key: keyof CloudflareAdapterBindingNames,
 ): string {
   return bindings?.[key] ?? DEFAULT_CLOUDFLARE_BINDING_NAMES[key];
 }
 
 function readBinding(
-  env: CloudflarePlatformEnv | undefined,
+  env: CloudflareAdapterEnv | undefined,
   name: string,
 ): unknown {
   if (!env) {
@@ -353,14 +353,14 @@ function readBinding(
 }
 
 function resolveDatabaseBinding(
-  options: CloudflarePlatformOptions,
+  options: CloudflareAdapterOptions,
 ): CloudflareD1Binding {
   const bindingName = getBindingName(options.bindings, "database");
   const binding = readBinding(options.env, bindingName);
 
   if (!isD1Binding(binding)) {
     throw new TypeError(
-      `Missing or invalid Cloudflare D1 binding \`${bindingName}\`. Pass \`cloudflarePlatform({ env })\` with a valid D1 binding or override the binding name through \`bindings.database\`.`,
+      `Missing or invalid Cloudflare D1 binding \`${bindingName}\`. Pass \`cloudflareAdapter({ env })\` with a valid D1 binding or override the binding name through \`bindings.database\`.`,
     );
   }
 
@@ -368,7 +368,7 @@ function resolveDatabaseBinding(
 }
 
 function resolveKvOption(
-  options: CloudflarePlatformOptions,
+  options: CloudflareAdapterOptions,
 ): { namespace: CloudflareKvNamespace } | undefined {
   const namespace = readBinding(
     options.env,
@@ -383,7 +383,7 @@ function resolveKvOption(
 }
 
 function resolveFilesOption(
-  options: CloudflarePlatformOptions,
+  options: CloudflareAdapterOptions,
 ): { bucket: CloudflareR2Bucket } | undefined {
   const bucket = readBinding(
     options.env,
@@ -397,12 +397,12 @@ function resolveFilesOption(
     : undefined;
 }
 
-export function cloudflarePlatform(options: CloudflarePlatformOptions) {
+export function cloudflareAdapter(options: CloudflareAdapterOptions) {
   return defineAdapter({
     name: "cloudflare",
-    platform: async (
-      _constructorOptions: ZelavisOptions<any>,
-    ): Promise<ZelavisResolvedPlatformOptions> => {
+    async resolve(
+      _constructorOptions: ZelavisOptions,
+    ): Promise<ZelavisResolvedPlatformOptions> {
       const nextCoreServices: Record<string, unknown> = {};
       const databaseBinding = resolveDatabaseBinding(options);
       const kvOptions = resolveKvOption(options);

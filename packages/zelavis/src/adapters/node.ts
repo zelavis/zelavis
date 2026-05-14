@@ -5,18 +5,20 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, resolve } from "node:path";
-import type { Server } from "node:http";
-import { nodeAdapter as bindNodeRuntime } from "@zelavis/server/adapters/node";
-import type {
-  ZelavisAdapterBinding,
-  ZelavisAdapterPlatform,
-  ZelavisDashboardSettingsStore,
-  ZelavisDashboardSettingsUpdate,
-  ZelavisDashboardThemeMode,
+import { dirname, join, resolve } from "node:path";
+import { createBetterSqlite3DatabaseDriver } from "@zelavis/database-node-sqlite";
+import {
+  defineAdapter,
+  type ZelavisDashboardSettingsStore,
+  type ZelavisDashboardSettingsUpdate,
+  type ZelavisDashboardThemeMode,
+  type ZelavisOptions,
+  type ZelavisResolvedPlatformOptions,
 } from "../index.js";
-import { defineAdapter } from "../index.js";
-import { createLazyBoundValue } from "./_shared.js";
+import {
+  createLocalFileStorage,
+  createMemoryKeyValueStore,
+} from "./_shared.js";
 
 function normalizePathPart(part: string | undefined): string {
   if (!part) {
@@ -116,29 +118,85 @@ export function createFileDashboardSettingsStore(
   };
 }
 
-export interface ZelavisNodeAdapterOptions {
-  platform?: ZelavisAdapterPlatform;
+export interface NodeAdapterDatabaseOptions {
+  filename?: string;
+  readonly?: boolean;
+  fileMustExist?: boolean;
+  defaultTenantId?: string;
+  pragma?: readonly string[];
 }
 
-export interface ZelavisNodeBinding extends ZelavisAdapterBinding {
-  nodeServer(): Promise<Server>;
+export interface NodeAdapterDashboardOptions {
+  settingsFile?: string;
 }
 
-export function nodeAdapter(options: ZelavisNodeAdapterOptions = {}) {
-  return defineAdapter<ZelavisNodeBinding>({
+export interface NodeAdapterOptions {
+  dataDirectory?: string;
+  database?: false | NodeAdapterDatabaseOptions;
+  dashboard?: false | NodeAdapterDashboardOptions;
+  files?: false | {
+    rootDirectory?: string;
+  };
+  kv?: false | {
+    kind?: "memory";
+  };
+}
+
+function normalizeDataDirectory(path: string | undefined): string {
+  return resolve(path?.trim() ? path : ".zelavis");
+}
+
+export function nodeAdapter(options: NodeAdapterOptions = {}) {
+  return defineAdapter({
     name: "node",
-    platform: options.platform,
-    mount: ({ getRuntime }) => {
-      const getServer = createLazyBoundValue(async () =>
-        bindNodeRuntime(await getRuntime()),
-      );
+    async resolve(
+      _constructorOptions: ZelavisOptions,
+    ): Promise<ZelavisResolvedPlatformOptions> {
+      const dataDirectory = normalizeDataDirectory(options.dataDirectory);
+      const nextCoreServices: Record<string, unknown> = {};
+
+      if (options.database !== false) {
+        const databaseOptions = options.database ?? {};
+        nextCoreServices.database = {
+          defaultTenantId: databaseOptions.defaultTenantId,
+          driver: createBetterSqlite3DatabaseDriver({
+            filename: databaseOptions.filename
+              ? resolve(databaseOptions.filename)
+              : join(dataDirectory, "zelavis.sqlite"),
+            readonly: databaseOptions.readonly,
+            fileMustExist: databaseOptions.fileMustExist,
+            defaultTenantId: databaseOptions.defaultTenantId,
+            pragma: databaseOptions.pragma,
+          }),
+        };
+      }
+
+      if (options.dashboard !== false) {
+        const dashboardOptions = options.dashboard ?? {};
+        nextCoreServices.dashboard = {
+          settingsStore: createFileDashboardSettingsStore(
+            dashboardOptions.settingsFile
+              ? resolve(dashboardOptions.settingsFile)
+              : join(dataDirectory, "dashboard-settings.json"),
+          ),
+        };
+      }
 
       return {
-        async ready() {
-          await getServer();
+        coreServices: nextCoreServices,
+        resources: {
+          kv: options.kv === false ? undefined : createMemoryKeyValueStore(),
+          files:
+            options.files === false
+              ? undefined
+              : createLocalFileStorage(
+                  options.files?.rootDirectory
+                    ? resolve(options.files.rootDirectory)
+                    : join(dataDirectory, "files"),
+                ),
         },
-        async nodeServer() {
-          return getServer();
+        metadata: {
+          runtime: "node",
         },
       };
     },

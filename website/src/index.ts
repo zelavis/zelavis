@@ -1,10 +1,10 @@
 import { Zelavis } from "zelavis";
 import {
-  cloudflarePlatform,
-  type CloudflarePlatformEnv,
-} from "zelavis/platforms/cloudflare";
+  cloudflareAdapter,
+  type CloudflareAdapterEnv,
+} from "zelavis/adapters/cloudflare";
 
-type Env = CloudflarePlatformEnv;
+type Env = CloudflareAdapterEnv;
 
 let runtimePromise: Promise<Awaited<ReturnType<Zelavis["runtime"]>>> | undefined;
 
@@ -14,9 +14,7 @@ function getRuntime(env: Env) {
   }
 
   const zelavis = new Zelavis({
-    platform: cloudflarePlatform({
-      env,
-    }),
+    adapter: cloudflareAdapter({ env }),
   });
 
   runtimePromise = zelavis.runtime();

@@ -8,29 +8,44 @@
     "esModuleInterop": true,
     "noEmit": true,
     "baseUrl": "../..",
-    "typeRoots": ["packages/server/node_modules/@types", "node_modules/@types"],
+    "typeRoots": [
+      "packages/server/node_modules/@types",
+      "node_modules/@types"
+    ],
     "paths": {
-      "@zelavis/auth": ["packages/auth/src/index.ts"],
-      "@zelavis/database": ["packages/database/src/index.ts"],
-      "@zelavis/ecommerce": ["plugins/ecommerce/src/index.ts"],
+      "@zelavis/auth": [
+        "packages/auth/src/index.ts"
+      ],
+      "@zelavis/database": [
+        "packages/database/src/index.ts"
+      ],
+      "@zelavis/ecommerce": [
+        "plugins/ecommerce/src/index.ts"
+      ],
       "@zelavis/ecommerce-paypal": [
         "plugins/ecommerce/plugins/paypal/src/index.ts"
       ],
       "@zelavis/ecommerce-stripe": [
         "plugins/ecommerce/plugins/stripe/src/index.ts"
       ],
-      "@zelavis/server": ["packages/server/src/index.ts"],
+      "@zelavis/server": [
+        "packages/server/src/index.ts"
+      ],
       "@zelavis/server/adapters/elysia": [
         "packages/server/src/adapters/elysia.ts"
       ],
-      "zelavis": ["packages/zelavis/src/index.ts"],
-      "zelavis/platforms/node": [
-        "packages/zelavis/src/platforms/node.ts"
+      "zelavis": [
+        "packages/zelavis/src/index.ts"
       ],
-      "zelavis/adapters/elysia": [
-        "packages/zelavis/src/adapters/elysia.ts"
+      "zelavis/adapters/bun": [
+        "packages/zelavis/src/adapters/bun.ts"
+      ],
+      "zelavis/elysia": [
+        "packages/zelavis/src/elysia/index.ts"
       ]
     }
   },
-  "include": ["index.ts"]
+  "include": [
+    "index.ts"
+  ]
 }

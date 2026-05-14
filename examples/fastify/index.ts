@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import { Zelavis } from "zelavis";
-import { zelavisFastify, zelavisNode } from "zelavis/adapters";
+import { nodeAdapter } from "zelavis/adapters/node";
+import { fastifyPlugin } from "zelavis/fastify";
 
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
@@ -9,14 +10,14 @@ async function main(): Promise<void> {
   app.get("/hello", async () => "Hello Fastify");
 
   const zelavis = new Zelavis({
-    adapter: zelavisFastify({ platform: zelavisNode() }),
+    adapter: nodeAdapter(),
     onError: ({ error }) => ({
       status: 400,
       body: { error: error instanceof Error ? error.message : "Unknown error" },
     }),
   });
 
-  await app.register(zelavis.adapter.fastifyPlugin());
+  await app.register(fastifyPlugin(zelavis));
   await app.listen({
     port,
     host: "127.0.0.1",

@@ -1,36 +1,31 @@
-# Node Adapter
+# Node.js
 
-Use the Node adapter when Zelavis should own a standalone HTTP server in a Node.js process.
+The Node.js integration has two pieces:
+
+- `nodeAdapter()` from `zelavis/adapters/node` — the environment adapter that provides SQLite, file storage, and dashboard settings persistence.
+- `createNodeServer(zelavis)` from `zelavis/node` — a utility that creates a standalone Node HTTP server bound to Zelavis.
 
 ## Basic usage
 
 ```ts
 import { Zelavis } from "zelavis";
-import { zelavisNodeServer, zelavisNode } from "zelavis/adapters";
+import { nodeAdapter } from "zelavis/adapters/node";
+import { createNodeServer } from "zelavis/node";
 
-const zelavis = new Zelavis({
-  adapter: zelavisNodeServer({ platform: zelavisNode() }),
-});
-
-const server = await zelavis.adapter.nodeServer();
+const zelavis = new Zelavis({ adapter: nodeAdapter() });
+const server = await createNodeServer(zelavis);
 server.listen(3000);
 ```
 
-## Options
+## Node adapter options
 
 ```ts
-zelavisNodeServer({
-  platform?: ZelavisAdapterPlatform;
-})
-```
-
-## Node platform adapter
-
-`zelavisNode()` provides Node-oriented infrastructure defaults: the built-in SQLite driver and file-backed dashboard settings. Use it as the `platform` option whenever the host is a Node.js process.
-
-```ts
-zelavisNode({
-  dataDirectory?: string;  // default: ".zelavis"
+nodeAdapter({
+  dataDirectory?: string;           // default: ".zelavis"
+  database?: false | { /* ... */ };
+  dashboard?: false | { /* ... */ };
+  files?: false | { rootDirectory?: string };
+  kv?: false | { kind?: "memory" };
 })
 ```
 
@@ -43,7 +38,7 @@ zelavisNode({
 
 ## Dashboard settings storage
 
-The Node adapter exposes a file-backed dashboard settings helper:
+The Node adapter automatically wires a file-backed dashboard settings store. The helper is also exported if you want it directly:
 
 ```ts
 import { createFileDashboardSettingsStore } from "zelavis/adapters/node";

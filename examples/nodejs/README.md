@@ -16,8 +16,8 @@ Then open:
 
 ## Why this example matters
 
-- it uses `zelavisNodeServer({ platform: zelavisNode() })` as a single unified adapter
-- `zelavisNode()` provides the Node infrastructure defaults; `zelavisNodeServer()` owns the HTTP server mount
+- it uses `nodeAdapter()` from `zelavis/adapters/node` for the Node infrastructure (SQLite, file storage, dashboard settings)
+- it uses `createNodeServer(zelavis)` from `zelavis/node` to spin up a standalone HTTP server
 - it is the easiest local setup for trying the storage service and copying a Zelavis file reference into a database schema field
 
 ## File-reference workflow

@@ -27,16 +27,8 @@
         "packages/server/src/adapters/node.ts"
       ],
       "zelavis": ["packages/zelavis/src/index.ts"],
-      "zelavis/platforms/node": [
-        "packages/zelavis/src/platforms/node.ts"
-      ],
-      "zelavis/adapters/express": [
-        "packages/zelavis/src/adapters/express.ts"
-      ],
-      "zelavis/adapters/hono": [
-        "packages/zelavis/src/adapters/hono.ts"
-      ],
-      "zelavis/adapters/node": ["packages/zelavis/src/adapters/node.ts"]
+      "zelavis/adapters/node": ["packages/zelavis/src/adapters/node.ts"],
+      "zelavis/express": ["packages/zelavis/src/express/index.ts"]
     }
   },
   "include": ["index.ts"]

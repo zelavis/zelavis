@@ -7,13 +7,12 @@ This page shows the simplest current way to start Zelavis.
 ```ts
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
-import { nodePlatform } from "zelavis/platforms/node";
+import { createNodeServer } from "zelavis/node";
 
 const zelavis = new Zelavis({
   adapter: nodeAdapter(),
-  platform: nodePlatform(),
 });
-const server = await zelavis.adapter.nodeServer();
+const server = await createNodeServer(zelavis);
 
 server.listen(3000);
 ```
@@ -31,7 +30,7 @@ Today, a default `new Zelavis(...)` runtime includes these core services by defa
 - database
 - website
 
-When the selected platform provides file storage, Zelavis can also expose:
+When the selected adapter provides file storage, Zelavis can also expose:
 
 - storage
 
@@ -85,12 +84,12 @@ Root path changes are stored as pending runtime settings and require a restart b
 
 ## Use the fetch-style runtime directly
 
-When you do not need a framework-specific mount helper:
+When the host already speaks the Web `Request` → `Response` model (Cloudflare Workers, Bun, Next.js App Router, etc.), no framework helper is needed — call `zelavis.fetch(request)` directly:
 
 ```ts
 import { Zelavis } from "zelavis";
 
-const zelavis = new Zelavis({});
+const zelavis = new Zelavis();
 const response = await zelavis.fetch(
   new Request("http://localhost/zelavis/api/v1/dashboard/config"),
 );

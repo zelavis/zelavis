@@ -241,7 +241,7 @@ export function createNetlifyBlobsFileStorage(
   };
 }
 
-export interface NetlifyPlatformOptions {
+export interface NetlifyAdapterOptions {
   database?: false | unknown;
   kv?: false | {
     store?: ZelavisKeyValueStore;
@@ -254,12 +254,12 @@ export interface NetlifyPlatformOptions {
   metadata?: Record<string, unknown>;
 }
 
-export function netlifyPlatform(options: NetlifyPlatformOptions = {}) {
+export function netlifyAdapter(options: NetlifyAdapterOptions = {}) {
   return defineAdapter({
     name: "netlify",
-    platform: async (
-      _constructorOptions: ZelavisOptions<any>,
-    ): Promise<ZelavisResolvedPlatformOptions> => {
+    async resolve(
+      _constructorOptions: ZelavisOptions,
+    ): Promise<ZelavisResolvedPlatformOptions> {
       const nextCoreServices: Record<string, unknown> = {};
 
       if (options.database !== false && options.database !== undefined) {

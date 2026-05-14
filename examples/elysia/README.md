@@ -25,4 +25,4 @@ Then open:
 
 ## Key file
 
-- `index.ts` constructs `new Zelavis({ adapter: zelavisElysia({ platform: zelavisBun() }) })`, creates a minimal `new Elysia()` app, and mounts `await zelavis.adapter.elysiaPlugin()` with `app.use(...)`
+- `index.ts` constructs `new Zelavis({ adapter: bunAdapter() })`, creates a minimal `new Elysia()` app, and mounts the runtime via `app.use(await elysiaPlugin(zelavis))` from `zelavis/elysia`

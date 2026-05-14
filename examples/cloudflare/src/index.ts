@@ -1,8 +1,10 @@
 import { Zelavis } from "zelavis";
-import { zelavisCloudflare } from "zelavis/adapters";
-import type { CloudflarePlatformEnv } from "zelavis/platforms/cloudflare";
+import {
+  cloudflareAdapter,
+  type CloudflareAdapterEnv,
+} from "zelavis/adapters/cloudflare";
 
-type Env = CloudflarePlatformEnv;
+type Env = CloudflareAdapterEnv;
 
 let zelavisInstance: Zelavis | undefined;
 
@@ -12,7 +14,7 @@ function getZelavis(env: Env) {
   }
 
   zelavisInstance = new Zelavis({
-    adapter: zelavisCloudflare({ env }),
+    adapter: cloudflareAdapter({ env }),
   });
 
   return zelavisInstance;

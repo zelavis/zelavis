@@ -1,9 +1,6 @@
 import { Zelavis } from "zelavis";
-import { zelavisFetch } from "zelavis/adapters";
 
-const zelavis = new Zelavis({
-  adapter: zelavisFetch(),
-});
+const zelavis = new Zelavis();
 
 export function getZelavisRuntime() {
   return zelavis.runtime();

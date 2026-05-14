@@ -23,4 +23,4 @@ Then open:
 
 ## Key file
 
-- `index.ts` creates a Fastify instance, constructs `new Zelavis({ adapter: zelavisFastify({ platform: zelavisNode() }) })`, and registers `zelavis.adapter.fastifyPlugin()` with `app.register(...)`
+- `index.ts` creates a Fastify instance, constructs `new Zelavis({ adapter: nodeAdapter() })`, and registers `fastifyPlugin(zelavis)` (from `zelavis/fastify`) via `app.register(...)`

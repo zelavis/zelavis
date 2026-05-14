@@ -1,43 +1,46 @@
-# Hono Adapter
+# Hono
 
-Use the Hono adapter when Zelavis should be mounted into an existing Hono application.
+Use the Hono utility when Zelavis should be mounted into an existing Hono application.
 
-## Basic usage
+## Basic usage (Hono on Node)
 
 ```ts
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { Zelavis } from "zelavis";
-import { zelavisHono, zelavisNode } from "zelavis/adapters";
+import { nodeAdapter } from "zelavis/adapters/node";
+import { honoMiddleware } from "zelavis/hono";
 
 const app = new Hono();
-const zelavis = new Zelavis({
-  adapter: zelavisHono({ platform: zelavisNode() }),
-});
+const zelavis = new Zelavis({ adapter: nodeAdapter() });
 
-app.use(zelavis.adapter.honoMiddleware());
+app.use(honoMiddleware(zelavis));
 
 serve({ fetch: app.fetch, port: 3000 });
 ```
 
 ## Hono on Cloudflare Workers
 
-Hono is fetch-native on Cloudflare Workers. Swap the platform adapter and the rest stays the same:
-
 ```ts
-import { zelavisHono, zelavisCloudflare } from "zelavis/adapters";
+import { Hono } from "hono";
+import { Zelavis } from "zelavis";
+import { cloudflareAdapter } from "zelavis/adapters/cloudflare";
+import { honoMiddleware } from "zelavis/hono";
 
-const zelavis = new Zelavis({
-  adapter: zelavisHono({ platform: zelavisCloudflare({ env }) }),
-});
+export default {
+  fetch(request: Request, env) {
+    const zelavis = new Zelavis({ adapter: cloudflareAdapter({ env }) });
+    const app = new Hono();
+    app.use(honoMiddleware(zelavis));
+    return app.fetch(request);
+  },
+};
 ```
 
-## Options
+## API
 
 ```ts
-zelavisHono({
-  platform?: ZelavisAdapterPlatform;
-})
+honoMiddleware(zelavis: Zelavis): MiddlewareHandler
 ```
 
 ## Good fit
@@ -45,11 +48,6 @@ zelavisHono({
 - Hono apps running on Node.js or Cloudflare Workers
 - Apps that already use Hono middleware and route composition
 - Cases where Zelavis should share an app with custom Hono endpoints
-
-## Notes
-
-- Hono remains the outer app boundary.
-- Zelavis routes stay Web-standard internally and are adapted into Hono's middleware shape.
 
 ## Related docs
 

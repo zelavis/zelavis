@@ -1,6 +1,6 @@
 import { del, head, list, put } from "@vercel/blob";
 import { Zelavis } from "zelavis";
-import { zelavisVercel } from "zelavis/adapters";
+import { vercelAdapter } from "zelavis/adapters/vercel";
 
 async function putBlob(
   pathname: string,
@@ -26,7 +26,7 @@ async function putBlob(
 }
 
 const zelavis = new Zelavis({
-  adapter: zelavisVercel({
+  adapter: vercelAdapter({
     files: {
       blobStore: {
         del,
