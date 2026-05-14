@@ -14,17 +14,25 @@ export interface RuntimeService {
   menu?: RuntimeServiceMenuDefinition;
 }
 
+export interface RuntimePluginPageDefinition {
+  id: string;
+  title?: string;
+  src: string;
+}
+
 export interface RuntimePluginMenuDefinition {
   title: string;
   path?: string;
   pageLabel?: string;
   panelLabel?: string;
+  page?: RuntimePluginPageDefinition;
   items?: readonly RuntimePluginMenuDefinition[];
 }
 
 export interface RuntimePluginRegistryEntry {
   name: string;
   version?: string;
+  specifier?: string;
   status: "installed" | "available";
   source?: "official" | "community";
   order?: number;
@@ -35,6 +43,24 @@ export interface RuntimePluginRegistryUpdate {
   status?: "installed" | "available";
   source?: "official" | "community";
   order?: number;
+}
+
+export interface RuntimePluginRegistryCreate {
+  name: string;
+  specifier: string;
+  status?: "installed" | "available";
+  source?: "official" | "community";
+  order?: number;
+}
+
+export interface RuntimePluginActivationResult {
+  status: "active" | "pending";
+  message?: string;
+}
+
+export interface RuntimePluginRegistryMutationResult {
+  plugins: RuntimePluginRegistryEntry[];
+  activation?: RuntimePluginActivationResult;
 }
 
 export interface RuntimeConfig {
@@ -632,16 +658,27 @@ export async function updateDashboardPlugin(
   config: RuntimeConfig,
   name: string,
   input: RuntimePluginRegistryUpdate,
-): Promise<RuntimePluginRegistryEntry[]> {
-  const result = await readJson<{ plugins: RuntimePluginRegistryEntry[] }>(
+): Promise<RuntimePluginRegistryMutationResult> {
+  return readJson<RuntimePluginRegistryMutationResult>(
     `${config.api.basePath}/dashboard/plugins/${encodeURIComponent(name)}`,
     {
       method: "PATCH",
       body: JSON.stringify(input),
     },
   );
+}
 
-  return result.plugins;
+export async function createDashboardPlugin(
+  config: RuntimeConfig,
+  input: RuntimePluginRegistryCreate,
+): Promise<RuntimePluginRegistryMutationResult> {
+  return readJson<RuntimePluginRegistryMutationResult>(
+    `${config.api.basePath}/dashboard/plugins`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+  );
 }
 
 export async function listWebsitePages(config: RuntimeConfig) {

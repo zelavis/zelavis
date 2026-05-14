@@ -15,6 +15,7 @@
     "changeset": "changeset",
     "changeset:add": "node scripts/create-changeset.mjs",
     "docs:check": "node scripts/check-docs.mjs",
+    "plugin:ecommerce:build": "pnpm --filter @zelavis/ecommerce build",
     "example:cloudflare": "pnpm --filter @zelavis/example-cloudflare dev",
     "example:bun": "pnpm --filter @zelavis/example-bun dev",
     "example:elysia": "pnpm --filter @zelavis/example-elysia dev",

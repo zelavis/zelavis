@@ -6,6 +6,7 @@ import {
   ResourceNotice,
   StatusBadge,
 } from "#/components/DashboardPage";
+import { PluginPageMount } from "#/components/PluginPageMount";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import {
   getRuntimeConfig,
@@ -56,6 +57,7 @@ function Commerce() {
   }
 
   return (
+    <PluginPageMount fallback={
     <section className="mx-auto grid w-full max-w-7xl gap-6">
       <PageHeader eyebrow="Commerce" title="Ecommerce" />
 
@@ -126,5 +128,6 @@ function Commerce() {
         </Card>
       </div>
     </section>
+  } />
   );
 }

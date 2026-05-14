@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createDatabase, defineService, zelavis } from "../dist/index.js";
+import { createDatabase, defineService, Zelavis, zelavis } from "../dist/index.js";
 
 test("zelavis exposes fetch handlers without requiring a mount adapter", async () => {
   const runtime = await zelavis({});
@@ -329,7 +329,165 @@ test("plugin registry install state controls plugin activation on boot", async (
   const config = await configResponse.json();
 
   assert.equal(config.plugins[0].status, "installed");
+  assert.equal(
+    config.plugins[0].menu.page.src,
+    "/zelavis/api/v1/dashboard/plugin-pages/zelavis-ecommerce/dashboard",
+  );
   assert.ok(config.services.some((service) => service.name === "commerce"));
+
+  const pluginPageResponse = await runtime.fetch(
+    new Request(
+      "http://localhost/zelavis/api/v1/dashboard/plugin-pages/zelavis-ecommerce/dashboard",
+    ),
+  );
+  const pluginPage = await pluginPageResponse.text();
+
+  assert.equal(pluginPageResponse.status, 200);
+  assert.match(
+    pluginPageResponse.headers.get("content-type"),
+    /text\/html/,
+  );
+  assert.match(pluginPage, /<!doctype html>/i);
+  assert.match(pluginPage, /<title>Ecommerce<\/title>/);
+});
+
+test("dashboard plugin registry can register ESM plugin sources", async () => {
+  const runtime = await zelavis({});
+  const specifier =
+    "data:text/javascript," +
+    encodeURIComponent(`
+      export default {
+        name: "uploaded-plugin",
+        version: "0.0.1",
+        menu: {
+          title: "Uploaded",
+          path: "/uploaded"
+        }
+      };
+    `);
+
+  const createResponse = await runtime.fetch(
+    new Request("http://localhost/zelavis/api/v1/dashboard/plugins", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "uploaded-plugin",
+        specifier,
+      }),
+    }),
+  );
+  const created = await createResponse.json();
+
+  assert.equal(createResponse.status, 201);
+  assert.ok(
+    created.plugins.some(
+      (plugin) =>
+        plugin.name === "uploaded-plugin" &&
+        plugin.specifier === specifier &&
+        plugin.status === "available",
+    ),
+  );
+
+  const storeState = [
+    {
+      name: "uploaded-plugin",
+      specifier,
+      status: "installed",
+      source: "community",
+    },
+  ];
+  const loadedRuntime = await zelavis({
+    plugins: {
+      store: {
+        read() {
+          return storeState;
+        },
+        write(entries) {
+          storeState.splice(0, storeState.length, ...entries);
+          return entries;
+        },
+      },
+    },
+  });
+  const configResponse = await loadedRuntime.fetch(
+    new Request("http://localhost/zelavis/api/v1/dashboard/config"),
+  );
+  const config = await configResponse.json();
+  const uploadedPlugin = config.plugins.find(
+    (plugin) => plugin.name === "uploaded-plugin",
+  );
+
+  assert.equal(uploadedPlugin.status, "installed");
+  assert.equal(uploadedPlugin.specifier, specifier);
+  assert.equal(uploadedPlugin.menu.path, "/uploaded");
+});
+
+test("Zelavis instance recomposes runtime after plugin activation", async () => {
+  const specifier =
+    "data:text/javascript," +
+    encodeURIComponent(`
+      export default {
+        name: "runtime-uploaded-plugin",
+        version: "0.0.1",
+        menu: {
+          title: "Runtime Uploaded",
+          path: "/runtime-uploaded"
+        },
+        setup() {
+          return {
+            services: [
+              {
+                name: "runtime-uploaded",
+                basePath: "/runtime-uploaded",
+                service: {},
+                api: {
+                  v1: [
+                    {
+                      id: "runtime-uploaded.health",
+                      method: "GET",
+                      path: "/health",
+                      handler: () => ({
+                        status: 200,
+                        body: { ok: true }
+                      })
+                    }
+                  ]
+                }
+              }
+            ]
+          };
+        }
+      };
+    `);
+  const app = new Zelavis();
+
+  const createResponse = await app.fetch(
+    new Request("http://localhost/zelavis/api/v1/dashboard/plugins", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "runtime-uploaded-plugin",
+        specifier,
+        status: "installed",
+      }),
+    }),
+  );
+  const created = await createResponse.json();
+
+  assert.equal(createResponse.status, 201);
+  assert.equal(created.activation.status, "active");
+
+  const healthResponse = await app.fetch(
+    new Request("http://localhost/zelavis/api/v1/runtime-uploaded/health"),
+  );
+  const health = await healthResponse.json();
+
+  assert.equal(healthResponse.status, 200);
+  assert.deepEqual(health, { ok: true });
 });
 
 test("zelavis can disable the database core service", async () => {

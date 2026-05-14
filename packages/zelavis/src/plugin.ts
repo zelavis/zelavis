@@ -8,10 +8,37 @@ import {
 
 export const ZELAVIS_PLUGIN_V1 = "ZELAVIS_PLUGIN_V1" as const;
 export type ZelavisPluginContractVersion = typeof ZELAVIS_PLUGIN_V1;
+export interface ZelavisPluginMenuPageRenderContext {
+  plugin: string;
+  page: string;
+  rootPath: string;
+  api: ZelavisPluginSetupApiContext;
+}
+
+export interface ZelavisPluginRenderedPageDocument {
+  html: string;
+  status?: number;
+  headers?: HeadersInit;
+  contentType?: string;
+}
+
+export interface ZelavisPluginMenuPageDefinition {
+  id: string;
+  title?: string;
+  render?:
+    | ((
+        context: ZelavisPluginMenuPageRenderContext,
+      ) =>
+        | string
+        | ZelavisPluginRenderedPageDocument
+        | Promise<string | ZelavisPluginRenderedPageDocument>);
+}
+
 export type ZelavisPluginMenuDefinition = Omit<
   ZelavisServiceMenuDefinition,
   "surface" | "items"
 > & {
+  page?: ZelavisPluginMenuPageDefinition;
   items?: readonly ZelavisPluginMenuDefinition[];
 };
 
@@ -59,6 +86,7 @@ export type ZelavisPluginV1Definition<
 
 export interface ZelavisPluginRegistryEntry<TContext = unknown> {
   plugin: Readonly<ZelavisPluginDefinition<TContext>>;
+  specifier?: string;
   status: "installed" | "available";
   source?: "official" | "community";
   order?: number;
@@ -122,6 +150,7 @@ export interface ZelavisPluginRegistryModuleEntry {
 
 export interface ZelavisPluginRegistryStateEntry {
   name: string;
+  specifier?: string;
   status?: "installed" | "available";
   source?: "official" | "community";
   order?: number;
@@ -182,6 +211,11 @@ function freezeMenu(
 ): Readonly<ZelavisPluginMenuDefinition> {
   return Object.freeze({
     ...menu,
+    page: menu.page
+      ? Object.freeze({
+          ...menu.page,
+        })
+      : menu.page,
     items: menu.items?.map(freezeMenu),
   });
 }
@@ -196,7 +230,63 @@ function validatePluginMenu(
     );
   }
 
+  if ("page" in menu && menu.page !== undefined) {
+    if (!menu.page || typeof menu.page !== "object") {
+      throw new TypeError(
+        `Plugin menu page metadata for "${path}" must be an object.`,
+      );
+    }
+
+    if (!menu.page.id || typeof menu.page.id !== "string") {
+      throw new TypeError(
+        `Plugin menu page metadata for "${path}" must include a string id.`,
+      );
+    }
+
+    if (
+      "title" in menu.page &&
+      menu.page.title !== undefined &&
+      typeof menu.page.title !== "string"
+    ) {
+      throw new TypeError(
+        `Plugin menu page metadata for "${path}" title must be a string when provided.`,
+      );
+    }
+
+    if (
+      "render" in menu.page &&
+      menu.page.render !== undefined &&
+      typeof menu.page.render !== "function"
+    ) {
+      throw new TypeError(
+        `Plugin menu page metadata for "${path}" render field must be a function.`,
+      );
+    }
+  }
+
   menu.items?.forEach((item) => validatePluginMenu(item, `${path} > ${item.title}`));
+}
+
+export function findPluginMenuPageById(
+  menu: ZelavisPluginMenuDefinition | undefined,
+  pageId: string,
+): ZelavisPluginMenuPageDefinition | undefined {
+  if (!menu) {
+    return undefined;
+  }
+
+  if (menu.page?.id === pageId) {
+    return menu.page;
+  }
+
+  for (const item of menu.items ?? []) {
+    const page = findPluginMenuPageById(item, pageId);
+    if (page) {
+      return page;
+    }
+  }
+
+  return undefined;
 }
 
 function freezeExtensionPoint(
@@ -708,6 +798,7 @@ export async function loadPluginRegistry<TContext = unknown>(
 
       return {
         plugin: await loadPlugin<TContext>(entry.specifier, options),
+        specifier: entry.specifier,
         status: entry.status ?? "installed",
         source: entry.source,
         ...(entry.order !== undefined ? { order: entry.order } : {}),
@@ -738,6 +829,7 @@ export function serializePluginRegistryState<TContext = unknown>(
     registry.map((entry) =>
       Object.freeze({
         name: entry.plugin.name,
+        ...(entry.specifier ? { specifier: entry.specifier } : {}),
         status: entry.status,
         ...(entry.source ? { source: entry.source } : {}),
         ...(entry.order !== undefined ? { order: entry.order } : {}),

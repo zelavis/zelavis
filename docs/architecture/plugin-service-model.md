@@ -49,10 +49,13 @@ The dashboard should reflect that split:
 - Each installed plugin gets exactly one root entry under `Workspace`.
 - Each plugin may own unlimited nested sidebar slides inside its own workspace area.
 - Plugin-owned dashboard navigation should be declared through a plain menu object such as `menu: { ... }`, not by reaching into sidebar internals directly.
+- A plugin menu item may declare `page: { id, title, render }` when that menu item owns dashboard content.
 - Core services may declare a service-only menu `surface` such as `root`, `core`, `workspace`, or `settings`.
 - Plugin menus must not declare a `surface`; Zelavis always mounts them under `Workspace`.
 
 This keeps the first slide stable and prevents dashboard sprawl.
+
+Plugin pages are served as full HTML documents and mounted by the dashboard inside the `zelavis-plugin-frame` iframe web component. That lets plugin authors use plain HTML, React, Vue, web components, or any other browser-side approach without coupling plugin settings or workspaces to the internal dashboard React tree. Zelavis serializes those page definitions to dashboard-safe URLs such as `/zelavis/api/v1/dashboard/plugin-pages/:plugin/:page`.
 
 ## TypeScript direction
 
@@ -139,6 +142,7 @@ For ecommerce payments, the current policy is `reviewed`, with Stripe and PayPal
 Important point:
 
 - the `menu` object is plugin-owned metadata
+- `menu.page` is the content contract for plugin-owned dashboard pages
 - Zelavis decides how to render that metadata in the current dashboard shell
 - if the dashboard changes later, the plugin contract can stay stable while Zelavis adapts the rendering layer
 
@@ -190,12 +194,13 @@ The runtime model should also stay explicit:
 - plugin **install state** lives in a registry store
 - plugin **activation order** is an explicit `order` number
 - plugin **setup** runs in registry order and can register additional services through the setup context
+- plugin **activation** is host-owned: Node-style hosts can recompose the local runtime graph, while serverless hosts can create a worker/function boundary or attach another live host capability
 
 That means install state and activation are related, but not the same thing:
 
 - a plugin can exist in the catalog as `available`
 - a plugin becomes active only when its registry state is `installed`
-- setup should run only for installed plugins
+- setup should run only for installed plugins once the host has activated the plugin module
 
 The current runtime direction now reflects that split with:
 

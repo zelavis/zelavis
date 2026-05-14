@@ -28,6 +28,7 @@ import {
 import type {
   RuntimeService,
   RuntimeServiceMenuDefinition,
+  RuntimePluginPageDefinition,
   RuntimePluginMenuDefinition,
   RuntimePluginRegistryEntry,
 } from "#/lib/runtime-api";
@@ -96,6 +97,7 @@ export type DashboardPluginMenuItem = {
   icon: LucideIcon;
   panelLabel?: string;
   pageLabel?: string;
+  page?: RuntimePluginPageDefinition;
   pluginOwned?: boolean;
   items?: readonly DashboardPluginMenuItem[];
 };
@@ -219,6 +221,7 @@ function createDashboardPluginMenuItem(
     icon: getPluginMenuIcon(menu.title, menu.path),
     pageLabel: menu.pageLabel,
     panelLabel: menu.panelLabel,
+    page: menu.page,
     pluginOwned: true,
     items: menu.items?.map(createDashboardPluginMenuItem),
   };
@@ -697,6 +700,30 @@ export const dashboardNavItems = buildDashboardNavItems(
   defaultRuntimeServices,
   defaultRuntimePluginRegistry,
 );
+
+export function findPluginMenuPageByPath(
+  pathname: string,
+  plugins?: readonly RuntimePluginRegistryEntry[],
+): RuntimePluginPageDefinition | undefined {
+  const search = (
+    items: readonly DashboardPluginMenuItem[],
+  ): RuntimePluginPageDefinition | undefined => {
+    for (const item of items) {
+      if (item.url === pathname && item.page) {
+        return item.page;
+      }
+
+      const nested = search(item.items ?? []);
+      if (nested) {
+        return nested;
+      }
+    }
+
+    return undefined;
+  };
+
+  return search(buildWorkspacePluginNavItems(plugins));
+}
 
 export function getDashboardPageLabel(
   pathname: string,

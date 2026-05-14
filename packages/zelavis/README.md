@@ -245,10 +245,16 @@ The dashboard plugin registry also has runtime endpoints:
 
 ```txt
 GET /zelavis/api/v1/dashboard/plugins
+POST /zelavis/api/v1/dashboard/plugins
 PATCH /zelavis/api/v1/dashboard/plugins/:name
+GET /zelavis/api/v1/dashboard/plugin-pages/:plugin/:page
 ```
 
-When a plugin registry store is configured, these endpoints read and update real install state instead of a hardcoded list. Dashboard metadata updates immediately, while plugin service activation still applies on runtime boot so install/uninstall stays explicit.
+When a plugin registry store is configured, these endpoints read and update real install state instead of a hardcoded list. Dashboard metadata updates immediately, while plugin service activation is host-controlled: a long-running server can recompose its runtime graph, while serverless hosts can map the same activation request to a worker/function boundary or another live host capability.
+
+`POST /dashboard/plugins` registers a non-marketplace ESM source with `{ name, specifier }`. The best portable input is a module specifier or hosted ESM entry point that the active host knows how to resolve. A raw folder or zip is intentionally not the runtime contract because serverless platforms cannot all import arbitrary uploaded files the same way.
+
+Installed plugins can also attach iframe-backed dashboard documents to their menu items with `menu.page`. The dashboard receives a safe `src` URL from runtime config and mounts it through the `zelavis-plugin-frame` web component, so plugin UI can be a full HTML document instead of a React component tied to Zelavis dashboard internals.
 
 When a file storage resource exists, Zelavis can also expose a built-in storage core service:
 

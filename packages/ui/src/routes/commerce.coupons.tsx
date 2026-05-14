@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 
 import { PageHeader, ResourceNotice } from "#/components/DashboardPage";
+import { PluginPageMount } from "#/components/PluginPageMount";
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
@@ -65,6 +66,7 @@ function CommerceCoupons() {
   }
 
   return (
+    <PluginPageMount fallback={
     <section className="mx-auto grid w-full max-w-7xl gap-6">
       <PageHeader eyebrow="Commerce" title="Coupons" />
 
@@ -159,5 +161,6 @@ function CommerceCoupons() {
         </Card>
       </div>
     </section>
+  } />
   );
 }

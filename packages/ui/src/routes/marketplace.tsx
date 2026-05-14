@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   Sparkles,
+  Upload,
 } from "lucide-react";
 
 import {
@@ -17,6 +18,7 @@ import {
   CardHeader,
   CardTitle,
 } from "#/components/ui/card";
+import { Input } from "#/components/ui/input";
 import {
   Carousel,
   CarouselContent,
@@ -32,6 +34,7 @@ import {
   SheetTitle,
 } from "#/components/ui/sheet";
 import {
+  createDashboardPlugin,
   getRuntimeConfig,
   listDashboardPlugins,
   type RuntimePluginRegistryEntry,
@@ -125,9 +128,9 @@ function createOfficialCatalog(
       description:
         "Official Zelavis commerce plugin. This is the best current proving ground for plugin-owned workspace areas with nested panels.",
       details: [
-        "Promoted official plugin",
-        "Workspace area with nested slides",
-        "Install state is real; runtime activation applies on restart",
+      "Promoted official plugin",
+      "Workspace area with nested slides",
+      "Install state is real; host activation applies the live plugin graph",
       ],
       tags: ["products", "orders", "customers"],
       maintainer: "Zelavis team",
@@ -169,7 +172,7 @@ function getPluginStatus(
   return plugins.find((plugin) => plugin.name === pluginName)?.status;
 }
 
-function hasPendingPluginRestart(
+function hasPendingPluginActivation(
   item: MarketplaceCatalogItem,
   baselinePlugins: readonly RuntimePluginRegistryEntry[] | undefined,
   currentPlugins: readonly RuntimePluginRegistryEntry[] | undefined,
@@ -273,8 +276,12 @@ function Marketplace() {
     readonly RuntimePluginRegistryEntry[] | undefined
   >(undefined);
   const [actionError, setActionError] = useState<string>();
+  const [pluginName, setPluginName] = useState("");
+  const [pluginSpecifier, setPluginSpecifier] = useState("");
   const [pendingPluginName, setPendingPluginName] = useState<string>();
-  const [restartRequired, setRestartRequired] = useState(false);
+  const [addingPlugin, setAddingPlugin] = useState(false);
+  const [activationRequired, setActivationRequired] = useState(false);
+  const [activationMessage, setActivationMessage] = useState<string>();
   const [selectedItem, setSelectedItem] = useState<MarketplaceCatalogItem | null>(null);
 
   useEffect(() => {
@@ -290,11 +297,18 @@ function Marketplace() {
     () => createOfficialCatalog(effectivePlugins ?? []),
     [effectivePlugins],
   );
+  const uploadedPlugins = useMemo(
+    () =>
+      (effectivePlugins ?? []).filter(
+        (plugin) => plugin.source === "community" && plugin.specifier,
+      ),
+    [effectivePlugins],
+  );
   const activeServiceNames = runtimeConfig?.services.map((service) => service.name);
-  const marketplaceRestartRequired =
-    restartRequired ||
+  const marketplaceActivationRequired =
+    activationRequired ||
     officialCatalog.some((item) =>
-      hasPendingPluginRestart(
+      hasPendingPluginActivation(
         item,
         runtimeConfig?.plugins,
         effectivePlugins,
@@ -311,16 +325,47 @@ function Marketplace() {
     setActionError(undefined);
 
     try {
-      const nextPlugins = await updateDashboardPlugin(runtimeConfig, pluginName, {
+      const result = await updateDashboardPlugin(runtimeConfig, pluginName, {
         status,
       });
 
-      setPluginEntries(nextPlugins);
-      setRestartRequired(true);
+      setPluginEntries(result.plugins);
+      setActivationRequired(result.activation?.status !== "active");
+      setActivationMessage(result.activation?.message);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error));
     } finally {
       setPendingPluginName(undefined);
+    }
+  }
+
+  async function addPluginSource(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!runtimeConfig || addingPlugin) {
+      return;
+    }
+
+    setAddingPlugin(true);
+    setActionError(undefined);
+
+    try {
+      const result = await createDashboardPlugin(runtimeConfig, {
+        name: pluginName,
+        specifier: pluginSpecifier,
+        status: "available",
+        source: "community",
+      });
+
+      setPluginEntries(result.plugins);
+      setPluginName("");
+      setPluginSpecifier("");
+      setActivationRequired(result.activation?.status !== "active");
+      setActivationMessage(result.activation?.message);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAddingPlugin(false);
     }
   }
 
@@ -332,15 +377,21 @@ function Marketplace() {
         description="Official Zelavis plugins live up top, community plugins below, and plugin install state stays separate from runtime activation."
       />
 
-      {marketplaceRestartRequired ? (
+      {marketplaceActivationRequired ? (
         <ResourceNotice
-          title="Runtime restart required"
-          description="Plugin install state has changed. Marketplace metadata updates now, but mounted plugin services and workspace activation apply on the next runtime restart."
+          title="Host activation required"
+          description={
+            activationMessage ??
+            "Plugin install state has changed. Marketplace metadata updates now; mounted services activate when the current host applies its live plugin activation flow."
+          }
         />
       ) : (
         <ResourceNotice
           title="Install flow model"
-          description="The marketplace now edits real plugin registry state. Runtime activation still stays explicit on restart so plugin mounting remains predictable."
+          description={
+            activationMessage ??
+            "The marketplace edits real plugin registry state. Hosts decide how activation happens: recompose the local runtime, create a worker/function, or attach another live function boundary."
+          }
         />
       )}
 
@@ -350,6 +401,60 @@ function Marketplace() {
           description={actionError}
         />
       ) : null}
+
+      <Card className="border-border/80">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Upload className="size-4" />
+            Upload plugin
+          </CardTitle>
+          <CardDescription>
+            Register an ESM plugin source that the current host can activate through its live plugin flow.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form
+            id="plugin-source-form"
+            className="grid gap-4 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.4fr)_auto]"
+            onSubmit={addPluginSource}
+          >
+            <label className="grid gap-2 text-sm font-medium text-foreground">
+              Plugin name
+              <Input
+                value={pluginName}
+                onChange={(event) => setPluginName(event.target.value)}
+                placeholder="my-plugin"
+                disabled={addingPlugin}
+              />
+            </label>
+            <label className="grid gap-2 text-sm font-medium text-foreground">
+              ESM specifier
+              <Input
+                value={pluginSpecifier}
+                onChange={(event) => setPluginSpecifier(event.target.value)}
+                placeholder="@scope/plugin or ./plugins/my-plugin/dist/index.js"
+                disabled={addingPlugin}
+              />
+            </label>
+            <Button
+              type="submit"
+              className="self-end"
+              disabled={
+                addingPlugin ||
+                !runtimeConfig ||
+                pluginName.trim().length === 0 ||
+                pluginSpecifier.trim().length === 0
+              }
+            >
+              {addingPlugin ? "Adding..." : "Add source"}
+            </Button>
+          </form>
+          <p className="mt-3 text-sm text-muted-foreground">
+            This stores plugin metadata only. The host must be able to resolve the
+            specifier when it activates plugins.
+          </p>
+        </CardContent>
+      </Card>
 
       <section className="grid gap-4">
         <div className="min-w-0">
@@ -419,6 +524,44 @@ function Marketplace() {
           ))}
         </div>
       </section>
+
+      {uploadedPlugins.length > 0 ? (
+        <section className="grid gap-4">
+          <div>
+            <p className="kicker">Local registry</p>
+            <h2 className="text-xl font-semibold tracking-tight">Uploaded sources</h2>
+          </div>
+          <div className="grid gap-2 rounded-md border">
+            {uploadedPlugins.map((plugin) => (
+              <div
+                key={plugin.name}
+                className="grid gap-2 border-b p-4 last:border-b-0 md:grid-cols-[minmax(0,1fr)_auto]"
+              >
+                <div className="min-w-0">
+                  <p className="font-medium text-foreground">{plugin.name}</p>
+                  <p className="truncate text-sm text-muted-foreground">
+                    {plugin.specifier}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={pendingPluginName === plugin.name}
+                  onClick={() =>
+                    togglePlugin(
+                      plugin.name,
+                      plugin.status === "installed" ? "available" : "installed",
+                    )
+                  }
+                >
+                  {plugin.status === "installed" ? "Disable" : "Install"}
+                </Button>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <Sheet open={Boolean(selectedItem)} onOpenChange={(open) => !open && setSelectedItem(null)}>
         <SheetContent side="right" className="w-full sm:max-w-lg">
