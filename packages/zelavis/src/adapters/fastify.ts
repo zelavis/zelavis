@@ -1,16 +1,22 @@
 import type { FastifyPluginAsync } from "fastify";
 import { fastifyAdapter as bindFastifyRuntime } from "@zelavis/server/adapters/fastify";
-import type { ZelavisAdapterBinding } from "../index.js";
-import { createLazyBoundValue, createRuntimeBackedAdapter } from "./_shared.js";
+import type { ZelavisAdapterBinding, ZelavisAdapterPlatform } from "../index.js";
+import { defineAdapter } from "../index.js";
+import { createLazyBoundValue } from "./_shared.js";
+
+export interface ZelavisFastifyAdapterOptions {
+  platform?: ZelavisAdapterPlatform;
+}
 
 export interface ZelavisFastifyBinding extends ZelavisAdapterBinding {
   fastifyPlugin(): FastifyPluginAsync;
 }
 
-export function fastifyAdapter() {
-  return createRuntimeBackedAdapter<ZelavisFastifyBinding>(
-    "fastify",
-    ({ getRuntime }) => {
+export function fastifyAdapter(options: ZelavisFastifyAdapterOptions = {}) {
+  return defineAdapter<ZelavisFastifyBinding>({
+    name: "fastify",
+    platform: options.platform,
+    mount: ({ getRuntime }) => {
       const getPlugin = createLazyBoundValue(async () =>
         bindFastifyRuntime(await getRuntime()),
       );
@@ -27,5 +33,5 @@ export function fastifyAdapter() {
         },
       };
     },
-  );
+  });
 }

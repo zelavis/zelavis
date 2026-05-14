@@ -1,5 +1,5 @@
 import type {
-  ZelavisAdapterFactory,
+  ZelavisAdapter,
   ZelavisAdapterRuntimeContext,
   ZelavisServerRuntime,
 } from "../index.js";
@@ -20,7 +20,7 @@ export function createRuntimeBackedAdapter<TAdapter extends object>(
   bind: (
     context: ZelavisAdapterRuntimeContext,
   ) => TAdapter,
-): ZelavisAdapterFactory<TAdapter> {
+): ZelavisAdapter<TAdapter> {
   return {
     name,
     bind,

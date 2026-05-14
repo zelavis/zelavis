@@ -1,7 +1,6 @@
 import { H3, serve } from "h3";
 import { Zelavis } from "zelavis";
-import { h3Adapter } from "zelavis/adapters/h3";
-import { nodePlatform } from "zelavis/platforms/node";
+import { zelavisH3, zelavisNode } from "zelavis/adapters";
 
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
@@ -10,8 +9,7 @@ async function main(): Promise<void> {
   app.get("/hello", () => "Hello h3");
 
   const zelavis = new Zelavis({
-    adapter: h3Adapter(),
-    platform: nodePlatform(),
+    adapter: zelavisH3({ platform: zelavisNode() }),
     onError: ({ error }) => ({
       status: 400,
       body: { error: error instanceof Error ? error.message : "Unknown error" },

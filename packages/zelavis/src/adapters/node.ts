@@ -10,11 +10,13 @@ import type { Server } from "node:http";
 import { nodeAdapter as bindNodeRuntime } from "@zelavis/server/adapters/node";
 import type {
   ZelavisAdapterBinding,
+  ZelavisAdapterPlatform,
   ZelavisDashboardSettingsStore,
   ZelavisDashboardSettingsUpdate,
   ZelavisDashboardThemeMode,
 } from "../index.js";
-import { createLazyBoundValue, createRuntimeBackedAdapter } from "./_shared.js";
+import { defineAdapter } from "../index.js";
+import { createLazyBoundValue } from "./_shared.js";
 
 function normalizePathPart(part: string | undefined): string {
   if (!part) {
@@ -114,23 +116,31 @@ export function createFileDashboardSettingsStore(
   };
 }
 
+export interface ZelavisNodeAdapterOptions {
+  platform?: ZelavisAdapterPlatform;
+}
+
 export interface ZelavisNodeBinding extends ZelavisAdapterBinding {
   nodeServer(): Promise<Server>;
 }
 
-export function nodeAdapter() {
-  return createRuntimeBackedAdapter<ZelavisNodeBinding>("node", ({ getRuntime }) => {
-    const getServer = createLazyBoundValue(async () =>
-      bindNodeRuntime(await getRuntime()),
-    );
+export function nodeAdapter(options: ZelavisNodeAdapterOptions = {}) {
+  return defineAdapter<ZelavisNodeBinding>({
+    name: "node",
+    platform: options.platform,
+    mount: ({ getRuntime }) => {
+      const getServer = createLazyBoundValue(async () =>
+        bindNodeRuntime(await getRuntime()),
+      );
 
-    return {
-      async ready() {
-        await getServer();
-      },
-      async nodeServer() {
-        return getServer();
-      },
-    };
+      return {
+        async ready() {
+          await getServer();
+        },
+        async nodeServer() {
+          return getServer();
+        },
+      };
+    },
   });
 }

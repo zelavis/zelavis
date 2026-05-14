@@ -7,13 +7,11 @@ Use the Express adapter when Zelavis should live inside an existing Express appl
 ```ts
 import express from "express";
 import { Zelavis } from "zelavis";
-import { expressAdapter } from "zelavis/adapters/express";
-import { nodePlatform } from "zelavis/platforms/node";
+import { zelavisExpress, zelavisNode } from "zelavis/adapters";
 
 const app = express();
 const zelavis = new Zelavis({
-  adapter: expressAdapter(),
-  platform: nodePlatform(),
+  adapter: zelavisExpress({ platform: zelavisNode() }),
 });
 
 app.use(express.json());
@@ -22,11 +20,21 @@ app.use(zelavis.adapter.expressMiddleware());
 app.listen(3000);
 ```
 
+## Options
+
+```ts
+zelavisExpress({
+  platform?: ZelavisAdapterPlatform;
+})
+```
+
+The `platform` option accepts any platform adapter or a custom resolver. Omit it when you supply infrastructure directly through `Zelavis` constructor options.
+
 ## Good fit
 
-- existing Express apps
-- apps that already own middleware ordering
-- cases where Zelavis should share one process with custom routes
+- Existing Express apps
+- Apps that already own middleware ordering
+- Cases where Zelavis should share one process with custom routes
 
 ## Notes
 

@@ -7,22 +7,28 @@ Use the Elysia adapter when Zelavis should be mounted inside an Elysia applicati
 ```ts
 import { Elysia } from "elysia";
 import { Zelavis } from "zelavis";
-import { elysiaAdapter } from "zelavis/adapters/elysia";
-import { nodePlatform } from "zelavis/platforms/node";
+import { zelavisElysia, zelavisBun } from "zelavis/adapters";
 
 const zelavis = new Zelavis({
-  adapter: elysiaAdapter(),
-  platform: nodePlatform(),
+  adapter: zelavisElysia({ platform: zelavisBun() }),
 });
 
 new Elysia().use(await zelavis.adapter.elysiaPlugin()).listen(3000);
+```
+
+## Options
+
+```ts
+zelavisElysia({
+  platform?: ZelavisAdapterPlatform;
+})
 ```
 
 ## Good fit
 
 - Elysia apps that want Zelavis as one mounted capability
 - Bun-oriented deployments using Elysia as the outer server framework
-- apps that want custom Elysia routes beside the Zelavis runtime
+- Apps that want custom Elysia routes beside the Zelavis runtime
 
 ## Notes
 

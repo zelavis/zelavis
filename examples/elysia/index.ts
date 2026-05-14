@@ -1,13 +1,11 @@
 import { Elysia } from "elysia";
 import { Zelavis } from "zelavis";
-import { elysiaAdapter } from "zelavis/adapters/elysia";
-import { nodePlatform } from "zelavis/platforms/node";
+import { zelavisElysia, zelavisBun } from "zelavis/adapters";
 
 const port = Number(process.env.PORT ?? 3000);
 
 const zelavis = new Zelavis({
-  adapter: elysiaAdapter(),
-  platform: nodePlatform(),
+  adapter: zelavisElysia({ platform: zelavisBun() }),
   onError: ({ error }) => ({
     status: 400,
     body: { error: error instanceof Error ? error.message : "Unknown error" },

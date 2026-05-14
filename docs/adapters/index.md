@@ -1,10 +1,6 @@
 # Adapters
 
-Use this section for runtime and framework adapter docs.
-
-Guideline:
-
-Document how each framework adapter mounts or embeds Zelavis without changing core package contracts. Host-level runtime defaults belong in platform preset docs instead.
+All Zelavis adapters come from `zelavis/adapters`. Framework adapters mount Zelavis into a host framework. Platform adapters contribute host infrastructure. The fetch adapter is for fetch-native hosts with no platform opinions.
 
 ## Pages
 
@@ -15,4 +11,4 @@ Document how each framework adapter mounts or embeds Zelavis without changing co
 - [Hono](./hono.md)
 - [Node](./node.md)
 - [Adapter Entry Points](./entry-points.md)
-- [Platform Presets](../reference/platform-presets.md)
+- [Platform Adapters](../reference/platform-presets.md)

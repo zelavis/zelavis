@@ -1,26 +1,21 @@
 import { Zelavis } from "zelavis";
-import {
-  cloudflarePlatform,
-  type CloudflarePlatformEnv,
-} from "zelavis/platforms/cloudflare";
+import { zelavisCloudflare } from "zelavis/adapters";
+import type { CloudflarePlatformEnv } from "zelavis/platforms/cloudflare";
 
 type Env = CloudflarePlatformEnv;
 
-let runtimePromise: Promise<Awaited<ReturnType<Zelavis["runtime"]>>> | undefined;
+let zelavisInstance: Zelavis | undefined;
 
-function getRuntime(env: Env) {
-  if (runtimePromise) {
-    return runtimePromise;
+function getZelavis(env: Env) {
+  if (zelavisInstance) {
+    return zelavisInstance;
   }
 
-  const zelavis = new Zelavis({
-    platform: cloudflarePlatform({
-      env,
-    }),
+  zelavisInstance = new Zelavis({
+    adapter: zelavisCloudflare({ env }),
   });
 
-  runtimePromise = zelavis.runtime();
-  return runtimePromise;
+  return zelavisInstance;
 }
 
 export default {
@@ -39,9 +34,7 @@ export default {
       return new Response("Not Found", { status: 404 });
     }
 
-    const runtime = await getRuntime(env);
-
-    return runtime.fetch(request, {
+    return getZelavis(env).fetch(request, {
       platform: {
         cloudflare: {
           env,

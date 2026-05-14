@@ -1,12 +1,12 @@
 import { fileURLToPath } from "node:url";
 import { Zelavis } from "zelavis";
-import { bunPlatform } from "zelavis/platforms/bun";
+import { zelavisBun } from "zelavis/adapters";
 
 const port = Number(Bun.env.PORT ?? 3000);
 const dataDirectory = fileURLToPath(new URL("./.data", import.meta.url));
 
 const zelavis = new Zelavis({
-  platform: bunPlatform({
+  adapter: zelavisBun({
     dataDirectory,
   }),
   onError: ({ error }) => ({

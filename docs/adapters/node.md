@@ -6,36 +6,40 @@ Use the Node adapter when Zelavis should own a standalone HTTP server in a Node.
 
 ```ts
 import { Zelavis } from "zelavis";
-import { nodeAdapter } from "zelavis/adapters/node";
-import { nodePlatform } from "zelavis/platforms/node";
+import { zelavisNodeServer, zelavisNode } from "zelavis/adapters";
 
 const zelavis = new Zelavis({
-  adapter: nodeAdapter(),
-  platform: nodePlatform(),
+  adapter: zelavisNodeServer({ platform: zelavisNode() }),
 });
-const server = await zelavis.adapter.nodeServer();
 
+const server = await zelavis.adapter.nodeServer();
 server.listen(3000);
+```
+
+## Options
+
+```ts
+zelavisNodeServer({
+  platform?: ZelavisAdapterPlatform;
+})
+```
+
+## Node platform adapter
+
+`zelavisNode()` provides Node-oriented infrastructure defaults: the built-in SQLite driver and file-backed dashboard settings. Use it as the `platform` option whenever the host is a Node.js process.
+
+```ts
+zelavisNode({
+  dataDirectory?: string;  // default: ".zelavis"
+})
 ```
 
 ## Current use cases
 
-- standalone local development server
-- simple self-hosted deployments
-- local dashboard development
-- file-backed dashboard settings storage
-- serving the default website and dashboard together from one Node process
-- choosing the default Node database/storage story through one platform preset
-
-## Platform preset
-
-The Node platform preset is where Zelavis now chooses host-level defaults such as the built-in Node SQLite driver and file-backed dashboard settings:
-
-```ts
-import { nodePlatform } from "zelavis/platforms/node";
-```
-
-Use it when you want the framework adapter and the storage/runtime defaults to feel like one Node-shaped setup.
+- Standalone local development server
+- Simple self-hosted deployments
+- Local dashboard development
+- Serving the dashboard and website from one Node process
 
 ## Dashboard settings storage
 
@@ -47,10 +51,8 @@ import { createFileDashboardSettingsStore } from "zelavis/adapters/node";
 
 Use it when you want runtime-editable dashboard settings persisted to disk.
 
-The helper persists dashboard settings such as theme, pending `rootPath`, and page-builder toggles outside the runtime process.
-
 ## Related docs
 
+- [Adapter Entry Points](./entry-points.md)
 - [First Runtime](../getting-started/first-runtime.md)
-- [zelavis](../packages/zelavis.md)
 - [Dashboard Development](../guides/dashboard-development.md)
