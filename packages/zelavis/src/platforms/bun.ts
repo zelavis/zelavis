@@ -1,8 +1,7 @@
 import { join, resolve } from "node:path";
 import {
-  createPlatform,
+  defineAdapter,
   type ZelavisOptions,
-  type ZelavisPlatformPreset,
   type ZelavisResolvedPlatformOptions,
 } from "../index.js";
 import { createFileDashboardSettingsStore } from "../adapters/node.js";
@@ -39,14 +38,12 @@ function normalizeDataDirectory(path: string | undefined): string {
   return resolve(path?.trim() ? path : ".zelavis");
 }
 
-export function bunPlatform(
-  options: BunPlatformOptions = {},
-): ZelavisPlatformPreset {
-  return createPlatform({
+export function bunPlatform(options: BunPlatformOptions = {}) {
+  return defineAdapter({
     name: "bun",
-    async resolve(
+    platform: async (
       _constructorOptions: ZelavisOptions<any>,
-    ): Promise<ZelavisResolvedPlatformOptions> {
+    ): Promise<ZelavisResolvedPlatformOptions> => {
       const dataDirectory = normalizeDataDirectory(options.dataDirectory);
       const nextCoreServices: Record<string, unknown> = {};
 

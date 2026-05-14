@@ -1,12 +1,11 @@
 import {
-  createPlatform,
+  defineAdapter,
   type ZelavisOptions,
   type ZelavisFileStorage,
   type ZelavisFileStorageEntry,
   type ZelavisFileStorageObject,
   type ZelavisFileStoragePutInput,
   type ZelavisKeyValueStore,
-  type ZelavisPlatformPreset,
   type ZelavisResolvedPlatformOptions,
 } from "../index.js";
 
@@ -398,14 +397,12 @@ function resolveFilesOption(
     : undefined;
 }
 
-export function cloudflarePlatform(
-  options: CloudflarePlatformOptions,
-): ZelavisPlatformPreset {
-  return createPlatform({
+export function cloudflarePlatform(options: CloudflarePlatformOptions) {
+  return defineAdapter({
     name: "cloudflare",
-    async resolve(
+    platform: async (
       _constructorOptions: ZelavisOptions<any>,
-    ): Promise<ZelavisResolvedPlatformOptions> {
+    ): Promise<ZelavisResolvedPlatformOptions> => {
       const nextCoreServices: Record<string, unknown> = {};
       const databaseBinding = resolveDatabaseBinding(options);
       const kvOptions = resolveKvOption(options);

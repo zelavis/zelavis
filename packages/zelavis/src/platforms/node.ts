@@ -1,9 +1,8 @@
 import { join, resolve } from "node:path";
 import { createBetterSqlite3DatabaseDriver } from "@zelavis/database-node-sqlite";
 import {
-  createPlatform,
+  defineAdapter,
   type ZelavisOptions,
-  type ZelavisPlatformPreset,
   type ZelavisResolvedPlatformOptions,
 } from "../index.js";
 import { createFileDashboardSettingsStore } from "../adapters/node.js";
@@ -37,14 +36,12 @@ function normalizeDataDirectory(path: string | undefined): string {
   return resolve(path?.trim() ? path : ".zelavis");
 }
 
-export function nodePlatform(
-  options: NodePlatformOptions = {},
-): ZelavisPlatformPreset {
-  return createPlatform({
+export function nodePlatform(options: NodePlatformOptions = {}) {
+  return defineAdapter({
     name: "node",
-    async resolve(
+    platform: async (
       _constructorOptions: ZelavisOptions<any>,
-    ): Promise<ZelavisResolvedPlatformOptions> {
+    ): Promise<ZelavisResolvedPlatformOptions> => {
       const dataDirectory = normalizeDataDirectory(options.dataDirectory);
       const nextCoreServices: Record<string, unknown> = {};
 

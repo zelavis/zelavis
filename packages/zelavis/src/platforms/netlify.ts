@@ -1,12 +1,11 @@
 import {
-  createPlatform,
+  defineAdapter,
   type ZelavisOptions,
   type ZelavisFileStorage,
   type ZelavisFileStorageEntry,
   type ZelavisFileStorageObject,
   type ZelavisFileStoragePutInput,
   type ZelavisKeyValueStore,
-  type ZelavisPlatformPreset,
   type ZelavisResolvedPlatformOptions,
 } from "../index.js";
 
@@ -255,14 +254,12 @@ export interface NetlifyPlatformOptions {
   metadata?: Record<string, unknown>;
 }
 
-export function netlifyPlatform(
-  options: NetlifyPlatformOptions = {},
-): ZelavisPlatformPreset {
-  return createPlatform({
+export function netlifyPlatform(options: NetlifyPlatformOptions = {}) {
+  return defineAdapter({
     name: "netlify",
-    async resolve(
+    platform: async (
       _constructorOptions: ZelavisOptions<any>,
-    ): Promise<ZelavisResolvedPlatformOptions> {
+    ): Promise<ZelavisResolvedPlatformOptions> => {
       const nextCoreServices: Record<string, unknown> = {};
 
       if (options.database !== false && options.database !== undefined) {
