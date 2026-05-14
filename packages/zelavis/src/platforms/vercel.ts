@@ -1,12 +1,11 @@
 import {
-  createPlatform,
+  defineAdapter,
   type ZelavisOptions,
   type ZelavisFileStorage,
   type ZelavisFileStorageEntry,
   type ZelavisFileStorageObject,
   type ZelavisFileStoragePutInput,
   type ZelavisKeyValueStore,
-  type ZelavisPlatformPreset,
   type ZelavisResolvedPlatformOptions,
 } from "../index.js";
 
@@ -173,14 +172,12 @@ export interface VercelPlatformOptions {
   metadata?: Record<string, unknown>;
 }
 
-export function vercelPlatform(
-  options: VercelPlatformOptions = {},
-): ZelavisPlatformPreset {
-  return createPlatform({
+export function vercelPlatform(options: VercelPlatformOptions = {}) {
+  return defineAdapter({
     name: "vercel",
-    async resolve(
+    platform: async (
       _constructorOptions: ZelavisOptions<any>,
-    ): Promise<ZelavisResolvedPlatformOptions> {
+    ): Promise<ZelavisResolvedPlatformOptions> => {
       const nextCoreServices: Record<string, unknown> = {};
 
       if (options.database !== false && options.database !== undefined) {
