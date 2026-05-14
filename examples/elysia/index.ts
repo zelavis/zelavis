@@ -1,11 +1,12 @@
 import { Elysia } from "elysia";
 import { Zelavis } from "zelavis";
-import { zelavisElysia, zelavisBun } from "zelavis/adapters";
+import { bunAdapter } from "zelavis/adapters/bun";
+import { elysiaPlugin } from "zelavis/elysia";
 
 const port = Number(process.env.PORT ?? 3000);
 
 const zelavis = new Zelavis({
-  adapter: zelavisElysia({ platform: zelavisBun() }),
+  adapter: bunAdapter(),
   onError: ({ error }) => ({
     status: 400,
     body: { error: error instanceof Error ? error.message : "Unknown error" },
@@ -14,7 +15,7 @@ const zelavis = new Zelavis({
 
 new Elysia()
   .get("/hello", "Hello Elysia")
-  .use(await zelavis.adapter.elysiaPlugin())
+  .use(await elysiaPlugin(zelavis))
   .listen(port);
 
 console.log(`zelavis Elysia example listening on http://localhost:${port}`);

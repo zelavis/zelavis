@@ -158,7 +158,7 @@ export function createVercelBlobFileStorage(
   };
 }
 
-export interface VercelPlatformOptions {
+export interface VercelAdapterOptions {
   database?: false | unknown;
   kv?: false | {
     store: ZelavisKeyValueStore;
@@ -172,12 +172,12 @@ export interface VercelPlatformOptions {
   metadata?: Record<string, unknown>;
 }
 
-export function vercelPlatform(options: VercelPlatformOptions = {}) {
+export function vercelAdapter(options: VercelAdapterOptions = {}) {
   return defineAdapter({
     name: "vercel",
-    platform: async (
-      _constructorOptions: ZelavisOptions<any>,
-    ): Promise<ZelavisResolvedPlatformOptions> => {
+    async resolve(
+      _constructorOptions: ZelavisOptions,
+    ): Promise<ZelavisResolvedPlatformOptions> {
       const nextCoreServices: Record<string, unknown> = {};
 
       if (options.database !== false && options.database !== undefined) {

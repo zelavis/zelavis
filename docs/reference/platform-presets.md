@@ -1,12 +1,20 @@
 # Platform Adapters
 
-Platform adapters contribute host-level infrastructure defaults to Zelavis: database drivers, KV stores, file storage, and dashboard settings persistence.
+Platform adapters contribute host-level infrastructure to Zelavis: database drivers, KV stores, file storage, and dashboard settings persistence. They are the `adapter:` option you pass to `new Zelavis({...})`.
 
-They are regular adapters and come from the same `zelavis/adapters` entry point as framework adapters. The distinction is purely functional — platform adapters provide `resolve` logic for infrastructure and have no framework mounting logic.
+In Zelavis there is only one *kind* of adapter — the environment adapter. There are no "framework adapters" — framework integration is handled by small utility functions like `expressMiddleware(zelavis)` from `zelavis/express`.
 
 ## Import
 
 ```ts
+// Direct paths
+import { nodeAdapter } from "zelavis/adapters/node";
+import { bunAdapter } from "zelavis/adapters/bun";
+import { cloudflareAdapter } from "zelavis/adapters/cloudflare";
+import { vercelAdapter } from "zelavis/adapters/vercel";
+import { netlifyAdapter } from "zelavis/adapters/netlify";
+
+// Or via the barrel (with zelavisX aliases)
 import {
   zelavisNode,
   zelavisBun,
@@ -16,9 +24,9 @@ import {
 } from "zelavis/adapters";
 ```
 
-## Available platform adapters
+## Available adapters
 
-### `zelavisNode(options?)`
+### `nodeAdapter(options?)`
 
 Node-oriented defaults:
 
@@ -28,16 +36,18 @@ Node-oriented defaults:
 - Local file storage rooted in the Zelavis data directory
 
 ```ts
-import { zelavisExpress, zelavisNode } from "zelavis/adapters";
+import { Zelavis } from "zelavis";
+import { nodeAdapter } from "zelavis/adapters/node";
+import { createNodeServer } from "zelavis/node";
 
-new Zelavis({
-  adapter: zelavisExpress({
-    platform: zelavisNode({ dataDirectory: ".zelavis" }),
-  }),
+const zelavis = new Zelavis({
+  adapter: nodeAdapter({ dataDirectory: ".zelavis" }),
 });
+const server = await createNodeServer(zelavis);
+server.listen(3000);
 ```
 
-### `zelavisBun(options?)`
+### `bunAdapter(options?)`
 
 Bun-oriented defaults:
 
@@ -47,50 +57,50 @@ Bun-oriented defaults:
 - Local file storage rooted in the Zelavis data directory
 
 ```ts
-import { zelavisBun } from "zelavis/adapters";
+import { Zelavis } from "zelavis";
+import { bunAdapter } from "zelavis/adapters/bun";
 
-const zelavis = new Zelavis({ adapter: zelavisBun() });
+const zelavis = new Zelavis({ adapter: bunAdapter() });
 
 export default { fetch: (req) => zelavis.fetch(req) };
 ```
 
-### `zelavisCloudflare({ env, bindings? })`
+### `cloudflareAdapter({ env, bindings? })`
 
-Cloudflare-oriented bindings. Pass the Worker `env` object and the platform discovers the standard Zelavis bindings (`ZELAVIS_DB`, `ZELAVIS_KV`, `ZELAVIS_FILES`):
+Cloudflare-oriented bindings. Pass the Worker `env` object and the adapter discovers the standard Zelavis bindings (`ZELAVIS_DB`, `ZELAVIS_KV`, `ZELAVIS_FILES`):
 
 - D1 database driver
 - KV namespace as the KV store
 - R2 bucket as file storage
 
 ```ts
-import { zelavisCloudflare } from "zelavis/adapters";
-
-const zelavis = new Zelavis({
-  adapter: zelavisCloudflare({ env }),
-});
+import { Zelavis } from "zelavis";
+import { cloudflareAdapter } from "zelavis/adapters/cloudflare";
 
 export default {
   async fetch(request, env, ctx) {
+    const zelavis = new Zelavis({ adapter: cloudflareAdapter({ env }) });
     return zelavis.fetch(request, ctx);
   },
 };
 ```
 
-The `env` object is passed at call time. Cloudflare Workers inject bindings at request time, so `zelavisCloudflare({ env })` captures them via closure before the adapter is used.
+The `env` object is passed at call time. Cloudflare Workers inject bindings at request time, so `cloudflareAdapter({ env })` captures them via closure.
 
 Custom binding names can be overridden through the `bindings` option.
 
-### `zelavisVercel(options?)`
+### `vercelAdapter(options?)`
 
-Vercel-shaped platform slot. Accepts injected database configuration, KV store, and file storage. Does not pick one default Vercel product automatically — you supply the resources explicitly.
+Vercel-shaped adapter. Accepts injected database configuration, KV store, and file storage. Does not pick one default Vercel product automatically — you supply the resources explicitly.
 
 For file storage, Vercel Blob is the natural fit via `createVercelBlobFileStorage(...)`.
 
 ```ts
-import { zelavisVercel } from "zelavis/adapters";
+import { Zelavis } from "zelavis";
+import { vercelAdapter } from "zelavis/adapters/vercel";
 
 const zelavis = new Zelavis({
-  adapter: zelavisVercel({
+  adapter: vercelAdapter({
     files: { blobStore: myVercelBlobClient },
   }),
 });
@@ -100,16 +110,17 @@ export async function GET(request: Request) {
 }
 ```
 
-### `zelavisNetlify(options?)`
+### `netlifyAdapter(options?)`
 
-Netlify-shaped platform slot. Netlify Blobs is the natural fit for both KV and file storage:
+Netlify-shaped adapter. Netlify Blobs is the natural fit for both KV and file storage:
 
 ```ts
 import { getStore } from "@netlify/blobs";
-import { zelavisNetlify } from "zelavis/adapters";
+import { Zelavis } from "zelavis";
+import { netlifyAdapter } from "zelavis/adapters/netlify";
 
 const zelavis = new Zelavis({
-  adapter: zelavisNetlify({
+  adapter: netlifyAdapter({
     kv: { blobsStore: getStore("zelavis-kv") },
     files: { blobsStore: getStore("zelavis-files") },
   }),
@@ -118,7 +129,7 @@ const zelavis = new Zelavis({
 
 ## Platform resources
 
-Platform adapters contribute runtime resources through `zelavis.platform.resources`:
+Adapters contribute runtime resources accessible through `zelavis.platform.resources`:
 
 - `kv` — used for dashboard settings persistence
 - `files` — used for file storage and website page persistence
@@ -127,7 +138,7 @@ These resources are not Zelavis services. They are host-level infrastructure cap
 
 ## Generic object storage
 
-S3-compatible object storage is not a platform preset — it is a storage backend. Use the first-party helper:
+S3-compatible object storage is not an adapter — it is a storage backend. Use the first-party helper:
 
 ```ts
 import { createS3CompatibleFileStorage } from "zelavis/storage/s3";
@@ -137,5 +148,5 @@ Pass the result as the `files` resource when constructing your adapter.
 
 ## Related docs
 
-- [Adapters and Fetch-Native Hosts](../guides/adapters-and-fetch-native.md)
+- [Adapters Guide](../guides/adapters-and-fetch-native.md)
 - [Adapter Entry Points](../adapters/entry-points.md)

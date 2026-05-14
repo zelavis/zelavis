@@ -1,7 +1,8 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { Zelavis } from "zelavis";
-import { zelavisHono, zelavisNode } from "zelavis/adapters";
+import { nodeAdapter } from "zelavis/adapters/node";
+import { honoMiddleware } from "zelavis/hono";
 
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
@@ -12,14 +13,14 @@ async function main(): Promise<void> {
   });
 
   const zelavis = new Zelavis({
-    adapter: zelavisHono({ platform: zelavisNode() }),
+    adapter: nodeAdapter(),
     onError: ({ error }) => ({
       status: 400,
       body: { error: error instanceof Error ? error.message : "Unknown error" },
     }),
   });
 
-  app.use(zelavis.adapter.honoMiddleware());
+  app.use(honoMiddleware(zelavis));
 
   serve(
     {

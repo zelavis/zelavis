@@ -1,103 +1,87 @@
 # Adapter Entry Points
 
-All Zelavis adapters — framework adapters, platform adapters, and the fetch-native adapter — come from a single entry point:
+Zelavis has two kinds of entry points:
 
-```ts
-import { ... } from "zelavis/adapters";
-```
+1. **Adapters** (`zelavis/adapters/*` and the `zelavis/adapters` barrel) — describe the *environment* Zelavis runs on.
+2. **Framework utilities** (`zelavis/<framework>`) — small helper functions for plugging Zelavis into a specific host framework.
 
-## Available adapters
+## Adapters
 
-### Framework adapters
+Adapters are built with `defineAdapter` and contribute infrastructure: database driver, KV, file storage, dashboard settings.
 
-Framework adapters mount Zelavis into an existing host framework. Each accepts an optional `platform` option for pairing with a platform adapter.
+### Available environment adapters
 
 ```txt
-zelavisExpress       — Express middleware
-zelavisHono          — Hono middleware
-zelavisFastify       — Fastify plugin
-zelavisH3            — h3 handler
-zelavisElysia        — Elysia plugin
-zelavisNodeServer    — standalone Node HTTP server
-zelavisNextjsPagesRouter — Next.js Pages Router API handler
+zelavis/adapters/node         — Node.js (better-sqlite3, local files, file dashboard settings)
+zelavis/adapters/bun          — Bun (bun:sqlite, local files, file dashboard settings)
+zelavis/adapters/cloudflare   — Cloudflare Workers (D1, KV, R2)
+zelavis/adapters/vercel       — Vercel (injected Vercel Blob and KV resources)
+zelavis/adapters/netlify      — Netlify (Netlify Blobs)
+```
+
+### Barrel
+
+The `zelavis/adapters` barrel re-exports every adapter under its canonical name and a `zelavisX` alias:
+
+```ts
+import {
+  nodeAdapter,
+  bunAdapter,
+  cloudflareAdapter,
+  vercelAdapter,
+  netlifyAdapter,
+  // aliases
+  zelavisNode,
+  zelavisBun,
+  zelavisCloudflare,
+  zelavisVercel,
+  zelavisNetlify,
+} from "zelavis/adapters";
+```
+
+### Typical usage
+
+```ts
+import { Zelavis } from "zelavis";
+import { nodeAdapter } from "zelavis/adapters/node";
+
+const zelavis = new Zelavis({ adapter: nodeAdapter() });
+```
+
+Fetch-native hosts use the adapter for infrastructure and call `zelavis.fetch(request)` directly — no framework utility needed.
+
+## Framework utilities
+
+Framework utilities take a `Zelavis` instance and return whatever shape the framework expects. They live at `zelavis/<framework>`:
+
+```txt
+zelavis/express       — expressMiddleware(zelavis)
+zelavis/hono          — honoMiddleware(zelavis)
+zelavis/fastify       — fastifyPlugin(zelavis)
+zelavis/h3            — h3Handler(zelavis)
+zelavis/elysia        — elysiaPlugin(zelavis)
+zelavis/nextjs/pages  — nextjsPagesRouterHandler(zelavis, options?)
+zelavis/node          — createNodeServer(zelavis)
 ```
 
 Typical usage:
 
 ```ts
+import express from "express";
 import { Zelavis } from "zelavis";
-import { zelavisNodeServer, zelavisNode } from "zelavis/adapters";
+import { nodeAdapter } from "zelavis/adapters/node";
+import { expressMiddleware } from "zelavis/express";
 
-const zelavis = new Zelavis({
-  adapter: zelavisNodeServer({ platform: zelavisNode() }),
-});
-
-const server = await zelavis.adapter.nodeServer();
+const zelavis = new Zelavis({ adapter: nodeAdapter() });
+const app = express();
+app.use(expressMiddleware(zelavis));
 ```
 
-### Platform adapters
-
-Platform adapters contribute host-level infrastructure: database, KV, file storage. They work standalone (for fetch-native hosts) or as the `platform` option inside a framework adapter.
-
-```txt
-zelavisNode          — Node.js defaults (SQLite, local file storage)
-zelavisBun           — Bun defaults (Bun SQLite, local file storage)
-zelavisCloudflare    — Cloudflare Workers (D1, KV, R2)
-zelavisVercel        — Vercel (injected resources)
-zelavisNetlify       — Netlify (Netlify Blobs)
-```
-
-Typical usage for a fetch-native host:
-
-```ts
-import { Zelavis } from "zelavis";
-import { zelavisVercel } from "zelavis/adapters";
-
-const zelavis = new Zelavis({
-  adapter: zelavisVercel(),
-});
-
-export async function GET(request: Request) {
-  return zelavis.fetch(request);
-}
-```
-
-### Fetch adapter
-
-`zelavisFetch()` is the explicit fetch-native adapter with no platform opinions. Use it when the host is fetch-native and you supply all infrastructure directly through `Zelavis` constructor options.
-
-```ts
-import { Zelavis } from "zelavis";
-import { zelavisFetch } from "zelavis/adapters";
-
-const zelavis = new Zelavis({
-  adapter: zelavisFetch(),
-  coreServices: { database: myDriver },
-});
-```
-
-## Individual deep imports
-
-The individual adapter paths remain available for cases where you want a single adapter without the full barrel:
-
-```txt
-zelavis/adapters/express
-zelavis/adapters/hono
-zelavis/adapters/fastify
-zelavis/adapters/h3
-zelavis/adapters/elysia
-zelavis/adapters/node
-zelavis/adapters/nextjs-pages-router
-zelavis/platforms/node
-zelavis/platforms/bun
-zelavis/platforms/cloudflare
-zelavis/platforms/netlify
-zelavis/platforms/vercel
-```
+These are *not* adapters — they are helper functions. The `Zelavis` instance is constructed once with its environment adapter, and the utility just wraps `zelavis.fetch` for a specific framework signature.
 
 ## Lower-level server adapters
 
-The `@zelavis/server` package exposes lower-level adapters for custom runtime assembly:
+The `@zelavis/server` package exposes runtime-level helpers for custom server composition:
 
 ```txt
 @zelavis/server/adapters/node
@@ -109,37 +93,36 @@ The `@zelavis/server` package exposes lower-level adapters for custom runtime as
 @zelavis/server/adapters/nextjs-pages-router
 ```
 
-Typical usage:
-
-```ts
-import { defineService, zelavisServer } from "@zelavis/server";
-import { nodeAdapter } from "@zelavis/server/adapters/node";
-
-const runtime = await zelavisServer({ services: [...] });
-const server = nodeAdapter(runtime);
-```
-
-Treat this layer as infrastructure-facing. It is the right tool for custom runtime assembly, not the default recommendation for application code.
+These accept a raw runtime rather than a `Zelavis` instance. The framework utilities in `zelavis/<framework>` wrap these for the `Zelavis` lifecycle. Use the low-level helpers only when you are composing services by hand via `zelavisServer(...)`.
 
 ## defineAdapter
 
-To build a custom adapter, use `defineAdapter` from the main `zelavis` package:
+To build a custom environment adapter:
 
 ```ts
 import { defineAdapter } from "zelavis";
 
 const myAdapter = defineAdapter({
   name: "my-host",
-  platform: (options) => ({
-    resources: { kv: myStore },
-  }),
-  mount: ({ getRuntime }) => ({
-    async myHandler(request) {
-      const runtime = await getRuntime();
-      return runtime.fetch(request);
-    },
-  }),
+  async resolve(_options) {
+    return {
+      coreServices: { /* ... */ },
+      resources: { kv: myStore, files: myStorage },
+      metadata: { runtime: "my-host" },
+    };
+  },
 });
+```
+
+The full shape:
+
+```ts
+interface ZelavisAdapter {
+  name: string;
+  resolve?(options: ZelavisOptions):
+    | ZelavisResolvedPlatformOptions
+    | Promise<ZelavisResolvedPlatformOptions>;
+}
 ```
 
 ## Related docs

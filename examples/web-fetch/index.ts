@@ -1,13 +1,10 @@
 import { Zelavis } from "zelavis";
-import { zelavisFetch } from "zelavis/adapters";
 
 // Reference embedding example only.
 // This module exports a standard fetch handler for Web-native hosts,
 // but it does not start a standalone local server by itself.
 
-const zelavis = new Zelavis({
-  adapter: zelavisFetch(),
-});
+const zelavis = new Zelavis();
 
 export interface ZelavisFetchPlatformContext {
   env?: unknown;

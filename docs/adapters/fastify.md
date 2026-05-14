@@ -1,29 +1,26 @@
-# Fastify Adapter
+# Fastify
 
-Use the Fastify adapter when Zelavis should be mounted as a Fastify plugin inside an existing Fastify application.
+Use the Fastify utility when Zelavis should be mounted as a Fastify plugin inside an existing Fastify application.
 
 ## Basic usage
 
 ```ts
 import Fastify from "fastify";
 import { Zelavis } from "zelavis";
-import { zelavisFastify, zelavisNode } from "zelavis/adapters";
+import { nodeAdapter } from "zelavis/adapters/node";
+import { fastifyPlugin } from "zelavis/fastify";
 
 const app = Fastify();
-const zelavis = new Zelavis({
-  adapter: zelavisFastify({ platform: zelavisNode() }),
-});
+const zelavis = new Zelavis({ adapter: nodeAdapter() });
 
-await app.register(zelavis.adapter.fastifyPlugin());
+await app.register(fastifyPlugin(zelavis));
 await app.listen({ port: 3000, host: "127.0.0.1" });
 ```
 
-## Options
+## API
 
 ```ts
-zelavisFastify({
-  platform?: ZelavisAdapterPlatform;
-})
+fastifyPlugin(zelavis: Zelavis): FastifyPluginAsync
 ```
 
 ## Good fit

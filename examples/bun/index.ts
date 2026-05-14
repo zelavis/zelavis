@@ -1,14 +1,12 @@
 import { fileURLToPath } from "node:url";
 import { Zelavis } from "zelavis";
-import { zelavisBun } from "zelavis/adapters";
+import { bunAdapter } from "zelavis/adapters/bun";
 
 const port = Number(Bun.env.PORT ?? 3000);
 const dataDirectory = fileURLToPath(new URL("./.data", import.meta.url));
 
 const zelavis = new Zelavis({
-  adapter: zelavisBun({
-    dataDirectory,
-  }),
+  adapter: bunAdapter({ dataDirectory }),
   onError: ({ error }) => ({
     status: 400,
     body: { error: error instanceof Error ? error.message : "Unknown error" },

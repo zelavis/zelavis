@@ -1,62 +1,66 @@
 import { join, resolve } from "node:path";
-import { createBetterSqlite3DatabaseDriver } from "@zelavis/database-node-sqlite";
 import {
   defineAdapter,
   type ZelavisOptions,
   type ZelavisResolvedPlatformOptions,
 } from "../index.js";
-import { createFileDashboardSettingsStore } from "../adapters/node.js";
+import { createFileDashboardSettingsStore } from "./node.js";
 import { createLocalFileStorage, createMemoryKeyValueStore } from "./_shared.js";
 
-export interface NodePlatformDatabaseOptions {
+export interface BunAdapterDatabaseOptions {
   filename?: string;
   readonly?: boolean;
-  fileMustExist?: boolean;
+  create?: boolean;
   defaultTenantId?: string;
-  pragma?: readonly string[];
 }
 
-export interface NodePlatformDashboardOptions {
+export interface BunAdapterDashboardOptions {
   settingsFile?: string;
 }
 
-export interface NodePlatformOptions {
+export interface BunAdapterFileStorageOptions {
+  rootDirectory?: string;
+}
+
+export interface BunAdapterKeyValueOptions {
+  kind?: "memory";
+}
+
+export interface BunAdapterOptions {
   dataDirectory?: string;
-  database?: false | NodePlatformDatabaseOptions;
-  dashboard?: false | NodePlatformDashboardOptions;
-  files?: false | {
-    rootDirectory?: string;
-  };
-  kv?: false | {
-    kind?: "memory";
-  };
+  database?: false | BunAdapterDatabaseOptions;
+  dashboard?: false | BunAdapterDashboardOptions;
+  files?: false | BunAdapterFileStorageOptions;
+  kv?: false | BunAdapterKeyValueOptions;
 }
 
 function normalizeDataDirectory(path: string | undefined): string {
   return resolve(path?.trim() ? path : ".zelavis");
 }
 
-export function nodePlatform(options: NodePlatformOptions = {}) {
+export function bunAdapter(options: BunAdapterOptions = {}) {
   return defineAdapter({
-    name: "node",
-    platform: async (
-      _constructorOptions: ZelavisOptions<any>,
-    ): Promise<ZelavisResolvedPlatformOptions> => {
+    name: "bun",
+    async resolve(
+      _constructorOptions: ZelavisOptions,
+    ): Promise<ZelavisResolvedPlatformOptions> {
       const dataDirectory = normalizeDataDirectory(options.dataDirectory);
       const nextCoreServices: Record<string, unknown> = {};
 
       if (options.database !== false) {
+        const { createBunSqliteDatabaseDriver } = await import(
+          "@zelavis/database-bun-sqlite"
+        );
         const databaseOptions = options.database ?? {};
         nextCoreServices.database = {
           defaultTenantId: databaseOptions.defaultTenantId,
-          driver: createBetterSqlite3DatabaseDriver({
+          driver: createBunSqliteDatabaseDriver({
             filename: databaseOptions.filename
               ? resolve(databaseOptions.filename)
               : join(dataDirectory, "zelavis.sqlite"),
             readonly: databaseOptions.readonly,
-            fileMustExist: databaseOptions.fileMustExist,
+            create: databaseOptions.create,
             defaultTenantId: databaseOptions.defaultTenantId,
-            pragma: databaseOptions.pragma,
           }),
         };
       }
@@ -89,7 +93,7 @@ export function nodePlatform(options: NodePlatformOptions = {}) {
                 ),
         },
         metadata: {
-          runtime: "node",
+          runtime: "bun",
         },
       };
     },

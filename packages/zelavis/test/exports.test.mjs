@@ -1,26 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-test("zelavis package exports runtime APIs and adapter subpaths", async () => {
+test("zelavis package exports runtime APIs, env adapters, and framework utility subpaths", async () => {
   const runtime = await import("zelavis");
-  const elysiaAdapter = await import("zelavis/adapters/elysia");
+  const adapters = await import("zelavis/adapters");
   const nodeAdapter = await import("zelavis/adapters/node");
-  const expressAdapter = await import("zelavis/adapters/express");
-  const fastifyAdapter = await import("zelavis/adapters/fastify");
-  const honoAdapter = await import("zelavis/adapters/hono");
-  const h3Adapter = await import("zelavis/adapters/h3");
-  const nextjsPagesRouterAdapter =
-    await import("zelavis/adapters/nextjs-pages-router");
-  const nodePlatform = await import("zelavis/platforms/node");
-  const bunPlatform = await import("zelavis/platforms/bun");
-  const cloudflarePlatform = await import("zelavis/platforms/cloudflare");
-  const netlifyPlatform = await import("zelavis/platforms/netlify");
-  const vercelPlatform = await import("zelavis/platforms/vercel");
+  const bunAdapter = await import("zelavis/adapters/bun");
+  const cloudflareAdapter = await import("zelavis/adapters/cloudflare");
+  const netlifyAdapter = await import("zelavis/adapters/netlify");
+  const vercelAdapter = await import("zelavis/adapters/vercel");
+  const expressUtil = await import("zelavis/express");
+  const honoUtil = await import("zelavis/hono");
+  const fastifyUtil = await import("zelavis/fastify");
+  const h3Util = await import("zelavis/h3");
+  const elysiaUtil = await import("zelavis/elysia");
+  const nextjsPagesUtil = await import("zelavis/nextjs/pages");
+  const nodeServerUtil = await import("zelavis/node");
   const s3Storage = await import("zelavis/storage/s3");
 
   assert.equal(typeof runtime.zelavis, "function");
   assert.equal(typeof runtime.Zelavis, "function");
-  assert.equal(typeof runtime.createAdapter, "function");
+  assert.equal(typeof runtime.defineAdapter, "function");
   assert.equal(typeof runtime.definePlugin, "function");
   assert.equal(typeof runtime.createPluginRegistry, "function");
   assert.equal(runtime.ZELAVIS_PLUGIN_V1, "ZELAVIS_PLUGIN_V1");
@@ -28,60 +28,66 @@ test("zelavis package exports runtime APIs and adapter subpaths", async () => {
   assert.equal(typeof runtime.loadPluginRegistry, "function");
   assert.equal(typeof runtime.resolvePluginModule, "function");
   assert.equal(typeof runtime.removePluginFromRegistry, "function");
-  assert.equal(typeof runtime.createPlatform, "function");
   assert.equal(typeof runtime.createDatabase, "function");
   assert.equal(typeof runtime.createFileReference, "function");
   assert.equal(typeof runtime.createS3CompatibleFileStorage, "function");
   assert.equal(typeof runtime.resolveS3CacheControlPreset, "function");
   assert.equal(typeof runtime.defineService, "function");
   assert.equal("zelavisServer" in runtime, false);
-  assert.equal(typeof elysiaAdapter.elysiaAdapter, "function");
+
+  // Env adapters via the barrel
+  assert.equal(typeof adapters.zelavisNode, "function");
+  assert.equal(typeof adapters.zelavisBun, "function");
+  assert.equal(typeof adapters.zelavisCloudflare, "function");
+  assert.equal(typeof adapters.zelavisVercel, "function");
+  assert.equal(typeof adapters.zelavisNetlify, "function");
+
+  // Env adapters via deep paths (named exports)
   assert.equal(typeof nodeAdapter.nodeAdapter, "function");
-  assert.equal(
-    typeof nodeAdapter.createFileDashboardSettingsStore,
-    "function",
-  );
-  assert.equal(typeof expressAdapter.expressAdapter, "function");
-  assert.equal(typeof fastifyAdapter.fastifyAdapter, "function");
-  assert.equal(typeof honoAdapter.honoAdapter, "function");
-  assert.equal(typeof h3Adapter.h3Adapter, "function");
-  assert.equal(
-    typeof nextjsPagesRouterAdapter.nextjsPagesRouterAdapter,
-    "function",
-  );
-  assert.equal(typeof nodePlatform.nodePlatform, "function");
-  assert.equal(typeof bunPlatform.bunPlatform, "function");
-  assert.equal(typeof cloudflarePlatform.cloudflarePlatform, "function");
-  assert.equal(typeof netlifyPlatform.netlifyPlatform, "function");
-  assert.equal(typeof vercelPlatform.vercelPlatform, "function");
+  assert.equal(typeof nodeAdapter.createFileDashboardSettingsStore, "function");
+  assert.equal(typeof bunAdapter.bunAdapter, "function");
+  assert.equal(typeof cloudflareAdapter.cloudflareAdapter, "function");
+  assert.equal(typeof netlifyAdapter.netlifyAdapter, "function");
+  assert.equal(typeof vercelAdapter.vercelAdapter, "function");
+
+  // Framework utility helpers
+  assert.equal(typeof expressUtil.expressMiddleware, "function");
+  assert.equal(typeof honoUtil.honoMiddleware, "function");
+  assert.equal(typeof fastifyUtil.fastifyPlugin, "function");
+  assert.equal(typeof h3Util.h3Handler, "function");
+  assert.equal(typeof elysiaUtil.elysiaPlugin, "function");
+  assert.equal(typeof nextjsPagesUtil.nextjsPagesRouterHandler, "function");
+  assert.equal(typeof nodeServerUtil.createNodeServer, "function");
+
+  // Storage helpers
   assert.equal(typeof s3Storage.createS3CompatibleFileStorage, "function");
   assert.equal(typeof s3Storage.resolveS3CacheControlPreset, "function");
 });
 
-test("Zelavis class can bind a node adapter and accept a node platform preset", async () => {
+test("Zelavis accepts a node env adapter and exposes a Node HTTP server through the utility", async () => {
   const { Zelavis } = await import("zelavis");
   const { nodeAdapter } = await import("zelavis/adapters/node");
-  const { nodePlatform } = await import("zelavis/platforms/node");
+  const { createNodeServer } = await import("zelavis/node");
 
   const zelavis = new Zelavis({
     adapter: nodeAdapter(),
-    platform: nodePlatform(),
   });
 
-  assert.equal(typeof zelavis.adapter.nodeServer, "function");
+  const server = await createNodeServer(zelavis);
+  assert.equal(typeof server.listen, "function");
 });
 
-test("cloudflare platform requires the standard D1 binding when env is provided", async () => {
-  const { cloudflarePlatform } = await import("zelavis/platforms/cloudflare");
+test("cloudflare adapter requires the standard D1 binding when env is provided", async () => {
+  const { cloudflareAdapter } = await import("zelavis/adapters/cloudflare");
 
   await assert.rejects(
-    () => cloudflarePlatform({ env: {} }).resolve({}),
+    () => cloudflareAdapter({ env: {} }).resolve({}),
     /Missing or invalid Cloudflare D1 binding `ZELAVIS_DB`/,
   );
 });
 
-test("cloudflare platform infers KV and file resources from standard env bindings", async () => {
-  const { cloudflarePlatform } = await import("zelavis/platforms/cloudflare");
+test("cloudflare adapter infers KV and file resources from standard env bindings", async () => {
+  const { cloudflareAdapter } = await import("zelavis/adapters/cloudflare");
   const database = {
     prepare() {
       return {
@@ -118,7 +124,7 @@ test("cloudflare platform infers KV and file resources from standard env binding
     },
   };
 
-  const resolved = await cloudflarePlatform({
+  const resolved = await cloudflareAdapter({
     env: {
       ZELAVIS_DB: database,
       ZELAVIS_KV: kv,
@@ -152,16 +158,14 @@ test("Zelavis rejects internal runtime options on the public class constructor",
   );
 });
 
-test("Zelavis merges platform resources and metadata for adapters", async () => {
-  const { Zelavis, createAdapter, createPlatform } = await import("zelavis");
+test("Zelavis applies adapter resolve output as platform resources, metadata, and presets", async () => {
+  const { Zelavis, defineAdapter } = await import("zelavis");
 
-  let capturedPlatform;
-
-  const firstPlatform = createPlatform({
-    name: "first",
+  const adapter = defineAdapter({
+    name: "capture",
     resolve() {
       return {
-        metadata: { runtime: "custom", first: true },
+        metadata: { runtime: "custom", marker: true },
         resources: {
           kv: {
             get() {
@@ -177,63 +181,23 @@ test("Zelavis merges platform resources and metadata for adapters", async () => 
     },
   });
 
-  const secondPlatform = createPlatform({
-    name: "second",
-    resolve() {
-      return {
-        metadata: { second: true },
-        resources: {
-          files: {
-            get() {
-              return undefined;
-            },
-            put(input) {
-              return { path: input.path };
-            },
-            delete() {
-              return false;
-            },
-          },
-        },
-      };
-    },
-  });
+  const zelavis = new Zelavis({ adapter });
+  await zelavis.runtime();
 
-  const zelavis = new Zelavis({
-    adapter: createAdapter({
-      name: "capture",
-      bind(context) {
-        return {
-          async snapshot() {
-            await context.getRuntime();
-            capturedPlatform = context.getPlatform();
-            return capturedPlatform;
-          },
-        };
-      },
-    }),
-    platform: [firstPlatform, secondPlatform],
-  });
-
-  const snapshot = await zelavis.adapter.snapshot();
-
-  assert.deepEqual(snapshot.presets, ["first", "second"]);
-  assert.equal(snapshot.metadata.runtime, "custom");
-  assert.equal(snapshot.metadata.first, true);
-  assert.equal(snapshot.metadata.second, true);
-  assert.equal(snapshot.resources.kv.get("x"), "alpha");
-  assert.equal(typeof snapshot.resources.files.put, "function");
-  assert.equal(capturedPlatform, snapshot);
+  assert.deepEqual(zelavis.platform.presets, ["capture"]);
+  assert.equal(zelavis.platform.metadata.runtime, "custom");
+  assert.equal(zelavis.platform.metadata.marker, true);
+  assert.equal(zelavis.platform.resources.kv.get("x"), "alpha");
 });
 
 test("Zelavis platform resources back dashboard settings, website pages, storage service, and ecommerce persistence", async () => {
-  const { Zelavis, createPlatform, createDatabase, zelavis: createZelavis } =
+  const { Zelavis, defineAdapter, createDatabase, zelavis: createZelavis } =
     await import("zelavis");
 
   const kv = new Map();
   const files = new Map();
 
-  const platform = createPlatform({
+  const adapter = defineAdapter({
     name: "storage-only",
     resolve() {
       return {
@@ -297,7 +261,7 @@ test("Zelavis platform resources back dashboard settings, website pages, storage
   });
 
   const zelavis = new Zelavis({
-    platform,
+    adapter,
     plugins: {
       store: {
         read() {

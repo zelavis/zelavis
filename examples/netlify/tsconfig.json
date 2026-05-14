@@ -1,7 +1,10 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022", "DOM"],
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "strict": true,
@@ -9,9 +12,15 @@
     "noEmit": true,
     "baseUrl": "../..",
     "paths": {
-      "zelavis": ["packages/zelavis/src/index.ts"],
-      "zelavis/platforms/netlify": ["packages/zelavis/src/platforms/netlify.ts"]
+      "zelavis": [
+        "packages/zelavis/src/index.ts"
+      ],
+      "zelavis/adapters/netlify": [
+        "packages/zelavis/src/adapters/netlify.ts"
+      ]
     }
   },
-  "include": ["**/*.ts"]
+  "include": [
+    "**/*.ts"
+  ]
 }

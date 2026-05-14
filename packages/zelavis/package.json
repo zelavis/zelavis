@@ -21,53 +21,53 @@
       "types": "./dist/adapters/index.d.ts",
       "import": "./dist/adapters/index.js"
     },
-    "./adapters/elysia": {
-      "types": "./dist/adapters/elysia.d.ts",
-      "import": "./dist/adapters/elysia.js"
-    },
-    "./adapters/express": {
-      "types": "./dist/adapters/express.d.ts",
-      "import": "./dist/adapters/express.js"
-    },
-    "./adapters/fastify": {
-      "types": "./dist/adapters/fastify.d.ts",
-      "import": "./dist/adapters/fastify.js"
-    },
-    "./adapters/hono": {
-      "types": "./dist/adapters/hono.d.ts",
-      "import": "./dist/adapters/hono.js"
-    },
-    "./adapters/h3": {
-      "types": "./dist/adapters/h3.d.ts",
-      "import": "./dist/adapters/h3.js"
-    },
-    "./adapters/nextjs-pages-router": {
-      "types": "./dist/adapters/nextjs-pages-router.d.ts",
-      "import": "./dist/adapters/nextjs-pages-router.js"
-    },
     "./adapters/node": {
       "types": "./dist/adapters/node.d.ts",
       "import": "./dist/adapters/node.js"
     },
-    "./platforms/node": {
-      "types": "./dist/platforms/node.d.ts",
-      "import": "./dist/platforms/node.js"
+    "./adapters/bun": {
+      "types": "./dist/adapters/bun.d.ts",
+      "import": "./dist/adapters/bun.js"
     },
-    "./platforms/bun": {
-      "types": "./dist/platforms/bun.d.ts",
-      "import": "./dist/platforms/bun.js"
+    "./adapters/cloudflare": {
+      "types": "./dist/adapters/cloudflare.d.ts",
+      "import": "./dist/adapters/cloudflare.js"
     },
-    "./platforms/cloudflare": {
-      "types": "./dist/platforms/cloudflare.d.ts",
-      "import": "./dist/platforms/cloudflare.js"
+    "./adapters/vercel": {
+      "types": "./dist/adapters/vercel.d.ts",
+      "import": "./dist/adapters/vercel.js"
     },
-    "./platforms/netlify": {
-      "types": "./dist/platforms/netlify.d.ts",
-      "import": "./dist/platforms/netlify.js"
+    "./adapters/netlify": {
+      "types": "./dist/adapters/netlify.d.ts",
+      "import": "./dist/adapters/netlify.js"
     },
-    "./platforms/vercel": {
-      "types": "./dist/platforms/vercel.d.ts",
-      "import": "./dist/platforms/vercel.js"
+    "./express": {
+      "types": "./dist/express/index.d.ts",
+      "import": "./dist/express/index.js"
+    },
+    "./hono": {
+      "types": "./dist/hono/index.d.ts",
+      "import": "./dist/hono/index.js"
+    },
+    "./fastify": {
+      "types": "./dist/fastify/index.d.ts",
+      "import": "./dist/fastify/index.js"
+    },
+    "./h3": {
+      "types": "./dist/h3/index.d.ts",
+      "import": "./dist/h3/index.js"
+    },
+    "./elysia": {
+      "types": "./dist/elysia/index.d.ts",
+      "import": "./dist/elysia/index.js"
+    },
+    "./nextjs/pages": {
+      "types": "./dist/nextjs/pages/index.d.ts",
+      "import": "./dist/nextjs/pages/index.js"
+    },
+    "./node": {
+      "types": "./dist/node/index.d.ts",
+      "import": "./dist/node/index.js"
     },
     "./storage/s3": {
       "types": "./dist/storage/s3.d.ts",

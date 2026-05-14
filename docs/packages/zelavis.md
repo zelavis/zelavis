@@ -11,7 +11,7 @@ Today, that mostly means:
 - dashboard delivery
 - auth service
 - database service
-- storage service when a platform file store exists
+- storage service when an adapter file store exists
 - website service
 - runtime composition
 
@@ -20,11 +20,9 @@ Today, that mostly means:
 ```ts
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
-import { nodePlatform } from "zelavis/platforms/node";
 
 const zelavis = new Zelavis({
   adapter: nodeAdapter(),
-  platform: nodePlatform(),
 });
 ```
 
@@ -62,15 +60,21 @@ Use scoped packages directly when you need lower-level control over primitives, 
 - `@zelavis/database`
 - `@zelavis/auth`
 
-The lower-level `zelavis()` function still exists for direct runtime composition, but the main public application-facing entry point is the `Zelavis` class with framework adapters plus platform presets.
+The lower-level `zelavis()` function still exists for direct runtime composition, but the main public application-facing entry point is the `Zelavis` class plus an environment adapter.
 
-Current platform presets are:
+Available environment adapters:
 
-- `zelavis/platforms/node`
-- `zelavis/platforms/bun`
-- `zelavis/platforms/cloudflare`
-- `zelavis/platforms/netlify`
-- `zelavis/platforms/vercel`
+- `zelavis/adapters/node`
+- `zelavis/adapters/bun`
+- `zelavis/adapters/cloudflare`
+- `zelavis/adapters/netlify`
+- `zelavis/adapters/vercel`
+
+Framework utilities (small wrappers around `zelavis.fetch`) live at:
+
+- `zelavis/express`, `zelavis/hono`, `zelavis/fastify`, `zelavis/h3`, `zelavis/elysia`
+- `zelavis/nextjs/pages` (Next.js Pages Router)
+- `zelavis/node` (standalone Node HTTP server)
 
 ## Related docs
 

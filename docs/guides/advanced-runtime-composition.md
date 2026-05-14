@@ -17,11 +17,9 @@ For normal application code, prefer:
 ```ts
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
-import { nodePlatform } from "zelavis/platforms/node";
 
 const zelavis = new Zelavis({
   adapter: nodeAdapter(),
-  platform: nodePlatform(),
 });
 ```
 

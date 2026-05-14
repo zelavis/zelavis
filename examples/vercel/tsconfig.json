@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2017",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
@@ -20,9 +24,15 @@
     ],
     "baseUrl": "../..",
     "paths": {
-      "@/*": ["examples/vercel/*"],
-      "zelavis": ["packages/zelavis/src/index.ts"],
-      "zelavis/platforms/vercel": ["packages/zelavis/src/platforms/vercel.ts"]
+      "@/*": [
+        "examples/vercel/*"
+      ],
+      "zelavis": [
+        "packages/zelavis/src/index.ts"
+      ],
+      "zelavis/adapters/vercel": [
+        "packages/zelavis/src/adapters/vercel.ts"
+      ]
     }
   },
   "include": [
@@ -32,5 +42,7 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules"
+  ]
 }

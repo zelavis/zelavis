@@ -471,10 +471,6 @@ export interface ZelavisServerOptions {
   onError?: ZelavisServerErrorHandler;
 }
 
-export interface ZelavisAdapterBinding {
-  ready?(): Promise<void> | void;
-}
-
 export interface ZelavisKeyValueStore {
   get(key: string): Promise<string | undefined> | string | undefined;
   set(key: string, value: string): Promise<void> | void;
@@ -550,61 +546,28 @@ export interface ZelavisPlatformContext {
   metadata: Record<string, unknown>;
 }
 
-export interface ZelavisAdapterRuntimeContext {
-  getRuntime: () => Promise<ZelavisServerRuntime<unknown>>;
-  getPlatform: () => ZelavisPlatformContext;
-}
-
-export interface ZelavisAdapterFactory<TAdapter extends object = object> {
-  name: string;
-  bind(context: ZelavisAdapterRuntimeContext): TAdapter;
-}
-
 export interface ZelavisResolvedPlatformOptions
   extends Partial<ZelavisServerOptions> {
   resources?: ZelavisPlatformResources;
   metadata?: Record<string, unknown>;
 }
 
-export interface ZelavisPlatformPreset {
-  name: string;
-  resolve(
-    options: ZelavisOptions<any>,
-  ):
-    | Promise<ZelavisResolvedPlatformOptions>
-    | ZelavisResolvedPlatformOptions;
-}
-
-export type ZelavisAdapterPlatform =
-  | ((
-      options: ZelavisOptions<any>,
-    ) =>
-      | Promise<ZelavisResolvedPlatformOptions>
-      | ZelavisResolvedPlatformOptions)
-  | {
-      resolve(
-        options: ZelavisOptions<any>,
-      ):
-        | Promise<ZelavisResolvedPlatformOptions>
-        | ZelavisResolvedPlatformOptions;
-    };
-
-export interface ZelavisAdapterDefinition<TBinding extends object = object> {
-  name: string;
-  platform?: ZelavisAdapterPlatform;
-  mount?:
-    | ((context: ZelavisAdapterRuntimeContext) => TBinding)
-    | { bind(context: ZelavisAdapterRuntimeContext): TBinding };
-}
-
-export interface ZelavisAdapter<TBinding extends object = object> {
+export interface ZelavisAdapterDefinition {
   name: string;
   resolve?(
-    options: ZelavisOptions<any>,
+    options: ZelavisOptions,
   ):
     | Promise<ZelavisResolvedPlatformOptions>
     | ZelavisResolvedPlatformOptions;
-  bind?(context: ZelavisAdapterRuntimeContext): TBinding;
+}
+
+export interface ZelavisAdapter {
+  name: string;
+  resolve?(
+    options: ZelavisOptions,
+  ):
+    | Promise<ZelavisResolvedPlatformOptions>
+    | ZelavisResolvedPlatformOptions;
 }
 
 export interface ZelavisPluginActivationRequest {
@@ -626,12 +589,12 @@ export interface ZelavisPluginActivationController {
   ): Promise<ZelavisPluginActivationResult> | ZelavisPluginActivationResult;
 }
 
-export interface ZelavisOptions<TAdapter extends object = object> {
+export interface ZelavisOptions {
   rootPath?: string;
   api?: ZelavisApiOptions;
   plugins?: ZelavisPluginRegistryOptions;
   onError?: ZelavisServerErrorHandler;
-  adapter?: ZelavisAdapter<TAdapter>;
+  adapter?: ZelavisAdapter;
 }
 
 export interface ZelavisDatabaseDocumentStoreOptions {
@@ -639,40 +602,10 @@ export interface ZelavisDatabaseDocumentStoreOptions {
   documentId?: string;
 }
 
-export function createAdapter<TAdapter extends object>(
-  adapter: ZelavisAdapterFactory<TAdapter>,
-): ZelavisAdapterFactory<TAdapter> {
-  return adapter;
-}
-
-export function createPlatform<TPlatform extends ZelavisPlatformPreset>(
-  platform: TPlatform,
-): TPlatform {
-  return platform;
-}
-
-export function defineAdapter<TBinding extends object = object>(
-  definition: ZelavisAdapterDefinition<TBinding>,
-): ZelavisAdapter<TBinding> {
-  return {
-    name: definition.name,
-    resolve: definition.platform
-      ? typeof definition.platform === "function"
-        ? definition.platform
-        : (options) =>
-            (
-              definition.platform as ZelavisPlatformPreset
-            ).resolve(options)
-      : undefined,
-    bind: definition.mount
-      ? typeof definition.mount === "function"
-        ? definition.mount
-        : (context) =>
-            (
-              definition.mount as ZelavisAdapterFactory<TBinding>
-            ).bind(context)
-      : undefined,
-  };
+export function defineAdapter(
+  definition: ZelavisAdapterDefinition,
+): ZelavisAdapter {
+  return definition;
 }
 
 const DEFAULT_ZELAVIS_STATE_COLLECTION = "zelavis_system";
@@ -3518,7 +3451,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function assertNoInternalConstructorOptions(
-  options: ZelavisOptions<any>,
+  options: ZelavisOptions,
 ): void {
   const raw = options as Record<string, unknown>;
   const forbiddenKeys = [
@@ -3664,7 +3597,7 @@ function mergePlatformMetadata(
 }
 
 async function resolvePlatformState(
-  options: ZelavisOptions<any>,
+  options: ZelavisOptions,
 ): Promise<{
   serverOptions: ZelavisServerOptions;
   context: ZelavisPlatformContext;
@@ -3771,9 +3704,8 @@ function applyPlatformResourceDefaults(
   };
 }
 
-export class Zelavis<TAdapter extends object = {}> {
-  readonly adapter: TAdapter;
-  private readonly options: ZelavisOptions<TAdapter>;
+export class Zelavis {
+  private readonly options: ZelavisOptions;
   private readonly pluginRegistryStore = createMemoryPluginRegistryStore([]);
   private runtimePromise?: Promise<ZelavisServerRuntime<unknown>>;
   private resolvedPlatformContext: ZelavisPlatformContext = {
@@ -3782,15 +3714,9 @@ export class Zelavis<TAdapter extends object = {}> {
     metadata: {},
   };
 
-  constructor(options: ZelavisOptions<TAdapter> = {}) {
+  constructor(options: ZelavisOptions = {}) {
     assertNoInternalConstructorOptions(options);
     this.options = options;
-    this.adapter = options.adapter?.bind
-      ? options.adapter.bind({
-          getRuntime: () => this.runtime(),
-          getPlatform: () => this.platform,
-        })
-      : ({} as TAdapter);
   }
 
   get platform(): ZelavisPlatformContext {

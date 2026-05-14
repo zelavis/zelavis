@@ -23,13 +23,10 @@ Use `Zelavis` for application and runtime code:
 ```ts
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
-import { nodePlatform } from "zelavis/platforms/node";
+import { createNodeServer } from "zelavis/node";
 
-const zelavis = new Zelavis({
-  adapter: nodeAdapter(),
-  platform: nodePlatform(),
-});
-const server = await zelavis.adapter.nodeServer();
+const zelavis = new Zelavis({ adapter: nodeAdapter() });
+const server = await createNodeServer(zelavis);
 ```
 
 Or embed the runtime directly in a Web/fetch environment:
@@ -100,13 +97,10 @@ Use the lower-level `zelavis(...)` function only when you need internal runtime 
 ```ts
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
-import { nodePlatform } from "zelavis/platforms/node";
+import { createNodeServer } from "zelavis/node";
 
-const zelavis = new Zelavis({
-  adapter: nodeAdapter(),
-  platform: nodePlatform(),
-});
-const server = await zelavis.adapter.nodeServer();
+const zelavis = new Zelavis({ adapter: nodeAdapter() });
+const server = await createNodeServer(zelavis);
 
 server.listen(3000);
 ```
@@ -169,33 +163,34 @@ into this package during `pnpm --filter zelavis build`. Application users should
 serve it through `zelavis`; they do not need to import `@zelavis/ui`
 directly.
 
-The runtime now supports both styles:
+The runtime supports two complementary integration patterns:
 
-- explicit framework adapters such as Node, Elysia, Express, Fastify, Hono, and h3
-- host-level platform presets such as Node, Bun, Cloudflare, Netlify, and Vercel
-- direct Web-handler embedding through `runtime.fetch(...)`
+- **environment adapters** (`zelavis/adapters/*`) — describe the environment Zelavis runs on, supply database/KV/file storage defaults
+- **framework utilities** (`zelavis/<framework>`) — small helper functions that wrap `zelavis.fetch` for a specific framework signature
 
-Platform presets are where Zelavis now chooses host-level infrastructure defaults:
+For fetch-native hosts (Cloudflare Workers, Bun, Next.js App Router), no framework utility is needed — call `zelavis.fetch(request)` directly.
 
-- database driver
-- dashboard settings persistence
-- key/value storage
-- file storage
-
-Current platform entry points:
+Available environment adapters:
 
 ```txt
-zelavis/platforms/node
-zelavis/platforms/bun
-zelavis/platforms/cloudflare
-zelavis/platforms/netlify
-zelavis/platforms/vercel
+zelavis/adapters/node
+zelavis/adapters/bun
+zelavis/adapters/cloudflare
+zelavis/adapters/netlify
+zelavis/adapters/vercel
 ```
 
-The important split is:
+Available framework utilities:
 
-- framework adapters answer "how does Zelavis mount here?"
-- platform presets answer "what infrastructure defaults does this host provide?"
+```txt
+zelavis/express       expressMiddleware(zelavis)
+zelavis/hono          honoMiddleware(zelavis)
+zelavis/fastify       fastifyPlugin(zelavis)
+zelavis/h3            h3Handler(zelavis)
+zelavis/elysia        elysiaPlugin(zelavis)
+zelavis/nextjs/pages  nextjsPagesRouterHandler(zelavis, options?)
+zelavis/node          createNodeServer(zelavis)
+```
 
 Platform resources now also feed real core-service persistence in the high-level `Zelavis` class:
 
@@ -207,14 +202,12 @@ For Cloudflare Workers, pass the worker `env` object to the platform preset and 
 
 ```ts
 import { Zelavis } from "zelavis";
-import { cloudflarePlatform } from "zelavis/platforms/cloudflare";
+import { cloudflareAdapter } from "zelavis/adapters/cloudflare";
 
 export default {
   fetch(request: Request, env: { ZELAVIS_DB: unknown }, ctx: ExecutionContext) {
     const zelavis = new Zelavis({
-      platform: cloudflarePlatform({
-        env,
-      }),
+      adapter: cloudflareAdapter({ env }),
     });
 
     return zelavis.fetch(request, {
@@ -229,7 +222,7 @@ export default {
 };
 ```
 
-`cloudflarePlatform()` expects a D1 binding at `env.ZELAVIS_DB` and will also pick up `env.ZELAVIS_KV` and `env.ZELAVIS_FILES` automatically when they are present. Use `bindings` only when your Cloudflare binding names differ from the Zelavis defaults.
+`cloudflareAdapter()` expects a D1 binding at `env.ZELAVIS_DB` and will also pick up `env.ZELAVIS_KV` and `env.ZELAVIS_FILES` automatically when they are present. Use `bindings` only when your Cloudflare binding names differ from the Zelavis defaults.
 
 Dashboard client routes are served as SPA shell routes by the dashboard core
 service, so direct visits such as `/zelavis/settings` work in Node and Express.
