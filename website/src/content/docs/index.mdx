@@ -1,0 +1,51 @@
+---
+title: Zelavis Docs
+description: Public documentation for the Zelavis backend platform.
+---
+
+Public documentation for the Zelavis composable backend platform.
+
+## Principles
+
+- Organize by durable product and package categories.
+- Document current behavior first.
+- Clearly distinguish implemented behavior from planned behavior.
+- Keep section structure stable so future doc versioning can be added without a rewrite.
+
+## Sections
+
+- [Getting Started](./getting-started/index.md)
+- [Guides](./guides/index.md)
+- [Packages](./packages/index.md)
+- [Adapters](./adapters/index.md)
+- [Architecture](./architecture/index.md)
+- [Reference](./reference/index.md)
+- [Versioning Strategy](./reference/versioning.md)
+
+## Version-ready structure
+
+The docs are intentionally organized so future versioning can be added without changing the information architecture.
+
+Current approach:
+
+- `website/src/content/docs/` contains the current canonical documentation.
+- Top-level folders represent stable sections, not framework-specific menus.
+- File names should remain durable and descriptive.
+
+Planned future path when multiple maintained doc versions are needed:
+
+- versioned doc trees under the website project (for example `current/`, `v1/`, `v2/`)
+
+Until then, keep `website/src/content/docs/` as the single current source of truth.
+
+## Start here
+
+- [Installation](./getting-started/installation.md)
+- [First Runtime](./getting-started/first-runtime.md)
+- [Advanced Runtime Composition](./guides/advanced-runtime-composition.md)
+- [Official Plugin Packages](./guides/official-plugin-packages.md)
+- [Service and Plugin Authoring](./guides/service-and-plugin-authoring.md)
+- [Dashboard Development](./guides/dashboard-development.md)
+- [zelavis package](./packages/zelavis.md)
+- [Node adapter](./adapters/node.md)
+- [Environment Variables](./reference/environment-variables.md)
