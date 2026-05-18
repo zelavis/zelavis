@@ -39,7 +39,7 @@
     "tw-animate-css": "^1.3.6"
   },
   "devDependencies": {
-    "@playwright/test": "^1.59.1",
+    "@playwright/test": "^1.60.0",
     "@react-router/dev": "7.15.1",
     "@tailwindcss/typography": "^0.5.16",
     "@tailwindcss/vite": "^4.3.0",
