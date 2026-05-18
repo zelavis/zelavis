@@ -1,14 +1,7 @@
-node_modules
 .DS_Store
-dist
-dist-ssr
-test-results
-*.local
 .env
-.nitro
-.tanstack
-.wrangler
-.output
-.vinxi
-__unconfig*
-todos.json
+/node_modules/
+
+# React Router
+/.react-router/
+/build/

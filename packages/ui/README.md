@@ -1,74 +1,28 @@
 # @zelavis/ui
 
-TanStack Start workspace package for the Zelavis dashboard UI.
+Zelavis dashboard UI packaged as a React Router 7 SPA.
 
-This package is the source app for the dashboard experience that will be served by the `zelavis` package under the configured root path, for example `/zelavis`. It is intentionally kept separate from the server runtime while the dashboard is being built, so the UI can use Vite, React, TanStack Router, and Tailwind without forcing those tools into the core server API.
+The app is designed to be served either as a standalone dev server or mounted by
+the Zelavis runtime under the dashboard root path, which defaults to `/zelavis`.
 
-## Scripts
-
-```bash
-pnpm --filter @zelavis/ui dev
-pnpm --filter @zelavis/ui typecheck
-pnpm --filter @zelavis/ui test
-pnpm --filter @zelavis/ui test:e2e
-pnpm --filter @zelavis/ui build
-```
-
-The production build runs TanStack Start in SPA mode and writes browser assets to `dist/client`.
-
-## Local API Proxy
-
-When the UI runs through Vite, API calls to `/api/*` are proxied to a local
-Zelavis server at `http://127.0.0.1:3000/zelavis/api/*`.
-
-Start the backend in another terminal:
+## Development
 
 ```bash
-pnpm example:nodejs
+pnpm --filter ./packages/ui dev
+pnpm --filter ./packages/ui dev:mounted
 ```
 
-For the local dashboard dev loop, start both the TanStack dev server and the
-Node runtime from the workspace root:
+`dev:mounted` sets `ZELAVIS_UI_BASE_PATH=/zelavis/` so generated assets and
+client routes match the runtime-mounted dashboard path.
+
+## Build And Validation
 
 ```bash
-pnpm run ui:dev
+pnpm --filter ./packages/ui typecheck
+pnpm --filter ./packages/ui test
+pnpm --filter ./packages/ui build
 ```
 
-That starts the UI on `http://127.0.0.1:3001/zelavis/`, starts the Zelavis Node example
-on `http://127.0.0.1:3000`, proxies UI API calls back to Zelavis, and lets the
-runtime redirect `/zelavis` dashboard requests to the live UI dev server.
-
-The script prefers ports `3000` and `3001`, but if either is already in use it
-automatically picks the next available local port and wires both processes
-together with the selected origins.
-
-Override the target with `ZELAVIS_DEV_SERVER` when the backend runs elsewhere:
-
-```bash
-ZELAVIS_DEV_SERVER=http://127.0.0.1:3333 pnpm --filter @zelavis/ui dev
-```
-
-Mount the standalone UI dev server under the production-style dashboard base:
-
-```bash
-ZELAVIS_UI_BASE_PATH=/zelavis/ pnpm --filter @zelavis/ui dev
-```
-
-Leave `ZELAVIS_UI_BASE_PATH` unset when you want the package-level UI dev server
-to stay root-mounted at `/` for isolated UI work.
-
-## Shipping
-
-The dashboard is shipped through the high-level `zelavis` package, not imported by application users directly.
-
-Current flow:
-
-1. Build this package as a static SPA artifact.
-2. Copy the built client assets into the publishable `zelavis` dashboard artifact.
-3. Let the dashboard core service in `zelavis` serve the SPA shell at the configured dashboard root.
-4. Serve dashboard assets below that same configured root, so custom roots such as `/admin` or `/backend` work without rebuilding the UI.
-5. Keep dashboard API calls relative to the configured Zelavis API prefix.
-
-## Notes
-
-The dashboard is now embedded into `zelavis`, but local UI development still happens in this workspace package so routing, layout, and dashboard behavior can evolve independently from the runtime build.
+The app uses React Router route config in `app/routes.ts`; route modules live in
+`app/routes/*`. Keep route wiring there rather than introducing generated router
+trees or framework-specific route shells.

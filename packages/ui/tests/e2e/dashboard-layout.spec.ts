@@ -287,6 +287,21 @@ test('media gallery is a top-level item on the first sidebar slide', async ({
   await expect(page.getByRole('heading', { name: 'Media Gallery' })).toBeVisible()
 })
 
+test('navigation can leave media gallery after visiting it', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await gotoDashboard(page, '/media')
+
+  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  await sidebar.getByRole('link', { name: 'Users', exact: true }).click()
+
+  await expect(page).toHaveURL(/\/users$/)
+  await expect(page.getByRole('heading', { name: 'Users & accounts' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Media Gallery' })).toHaveCount(0)
+})
+
 test('marketplace is a top-level item on the first sidebar slide', async ({
   page,
 }, testInfo) => {
@@ -361,6 +376,26 @@ test('sidebar category rows drill down into sliding panels', async ({
       .getByRole('complementary', { name: 'Dashboard navigation' })
       .getByRole('button', { name: 'Core', exact: true }),
   ).toBeVisible()
+})
+
+test('sidebar back works on route-owned panels without changing content', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await gotoDashboard(page, '/settings')
+
+  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const activeSlide = sidebar.locator('.swiper-slide-active').first()
+
+  await expect(activeSlide.getByRole('link', { name: 'Runtime', exact: true })).toBeVisible()
+  await activeSlide.getByRole('button', { name: 'Settings', exact: true }).click()
+
+  await expect(sidebar.locator('.swiper-slide-active').first().getByRole('link', {
+    name: 'Overview',
+    exact: true,
+  })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Runtime Settings' })).toBeVisible()
 })
 
 test('sidebar shows a single platform label on the root panel', async ({

@@ -2,7 +2,7 @@
 
 The `zelavis` package ships the dashboard as a built SPA artifact. The source
 app lives in `@zelavis/ui`; `pnpm --filter zelavis build` builds that package
-and generates an embedded dashboard asset module from `packages/ui/dist/client`.
+and generates an embedded dashboard asset module from `packages/ui/build/client`.
 
 ## Current Runtime
 

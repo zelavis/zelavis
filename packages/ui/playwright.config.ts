@@ -1,41 +1,37 @@
-import { defineConfig, devices } from '@playwright/test'
+import { defineConfig, devices } from "@playwright/test";
 
 function normalizeBasePath(path: string) {
-  if (!path || path === '/') {
-    return '/'
+  if (!path || path === "/") {
+    return "/";
   }
 
-  const withLeadingSlash = path.startsWith('/') ? path : `/${path}`
-  return `${withLeadingSlash.replace(/\/+$/, '')}/`
+  const withLeadingSlash = path.startsWith("/") ? path : `/${path}`;
+  return `${withLeadingSlash.replace(/\/+$/, "")}/`;
 }
 
 const dashboardBasePath = normalizeBasePath(
-  process.env.ZELAVIS_UI_BASE_PATH ?? '/',
-)
-const webServerOrigin = 'http://127.0.0.1:3100'
-const webServerCommand =
-  dashboardBasePath === '/'
-    ? 'pnpm exec vite dev --host 127.0.0.1 --port 3100'
-    : `pnpm exec vite dev --host 127.0.0.1 --port 3100 --base ${dashboardBasePath}`
+  process.env.ZELAVIS_UI_BASE_PATH ?? "/",
+);
+const webServerOrigin = "http://127.0.0.1:3100";
 
 export default defineConfig({
-  testDir: './tests/e2e',
-  outputDir: './test-results',
-  reporter: 'list',
+  testDir: "./tests/e2e",
+  outputDir: "./test-results",
+  reporter: "list",
   use: {
     baseURL: webServerOrigin,
-    trace: 'on-first-retry',
+    trace: "on-first-retry",
   },
   webServer: {
-    command: webServerCommand,
+    command: "pnpm exec react-router dev --host 127.0.0.1 --port 3100",
     reuseExistingServer: !process.env.CI,
-    url: `${webServerOrigin}${dashboardBasePath === '/' ? '/' : dashboardBasePath}`,
+    url: `${webServerOrigin}${dashboardBasePath === "/" ? "/" : dashboardBasePath}`,
   },
   projects: [
     {
-      name: 'desktop',
+      name: "desktop",
       use: {
-        ...devices['Desktop Chrome'],
+        ...devices["Desktop Chrome"],
         viewport: {
           width: 1280,
           height: 900,
@@ -43,10 +39,10 @@ export default defineConfig({
       },
     },
     {
-      name: 'mobile',
+      name: "mobile",
       use: {
-        ...devices['Pixel 7'],
+        ...devices["Pixel 7"],
       },
     },
   ],
-})
+});

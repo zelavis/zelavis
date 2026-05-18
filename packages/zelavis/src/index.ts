@@ -1836,25 +1836,56 @@ function collectDashboardAssets(): DashboardAsset[] {
     .sort((left, right) => left.path.localeCompare(right.path));
 }
 
+const DASHBOARD_RUNTIME_ASSET_CACHE_KEY = "zelavis-runtime-v1";
+
 function prefixDashboardAssetReferences(
   content: string,
   rootPath: string,
+  options: { cacheAbsoluteAssets?: boolean } = {},
 ): string {
   const prefix = rootPath === "/" ? "" : rootPath;
+  const barePrefix = prefix.replace(/^\/+/, "");
+  const bareAssetPrefix = barePrefix ? `${barePrefix}/assets/` : "assets/";
+  const maybeCacheAsset = (path: string) => {
+    if (!options.cacheAbsoluteAssets) {
+      return path;
+    }
+
+    return `${path}${path.includes("?") ? "&" : "?"}${DASHBOARD_RUNTIME_ASSET_CACHE_KEY}`;
+  };
+  const prefixAbsolutePath = (attribute: string, path: string) => {
+    const nextPath = `${prefix}/${path}`;
+
+    return `${attribute}="${path.startsWith("assets/") ? maybeCacheAsset(nextPath) : nextPath}"`;
+  };
+  const prefixQuotedAbsoluteAsset = (
+    _match: string,
+    quote: string,
+    assetPath: string,
+  ) => {
+    return `${quote}${maybeCacheAsset(`${prefix}/assets/${assetPath}`)}`;
+  };
+  const prefixQuotedBareAsset = (
+    _match: string,
+    quote: string,
+    assetPath: string,
+  ) => {
+    return `${quote}${bareAssetPrefix}${assetPath}`;
+  };
 
   return content
     .replace(
+      /("basename"\s*:\s*)"\/"/g,
+      (_match, property: string) => `${property}${JSON.stringify(rootPath)}`,
+    )
+    .replace(
       /\b(href|src|action)="\/(?!\/)([^"]*)"/g,
       (_match, attribute, path) => {
-        return `${attribute}="${prefix}/${path}"`;
+        return prefixAbsolutePath(attribute, path);
       },
     )
-    .replaceAll('"/assets/', `"${prefix}/assets/`)
-    .replaceAll("'/assets/", `'${prefix}/assets/`)
-    .replaceAll("`/assets/", `\`${prefix}/assets/`)
-    .replaceAll('"assets/', `"${prefix}/assets/`)
-    .replaceAll("'assets/", `'${prefix}/assets/`)
-    .replaceAll("`assets/", `\`${prefix}/assets/`);
+    .replace(/(["'`])\/assets\/([^"'`\\\s<>)]*)/g, prefixQuotedAbsoluteAsset)
+    .replace(/(["'`])assets\/([^"'`\\\s<>)]*)/g, prefixQuotedBareAsset);
 }
 
 function shouldPrefixDashboardAsset(asset: DashboardAsset): boolean {
@@ -2413,7 +2444,9 @@ async function resolveDashboardCoreService(
     };
   };
   const baseShell = embeddedDashboardShell
-    ? prefixDashboardAssetReferences(embeddedDashboardShell, rootPath)
+    ? prefixDashboardAssetReferences(embeddedDashboardShell, rootPath, {
+        cacheAbsoluteAssets: true,
+      })
     : undefined;
   const shellHandler = async ({
     query,

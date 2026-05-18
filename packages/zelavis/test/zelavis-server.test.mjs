@@ -70,8 +70,19 @@ test("zelavis includes core services by default", async () => {
   assert.equal(dashboardResponse.status, 200);
   assert.match(dashboardResponse.body, /Zelavis Dashboard/);
   assert.match(dashboardResponse.body, /__ZELAVIS_RUNTIME_CONFIG__/);
+  assert.match(dashboardResponse.body, /"basename":"\/zelavis"/);
   assert.match(dashboardResponse.body, /\/zelavis\/assets\//);
+  assert.match(dashboardResponse.body, /\?zelavis-runtime-v1/);
+  assert.match(
+    dashboardResponse.body,
+    /import\(["']\/zelavis\/assets\/entry\.client-[^"'?]+\.js\?zelavis-runtime-v1["']\)/,
+  );
+  assert.doesNotMatch(dashboardResponse.body, /\/\/zelavis\/assets\//);
   assert.doesNotMatch(dashboardResponse.body, /"\/assets\//);
+  assert.doesNotMatch(
+    dashboardResponse.body,
+    /import\(["']\/zelavis\/assets\/entry\.client-[^"'?]+\.js["']\)/,
+  );
 
   const settingsRoute = routes.find(
     (route) => route.fullPath === "/zelavis/settings",
@@ -86,12 +97,13 @@ test("zelavis includes core services by default", async () => {
   });
 
   assert.equal(settingsResponse.status, 200);
+  assert.match(settingsResponse.body, /"basename":"\/zelavis"/);
   assert.match(settingsResponse.body, /\/zelavis\/assets\//);
 
   const scriptAssetRoute = routes.find(
     (route) =>
       route.fullPath.startsWith("/zelavis/assets/") &&
-      route.fullPath.includes("/index-") &&
+      route.fullPath.includes("/manifest-") &&
       route.fullPath.endsWith(".js"),
   );
   const scriptAssetResponse = await scriptAssetRoute.route.handler({
@@ -104,7 +116,10 @@ test("zelavis includes core services by default", async () => {
   });
 
   assert.equal(scriptAssetResponse.status, 200);
+  assert.equal(scriptAssetResponse.headers["cache-control"], "no-cache");
   assert.match(scriptAssetResponse.body, /\/zelavis\/assets\//);
+  assert.match(scriptAssetResponse.body, /"\/zelavis\/assets\/[^"]+"/);
+  assert.doesNotMatch(scriptAssetResponse.body, /\/\/zelavis\/assets\//);
   assert.doesNotMatch(scriptAssetResponse.body, /[`"']\/assets\//);
   assert.doesNotMatch(scriptAssetResponse.body, /[`"']assets\//);
 
@@ -571,12 +586,23 @@ test("zelavis uses a configurable root path for dashboard and APIs", async () =>
   });
 
   assert.match(dashboardResponse.body, /\/admin\/assets\//);
+  assert.match(dashboardResponse.body, /"basename":"\/admin"/);
+  assert.match(dashboardResponse.body, /\?zelavis-runtime-v1/);
+  assert.match(
+    dashboardResponse.body,
+    /import\(["']\/admin\/assets\/entry\.client-[^"'?]+\.js\?zelavis-runtime-v1["']\)/,
+  );
+  assert.doesNotMatch(dashboardResponse.body, /\/\/admin\/assets\//);
   assert.doesNotMatch(dashboardResponse.body, /"\/assets\//);
+  assert.doesNotMatch(
+    dashboardResponse.body,
+    /import\(["']\/admin\/assets\/entry\.client-[^"'?]+\.js["']\)/,
+  );
 
   const scriptAssetRoute = routes.find(
     (route) =>
       route.fullPath.startsWith("/admin/assets/") &&
-      route.fullPath.includes("/index-") &&
+      route.fullPath.includes("/manifest-") &&
       route.fullPath.endsWith(".js"),
   );
   const scriptAssetResponse = await scriptAssetRoute.route.handler({
@@ -588,7 +614,10 @@ test("zelavis uses a configurable root path for dashboard and APIs", async () =>
     request: undefined,
   });
 
+  assert.equal(scriptAssetResponse.headers["cache-control"], "no-cache");
   assert.match(scriptAssetResponse.body, /\/admin\/assets\//);
+  assert.match(scriptAssetResponse.body, /"\/admin\/assets\/[^"]+"/);
+  assert.doesNotMatch(scriptAssetResponse.body, /\/\/admin\/assets\//);
   assert.doesNotMatch(scriptAssetResponse.body, /[`"']\/assets\//);
   assert.doesNotMatch(scriptAssetResponse.body, /[`"']assets\//);
 });

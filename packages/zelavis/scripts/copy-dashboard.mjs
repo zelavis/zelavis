@@ -12,7 +12,7 @@ const packageRoot = dirname(
   fileURLToPath(new URL("../package.json", import.meta.url)),
 );
 const workspaceRoot = resolve(packageRoot, "../..");
-const source = resolve(workspaceRoot, "packages/ui/dist/client");
+const source = resolve(workspaceRoot, "packages/ui/build/client");
 const target = resolve(packageRoot, "src/generated/dashboard-assets.ts");
 
 if (!existsSync(source)) {
@@ -49,7 +49,7 @@ function walk(directory = source) {
 }
 
 const files = walk(source).sort((left, right) => left.localeCompare(right));
-const shellPath = join(source, "_shell.html");
+const shellPath = join(source, "index.html");
 const shell = existsSync(shellPath) ? readFileSync(shellPath, "utf8") : "";
 
 const assets = files
