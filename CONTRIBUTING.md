@@ -49,7 +49,7 @@ The ecommerce package is still useful, but it should be treated as an optional d
 - `packages/*/adapters/*` contains framework or external runtime adapters.
 - `packages/*/plugins/*` contains package-local capability/provider packages.
 - `examples/*` contains runnable example workspace packages.
-- `docs/archive/*` is historical material and should not be treated as current source of truth unless explicitly revived.
+- `website/src/content/docs/` contains the public documentation source of truth.
 
 ## Local development
 
@@ -134,7 +134,6 @@ Dependabot and Dependabot auto-merge are configured in-repo, but GitHub branch p
 
 Publishable packages use Changesets-based release management.
 
-- release guide: [docs/releasing.md](docs/releasing.md)
 - create a release note: `pnpm changeset`
 - prepare versions: `pnpm release:version`
 - publish alpha builds: `pnpm release:publish:alpha`
@@ -154,7 +153,7 @@ Be careful with these:
 
 - `packages/ui/src/routeTree.gen.ts` is generated
 - `packages/*/dist/*` is build output
-- `docs/archive/*` is historical
+- `website/.astro/*` and `website/dist/*` are generated site output
 
 ## Pull request guidance
 

@@ -1,27 +1,27 @@
-# Zelavis Website
+# Zelavis documentation site
 
-This workspace package is the starting point for the public Zelavis website hosted on Cloudflare Workers.
+Public docs for Zelavis, built with [Astro Starlight](https://starlight.astro.build/).
 
-## Current scope
+## Content
 
-Today this is only a minimal Cloudflare Worker scaffold that:
+Canonical documentation lives in `src/content/docs/`. Edit Markdown or MDX files there; Starlight exposes each file as a route from its path.
 
-- serves a simple landing page at `/`
-- keeps room for future website and docs routes
-- forwards `/zelavis/*` requests into the Zelavis runtime
+## Commands
 
-## Run locally
-
-From the workspace root:
+From the repo root:
 
 ```bash
 pnpm run website:dev
 ```
 
-## Typecheck
-
-From the workspace root:
+From this package:
 
 ```bash
-pnpm run website:typecheck
+pnpm dev
+pnpm build
+pnpm preview
 ```
+
+## Deployment
+
+The site is configured for Cloudflare via `@astrojs/cloudflare`. See `wrangler.jsonc` for worker settings.

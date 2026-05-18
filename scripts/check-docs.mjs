@@ -3,8 +3,9 @@ import { join } from "node:path";
 import { execSync } from "node:child_process";
 
 const repoRoot = process.cwd();
+const docsRoot = "website/src/content/docs";
 const targets = [
-  "docs",
+  docsRoot,
   "packages/zelavis/README.md",
   "packages/ui/README.md",
   "packages/server/README.md",
@@ -35,6 +36,10 @@ const stalePatterns = [
     pattern: /@zelavis\/adapter-cloudflare|@zelavis\/adapter-turso/i,
     message: "Docs reference old adapter package names.",
   },
+  {
+    pattern: /Use `docs\/` as the canonical home/i,
+    message: "Docs still point at the removed docs/ folder as canonical.",
+  },
 ];
 
 const failures = [];
@@ -53,7 +58,9 @@ function listFiles(target) {
     .split("\n")
     .map((value) => value.trim())
     .filter(Boolean)
-    .filter((value) => value.endsWith(".md"));
+    .filter(
+      (value) => value.endsWith(".md") || value.endsWith(".mdx"),
+    );
 }
 
 for (const target of targets) {
@@ -62,10 +69,6 @@ for (const target of targets) {
   }
 
   for (const file of listFiles(target)) {
-    if (file.startsWith("docs/archive/")) {
-      continue;
-    }
-
     const content = readTarget(file);
     for (const { pattern, message } of stalePatterns) {
       if (pattern.test(content)) {

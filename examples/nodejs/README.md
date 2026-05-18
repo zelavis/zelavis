@@ -27,3 +27,23 @@ Once the runtime is running:
 1. upload a file from `/zelavis/storage`
 2. copy the file reference JSON
 3. use that reference in a database document schema field validated with `imageFileSchema(...)` or `fileSchema(...)`
+
+## Test Plugin Uploads
+
+Use `examples/plugin-basic` as a real upload fixture for the Marketplace flow:
+
+```bash
+pnpm --filter @zelavis/example-plugin-basic package
+pnpm --filter @zelavis/example-nodejs dev
+```
+
+Open `http://localhost:3000/zelavis/marketplace`, select
+`examples/plugin-basic/dist/example-basic.zip` in **Upload plugin**, then install
+it from **Uploaded sources**.
+
+The plugin module defines its own `name`, `version`, menu, pages, and services,
+so the dashboard does not ask for a separate plugin name. The Node adapter unpacks
+the ZIP into `.zelavis/plugins`, reads `zelavis.plugin.json`, and imports the
+declared ESM entry from there.
+
+After install, the plugin dashboard page is available at `/zelavis/example-basic` and its API health route is available at `/zelavis/api/v1/example-basic/health`.

@@ -77,7 +77,7 @@ const runtime = await zelavis();
 const server = nodeAdapter(runtime);
 ```
 
-Maintainers publishing packages should use [docs/releasing.md](docs/releasing.md).
+Maintainers publishing packages should follow the [release workflow](CONTRIBUTING.md#release-workflow) in CONTRIBUTING.md.
 If you use `NPM_TOKEN`, set it in your local shell or CI secret store. Do not
 commit tokens to this repository.
 
@@ -259,7 +259,7 @@ For a unified recurring billing flow (Stripe + PayPal) through the ecommerce cor
 - [examples/nextjs](examples/nextjs)
 - [examples/nextjs-pages-router](examples/nextjs-pages-router)
 - [examples/web-fetch](examples/web-fetch)
-- [docs/ecommerce-recurring-subscriptions.ts](docs/ecommerce-recurring-subscriptions.ts)
+- [plugins/ecommerce/ecommerce-recurring-subscriptions.ts](plugins/ecommerce/ecommerce-recurring-subscriptions.ts)
 
 The recurring subscriptions example uses these environment variables:
 
@@ -285,6 +285,6 @@ Near-term areas:
 
 Contributors and coding agents should follow the guidance in [AGENTS.md](AGENTS.md).
 
-Maintainers publishing packages should use [docs/releasing.md](docs/releasing.md).
+Maintainers publishing packages should follow the [release workflow](CONTRIBUTING.md#release-workflow) in CONTRIBUTING.md.
 If you use `NPM_TOKEN`, set it in your local shell or CI secret store. Do not
 commit tokens to this repository.

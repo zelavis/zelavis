@@ -90,7 +90,7 @@ Plugin setup receives standard JavaScript data only:
 
 That keeps plugin setup runtime-neutral while still giving plugins enough context to register extra services.
 
-Use the lower-level `zelavis(...)` function only when you need internal runtime controls such as `coreServices`, direct `services`, or path/mount overrides. See [Advanced Runtime Composition](../../docs/guides/advanced-runtime-composition.md) for the focused version of that story.
+Use the lower-level `zelavis(...)` function only when you need internal runtime controls such as `coreServices`, direct `services`, or path/mount overrides. See [Advanced Runtime Composition](../../website/src/content/docs/guides/advanced-runtime-composition.md) for the focused version of that story.
 
 ## Usage
 
@@ -243,7 +243,7 @@ PATCH /zelavis/api/v1/dashboard/plugins/:name
 GET /zelavis/api/v1/dashboard/plugin-pages/:plugin/:page
 ```
 
-When a plugin registry store is configured, these endpoints read and update real install state instead of a hardcoded list. Dashboard metadata updates immediately, while plugin service activation is host-controlled: a long-running server can recompose its runtime graph, while serverless hosts can map the same activation request to a worker/function boundary or another live host capability.
+When a plugin registry store is configured, these endpoints read and update real install state instead of a hardcoded list. Dashboard metadata updates immediately, while plugin service activation is adapter-controlled: a long-running server can recompose its runtime graph, while serverless hosts can map the same activation request to a worker/function boundary or another live host capability. Runtime config exposes the current adapter's plugin activation capabilities so the dashboard can show whether uploaded specifiers, runtime installs, and isolated execution are actually supported by the active host.
 
 `POST /dashboard/plugins` registers a non-marketplace ESM source with `{ name, specifier }`. The best portable input is a module specifier or hosted ESM entry point that the active host knows how to resolve. A raw folder or zip is intentionally not the runtime contract because serverless platforms cannot all import arbitrary uploaded files the same way.
 

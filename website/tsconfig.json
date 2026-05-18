@@ -1,29 +1,11 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "lib": [
-      "ES2022",
-      "WebWorker"
-    ],
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "strict": true,
-    "skipLibCheck": true,
-    "noEmit": true,
-    "types": [
-      "@cloudflare/workers-types"
-    ],
-    "baseUrl": "..",
-    "paths": {
-      "zelavis": [
-        "packages/zelavis/src/index.ts"
-      ],
-      "zelavis/adapters/cloudflare": [
-        "packages/zelavis/src/adapters/cloudflare.ts"
-      ]
-    }
-  },
+  "extends": "astro/tsconfigs/strict",
   "include": [
-    "src/**/*.ts"
+    ".astro/types.d.ts",
+    "**/*",
+    "./worker-configuration.d.ts"
+  ],
+  "exclude": [
+    "dist"
   ]
 }

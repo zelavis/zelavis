@@ -7,6 +7,9 @@ import {
   type ZelavisFileStoragePutInput,
   type ZelavisKeyValueStore,
   type ZelavisResolvedPlatformOptions,
+  type ZelavisPluginActivationController,
+  type ZelavisPluginActivationRequest,
+  type ZelavisPluginActivationResult,
 } from "../index.js";
 
 export interface CloudflareKvNamespace {
@@ -109,6 +112,7 @@ export interface CloudflareAdapterOptions {
   bindings?: CloudflareAdapterBindingNames;
   defaultTenantId?: string;
   metadata?: Record<string, unknown>;
+  plugins?: false | CloudflareAdapterPluginOptions;
 }
 
 export interface CloudflareAdapterEnv {
@@ -124,11 +128,128 @@ export interface CloudflareAdapterBindingNames {
   files?: string;
 }
 
+export interface CloudflareAdapterPluginOptions {
+  activation?: ZelavisPluginActivationController;
+}
+
+export interface CloudflareDispatchNamespace {
+  get(
+    name: string,
+    bindings?: Record<string, unknown>,
+    options?: Record<string, unknown>,
+  ): { fetch(request: Request): Promise<Response> | Response };
+}
+
+export interface CloudflareDispatchPluginActivationOptions {
+  dispatchNamespace: CloudflareDispatchNamespace;
+  workerName?:
+    | string
+    | ((request: ZelavisPluginActivationRequest) => string);
+  endpoint?: string;
+  bindings?:
+    | Record<string, unknown>
+    | ((request: ZelavisPluginActivationRequest) => Record<string, unknown>);
+  dispatchOptions?:
+    | Record<string, unknown>
+    | ((request: ZelavisPluginActivationRequest) => Record<string, unknown>);
+}
+
 const DEFAULT_CLOUDFLARE_BINDING_NAMES = Object.freeze({
   database: "ZELAVIS_DB",
   kv: "ZELAVIS_KV",
   files: "ZELAVIS_FILES",
 });
+
+function resolveDispatchValue<TValue>(
+  value: TValue | ((request: ZelavisPluginActivationRequest) => TValue) | undefined,
+  request: ZelavisPluginActivationRequest,
+): TValue | undefined {
+  return typeof value === "function"
+    ? (value as (request: ZelavisPluginActivationRequest) => TValue)(request)
+    : value;
+}
+
+function isPluginActivationResult(
+  value: unknown,
+): value is ZelavisPluginActivationResult {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "status" in value &&
+    (value.status === "active" || value.status === "pending") &&
+    (!("message" in value) ||
+      value.message === undefined ||
+      typeof value.message === "string")
+  );
+}
+
+export function createCloudflareDispatchPluginActivation(
+  options: CloudflareDispatchPluginActivationOptions,
+): ZelavisPluginActivationController {
+  return {
+    mode: "host",
+    capabilities: {
+      strategy: "worker-boundary",
+      supportsRuntimeInstall: true,
+      supportsUploadedSpecifiers: true,
+      supportsPackageUploads: false,
+      supportsIsolatedExecution: true,
+      description:
+        "Applies plugin registry changes through a Cloudflare worker dispatch boundary.",
+    },
+    async activate(request) {
+      const workerName =
+        resolveDispatchValue(options.workerName, request) ?? request.pluginName;
+      const endpoint = options.endpoint ?? "/__zelavis/plugin/activate";
+      const worker = options.dispatchNamespace.get(
+        workerName,
+        resolveDispatchValue(options.bindings, request),
+        resolveDispatchValue(options.dispatchOptions, request),
+      );
+      const response = await worker.fetch(
+        new Request(`https://zelavis.internal${endpoint}`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(request),
+        }),
+      );
+
+      if (response.status === 404) {
+        return {
+          status: "pending",
+          message: `Plugin worker "${workerName}" is not reachable through the Cloudflare dispatch namespace yet.`,
+        };
+      }
+
+      if (!response.ok) {
+        return {
+          status: "pending",
+          message: `Plugin worker "${workerName}" activation returned HTTP ${response.status}.`,
+        };
+      }
+
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!contentType.includes("application/json")) {
+        return {
+          status: "active",
+          message: `Plugin worker "${workerName}" accepted the activation request.`,
+        };
+      }
+
+      const result = await response.json();
+      if (isPluginActivationResult(result)) {
+        return result;
+      }
+
+      return {
+        status: "active",
+        message: `Plugin worker "${workerName}" accepted the activation request.`,
+      };
+    },
+  };
+}
 
 async function toBytes(
   body: ZelavisFileStoragePutInput["body"],
@@ -427,6 +548,10 @@ export function cloudflareAdapter(options: CloudflareAdapterOptions) {
           files: filesOptions
             ? createCloudflareFileStorage(filesOptions.bucket)
             : undefined,
+          plugins:
+            options.plugins === false
+              ? undefined
+              : options.plugins?.activation,
         },
         metadata: {
           runtime: "cloudflare",

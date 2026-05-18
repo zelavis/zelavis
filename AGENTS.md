@@ -44,7 +44,7 @@ The repo still contains domain packages such as `@zelavis/ecommerce`, but they a
 - `packages/*/adapters/*` contains framework or external-system adapters.
 - `packages/*/plugins/*` contains package-local capability/provider plugins for core services.
 - `examples/*` contains runnable example workspace packages.
-- `docs/archive/*` is historical material and should not drive current product decisions unless explicitly revived.
+- `website/` contains the public Astro Starlight documentation site (`website/src/content/docs/`).
 
 Each package should remain independently useful and focused.
 
@@ -134,7 +134,7 @@ Treat these carefully:
 
 - `packages/ui/src/routeTree.gen.ts` is generated.
 - `packages/*/dist/*` is build output.
-- `docs/archive/*` is historical, not current product truth.
+- `website/.astro/*` and `website/dist/*` are generated site output.
 
 Do not manually edit generated files unless the user explicitly asks for it and the generating source cannot reasonably be changed instead.
 
@@ -149,7 +149,7 @@ Do not manually edit generated files unless the user explicitly asks for it and 
 ## Documentation Expectations
 
 - Each package should have a focused README with purpose, scope, and basic usage.
-- Top-level docs should describe Zelavis as an in-progress backend platform, not as a generic utilities repo.
+- Public docs in `website/src/content/docs/` should describe Zelavis as an in-progress backend platform, not as a generic utilities repo.
 - Document extension points and adapter boundaries.
 - Be explicit about what is implemented today versus roadmap direction.
 - Avoid vague marketing language.

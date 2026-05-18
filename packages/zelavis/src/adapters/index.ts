@@ -1,4 +1,9 @@
-export { nodeAdapter, nodeAdapter as zelavisNode } from "./node.js";
+export {
+  createNodePluginImporter,
+  createNodePluginPackageInstaller,
+  nodeAdapter,
+  nodeAdapter as zelavisNode,
+} from "./node.js";
 export type {
   NodeAdapterOptions,
   NodeAdapterDatabaseOptions,
@@ -15,11 +20,18 @@ export type {
   BunAdapterKeyValueOptions,
 } from "./bun.js";
 
-export { cloudflareAdapter, cloudflareAdapter as zelavisCloudflare } from "./cloudflare.js";
+export {
+  cloudflareAdapter,
+  cloudflareAdapter as zelavisCloudflare,
+  createCloudflareDispatchPluginActivation,
+} from "./cloudflare.js";
 export type {
   CloudflareAdapterOptions,
   CloudflareAdapterEnv,
   CloudflareAdapterBindingNames,
+  CloudflareAdapterPluginOptions,
+  CloudflareDispatchNamespace,
+  CloudflareDispatchPluginActivationOptions,
 } from "./cloudflare.js";
 
 export { vercelAdapter, vercelAdapter as zelavisVercel } from "./vercel.js";

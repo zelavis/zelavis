@@ -44,7 +44,7 @@ async function main(): Promise<void> {
       providerPlanReference: "price_123",
       referenceId: "sub_ref_stripe_demo",
       metadata: {
-        source: "docs/ecommerce-recurring-subscriptions.ts",
+        source: "plugins/ecommerce/ecommerce-recurring-subscriptions.ts",
       },
     },
     "stripe",
@@ -60,7 +60,7 @@ async function main(): Promise<void> {
       providerPlanReference: "P-123",
       referenceId: "sub_ref_paypal_demo",
       metadata: {
-        source: "docs/ecommerce-recurring-subscriptions.ts",
+        source: "plugins/ecommerce/ecommerce-recurring-subscriptions.ts",
       },
     },
     "paypal",

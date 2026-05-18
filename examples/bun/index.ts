@@ -12,6 +12,7 @@ const zelavis = new Zelavis({
     body: { error: error instanceof Error ? error.message : "Unknown error" },
   }),
 });
+
 const runtime = await zelavis.runtime();
 
 let server: ReturnType<typeof Bun.serve>;
@@ -39,5 +40,8 @@ server = Bun.serve({
 });
 
 console.log("database driver", runtime.services.database.service.driver.name);
-console.log("database file", fileURLToPath(new URL("./.data/zelavis.sqlite", import.meta.url)));
+console.log(
+  "database file",
+  fileURLToPath(new URL("./.data/zelavis.sqlite", import.meta.url)),
+);
 console.log(`zelavis Bun example listening on http://localhost:${port}`);

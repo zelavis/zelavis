@@ -1,20 +1,25 @@
 {
   "name": "@zelavis/website",
-  "private": true,
-  "author": "Ivan Jeremic",
-  "license": "MIT",
   "type": "module",
+  "version": "0.0.1",
   "scripts": {
-    "dev": "wrangler dev",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "dev": "astro dev",
+    "start": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro",
+    "generate-types": "wrangler types"
   },
   "dependencies": {
-    "@zelavis/database-cloudflare-d1": "workspace:*",
-    "zelavis": "workspace:*"
+    "@astrojs/cloudflare": "^13.5.1",
+    "@astrojs/starlight": "^0.39.2",
+    "astro": "^6.3.1",
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260504.1",
-    "typescript": "^5.9.0",
-    "wrangler": "^4.87.0"
+    "wrangler": "^4.92.0"
+  },
+  "overrides": {
+    "vite": "^7"
   }
 }

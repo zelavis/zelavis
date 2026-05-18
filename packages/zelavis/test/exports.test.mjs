@@ -39,14 +39,25 @@ test("zelavis package exports runtime APIs, env adapters, and framework utility 
   assert.equal(typeof adapters.zelavisNode, "function");
   assert.equal(typeof adapters.zelavisBun, "function");
   assert.equal(typeof adapters.zelavisCloudflare, "function");
+  assert.equal(typeof adapters.createNodePluginPackageInstaller, "function");
+  assert.equal(
+    typeof adapters.createCloudflareDispatchPluginActivation,
+    "function",
+  );
   assert.equal(typeof adapters.zelavisVercel, "function");
   assert.equal(typeof adapters.zelavisNetlify, "function");
 
   // Env adapters via deep paths (named exports)
   assert.equal(typeof nodeAdapter.nodeAdapter, "function");
+  assert.equal(typeof nodeAdapter.createNodePluginImporter, "function");
+  assert.equal(typeof nodeAdapter.createNodePluginPackageInstaller, "function");
   assert.equal(typeof nodeAdapter.createFileDashboardSettingsStore, "function");
   assert.equal(typeof bunAdapter.bunAdapter, "function");
   assert.equal(typeof cloudflareAdapter.cloudflareAdapter, "function");
+  assert.equal(
+    typeof cloudflareAdapter.createCloudflareDispatchPluginActivation,
+    "function",
+  );
   assert.equal(typeof netlifyAdapter.netlifyAdapter, "function");
   assert.equal(typeof vercelAdapter.vercelAdapter, "function");
 
@@ -134,6 +145,74 @@ test("cloudflare adapter infers KV and file resources from standard env bindings
 
   assert.equal(typeof resolved.resources.kv.get, "function");
   assert.equal(typeof resolved.resources.files.put, "function");
+});
+
+test("cloudflare dispatch plugin activation sends registry changes to a worker boundary", async () => {
+  const {
+    cloudflareAdapter,
+    createCloudflareDispatchPluginActivation,
+  } = await import("zelavis/adapters/cloudflare");
+  const database = {
+    prepare() {
+      return {
+        bind() {
+          return this;
+        },
+        all: async () => ({ results: [], success: true }),
+        run: async () => ({ success: true }),
+      };
+    },
+    async batch() {
+      return [];
+    },
+  };
+  const seen = [];
+  const dispatchNamespace = {
+    get(name, bindings, options) {
+      seen.push({ name, bindings, options });
+      return {
+        async fetch(request) {
+          seen.push({
+            url: request.url,
+            body: await request.json(),
+          });
+          return Response.json({
+            status: "active",
+            message: "activated through dispatch",
+          });
+        },
+      };
+    },
+  };
+  const activation = createCloudflareDispatchPluginActivation({
+    dispatchNamespace,
+    workerName: (request) => `plugin-${request.pluginName}`,
+    bindings: { ZELAVIS_CONTEXT: "runtime" },
+    dispatchOptions: { outbound: "allow" },
+  });
+  const resolved = await cloudflareAdapter({
+    env: {
+      ZELAVIS_DB: database,
+    },
+    plugins: {
+      activation,
+    },
+  }).resolve({});
+  const result = await resolved.resources.plugins.activate({
+    pluginName: "search",
+    action: "install",
+    specifier: "https://example.com/search.mjs",
+    registry: [],
+  });
+
+  assert.equal(result.status, "active");
+  assert.equal(result.message, "activated through dispatch");
+  assert.equal(seen[0].name, "plugin-search");
+  assert.deepEqual(seen[0].bindings, { ZELAVIS_CONTEXT: "runtime" });
+  assert.deepEqual(seen[0].options, { outbound: "allow" });
+  assert.equal(seen[1].url, "https://zelavis.internal/__zelavis/plugin/activate");
+  assert.equal(seen[1].body.pluginName, "search");
+  assert.equal(seen[1].body.action, "install");
 });
 
 test("Zelavis rejects internal runtime options on the public class constructor", async () => {

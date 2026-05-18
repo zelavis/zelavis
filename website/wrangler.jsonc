@@ -1,16 +1,16 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "zelavis-website",
-  "main": "src/index.ts",
-  "compatibility_date": "2026-04-30",
-  // This local binding lets `wrangler dev` inject `env.ZELAVIS_DB` during
-  // development. Replace the IDs with real Cloudflare D1 IDs before deploy.
-  "d1_databases": [
-    {
-      "binding": "ZELAVIS_DB",
-      "database_name": "zelavis-website-local",
-      "database_id": "00000000-0000-0000-0000-000000000000",
-      "preview_database_id": "00000000-0000-0000-0000-000000000000",
-    },
-  ],
+	"compatibility_date": "2026-05-15",
+	"compatibility_flags": [
+		"nodejs_compat",
+		"global_fetch_strictly_public"
+	],
+	"name": "zelavis-website",
+	"main": "@astrojs/cloudflare/entrypoints/server",
+	"assets": {
+		"directory": "./dist",
+		"binding": "ASSETS"
+	},
+	"observability": {
+		"enabled": true
+	}
 }

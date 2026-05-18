@@ -35,6 +35,13 @@ yarn-error.log*
 
 # Testing
 .nyc_output/
+test-results/
+
+# Runtime data
+.zelavis/
+
+# Wrangler local state
+.wrangler/
 
 # Editor directories and files
 .idea/

@@ -1,6 +1,58 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import test from "node:test";
 import { createDatabase, defineService, Zelavis, zelavis } from "../dist/index.js";
+
+function createStoredZip(files) {
+  const encoder = new TextEncoder();
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+
+  for (const [path, content] of Object.entries(files)) {
+    const name = encoder.encode(path);
+    const body =
+      content instanceof Uint8Array ? content : encoder.encode(String(content));
+    const local = Buffer.alloc(30);
+
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt32LE(0, 14);
+    local.writeUInt32LE(body.byteLength, 18);
+    local.writeUInt32LE(body.byteLength, 22);
+    local.writeUInt16LE(name.byteLength, 26);
+    localParts.push(local, Buffer.from(name), Buffer.from(body));
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0, 8);
+    central.writeUInt16LE(0, 10);
+    central.writeUInt32LE(0, 16);
+    central.writeUInt32LE(body.byteLength, 20);
+    central.writeUInt32LE(body.byteLength, 24);
+    central.writeUInt16LE(name.byteLength, 28);
+    central.writeUInt32LE(offset, 42);
+    centralParts.push(central, Buffer.from(name));
+
+    offset += local.byteLength + name.byteLength + body.byteLength;
+  }
+
+  const centralDirectory = Buffer.concat(centralParts);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(Object.keys(files).length, 8);
+  end.writeUInt16LE(Object.keys(files).length, 10);
+  end.writeUInt32LE(centralDirectory.byteLength, 12);
+  end.writeUInt32LE(offset, 16);
+
+  return new Uint8Array(Buffer.concat([...localParts, centralDirectory, end]));
+}
 
 test("zelavis exposes fetch handlers without requiring a mount adapter", async () => {
   const runtime = await zelavis({});
@@ -388,7 +440,6 @@ test("dashboard plugin registry can register ESM plugin sources", async () => {
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        name: "uploaded-plugin",
         specifier,
       }),
     }),
@@ -437,6 +488,47 @@ test("dashboard plugin registry can register ESM plugin sources", async () => {
   assert.equal(uploadedPlugin.status, "installed");
   assert.equal(uploadedPlugin.specifier, specifier);
   assert.equal(uploadedPlugin.menu.path, "/uploaded");
+});
+
+test("dashboard plugin upload derives metadata from the selected module", async () => {
+  const runtime = await zelavis({});
+  const form = new FormData();
+
+  form.set(
+    "file",
+    new Blob(
+      [
+        `
+          export default {
+            name: "picked-plugin",
+            version: "0.0.2",
+            menu: {
+              title: "Picked",
+              path: "/picked"
+            }
+          };
+        `,
+      ],
+      { type: "text/javascript" },
+    ),
+    "picked-plugin.mjs",
+  );
+
+  const createResponse = await runtime.fetch(
+    new Request("http://localhost/zelavis/api/v1/dashboard/plugins", {
+      method: "POST",
+      body: form,
+    }),
+  );
+  const created = await createResponse.json();
+  const plugin = created.plugins.find(
+    (plugin) => plugin.name === "picked-plugin",
+  );
+
+  assert.equal(createResponse.status, 201);
+  assert.equal(plugin.version, "0.0.2");
+  assert.equal(plugin.status, "available");
+  assert.match(plugin.specifier, /^data:text\/javascript;base64,/);
 });
 
 test("Zelavis instance recomposes runtime after plugin activation", async () => {
@@ -496,6 +588,23 @@ test("Zelavis instance recomposes runtime after plugin activation", async () => 
   assert.equal(createResponse.status, 201);
   assert.equal(created.activation.status, "active");
 
+  const configResponse = await app.fetch(
+    new Request("http://localhost/zelavis/api/v1/dashboard/config"),
+  );
+  const config = await configResponse.json();
+
+  assert.equal(configResponse.status, 200);
+  assert.equal(config.pluginActivation.mode, "runtime");
+  assert.equal(config.pluginActivation.capabilities.strategy, "runtime-graph");
+  assert.equal(
+    config.pluginActivation.capabilities.supportsRuntimeInstall,
+    true,
+  );
+  assert.equal(
+    config.pluginActivation.capabilities.supportsUploadedSpecifiers,
+    true,
+  );
+
   const healthResponse = await app.fetch(
     new Request("http://localhost/zelavis/api/v1/runtime-uploaded/health"),
   );
@@ -503,6 +612,192 @@ test("Zelavis instance recomposes runtime after plugin activation", async () => 
 
   assert.equal(healthResponse.status, 200);
   assert.deepEqual(health, { ok: true });
+});
+
+test("node adapter resolves uploaded plugin paths through its plugin cache importer", async () => {
+  const { nodeAdapter } = await import("../dist/adapters/node.js");
+  const tempDirectory = await mkdtemp(join(tmpdir(), "zelavis-node-plugin-"));
+
+  try {
+    const pluginPath = join(tempDirectory, "uploaded-plugin.mjs");
+    await writeFile(
+      pluginPath,
+      `
+        export default {
+          name: "node-uploaded-plugin",
+          version: "0.0.1",
+          menu: {
+            title: "Node Uploaded",
+            path: "/node-uploaded",
+            page: {
+              id: "dashboard",
+              title: "Node Uploaded",
+              render: () => "<!doctype html><html><head><title>Node Uploaded</title></head><body><main>Node uploaded plugin page</main></body></html>"
+            }
+          },
+          setup() {
+            return {
+              services: [
+                {
+                  name: "node-uploaded",
+                  basePath: "/node-uploaded",
+                  service: {},
+                  api: {
+                    v1: [
+                      {
+                        id: "node-uploaded.health",
+                        method: "GET",
+                        path: "/health",
+                        handler: () => ({
+                          status: 200,
+                          body: { ok: true, source: "node-plugin-cache" }
+                        })
+                      }
+                    ]
+                  }
+                }
+              ]
+            };
+          }
+        };
+      `,
+    );
+
+    const app = new Zelavis({
+      adapter: nodeAdapter({ dataDirectory: tempDirectory }),
+    });
+
+    const createResponse = await app.fetch(
+      new Request("http://localhost/zelavis/api/v1/dashboard/plugins", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          specifier: pluginPath,
+          status: "installed",
+        }),
+      }),
+    );
+    const created = await createResponse.json();
+
+    assert.equal(createResponse.status, 201);
+    assert.equal(created.activation.status, "active");
+
+    const healthResponse = await app.fetch(
+      new Request("http://localhost/zelavis/api/v1/node-uploaded/health"),
+    );
+    const health = await healthResponse.json();
+
+    assert.equal(healthResponse.status, 200);
+    assert.deepEqual(health, { ok: true, source: "node-plugin-cache" });
+
+    const pluginPageResponse = await app.fetch(
+      new Request(
+        "http://localhost/zelavis/api/v1/dashboard/plugin-pages/node-uploaded-plugin/dashboard",
+      ),
+    );
+    const pluginPage = await pluginPageResponse.text();
+
+    assert.equal(pluginPageResponse.status, 200);
+    assert.match(pluginPage, /Node uploaded plugin page/);
+  } finally {
+    await rm(tempDirectory, { recursive: true, force: true });
+  }
+});
+
+test("node adapter installs uploaded ZIP plugin packages", async () => {
+  const { nodeAdapter } = await import("../dist/adapters/node.js");
+  const tempDirectory = await mkdtemp(join(tmpdir(), "zelavis-node-package-"));
+
+  try {
+    const app = new Zelavis({
+      adapter: nodeAdapter({ dataDirectory: tempDirectory }),
+    });
+    const packageBytes = createStoredZip({
+      "zelavis.plugin.json": JSON.stringify({
+        entry: "./dist/index.mjs",
+      }),
+      "dist/index.mjs": `
+        export default {
+          name: "zip-uploaded-plugin",
+          version: "0.0.3",
+          menu: {
+            title: "Zip Uploaded",
+            path: "/zip-uploaded"
+          },
+          setup() {
+            return {
+              services: [
+                {
+                  name: "zip-uploaded",
+                  basePath: "/zip-uploaded",
+                  service: {},
+                  api: {
+                    v1: [
+                      {
+                        id: "zip-uploaded.health",
+                        method: "GET",
+                        path: "/health",
+                        handler: () => ({
+                          status: 200,
+                          body: { ok: true, source: "zip-package" }
+                        })
+                      }
+                    ]
+                  }
+                }
+              ]
+            };
+          }
+        };
+      `,
+    });
+    const form = new FormData();
+    form.set(
+      "file",
+      new Blob([packageBytes], { type: "application/zip" }),
+      "zip-uploaded-plugin.zip",
+    );
+    form.set("status", "installed");
+
+    const configResponse = await app.fetch(
+      new Request("http://localhost/zelavis/api/v1/dashboard/config"),
+    );
+    const config = await configResponse.json();
+
+    assert.equal(
+      config.pluginActivation.capabilities.supportsPackageUploads,
+      true,
+    );
+
+    const createResponse = await app.fetch(
+      new Request("http://localhost/zelavis/api/v1/dashboard/plugins", {
+        method: "POST",
+        body: form,
+      }),
+    );
+    const created = await createResponse.json();
+    const plugin = created.plugins.find(
+      (plugin) => plugin.name === "zip-uploaded-plugin",
+    );
+
+    assert.equal(createResponse.status, 201);
+    assert.equal(created.activation.status, "active");
+    assert.equal(plugin.version, "0.0.3");
+    assert.equal(plugin.status, "installed");
+    assert.match(plugin.specifier, /plugins\/packages\/[a-f0-9]{64}\/dist\/index\.mjs$/);
+
+    const healthResponse = await app.fetch(
+      new Request("http://localhost/zelavis/api/v1/zip-uploaded/health"),
+    );
+    const health = await healthResponse.json();
+
+    assert.equal(healthResponse.status, 200);
+    assert.deepEqual(health, { ok: true, source: "zip-package" });
+  } finally {
+    await rm(tempDirectory, { recursive: true, force: true });
+  }
 });
 
 test("zelavis can disable the database core service", async () => {
