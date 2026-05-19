@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import express from "express";
-import { defineService, zelavisServer } from "../dist/index.js";
+import { zelavisServer } from "../dist/index.js";
 import { expressAdapter } from "../dist/adapters/express.js";
 
 function listen(server) {
@@ -34,7 +34,7 @@ test("expressAdapter preserves binary bodies, repeated headers, and HEAD fallbac
 
   const runtime = await zelavisServer({
     services: [
-      defineService({
+      {
         name: "demo",
         service: {},
         api: {
@@ -65,7 +65,7 @@ test("expressAdapter preserves binary bodies, repeated headers, and HEAD fallbac
             },
           ],
         },
-      }),
+      },
     ],
   });
 

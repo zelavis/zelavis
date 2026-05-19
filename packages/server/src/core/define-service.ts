@@ -1,7 +1,2 @@
-import type { ZelavisService } from "../contracts.js";
-
-export function defineService<TService>(
-  definition: ZelavisService<TService>,
-): ZelavisService<TService> {
-  return definition;
-}
+// defineService has been removed. Use definePlugin from "zelavis" for user-facing plugins,
+// or write plain ZelavisService object literals for internal framework use.

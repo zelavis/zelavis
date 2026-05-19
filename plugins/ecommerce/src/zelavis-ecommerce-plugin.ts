@@ -1,7 +1,6 @@
 import {
   createJsonErrorResponse,
   createMappedJsonErrorResponse,
-  defineService,
   type ZelavisServerErrorStatusRule,
 } from "@zelavis/server";
 import {
@@ -604,7 +603,7 @@ export const zelavisEcommercePlugin = definePlugin<ZelavisPluginSetupContext>({
 
     return {
       services: [
-        defineService({
+        {
           name: "commerce",
           basePath: "/commerce",
           service: commerce,
@@ -798,9 +797,9 @@ export const zelavisEcommercePlugin = definePlugin<ZelavisPluginSetupContext>({
                 handler: ({ service }) => ({
                   status: 200,
                   body: {
-                    providers: service.payments.listProviders().map((name) => {
+                    providers: service.payments.listProviders().map((name: string) => {
                       const childPlugin = service.context.childPlugins.find(
-                        (plugin) => plugin.name === name,
+                        (plugin: { name: string; extends: { extensionPoint?: string; plugin?: string } }) => plugin.name === name,
                       );
 
                       return {
@@ -859,7 +858,7 @@ export const zelavisEcommercePlugin = definePlugin<ZelavisPluginSetupContext>({
               },
             ],
           },
-        }),
+        },
       ],
     };
   },

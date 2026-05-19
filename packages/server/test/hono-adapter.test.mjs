@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Hono } from "hono";
-import { defineService, zelavisServer } from "../dist/index.js";
+import { zelavisServer } from "../dist/index.js";
 import { honoAdapter } from "../dist/adapters/hono.js";
 
 test("honoAdapter mounts routes and passes normalized request context", async () => {
@@ -10,7 +10,7 @@ test("honoAdapter mounts routes and passes normalized request context", async ()
 
   const runtime = await zelavisServer({
     services: [
-      defineService({
+      {
         name: "demo",
         service: serviceApi,
         api: {
@@ -44,7 +44,7 @@ test("honoAdapter mounts routes and passes normalized request context", async ()
             },
           ],
         },
-      }),
+      },
     ],
     prefix: "/api",
   });
@@ -84,7 +84,7 @@ test("honoAdapter uses the configured error handler", async () => {
 
   const runtime = await zelavisServer({
     services: [
-      defineService({
+      {
         name: "demo",
         service: {},
         api: {
@@ -99,7 +99,7 @@ test("honoAdapter uses the configured error handler", async () => {
             },
           ],
         },
-      }),
+      },
     ],
     onError: ({ error, resolvedRoute }) => ({
       status: 418,

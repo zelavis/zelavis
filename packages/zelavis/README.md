@@ -45,8 +45,7 @@ Use scoped packages when building lower-level primitives, adapters, plugins, or 
 
 ```ts
 import { createDatabase } from "@zelavis/db";
-import { createPlugin } from "zelavis";
-import { defineService } from "@zelavis/server";
+import { definePlugin } from "zelavis";
 import { authService } from "@zelavis/auth";
 ```
 

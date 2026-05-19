@@ -95,7 +95,7 @@ await zelavisServer({
 
 The main service-definition entrypoint lives in
 [packages/db/src/database-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/db/src/database-service.ts),
-so package authors can open one obvious file and see the `defineService({ ... })`
+so package authors can open one obvious file and see the `ZelavisService` object
 surface immediately.
 
 Each `DatabaseDocument` now also carries a `schemaVersion`, which is stored on the event stream and projection rows. If a collection has an active schema, inserts and updates are validated before events are appended.

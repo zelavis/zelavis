@@ -18,7 +18,6 @@ import {
 } from "@zelavis/db";
 import {
   createMappedJsonErrorResponse,
-  defineService,
   zelavisServer as mountZelavisServer,
   type ZelavisServerErrorStatusRule,
   type ZelavisAnyServiceInput,
@@ -57,7 +56,6 @@ export * from "./storage/s3.js";
 
 export * from "@zelavis/db";
 export {
-  defineService,
   type ZelavisAnyServiceInput,
   type ZelavisServerErrorHandler,
   type ZelavisServerRoute,
@@ -2720,7 +2718,7 @@ async function resolveDashboardCoreService(
     return shellHandler({ query, request });
   };
 
-  return defineService({
+  return {
     name: "dashboard",
     basePath: "/",
     menu: {
@@ -3039,7 +3037,7 @@ async function resolveDashboardCoreService(
         },
       ],
     },
-  });
+  };
 }
 
 async function resolveWebsiteCoreService(
@@ -3081,7 +3079,7 @@ async function resolveWebsiteCoreService(
     );
   }
 
-  return defineService({
+  return {
     name: "website",
     basePath: "/",
     menu: {
@@ -3249,7 +3247,7 @@ async function resolveWebsiteCoreService(
         },
       ],
     },
-  });
+  };
 }
 
 async function resolveStorageCoreService(
@@ -3273,7 +3271,7 @@ async function resolveStorageCoreService(
     return undefined;
   }
 
-  return defineService({
+  return {
     name: "storage",
     basePath: "/",
     menu: {
@@ -3471,7 +3469,7 @@ async function resolveStorageCoreService(
         },
       ],
     },
-  });
+  };
 }
 
 function createServicePrefixes(
@@ -3634,12 +3632,12 @@ export async function zelavis(
     ...(hasDashboardService || options.coreServices?.dashboard === false
       ? []
       : [
-          defineService({
+          {
             name: "dashboard",
             basePath: "/",
             service: {},
             api: { v1: [] },
-          }),
+          },
         ]),
     ...coreServices,
     ...services,

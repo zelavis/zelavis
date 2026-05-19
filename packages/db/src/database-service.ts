@@ -1,6 +1,5 @@
 import {
   createMappedJsonErrorResponse,
-  defineService,
   type ZelavisServerErrorStatusRule,
   type ZelavisService,
 } from "@zelavis/server";
@@ -220,7 +219,7 @@ export type DatabaseServiceDefinition = ZelavisService<DatabaseApi>;
 export function defineDatabaseService(
   database: DatabaseApi,
 ): DatabaseServiceDefinition {
-  return defineService({
+  return {
     name: "database",
     basePath: "database",
     menu: {
@@ -284,13 +283,13 @@ export function defineDatabaseService(
       defineDatabaseTimeSeriesService(database),
       defineDatabaseSqlService(database),
     ],
-  });
+  };
 }
 
 export function defineDatabaseSqlService(
   database: DatabaseApi,
 ): ZelavisService<DatabaseApi> {
-  return defineService({
+  return {
     name: "sql",
     basePath: "sql",
     service: database,
@@ -358,13 +357,13 @@ export function defineDatabaseSqlService(
         },
       ],
     },
-  });
+  };
 }
 
 export function defineDatabaseDocumentsService(
   database: DatabaseApi,
 ): ZelavisService<DatabaseApi> {
-  return defineService({
+  return {
     name: "documents",
     basePath: "documents",
     service: database,
@@ -522,13 +521,13 @@ export function defineDatabaseDocumentsService(
         },
       ],
     },
-  });
+  };
 }
 
 export function defineDatabaseSchemasService(
   database: DatabaseApi,
 ): ZelavisService<DatabaseApi> {
-  return defineService({
+  return {
     name: "schemas",
     basePath: "schemas",
     service: database,
@@ -629,13 +628,13 @@ export function defineDatabaseSchemasService(
         },
       ],
     },
-  });
+  };
 }
 
 export function defineDatabaseTimeSeriesService(
   database: DatabaseApi,
 ): ZelavisService<DatabaseApi> {
-  return defineService({
+  return {
     name: "timeseries",
     basePath: "timeseries",
     service: database,
@@ -698,5 +697,5 @@ export function defineDatabaseTimeSeriesService(
         },
       ],
     },
-  });
+  };
 }

@@ -62,7 +62,7 @@ Plugin pages are served as full HTML documents and mounted by the dashboard insi
 
 A good current TypeScript direction is:
 
-- keep `defineService(...)` for the internal runtime contract
+- use plain `ZelavisService` object literals for the internal runtime contract
 - expose one shared public plugin builder: `definePlugin(...)`
 - version that contract explicitly with `ZELAVIS_PLUGIN_V1`
 - let plugin definitions carry declarative dashboard metadata such as `menu: { ... }` so plugins are not locked to one dashboard implementation detail
