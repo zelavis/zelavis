@@ -1,4 +1,5 @@
 import {
+  createFileStoragePluginRegistryStore,
   defineAdapter,
   type ZelavisOptions,
   type ZelavisFileStorage,
@@ -541,13 +542,23 @@ export function cloudflareAdapter(options: CloudflareAdapterOptions) {
         };
       }
 
+      const fileStorage = filesOptions
+        ? createCloudflareFileStorage(filesOptions.bucket)
+        : undefined;
+
       return {
         coreServices: nextCoreServices,
+        plugins:
+          options.plugins === false
+            ? undefined
+            : {
+                ...(fileStorage
+                  ? { store: createFileStoragePluginRegistryStore(fileStorage) }
+                  : {}),
+              },
         resources: {
           kv: kvOptions ? createCloudflareKeyValueStore(kvOptions.namespace) : undefined,
-          files: filesOptions
-            ? createCloudflareFileStorage(filesOptions.bucket)
-            : undefined,
+          files: fileStorage,
           plugins:
             options.plugins === false
               ? undefined

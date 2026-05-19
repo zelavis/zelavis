@@ -1,4 +1,5 @@
 import {
+  createFileStoragePluginRegistryStore,
   defineAdapter,
   type ZelavisOptions,
   type ZelavisFileStorage,
@@ -266,8 +267,18 @@ export function netlifyAdapter(options: NetlifyAdapterOptions = {}) {
         nextCoreServices.database = options.database as Record<string, unknown>;
       }
 
+      const fileStorage = options.files
+        ? options.files.storage ??
+          (options.files.blobsStore
+            ? createNetlifyBlobsFileStorage(options.files.blobsStore)
+            : undefined)
+        : undefined;
+
       return {
         coreServices: nextCoreServices,
+        plugins: fileStorage
+          ? { store: createFileStoragePluginRegistryStore(fileStorage) }
+          : undefined,
         resources: {
           kv: options.kv
             ? options.kv.store ??
@@ -275,12 +286,7 @@ export function netlifyAdapter(options: NetlifyAdapterOptions = {}) {
                 ? createNetlifyBlobsKeyValueStore(options.kv.blobsStore)
                 : undefined)
             : undefined,
-          files: options.files
-            ? options.files.storage ??
-              (options.files.blobsStore
-                ? createNetlifyBlobsFileStorage(options.files.blobsStore)
-                : undefined)
-            : undefined,
+          files: fileStorage,
         },
         metadata: {
           runtime: "netlify",
