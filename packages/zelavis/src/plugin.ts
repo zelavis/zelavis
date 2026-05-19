@@ -36,7 +36,7 @@ export interface ZelavisPluginMenuPageDefinition {
 
 export type ZelavisPluginMenuDefinition = Omit<
   ZelavisServiceMenuDefinition,
-  "surface" | "items"
+  "items"
 > & {
   page?: ZelavisPluginMenuPageDefinition;
   items?: readonly ZelavisPluginMenuDefinition[];
@@ -55,12 +55,34 @@ export interface ZelavisPluginExtensionPointDefinition {
   allowedPlugins?: readonly string[];
 }
 
+/**
+ * Controls which capabilities are available to this plugin.
+ *
+ * - `"system"` — first-party or statically registered plugins. Can mount on
+ *   any dashboard surface (root, core, workspace, settings). Set automatically
+ *   when the plugin is passed directly to `zelavis({ plugins: [...] })`.
+ *
+ * - `"workspace"` — runtime-installed plugins (uploaded ZIP, marketplace).
+ *   Always mount under the Workspace surface regardless of what `menu.surface`
+ *   declares. Enforced by the activation layer, not the definition.
+ *
+ * Defaults to `"workspace"`. The activation layer upgrades this to `"system"`
+ * for statically registered entries and forces it back to `"workspace"` for
+ * any plugin loaded from the registry store.
+ */
+export type ZelavisPluginScope = "system" | "workspace";
+
 export interface ZelavisPluginDefinition<
   TContext = unknown,
   TService = unknown,
 > {
   name: string;
   contractVersion?: ZelavisPluginContractVersion;
+  /**
+   * Controls surface access and other trust-gated capabilities.
+   * Set by the registration path — do not rely on this field in plugin code.
+   */
+  scope?: ZelavisPluginScope;
   basePath?: string;
   api?: Record<string, readonly ZelavisServerRoute<TService>[]>;
   service?: TService;
@@ -224,11 +246,9 @@ function validatePluginMenu(
   menu: ZelavisPluginMenuDefinition,
   path = menu.title,
 ): void {
-  if ("surface" in menu) {
-    throw new TypeError(
-      `Plugin menu metadata for "${path}" cannot declare a dashboard surface. Installed plugins always mount under Workspace.`,
-    );
-  }
+  // `surface` is allowed in the definition — the activation layer enforces
+  // workspace-only scoping for runtime-installed plugins at registration time,
+  // not here. System plugins registered statically may use any surface.
 
   if ("page" in menu && menu.page !== undefined) {
     if (!menu.page || typeof menu.page !== "object") {
@@ -676,6 +696,9 @@ export function definePlugin<TContext = unknown>(
   return Object.freeze({
     ...normalized,
     contractVersion: ZELAVIS_PLUGIN_V1,
+    // Default to "workspace". The registration path (static vs. uploaded)
+    // overrides this — see loadStoredPluginRegistryModules in index.ts.
+    scope: definition.scope ?? "workspace",
     version: definition.version,
     extends: definition.extends
       ? Object.freeze({ ...definition.extends })
@@ -686,6 +709,15 @@ export function definePlugin<TContext = unknown>(
     setup: definition.setup,
   });
 }
+
+/**
+ * @deprecated Use `definePlugin` instead. `defineService` remains available
+ * as a low-level escape hatch for cases where the full plugin lifecycle is not
+ * needed, but the recommended path is a single `definePlugin` call for all
+ * units — the activation layer determines capabilities from the registration
+ * path, not from which define function was used.
+ */
+export { defineService } from "@zelavis/server";
 
 export function createPluginRegistry<TContext = unknown>(
   entries: readonly ZelavisPluginRegistryEntry<TContext>[],
