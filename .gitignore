@@ -40,10 +40,9 @@ test-results/
 # Runtime data
 .zelavis/
 
-# Claude local state
+# Claude local state (.claude/skills/ is auto-symlinked from .agents/skills/ on SessionStart)
 .claude/*
-!.claude/skills/
-!.claude/skills/**
+!.claude/settings.json
 
 # Wrangler local state
 .wrangler/

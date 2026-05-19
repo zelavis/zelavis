@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "for d in \"$(git rev-parse --show-toplevel)\"/.agents/skills/*/; do skill=$(basename \"$d\"); ln -sfn \"$d\" \"$(git rev-parse --show-toplevel)/.claude/skills/$skill\"; done"
+          }
+        ]
+      }
+    ]
+  }
+}
