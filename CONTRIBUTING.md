@@ -9,6 +9,8 @@ Zelavis is an early-stage backend platform built as a pnpm workspace of composab
 Read these first:
 
 - [README.md](README.md)
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- [SECURITY.md](SECURITY.md)
 - [AGENTS.md](AGENTS.md)
 - [.github/copilot-instructions.md](.github/copilot-instructions.md)
 
@@ -128,7 +130,8 @@ The default CI baseline currently runs:
 
 For lockfile or dependency changes, run the audit locally before opening a PR.
 
-Dependabot and Dependabot auto-merge are configured in-repo, but GitHub branch protection and repository auto-merge still need to be enabled once in the repository settings.
+Dependabot, repository auto-merge, branch protection, issue forms, and GitHub
+Discussions are already part of the repository workflow.
 
 ## Release workflow
 

@@ -1,0 +1,65 @@
+name: Feature request
+description: Suggest an improvement to Zelavis.
+title: "[Feature]: "
+labels:
+  - enhancement
+  - triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for sharing an idea.
+        Please explain the user or maintainer problem before jumping to implementation details.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and discussions first.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - runtime (zelavis)
+        - server
+        - database
+        - auth
+        - ui/dashboard
+        - ecommerce plugin
+        - docs
+        - developer experience
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      placeholder: Describe the gap, friction, or missing capability.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+      placeholder: Describe the API, UX, or workflow you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      placeholder: Mention workarounds or other approaches you already evaluated.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      placeholder: Links, sketches, examples, or prior art.
+

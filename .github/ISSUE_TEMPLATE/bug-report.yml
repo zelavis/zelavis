@@ -1,0 +1,82 @@
+name: Bug report
+description: Report broken behavior in Zelavis packages, examples, or docs.
+title: "[Bug]: "
+labels:
+  - bug
+  - triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a problem.
+        Please include a small reproduction when possible.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I read the relevant README/CONTRIBUTING guidance.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - runtime (zelavis)
+        - server
+        - database
+        - auth
+        - ui/dashboard
+        - ecommerce plugin
+        - example app
+        - docs
+        - ci/release
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Tell us what broke and what you expected instead.
+      placeholder: A short summary of the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Steps, code, request payloads, screenshots, or a minimal repo.
+      placeholder: |
+        1. Run ...
+        2. Call ...
+        3. Observe ...
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Versions and host details.
+      placeholder: |
+        - OS:
+        - Node/Bun/Deno:
+        - pnpm:
+        - Package versions:
+        - Browser (if UI):
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: Anything else that would help triage this faster.
+
