@@ -1,7 +1,13 @@
 # Claude Skills
 
-This folder is reserved for tracked Claude-compatible skills that are useful to
-contributors working in the Zelavis repository.
+This folder contains tracked Claude-compatible skills for working in the
+Zelavis repository.
+
+Current skills:
+
+- `zelavis-core-platform`
+- `zelavis-dashboard-ui`
+- `zelavis-repo-maintainer`
 
 Local Claude worktrees, caches, and machine-specific state are intentionally
 ignored by the repository root `.gitignore`.
