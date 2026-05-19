@@ -1,11 +1,18 @@
 import { join, resolve } from "node:path";
 import {
+  createFileStoragePluginRegistryStore,
   defineAdapter,
   type ZelavisOptions,
   type ZelavisResolvedPlatformOptions,
 } from "../index.js";
 import { createFileDashboardSettingsStore } from "./node.js";
 import { createLocalFileStorage, createMemoryKeyValueStore } from "./_shared.js";
+import {
+  normalizeDataDirectory,
+  createLocalRuntimePluginPackageInstaller,
+  createLocalRuntimePluginImporter,
+  type LocalRuntimePluginOptions,
+} from "./_local-runtime.js";
 
 export interface BunAdapterDatabaseOptions {
   filename?: string;
@@ -26,16 +33,15 @@ export interface BunAdapterKeyValueOptions {
   kind?: "memory";
 }
 
+export type BunAdapterPluginOptions = LocalRuntimePluginOptions;
+
 export interface BunAdapterOptions {
   dataDirectory?: string;
   database?: false | BunAdapterDatabaseOptions;
   dashboard?: false | BunAdapterDashboardOptions;
   files?: false | BunAdapterFileStorageOptions;
   kv?: false | BunAdapterKeyValueOptions;
-}
-
-function normalizeDataDirectory(path: string | undefined): string {
-  return resolve(path?.trim() ? path : ".zelavis");
+  plugins?: false | BunAdapterPluginOptions;
 }
 
 export function bunAdapter(options: BunAdapterOptions = {}) {
@@ -76,21 +82,41 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
         };
       }
 
+      const pluginOptions = options.plugins === false ? undefined : options.plugins;
+      const pluginDirectory = join(dataDirectory, "plugins");
+      const fileStorage =
+        options.files === false
+          ? undefined
+          : createLocalFileStorage(
+              options.files?.rootDirectory
+                ? resolve(options.files.rootDirectory)
+                : join(dataDirectory, "files"),
+            );
+
       return {
         coreServices: nextCoreServices,
+        plugins:
+          options.plugins === false
+            ? undefined
+            : {
+                importer: createLocalRuntimePluginImporter({
+                  directory: pluginDirectory,
+                  ...(pluginOptions ?? {}),
+                }),
+                ...(fileStorage
+                  ? { store: createFileStoragePluginRegistryStore(fileStorage) }
+                  : {}),
+              },
         resources: {
-          kv:
-            options.kv === false
+          kv: options.kv === false ? undefined : createMemoryKeyValueStore(),
+          files: fileStorage,
+          pluginPackages:
+            options.plugins === false
               ? undefined
-              : createMemoryKeyValueStore(),
-          files:
-            options.files === false
-              ? undefined
-              : createLocalFileStorage(
-                  options.files?.rootDirectory
-                    ? resolve(options.files.rootDirectory)
-                    : join(dataDirectory, "files"),
-                ),
+              : createLocalRuntimePluginPackageInstaller({
+                  directory: pluginDirectory,
+                  ...(pluginOptions ?? {}),
+                }),
         },
         metadata: {
           runtime: "bun",

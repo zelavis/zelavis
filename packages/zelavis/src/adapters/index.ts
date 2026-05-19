@@ -8,6 +8,7 @@ export type {
   NodeAdapterOptions,
   NodeAdapterDatabaseOptions,
   NodeAdapterDashboardOptions,
+  NodeAdapterPluginOptions,
 } from "./node.js";
 export { createFileDashboardSettingsStore } from "./node.js";
 
@@ -18,6 +19,7 @@ export type {
   BunAdapterDashboardOptions,
   BunAdapterFileStorageOptions,
   BunAdapterKeyValueOptions,
+  BunAdapterPluginOptions,
 } from "./bun.js";
 
 export {

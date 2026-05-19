@@ -1,4 +1,5 @@
 import {
+  createFileStoragePluginRegistryStore,
   defineAdapter,
   type ZelavisOptions,
   type ZelavisFileStorage,
@@ -184,19 +185,24 @@ export function vercelAdapter(options: VercelAdapterOptions = {}) {
         nextCoreServices.database = options.database as Record<string, unknown>;
       }
 
+      const fileStorage = options.files
+        ? options.files.storage ??
+          (options.files.blobStore
+            ? createVercelBlobFileStorage(options.files.blobStore, {
+                access: options.files.access,
+                addRandomSuffix: options.files.addRandomSuffix,
+              })
+            : undefined)
+        : undefined;
+
       return {
         coreServices: nextCoreServices,
+        plugins: fileStorage
+          ? { store: createFileStoragePluginRegistryStore(fileStorage) }
+          : undefined,
         resources: {
           kv: options.kv ? options.kv.store : undefined,
-          files: options.files
-            ? options.files.storage ??
-              (options.files.blobStore
-                ? createVercelBlobFileStorage(options.files.blobStore, {
-                    access: options.files.access,
-                    addRandomSuffix: options.files.addRandomSuffix,
-                  })
-                : undefined)
-            : undefined,
+          files: fileStorage,
         },
         metadata: {
           runtime: "vercel",
