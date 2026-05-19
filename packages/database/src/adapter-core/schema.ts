@@ -1,0 +1,97 @@
+/**
+ * SQLite-flavored DDL applied by every Zelavis SQLite-compatible adapter
+ * (better-sqlite3, bun:sqlite, Cloudflare D1, libSQL).
+ *
+ * Restricted to features supported by all four dialects so each adapter
+ * can apply the same statements without modification.
+ */
+
+export const SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS collections (
+    tenant_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    document_count INTEGER NOT NULL DEFAULT 0,
+    metadata_json TEXT,
+    PRIMARY KEY (tenant_id, name)
+  )`,
+  `CREATE TABLE IF NOT EXISTS documents (
+    tenant_id TEXT NOT NULL,
+    collection_name TEXT NOT NULL,
+    id TEXT NOT NULL,
+    data_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (tenant_id, collection_name, id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS events (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL UNIQUE,
+    idempotency_key TEXT,
+    node_id TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    collection_name TEXT NOT NULL,
+    document_id TEXT,
+    type TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    timestamp TEXT NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    payload_json TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS schemas (
+    collection_name TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    document_json TEXT NOT NULL,
+    metadata_json TEXT,
+    is_active INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (collection_name, version)
+  )`,
+  `CREATE TABLE IF NOT EXISTS time_series_checkpoints (
+    tenant_id TEXT NOT NULL,
+    series_name TEXT NOT NULL,
+    definition_version TEXT NOT NULL,
+    last_sequence INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, series_name)
+  )`,
+  `CREATE TABLE IF NOT EXISTS time_series_points (
+    tenant_id TEXT NOT NULL,
+    series_name TEXT NOT NULL,
+    definition_version TEXT NOT NULL,
+    source_sequence INTEGER NOT NULL,
+    point_index INTEGER NOT NULL,
+    timestamp_ms INTEGER NOT NULL,
+    value REAL NOT NULL,
+    tags_json TEXT,
+    fields_json TEXT,
+    PRIMARY KEY (
+      tenant_id,
+      series_name,
+      definition_version,
+      source_sequence,
+      point_index
+    )
+  )`,
+  `CREATE INDEX IF NOT EXISTS documents_lookup_idx
+    ON documents (tenant_id, collection_name, updated_at, id)`,
+  `CREATE INDEX IF NOT EXISTS events_tenant_sequence_idx
+    ON events (tenant_id, sequence)`,
+  `CREATE INDEX IF NOT EXISTS events_stream_idx
+    ON events (tenant_id, collection_name, document_id, sequence)`,
+  `CREATE INDEX IF NOT EXISTS schemas_collection_active_idx
+    ON schemas (collection_name, is_active, version)`,
+  `CREATE INDEX IF NOT EXISTS time_series_points_lookup_idx
+    ON time_series_points (
+      tenant_id,
+      series_name,
+      definition_version,
+      timestamp_ms,
+      source_sequence,
+      point_index
+    )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS events_tenant_idempotency_idx
+    ON events (tenant_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL`,
+] as const;

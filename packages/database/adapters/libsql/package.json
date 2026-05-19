@@ -1,8 +1,8 @@
 {
-  "name": "@zelavis/database-cloudflare-d1",
+  "name": "@zelavis/database-libsql",
   "version": "1.0.1-alpha.2",
   "private": false,
-  "description": "Cloudflare D1 adapter for @zelavis/database.",
+  "description": "libSQL / Turso adapter for @zelavis/database.",
   "license": "MIT",
   "author": "Ivan Jeremic",
   "type": "module",
@@ -28,25 +28,25 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/zelavis/zelavis.git",
-    "directory": "packages/database/adapters/cloudflare-d1"
+    "directory": "packages/database/adapters/libsql"
   },
-  "homepage": "https://github.com/zelavis/zelavis/tree/main/packages/database/adapters/cloudflare-d1#readme",
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/packages/database/adapters/libsql#readme",
   "bugs": {
     "url": "https://github.com/zelavis/zelavis/issues"
   },
   "dependencies": {
+    "@libsql/client": "^0.15.0",
     "@zelavis/database": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260504.1",
-    "better-sqlite3": "^11.5.0",
+    "@types/node": "^24.11.0",
     "typescript": "^5.9.0"
   },
   "keywords": [
     "database",
-    "cloudflare",
-    "d1",
-    "workers",
+    "sqlite",
+    "libsql",
+    "turso",
     "adapter"
   ]
 }

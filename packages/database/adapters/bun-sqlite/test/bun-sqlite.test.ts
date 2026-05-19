@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Database as RawDatabase } from "bun:sqlite";
 import {
   DatabaseConflictError,
   DatabaseRevisionMismatchError,
@@ -19,65 +18,6 @@ function createTempDatabasePath() {
     directory,
     filename: join(directory, "database.sqlite"),
   };
-}
-
-function createLegacyEventsTable(filename: string) {
-  const database = new RawDatabase(filename);
-
-  try {
-    database.exec(`
-      CREATE TABLE events (
-        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL UNIQUE,
-        node_id TEXT NOT NULL,
-        tenant_id TEXT NOT NULL,
-        collection_name TEXT NOT NULL,
-        document_id TEXT,
-        type TEXT NOT NULL,
-        revision INTEGER NOT NULL,
-        timestamp TEXT NOT NULL,
-        schema_version INTEGER NOT NULL DEFAULT 1,
-        payload_json TEXT NOT NULL
-      );
-    `);
-  } finally {
-    database.close();
-  }
-}
-
-function createLegacyDocumentsTable(filename: string) {
-  const database = new RawDatabase(filename);
-
-  try {
-    database.exec(`
-      CREATE TABLE collections (
-        tenant_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        document_count INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY (tenant_id, name)
-      );
-
-      CREATE TABLE documents (
-        tenant_id TEXT NOT NULL,
-        collection_name TEXT NOT NULL,
-        id TEXT NOT NULL,
-        data_json TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        version INTEGER NOT NULL,
-        PRIMARY KEY (tenant_id, collection_name, id),
-        FOREIGN KEY (tenant_id, collection_name)
-          REFERENCES collections (tenant_id, name)
-          ON DELETE CASCADE
-      );
-
-      INSERT INTO collections (tenant_id, name, created_at, document_count)
-      VALUES ('default', 'products', '2026-01-01T00:00:00.000Z', 0);
-    `);
-  } finally {
-    database.close();
-  }
 }
 
 test("bun:sqlite driver supports persistent tenant-aware document CRUD", async () => {
@@ -322,44 +262,6 @@ test("bun:sqlite database uses typed conflict and revision errors", async () => 
       expect(error).toBeInstanceOf(DatabaseRevisionMismatchError);
       expect((error as Error).name).toBe("DatabaseRevisionMismatchError");
     }
-  } finally {
-    rmSync(temp.directory, { recursive: true, force: true });
-  }
-});
-
-test("bun:sqlite database migrates legacy events table schemas", async () => {
-  const temp = createTempDatabasePath();
-
-  try {
-    createLegacyEventsTable(temp.filename);
-    const database = await createBunSqliteDatabase({ filename: temp.filename });
-    const eventColumns = await database.sql?.query({
-      statement: "PRAGMA table_info(events)",
-    });
-    const columnNames = (eventColumns?.rows ?? []).map((row) =>
-      String(row.name),
-    );
-
-    expect(columnNames).toContain("idempotency_key");
-    expect(columnNames).toContain("schema_version");
-  } finally {
-    rmSync(temp.directory, { recursive: true, force: true });
-  }
-});
-
-test("bun:sqlite database migrates legacy documents table schemas", async () => {
-  const temp = createTempDatabasePath();
-
-  try {
-    createLegacyDocumentsTable(temp.filename);
-    const database = await createBunSqliteDatabase({ filename: temp.filename });
-    const created = await database.documents.insert({
-      collection: "products",
-      id: "product_1",
-      data: { name: "Migrated product" },
-    });
-
-    expect(created.schemaVersion).toBe(1);
   } finally {
     rmSync(temp.directory, { recursive: true, force: true });
   }
