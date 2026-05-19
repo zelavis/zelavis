@@ -1,6 +1,5 @@
 import {
   definePlugin,
-  defineService,
   type ZelavisPluginSetupContext,
 } from "zelavis";
 
@@ -111,31 +110,29 @@ export default definePlugin<ZelavisPluginSetupContext>({
     },
   },
   setup(context) {
-    context.addService(
-      defineService({
-        name: "example-basic",
-        basePath: "/example-basic",
-        service: {
-          message: "Hello from an uploaded Zelavis plugin.",
-        },
-        api: {
-          v1: [
-            {
-              id: "example-basic.health",
-              method: "GET",
-              path: "/health",
-              handler: () => ({
-                status: 200,
-                body: {
-                  ok: true,
-                  plugin: "example-basic",
-                  message: "Hello from an uploaded Zelavis plugin.",
-                },
-              }),
-            },
-          ],
-        },
-      }),
-    );
+    context.addService({
+      name: "example-basic",
+      basePath: "/example-basic",
+      service: {
+        message: "Hello from an uploaded Zelavis plugin.",
+      },
+      api: {
+        v1: [
+          {
+            id: "example-basic.health",
+            method: "GET",
+            path: "/health",
+            handler: () => ({
+              status: 200,
+              body: {
+                ok: true,
+                plugin: "example-basic",
+                message: "Hello from an uploaded Zelavis plugin.",
+              },
+            }),
+          },
+        ],
+      },
+    });
   },
 });

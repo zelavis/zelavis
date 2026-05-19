@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
-import { createDatabase, defineService, Zelavis, zelavis } from "../dist/index.js";
+import { createDatabase, Zelavis, zelavis } from "../dist/index.js";
 
 function createStoredZip(files) {
   const encoder = new TextEncoder();
@@ -1047,7 +1047,7 @@ test("zelavis can disable all core services", async () => {
 });
 
 test("zelavis does not duplicate an explicitly provided database service", async () => {
-  const databaseService = defineService({
+  const databaseService = {
     name: "database",
     service: { custom: true },
     api: {
@@ -1060,7 +1060,7 @@ test("zelavis does not duplicate an explicitly provided database service", async
         },
       ],
     },
-  });
+  };
   const runtime = await zelavis({
     coreServices: {
       auth: false,
@@ -1076,7 +1076,7 @@ test("zelavis does not duplicate an explicitly provided database service", async
 });
 
 test("zelavis does not duplicate an explicitly provided auth service", async () => {
-  const authService = defineService({
+  const authService = {
     name: "auth",
     service: { custom: true },
     api: {
@@ -1089,7 +1089,7 @@ test("zelavis does not duplicate an explicitly provided auth service", async () 
         },
       ],
     },
-  });
+  };
   const runtime = await zelavis({
     coreServices: {
       dashboard: false,

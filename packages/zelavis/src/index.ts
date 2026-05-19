@@ -18,7 +18,6 @@ import {
 } from "@zelavis/db";
 import {
   createMappedJsonErrorResponse,
-  defineService,
   zelavisServer as mountZelavisServer,
   type ZelavisServerErrorStatusRule,
   type ZelavisAnyServiceInput,
@@ -57,7 +56,6 @@ export * from "./storage/s3.js";
 
 export * from "@zelavis/db";
 export {
-  defineService,
   type ZelavisAnyServiceInput,
   type ZelavisServerErrorHandler,
   type ZelavisServerRoute,
@@ -1888,11 +1886,41 @@ async function loadStoredPluginRegistryModules(
 
   for (const entry of moduleEntries) {
     try {
-      resolvedEntries.push(
-        ...(await loadPluginRegistry<ZelavisPluginSetupContext>([entry], {
-          importer,
-        })),
+      const loaded = await loadPluginRegistry<ZelavisPluginSetupContext>(
+        [entry],
+        { importer },
       );
+
+      // Runtime-installed plugins are always workspace-scoped regardless of
+      // what `scope` or `menu.surface` their definition declares. Trust is
+      // granted by the registration path (static), not the definition itself.
+      const scoped = loaded.map((registryEntry) => {
+        if (!registryEntry.plugin) {
+          return registryEntry;
+        }
+
+        const plugin = registryEntry.plugin;
+        const needsPatch =
+          plugin.scope !== "workspace" ||
+          (plugin.menu && "surface" in plugin.menu && plugin.menu.surface !== undefined);
+
+        if (!needsPatch) {
+          return registryEntry;
+        }
+
+        return Object.freeze({
+          ...registryEntry,
+          plugin: Object.freeze({
+            ...plugin,
+            scope: "workspace" as const,
+            menu: plugin.menu
+              ? Object.freeze({ ...plugin.menu, surface: undefined })
+              : plugin.menu,
+          }),
+        });
+      });
+
+      resolvedEntries.push(...scoped);
     } catch {
       continue;
     }
@@ -2339,11 +2367,24 @@ async function resolveDashboardCoreService(
       storedEntries,
       context.pluginImporter,
     );
+
+    // Static plugins (passed directly to zelavis()) are system-scoped — they
+    // can use any dashboard surface. Runtime-installed plugins are already
+    // forced to workspace scope inside loadStoredPluginRegistryModules.
+    const systemPluginRegistry = context.pluginRegistry.map((entry) =>
+      entry.plugin.scope === "system"
+        ? entry
+        : Object.freeze({
+            ...entry,
+            plugin: Object.freeze({ ...entry.plugin, scope: "system" as const }),
+          }),
+    );
+
     const knownPluginNames = new Set(
-      context.pluginRegistry.map((entry) => entry.plugin.name),
+      systemPluginRegistry.map((entry) => entry.plugin.name),
     );
     const completePluginRegistry = createPluginRegistry([
-      ...context.pluginRegistry,
+      ...systemPluginRegistry,
       ...storedPluginRegistry.filter(
         (entry) => !knownPluginNames.has(entry.plugin.name),
       ),
@@ -2677,7 +2718,7 @@ async function resolveDashboardCoreService(
     return shellHandler({ query, request });
   };
 
-  return defineService({
+  return {
     name: "dashboard",
     basePath: "/",
     menu: {
@@ -2996,7 +3037,7 @@ async function resolveDashboardCoreService(
         },
       ],
     },
-  });
+  };
 }
 
 async function resolveWebsiteCoreService(
@@ -3038,7 +3079,7 @@ async function resolveWebsiteCoreService(
     );
   }
 
-  return defineService({
+  return {
     name: "website",
     basePath: "/",
     menu: {
@@ -3206,7 +3247,7 @@ async function resolveWebsiteCoreService(
         },
       ],
     },
-  });
+  };
 }
 
 async function resolveStorageCoreService(
@@ -3230,7 +3271,7 @@ async function resolveStorageCoreService(
     return undefined;
   }
 
-  return defineService({
+  return {
     name: "storage",
     basePath: "/",
     menu: {
@@ -3428,7 +3469,7 @@ async function resolveStorageCoreService(
         },
       ],
     },
-  });
+  };
 }
 
 function createServicePrefixes(
@@ -3591,12 +3632,12 @@ export async function zelavis(
     ...(hasDashboardService || options.coreServices?.dashboard === false
       ? []
       : [
-          defineService({
+          {
             name: "dashboard",
             basePath: "/",
             service: {},
             api: { v1: [] },
-          }),
+          },
         ]),
     ...coreServices,
     ...services,

@@ -7,7 +7,6 @@ import {
   definePluginCatalogEntry,
   definePlugin,
   createPluginRegistry,
-  defineService,
   loadPlugin,
   loadPluginRegistry,
   removePluginFromRegistry,
@@ -18,13 +17,13 @@ import {
 } from "../dist/index.js";
 
 test("definePlugin normalizes plugin metadata for developer-facing extensions", () => {
-  const service = defineService({
+  const service = {
     name: "commerce",
     service: {},
     api: {
       v1: [],
     },
-  });
+  };
 
   const plugin = definePlugin({
     name: "zelavis-ecommerce",
@@ -89,17 +88,17 @@ test("definePlugin validates required plugin fields", () => {
     /Unsupported plugin contract version/,
   );
 
-  assert.throws(
-    () =>
-      definePlugin({
-        name: "surface-plugin",
-        menu: {
-          title: "Surface",
-          path: "/surface",
-          surface: "root",
-        },
-      }),
-    /cannot declare a dashboard surface/,
+  // surface is now allowed in definitions — the activation layer strips it
+  // for workspace-scoped plugins at runtime, so no throw at define-time.
+  assert.doesNotThrow(() =>
+    definePlugin({
+      name: "surface-plugin",
+      menu: {
+        title: "Surface",
+        path: "/surface",
+        surface: "root",
+      },
+    }),
   );
 
   assert.throws(
@@ -516,16 +515,16 @@ test("applyPluginRegistryState overlays stored install state and order", () => {
 
 test("activatePluginRegistry runs installed plugins in order and collects services", async () => {
   const activationOrder = [];
-  const firstService = defineService({
+  const firstService = {
     name: "first-plugin-service",
     service: {},
     api: { v1: [] },
-  });
-  const secondService = defineService({
+  };
+  const secondService = {
     name: "second-plugin-service",
     service: {},
     api: { v1: [] },
-  });
+  };
 
   const registry = createPluginRegistry([
     {
