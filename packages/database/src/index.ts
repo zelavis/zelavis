@@ -17,3 +17,4 @@ export * from "./services/schema-service.js";
 export * from "./schema-helpers.js";
 export * from "./services/time-series-service.js";
 export * from "./storage/in-memory.js";
+export * from "./adapter-core/index.js";
