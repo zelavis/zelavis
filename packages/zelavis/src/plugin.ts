@@ -4,6 +4,11 @@ import {
   type ZelavisService,
   type ZelavisServiceMenuDefinition,
 } from "@zelavis/server";
+import type { BundleStore } from "./bundle-store.js";
+import {
+  resolveEffectiveMount,
+  synthesizePluginAppService,
+} from "./plugin-app.js";
 
 export const ZELAVIS_PLUGIN_V1 = "ZELAVIS_PLUGIN_V1" as const;
 export type ZelavisPluginContractVersion = typeof ZELAVIS_PLUGIN_V1;
@@ -71,6 +76,69 @@ export interface ZelavisPluginExtensionPointDefinition {
  */
 export type ZelavisPluginScope = "system" | "workspace";
 
+/**
+ * Static-asset serving mode for a plugin app.
+ *
+ * - `"spa"` falls back to the index document for any unmatched sub-path under
+ *   the mount prefix. Suitable for single-page apps that own client-side routing.
+ * - `"mpa"` resolves the request path against the bundle filesystem (with
+ *   `.html` and `/index.html` lookups). Suitable for static MPAs like Astro,
+ *   Hugo, 11ty, or hand-authored HTML.
+ */
+export type ZelavisPluginAppMode = "spa" | "mpa";
+
+/**
+ * A domain binding declaration. Strings are treated as bare hostnames. The
+ * object form leaves room for future per-domain config (redirects, headers,
+ * cert backend) without a breaking type change.
+ */
+export interface ZelavisPluginAppDomainBinding {
+  host: string;
+}
+
+export type ZelavisPluginAppDomainEntry =
+  | string
+  | ZelavisPluginAppDomainBinding;
+
+/**
+ * Declares that a plugin owns a route prefix (and optionally a set of domains)
+ * and serves a web application — SPA bundle, static MPA, or server-rendered
+ * (future). The activation layer turns this into asset-serving routes on the
+ * underlying dispatcher.
+ *
+ * This is the foundation for "dashboard is just a plugin", embedded
+ * customer-built apps, and (eventually) tenant-domain hosting.
+ */
+export interface ZelavisPluginAppDefinition {
+  /**
+   * Path prefix this app is mounted under. Defaults to `"/"` (root).
+   * Workspace-scoped plugins have their mount rewritten to
+   * `/apps/<plugin-name>` at activation regardless of what they declare.
+   */
+  mount?: string;
+  /**
+   * Hostnames this app responds on. Strings are exact-match hostnames; the
+   * sentinel `"*"` matches any host. Defaults to `["*"]` (host-agnostic).
+   */
+  domains?: readonly ZelavisPluginAppDomainEntry[];
+  /**
+   * Logical bundle identifier. The BundleStore resolves this against the
+   * plugin's installed assets — for the default `SharedBundleStore`, it
+   * keys into `apps/<plugin-name>/<bundle>/...`. Defaults to `"dist"`.
+   */
+  bundle?: string;
+  /** Index document for SPA fallback and MPA directory roots. Default `"index.html"`. */
+  indexHtml?: string;
+  /** Serving mode. Default `"spa"`. */
+  mode?: ZelavisPluginAppMode;
+  /**
+   * Dev-server URL to proxy to instead of serving static files. When set and
+   * the host is in development mode, the runtime forwards requests to this
+   * URL instead of reading from the bundle.
+   */
+  devUrl?: string;
+}
+
 export interface ZelavisPluginDefinition<
   TContext = unknown,
   TService = unknown,
@@ -87,6 +155,11 @@ export interface ZelavisPluginDefinition<
   service?: TService;
   version?: string;
   menu?: ZelavisPluginMenuDefinition;
+  /**
+   * Declare a hosted web application for this plugin. See
+   * {@link ZelavisPluginAppDefinition}.
+   */
+  app?: ZelavisPluginAppDefinition;
   services?: readonly ZelavisAnyServiceInput[];
   extends?: ZelavisPluginExtensionTarget;
   extensionPoints?: readonly ZelavisPluginExtensionPointDefinition[];
@@ -417,6 +490,104 @@ function freezeCatalogLinks(
   return Object.freeze({ ...links });
 }
 
+function validatePluginApp(app: ZelavisPluginAppDefinition): void {
+  if (!app || typeof app !== "object") {
+    throw new TypeError("Plugin app metadata must be an object.");
+  }
+
+  if (
+    "mount" in app &&
+    app.mount !== undefined &&
+    typeof app.mount !== "string"
+  ) {
+    throw new TypeError("Plugin app mount must be a string when provided.");
+  }
+
+  if (app.mount !== undefined && !app.mount.startsWith("/")) {
+    throw new TypeError("Plugin app mount must start with a leading slash.");
+  }
+
+  if ("domains" in app && app.domains !== undefined) {
+    if (!Array.isArray(app.domains)) {
+      throw new TypeError("Plugin app domains must be provided as an array.");
+    }
+
+    for (const entry of app.domains) {
+      if (typeof entry === "string") {
+        if (entry.length === 0) {
+          throw new TypeError("Plugin app domain entries must not be empty.");
+        }
+        continue;
+      }
+
+      if (!entry || typeof entry !== "object") {
+        throw new TypeError(
+          "Plugin app domain entries must be strings or binding objects.",
+        );
+      }
+
+      if (!entry.host || typeof entry.host !== "string") {
+        throw new TypeError(
+          "Plugin app domain bindings must include a string host.",
+        );
+      }
+    }
+  }
+
+  if (
+    "bundle" in app &&
+    app.bundle !== undefined &&
+    typeof app.bundle !== "string"
+  ) {
+    throw new TypeError("Plugin app bundle must be a string when provided.");
+  }
+
+  if (
+    "indexHtml" in app &&
+    app.indexHtml !== undefined &&
+    typeof app.indexHtml !== "string"
+  ) {
+    throw new TypeError(
+      "Plugin app indexHtml must be a string when provided.",
+    );
+  }
+
+  if ("mode" in app && app.mode !== undefined) {
+    if (app.mode !== "spa" && app.mode !== "mpa") {
+      throw new TypeError('Plugin app mode must be "spa" or "mpa".');
+    }
+  }
+
+  if (
+    "devUrl" in app &&
+    app.devUrl !== undefined &&
+    typeof app.devUrl !== "string"
+  ) {
+    throw new TypeError("Plugin app devUrl must be a string when provided.");
+  }
+}
+
+function freezePluginApp(
+  app: ZelavisPluginAppDefinition,
+): Readonly<ZelavisPluginAppDefinition> {
+  const frozenDomains = app.domains
+    ? Object.freeze(
+        app.domains.map((entry) =>
+          typeof entry === "string" ? entry : Object.freeze({ ...entry }),
+        ),
+      )
+    : app.domains;
+
+  return Object.freeze({
+    mount: app.mount,
+    domains: frozenDomains,
+    bundle: app.bundle,
+    indexHtml: app.indexHtml,
+    mode: app.mode,
+    devUrl: app.devUrl,
+  });
+}
+
 function validateExtensionTarget(target: ZelavisPluginExtensionTarget): void {
   if (!target || typeof target !== "object") {
     throw new TypeError("Plugin extension target must be an object.");
@@ -681,6 +852,10 @@ export function definePlugin<TContext = unknown>(
     validateExtensionPoints(definition.extensionPoints);
   }
 
+  if ("app" in definition && definition.app !== undefined) {
+    validatePluginApp(definition.app);
+  }
+
   const normalized = {
     name: definition.name,
     basePath: definition.basePath,
@@ -699,6 +874,7 @@ export function definePlugin<TContext = unknown>(
     // overrides this — see loadStoredPluginRegistryModules in index.ts.
     scope: definition.scope ?? "workspace",
     version: definition.version,
+    app: definition.app ? freezePluginApp(definition.app) : definition.app,
     extends: definition.extends
       ? Object.freeze({ ...definition.extends })
       : definition.extends,
@@ -889,6 +1065,24 @@ export function applyPluginRegistryState<TContext = unknown>(
   );
 }
 
+export interface ActivatePluginRegistryOptions {
+  /**
+   * Bundle store the plugin-app synthesizer reads from. When omitted,
+   * plugins that declare an `app` field are still mounted but their
+   * synthesized routes fall back to a 404 — i.e. the host has not
+   * configured static-asset serving. Provide a store (typically a
+   * {@link createSharedBundleStore} backed by `platform.resources.files`)
+   * for the routes to actually serve content.
+   */
+  bundleStore?: BundleStore;
+  /**
+   * Workspace ownership context for synthesized app services. The
+   * `BundleStore` uses this to key into per-tenant asset namespaces. For
+   * system-host activation (no multi-tenancy), leave undefined.
+   */
+  workspaceId?: string;
+}
+
 export async function activatePluginRegistry<
   TContext extends ZelavisPluginSetupContext = ZelavisPluginSetupContext,
 >(
@@ -897,6 +1091,7 @@ export async function activatePluginRegistry<
     TContext,
     "plugin" | "registry" | "children" | "services" | "addService" | "addServices"
   >,
+  options: ActivatePluginRegistryOptions = {},
 ): Promise<{
   registry: readonly Readonly<ZelavisPluginRegistryEntry<TContext>>[];
   services: readonly ZelavisAnyServiceInput[];
@@ -932,6 +1127,24 @@ export async function activatePluginRegistry<
 
     if (shouldMountPlugin(entry.plugin)) {
       addService(entry.plugin as unknown as ZelavisAnyServiceInput);
+    }
+
+    // Synthesize an asset-serving service for plugins that declare an
+    // `app`. Workspace-scoped plugins are forced under `/apps/<name>`
+    // here — `resolveEffectiveMount` reads `plugin.scope`, which the
+    // registration layer already pinned at load time.
+    if (entry.plugin.app && options.bundleStore) {
+      const appService = synthesizePluginAppService({
+        plugin: entry.plugin as Readonly<ZelavisPluginDefinition<unknown>>,
+        bundleStore: options.bundleStore,
+        workspaceId: options.workspaceId,
+        effectiveMount: resolveEffectiveMount(
+          entry.plugin as Readonly<ZelavisPluginDefinition<unknown>>,
+        ),
+      });
+      if (appService) {
+        addService(appService as unknown as ZelavisAnyServiceInput);
+      }
     }
 
     if (entry.plugin.services?.length) {

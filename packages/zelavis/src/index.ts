@@ -52,6 +52,8 @@ import {
   type ZelavisPluginSetupContext,
 } from "./plugin.js";
 export * from "./plugin.js";
+export * from "./bundle-store.js";
+import { createSharedBundleStore, type BundleStore } from "./bundle-store.js";
 export * from "./storage/s3.js";
 
 export * from "@zelavis/db";
@@ -471,6 +473,14 @@ export interface ZelavisServerOptions {
   servicePrefixes?: Record<string, string>;
   pathOverrides?: Record<string, string>;
   onError?: ZelavisServerErrorHandler;
+  /**
+   * Backing store for plugin `app` bundles. When omitted, the runtime
+   * tries to wrap `platform.resources.files` in a default
+   * `SharedBundleStore`. Plugins that declare an `app` field but have no
+   * `BundleStore` available will still mount, but their asset routes
+   * return 404 until a store is configured.
+   */
+  bundleStore?: BundleStore;
 }
 
 export interface ZelavisKeyValueStore {
@@ -3580,18 +3590,24 @@ export async function zelavis(
     completePluginRegistry,
     initialPluginRegistryState,
   );
-  const activatedPlugins = await activatePluginRegistry(pluginRegistry, {
-    rootPath,
-    api: {
-      prefix: apiPrefix,
-      version: apiVersion,
-      basePath: joinPathParts(rootPath, apiPrefix, apiVersion),
+  const activatedPlugins = await activatePluginRegistry(
+    pluginRegistry,
+    {
+      rootPath,
+      api: {
+        prefix: apiPrefix,
+        version: apiVersion,
+        basePath: joinPathParts(rootPath, apiPrefix, apiVersion),
+      },
+      platform: createPluginSetupPlatformContext(options.pluginContext?.platform),
+      core: {
+        ...(resolvedDatabaseApi ? { database: resolvedDatabaseApi } : {}),
+      },
     },
-    platform: createPluginSetupPlatformContext(options.pluginContext?.platform),
-    core: {
-      ...(resolvedDatabaseApi ? { database: resolvedDatabaseApi } : {}),
+    {
+      bundleStore: options.bundleStore,
     },
-  });
+  );
   const pluginServices = await Promise.all(activatedPlugins.services);
   assertNoReservedPluginServiceNames(pluginServices);
   const dashboardSettingsStore = resolveDashboardSettingsStore(
@@ -4004,12 +4020,21 @@ export class Zelavis {
         ...(serverOptions.plugins ?? {}),
         store: serverOptions.plugins?.store ?? this.pluginRegistryStore,
       };
+      // Default bundle store: wrap the adapter's file storage when present.
+      // Explicit user-provided `bundleStore` always wins. Without either,
+      // plugin `app` routes fall back to 404 — see ZelavisServerOptions.
+      const bundleStore =
+        serverOptions.bundleStore ??
+        (platformResources.files
+          ? createSharedBundleStore({ storage: platformResources.files })
+          : undefined);
       const runtime = await zelavis(
         {
           ...serverOptions,
           plugins,
           pluginPackageInstaller: platformResources.pluginPackages,
           pluginActivation: platformResources.plugins,
+          bundleStore,
           pluginContext: {
             ...resolved.serverOptions.pluginContext,
             platform: createPluginSetupPlatformContext(
