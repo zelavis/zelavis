@@ -3,7 +3,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import Database from "better-sqlite3";
 import {
   DatabaseConflictError,
   DatabaseRevisionMismatchError,
@@ -20,65 +19,6 @@ function createTempDatabasePath() {
     directory,
     filename: join(directory, "database.sqlite"),
   };
-}
-
-function createLegacyEventsTable(filename) {
-  const database = new Database(filename);
-
-  try {
-    database.exec(`
-      CREATE TABLE events (
-        sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL UNIQUE,
-        node_id TEXT NOT NULL,
-        tenant_id TEXT NOT NULL,
-        collection_name TEXT NOT NULL,
-        document_id TEXT,
-        type TEXT NOT NULL,
-        revision INTEGER NOT NULL,
-        timestamp TEXT NOT NULL,
-        schema_version INTEGER NOT NULL DEFAULT 1,
-        payload_json TEXT NOT NULL
-      );
-    `);
-  } finally {
-    database.close();
-  }
-}
-
-function createLegacyDocumentsTable(filename) {
-  const database = new Database(filename);
-
-  try {
-    database.exec(`
-      CREATE TABLE collections (
-        tenant_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        document_count INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY (tenant_id, name)
-      );
-
-      CREATE TABLE documents (
-        tenant_id TEXT NOT NULL,
-        collection_name TEXT NOT NULL,
-        id TEXT NOT NULL,
-        data_json TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        version INTEGER NOT NULL,
-        PRIMARY KEY (tenant_id, collection_name, id),
-        FOREIGN KEY (tenant_id, collection_name)
-          REFERENCES collections (tenant_id, name)
-          ON DELETE CASCADE
-      );
-
-      INSERT INTO collections (tenant_id, name, created_at, document_count)
-      VALUES ('default', 'products', '2026-01-01T00:00:00.000Z', 0);
-    `);
-  } finally {
-    database.close();
-  }
 }
 
 test("better-sqlite3 driver supports persistent tenant-aware document CRUD", async () => {
@@ -343,48 +283,6 @@ test("better-sqlite3 database uses typed conflict and revision errors", async ()
         return true;
       },
     );
-  } finally {
-    rmSync(temp.directory, { recursive: true, force: true });
-  }
-});
-
-test("better-sqlite3 database migrates legacy events table schemas", async () => {
-  const temp = createTempDatabasePath();
-
-  try {
-    createLegacyEventsTable(temp.filename);
-    const database = await createBetterSqlite3Database({
-      filename: temp.filename,
-    });
-    const eventColumns = await database.sql?.query({
-      statement: "PRAGMA table_info(events)",
-    });
-    const columnNames = (eventColumns?.rows ?? []).map((row) =>
-      String(row.name),
-    );
-
-    assert.equal(columnNames.includes("idempotency_key"), true);
-    assert.equal(columnNames.includes("schema_version"), true);
-  } finally {
-    rmSync(temp.directory, { recursive: true, force: true });
-  }
-});
-
-test("better-sqlite3 database migrates legacy documents table schemas", async () => {
-  const temp = createTempDatabasePath();
-
-  try {
-    createLegacyDocumentsTable(temp.filename);
-    const database = await createBetterSqlite3Database({
-      filename: temp.filename,
-    });
-    const created = await database.documents.insert({
-      collection: "products",
-      id: "product_1",
-      data: { name: "Migrated product" },
-    });
-
-    assert.equal(created.schemaVersion, 1);
   } finally {
     rmSync(temp.directory, { recursive: true, force: true });
   }

@@ -1,17 +1,12 @@
 /**
- * Shared SQLite-flavored DDL applied by every Zelavis SQLite-compatible
- * adapter (better-sqlite3, bun:sqlite, Cloudflare D1, libSQL).
+ * SQLite-flavored DDL applied by every Zelavis SQLite-compatible adapter
+ * (better-sqlite3, bun:sqlite, Cloudflare D1, libSQL).
  *
- * The schema is intentionally restricted to features supported by all four
- * dialects so each adapter can apply it without modification.
- *
- * The DDL is split into two phases so the legacy column migration step
- * (`migrations.ts`) can run between them: indexes that reference newer
- * columns (e.g. `events_tenant_idempotency_idx` on `idempotency_key`) need
- * those columns to exist first.
+ * Restricted to features supported by all four dialects so each adapter
+ * can apply the same statements without modification.
  */
 
-export const TABLE_STATEMENTS = [
+export const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS collections (
     tenant_id TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -79,9 +74,6 @@ export const TABLE_STATEMENTS = [
       point_index
     )
   )`,
-] as const;
-
-export const INDEX_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS documents_lookup_idx
     ON documents (tenant_id, collection_name, updated_at, id)`,
   `CREATE INDEX IF NOT EXISTS events_tenant_sequence_idx
@@ -103,17 +95,3 @@ export const INDEX_STATEMENTS = [
     ON events (tenant_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL`,
 ] as const;
-
-/**
- * Backwards-compatible combined export. New code should prefer the explicit
- * `TABLE_STATEMENTS` / `INDEX_STATEMENTS` split so the migration step can
- * slot between them.
- */
-export const SCHEMA_STATEMENTS = [
-  ...TABLE_STATEMENTS,
-  ...INDEX_STATEMENTS,
-] as const;
-
-export function schemaAsExecScript(): string {
-  return SCHEMA_STATEMENTS.join(";\n") + ";";
-}

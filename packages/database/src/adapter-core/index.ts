@@ -1,19 +1,10 @@
-export type {
-  SqliteGateway,
-  GatewayRunResult,
-} from "./gateway.js";
+export type { SqliteGateway, GatewayRunResult } from "./gateway.js";
 export {
   applySqliteCompatibleSchema,
   createSqliteCompatibleDriver,
   type CreateSqliteCompatibleDriverOptions,
 } from "./driver.js";
-export {
-  SCHEMA_STATEMENTS,
-  TABLE_STATEMENTS,
-  INDEX_STATEMENTS,
-  schemaAsExecScript,
-} from "./schema.js";
-export { applyLegacyColumnMigrations } from "./migrations.js";
+export { SCHEMA_STATEMENTS } from "./schema.js";
 export {
   buildDocumentQueryFragment,
   type DocumentQueryFragment,

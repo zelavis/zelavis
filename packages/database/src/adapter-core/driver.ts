@@ -46,7 +46,6 @@ import type {
 } from "../contracts/sql.js";
 import type { SqliteGateway } from "./gateway.js";
 import { buildDocumentQueryFragment } from "./json-query.js";
-import { applyLegacyColumnMigrations } from "./migrations.js";
 import {
   cloneJson,
   cloneRecord,
@@ -67,7 +66,7 @@ import {
   type SchemaRow,
   type TimeSeriesPointRow,
 } from "./mappers.js";
-import { INDEX_STATEMENTS, TABLE_STATEMENTS } from "./schema.js";
+import { SCHEMA_STATEMENTS } from "./schema.js";
 
 type TenantScoped<TInput extends { tenantId?: string }> = Omit<
   TInput,
@@ -129,28 +128,13 @@ function matchesIdempotentAppend<TPayload extends DatabaseEventPayload>(
 export async function applySqliteCompatibleSchema(
   gateway: SqliteGateway,
 ): Promise<void> {
-  // Phase 1: create tables. Done first so the legacy column migration in
-  // Phase 2 has something to ALTER.
   if (gateway.batch) {
-    await gateway.batch(TABLE_STATEMENTS.map((sql) => ({ sql })));
-  } else {
-    for (const statement of TABLE_STATEMENTS) {
-      await gateway.exec(statement);
-    }
+    await gateway.batch(SCHEMA_STATEMENTS.map((sql) => ({ sql })));
+    return;
   }
 
-  // Phase 2: bring older databases forward by adding any columns added in
-  // later Zelavis releases.
-  await applyLegacyColumnMigrations(gateway);
-
-  // Phase 3: create indexes (including partial indexes that reference
-  // columns added by the migration above).
-  if (gateway.batch) {
-    await gateway.batch(INDEX_STATEMENTS.map((sql) => ({ sql })));
-  } else {
-    for (const statement of INDEX_STATEMENTS) {
-      await gateway.exec(statement);
-    }
+  for (const statement of SCHEMA_STATEMENTS) {
+    await gateway.exec(statement);
   }
 }
 
