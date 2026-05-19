@@ -40,6 +40,11 @@ test-results/
 # Runtime data
 .zelavis/
 
+# Claude local state
+.claude/*
+!.claude/skills/
+!.claude/skills/**
+
 # Wrangler local state
 .wrangler/
 
