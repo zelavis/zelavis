@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { defineService, resolveMountedEndpoints } from "../dist/index.js";
+import { resolveMountedEndpoints } from "../dist/index.js";
 
 const noopHandler = () => ({ status: 204 });
 
 function createService(overrides = {}) {
-  return defineService({
+  return {
     name: "catalog",
     basePath: "/commerce/",
     service: { id: "catalog-api" },
@@ -34,7 +34,7 @@ function createService(overrides = {}) {
       ],
     },
     ...overrides,
-  });
+  };
 }
 
 test("resolveMountedEndpoints normalizes prefixes, service paths, and route paths", () => {
@@ -91,7 +91,7 @@ test("resolveMountedEndpoints skips services without routes for the selected ver
 });
 
 test("resolveMountedEndpoints recursively mounts nested services", () => {
-  const service = defineService({
+  const service = {
     name: "database",
     basePath: "database",
     service: {},
@@ -106,7 +106,7 @@ test("resolveMountedEndpoints recursively mounts nested services", () => {
       ],
     },
     services: [
-      defineService({
+      {
         name: "documents",
         basePath: "documents",
         service: {},
@@ -120,9 +120,9 @@ test("resolveMountedEndpoints recursively mounts nested services", () => {
             },
           ],
         },
-      }),
+      },
     ],
-  });
+  };
 
   const routes = resolveMountedEndpoints([service], {
     prefix: "/api",

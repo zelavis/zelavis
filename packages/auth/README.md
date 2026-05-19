@@ -64,7 +64,7 @@ const result = await auth.authentication.authenticate("email-password", {
 
 The main service-definition entrypoint lives in
 [packages/auth/src/auth-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/auth/src/auth-service.ts),
-so package authors can immediately see the `defineService({ ... })` shape in one place.
+so package authors can immediately see the `ZelavisService` shape in one place.
 
 In the default flow, no auth-specific server plugin is required. `authService()` can be passed directly to `zelavisServer(...)`, and routing is configured centrally via `prefix`, `servicePrefixes`, and `pathOverrides`.
 

@@ -54,20 +54,20 @@ export * from "./stripe-plugin.js";
 
 That gives package authors one obvious place to open first, while keeping imports ergonomic.
 
-## Rule 3: Use `defineService(...)` for mounted runtime services
+## Rule 3: Use plain object literals for mounted runtime services
 
-`defineService(...)` is the low-level builder for runtime-mounted services.
+Runtime-mounted services are plain `ZelavisService` objects. There is no wrapper function — just write the object directly.
 
-The package-level definition file should wrap that builder with the package's real semantics:
+The package-level definition file should expose a factory that returns the service shape:
 
 ```ts
-import { defineService, type ZelavisService } from "@zelavis/server";
+import type { ZelavisService } from "@zelavis/server";
 import type { AuthApi } from "./core/types.js";
 
 export type AuthServiceDefinition = ZelavisService<AuthApi>;
 
 export function defineAuthService(auth: AuthApi): AuthServiceDefinition {
-  return defineService({
+  return {
     name: "auth",
     basePath: "/auth",
     service: auth,
@@ -76,11 +76,11 @@ export function defineAuthService(auth: AuthApi): AuthServiceDefinition {
         // routes
       ],
     },
-  });
+  };
 }
 ```
 
-That wrapper is not accidental extra abstraction.
+That factory is not accidental extra abstraction.
 
 It is the package's concrete service-definition entrypoint:
 
@@ -288,7 +288,6 @@ Use this for focused provider packages and optional extension packages.
 
 Prefer these names:
 
-- `defineService(...)`
 - `defineAuthService(...)`
 - `defineDatabaseService(...)`
 - `definePlugin(...)`

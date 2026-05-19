@@ -1,25 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { defineService, zelavisServer } from "../dist/index.js";
+import { zelavisServer } from "../dist/index.js";
 
 test("zelavisServer resolves promised services and returns service map plus routes", async () => {
   const serviceApi = { version: "test" };
-  const service = Promise.resolve(
-    defineService({
-      name: "orders",
-      service: serviceApi,
-      api: {
-        v1: [
-          {
-            id: "orders.list",
-            method: "GET",
-            path: "/",
-            handler: () => ({ body: [] }),
-          },
-        ],
-      },
-    }),
-  );
+  const service = Promise.resolve({
+    name: "orders",
+    service: serviceApi,
+    api: {
+      v1: [
+        {
+          id: "orders.list",
+          method: "GET",
+          path: "/",
+          handler: () => ({ body: [] }),
+        },
+      ],
+    },
+  });
   const onError = () => ({ status: 500 });
 
   const runtime = await zelavisServer({
@@ -42,28 +40,26 @@ test("zelavisServer resolves promised services and returns service map plus rout
 });
 
 test("zelavisServer resolves promised nested services without adding them to the top-level service map", async () => {
-  const child = Promise.resolve(
-    defineService({
-      name: "child",
-      service: { nested: true },
-      api: {
-        v1: [
-          {
-            id: "parent.child",
-            method: "GET",
-            path: "/",
-            handler: () => ({ status: 204 }),
-          },
-        ],
-      },
-    }),
-  );
-  const parent = defineService({
+  const child = Promise.resolve({
+    name: "child",
+    service: { nested: true },
+    api: {
+      v1: [
+        {
+          id: "parent.child",
+          method: "GET",
+          path: "/",
+          handler: () => ({ status: 204 }),
+        },
+      ],
+    },
+  });
+  const parent = {
     name: "parent",
     service: { root: true },
     api: {},
     services: [child],
-  });
+  };
   const runtime = await zelavisServer({
     services: [parent],
   });
@@ -78,7 +74,7 @@ test("zelavisServer resolves promised nested services without adding them to the
 test("zelavisServer exposes fetch and plain handlers without requiring a mount adapter", async () => {
   const runtime = await zelavisServer({
     services: [
-      defineService({
+      {
         name: "demo",
         service: { label: "plain" },
         api: {
@@ -99,7 +95,7 @@ test("zelavisServer exposes fetch and plain handlers without requiring a mount a
             },
           ],
         },
-      }),
+      },
     ],
     prefix: "/api",
   });
@@ -148,7 +144,7 @@ test("zelavisServer exposes fetch and plain handlers without requiring a mount a
 test("zelavisServer parses multipart payloads and preserves repeated response headers", async () => {
   const runtime = await zelavisServer({
     services: [
-      defineService({
+      {
         name: "demo",
         service: {},
         api: {
@@ -174,7 +170,7 @@ test("zelavisServer parses multipart payloads and preserves repeated response he
             },
           ],
         },
-      }),
+      },
     ],
   });
 
@@ -211,7 +207,7 @@ test("zelavisServer parses multipart payloads and preserves repeated response he
 test("zelavisServer prefers an exact route over a wildcard sibling", async () => {
   const runtime = await zelavisServer({
     services: [
-      defineService({
+      {
         name: "demo",
         service: {},
         api: {
@@ -236,7 +232,7 @@ test("zelavisServer prefers an exact route over a wildcard sibling", async () =>
             },
           ],
         },
-      }),
+      },
     ],
   });
 

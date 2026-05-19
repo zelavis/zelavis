@@ -1,5 +1,4 @@
 import {
-  defineService,
   type ZelavisAnyServiceInput,
   type ZelavisServerRoute,
   type ZelavisService,
@@ -682,7 +681,7 @@ export function definePlugin<TContext = unknown>(
     validateExtensionPoints(definition.extensionPoints);
   }
 
-  const normalized = defineService({
+  const normalized = {
     name: definition.name,
     basePath: definition.basePath,
     api: definition.api ?? {},
@@ -691,7 +690,7 @@ export function definePlugin<TContext = unknown>(
     services: definition.services
       ? Object.freeze([...definition.services])
       : definition.services,
-  }) as ZelavisService<unknown> & ZelavisPluginDefinition<TContext>;
+  } as ZelavisService<unknown> & ZelavisPluginDefinition<TContext>;
 
   return Object.freeze({
     ...normalized,
@@ -710,14 +709,6 @@ export function definePlugin<TContext = unknown>(
   });
 }
 
-/**
- * @deprecated Use `definePlugin` instead. `defineService` remains available
- * as a low-level escape hatch for cases where the full plugin lifecycle is not
- * needed, but the recommended path is a single `definePlugin` call for all
- * units — the activation layer determines capabilities from the registration
- * path, not from which define function was used.
- */
-export { defineService } from "@zelavis/server";
 
 export function createPluginRegistry<TContext = unknown>(
   entries: readonly ZelavisPluginRegistryEntry<TContext>[],

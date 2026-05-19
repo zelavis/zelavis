@@ -59,22 +59,20 @@ There is no separate `defineCoreService(...)` helper today.
 The pattern is:
 
 1. A package exposes a normal server-service factory.
-2. That factory uses `defineService(...)`.
+2. That factory returns a plain `ZelavisService` object literal.
 3. The high-level `zelavis(...)` runtime decides when to call that factory and include the result as a built-in core service.
 
 For example:
 
 - database package factory:
   [packages/db/src/database-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/db/src/database-service.ts)
-- low-level service helper:
-  [packages/server/src/core/define-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/server/src/core/define-service.ts)
 - high-level runtime assembly:
   [packages/zelavis/src/index.ts](/Users/ivanjeremicx/Projects/zelavis/packages/zelavis/src/index.ts)
 
 Concretely:
 
 - `@zelavis/db` exports `defineDatabaseService(database)`
-- that function returns `defineService({ ... })`
+- that function returns a plain `{ name, basePath, service, api }` object
 - then `zelavis(...)` calls `resolveDatabaseCoreService(...)`, wraps the returned database API with `defineDatabaseService(...)`, and adds it to the built-in core service list
 
 The same shape is used for auth, dashboard, website, and storage.
