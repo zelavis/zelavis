@@ -18,6 +18,13 @@ Today, Zelavis is still foundation-first. It already has working packages for au
 
 This repository is intended for developers building custom software, internal tools, multi-tenant backends, CMS systems, platform services, plugins, and reusable infrastructure components.
 
+## Community Files
+
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- [SECURITY.md](SECURITY.md)
+- [MAINTAINERS.md](MAINTAINERS.md)
+
 ## Current shape
 
 Zelavis currently focuses on these platform layers:
@@ -239,10 +246,9 @@ That keeps the default branch honest without forcing every package and example i
 
 Dependabot is also configured for weekly npm and GitHub Actions update PRs, and a companion workflow enables squash auto-merge for safe patch and minor Dependabot updates after checks pass.
 
-Two GitHub repository settings still need to be enabled manually in the web UI:
-
-- branch protection on `main` that requires the `CI` workflow to pass
-- repository-level auto-merge support, so Dependabot PRs can enter the merge queue automatically
+The repository currently uses protected `main`, repository-level auto-merge,
+private vulnerability reporting, issue forms, and GitHub Discussions to keep
+collaboration orderly as the project grows.
 
 ## Usage Example
 

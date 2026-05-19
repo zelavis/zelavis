@@ -1,0 +1,27 @@
+# Default owner for the whole repository.
+* @ivanjeremic
+
+# Core platform packages
+/packages/server/ @ivanjeremic
+/packages/database/ @ivanjeremic
+/packages/auth/ @ivanjeremic
+/packages/zelavis/ @ivanjeremic
+/packages/ui/ @ivanjeremic
+
+# Official plugin surface
+/plugins/ @ivanjeremic
+
+# Examples and website
+/examples/ @ivanjeremic
+/website/ @ivanjeremic
+
+# Repository process and security
+/.github/ @ivanjeremic
+/README.md @ivanjeremic
+/CONTRIBUTING.md @ivanjeremic
+/SECURITY.md @ivanjeremic
+/CODE_OF_CONDUCT.md @ivanjeremic
+/MAINTAINERS.md @ivanjeremic
+/package.json @ivanjeremic
+/pnpm-lock.yaml @ivanjeremic
+/pnpm-workspace.yaml @ivanjeremic
