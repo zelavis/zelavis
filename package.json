@@ -15,6 +15,7 @@
     "changeset": "changeset",
     "changeset:add": "node scripts/create-changeset.mjs",
     "docs:check": "node scripts/check-docs.mjs",
+    "clean:db": "node scripts/clean-databases.mjs",
     "plugin:ecommerce:build": "pnpm --filter @zelavis/ecommerce build",
     "example:plugin-basic:build": "pnpm install --filter @zelavis/example-plugin-basic && pnpm --filter @zelavis/example-plugin-basic build",
     "example:plugin-basic:package": "pnpm install --filter @zelavis/example-plugin-basic && pnpm --filter @zelavis/example-plugin-basic package",
