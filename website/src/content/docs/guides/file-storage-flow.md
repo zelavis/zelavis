@@ -49,7 +49,7 @@ After the upload, Zelavis gives you:
 Use the database schema helpers when the field is meant to store a file reference:
 
 ```ts
-import { createDatabase, imageFileSchema } from "@zelavis/database";
+import { createDatabase, imageFileSchema } from "@zelavis/db";
 
 const database = createDatabase();
 

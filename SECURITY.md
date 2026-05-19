@@ -30,7 +30,7 @@ and coordinate a fix before public disclosure when that is appropriate.
 Security reports are especially useful for:
 
 - `packages/server`
-- `packages/database`
+- `packages/db`
 - `packages/auth`
 - `packages/zelavis`
 - `packages/ui`

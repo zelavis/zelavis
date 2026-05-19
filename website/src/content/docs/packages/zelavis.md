@@ -58,7 +58,7 @@ The dashboard stays mounted under the configured root path, while API services s
 Use scoped packages directly when you need lower-level control over primitives, adapters, or tests:
 
 - `@zelavis/server`
-- `@zelavis/database`
+- `@zelavis/db`
 - `@zelavis/auth`
 
 The lower-level `zelavis()` function still exists for direct runtime composition, but the main public application-facing entry point is the `Zelavis` class plus an environment adapter.
@@ -81,5 +81,5 @@ Framework utilities (small wrappers around `zelavis.fetch`) live at:
 
 - [First Runtime](../getting-started/first-runtime.md)
 - [@zelavis/server](./server.md)
-- [@zelavis/database](./database.md)
+- [@zelavis/db](./database.md)
 - [@zelavis/auth](./auth.md)

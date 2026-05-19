@@ -2,7 +2,7 @@
 
 `zelavis` is the high-level runtime package for the Zelavis backend platform.
 
-Use this package when building an application or service with Zelavis and you want the default platform building blocks wired together for you. Lower-level packages such as `@zelavis/server`, `@zelavis/database`, and `@zelavis/auth` remain available when you need direct access to the primitives.
+Use this package when building an application or service with Zelavis and you want the default platform building blocks wired together for you. Lower-level packages such as `@zelavis/server`, `@zelavis/db`, and `@zelavis/auth` remain available when you need direct access to the primitives.
 
 Today, that mostly means auth, database, website delivery, server mounting, and dashboard delivery under one runtime entry point.
 
@@ -44,7 +44,7 @@ export function GET(request: Request) {
 Use scoped packages when building lower-level primitives, adapters, plugins, or tests that need direct package APIs:
 
 ```ts
-import { createDatabase } from "@zelavis/database";
+import { createDatabase } from "@zelavis/db";
 import { createPlugin } from "zelavis";
 import { defineService } from "@zelavis/server";
 import { authService } from "@zelavis/auth";

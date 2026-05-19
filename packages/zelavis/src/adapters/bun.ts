@@ -49,7 +49,7 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
 
       if (options.database !== false) {
         const { createBunSqliteDatabaseDriver } = await import(
-          "@zelavis/database-bun-sqlite"
+          "@zelavis/db-bun-sqlite"
         );
         const databaseOptions = options.database ?? {};
         nextCoreServices.database = {

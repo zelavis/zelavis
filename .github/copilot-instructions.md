@@ -12,7 +12,7 @@ Zelavis is an early-stage backend platform built as a pnpm workspace of composab
 
 - `zelavis` is the high-level runtime package.
 - `@zelavis/server` owns the shared service and route mounting contracts.
-- `@zelavis/database` owns the database core.
+- `@zelavis/db` owns the database core.
 - `@zelavis/auth` owns the auth core.
 - `@zelavis/ui` owns the dashboard UI.
 

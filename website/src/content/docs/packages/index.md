@@ -7,7 +7,7 @@ Likely pages:
 
 - `zelavis`
 - `@zelavis/server`
-- `@zelavis/database`
+- `@zelavis/db`
 - `@zelavis/auth`
 - `@zelavis/ui`
 
@@ -19,5 +19,5 @@ Keep package-specific installation and quick usage in each package README, and u
 
 - [zelavis](./zelavis.md)
 - [@zelavis/server](./server.md)
-- [@zelavis/database](./database.md)
+- [@zelavis/db](./database.md)
 - [@zelavis/auth](./auth.md)

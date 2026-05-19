@@ -16,8 +16,8 @@
       "@zelavis/auth": [
         "packages/auth/src/index.ts"
       ],
-      "@zelavis/database": [
-        "packages/database/src/index.ts"
+      "@zelavis/db": [
+        "packages/db/src/index.ts"
       ],
       "@zelavis/ecommerce": [
         "plugins/ecommerce/src/index.ts"
@@ -32,7 +32,7 @@
         "packages/server/src/index.ts"
       ],
       "bun:sqlite": [
-        "packages/database/adapters/bun-sqlite/src/bun-sqlite.d.ts"
+        "packages/db/adapters/bun-sqlite/src/bun-sqlite.d.ts"
       ],
       "zelavis": [
         "packages/zelavis/src/index.ts"

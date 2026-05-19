@@ -37,7 +37,7 @@ file: {
 }
 ```
 
-or use the small helpers from `@zelavis/database`:
+or use the small helpers from `@zelavis/db`:
 
 ```ts
 import {
@@ -45,7 +45,7 @@ import {
   fileSchema,
   imageFileSchema,
   richTextHtmlSchema,
-} from "@zelavis/database";
+} from "@zelavis/db";
 
 await database.schemas.register({
   collection: "products",
@@ -110,5 +110,5 @@ You can:
 
 ## Related docs
 
-- [@zelavis/database](../packages/database.md)
+- [@zelavis/db](../packages/db.md)
 - [Adapters and Fetch-Native Hosts](./adapters-and-fetch-native.md)

@@ -341,7 +341,7 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/database:
+  packages/db:
     dependencies:
       '@zelavis/server':
         specifier: workspace:*
@@ -351,22 +351,22 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/database/adapters/bun-sqlite:
+  packages/db/adapters/bun-sqlite:
     dependencies:
-      '@zelavis/database':
+      '@zelavis/db':
         specifier: workspace:*
         version: link:../..
     devDependencies:
       '@types/node':
         specifier: ^24.11.0
-        version: 24.11.0
+        version: 24.12.4
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/database/adapters/cloudflare-d1:
+  packages/db/adapters/cloudflare-d1:
     dependencies:
-      '@zelavis/database':
+      '@zelavis/db':
         specifier: workspace:*
         version: link:../..
     devDependencies:
@@ -380,12 +380,12 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/database/adapters/libsql:
+  packages/db/adapters/libsql:
     dependencies:
       '@libsql/client':
         specifier: ^0.15.0
         version: 0.15.15
-      '@zelavis/database':
+      '@zelavis/db':
         specifier: workspace:*
         version: link:../..
     devDependencies:
@@ -396,9 +396,9 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/database/adapters/node-sqlite:
+  packages/db/adapters/node-sqlite:
     dependencies:
-      '@zelavis/database':
+      '@zelavis/db':
         specifier: workspace:*
         version: link:../..
       better-sqlite3:
@@ -410,7 +410,7 @@ importers:
         version: 7.6.13
       '@types/node':
         specifier: ^24.11.0
-        version: 24.11.0
+        version: 24.12.4
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
@@ -565,18 +565,18 @@ importers:
       '@zelavis/auth':
         specifier: workspace:*
         version: link:../auth
-      '@zelavis/database':
+      '@zelavis/db':
         specifier: workspace:*
-        version: link:../database
-      '@zelavis/database-bun-sqlite':
+        version: link:../db
+      '@zelavis/db-bun-sqlite':
         specifier: workspace:*
-        version: link:../database/adapters/bun-sqlite
-      '@zelavis/database-cloudflare-d1':
+        version: link:../db/adapters/bun-sqlite
+      '@zelavis/db-cloudflare-d1':
         specifier: workspace:*
-        version: link:../database/adapters/cloudflare-d1
-      '@zelavis/database-node-sqlite':
+        version: link:../db/adapters/cloudflare-d1
+      '@zelavis/db-node-sqlite':
         specifier: workspace:*
-        version: link:../database/adapters/node-sqlite
+        version: link:../db/adapters/node-sqlite
       '@zelavis/ecommerce':
         specifier: workspace:*
         version: link:../../plugins/ecommerce
@@ -608,9 +608,9 @@ importers:
 
   plugins/ecommerce:
     dependencies:
-      '@zelavis/database':
+      '@zelavis/db':
         specifier: workspace:*
-        version: link:../../packages/database
+        version: link:../../packages/db
       '@zelavis/server':
         specifier: workspace:*
         version: link:../../packages/server

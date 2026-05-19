@@ -4,7 +4,7 @@ const nextConfig: NextConfig = {
   transpilePackages: [
     "zelavis",
     "@zelavis/auth",
-    "@zelavis/database",
+    "@zelavis/db",
     "@zelavis/server",
   ],
 };

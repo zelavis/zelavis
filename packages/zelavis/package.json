@@ -75,7 +75,7 @@
     }
   },
   "scripts": {
-    "build": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/database build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/ui build && node scripts/copy-dashboard.mjs && tsc -p tsconfig.json",
+    "build": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/db build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/ui build && node scripts/copy-dashboard.mjs && tsc -p tsconfig.json",
     "build:runtime": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm run build && pnpm --filter @zelavis/ecommerce build && node --test test/*.test.mjs"
@@ -97,10 +97,10 @@
   },
   "dependencies": {
     "@zelavis/auth": "workspace:*",
-    "@zelavis/database": "workspace:*",
-    "@zelavis/database-bun-sqlite": "workspace:*",
-    "@zelavis/database-cloudflare-d1": "workspace:*",
-    "@zelavis/database-node-sqlite": "workspace:*",
+    "@zelavis/db": "workspace:*",
+    "@zelavis/db-bun-sqlite": "workspace:*",
+    "@zelavis/db-cloudflare-d1": "workspace:*",
+    "@zelavis/db-node-sqlite": "workspace:*",
     "@zelavis/ecommerce": "workspace:*",
     "@zelavis/server": "workspace:*"
   },

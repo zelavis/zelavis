@@ -1,6 +1,6 @@
 ---
 name: zelavis-core-platform
-description: Use when changing Zelavis core packages such as zelavis, @zelavis/server, @zelavis/database, or @zelavis/auth, especially for service boundaries, adapters vs plugins, public API shape, and runtime-neutral architecture decisions.
+description: Use when changing Zelavis core packages such as zelavis, @zelavis/server, @zelavis/db, or @zelavis/auth, especially for service boundaries, adapters vs plugins, public API shape, and runtime-neutral architecture decisions.
 ---
 
 # Zelavis Core Platform
@@ -9,7 +9,7 @@ Use this skill for changes in:
 
 - `packages/zelavis`
 - `packages/server`
-- `packages/database`
+- `packages/db`
 - `packages/auth`
 
 Start by reading `AGENTS.md` and the relevant package README before editing.
@@ -38,7 +38,7 @@ Run the smallest useful checks first, then broaden as needed:
 ```bash
 pnpm --filter zelavis test
 pnpm --filter @zelavis/server test
-pnpm --filter @zelavis/database test
+pnpm --filter @zelavis/db test
 pnpm --filter @zelavis/auth test
 pnpm check
 ```

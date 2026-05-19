@@ -6,9 +6,9 @@
     [
       "zelavis",
       "@zelavis/server",
-      "@zelavis/database",
-      "@zelavis/database-node-sqlite",
-      "@zelavis/database-bun-sqlite",
+      "@zelavis/db",
+      "@zelavis/db-node-sqlite",
+      "@zelavis/db-bun-sqlite",
       "@zelavis/auth",
       "@zelavis/auth-email-password",
       "@zelavis/auth-username-password"
