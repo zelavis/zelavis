@@ -29,7 +29,7 @@ Today, the most important packages are:
 
 - [packages/zelavis](packages/zelavis)
 - [packages/server](packages/server)
-- [packages/database](packages/database)
+- [packages/db](packages/db)
 - [packages/auth](packages/auth)
 - [packages/ui](packages/ui)
 

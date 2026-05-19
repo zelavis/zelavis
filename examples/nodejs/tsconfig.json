@@ -16,8 +16,8 @@
       "@zelavis/auth": [
         "packages/auth/src/index.ts"
       ],
-      "@zelavis/database": [
-        "packages/database/src/index.ts"
+      "@zelavis/db": [
+        "packages/db/src/index.ts"
       ],
       "@zelavis/ecommerce": [
         "plugins/ecommerce/src/index.ts"

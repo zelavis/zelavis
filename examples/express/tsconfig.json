@@ -11,7 +11,7 @@
     "typeRoots": ["packages/server/node_modules/@types", "node_modules/@types"],
     "paths": {
       "@zelavis/auth": ["packages/auth/src/index.ts"],
-      "@zelavis/database": ["packages/database/src/index.ts"],
+      "@zelavis/db": ["packages/db/src/index.ts"],
       "@zelavis/ecommerce": ["plugins/ecommerce/src/index.ts"],
       "@zelavis/ecommerce-paypal": [
         "plugins/ecommerce/plugins/paypal/src/index.ts"

@@ -15,7 +15,7 @@ import {
   type DatabaseApi,
   type DatabaseJsonObject,
   DatabaseNotFoundError,
-} from "@zelavis/database";
+} from "@zelavis/db";
 import {
   createMappedJsonErrorResponse,
   defineService,
@@ -55,7 +55,7 @@ import {
 export * from "./plugin.js";
 export * from "./storage/s3.js";
 
-export * from "@zelavis/database";
+export * from "@zelavis/db";
 export {
   defineService,
   type ZelavisAnyServiceInput,

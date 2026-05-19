@@ -20,7 +20,7 @@ Maintainers are responsible for:
 ## Ownership Areas
 
 - `packages/server` — service contracts, adapters, routing model
-- `packages/database` — database core, storage contracts, adapters
+- `packages/db` — database core, storage contracts, adapters
 - `packages/auth` — auth core, plugins, auth-facing server surfaces
 - `packages/zelavis` — composed runtime, embedded dashboard delivery
 - `packages/ui` — dashboard UX and frontend architecture

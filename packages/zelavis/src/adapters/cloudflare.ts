@@ -531,7 +531,7 @@ export function cloudflareAdapter(options: CloudflareAdapterOptions) {
 
       {
         const { createCloudflareD1DatabaseDriver } = await import(
-          "@zelavis/database-cloudflare-d1"
+          "@zelavis/db-cloudflare-d1"
         );
         nextCoreServices.database = {
           defaultTenantId: options.defaultTenantId,

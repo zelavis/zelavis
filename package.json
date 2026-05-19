@@ -10,7 +10,7 @@
     "audit:security:full": "pnpm audit --audit-level=low",
     "build": "pnpm -r --filter './packages/*' --filter './plugins/*' --filter './plugins/*/adapters/*' --filter './plugins/*/plugins/*' --filter './packages/*/adapters/*' --filter './packages/*/plugins/*' --if-present build",
     "check": "pnpm run typecheck",
-    "ci:runtime": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/database build && pnpm --filter @zelavis/database-node-sqlite build && pnpm --filter @zelavis/database-bun-sqlite build && pnpm --filter @zelavis/database-cloudflare-d1 build && pnpm --filter @zelavis/ecommerce build && pnpm check && pnpm --filter zelavis test",
+    "ci:runtime": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/db build && pnpm --filter @zelavis/db-node-sqlite build && pnpm --filter @zelavis/db-bun-sqlite build && pnpm --filter @zelavis/db-cloudflare-d1 build && pnpm --filter @zelavis/ecommerce build && pnpm check && pnpm --filter zelavis test",
     "ci:ui": "pnpm --filter @zelavis/ui typecheck && ZELAVIS_UI_BASE_PATH=/zelavis/ pnpm --filter @zelavis/ui exec playwright test --project=desktop",
     "changeset": "changeset",
     "changeset:add": "node scripts/create-changeset.mjs",

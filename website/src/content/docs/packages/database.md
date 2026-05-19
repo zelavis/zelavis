@@ -1,7 +1,7 @@
 ---
-title: "@zelavis/database"
+title: "@zelavis/db"
 ---
-`@zelavis/database` provides the core database contracts and document primitives for Zelavis.
+`@zelavis/db` provides the core database contracts and document primitives for Zelavis.
 
 ## Current role
 

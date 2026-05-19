@@ -16,7 +16,7 @@ Core platform work currently centers on:
 
 - `zelavis`
 - `@zelavis/server`
-- `@zelavis/database`
+- `@zelavis/db`
 - `@zelavis/auth`
 - `@zelavis/ui`
 
@@ -38,7 +38,7 @@ The repo still contains domain packages such as `@zelavis/ecommerce`, but they a
 - `plugins/*` contains official user-installable Zelavis plugins.
 - `packages/zelavis` is the high-level runtime package that composes core services.
 - `packages/server` defines the shared service and route mounting model.
-- `packages/database` contains the document-first database core and server-facing database service.
+- `packages/db` contains the document-first database core and server-facing database service.
 - `packages/auth` contains the low-level auth core and auth method plugins.
 - `packages/ui` contains the admin/dashboard UI used by the runtime package.
 - `packages/*/adapters/*` contains framework or external-system adapters.

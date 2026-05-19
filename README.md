@@ -45,12 +45,12 @@ Current packages:
 
 - [packages/zelavis](packages/zelavis)
   The high-level runtime package. It composes core services such as auth, database, and dashboard delivery, and re-exports server adapters.
-- [packages/database](packages/database)
+- [packages/db](packages/db)
   A document-first, tenant-aware database core with an in-memory driver, optional SQL capability, and a mountable server service.
-- [packages/database/adapters/bun-sqlite](packages/database/adapters/bun-sqlite)
-  A Bun SQLite adapter package for `@zelavis/database` using the built-in `bun:sqlite` module.
-- [packages/database/adapters/node-sqlite](packages/database/adapters/node-sqlite)
-  A Node.js SQLite adapter package for `@zelavis/database` using `better-sqlite3`.
+- [packages/db/adapters/bun-sqlite](packages/db/adapters/bun-sqlite)
+  A Bun SQLite adapter package for `@zelavis/db` using the built-in `bun:sqlite` module.
+- [packages/db/adapters/node-sqlite](packages/db/adapters/node-sqlite)
+  A Node.js SQLite adapter package for `@zelavis/db` using `better-sqlite3`.
 - [packages/auth](packages/auth)
   A low-level authentication core for accounts, credentials, sessions, and opt-in auth method plugins.
 - [packages/server](packages/server)
@@ -126,7 +126,7 @@ That moves the dashboard and APIs together:
 /admin/api/v1/database
 ```
 
-Use scoped packages such as `@zelavis/server`, `@zelavis/database`, and `@zelavis/auth` when building lower-level primitives, adapters, plugins, or tests that need direct package APIs.
+Use scoped packages such as `@zelavis/server`, `@zelavis/db`, and `@zelavis/auth` when building lower-level primitives, adapters, plugins, or tests that need direct package APIs.
 
 ## Core Services
 
@@ -177,11 +177,11 @@ Current architecture includes:
 - Tenant-aware document collections.
 - A document API for create, read, query, update, and delete operations.
 - An in-memory driver for development and tests.
-- An optional SQL capability contract plus a Bun SQLite adapter via `@zelavis/database-bun-sqlite`.
-- An optional SQL capability contract plus a Node SQLite adapter via `@zelavis/database-node-sqlite`.
+- An optional SQL capability contract plus a Bun SQLite adapter via `@zelavis/db-bun-sqlite`.
+- An optional SQL capability contract plus a Node SQLite adapter via `@zelavis/db-node-sqlite`.
 - `defineDatabaseService(database)` for mounting database routes through `@zelavis/server`, with documents exposed as a nested service.
 
-The core implementation is intentionally portable and does not depend on `unstorage` or native SQLite bindings. Durable database drivers should be supplied by platform adapters such as `@zelavis/database-bun-sqlite`, `@zelavis/database-node-sqlite`, or future `@zelavis/adapter-cloudflare` and `@zelavis/adapter-turso` packages.
+The core implementation is intentionally portable and does not depend on `unstorage` or native SQLite bindings. Durable database drivers should be supplied by platform adapters such as `@zelavis/db-bun-sqlite`, `@zelavis/db-node-sqlite`, or future `@zelavis/adapter-cloudflare` and `@zelavis/adapter-turso` packages.
 
 ## Error Model
 

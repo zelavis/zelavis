@@ -65,7 +65,7 @@ The pattern is:
 For example:
 
 - database package factory:
-  [packages/database/src/database-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/database/src/database-service.ts)
+  [packages/db/src/database-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/db/src/database-service.ts)
 - low-level service helper:
   [packages/server/src/core/define-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/server/src/core/define-service.ts)
 - high-level runtime assembly:
@@ -73,7 +73,7 @@ For example:
 
 Concretely:
 
-- `@zelavis/database` exports `defineDatabaseService(database)`
+- `@zelavis/db` exports `defineDatabaseService(database)`
 - that function returns `defineService({ ... })`
 - then `zelavis(...)` calls `resolveDatabaseCoreService(...)`, wraps the returned database API with `defineDatabaseService(...)`, and adds it to the built-in core service list
 
@@ -85,7 +85,7 @@ So the “core” part is not a special helper. The “core” part is that the 
 
 This gives Zelavis two useful properties:
 
-- packages like `@zelavis/database` stay independently usable
+- packages like `@zelavis/db` stay independently usable
 - the high-level runtime can still reserve extra privileges for built-in core services
 
 That means the service factory itself can stay ordinary, while the runtime decides which services are privileged built-ins.

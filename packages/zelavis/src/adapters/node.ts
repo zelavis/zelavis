@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { inflateRawSync } from "node:zlib";
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { createBetterSqlite3DatabaseDriver } from "@zelavis/database-node-sqlite";
+import { createBetterSqlite3DatabaseDriver } from "@zelavis/db-node-sqlite";
 import {
   createFileStoragePluginRegistryStore,
   defineAdapter,

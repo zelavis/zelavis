@@ -16,7 +16,7 @@ For core packages, the service definition should live in a named file near the t
 Examples:
 
 - [packages/auth/src/auth-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/auth/src/auth-service.ts)
-- [packages/database/src/database-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/database/src/database-service.ts)
+- [packages/db/src/database-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/db/src/database-service.ts)
 
 For plugin packages, the plugin definition should also live in a named file near the top of the package source.
 

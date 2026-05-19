@@ -1,4 +1,4 @@
-import type { DatabaseApi, DatabaseJson, DatabaseJsonObject } from "@zelavis/database";
+import type { DatabaseApi, DatabaseJson, DatabaseJsonObject } from "@zelavis/db";
 import type {
   CouponRepository,
   CustomerRepository,
