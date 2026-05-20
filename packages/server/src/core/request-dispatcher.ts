@@ -85,6 +85,44 @@ function scoreMatchedPath(pattern: string): number {
   return score + parts.length - wildcardCount * 1000;
 }
 
+/**
+ * Decide whether a route accepts the request's host.
+ *
+ * Returns `null` for "no match" (route is host-restricted and the request
+ * host doesn't appear in its list). Returns a non-negative number used as a
+ * tiebreaker in the dispatcher's scoring — host-specific matches get a small
+ * bonus over host-agnostic ones, so `kanban.example.com/foo` beats a
+ * wildcard host on `/foo` when both happen to match.
+ *
+ * Wildcard sentinel `"*"` (or omitted matcher) means host-agnostic and
+ * returns 0. Exact hostname matches return 1000 (large enough to dominate
+ * any path-score difference, since hosts are a stronger affinity signal
+ * than path specificity).
+ */
+function matchRouteHost(
+  matcher: string | readonly string[] | undefined,
+  requestHost: string,
+): number | null {
+  if (matcher === undefined || matcher === "*") {
+    return 0;
+  }
+
+  if (typeof matcher === "string") {
+    return matcher.toLowerCase() === requestHost ? 1000 : null;
+  }
+
+  for (const candidate of matcher) {
+    if (candidate === "*") {
+      return 0;
+    }
+    if (candidate.toLowerCase() === requestHost) {
+      return 1000;
+    }
+  }
+
+  return null;
+}
+
 function toHeaderMap(headers: Headers): Record<string, string | undefined> {
   const result: Record<string, string | undefined> = {};
 
@@ -400,6 +438,7 @@ export function createZelavisDispatcher<TService = unknown>(
   return async (request, context) => {
     const url = new URL(request.url);
     const method = request.method.toUpperCase();
+    const requestHost = url.host.toLowerCase();
     let matched:
       | {
           resolvedRoute: ZelavisResolvedRoute<TService>;
@@ -418,12 +457,20 @@ export function createZelavisDispatcher<TService = unknown>(
         continue;
       }
 
+      const hostMatch = matchRouteHost(resolvedRoute.route.host, requestHost);
+      if (hostMatch === null) {
+        continue;
+      }
+
       const params = matchPath(resolvedRoute.fullPath, url.pathname);
       if (!params) {
         continue;
       }
 
-      const score = scoreMatchedPath(resolvedRoute.fullPath);
+      // Host-specific routes outrank host-agnostic ones at the same path
+      // score, so e.g. `kanban.example.com/foo` beats `*/foo` even when both
+      // would otherwise match.
+      const score = scoreMatchedPath(resolvedRoute.fullPath) + hostMatch;
       if (!matched || score > matched.score) {
         matched = {
           resolvedRoute,

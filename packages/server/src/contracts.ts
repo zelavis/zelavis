@@ -17,10 +17,26 @@ export interface ZelavisRouteResponse {
   headers?: HeadersInit;
 }
 
+/**
+ * Hosts a route is willing to serve. A string is treated as a single exact
+ * hostname; an array as the set of acceptable hostnames; `"*"` (the default
+ * when omitted) means host-agnostic.
+ *
+ * This is the route-level half of the (host, path) two-pass matching the
+ * dispatcher does. It exists primarily for plugin `app` mounts that want
+ * to bind to a tenant domain.
+ */
+export type ZelavisRouteHostMatcher = string | readonly string[];
+
 export interface ZelavisServerRoute<TService = unknown> {
   id: string;
   method: ZelavisHttpMethod;
   path: string;
+  /**
+   * Restrict this route to specific hostnames. Omit (or pass `"*"`) for
+   * host-agnostic routes — the dispatcher will match regardless of host.
+   */
+  host?: ZelavisRouteHostMatcher;
   meta?: Record<string, unknown>;
   handler: (
     context: ZelavisRouteContext<TService>,
