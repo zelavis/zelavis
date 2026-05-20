@@ -53,7 +53,9 @@ import {
 } from "./plugin.js";
 export * from "./plugin.js";
 export * from "./bundle-store.js";
+export * from "./tls.js";
 import { createSharedBundleStore, type BundleStore } from "./bundle-store.js";
+import type { TlsProvider } from "./tls.js";
 import { synthesizePluginAppService } from "./plugin-app.js";
 import type {
   ZelavisPluginAppShellDefinition,
@@ -575,6 +577,14 @@ export interface ZelavisPlatformResources {
   files?: ZelavisFileStorage;
   plugins?: ZelavisPluginActivationController;
   pluginPackages?: ZelavisPluginPackageInstaller;
+  /**
+   * TLS certificate provider. Adapters that terminate TLS in-process
+   * (Node/Bun self-host) wire a real provider here; adapters whose
+   * platform terminates TLS at the edge (Cloudflare/Vercel/Netlify)
+   * should wire `createEdgeTlsProvider()` so downstream code can
+   * distinguish "intentionally not my problem" from "not configured".
+   */
+  tls?: TlsProvider;
 }
 
 export interface ZelavisPlatformContext {
