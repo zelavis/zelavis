@@ -101,7 +101,6 @@
     "@zelavis/db-bun-sqlite": "workspace:*",
     "@zelavis/db-cloudflare-d1": "workspace:*",
     "@zelavis/db-node-sqlite": "workspace:*",
-    "@zelavis/ecommerce": "workspace:*",
     "@zelavis/server": "workspace:*"
   },
   "devDependencies": {
