@@ -340,6 +340,190 @@ test("MPA mode resolves directory-style requests to .html and index.html, no SPA
   assert.equal(missingResponse.status, 404);
 });
 
+// ---------- app.devUrl ----------
+
+test("app.devUrl short-circuits asset serving with a 307 redirect", async () => {
+  const plugin = definePlugin({
+    name: "vite-app",
+    scope: "system",
+    app: {
+      mount: "/vite",
+      bundle: "dist",
+      devUrl: "http://127.0.0.1:5173",
+    },
+  });
+
+  // Bundle store deliberately contains content that should NOT be
+  // served — confirms the redirect runs before any read.
+  const bundleStore = createInMemoryBundleStore(
+    new Map([
+      [
+        "system/vite-app/dist/index.html",
+        { body: utf8("should-not-serve"), contentType: "text/html" },
+      ],
+    ]),
+  );
+
+  const { services } = await activatePluginRegistry(
+    [{ plugin, status: "installed" }],
+    {
+      rootPath: "/",
+      api: { prefix: "/api", version: "v1", basePath: "/api/v1" },
+      platform: {
+        presets: [],
+        resources: { keyValueStore: false, fileStorage: true },
+        metadata: {},
+      },
+      core: {},
+    },
+    { bundleStore },
+  );
+
+  const runtime = await zelavisServer({ services });
+
+  // Root request → trailing-slash form to keep dev-server router happy.
+  const rootResponse = await runtime.fetch(
+    new Request("http://localhost/vite", { redirect: "manual" }),
+  );
+  assert.equal(rootResponse.status, 307);
+  assert.equal(
+    rootResponse.headers.get("location"),
+    "http://127.0.0.1:5173/",
+  );
+  assert.equal(rootResponse.headers.get("cache-control"), "no-cache");
+
+  // Sub-path request → preserves the relative path.
+  const assetResponse = await runtime.fetch(
+    new Request("http://localhost/vite/src/main.ts", { redirect: "manual" }),
+  );
+  assert.equal(assetResponse.status, 307);
+  assert.equal(
+    assetResponse.headers.get("location"),
+    "http://127.0.0.1:5173/src/main.ts",
+  );
+
+  // Querystring is preserved verbatim.
+  const queryResponse = await runtime.fetch(
+    new Request("http://localhost/vite/api/data?id=42&tab=auth", {
+      redirect: "manual",
+    }),
+  );
+  assert.equal(queryResponse.status, 307);
+  assert.equal(
+    queryResponse.headers.get("location"),
+    "http://127.0.0.1:5173/api/data?id=42&tab=auth",
+  );
+});
+
+test("app.devUrl can include its own base path that prefixes the relative path", async () => {
+  // Common when the dev server itself is mounted under a sub-path
+  // (e.g. `react-router dev --base /zelavis`) and zelavis needs to
+  // redirect into that base.
+  const plugin = definePlugin({
+    name: "rr-app",
+    scope: "system",
+    app: {
+      mount: "/zelavis",
+      bundle: "dist",
+      devUrl: "http://127.0.0.1:3001/zelavis",
+    },
+  });
+
+  const { services } = await activatePluginRegistry(
+    [{ plugin, status: "installed" }],
+    {
+      rootPath: "/",
+      api: { prefix: "/api", version: "v1", basePath: "/api/v1" },
+      platform: {
+        presets: [],
+        resources: { keyValueStore: false, fileStorage: true },
+        metadata: {},
+      },
+      core: {},
+    },
+    { bundleStore: createInMemoryBundleStore(new Map()) },
+  );
+
+  const runtime = await zelavisServer({ services });
+
+  const rootResponse = await runtime.fetch(
+    new Request("http://localhost/zelavis", { redirect: "manual" }),
+  );
+  assert.equal(rootResponse.status, 307);
+  assert.equal(
+    rootResponse.headers.get("location"),
+    "http://127.0.0.1:3001/zelavis/",
+  );
+
+  const settingsResponse = await runtime.fetch(
+    new Request("http://localhost/zelavis/settings?tab=auth", {
+      redirect: "manual",
+    }),
+  );
+  assert.equal(settingsResponse.status, 307);
+  assert.equal(
+    settingsResponse.headers.get("location"),
+    "http://127.0.0.1:3001/zelavis/settings?tab=auth",
+  );
+});
+
+test("app.devUrl bypasses bundle store and shell.render entirely", async () => {
+  // If devUrl is configured, neither the bundle store nor any
+  // configured shell.render should be invoked — the dev server is the
+  // source of truth.
+  const calls = { bundleReads: 0, shellRenders: 0 };
+
+  const bundleStore = {
+    async read() {
+      calls.bundleReads += 1;
+      return undefined;
+    },
+  };
+
+  const plugin = definePlugin({
+    name: "dual-mode",
+    scope: "system",
+    app: {
+      mount: "/dual",
+      bundle: "dist",
+      devUrl: "http://127.0.0.1:5173",
+      shell: {
+        render: () => {
+          calls.shellRenders += 1;
+          return { body: "would-render" };
+        },
+      },
+    },
+  });
+
+  const { services } = await activatePluginRegistry(
+    [{ plugin, status: "installed" }],
+    {
+      rootPath: "/",
+      api: { prefix: "/api", version: "v1", basePath: "/api/v1" },
+      platform: {
+        presets: [],
+        resources: { keyValueStore: false, fileStorage: true },
+        metadata: {},
+      },
+      core: {},
+    },
+    { bundleStore },
+  );
+
+  const runtime = await zelavisServer({ services });
+
+  await runtime.fetch(
+    new Request("http://localhost/dual", { redirect: "manual" }),
+  );
+  await runtime.fetch(
+    new Request("http://localhost/dual/x/y/z", { redirect: "manual" }),
+  );
+
+  assert.equal(calls.bundleReads, 0, "bundle store should not be read");
+  assert.equal(calls.shellRenders, 0, "shell.render should not be invoked");
+});
+
 test("shell.render is called for index requests and SPA-fallback misses", async () => {
   const calls = [];
   const plugin = definePlugin({
