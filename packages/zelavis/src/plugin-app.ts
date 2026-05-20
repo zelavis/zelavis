@@ -121,11 +121,53 @@ interface AppHandlerOptions {
    */
   shell?: ZelavisPluginAppShellDefinition;
   /**
+   * When set, the synthesized handler short-circuits every request
+   * under the mount with a 307 redirect to `devUrl + relativePath +
+   * querystring`. Used during local development so edits to the SPA's
+   * own dev server (Vite/RR/Next) show up without rebuilding the
+   * embedded bundle on every save.
+   *
+   * Redirect (not server-side proxy) is the right primitive: the browser
+   * connects directly to the dev server, so its HMR socket, source-map
+   * mapping, and dev-only headers all work as the framework expects.
+   */
+  devUrl?: string;
+  /**
    * Optional override resolved when the route handler executes; lets
    * higher-level code (workspace context, dev-mode toggle) influence the
    * scope at request time without re-synthesizing routes.
    */
   resolveScope?: (request: Request) => BundleScope | undefined;
+}
+
+/**
+ * Build a 307 redirect from a mount-relative path + querystring to a
+ * configured dev-server URL.
+ *
+ * The dev URL may itself contain a path (e.g.
+ * `http://localhost:3001/zelavis`). We append the relative path with a
+ * single slash separator and preserve the querystring verbatim.
+ *
+ * For the mount root (`relativePath === ""`), we still produce a
+ * trailing slash on the target so the dev server's own routing sees
+ * the directory form. Some dev servers (Vite history fallback) depend
+ * on this.
+ */
+function buildDevRedirect(
+  devUrl: string,
+  relativePath: string,
+  search: string,
+) {
+  const normalizedDevUrl = devUrl.replace(/\/+$/, "");
+  const normalizedPath = relativePath.replace(/^\/+/, "");
+  const targetPath = normalizedPath ? `/${normalizedPath}` : "/";
+  return {
+    status: 307 as const,
+    headers: {
+      location: `${normalizedDevUrl}${targetPath}${search}`,
+      "cache-control": "no-cache",
+    },
+  };
 }
 
 /**
@@ -181,8 +223,15 @@ async function readWithFallback(
 }
 
 function createAppAssetHandler(options: AppHandlerOptions) {
-  const { bundleStore, scope: defaultScope, mount, indexHtml, mode, shell } =
-    options;
+  const {
+    bundleStore,
+    scope: defaultScope,
+    mount,
+    indexHtml,
+    mode,
+    shell,
+    devUrl,
+  } = options;
 
   return async (context: {
     request: Request;
@@ -190,21 +239,39 @@ function createAppAssetHandler(options: AppHandlerOptions) {
   }) => {
     const { request, params } = context;
     const scope = options.resolveScope?.(request) ?? defaultScope;
-    // Prefer the dispatcher-provided `*path` param when available, since
-    // it's already mount-relative no matter how many prefixes the host
-    // stacked above the synthesized service. Fall back to mount-stripping
-    // for the index route (which has no wildcard param) and for callers
-    // that invoke the handler directly without going through the
-    // dispatcher.
+    // Resolve the mount-relative path. Three cases:
+    //
+    //  - `*path` route via the dispatcher → `params.path` is set and
+    //    already mount-relative, regardless of any higher-level
+    //    dispatcher prefix.
+    //  - index route via the dispatcher → no `*path` param, but the
+    //    handler is mounted at the index by construction. The request
+    //    is the mount root; relativePath is "".
+    //  - direct handler invocation outside the dispatcher (e.g. in
+    //    tests, or unit-level handler calls) → no params at all. Fall
+    //    back to URL-based mount stripping, which only knows about the
+    //    synthesized mount and may produce a wrong answer if the host
+    //    stacked extra prefixes on top.
     const relativePath =
       typeof params?.path === "string"
         ? params.path
-        : (stripMount(mount, new URL(request.url).pathname) ?? "");
+        : params !== undefined && Object.keys(params).length === 0
+          ? ""
+          : (stripMount(mount, new URL(request.url).pathname) ?? "");
     if (relativePath === undefined) {
       // Defensive: this handler is only mounted under the mount prefix, so
       // a non-match here would be a routing bug. Surface a 404 rather than
       // serving the SPA shell from an unrelated URL.
       return { status: 404, body: "Not found" };
+    }
+
+    // Dev-server short-circuit: when `devUrl` is set, every request
+    // under the mount becomes a 307 redirect to the dev server. Bundle
+    // store, shell renderer, and MPA resolution all sit out — the
+    // browser talks to Vite/RR/Next directly so HMR works.
+    if (devUrl) {
+      const url = new URL(request.url);
+      return buildDevRedirect(devUrl, relativePath, url.search);
     }
 
     if (mode === "spa") {
@@ -331,6 +398,7 @@ export function synthesizePluginAppService(
     indexHtml,
     mode,
     shell: app.shell,
+    devUrl: app.devUrl,
   });
 
   const routes: ZelavisServerRoute<unknown>[] = [

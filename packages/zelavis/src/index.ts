@@ -1679,68 +1679,6 @@ async function readDashboardPluginRegistryCreate(
   });
 }
 
-function readRequestUrl(request: unknown): string | undefined {
-  if (!request || typeof request !== "object") {
-    return undefined;
-  }
-
-  const candidate =
-    "originalUrl" in request && typeof request.originalUrl === "string"
-      ? request.originalUrl
-      : "url" in request && typeof request.url === "string"
-        ? request.url
-        : undefined;
-
-  return candidate && candidate.length > 0 ? candidate : undefined;
-}
-
-function stripRootPath(pathname: string, rootPath: string): string {
-  if (pathname === rootPath) {
-    return "/";
-  }
-
-  if (pathname.startsWith(`${rootPath}/`)) {
-    return pathname.slice(rootPath.length) || "/";
-  }
-
-  return pathname || "/";
-}
-
-function createDashboardDevRedirect(
-  context: {
-    query: URLSearchParams;
-    request: unknown;
-  },
-  options: {
-    devServerUrl: string;
-    rootPath: string;
-    fallbackPath: string;
-  },
-) {
-  const requestUrl = readRequestUrl(context.request);
-  const parsed = requestUrl
-    ? new URL(requestUrl, "http://127.0.0.1")
-    : undefined;
-  const pathname = stripRootPath(
-    parsed?.pathname ?? options.fallbackPath,
-    options.rootPath,
-  );
-  const search =
-    parsed?.search ??
-    (() => {
-      const query = context.query.toString();
-      return query ? `?${query}` : "";
-    })();
-
-  return {
-    status: 307,
-    headers: {
-      location: `${options.devServerUrl}${pathname}${search}`,
-      "cache-control": "no-cache",
-    },
-  };
-}
-
 function readStorageMetadataHeaders(
   headers: Headers | undefined,
 ): Record<string, string> | undefined {
@@ -2101,11 +2039,13 @@ function injectDashboardRuntimeConfig(html: string, config: unknown): string {
 /**
  * Internal host-side binding the dashboard core service hands up to
  * `zelavis()`. Allows the dashboard to declare its app bundle + shell
- * renderer without polluting the public `ZelavisService` shape.
+ * renderer + dev-server URL without polluting the public
+ * `ZelavisService` shape.
  */
 interface DashboardAppHostBinding {
   bundleStore: BundleStore;
   shell: { render: ZelavisPluginAppShellDefinition["render"] };
+  devUrl?: string;
 }
 
 /**
@@ -2734,16 +2674,9 @@ async function resolveDashboardCoreService(
     query: URLSearchParams;
     request: unknown;
   }) => {
-    if (devServerUrl) {
-      return createDashboardDevRedirect(
-        { query, request },
-        {
-          devServerUrl,
-          rootPath,
-          fallbackPath: "/",
-        },
-      );
-    }
+    // Dev-server short-circuit lives in the synthesized app handler now
+    // (via `app.devUrl`); by the time shellHandler runs, we're serving
+    // the embedded bundle's shell with injected runtime config.
 
     if (!baseShell) {
       return {
@@ -2770,34 +2703,22 @@ async function resolveDashboardCoreService(
   };
   // The dashboard's shell renderer. Used by the synthesized
   // `dashboard:app` service for the mount root and for SPA fallback
-  // misses. Three concerns merged here:
+  // misses. Two concerns merged here (the dev-server redirect used to
+  // be the third, but it's now declared via `app.devUrl` and runs
+  // inside the synthesizer before this renderer is ever called):
   //
-  //  1. Dev-server redirect — when ZELAVIS_UI_DEV_SERVER is set, forward
-  //     everything to the Vite dev server so source edits show up
-  //     without rebuilding the embedded bundle.
-  //  2. `api/*` / `assets/*` 404 — these paths must NOT fall through to
+  //  1. `api/*` / `assets/*` 404 — these paths must NOT fall through to
   //     the SPA shell on miss, since they're either real API endpoints
   //     (resolved by the dispatcher first; only unrecognized ones reach
   //     us) or static assets (resolved by the bundle store; only
   //     missing ones reach us).
-  //  3. Shell HTML with injected runtime config — for everything else.
+  //  2. Shell HTML with injected runtime config — for everything else.
   const dashboardShellRender = async (
     context: { request: Request; path: string },
   ): Promise<{ status?: number; headers?: HeadersInit; body?: unknown }> => {
     const { request, path } = context;
     const url = new URL(request.url);
     const query = url.searchParams;
-
-    if (devServerUrl) {
-      return createDashboardDevRedirect(
-        { query, request },
-        {
-          devServerUrl,
-          rootPath,
-          fallbackPath: path ? `/${path.replace(/^\/+/, "")}` : "/",
-        },
-      );
-    }
 
     if (
       path === "api" ||
@@ -2840,6 +2761,11 @@ async function resolveDashboardCoreService(
       _app: {
         bundleStore: createEmbeddedDashboardBundleStore(rootPath),
         shell: { render: dashboardShellRender },
+        // When set, the synthesizer 307s every request under the
+        // dashboard mount to this URL. Previously this was a bespoke
+        // branch inside the shell renderer; now it flows through the
+        // same `app.devUrl` primitive plugins use.
+        devUrl: devServerUrl,
       } as DashboardAppHostBinding,
     },
     api: {
@@ -3562,6 +3488,7 @@ function synthesizeDashboardAppService(
       mount: "/",
       mode: "spa" as const,
       shell: binding.shell,
+      devUrl: binding.devUrl,
     }),
   }) as Readonly<ZelavisPluginDefinition<unknown>>;
 
