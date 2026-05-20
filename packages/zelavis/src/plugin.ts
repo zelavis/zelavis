@@ -5,10 +5,8 @@ import {
   type ZelavisServiceMenuDefinition,
 } from "@zelavis/server";
 import type { BundleStore } from "./bundle-store.js";
-import {
-  resolveEffectiveMount,
-  synthesizePluginAppService,
-} from "./plugin-app.js";
+import type { DomainBindingStore } from "./domain-binding.js";
+import { synthesizePluginAppService } from "./plugin-app.js";
 
 export const ZELAVIS_PLUGIN_V1 = "ZELAVIS_PLUGIN_V1" as const;
 export type ZelavisPluginContractVersion = typeof ZELAVIS_PLUGIN_V1;
@@ -1138,6 +1136,13 @@ export interface ActivatePluginRegistryOptions {
    * system-host activation (no multi-tenancy), leave undefined.
    */
   workspaceId?: string;
+  /**
+   * Domain-binding store. When set, workspace-scoped plugins
+   * declaring `app.domains` only get host-bound routing for hosts with
+   * a verified binding owned by their workspace+plugin pair. System
+   * plugins are unaffected.
+   */
+  domainBindings?: DomainBindingStore;
 }
 
 export async function activatePluginRegistry<
@@ -1187,17 +1192,18 @@ export async function activatePluginRegistry<
     }
 
     // Synthesize an asset-serving service for plugins that declare an
-    // `app`. Workspace-scoped plugins are forced under `/apps/<name>`
-    // here — `resolveEffectiveMount` reads `plugin.scope`, which the
-    // registration layer already pinned at load time.
+    // `app`. The synthesizer decides the effective mount internally
+    // based on (scope, verified hosts): system plugins keep their
+    // declared mount; workspace plugins with verified host bindings
+    // serve their declared mount restricted to those hosts; workspace
+    // plugins without verified hosts get the path-namespaced
+    // `/apps/<plugin-name>` mount on the shared host.
     if (entry.plugin.app && options.bundleStore) {
-      const appService = synthesizePluginAppService({
+      const appService = await synthesizePluginAppService({
         plugin: entry.plugin as Readonly<ZelavisPluginDefinition<unknown>>,
         bundleStore: options.bundleStore,
         workspaceId: options.workspaceId,
-        effectiveMount: resolveEffectiveMount(
-          entry.plugin as Readonly<ZelavisPluginDefinition<unknown>>,
-        ),
+        domainBindings: options.domainBindings,
       });
       if (appService) {
         addService(appService as unknown as ZelavisAnyServiceInput);

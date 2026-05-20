@@ -15,6 +15,10 @@
  */
 
 import type { BundleScope, BundleStore } from "./bundle-store.js";
+import {
+  filterAuthorizedHostsForPlugin,
+  type DomainBindingStore,
+} from "./domain-binding.js";
 import type {
   ZelavisPluginAppDefinition,
   ZelavisPluginAppShellDefinition,
@@ -364,26 +368,72 @@ export interface SynthesizePluginAppOptions {
    * what their definition claims.
    */
   effectiveMount?: string;
+  /**
+   * Domain bindings store. When set, the synthesizer filters declared
+   * `app.domains` for workspace-scoped plugins down to hosts with a
+   * verified binding owned by the plugin's workspace+plugin pair.
+   * System-scope plugins keep their declared hosts unchanged.
+   */
+  domainBindings?: DomainBindingStore;
 }
 
 /**
  * Produce a `ZelavisService` that serves the plugin's app bundle, or
  * `undefined` if the plugin doesn't declare an `app`.
+ *
+ * Async because the domain-binding store lookups it does for
+ * workspace plugins may be I/O-bound (KV / blob backends).
  */
-export function synthesizePluginAppService(
+export async function synthesizePluginAppService(
   options: SynthesizePluginAppOptions,
-): ZelavisService | undefined {
-  const { plugin, bundleStore, workspaceId, effectiveMount } = options;
+): Promise<ZelavisService | undefined> {
+  const { plugin, bundleStore, workspaceId, effectiveMount, domainBindings } =
+    options;
   const app = plugin.app;
   if (!app) {
     return undefined;
   }
 
-  const mount = effectiveMount ?? app.mount ?? DEFAULT_MOUNT;
   const bundle = app.bundle ?? DEFAULT_BUNDLE;
   const indexHtml = app.indexHtml ?? DEFAULT_INDEX_HTML;
   const mode = app.mode ?? "spa";
-  const hosts = normalizeAppHosts(app);
+  const declaredHosts = normalizeAppHosts(app);
+
+  // Gate workspace plugins behind the domain-binding store. System
+  // plugins keep what they declared — the operator deployed them, so
+  // they're trusted to claim any host.
+  let hosts: readonly string[] | undefined = declaredHosts;
+  if (declaredHosts && plugin.scope === "workspace") {
+    const authorized = await filterAuthorizedHostsForPlugin(declaredHosts, {
+      scope: "workspace",
+      workspaceId,
+      pluginName: plugin.name,
+      domainBindings,
+    });
+    hosts = authorized.length > 0 ? Object.freeze([...authorized]) : undefined;
+  }
+
+  // Mount selection:
+  //  - System plugins keep whatever mount they declared.
+  //  - Workspace plugins with verified host bindings serve their
+  //    declared mount (typically "/") restricted to those hosts. The
+  //    host itself provides namespace isolation, so no path-prefix
+  //    rewrite is needed.
+  //  - Workspace plugins without verified hosts get the
+  //    `/apps/<plugin-name>` namespaced mount on the shared host,
+  //    where path-prefixing is the only thing preventing collisions.
+  //
+  // Callers may override via `effectiveMount` — primarily for tests
+  // and for the dashboard's "I'm system scope but mount me at /"
+  // case.
+  let mount: string;
+  if (effectiveMount !== undefined) {
+    mount = effectiveMount;
+  } else if (plugin.scope === "workspace" && (!hosts || hosts.length === 0)) {
+    mount = `/apps/${plugin.name}`;
+  } else {
+    mount = app.mount ?? DEFAULT_MOUNT;
+  }
 
   const scope: BundleScope = {
     workspaceId,
