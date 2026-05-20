@@ -54,8 +54,10 @@ import {
 export * from "./plugin.js";
 export * from "./bundle-store.js";
 export * from "./tls.js";
+export * from "./domain-binding.js";
 import { createSharedBundleStore, type BundleStore } from "./bundle-store.js";
 import type { TlsProvider } from "./tls.js";
+import type { DomainBindingStore } from "./domain-binding.js";
 import { synthesizePluginAppService } from "./plugin-app.js";
 import type {
   ZelavisPluginAppShellDefinition,
@@ -488,6 +490,16 @@ export interface ZelavisServerOptions {
    * return 404 until a store is configured.
    */
   bundleStore?: BundleStore;
+  /**
+   * Domain bindings store. Workspace plugins that declare
+   * `app.domains` only get host-bound routing for hosts with verified
+   * bindings owned by their workspace+plugin pair.
+   *
+   * When omitted, the runtime falls through to
+   * `platform.resources.domainBindings`; if neither is set, workspace
+   * plugins get no host-bound routing.
+   */
+  domainBindings?: DomainBindingStore;
 }
 
 export interface ZelavisKeyValueStore {
@@ -585,6 +597,17 @@ export interface ZelavisPlatformResources {
    * distinguish "intentionally not my problem" from "not configured".
    */
   tls?: TlsProvider;
+  /**
+   * Domain-binding store. The synthesizer consults this when a
+   * workspace-scoped plugin declares `app.domains` — only hosts with
+   * verified bindings owned by the plugin's workspace+plugin pair are
+   * allowed through. System-scope plugins skip this check (operator
+   * deployed them, they're trusted).
+   *
+   * When undefined, workspace plugins get no host-bound routing
+   * (their path-based `/apps/<name>` mount still works).
+   */
+  domainBindings?: DomainBindingStore;
 }
 
 export interface ZelavisPlatformContext {
@@ -3483,9 +3506,9 @@ async function resolveStorageCoreService(
  * e.g. when a user provided their own `dashboard` service that doesn't
  * follow the core convention.
  */
-function synthesizeDashboardAppService(
+async function synthesizeDashboardAppService(
   dashboardService: ZelavisService<any>,
-): ZelavisService | undefined {
+): Promise<ZelavisService | undefined> {
   const binding = readDashboardAppHostBinding(dashboardService);
   if (!binding) {
     return undefined;
@@ -3502,7 +3525,11 @@ function synthesizeDashboardAppService(
     }),
   }) as Readonly<ZelavisPluginDefinition<unknown>>;
 
-  const appService = synthesizePluginAppService({
+  // System-scope plugin, so domain bindings are bypassed — pass
+  // undefined for the binding store rather than threading the real
+  // one through. (System plugins are operator-trusted and may declare
+  // any host they like.)
+  const appService = await synthesizePluginAppService({
     plugin: synthetic,
     bundleStore: binding.bundleStore,
     effectiveMount: "/",
@@ -3683,6 +3710,7 @@ export async function zelavis(
     },
     {
       bundleStore: options.bundleStore,
+      domainBindings: options.domainBindings,
     },
   );
   const pluginServices = await Promise.all(activatedPlugins.services);
@@ -3755,7 +3783,7 @@ export async function zelavis(
   // serves the bundle. Strip `_app` off the visible service so consumers
   // see the clean `ZelavisService` shape.
   const dashboardAppService = dashboardService
-    ? synthesizeDashboardAppService(dashboardService)
+    ? await synthesizeDashboardAppService(dashboardService)
     : undefined;
   const sanitizedDashboardService = dashboardService
     ? stripDashboardHostBinding(dashboardService)
@@ -4120,6 +4148,12 @@ export class Zelavis {
         (platformResources.files
           ? createSharedBundleStore({ storage: platformResources.files })
           : undefined);
+      // Domain bindings: explicit option wins, then fall through to
+      // the adapter-supplied resource. No on-the-fly default — leaving
+      // both unset means workspace plugins get no host-bound routing,
+      // which is the safe default.
+      const domainBindings =
+        serverOptions.domainBindings ?? platformResources.domainBindings;
       const runtime = await zelavis(
         {
           ...serverOptions,
@@ -4127,6 +4161,7 @@ export class Zelavis {
           pluginPackageInstaller: platformResources.pluginPackages,
           pluginActivation: platformResources.plugins,
           bundleStore,
+          domainBindings,
           pluginContext: {
             ...resolved.serverOptions.pluginContext,
             platform: createPluginSetupPlatformContext(
