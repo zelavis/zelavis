@@ -55,9 +55,11 @@ export * from "./plugin.js";
 export * from "./bundle-store.js";
 export * from "./tls.js";
 export * from "./domain-binding.js";
+export * from "./domain-verifier.js";
 import { createSharedBundleStore, type BundleStore } from "./bundle-store.js";
 import type { TlsProvider } from "./tls.js";
 import type { DomainBindingStore } from "./domain-binding.js";
+import { createDomainChallengeService } from "./domain-verifier.js";
 import { synthesizePluginAppService } from "./plugin-app.js";
 import type {
   ZelavisPluginAppShellDefinition,
@@ -704,6 +706,7 @@ const RESERVED_CORE_SERVICE_NAMES = new Set([
   "database",
   "storage",
   "website",
+  "zelavis-domain-challenge",
 ]);
 
 function readOptionalProcessEnv(name: string): string | undefined {
@@ -3610,6 +3613,20 @@ function createServicePrefixes(
       continue;
     }
 
+    if (service.name === "zelavis-domain-challenge") {
+      // Leave the route's declared path verbatim under whatever the
+      // global mount prefix is. In typical hosting setups (website
+      // enabled → mountPrefix `/`) the challenge ends up at the
+      // literal well-known path. In path-only-API setups (no
+      // website, mountPrefix `/zelavis`) it lands at
+      // `/zelavis/.well-known/zelavis-challenge/...`; operators in
+      // that mode can pass a matching `challengePath` to the
+      // verifier, or — more practically — enable the website service
+      // when they want HTTP-01 verification.
+      prefixes[service.name] = "/";
+      continue;
+    }
+
     prefixes[service.name] = mountAtRoot
       ? joinPathParts(
           options.rootPath,
@@ -3788,9 +3805,18 @@ export async function zelavis(
   const sanitizedDashboardService = dashboardService
     ? stripDashboardHostBinding(dashboardService)
     : undefined;
+  // Mount the HTTP-01 challenge responder when a domain-binding store
+  // is configured. The endpoint serves `verificationToken` back to
+  // requesters who hit `<host>/.well-known/zelavis-challenge/<token>`,
+  // making automatic verification a no-op for the operator once they
+  // point their DNS at this zelavis instance.
+  const domainChallengeService = options.domainBindings
+    ? createDomainChallengeService(options.domainBindings)
+    : undefined;
   const finalServices = [
     sanitizedDashboardService,
     dashboardAppService,
+    domainChallengeService,
     ...coreServices,
     ...services,
   ].filter(
