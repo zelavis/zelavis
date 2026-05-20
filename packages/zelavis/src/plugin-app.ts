@@ -17,6 +17,7 @@
 import type { BundleScope, BundleStore } from "./bundle-store.js";
 import type {
   ZelavisPluginAppDefinition,
+  ZelavisPluginAppShellDefinition,
   ZelavisPluginDefinition,
 } from "./plugin.js";
 import type {
@@ -113,11 +114,43 @@ interface AppHandlerOptions {
   indexHtml: string;
   mode: "spa" | "mpa";
   /**
+   * When set, the synthesized handler calls `shell.render` for index
+   * requests and SPA-fallback misses instead of reading `indexHtml` from
+   * the bundle. The dashboard uses this to inject runtime config into
+   * its HTML shell.
+   */
+  shell?: ZelavisPluginAppShellDefinition;
+  /**
    * Optional override resolved when the route handler executes; lets
    * higher-level code (workspace context, dev-mode toggle) influence the
    * scope at request time without re-synthesizing routes.
    */
   resolveScope?: (request: Request) => BundleScope | undefined;
+}
+
+/**
+ * Default content-type / cache-control applied when shell.render returns
+ * a `string` body without explicit headers. Renderers that need to send
+ * different headers (e.g. an error page, a redirect) can supply their
+ * own `headers` and the synthesizer respects them verbatim.
+ */
+const DEFAULT_SHELL_CONTENT_TYPE = "text/html; charset=utf-8";
+const DEFAULT_SHELL_CACHE_CONTROL = "no-cache";
+
+async function renderShell(
+  shell: ZelavisPluginAppShellDefinition,
+  request: Request,
+  relativePath: string,
+): Promise<ZelavisRouteResponse> {
+  const result = await shell.render({ request, path: relativePath });
+  const status = result.status ?? 200;
+  const headers =
+    result.headers ??
+    ({
+      "content-type": DEFAULT_SHELL_CONTENT_TYPE,
+      "cache-control": DEFAULT_SHELL_CACHE_CONTROL,
+    } as Record<string, string>);
+  return { status, headers, body: result.body };
 }
 
 function buildResponse(
@@ -148,12 +181,25 @@ async function readWithFallback(
 }
 
 function createAppAssetHandler(options: AppHandlerOptions) {
-  const { bundleStore, scope: defaultScope, mount, indexHtml, mode } = options;
+  const { bundleStore, scope: defaultScope, mount, indexHtml, mode, shell } =
+    options;
 
-  return async ({ request }: { request: Request }) => {
+  return async (context: {
+    request: Request;
+    params: Record<string, string>;
+  }) => {
+    const { request, params } = context;
     const scope = options.resolveScope?.(request) ?? defaultScope;
-    const url = new URL(request.url);
-    const relativePath = stripMount(mount, url.pathname);
+    // Prefer the dispatcher-provided `*path` param when available, since
+    // it's already mount-relative no matter how many prefixes the host
+    // stacked above the synthesized service. Fall back to mount-stripping
+    // for the index route (which has no wildcard param) and for callers
+    // that invoke the handler directly without going through the
+    // dispatcher.
+    const relativePath =
+      typeof params?.path === "string"
+        ? params.path
+        : (stripMount(mount, new URL(request.url).pathname) ?? "");
     if (relativePath === undefined) {
       // Defensive: this handler is only mounted under the mount prefix, so
       // a non-match here would be a routing bug. Surface a 404 rather than
@@ -162,21 +208,53 @@ function createAppAssetHandler(options: AppHandlerOptions) {
     }
 
     if (mode === "spa") {
-      // Try the exact asset first; on miss, serve the index document so
-      // the SPA can take over client-side routing.
-      const candidates =
-        relativePath === "" ? [indexHtml] : [relativePath, indexHtml];
-      const hit = await readWithFallback(bundleStore, scope, candidates);
-      if (!hit) {
+      // Root request: shell.render takes precedence over a static
+      // `indexHtml` so plugins can inject runtime config.
+      if (relativePath === "") {
+        if (shell) {
+          return renderShell(shell, request, relativePath);
+        }
+        const indexHit = await bundleStore.read(scope, indexHtml);
+        if (!indexHit) {
+          return { status: 404, body: "Not found" };
+        }
+        return buildResponse(
+          indexHit.body,
+          indexHit.contentType ?? guessContentType(indexHtml),
+          indexHit.cacheControl,
+        );
+      }
+
+      // Sub-path: try the exact asset, then SPA-fallback to either the
+      // shell renderer or the static index document.
+      const exactHit = await bundleStore.read(scope, relativePath);
+      if (exactHit) {
+        return buildResponse(
+          exactHit.body,
+          exactHit.contentType ?? guessContentType(relativePath),
+          exactHit.cacheControl,
+        );
+      }
+      if (shell) {
+        return renderShell(shell, request, relativePath);
+      }
+      const fallbackHit = await bundleStore.read(scope, indexHtml);
+      if (!fallbackHit) {
         return { status: 404, body: "Not found" };
       }
-      const contentType =
-        hit.asset.contentType ?? guessContentType(hit.resolvedPath);
-      return buildResponse(hit.asset.body, contentType, hit.asset.cacheControl);
+      return buildResponse(
+        fallbackHit.body,
+        fallbackHit.contentType ?? guessContentType(indexHtml),
+        fallbackHit.cacheControl,
+      );
     }
 
     // MPA mode: filesystem-style resolution. Try the exact path, then
-    // `<path>.html`, then `<path>/index.html`. No SPA fallback.
+    // `<path>.html`, then `<path>/index.html`. No SPA fallback, but if a
+    // shell renderer is configured it gets a chance to handle the root.
+    if (relativePath === "" && shell) {
+      return renderShell(shell, request, relativePath);
+    }
     const candidates: string[] = [];
     if (relativePath === "") {
       candidates.push(indexHtml);
@@ -252,6 +330,7 @@ export function synthesizePluginAppService(
     mount,
     indexHtml,
     mode,
+    shell: app.shell,
   });
 
   const routes: ZelavisServerRoute<unknown>[] = [

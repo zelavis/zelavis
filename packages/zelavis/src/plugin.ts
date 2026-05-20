@@ -101,6 +101,47 @@ export type ZelavisPluginAppDomainEntry =
   | ZelavisPluginAppDomainBinding;
 
 /**
+ * Context handed to a dynamic shell renderer.
+ *
+ * `request` is the incoming `Request`. `path` is the bundle-relative path
+ * that was being resolved when the SPA fallback fired (empty string for
+ * the mount root). Renderers can use the path to discriminate — e.g. the
+ * dashboard returns 404 for any path under its API prefix, otherwise
+ * serves the SPA shell.
+ */
+export interface ZelavisPluginAppShellRenderContext {
+  request: Request;
+  path: string;
+}
+
+export interface ZelavisPluginAppShellResult {
+  status?: number;
+  headers?: HeadersInit;
+  body?: unknown;
+}
+
+/**
+ * Optional dynamic-shell hook. When set, the synthesized app handler
+ * calls `render` instead of reading `indexHtml` from the bundle on:
+ *
+ * - a request to the mount root,
+ * - a SPA-fallback miss (mode `"spa"`, asset not found).
+ *
+ * Concrete use case: the dashboard injects a `<script>` with runtime
+ * config (API base path, theme, feature flags) into the HTML shell
+ * before serving. A plain static index document can't do that.
+ *
+ * The renderer fully controls the response (status/headers/body), so it
+ * can also choose to 404 on specific paths — e.g. don't serve the SPA
+ * shell for `api/*` deep links.
+ */
+export interface ZelavisPluginAppShellDefinition {
+  render: (
+    context: ZelavisPluginAppShellRenderContext,
+  ) => ZelavisPluginAppShellResult | Promise<ZelavisPluginAppShellResult>;
+}
+
+/**
  * Declares that a plugin owns a route prefix (and optionally a set of domains)
  * and serves a web application — SPA bundle, static MPA, or server-rendered
  * (future). The activation layer turns this into asset-serving routes on the
@@ -131,6 +172,12 @@ export interface ZelavisPluginAppDefinition {
   indexHtml?: string;
   /** Serving mode. Default `"spa"`. */
   mode?: ZelavisPluginAppMode;
+  /**
+   * Dynamic-shell renderer. See {@link ZelavisPluginAppShellDefinition}.
+   * When set, the synthesizer uses `render` for the mount root and for
+   * SPA-fallback misses, instead of reading `indexHtml` from the bundle.
+   */
+  shell?: ZelavisPluginAppShellDefinition;
   /**
    * Dev-server URL to proxy to instead of serving static files. When set and
    * the host is in development mode, the runtime forwards requests to this
@@ -558,6 +605,15 @@ function validatePluginApp(app: ZelavisPluginAppDefinition): void {
     }
   }
 
+  if ("shell" in app && app.shell !== undefined) {
+    if (!app.shell || typeof app.shell !== "object") {
+      throw new TypeError("Plugin app shell must be an object when provided.");
+    }
+    if (typeof app.shell.render !== "function") {
+      throw new TypeError("Plugin app shell.render must be a function.");
+    }
+  }
+
   if (
     "devUrl" in app &&
     app.devUrl !== undefined &&
@@ -584,6 +640,7 @@ function freezePluginApp(
     bundle: app.bundle,
     indexHtml: app.indexHtml,
     mode: app.mode,
+    shell: app.shell ? Object.freeze({ render: app.shell.render }) : app.shell,
     devUrl: app.devUrl,
   });
 }

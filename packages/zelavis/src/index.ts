@@ -54,6 +54,11 @@ import {
 export * from "./plugin.js";
 export * from "./bundle-store.js";
 import { createSharedBundleStore, type BundleStore } from "./bundle-store.js";
+import { synthesizePluginAppService } from "./plugin-app.js";
+import type {
+  ZelavisPluginAppShellDefinition,
+  ZelavisPluginDefinition,
+} from "./plugin.js";
 export * from "./storage/s3.js";
 
 export * from "@zelavis/db";
@@ -662,6 +667,7 @@ const STORAGE_CHECKSUM_METADATA_KEY = "checksum-sha256";
 const RESERVED_CORE_SERVICE_NAMES = new Set([
   "auth",
   "dashboard",
+  "dashboard:app",
   "database",
   "storage",
   "website",
@@ -2092,6 +2098,80 @@ function injectDashboardRuntimeConfig(html: string, config: unknown): string {
     : `${script}${html}`;
 }
 
+/**
+ * Internal host-side binding the dashboard core service hands up to
+ * `zelavis()`. Allows the dashboard to declare its app bundle + shell
+ * renderer without polluting the public `ZelavisService` shape.
+ */
+interface DashboardAppHostBinding {
+  bundleStore: BundleStore;
+  shell: { render: ZelavisPluginAppShellDefinition["render"] };
+}
+
+/**
+ * Build a `BundleStore` over the embedded dashboard assets. The dashboard
+ * ships its UI bundle as a generated `embeddedDashboardAssets` array
+ * (paths, content-type, base64-or-text body). We need to expose those to
+ * the request pipeline through the same `BundleStore` interface used by
+ * plugin apps, so the dashboard becomes "just another app" from the
+ * dispatcher's point of view.
+ *
+ * Notes on path normalization:
+ *
+ * - The synthesizer calls `read(scope, relativePath)` with a path that's
+ *   the request URL minus the mount prefix and leading slash. For a
+ *   dashboard mounted at `/zelavis`, a request for
+ *   `/zelavis/assets/main.abc.js` arrives here as `assets/main.abc.js`.
+ * - `embeddedDashboardAssets` stores paths with a leading slash
+ *   (`/assets/main.abc.js`), so we lookup with that form.
+ *
+ * Notes on content transformation:
+ *
+ * - Text assets (HTML, JS, CSS) reference absolute paths like
+ *   `/assets/...`. When the dashboard is mounted under a non-root path,
+ *   those references need rewriting. `readDashboardAsset` already does
+ *   this via `prefixDashboardAssetReferences`, so the bundle store
+ *   delegates to it.
+ *
+ * The store is read-only — there is no write path for embedded assets.
+ */
+function createEmbeddedDashboardBundleStore(
+  rootPath: string,
+): BundleStore {
+  const assets = collectDashboardAssets();
+  const byKey = new Map<string, DashboardAsset>();
+  for (const asset of assets) {
+    // Index by leading-slash form (`/assets/...`) and bare form
+    // (`assets/...`) so callers can use either.
+    byKey.set(asset.path, asset);
+    byKey.set(asset.path.replace(/^\/+/, ""), asset);
+  }
+
+  return {
+    async read(_scope, path) {
+      const asset = byKey.get(path) ?? byKey.get(`/${path.replace(/^\/+/, "")}`);
+      if (!asset) {
+        return undefined;
+      }
+      const body = readDashboardAsset(asset, rootPath);
+      const bytes =
+        typeof body === "string" ? new TextEncoder().encode(body) : body;
+      return {
+        path,
+        body: bytes,
+        size: bytes.byteLength,
+        contentType: asset.contentType,
+        cacheControl: shouldPrefixDashboardAsset(asset)
+          ? "no-cache"
+          : asset.cacheControl,
+      };
+    },
+    async list() {
+      return assets.map((asset) => asset.path);
+    },
+  };
+}
+
 function renderWebsitePage(page: ZelavisWebsitePage): string {
   const title = escapeHtml(page.title);
   const kicker = page.kicker
@@ -2362,7 +2442,6 @@ async function resolveDashboardCoreService(
   const devServerUrl = normalizeExternalUrl(
     options.devServerUrl ?? readOptionalProcessEnv("ZELAVIS_UI_DEV_SERVER"),
   );
-  const assets = devServerUrl ? [] : collectDashboardAssets();
   const finalServicesForDashboard = context.services;
   const clientRoutes = [
     ...new Set(
@@ -2689,16 +2768,25 @@ async function resolveDashboardCoreService(
       ),
     };
   };
-  const dashboardFallbackHandler = async ({
-    params,
-    query,
-    request,
-  }: {
-    params: Record<string, string>;
-    query: URLSearchParams;
-    request: unknown;
-  }) => {
-    const path = params.path ?? "";
+  // The dashboard's shell renderer. Used by the synthesized
+  // `dashboard:app` service for the mount root and for SPA fallback
+  // misses. Three concerns merged here:
+  //
+  //  1. Dev-server redirect — when ZELAVIS_UI_DEV_SERVER is set, forward
+  //     everything to the Vite dev server so source edits show up
+  //     without rebuilding the embedded bundle.
+  //  2. `api/*` / `assets/*` 404 — these paths must NOT fall through to
+  //     the SPA shell on miss, since they're either real API endpoints
+  //     (resolved by the dispatcher first; only unrecognized ones reach
+  //     us) or static assets (resolved by the bundle store; only
+  //     missing ones reach us).
+  //  3. Shell HTML with injected runtime config — for everything else.
+  const dashboardShellRender = async (
+    context: { request: Request; path: string },
+  ): Promise<{ status?: number; headers?: HeadersInit; body?: unknown }> => {
+    const { request, path } = context;
+    const url = new URL(request.url);
+    const query = url.searchParams;
 
     if (devServerUrl) {
       return createDashboardDevRedirect(
@@ -2706,7 +2794,7 @@ async function resolveDashboardCoreService(
         {
           devServerUrl,
           rootPath,
-          fallbackPath: path ? `/${path}` : "/",
+          fallbackPath: path ? `/${path.replace(/^\/+/, "")}` : "/",
         },
       );
     }
@@ -2719,9 +2807,8 @@ async function resolveDashboardCoreService(
     ) {
       return {
         status: 404,
-        body: {
-          error: "Not found",
-        },
+        headers: { "content-type": "application/json; charset=utf-8" },
+        body: { error: "Not found" },
       };
     }
 
@@ -2740,37 +2827,23 @@ async function resolveDashboardCoreService(
       title,
       subtitle,
       assetRoot: joinPathParts(rootPath, "assets"),
+      // Surfaced so `zelavis()` can synthesize the dashboard's
+      // asset-serving service via the shared plugin-app primitive. The
+      // per-asset routes and SPA-deep-link fallback that used to live
+      // in `api.v1` are now produced by `synthesizePluginAppService`,
+      // which calls `shell.render` for the index + SPA fallback and
+      // serves bundle bytes for everything else.
+      //
+      // This isn't a public service field — consumers should not poke
+      // at it. The runtime reads it once during composition and drops
+      // it from the externally-visible service map.
+      _app: {
+        bundleStore: createEmbeddedDashboardBundleStore(rootPath),
+        shell: { render: dashboardShellRender },
+      } as DashboardAppHostBinding,
     },
     api: {
       v1: [
-        {
-          id: "dashboard.view.overview",
-          method: "GET",
-          path: "/",
-          handler: shellHandler,
-        },
-        ...clientRoutes.map((route) => ({
-          id: `dashboard.view${route.replaceAll("/", ".")}`,
-          method: "GET" as const,
-          path: route,
-          handler: async ({
-            query,
-            request,
-          }: {
-            query: URLSearchParams;
-            request: unknown;
-          }) =>
-            devServerUrl
-              ? createDashboardDevRedirect(
-                  { query, request },
-                  {
-                    devServerUrl,
-                    rootPath,
-                    fallbackPath: route,
-                  },
-                )
-              : shellHandler({ query, request }),
-        })),
         {
           id: "dashboard.config",
           method: "GET",
@@ -3024,27 +3097,10 @@ async function resolveDashboardCoreService(
             }
           },
         },
-        ...assets.map((asset) => ({
-          id: `dashboard.assets${asset.path.replaceAll("/", ".")}`,
-          method: "GET" as const,
-          path: asset.path,
-          handler: () => ({
-            status: 200,
-            headers: {
-              "content-type": asset.contentType,
-              "cache-control": shouldPrefixDashboardAsset(asset)
-                ? "no-cache"
-                : asset.cacheControl,
-            },
-            body: readDashboardAsset(asset, rootPath),
-          }),
-        })),
-        {
-          id: "dashboard.view.fallback",
-          method: "GET",
-          path: "/*path",
-          handler: dashboardFallbackHandler,
-        },
+        // Per-asset routes and the SPA-fallback catch-all used to live
+        // here. They're now synthesized from `service.app` via the
+        // shared plugin-app synthesizer — see the runtime mounting step
+        // in `zelavis()`.
       ],
     },
   };
@@ -3482,6 +3538,88 @@ async function resolveStorageCoreService(
   };
 }
 
+/**
+ * Read the dashboard's host-side app binding (smuggled via `service._app`)
+ * and synthesize a sibling asset-serving service through the same
+ * plugin-app primitive that ordinary plugins use.
+ *
+ * Returns `undefined` when the dashboard didn't expose an app binding —
+ * e.g. when a user provided their own `dashboard` service that doesn't
+ * follow the core convention.
+ */
+function synthesizeDashboardAppService(
+  dashboardService: ZelavisService<any>,
+): ZelavisService | undefined {
+  const binding = readDashboardAppHostBinding(dashboardService);
+  if (!binding) {
+    return undefined;
+  }
+
+  const synthetic: Readonly<ZelavisPluginDefinition<unknown>> = Object.freeze({
+    name: "dashboard",
+    scope: "system" as const,
+    app: Object.freeze({
+      mount: "/",
+      mode: "spa" as const,
+      shell: binding.shell,
+    }),
+  }) as Readonly<ZelavisPluginDefinition<unknown>>;
+
+  const appService = synthesizePluginAppService({
+    plugin: synthetic,
+    bundleStore: binding.bundleStore,
+    effectiveMount: "/",
+  });
+
+  return appService;
+}
+
+function readDashboardAppHostBinding(
+  dashboardService: ZelavisService<any>,
+): DashboardAppHostBinding | undefined {
+  const serviceApi = dashboardService.service;
+  if (
+    !serviceApi ||
+    typeof serviceApi !== "object" ||
+    !("_app" in serviceApi)
+  ) {
+    return undefined;
+  }
+  const binding = (serviceApi as { _app?: unknown })._app;
+  if (
+    !binding ||
+    typeof binding !== "object" ||
+    !("bundleStore" in binding) ||
+    !("shell" in binding)
+  ) {
+    return undefined;
+  }
+  return binding as DashboardAppHostBinding;
+}
+
+/**
+ * Produce a copy of the dashboard service with the internal `_app`
+ * binding removed, so the externally-visible service map stays a clean
+ * `ZelavisService` shape (no leaking host implementation details).
+ */
+function stripDashboardHostBinding(
+  dashboardService: ZelavisService<any>,
+): ZelavisService<any> {
+  const serviceApi = dashboardService.service;
+  if (
+    !serviceApi ||
+    typeof serviceApi !== "object" ||
+    !("_app" in serviceApi)
+  ) {
+    return dashboardService;
+  }
+  const { _app: _ignored, ...rest } = serviceApi as Record<string, unknown>;
+  return {
+    ...dashboardService,
+    service: rest,
+  };
+}
+
 function createServicePrefixes(
   services: readonly ZelavisService<any>[],
   options: {
@@ -3501,7 +3639,9 @@ function createServicePrefixes(
       continue;
     }
 
-    if (service.name === "dashboard") {
+    if (service.name === "dashboard" || service.name === "dashboard:app") {
+      // The synthesized asset-serving service mirrors the dashboard's
+      // mount, so its routes line up under the same prefix.
       prefixes[service.name] = mountAtRoot ? options.rootPath : "/";
       continue;
     }
@@ -3673,7 +3813,22 @@ export async function zelavis(
         settingsStore: dashboardSettingsStore,
         websiteEnabled,
       });
-  const finalServices = [dashboardService, ...coreServices, ...services].filter(
+  // Pull the dashboard's host-side `_app` binding (bundle store + shell
+  // renderer) and synthesize a sibling `dashboard:app` service that
+  // serves the bundle. Strip `_app` off the visible service so consumers
+  // see the clean `ZelavisService` shape.
+  const dashboardAppService = dashboardService
+    ? synthesizeDashboardAppService(dashboardService)
+    : undefined;
+  const sanitizedDashboardService = dashboardService
+    ? stripDashboardHostBinding(dashboardService)
+    : undefined;
+  const finalServices = [
+    sanitizedDashboardService,
+    dashboardAppService,
+    ...coreServices,
+    ...services,
+  ].filter(
     (service): service is ZelavisService<any> => Boolean(service),
   );
   const mountPrefix = websiteEnabled ? "/" : rootPath;

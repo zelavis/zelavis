@@ -340,6 +340,145 @@ test("MPA mode resolves directory-style requests to .html and index.html, no SPA
   assert.equal(missingResponse.status, 404);
 });
 
+test("shell.render is called for index requests and SPA-fallback misses", async () => {
+  const calls = [];
+  const plugin = definePlugin({
+    name: "shellful",
+    scope: "system",
+    app: {
+      mount: "/app",
+      bundle: "dist",
+      mode: "spa",
+      shell: {
+        render: ({ request, path }) => {
+          calls.push({ url: request.url, path });
+          return {
+            status: 200,
+            headers: { "content-type": "text/html; charset=utf-8" },
+            body: `<!doctype html><body data-rendered-path="${path}">shell</body>`,
+          };
+        },
+      },
+    },
+  });
+
+  const bundleStore = createInMemoryBundleStore(
+    new Map([
+      [
+        "system/shellful/dist/assets/main.js",
+        {
+          body: utf8("console.log('main')"),
+          contentType: "text/javascript; charset=utf-8",
+        },
+      ],
+    ]),
+  );
+
+  const { services } = await activatePluginRegistry(
+    [{ plugin, status: "installed" }],
+    {
+      rootPath: "/",
+      api: { prefix: "/api", version: "v1", basePath: "/api/v1" },
+      platform: {
+        presets: [],
+        resources: { keyValueStore: false, fileStorage: true },
+        metadata: {},
+      },
+      core: {},
+    },
+    { bundleStore },
+  );
+
+  const runtime = await zelavisServer({ services });
+
+  // Root request — shell.render fires with empty path.
+  const rootResponse = await runtime.fetch(new Request("http://localhost/app"));
+  assert.equal(rootResponse.status, 200);
+  assert.match(await rootResponse.text(), /data-rendered-path=""/);
+
+  // Existing asset — bundle store wins, shell.render is NOT called.
+  const assetResponse = await runtime.fetch(
+    new Request("http://localhost/app/assets/main.js"),
+  );
+  assert.equal(assetResponse.status, 200);
+  assert.match(await assetResponse.text(), /console\.log/);
+
+  // Missing asset — shell.render fires as the SPA fallback, with the
+  // unmatched path so the renderer can decide what to do.
+  const fallbackResponse = await runtime.fetch(
+    new Request("http://localhost/app/unknown/deep/path"),
+  );
+  assert.equal(fallbackResponse.status, 200);
+  assert.match(
+    await fallbackResponse.text(),
+    /data-rendered-path="unknown\/deep\/path"/,
+  );
+
+  // shell.render was called twice (root + fallback), NOT for the asset
+  // request that the bundle store handled.
+  assert.equal(calls.length, 2);
+  assert.deepEqual(
+    calls.map((call) => call.path),
+    ["", "unknown/deep/path"],
+  );
+});
+
+test("shell.render can return non-200 for paths it wants to reject", async () => {
+  const plugin = definePlugin({
+    name: "gated",
+    scope: "system",
+    app: {
+      mount: "/gated",
+      bundle: "dist",
+      mode: "spa",
+      shell: {
+        render: ({ path }) => {
+          if (path.startsWith("api/")) {
+            return {
+              status: 404,
+              headers: { "content-type": "application/json; charset=utf-8" },
+              body: { error: "Not found" },
+            };
+          }
+          return {
+            status: 200,
+            body: "<!doctype html>gated",
+          };
+        },
+      },
+    },
+  });
+
+  const { services } = await activatePluginRegistry(
+    [{ plugin, status: "installed" }],
+    {
+      rootPath: "/",
+      api: { prefix: "/api", version: "v1", basePath: "/api/v1" },
+      platform: {
+        presets: [],
+        resources: { keyValueStore: false, fileStorage: true },
+        metadata: {},
+      },
+      core: {},
+    },
+    { bundleStore: createInMemoryBundleStore(new Map()) },
+  );
+
+  const runtime = await zelavisServer({ services });
+
+  const apiResponse = await runtime.fetch(
+    new Request("http://localhost/gated/api/v1/whatever"),
+  );
+  assert.equal(apiResponse.status, 404);
+  assert.deepEqual(await apiResponse.json(), { error: "Not found" });
+
+  const pageResponse = await runtime.fetch(
+    new Request("http://localhost/gated/some-page"),
+  );
+  assert.equal(pageResponse.status, 200);
+  assert.match(await pageResponse.text(), /gated/);
+});
+
 test("host-bound app routes only match the declared hostname", async () => {
   const plugin = definePlugin({
     name: "tenant",
