@@ -102,7 +102,7 @@ function UsersRoute() {
                 description={
                   providers.error
                     ? "The auth endpoint is not reachable from this dashboard session."
-                    : "Install an auth plugin to expose credential-based sign-in for user accounts."
+                    : "Install an auth provider service to expose credential-based sign-in for user accounts."
                 }
               />
             </div>

@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  activatePluginRegistry,
+  activateServiceRegistry,
   addDomainBinding,
   createInMemoryBundleStore,
   createInMemoryDomainBindingStore,
   createKeyValueDomainBindingStore,
-  definePlugin,
-  filterAuthorizedHostsForPlugin,
+  defineService,
   generateVerificationToken,
+  listAuthorizedHostsForService,
   revokeDomainBindingVerification,
   verifyDomainBindingManually,
 } from "../dist/index.js";
@@ -43,12 +43,12 @@ test("in-memory store stores and retrieves bindings (case-insensitive)", async (
   const binding = await addDomainBinding(store, {
     host: "ACME.com",
     workspaceId: "ws-1",
-    pluginName: "kanban",
+    serviceName: "@example/kanban",
   });
 
   assert.equal(binding.host, "acme.com");
   assert.equal(binding.workspaceId, "ws-1");
-  assert.equal(binding.pluginName, "kanban");
+  assert.equal(binding.serviceName, "@example/kanban");
   assert.equal(binding.verifiedAt, undefined);
   assert.ok(binding.verificationToken.length > 0);
 
@@ -79,22 +79,22 @@ test("in-memory store rejects duplicate inserts but allows explicit upsert", asy
   assert.equal(updated.verificationToken, "t");
 });
 
-test("in-memory store list filters by workspace, plugin, and verified status", async () => {
+test("in-memory store list filters by workspace, service, and verified status", async () => {
   const store = createInMemoryDomainBindingStore();
   await addDomainBinding(store, {
     host: "a.example.com",
     workspaceId: "ws-1",
-    pluginName: "kanban",
+    serviceName: "@example/kanban",
   });
   await addDomainBinding(store, {
     host: "b.example.com",
     workspaceId: "ws-1",
-    pluginName: "billing",
+    serviceName: "@example/billing",
   });
   await addDomainBinding(store, {
     host: "c.example.com",
     workspaceId: "ws-2",
-    pluginName: "kanban",
+    serviceName: "@example/kanban",
   });
   await verifyDomainBindingManually(store, "a.example.com");
 
@@ -106,8 +106,8 @@ test("in-memory store list filters by workspace, plugin, and verified status", a
     ws1.map((b) => b.host),
     ["a.example.com", "b.example.com"],
   );
-  // By plugin
-  const kanban = await store.list({ pluginName: "kanban" });
+  // By service
+  const kanban = await store.list({ serviceName: "@example/kanban" });
   assert.deepEqual(
     kanban.map((b) => b.host),
     ["a.example.com", "c.example.com"],
@@ -269,92 +269,118 @@ test("KV store supports a custom prefix", async () => {
   assert.ok(raw, "binding stored under the configured prefix");
 });
 
-// ---------- filterAuthorizedHostsForPlugin ----------
+// ---------- listAuthorizedHostsForService ----------
 
-test("filterAuthorizedHostsForPlugin passes through declared hosts for system scope", async () => {
-  const result = await filterAuthorizedHostsForPlugin(
-    ["a.com", "b.com"],
-    {
-      scope: "system",
-      pluginName: "dashboard",
-      domainBindings: createInMemoryDomainBindingStore(),
-    },
-  );
-  assert.deepEqual(result, ["a.com", "b.com"]);
-});
-
-test("filterAuthorizedHostsForPlugin returns [] when no store is configured for workspace", async () => {
-  const result = await filterAuthorizedHostsForPlugin(["a.com"], {
-    scope: "workspace",
-    workspaceId: "ws-1",
-    pluginName: "kanban",
+test("listAuthorizedHostsForService returns [] for system scope", async () => {
+  const result = await listAuthorizedHostsForService({
+    scope: "system",
+    serviceName: "@zelavis/ui",
+    domainBindings: createInMemoryDomainBindingStore(),
   });
   assert.deepEqual(result, []);
 });
 
-test("filterAuthorizedHostsForPlugin only allows verified bindings owned by the plugin's workspace", async () => {
+test("listAuthorizedHostsForService returns [] when no store is configured for workspace", async () => {
+  const result = await listAuthorizedHostsForService({
+    scope: "workspace",
+    workspaceId: "ws-1",
+    serviceName: "@example/kanban",
+  });
+  assert.deepEqual(result, []);
+});
+
+test("listAuthorizedHostsForService returns [] without workspace ownership context", async () => {
+  const store = createInMemoryDomainBindingStore();
+  await addDomainBinding(store, {
+    host: "workspace.example",
+    workspaceId: "ws-1",
+  });
+  await verifyDomainBindingManually(store, "workspace.example");
+
+  const result = await listAuthorizedHostsForService({
+    scope: "workspace",
+    serviceName: "@example/kanban",
+    domainBindings: store,
+  });
+  assert.deepEqual(result, []);
+});
+
+test("listAuthorizedHostsForService only allows verified bindings owned by the service's workspace", async () => {
   const store = createInMemoryDomainBindingStore();
   await addDomainBinding(store, {
     host: "owned.com",
     workspaceId: "ws-1",
-    pluginName: "kanban",
+    serviceName: "@example/kanban",
   });
   await verifyDomainBindingManually(store, "owned.com");
 
   await addDomainBinding(store, {
     host: "other-tenant.com",
     workspaceId: "ws-2",
-    pluginName: "kanban",
+    serviceName: "@example/kanban",
   });
   await verifyDomainBindingManually(store, "other-tenant.com");
 
   await addDomainBinding(store, {
     host: "unverified.com",
     workspaceId: "ws-1",
-    pluginName: "kanban",
+    serviceName: "@example/kanban",
   });
+  await addDomainBinding(store, {
+    host: "other-service.com",
+    workspaceId: "ws-1",
+    serviceName: "@example/billing",
+  });
+  await verifyDomainBindingManually(store, "other-service.com");
 
-  const allowed = await filterAuthorizedHostsForPlugin(
-    ["owned.com", "other-tenant.com", "unverified.com", "unknown.com"],
-    {
-      scope: "workspace",
-      workspaceId: "ws-1",
-      pluginName: "kanban",
-      domainBindings: store,
-    },
-  );
+  const allowed = await listAuthorizedHostsForService({
+    scope: "workspace",
+    workspaceId: "ws-1",
+    serviceName: "@example/kanban",
+    domainBindings: store,
+  });
   assert.deepEqual(allowed, ["owned.com"]);
 });
 
-test("filterAuthorizedHostsForPlugin rejects wildcard host for workspace plugins", async () => {
+test("listAuthorizedHostsForService rejects wildcard host for workspace services", async () => {
   const store = createInMemoryDomainBindingStore();
-  // Even if somehow a workspace binding existed for `*`, it shouldn't be
-  // honored — workspace plugins claiming wildcard would swallow every
-  // unmatched request.
-  const allowed = await filterAuthorizedHostsForPlugin(["*"], {
+  await store.put(
+    {
+      host: "*",
+      workspaceId: "ws-1",
+      serviceName: "@example/kanban",
+      verificationToken: "tok",
+      verifiedAt: "2026-01-01T00:00:00Z",
+      verificationMethod: "manual",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    },
+    "insert",
+  );
+  const allowed = await listAuthorizedHostsForService({
     scope: "workspace",
     workspaceId: "ws-1",
-    pluginName: "kanban",
+    serviceName: "@example/kanban",
     domainBindings: store,
   });
   assert.deepEqual(allowed, []);
 });
 
-test("filterAuthorizedHostsForPlugin honors workspace-level bindings (no pluginName)", async () => {
-  // A binding without a pluginName is workspace-wide — any plugin in
-  // that workspace can claim the host.
+test("listAuthorizedHostsForService honors workspace-level bindings (no serviceName)", async () => {
+  // A binding without a serviceName is workspace-wide — any service in
+  // that workspace can use the host.
   const store = createInMemoryDomainBindingStore();
   await addDomainBinding(store, {
     host: "workspace.example",
     workspaceId: "ws-1",
-    // pluginName intentionally omitted
+    // serviceName intentionally omitted
   });
   await verifyDomainBindingManually(store, "workspace.example");
 
-  const allowed = await filterAuthorizedHostsForPlugin(["workspace.example"], {
+  const allowed = await listAuthorizedHostsForService({
     scope: "workspace",
     workspaceId: "ws-1",
-    pluginName: "any-plugin",
+    serviceName: "@example/any-service",
     domainBindings: store,
   });
   assert.deepEqual(allowed, ["workspace.example"]);
@@ -362,44 +388,42 @@ test("filterAuthorizedHostsForPlugin honors workspace-level bindings (no pluginN
 
 // ---------- End-to-end: synthesizer integration ----------
 
-test("synthesizePluginAppService filters workspace-plugin domains to verified bindings", async () => {
+test("synthesizeServiceAppService uses verified bindings for workspace-service app hosts", async () => {
   const store = createInMemoryDomainBindingStore();
   await addDomainBinding(store, {
     host: "kanban.acme.com",
     workspaceId: "ws-1",
-    pluginName: "kanban",
+    serviceName: "@example/kanban",
   });
   await verifyDomainBindingManually(store, "kanban.acme.com");
   // unverified binding for evil.com — should NOT enable host routing
   await addDomainBinding(store, {
     host: "evil.com",
     workspaceId: "ws-1",
-    pluginName: "kanban",
+    serviceName: "@example/kanban",
   });
 
-  const plugin = definePlugin({
-    name: "kanban",
+  const service = defineService({
+    name: "@example/kanban",
     scope: "workspace",
     app: {
       mount: "/",
       bundle: "dist",
-      // Plugin declares both hosts, but the synthesizer should only
-      // honor the verified one.
-      domains: ["kanban.acme.com", "evil.com"],
+      domainPolicy: "optional",
     },
   });
 
   const bundleStore = createInMemoryBundleStore(
     new Map([
       [
-        "ws-1/kanban/dist/index.html",
+        "ws-1/@example/kanban/dist/index.html",
         { body: utf8("kanban-shell"), contentType: "text/html" },
       ],
     ]),
   );
 
-  const { services } = await activatePluginRegistry(
-    [{ plugin, status: "installed" }],
+  const { services } = await activateServiceRegistry(
+    [{ service, status: "installed" }],
     {
       rootPath: "/",
       api: { prefix: "/api", version: "v1", basePath: "/api/v1" },
@@ -426,36 +450,35 @@ test("synthesizePluginAppService filters workspace-plugin domains to verified bi
   assert.equal(allowed.status, 200);
   assert.match(await allowed.text(), /kanban-shell/);
 
-  // Unverified host: does NOT route to this plugin (404 — no other
+  // Unverified host: does NOT route to this service (404 — no other
   // route matches)
   const rejected = await runtime.fetch(new Request("http://evil.com/"));
   assert.equal(rejected.status, 404);
 });
 
-test("system plugins bypass domain bindings entirely", async () => {
-  // Even with no binding store configured, a system plugin's declared
-  // hosts still route — operator-deployed code is trusted.
-  const plugin = definePlugin({
-    name: "system-tool",
+test("system services bypass domain bindings entirely", async () => {
+  // Even with no binding store configured, a system service still routes
+  // host-agnostically — operator-deployed code is trusted.
+  const service = defineService({
+    name: "@example/system-tool",
     scope: "system",
     app: {
       mount: "/",
       bundle: "dist",
-      domains: ["tool.example.com"],
     },
   });
 
   const bundleStore = createInMemoryBundleStore(
     new Map([
       [
-        "system/system-tool/dist/index.html",
+        "system/@example/system-tool/dist/index.html",
         { body: utf8("system-tool-home"), contentType: "text/html" },
       ],
     ]),
   );
 
-  const { services } = await activatePluginRegistry(
-    [{ plugin, status: "installed" }],
+  const { services } = await activateServiceRegistry(
+    [{ service, status: "installed" }],
     {
       rootPath: "/",
       api: { prefix: "/api", version: "v1", basePath: "/api/v1" },
@@ -476,4 +499,40 @@ test("system plugins bypass domain bindings entirely", async () => {
   );
   assert.equal(response.status, 200);
   assert.match(await response.text(), /system-tool-home/);
+});
+
+test("workspace apps with required domain policy do not synthesize without verified hosts", async () => {
+  const service = defineService({
+    name: "@example/public-site",
+    scope: "workspace",
+    app: {
+      mount: "/",
+      bundle: "dist",
+      domainPolicy: "required",
+    },
+  });
+
+  const { services } = await activateServiceRegistry(
+    [{ service, status: "installed" }],
+    {
+      rootPath: "/",
+      api: { prefix: "/api", version: "v1", basePath: "/api/v1" },
+      platform: {
+        presets: [],
+        resources: { keyValueStore: false, fileStorage: true },
+        metadata: {},
+      },
+      core: {},
+    },
+    {
+      bundleStore: createInMemoryBundleStore(new Map()),
+      workspaceId: "ws-1",
+      domainBindings: createInMemoryDomainBindingStore(),
+    },
+  );
+
+  const appService = (await Promise.all(services)).find(
+    (service) => service.name === "@example/public-site:app",
+  );
+  assert.equal(appService, undefined);
 });

@@ -1,5 +1,5 @@
 import {
-  createFileStoragePluginRegistryStore,
+  createFileStorageServiceRegistryStore,
   defineAdapter,
   type ZelavisOptions,
   type ZelavisFileStorage,
@@ -276,8 +276,8 @@ export function netlifyAdapter(options: NetlifyAdapterOptions = {}) {
 
       return {
         coreServices: nextCoreServices,
-        plugins: fileStorage
-          ? { store: createFileStoragePluginRegistryStore(fileStorage) }
+        services: fileStorage
+          ? { store: createFileStorageServiceRegistryStore(fileStorage) }
           : undefined,
         resources: {
           kv: options.kv

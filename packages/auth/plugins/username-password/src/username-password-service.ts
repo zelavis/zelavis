@@ -1,7 +1,7 @@
-import type { AuthenticationResult, CredentialProvider } from "@zelavis/auth";
-import { defineAuthPlugin } from "@zelavis/auth";
+import type { AuthenticationResult, AuthApi, CredentialProvider } from "@zelavis/auth";
+import { defineService } from "zelavis/service";
 
-export interface UsernamePasswordPluginOptions {
+export interface UsernamePasswordServiceOptions {
   createSession?: boolean;
   getSessionExpiry?: () => Date;
   verifyPasswordHash(input: { password: string; passwordHash: string }): Promise<boolean>;
@@ -12,10 +12,10 @@ function invalidCredentials(): never {
 }
 
 export function createUsernamePasswordProvider(
-  options: UsernamePasswordPluginOptions,
+  options: UsernamePasswordServiceOptions,
 ): CredentialProvider {
   return {
-    name: "username-password",
+    name: "@zelavis/auth-username-password",
     async authenticate(input, api): Promise<AuthenticationResult> {
       if (!input.identifier || typeof input.identifier !== "string") {
         throw new TypeError("Username/password authentication requires an identifier.");
@@ -66,9 +66,12 @@ export function createUsernamePasswordProvider(
   };
 }
 
-export function usernamePasswordPlugin(options: UsernamePasswordPluginOptions) {
-  return defineAuthPlugin({
-    name: "username-password",
+export function usernamePasswordService(options: UsernamePasswordServiceOptions) {
+  return defineService<AuthApi>({
+    name: "@zelavis/auth-username-password",
+    kind: "provider",
+    capabilities: ["provider:auth"],
+    extends: "@zelavis/auth",
     setup(api) {
       api.authentication.registerProvider(createUsernamePasswordProvider(options));
     },

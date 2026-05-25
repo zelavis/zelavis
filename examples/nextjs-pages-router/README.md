@@ -13,7 +13,7 @@ Then open [http://localhost:3000](http://localhost:3000) and try:
 
 - `/zelavis`
 - `/zelavis/settings`
-- `/zelavis/api/v1/dashboard/config`
+- `/zelavis/api/v1/runtime/config`
 
 ## Key Files
 

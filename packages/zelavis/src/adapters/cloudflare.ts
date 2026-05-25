@@ -1,5 +1,5 @@
 import {
-  createFileStoragePluginRegistryStore,
+  createFileStorageServiceRegistryStore,
   defineAdapter,
   type ZelavisOptions,
   type ZelavisFileStorage,
@@ -8,9 +8,9 @@ import {
   type ZelavisFileStoragePutInput,
   type ZelavisKeyValueStore,
   type ZelavisResolvedPlatformOptions,
-  type ZelavisPluginActivationController,
-  type ZelavisPluginActivationRequest,
-  type ZelavisPluginActivationResult,
+  type ZelavisServiceActivationController,
+  type ZelavisServiceActivationRequest,
+  type ZelavisServiceActivationResult,
 } from "../index.js";
 
 export interface CloudflareKvNamespace {
@@ -113,7 +113,7 @@ export interface CloudflareAdapterOptions {
   bindings?: CloudflareAdapterBindingNames;
   defaultTenantId?: string;
   metadata?: Record<string, unknown>;
-  plugins?: false | CloudflareAdapterPluginOptions;
+  services?: false | CloudflareAdapterServiceOptions;
 }
 
 export interface CloudflareAdapterEnv {
@@ -129,8 +129,8 @@ export interface CloudflareAdapterBindingNames {
   files?: string;
 }
 
-export interface CloudflareAdapterPluginOptions {
-  activation?: ZelavisPluginActivationController;
+export interface CloudflareAdapterServiceOptions {
+  activation?: ZelavisServiceActivationController;
 }
 
 export interface CloudflareDispatchNamespace {
@@ -141,18 +141,18 @@ export interface CloudflareDispatchNamespace {
   ): { fetch(request: Request): Promise<Response> | Response };
 }
 
-export interface CloudflareDispatchPluginActivationOptions {
+export interface CloudflareDispatchServiceActivationOptions {
   dispatchNamespace: CloudflareDispatchNamespace;
   workerName?:
     | string
-    | ((request: ZelavisPluginActivationRequest) => string);
+    | ((request: ZelavisServiceActivationRequest) => string);
   endpoint?: string;
   bindings?:
     | Record<string, unknown>
-    | ((request: ZelavisPluginActivationRequest) => Record<string, unknown>);
+    | ((request: ZelavisServiceActivationRequest) => Record<string, unknown>);
   dispatchOptions?:
     | Record<string, unknown>
-    | ((request: ZelavisPluginActivationRequest) => Record<string, unknown>);
+    | ((request: ZelavisServiceActivationRequest) => Record<string, unknown>);
 }
 
 const DEFAULT_CLOUDFLARE_BINDING_NAMES = Object.freeze({
@@ -162,17 +162,17 @@ const DEFAULT_CLOUDFLARE_BINDING_NAMES = Object.freeze({
 });
 
 function resolveDispatchValue<TValue>(
-  value: TValue | ((request: ZelavisPluginActivationRequest) => TValue) | undefined,
-  request: ZelavisPluginActivationRequest,
+  value: TValue | ((request: ZelavisServiceActivationRequest) => TValue) | undefined,
+  request: ZelavisServiceActivationRequest,
 ): TValue | undefined {
   return typeof value === "function"
-    ? (value as (request: ZelavisPluginActivationRequest) => TValue)(request)
+    ? (value as (request: ZelavisServiceActivationRequest) => TValue)(request)
     : value;
 }
 
-function isPluginActivationResult(
+function isServiceActivationResult(
   value: unknown,
-): value is ZelavisPluginActivationResult {
+): value is ZelavisServiceActivationResult {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -184,9 +184,9 @@ function isPluginActivationResult(
   );
 }
 
-export function createCloudflareDispatchPluginActivation(
-  options: CloudflareDispatchPluginActivationOptions,
-): ZelavisPluginActivationController {
+export function createCloudflareDispatchServiceActivation(
+  options: CloudflareDispatchServiceActivationOptions,
+): ZelavisServiceActivationController {
   return {
     mode: "host",
     capabilities: {
@@ -196,12 +196,12 @@ export function createCloudflareDispatchPluginActivation(
       supportsPackageUploads: false,
       supportsIsolatedExecution: true,
       description:
-        "Applies plugin registry changes through a Cloudflare worker dispatch boundary.",
+        "Applies service registry changes through a Cloudflare worker dispatch boundary.",
     },
     async activate(request) {
       const workerName =
-        resolveDispatchValue(options.workerName, request) ?? request.pluginName;
-      const endpoint = options.endpoint ?? "/__zelavis/plugin/activate";
+        resolveDispatchValue(options.workerName, request) ?? request.serviceName;
+      const endpoint = options.endpoint ?? "/__zelavis/service/activate";
       const worker = options.dispatchNamespace.get(
         workerName,
         resolveDispatchValue(options.bindings, request),
@@ -220,14 +220,14 @@ export function createCloudflareDispatchPluginActivation(
       if (response.status === 404) {
         return {
           status: "pending",
-          message: `Plugin worker "${workerName}" is not reachable through the Cloudflare dispatch namespace yet.`,
+          message: `Service worker "${workerName}" is not reachable through the Cloudflare dispatch namespace yet.`,
         };
       }
 
       if (!response.ok) {
         return {
           status: "pending",
-          message: `Plugin worker "${workerName}" activation returned HTTP ${response.status}.`,
+          message: `Service worker "${workerName}" activation returned HTTP ${response.status}.`,
         };
       }
 
@@ -235,18 +235,18 @@ export function createCloudflareDispatchPluginActivation(
       if (!contentType.includes("application/json")) {
         return {
           status: "active",
-          message: `Plugin worker "${workerName}" accepted the activation request.`,
+          message: `Service worker "${workerName}" accepted the activation request.`,
         };
       }
 
       const result = await response.json();
-      if (isPluginActivationResult(result)) {
+      if (isServiceActivationResult(result)) {
         return result;
       }
 
       return {
         status: "active",
-        message: `Plugin worker "${workerName}" accepted the activation request.`,
+        message: `Service worker "${workerName}" accepted the activation request.`,
       };
     },
   };
@@ -548,21 +548,21 @@ export function cloudflareAdapter(options: CloudflareAdapterOptions) {
 
       return {
         coreServices: nextCoreServices,
-        plugins:
-          options.plugins === false
+        services:
+          options.services === false
             ? undefined
             : {
                 ...(fileStorage
-                  ? { store: createFileStoragePluginRegistryStore(fileStorage) }
+                  ? { store: createFileStorageServiceRegistryStore(fileStorage) }
                   : {}),
               },
         resources: {
           kv: kvOptions ? createCloudflareKeyValueStore(kvOptions.namespace) : undefined,
           files: fileStorage,
-          plugins:
-            options.plugins === false
+          services:
+            options.services === false
               ? undefined
-              : options.plugins?.activation,
+              : options.services?.activation,
         },
         metadata: {
           runtime: "cloudflare",

@@ -6,7 +6,7 @@ import {
   ResourceNotice,
   StatusBadge,
 } from "#/components/DashboardPage";
-import { PluginPageMount } from "#/components/PluginPageMount";
+import { ServicePageMount } from "#/components/ServicePageMount";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import {
   getRuntimeConfig,
@@ -58,7 +58,7 @@ function Commerce() {
   }
 
   return (
-    <PluginPageMount fallback={
+    <ServicePageMount fallback={
     <section className="mx-auto grid w-full max-w-7xl gap-6">
       <PageHeader eyebrow="Commerce" title="Ecommerce" />
 
@@ -97,7 +97,7 @@ function Commerce() {
           </CardHeader>
           <CardContent className="p-0">
             <DataRow
-              label="Child plugins"
+              label="Child services"
               detail={`${providers.data?.length ?? 0} payment providers`}
               meta={
                 <StatusBadge
@@ -113,8 +113,8 @@ function Commerce() {
               <DataRow
                 key={provider.name}
                 label={provider.name}
-                detail={`${provider.targetPlugin} · ${provider.extensionPoint}`}
-                meta={<StatusBadge state={provider.childPlugin ? "ready" : "planned"} />}
+                detail={provider.parentService}
+                meta={<StatusBadge state={provider.childService ? "ready" : "planned"} />}
               />
             ))}
             {providers.error ? (

@@ -1,0 +1,309 @@
+---
+title: Service Model
+---
+Zelavis currently benefits from using two names for two different layers:
+
+- `service` for the internal runtime-mounting unit
+- `service` for the public extension concept developers and operators interact with
+
+## Current recommendation
+
+Use this language split consistently:
+
+- **Services** are the internal transport/runtime primitive.
+- **Services** are the external product concept.
+
+That means the dashboard, docs, and developer-facing product language can talk about services without forcing the runtime internals to stop using the service contract that already exists.
+
+## Are services services under the hood?
+
+Sometimes yes, but not always in the same way.
+
+- Auth provider services extend the auth API surface through service registration.
+- Ecommerce provider services extend the ecommerce API surface through service registration.
+- Installable dashboard/runtime features may eventually expose one runtime-mounted service as part of how the service is activated.
+
+That lower-level provider layer uses parent/child service metadata.
+
+Current example:
+
+- `zelavis-ecommerce` is the top-level marketplace/runtime service
+- payment providers such as Stripe or PayPal are child services allowed by `zelavis-ecommerce.childServices`
+
+So the safe model is:
+
+> A service may register or compose one or more internal services, but the service itself is the user-facing extension unit.
+
+## Why this split is good
+
+- The runtime already has a clear internal service contract.
+- Service is the public unit for installable capabilities, web apps, providers, and dashboard extensions.
+- Operators think in terms of installing, enabling, and using services, not mounting service graphs.
+- This avoids leaking internal transport language into the UX.
+
+## Dashboard rule
+
+The dashboard should reflect that split:
+
+- `Marketplace` is a top-level discovery/install area.
+- Installed services do not get first-slide root items.
+- Each installed service gets exactly one root entry under `Workspace`.
+- Each service may own unlimited nested sidebar slides inside its own workspace area.
+- Service-owned dashboard navigation should be declared through a plain menu object such as `menu: { ... }`, not by reaching into sidebar internals directly.
+- A service menu item may declare `page: { id, title, render }` when that menu item owns dashboard content.
+- Core services may declare a service-only menu `surface` such as `root`, `core`, `workspace`, or `settings`.
+- Service menus must not declare a `surface`; Zelavis always mounts them under `Workspace`.
+
+This keeps the first slide stable and prevents dashboard sprawl.
+
+Service pages are served as full HTML documents and mounted by the dashboard inside the `zelavis-service-frame` iframe web component. That lets service authors use plain HTML, React, Vue, web components, or any other browser-side approach without coupling service settings or workspaces to the internal dashboard React tree. Zelavis serializes those page definitions to dashboard-safe URLs such as `/zelavis/api/v1/runtime/service-pages/:service/:page`.
+
+## TypeScript direction
+
+A good current TypeScript direction is:
+
+- use plain `ZelavisRuntimeService` object literals for the internal runtime contract
+- expose one shared public service builder: `defineService(...)`
+- version that contract explicitly with `ZELAVIS_SERVICE_V1`
+- let service definitions carry declarative dashboard metadata such as `menu: { ... }` so services are not locked to one dashboard implementation detail
+- let child services declare `extends: "parent-service-name"` instead of inventing package-local service builders
+
+That builder should be about developer ergonomics and metadata, not about replacing the internal service contract.
+
+## Suggested service shape
+
+The current DX direction should lean declarative:
+
+```ts
+import { defineService, ZELAVIS_SERVICE_V1 } from "zelavis";
+
+defineService({
+  name: "@zelavis/ecommerce",
+  contractVersion: ZELAVIS_SERVICE_V1,
+  childServices: ["@zelavis/ecommerce-stripe", "@zelavis/ecommerce-paypal"],
+  menu: {
+    title: "Ecommerce",
+    path: "/commerce",
+    page: {
+      id: "dashboard",
+      title: "Commerce",
+      render() {
+        return {
+          html: "<!doctype html><html><body>Commerce</body></html>",
+        };
+      },
+    },
+    items: [
+      {
+        title: "Orders",
+        path: "/commerce/orders",
+        page: {
+          id: "orders",
+          title: "Orders",
+          render() {
+            return "<!doctype html><html><body>Orders</body></html>";
+          },
+        },
+      },
+      {
+        title: "More",
+        items: [
+          {
+            title: "Customers",
+            path: "/commerce/customers",
+          },
+        ],
+      },
+    ],
+  },
+  setup(service) {
+    // register services, routes, providers, and service capabilities
+  },
+});
+```
+
+Child services use the same builder but target a parent service:
+
+```ts
+import { defineService } from "zelavis/service";
+import type { EcommerceApi } from "@zelavis/ecommerce";
+
+defineService<EcommerceApi>({
+  name: "@zelavis/ecommerce-stripe",
+  extends: "@zelavis/ecommerce",
+  marketplace: {
+    title: "Stripe",
+    categories: ["payments"],
+  },
+  setup(api) {
+    api.payments.registerProvider("@zelavis/ecommerce-stripe", provider);
+  },
+});
+```
+
+Installed child services are collected for their parent. They do not activate as independent top-level workspace services.
+
+Parent services own their child allow-list through `childServices`. For ecommerce payments, Stripe and PayPal are allowed by the official ecommerce package. A future `XYZ Payments` child service would need the parent service to add it to that list before activation. If a child service has `marketplace.categories`, those categories apply to the parent service's child marketplace.
+
+Important point:
+
+- the `menu` object is service-owned metadata
+- `menu.page` is the content contract for service-owned dashboard pages
+- Zelavis decides how to render that metadata in the current dashboard shell
+- if the dashboard changes later, the service contract can stay stable while Zelavis adapts the rendering layer
+
+## App services and domains
+
+Services can also ship full web apps. The app contract should stay small:
+
+```ts
+import { defineService } from "zelavis";
+
+export default defineService({
+  name: "@acme/storefront",
+  app: {
+    mount: "/",
+    mode: "spa",
+    bundle: "dist",
+    domainPolicy: "optional",
+  },
+});
+```
+
+The important design rule is that services do **not** declare concrete hostnames.
+Concrete domains are runtime activation state:
+
+- the operator or workspace adds a domain binding such as `shop.acme.com`
+- Zelavis verifies ownership through manual, DNS-TXT, or HTTP-01 verification
+- activation exposes the app on verified bindings owned by that workspace or service
+
+`app.domainPolicy` controls what happens when no verified domain exists:
+
+- `optional` is the default. Workspace apps can be served on verified domains, but also fall back to `/apps/<service-name>` on the shared Zelavis host.
+- `required` means the workspace app is not synthesized until it has a verified domain binding. Use this for website/webapp services that should not appear on the shared host.
+
+This keeps service packages portable. A marketplace app can say "I am an SPA that wants root when hosted" without baking in `acme.com`, `localhost`, staging hostnames, certificate choices, or future deployment-provider details.
+
+System services may still mount at privileged paths because the operator shipped them with the runtime. The built-in `@zelavis/ui` dashboard is one of these: it is an app service mounted under the configured dashboard root, but it is not a general deployment system itself.
+
+## Registry direction
+
+Services should also be representable through one neutral registry shape:
+
+```ts
+createServiceRegistry([
+  {
+    service: ecommerceService,
+    status: "installed",
+    source: "official",
+  },
+]);
+```
+
+That gives Marketplace, installed service navigation, and future runtime activation a shared model instead of separate ad hoc lists.
+
+## ESM loading direction
+
+Zelavis should keep service loading 100% inside standard JavaScript and ESM:
+
+- service modules should be loaded through dynamic `import()`
+- service modules may export a service definition directly, as `service`, or as `default`
+- loading and registry updates should stay runtime-neutral and avoid Node-only APIs
+
+That means a future runtime can do things like:
+
+```ts
+const service = await loadService("@zelavis/ecommerce");
+const registry = await loadServiceRegistry([
+  { specifier: "@zelavis/ecommerce", status: "installed", source: "official" },
+]);
+```
+
+Important boundary:
+
+- **load/install** can be modeled with ESM imports and registry state
+- **remove/uninstall** should mean removing the service from Zelavis registry/config state
+- JavaScript does not offer a standard way to unload an already-imported ESM module from memory, so Zelavis should not pretend otherwise
+
+## Install State And Activation
+
+The runtime model should also stay explicit:
+
+- service **catalog metadata** lives in Marketplace catalog entries
+- service **runtime metadata** lives in service registry entries
+- service **install state** lives in a registry store
+- service **activation order** is an explicit `order` number
+- service **setup** runs in registry order and can register additional services through the setup context
+- service **activation** is adapter-owned: Node-style adapters can recompose the local runtime graph, while serverless adapters can attach a worker/function boundary or another live host capability
+
+That means install state and activation are related, but not the same thing:
+
+- a service can exist in the catalog as `available`
+- a service becomes active only when its registry state is `installed`
+- setup should run only for installed services once the host has activated the service module
+
+The current runtime direction now reflects that split with:
+
+- `createServiceRegistry(...)`
+- `defineServiceCatalogEntry(...)`
+- `defineServiceCatalog(...)`
+- `applyServiceRegistryState(...)`
+- `activateServiceRegistry(...)`
+- runtime service registry stores for memory, database, key/value, and file storage
+- parent-owned `childServices` allow-lists for child services
+- service setup context carrying only standard data such as root path, API paths, platform summary, and collected services
+- a service activation controller with declared host capabilities:
+  - `strategy`: `runtime-graph`, `worker-boundary`, `function-boundary`, or `custom`
+  - `supportsRuntimeInstall`
+  - `supportsUploadedSpecifiers`
+  - `supportsIsolatedExecution`
+
+The dashboard exposes these capabilities so users can tell whether a host can truly apply uploaded or marketplace services at runtime. Core does not assume a filesystem, a deploy API, or a provider-specific worker model.
+
+For Node or Bun adapters, the likely production shape is a local service cache such as `.zelavis/services/<service>/<version>/index.js`, plus a registry entry that points to that ESM entry point. Zelavis can then dynamic-import the specifier and recompose the runtime graph without restarting the process.
+
+For serverless adapters, the correct shape is provider-specific. A Cloudflare adapter cannot mutate the already-running Worker in place. The plausible runtime-install model is a worker boundary: upload service code as a user Worker, route through a dispatch namespace or service binding, and pass Zelavis context through standard request/binding contracts. That keeps Zelavis core portable while letting the Cloudflare adapter implement the Cloudflare-specific deployment and isolation mechanics.
+
+That platform summary should stay intentionally small:
+
+- `presets`: platform preset names such as `node` or `cloudflare`
+- `resources`: booleans for resource availability such as key/value or file storage
+- `metadata`: plain serializable platform hints
+
+That gives services useful context without leaking host-specific APIs into the service contract.
+
+## Trust, capabilities, and stronger dashboard access
+
+Some services need more power than normal workspace services. The dashboard itself can render first-slide entries, settings surfaces, and core-owned pages. A random marketplace service should not be able to do that just by declaring a clever menu object.
+
+The clean distinction is trust and capability, not "service vs. non-service":
+
+- **system services** are bundled or statically registered by the operator. They may use privileged dashboard surfaces such as `root`, `core`, or `settings`.
+- **workspace services** are uploaded, marketplace-installed, or tenant-managed. They are constrained to the Workspace surface and can own nested slides under their own entry.
+- future hosts can make this more explicit with capability grants such as allowed menu surfaces, app hosting policy, isolated execution support, and runtime install strategy.
+
+Bundling a service into `zelavis` is acceptable today as a trust signal for first-party/system code, but it should not become the only long-term authorization model. The issue to avoid is hidden privilege: if "more power" comes only from where the code was imported, the system grows special cases and users cannot reason about why one service can render into Settings while another cannot. The better future shape is that static registration sets or implies `scope: "system"` and, over time, explicit capability grants describe exactly what the service is allowed to do.
+
+## Current design preference
+
+For product language:
+
+- prefer **Service** as the public extension unit
+
+For runtime internals:
+
+- keep **Service**
+
+For possible alternatives:
+
+- **Apps** feels more end-user/productized, but less precise for provider-style extensions
+- **Extensions** is good, but broader and less precise than Service
+- **Services** is the clearest choice for the current Zelavis direction
+
+## Related docs
+
+- [Official Service Packages](../guides/official-service-packages.md)
+- [Service Authoring](../guides/service-authoring.md)
+- [Website Core Service](./website-core-service.md)
+- [Adapter Entry Points](../adapters/entry-points.md)
+- [Marketplace](../adapters/index.md)

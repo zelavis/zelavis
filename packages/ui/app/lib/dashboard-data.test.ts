@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPlatformNavItems,
-  buildWorkspacePluginNavItems,
-  findPluginMenuPageByPath,
+  buildWorkspaceServiceNavItems,
+  findServiceMenuPageByPath,
   type DashboardNavItem,
 } from "./dashboard-data";
-import type { RuntimePluginRegistryEntry, RuntimeService } from "./runtime-api";
+import type { RuntimeServiceRegistryEntry, RuntimeService } from "./runtime-api";
 
 function findNavItem(
   items: readonly DashboardNavItem[],
@@ -26,10 +26,10 @@ function findNavItem(
 }
 
 describe("dashboard navigation ownership", () => {
-  it("keeps installed plugins to one root workspace item with nested slides underneath", () => {
-    const plugins = [
+  it("keeps installed services to one root workspace item with nested slides underneath", () => {
+    const services = [
       {
-        name: "zelavis-ecommerce",
+        name: "@zelavis/ecommerce",
         status: "installed",
         source: "official",
         menu: {
@@ -43,23 +43,23 @@ describe("dashboard navigation ownership", () => {
           ],
         },
       },
-    ] satisfies readonly RuntimePluginRegistryEntry[];
+    ] satisfies readonly RuntimeServiceRegistryEntry[];
 
-    const workspaceItems = buildWorkspacePluginNavItems(plugins);
+    const workspaceItems = buildWorkspaceServiceNavItems(services);
     expect(workspaceItems).toHaveLength(1);
     expect(workspaceItems[0]?.title).toBe("Ecommerce");
     expect(workspaceItems[0]?.items?.map((item) => item.title)).toEqual(["Orders"]);
 
-    const nav = buildPlatformNavItems([], plugins);
+    const nav = buildPlatformNavItems([], services);
     const workspace = nav.find((item) => item.title === "Workspace");
     expect(workspace?.items?.some((item) => item.title === "Ecommerce")).toBe(true);
     expect(nav.some((item) => item.title === "Ecommerce")).toBe(false);
   });
 
-  it("keeps arbitrary plugin dashboard paths clickable and page-resolvable", () => {
-    const plugins = [
+  it("keeps arbitrary service dashboard paths clickable and page-resolvable", () => {
+    const services = [
       {
-        name: "example-basic",
+        name: "@zelavis/example-plugin-basic",
         status: "installed",
         source: "community",
         menu: {
@@ -67,22 +67,22 @@ describe("dashboard navigation ownership", () => {
           path: "/example-basic",
           page: {
             id: "dashboard",
-            src: "/zelavis/api/v1/dashboard/plugin-pages/example-basic/dashboard",
+            src: "/zelavis/api/v1/runtime/service-pages/%40zelavis%2Fexample-plugin-basic/dashboard",
           },
         },
       },
-    ] satisfies readonly RuntimePluginRegistryEntry[];
+    ] satisfies readonly RuntimeServiceRegistryEntry[];
 
-    const [item] = buildWorkspacePluginNavItems(plugins);
+    const [item] = buildWorkspaceServiceNavItems(services);
 
     expect(item?.url).toBe("/example-basic");
-    expect(findPluginMenuPageByPath("/example-basic", plugins)?.id).toBe("dashboard");
+    expect(findServiceMenuPageByPath("/example-basic", services)?.id).toBe("dashboard");
   });
 
   it("allows core services to declare their dashboard surface explicitly", () => {
     const services = [
       {
-        name: "insights",
+        name: "@example/insights",
         core: true,
         apiPath: "/api/v1/insights",
         menu: {
@@ -92,7 +92,7 @@ describe("dashboard navigation ownership", () => {
         },
       },
       {
-        name: "jobs",
+        name: "@example/jobs",
         core: true,
         apiPath: "/api/v1/jobs",
         menu: {

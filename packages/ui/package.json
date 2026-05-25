@@ -1,16 +1,46 @@
 {
   "name": "@zelavis/ui",
-  "private": true,
+  "version": "1.0.1-alpha.2",
+  "private": false,
+  "description": "Zelavis dashboard SPA packaged as a system plugin.",
+  "license": "MIT",
+  "author": "Ivan Jeremic",
   "type": "module",
+  "main": "./dist/dashboard-service.js",
+  "types": "./dist/dashboard-service.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/dashboard-service.d.ts",
+      "import": "./dist/dashboard-service.js"
+    },
+    "./service": {
+      "types": "./dist/dashboard-service.d.ts",
+      "import": "./dist/dashboard-service.js"
+    }
+  },
+  "files": [
+    "dist",
+    "build/client"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zelavis/zelavis.git",
+    "directory": "packages/ui"
+  },
+  "homepage": "https://www.zelavis.com",
+  "bugs": {
+    "url": "https://github.com/zelavis/zelavis/issues"
+  },
   "scripts": {
-    "build": "react-router build",
+    "build": "react-router build && node scripts/copy-dashboard-assets.mjs && tsc -p tsconfig.plugin.json",
+    "build:plugin": "tsc -p tsconfig.plugin.json",
     "dev": "react-router dev --port 3000",
     "dev:mounted": "ZELAVIS_UI_BASE_PATH=/zelavis/ react-router dev --port 3000",
     "start": "react-router-serve ./build/server/index.js",
     "test": "vitest run --passWithNoTests --exclude 'tests/e2e/**'",
     "test:e2e": "playwright test",
     "test:e2e:mounted": "ZELAVIS_UI_BASE_PATH=/zelavis/ playwright test",
-    "typecheck": "react-router typegen && tsc"
+    "typecheck": "react-router typegen && tsc && tsc -p tsconfig.plugin.json --noEmit"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -24,7 +54,7 @@
     "@react-router/node": "7.15.1",
     "@react-router/serve": "7.15.1",
     "@tanstack/react-table": "^8.21.3",
-    "@tanstack/react-virtual": "^3.13.24",
+    "@tanstack/react-virtual": "^3.13.25",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "embla-carousel-react": "^8.6.0",
@@ -35,7 +65,7 @@
     "react-dom": "19.2.6",
     "react-router": "7.15.1",
     "swiper": "^12.1.4",
-    "tailwind-merge": "^3.0.2",
+    "tailwind-merge": "^3.6.0",
     "tw-animate-css": "^1.3.6"
   },
   "devDependencies": {
@@ -44,13 +74,13 @@
     "@tailwindcss/typography": "^0.5.16",
     "@tailwindcss/vite": "^4.3.0",
     "@types/node": "^22",
-    "@types/react": "^19.2.14",
+    "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
     "jsdom": "^28.1.0",
     "shadcn": "^4.6.0",
     "tailwindcss": "^4.3.0",
     "typescript": "^5.9.3",
-    "vite": "^8.0.10",
+    "vite": "^8.0.14",
     "vitest": "^4.1.7"
   }
 }

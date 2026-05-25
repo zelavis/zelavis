@@ -14,15 +14,15 @@
       "preview_database_id": "00000000-0000-0000-0000-000000000000",
     },
   ],
-  // Runtime plugin activation can be wired through a Workers for Platforms
-  // dispatch namespace binding named ZELAVIS_PLUGIN_DISPATCHER. This example
+  // Runtime service activation can be wired through a Workers for Platforms
+  // dispatch namespace binding named ZELAVIS_SERVICE_DISPATCHER. This example
   // keeps it commented because local dispatch namespace setup depends on the
   // Cloudflare account and product configuration.
   //
   // "dispatch_namespaces": [
   //   {
-  //     "binding": "ZELAVIS_PLUGIN_DISPATCHER",
-  //     "namespace": "zelavis-plugins",
+  //     "binding": "ZELAVIS_SERVICE_DISPATCHER",
+  //     "namespace": "zelavis-services",
   //   },
   // ],
 }

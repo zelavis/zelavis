@@ -5,12 +5,12 @@ import { OrderService } from "../services/order-service.js";
 import { PaymentService } from "../services/payment-service.js";
 import { ProductService } from "../services/product-service.js";
 import { createInMemoryEcommerceRepositories } from "../repositories/in-memory.js";
-import type { EcommercePlugin } from "../ecommerce-plugin.js";
+import type { EcommerceService } from "../ecommerce-service.js";
 import type { EcommerceApi } from "./types.js";
 
 export interface CreateEcommerceOptions {
   config?: Record<string, unknown>;
-  plugins?: readonly EcommercePlugin[];
+  services?: readonly EcommerceService[];
   repositories?: Partial<EcommerceRepositories>;
 }
 
@@ -28,7 +28,7 @@ export async function createEcommerce(options: CreateEcommerceOptions = {}): Pro
   const api: EcommerceApi = {
     context: {
       config: options.config ?? {},
-      childPlugins: Object.freeze([...(options.plugins ?? [])]),
+      childServices: Object.freeze([...(options.services ?? [])]),
     },
     repositories,
     customers,
@@ -38,8 +38,8 @@ export async function createEcommerce(options: CreateEcommerceOptions = {}): Pro
     payments,
   };
 
-  for (const plugin of options.plugins ?? []) {
-    await plugin.setup?.(api);
+  for (const service of options.services ?? []) {
+    await service.setup?.(api);
   }
 
   return api;

@@ -1,19 +1,19 @@
 import * as React from "react";
 import { useLocation } from "react-router";
 
-import { PluginFrame } from "#/components/PluginFrame";
-import { findPluginMenuPageByPath } from "#/lib/dashboard-data";
+import { ServiceFrame } from "#/components/ServiceFrame";
+import { findServiceMenuPageByPath } from "#/lib/dashboard-data";
 import { getRuntimeConfig } from "#/lib/runtime-api";
 import { useRuntimeResource } from "#/lib/use-runtime-resource";
 
-export function PluginPageMount({
+export function ServicePageMount({
   fallback,
 }: {
   fallback: React.ReactNode;
 }) {
   const pathname = useLocation().pathname;
   const runtime = useRuntimeResource(getRuntimeConfig);
-  const page = findPluginMenuPageByPath(pathname, runtime.data?.plugins);
+  const page = findServiceMenuPageByPath(pathname, runtime.data?.serviceRegistry);
 
   if (!page) {
     return <>{fallback}</>;
@@ -21,7 +21,7 @@ export function PluginPageMount({
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PluginFrame src={page.src} title={page.title ?? "Plugin page"} />
+      <ServiceFrame src={page.src} title={page.title ?? "Service page"} />
     </section>
   );
 }

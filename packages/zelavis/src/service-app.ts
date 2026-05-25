@@ -1,38 +1,42 @@
 /**
- * Synthesize asset-serving routes from a plugin's `app` field.
+ * Synthesize asset-serving routes from a service's `app` field.
  *
- * Plugins that declare an `app` are turned into a separate
- * `ZelavisService` whose routes serve static bundle bytes via a
+ * Services that declare an `app` are turned into a separate
+ * `ZelavisRuntimeService` whose routes serve static bundle bytes via a
  * `BundleStore`. This keeps the request dispatcher itself unchanged:
  * everything still flows through the same route table; "static file" is
  * just a handler that happens to read from a bundle store and apply
  * SPA-fallback or MPA-filesystem semantics.
  *
  * Why a separate synthesized service and not in-place mutation of the
- * plugin's own service entry: plugin definitions are frozen, app-routes
+ * service's own service entry: service definitions are frozen, app-routes
  * are distinct in lifecycle (purely host-side, no service-state), and we
  * want them to appear as their own debuggable mount in the routes table.
  */
 
 import type { BundleScope, BundleStore } from "./bundle-store.js";
 import {
-  filterAuthorizedHostsForPlugin,
+  listAuthorizedHostsForService,
   type DomainBindingStore,
 } from "./domain-binding.js";
 import type {
-  ZelavisPluginAppDefinition,
-  ZelavisPluginAppShellDefinition,
-  ZelavisPluginDefinition,
-} from "./plugin.js";
+  ZelavisServiceAppDefinition,
+  ZelavisServiceAppShellDefinition,
+  ZelavisServiceDefinition,
+} from "./service.js";
 import type {
   ZelavisRouteResponse,
   ZelavisServerRoute,
-  ZelavisService,
+  ZelavisRuntimeService,
 } from "@zelavis/server";
 
 const DEFAULT_BUNDLE = "dist";
 const DEFAULT_INDEX_HTML = "index.html";
 const DEFAULT_MOUNT = "/";
+
+function servicePathSegment(serviceName: string): string {
+  return encodeURIComponent(serviceName);
+}
 
 const CONTENT_TYPE_BY_EXT: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -68,31 +72,6 @@ function guessContentType(path: string): string {
 }
 
 /**
- * Normalize a route's host matcher to an array form, since the contract
- * accepts either string or readonly string[]. The dispatcher handles both,
- * but consumers reasoning about app routes (debug, admin UIs) get a
- * predictable shape this way.
- */
-function normalizeAppHosts(
-  app: ZelavisPluginAppDefinition,
-): readonly string[] | undefined {
-  if (!app.domains || app.domains.length === 0) {
-    return undefined;
-  }
-  const hosts: string[] = [];
-  for (const entry of app.domains) {
-    hosts.push(typeof entry === "string" ? entry : entry.host);
-  }
-  // If the wildcard sentinel appears, the matcher is effectively
-  // host-agnostic and we can omit it — the dispatcher treats `undefined`
-  // and `"*"` the same way.
-  if (hosts.includes("*")) {
-    return undefined;
-  }
-  return Object.freeze(hosts);
-}
-
-/**
  * Strip the mount prefix from the requested pathname to produce the
  * bundle-relative path. Returns the empty string for the mount root, so
  * callers know to serve `indexHtml`.
@@ -120,10 +99,10 @@ interface AppHandlerOptions {
   /**
    * When set, the synthesized handler calls `shell.render` for index
    * requests and SPA-fallback misses instead of reading `indexHtml` from
-   * the bundle. The dashboard uses this to inject runtime config into
-   * its HTML shell.
+   * the bundle. Apps can use this to inject runtime config into their
+   * HTML shell.
    */
-  shell?: ZelavisPluginAppShellDefinition;
+  shell?: ZelavisServiceAppShellDefinition;
   /**
    * When set, the synthesized handler short-circuits every request
    * under the mount with a 307 redirect to `devUrl + relativePath +
@@ -184,7 +163,7 @@ const DEFAULT_SHELL_CONTENT_TYPE = "text/html; charset=utf-8";
 const DEFAULT_SHELL_CACHE_CONTROL = "no-cache";
 
 async function renderShell(
-  shell: ZelavisPluginAppShellDefinition,
+  shell: ZelavisServiceAppShellDefinition,
   request: Request,
   relativePath: string,
 ): Promise<ZelavisRouteResponse> {
@@ -265,7 +244,7 @@ function createAppAssetHandler(options: AppHandlerOptions) {
     if (relativePath === undefined) {
       // Defensive: this handler is only mounted under the mount prefix, so
       // a non-match here would be a routing bug. Surface a 404 rather than
-      // serving the SPA shell from an unrelated URL.
+      // serving the app shell from an unrelated URL.
       return { status: 404, body: "Not found" };
     }
 
@@ -280,7 +259,7 @@ function createAppAssetHandler(options: AppHandlerOptions) {
 
     if (mode === "spa") {
       // Root request: shell.render takes precedence over a static
-      // `indexHtml` so plugins can inject runtime config.
+      // `indexHtml` so services can inject runtime config.
       if (relativePath === "") {
         if (shell) {
           return renderShell(shell, request, relativePath);
@@ -348,48 +327,48 @@ function createAppAssetHandler(options: AppHandlerOptions) {
   };
 }
 
-export interface SynthesizePluginAppOptions {
+export interface SynthesizeServiceAppOptions {
   /**
-   * The plugin whose `app` field should be turned into a service. If the
-   * plugin has no `app`, returns `undefined`.
+   * The service whose `app` field should be turned into a service. If the
+   * service has no `app`, returns `undefined`.
    */
-  plugin: Readonly<ZelavisPluginDefinition<unknown>>;
+  service: Readonly<ZelavisServiceDefinition<unknown>>;
   /** Bundle store the synthesized handlers will read from. */
   bundleStore: BundleStore;
   /**
-   * Workspace this plugin belongs to. Optional — undefined is treated as
+   * Workspace this service belongs to. Optional — undefined is treated as
    * system scope by the default `SharedBundleStore`.
    */
   workspaceId?: string;
   /**
    * Override the effective mount path after scope-based rewriting. The
-   * caller (`activatePluginRegistry`) supplies this for workspace-scoped
-   * plugins, which are forced under `/apps/<plugin-name>` regardless of
+   * caller (`activateServiceRegistry`) supplies this for workspace-scoped
+   * services, which are forced under `/apps/<service-name>` regardless of
    * what their definition claims.
    */
   effectiveMount?: string;
   /**
-   * Domain bindings store. When set, the synthesizer filters declared
-   * `app.domains` for workspace-scoped plugins down to hosts with a
-   * verified binding owned by the plugin's workspace+plugin pair.
-   * System-scope plugins keep their declared hosts unchanged.
+   * Domain bindings store. When set, workspace-scoped service apps can be
+   * host-bound to verified bindings owned by their workspace or by the
+   * service itself. Concrete hostnames are runtime activation state, not
+   * service metadata.
    */
   domainBindings?: DomainBindingStore;
 }
 
 /**
- * Produce a `ZelavisService` that serves the plugin's app bundle, or
- * `undefined` if the plugin doesn't declare an `app`.
+ * Produce a `ZelavisRuntimeService` that serves the service's app bundle, or
+ * `undefined` if the service doesn't declare an `app`.
  *
  * Async because the domain-binding store lookups it does for
- * workspace plugins may be I/O-bound (KV / blob backends).
+ * workspace services may be I/O-bound (KV / blob backends).
  */
-export async function synthesizePluginAppService(
-  options: SynthesizePluginAppOptions,
-): Promise<ZelavisService | undefined> {
-  const { plugin, bundleStore, workspaceId, effectiveMount, domainBindings } =
+export async function synthesizeServiceAppService(
+  options: SynthesizeServiceAppOptions,
+): Promise<ZelavisRuntimeService | undefined> {
+  const { service, bundleStore, workspaceId, effectiveMount, domainBindings } =
     options;
-  const app = plugin.app;
+  const app = service.app;
   if (!app) {
     return undefined;
   }
@@ -397,47 +376,51 @@ export async function synthesizePluginAppService(
   const bundle = app.bundle ?? DEFAULT_BUNDLE;
   const indexHtml = app.indexHtml ?? DEFAULT_INDEX_HTML;
   const mode = app.mode ?? "spa";
-  const declaredHosts = normalizeAppHosts(app);
+  const domainPolicy = app.domainPolicy ?? "optional";
 
-  // Gate workspace plugins behind the domain-binding store. System
-  // plugins keep what they declared — the operator deployed them, so
-  // they're trusted to claim any host.
-  let hosts: readonly string[] | undefined = declaredHosts;
-  if (declaredHosts && plugin.scope === "workspace") {
-    const authorized = await filterAuthorizedHostsForPlugin(declaredHosts, {
+  // Gate workspace services behind verified runtime domain bindings.
+  // System services are trusted host-side code, so their synthesized
+  // routes stay host-agnostic unless the host provides a narrower mount
+  // through a future deployment adapter.
+  let hosts: readonly string[] | undefined;
+  if (service.scope === "workspace") {
+    const authorized = await listAuthorizedHostsForService({
       scope: "workspace",
       workspaceId,
-      pluginName: plugin.name,
+      serviceName: service.name,
       domainBindings,
     });
     hosts = authorized.length > 0 ? Object.freeze([...authorized]) : undefined;
+
+    if ((!hosts || hosts.length === 0) && domainPolicy === "required") {
+      return undefined;
+    }
   }
 
   // Mount selection:
-  //  - System plugins keep whatever mount they declared.
-  //  - Workspace plugins with verified host bindings serve their
+  //  - System services keep whatever mount they declared.
+  //  - Workspace services with verified host bindings serve their
   //    declared mount (typically "/") restricted to those hosts. The
   //    host itself provides namespace isolation, so no path-prefix
   //    rewrite is needed.
-  //  - Workspace plugins without verified hosts get the
-  //    `/apps/<plugin-name>` namespaced mount on the shared host,
+  //  - Workspace services without verified hosts get the
+  //    `/apps/<service-name>` namespaced mount on the shared host,
   //    where path-prefixing is the only thing preventing collisions.
   //
   // Callers may override via `effectiveMount` — primarily for tests
-  // and for the dashboard's "I'm system scope but mount me at /"
-  // case.
+  // or for system services whose effective mount is chosen by the host.
   let mount: string;
   if (effectiveMount !== undefined) {
     mount = effectiveMount;
-  } else if (plugin.scope === "workspace" && (!hosts || hosts.length === 0)) {
-    mount = `/apps/${plugin.name}`;
+  } else if (service.scope === "workspace" && (!hosts || hosts.length === 0)) {
+    mount = `/apps/${servicePathSegment(service.name)}`;
   } else {
     mount = app.mount ?? DEFAULT_MOUNT;
   }
 
   const scope: BundleScope = {
     workspaceId,
-    pluginName: plugin.name,
+    serviceName: service.name,
     bundle,
   };
 
@@ -453,14 +436,14 @@ export async function synthesizePluginAppService(
 
   const routes: ZelavisServerRoute<unknown>[] = [
     {
-      id: `${plugin.name}.app.index`,
+      id: `${service.name}.app.index`,
       method: "GET",
       path: "/",
       host: hosts,
       handler,
     },
     {
-      id: `${plugin.name}.app.assets`,
+      id: `${service.name}.app.assets`,
       method: "GET",
       path: "/*path",
       host: hosts,
@@ -469,29 +452,29 @@ export async function synthesizePluginAppService(
   ];
 
   return Object.freeze({
-    name: `${plugin.name}:app`,
+    name: `${service.name}:app`,
     basePath: mount,
     service: Object.freeze({}),
     api: Object.freeze({
       v1: Object.freeze(routes),
     }),
-  }) as ZelavisService;
+  }) as ZelavisRuntimeService;
 }
 
 /**
- * Apply scope-based mount rewriting. Workspace-scoped plugins (uploaded
- * ZIPs, marketplace installs) are corralled under `/apps/<plugin-name>`
+ * Apply scope-based mount rewriting. Workspace-scoped services (uploaded
+ * ZIPs, marketplace installs) are corralled under `/apps/<service-name>`
  * regardless of what mount they declare, so a tenant can't squat a
- * reserved prefix like `/zelavis` or `/api`. System-scope plugins keep
+ * reserved prefix like `/zelavis` or `/api`. System-scope services keep
  * whatever mount they declared.
  */
 export function resolveEffectiveMount(
-  plugin: Readonly<ZelavisPluginDefinition<unknown>>,
+  service: Readonly<ZelavisServiceDefinition<unknown>>,
 ): string {
-  const declared = plugin.app?.mount ?? DEFAULT_MOUNT;
-  if (plugin.scope === "system") {
+  const declared = service.app?.mount ?? DEFAULT_MOUNT;
+  if (service.scope === "system") {
     return declared;
   }
   // Workspace scope: always namespaced.
-  return `/apps/${plugin.name}`;
+  return `/apps/${servicePathSegment(service.name)}`;
 }

@@ -8,7 +8,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@netlify/blobs": "^10.7.4",
+    "@netlify/blobs": "^10.7.8",
     "zelavis": "workspace:*"
   },
   "devDependencies": {

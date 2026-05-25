@@ -59,7 +59,7 @@ There is no separate `defineCoreService(...)` helper today.
 The pattern is:
 
 1. A package exposes a normal server-service factory.
-2. That factory returns a plain `ZelavisService` object literal.
+2. That factory returns a plain `ZelavisRuntimeService` object literal.
 3. The high-level `zelavis(...)` runtime decides when to call that factory and include the result as a built-in core service.
 
 For example:

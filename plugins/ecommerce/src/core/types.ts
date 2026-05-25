@@ -4,11 +4,11 @@ import type { CustomerService } from "../services/customer-service.js";
 import type { OrderService } from "../services/order-service.js";
 import type { PaymentService } from "../services/payment-service.js";
 import type { ProductService } from "../services/product-service.js";
-import type { EcommercePlugin } from "../ecommerce-plugin.js";
+import type { EcommerceService } from "../ecommerce-service.js";
 
 export interface EcommerceContext {
   config: Record<string, unknown>;
-  childPlugins: readonly EcommercePlugin[];
+  childServices: readonly EcommerceService[];
 }
 
 export interface EcommerceApi {
