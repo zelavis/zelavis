@@ -1,7 +1,9 @@
 import {
   createMappedJsonErrorResponse,
   type ZelavisServerErrorStatusRule,
-  type ZelavisService,
+  defineService,
+  type ZelavisServiceDefinition,
+  type ZelavisRuntimeService,
 } from "@zelavis/server";
 import type { AuthApi } from "./core/types.js";
 import {
@@ -30,11 +32,23 @@ function authErrorResponse(error: unknown, fallback = 500) {
   return createMappedJsonErrorResponse(error, authErrorRules, fallback);
 }
 
-export type AuthServiceDefinition = ZelavisService<AuthApi>;
+export type AuthServiceDefinition = Readonly<
+  ZelavisRuntimeService<AuthApi> & ZelavisServiceDefinition<AuthApi, AuthApi>
+>;
 
-export function defineAuthService(auth: AuthApi): AuthServiceDefinition {
-  return {
-    name: "auth",
+export interface DefineAuthServiceOptions {
+  childServices?: readonly string[];
+}
+
+export function defineAuthService(
+  auth: AuthApi,
+  options: DefineAuthServiceOptions = {},
+): AuthServiceDefinition {
+  return defineService<AuthApi, AuthApi>({
+    name: "@zelavis/auth",
+    kind: "plugin",
+    capabilities: ["api:routes", "dashboard:menu"],
+    childServices: options.childServices,
     basePath: "/auth",
     menu: {
       title: "Auth",
@@ -127,5 +141,5 @@ export function defineAuthService(auth: AuthApi): AuthServiceDefinition {
         },
       ],
     },
-  };
+  });
 }

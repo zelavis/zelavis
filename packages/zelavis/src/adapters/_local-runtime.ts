@@ -1,5 +1,5 @@
 /**
- * Shared plugin infrastructure for local JS runtimes (Node.js, Bun).
+ * Shared service package infrastructure for local JS runtimes (Node.js, Bun).
  *
  * All APIs here depend only on standard node: built-ins that are available
  * identically in both Node.js and Bun — no runtime-specific imports.
@@ -15,12 +15,12 @@ import { inflateRawSync } from "node:zlib";
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type {
-  ZelavisPluginLoadOptions,
-  ZelavisPluginPackageInstaller,
+  ZelavisServiceLoadOptions,
+  ZelavisServicePackageInstaller,
 } from "../index.js";
 
 // ---------------------------------------------------------------------------
-// Shared plugin directory helpers
+// Shared service directory helpers
 // ---------------------------------------------------------------------------
 
 export function normalizeDataDirectory(path: string | undefined): string {
@@ -82,7 +82,7 @@ function findEndOfCentralDirectory(bytes: Uint8Array): number {
     }
   }
 
-  throw new Error("Plugin package is not a valid ZIP archive.");
+  throw new Error("Service package is not a valid ZIP archive.");
 }
 
 function normalizeZipEntryPath(path: string): string | undefined {
@@ -109,7 +109,7 @@ function inflateZipEntry(
   localHeaderOffset: number,
 ): Uint8Array {
   if (readUInt32(bytes, localHeaderOffset) !== 0x04034b50) {
-    throw new Error("Plugin package contains an invalid ZIP local header.");
+    throw new Error("Service package contains an invalid ZIP local header.");
   }
 
   const fileNameLength = readUInt16(bytes, localHeaderOffset + 26);
@@ -138,7 +138,7 @@ function readZipEntries(bytes: Uint8Array): ZipEntry[] {
 
   for (let index = 0; index < entryCount; index += 1) {
     if (readUInt32(bytes, offset) !== 0x02014b50) {
-      throw new Error("Plugin package contains an invalid ZIP central directory.");
+      throw new Error("Service package contains an invalid ZIP central directory.");
     }
 
     const method = readUInt16(bytes, offset + 10);
@@ -165,11 +165,11 @@ function readZipEntries(bytes: Uint8Array): ZipEntry[] {
   return entries;
 }
 
-function resolvePluginPackageEntry(entries: readonly ZipEntry[]): string {
-  const manifest = entries.find((entry) => entry.path === "zelavis.plugin.json");
+function resolveServicePackageEntry(entries: readonly ZipEntry[]): string {
+  const manifest = entries.find((entry) => entry.path === "zelavis.service.json");
 
   if (!manifest) {
-    throw new Error("Plugin package must include zelavis.plugin.json.");
+    throw new Error("Service package must include zelavis.service.json.");
   }
 
   const parsed = JSON.parse(new TextDecoder().decode(manifest.body)) as {
@@ -179,11 +179,11 @@ function resolvePluginPackageEntry(entries: readonly ZipEntry[]): string {
   const normalized = normalizeZipEntryPath(entry.replace(/^\.\//, ""));
 
   if (!normalized) {
-    throw new Error("Plugin package manifest must include a valid entry path.");
+    throw new Error("Service package manifest must include a valid entry path.");
   }
 
   if (!entries.some((candidate) => candidate.path === normalized)) {
-    throw new Error(`Plugin package entry "${normalized}" does not exist.`);
+    throw new Error(`Service package entry "${normalized}" does not exist.`);
   }
 
   return normalized;
@@ -198,7 +198,7 @@ function resolvePackageFilePath(root: string, path: string): string {
     relativePath === "" ||
     resolve(relativePath) === relativePath
   ) {
-    throw new Error(`Plugin package path "${path}" escapes the package root.`);
+    throw new Error(`Service package path "${path}" escapes the package root.`);
   }
 
   return resolved;
@@ -215,35 +215,35 @@ async function importFilePath(filePath: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Remote plugin download (https:// specifiers)
+// Remote service download (https:// specifiers)
 // ---------------------------------------------------------------------------
 
-async function downloadRemotePlugin(
+async function downloadRemoteService(
   specifier: string,
-  pluginDirectory: string,
+  serviceDirectory: string,
 ): Promise<string> {
   const response = await fetch(specifier);
 
   if (!response.ok) {
     throw new Error(
-      `Failed to download plugin module from ${specifier}: ${response.status}`,
+      `Failed to download service module from ${specifier}: ${response.status}`,
     );
   }
 
   const source = await response.text();
   const sourceHash = createHash("sha256").update(source).digest("hex");
   const specifierHash = createHash("sha256").update(specifier).digest("hex");
-  const pluginPath = join(pluginDirectory, specifierHash, `${sourceHash}.mjs`);
+  const servicePath = join(serviceDirectory, specifierHash, `${sourceHash}.mjs`);
 
-  await writeFile(pluginPath, source, { flag: "wx" }).catch(async (error) => {
+  await writeFile(servicePath, source, { flag: "wx" }).catch(async (error) => {
     if (
       typeof error === "object" &&
       error !== null &&
       "code" in error &&
       error.code === "ENOENT"
     ) {
-      mkdirSync(dirname(pluginPath), { recursive: true });
-      await writeFile(pluginPath, source, { flag: "wx" }).catch((nextError) => {
+      mkdirSync(dirname(servicePath), { recursive: true });
+      await writeFile(servicePath, source, { flag: "wx" }).catch((nextError) => {
         if (
           typeof nextError === "object" &&
           nextError !== null &&
@@ -269,41 +269,41 @@ async function downloadRemotePlugin(
     throw error;
   });
 
-  return pluginPath;
+  return servicePath;
 }
 
 // ---------------------------------------------------------------------------
-// Public plugin options interface (shared by node + bun)
+// Public service options interface (shared by node + bun)
 // ---------------------------------------------------------------------------
 
-export interface LocalRuntimePluginOptions {
+export interface LocalRuntimeServiceOptions {
   directory?: string;
   allowRemote?: boolean;
 }
 
 // ---------------------------------------------------------------------------
-// Plugin package installer (ZIP → disk)
+// Service package installer (ZIP → disk)
 // ---------------------------------------------------------------------------
 
-export function createLocalRuntimePluginPackageInstaller(
-  options: LocalRuntimePluginOptions = {},
-): ZelavisPluginPackageInstaller {
-  const pluginDirectory = resolve(options.directory ?? ".zelavis/plugins");
+export function createLocalRuntimeServicePackageInstaller(
+  options: LocalRuntimeServiceOptions = {},
+): ZelavisServicePackageInstaller {
+  const serviceDirectory = resolve(options.directory ?? ".zelavis/services");
 
   return {
     async install(input) {
       const fileName = input.fileName.toLowerCase();
 
       if (!fileName.endsWith(".zip")) {
-        throw new Error("Plugin package uploads must be ZIP archives.");
+        throw new Error("Service package uploads must be ZIP archives.");
       }
 
       const packageHash = createHash("sha256").update(input.body).digest("hex");
       const entries = readZipEntries(input.body);
-      const entry = resolvePluginPackageEntry(entries);
-      const packageDirectory = join(pluginDirectory, "packages", packageHash);
+      const entry = resolveServicePackageEntry(entries);
+      const packageDirectory = join(serviceDirectory, "packages", packageHash);
       const temporaryDirectory = join(
-        pluginDirectory,
+        serviceDirectory,
         ".tmp",
         `${packageHash}-${Date.now()}`,
       );
@@ -343,20 +343,20 @@ export function createLocalRuntimePluginPackageInstaller(
 
       return {
         specifier: join(packageDirectory, entry),
-        message: `Installed plugin package ${input.fileName}.`,
+        message: `Installed service package ${input.fileName}.`,
       };
     },
   };
 }
 
 // ---------------------------------------------------------------------------
-// Plugin importer (specifier → ESM module)
+// Service importer (specifier → ESM module)
 // ---------------------------------------------------------------------------
 
-export function createLocalRuntimePluginImporter(
-  options: LocalRuntimePluginOptions = {},
-): NonNullable<ZelavisPluginLoadOptions["importer"]> {
-  const pluginDirectory = resolve(options.directory ?? ".zelavis/plugins");
+export function createLocalRuntimeServiceImporter(
+  options: LocalRuntimeServiceOptions = {},
+): NonNullable<ZelavisServiceLoadOptions["importer"]> {
+  const serviceDirectory = resolve(options.directory ?? ".zelavis/services");
   const allowRemote = options.allowRemote ?? true;
 
   return async (specifier) => {
@@ -366,11 +366,11 @@ export function createLocalRuntimePluginImporter(
 
     if (isRemoteSpecifier(specifier)) {
       if (!allowRemote) {
-        throw new Error("Remote plugin module specifiers are disabled.");
+        throw new Error("Remote service module specifiers are disabled.");
       }
 
       return importFilePath(
-        await downloadRemotePlugin(specifier, pluginDirectory),
+        await downloadRemoteService(specifier, serviceDirectory),
       );
     }
 

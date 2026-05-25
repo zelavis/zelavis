@@ -3,7 +3,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
-import { createDatabase, Zelavis, zelavis } from "../dist/index.js";
+import { createDatabase, defineService, Zelavis, zelavis } from "../dist/index.js";
+import { zelavisEcommerceService } from "../../../plugins/ecommerce/dist/index.js";
 
 function createStoredZip(files) {
   const encoder = new TextEncoder();
@@ -58,7 +59,7 @@ test("zelavis exposes fetch handlers without requiring a mount adapter", async (
   const runtime = await zelavis({});
 
   const response = await runtime.fetch(
-    new Request("http://localhost/zelavis/api/v1/dashboard/config"),
+    new Request("http://localhost/zelavis/api/v1/runtime/config"),
   );
 
   assert.equal(response.status, 200);
@@ -68,32 +69,32 @@ test("zelavis exposes fetch handlers without requiring a mount adapter", async (
   assert.equal(payload.api.basePath, "/zelavis/api/v1");
   assert.deepEqual(
     payload.services.map((service) => service.name),
-    ["dashboard", "database", "auth", "website"],
+    ["@zelavis/ui", "@zelavis/db", "@zelavis/auth", "@zelavis/website"],
   );
-  assert.equal(payload.plugins[0].name, "zelavis-ecommerce");
-  assert.equal(payload.plugins[0].status, "available");
+  assert.equal(payload.serviceRegistry[0].name, "@zelavis/ecommerce");
+  assert.equal(payload.serviceRegistry[0].status, "available");
 });
 
 test("zelavis includes core services by default", async () => {
   const runtime = await zelavis({});
   const routes = runtime.routes;
 
-  assert.equal(runtime.services.dashboard.name, "dashboard");
-  assert.equal(runtime.services.auth.name, "auth");
-  assert.equal(runtime.services.database.name, "database");
-  assert.equal(runtime.services.website.name, "website");
+  assert.equal(runtime.services["@zelavis/ui"].name, "@zelavis/ui");
+  assert.equal(runtime.services["@zelavis/auth"].name, "@zelavis/auth");
+  assert.equal(runtime.services["@zelavis/db"].name, "@zelavis/db");
+  assert.equal(runtime.services["@zelavis/website"].name, "@zelavis/website");
   assert.ok(routes.some((route) => route.fullPath === "/*path"));
   assert.ok(routes.some((route) => route.fullPath === "/zelavis"));
   // The dashboard's view+asset+fallback used to register one route per
   // asset and an explicit route per client-side path (e.g.
-  // `/zelavis/commerce/orders` from the ecommerce plugin's menu); now
+  // `/zelavis/commerce/orders` from the ecommerce service's menu); now
   // everything under the dashboard mount is handled by a single
   // catch-all that serves bundle bytes or falls back to the shell
   // renderer for SPA deep links.
   assert.ok(routes.some((route) => route.fullPath === "/zelavis/*path"));
   assert.ok(
     routes.some(
-      (route) => route.fullPath === "/zelavis/api/v1/dashboard/config",
+      (route) => route.fullPath === "/zelavis/api/v1/runtime/config",
     ),
   );
   assert.ok(
@@ -183,7 +184,7 @@ test("zelavis includes core services by default", async () => {
   assert.deepEqual(await unknownApiResponse.json(), { error: "Not found" });
 
   const configRoute = routes.find(
-    (route) => route.fullPath === "/zelavis/api/v1/dashboard/config",
+    (route) => route.fullPath === "/zelavis/api/v1/runtime/config",
   );
   const configResponse = await configRoute.route.handler({
     service: configRoute.service.service,
@@ -199,16 +200,16 @@ test("zelavis includes core services by default", async () => {
   assert.equal(configResponse.body.api.basePath, "/zelavis/api/v1");
   assert.deepEqual(
     configResponse.body.services.map((service) => service.name),
-    ["dashboard", "database", "auth", "website"],
+    ["@zelavis/ui", "@zelavis/db", "@zelavis/auth", "@zelavis/website"],
   );
-  assert.equal(configResponse.body.plugins.length, 1);
-  assert.equal(configResponse.body.plugins[0].name, "zelavis-ecommerce");
-  assert.equal(configResponse.body.plugins[0].status, "available");
-  assert.equal(configResponse.body.plugins[0].menu.items[0].path, "/commerce/products");
+  assert.equal(configResponse.body.serviceRegistry.length, 1);
+  assert.equal(configResponse.body.serviceRegistry[0].name, "@zelavis/ecommerce");
+  assert.equal(configResponse.body.serviceRegistry[0].status, "available");
+  assert.equal(configResponse.body.serviceRegistry[0].menu.items[0].path, "/commerce/products");
 
   const pluginsRoute = routes.find(
     (route) =>
-      route.fullPath === "/zelavis/api/v1/dashboard/plugins" &&
+      route.fullPath === "/zelavis/api/v1/runtime/services" &&
       route.route.method === "GET",
   );
   const pluginsResponse = await pluginsRoute.route.handler({
@@ -221,16 +222,16 @@ test("zelavis includes core services by default", async () => {
   });
 
   assert.equal(pluginsResponse.status, 200);
-  assert.equal(pluginsResponse.body.plugins[0].status, "available");
+  assert.equal(pluginsResponse.body.services[0].status, "available");
 
   const updatePluginRoute = routes.find(
     (route) =>
-      route.fullPath === "/zelavis/api/v1/dashboard/plugins/:name" &&
+      route.fullPath === "/zelavis/api/v1/runtime/services/:name" &&
       route.route.method === "PATCH",
   );
   const updatePluginResponse = await updatePluginRoute.route.handler({
     service: updatePluginRoute.service.service,
-    params: { name: "zelavis-ecommerce" },
+    params: { name: "@zelavis/ecommerce" },
     query: new URLSearchParams(),
     body: {
       status: "installed",
@@ -241,8 +242,8 @@ test("zelavis includes core services by default", async () => {
   });
 
   assert.equal(updatePluginResponse.status, 200);
-  assert.equal(updatePluginResponse.body.plugins[0].status, "installed");
-  assert.equal(updatePluginResponse.body.plugins[0].order, 3);
+  assert.equal(updatePluginResponse.body.services[0].status, "installed");
+  assert.equal(updatePluginResponse.body.services[0].order, 3);
 
   const configResponseAfterPluginUpdate = await configRoute.route.handler({
     service: configRoute.service.service,
@@ -254,13 +255,13 @@ test("zelavis includes core services by default", async () => {
   });
 
   assert.equal(
-    configResponseAfterPluginUpdate.body.plugins[0].status,
+    configResponseAfterPluginUpdate.body.serviceRegistry[0].status,
     "installed",
   );
 
   const dashboardSettingsRoute = routes.find(
     (route) =>
-      route.fullPath === "/zelavis/api/v1/dashboard/settings" &&
+      route.fullPath === "/zelavis/api/v1/runtime/settings" &&
       route.route.method === "GET",
   );
   const dashboardSettingsResponse = await dashboardSettingsRoute.route.handler({
@@ -286,7 +287,7 @@ test("zelavis includes core services by default", async () => {
 
   const updateRoute = routes.find(
     (route) =>
-      route.fullPath === "/zelavis/api/v1/dashboard/settings" &&
+      route.fullPath === "/zelavis/api/v1/runtime/settings" &&
       route.route.method === "PATCH",
   );
   const updateResponse = await updateRoute.route.handler({
@@ -344,16 +345,71 @@ test("zelavis includes core services by default", async () => {
   assert.match(invalidUpdateResponse.body.error, /Theme must be/);
 });
 
-test("plugin registry install state controls plugin activation on boot", async () => {
+test("auth provider child services extend the built-in auth service", async () => {
+  const runtime = await zelavis({
+    coreServices: {
+      auth: {
+        childServices: ["@example/test-auth-provider"],
+      },
+    },
+    services: {
+      entries: [
+        {
+          service: defineService({
+            name: "@example/test-auth-provider",
+            extends: "@zelavis/auth",
+            setup(api) {
+              api.authentication.registerProvider({
+                name: "@example/test-auth-provider",
+                async authenticate(input) {
+                  return {
+                    account: await api.accounts.create({
+                      id: String(input.accountId ?? "acc_test"),
+                      email: "test@example.com",
+                    }),
+                  };
+                },
+              });
+            },
+          }),
+          status: "installed",
+        },
+      ],
+    },
+  });
+
+  const providersResponse = await runtime.fetch(
+    new Request("http://localhost/zelavis/api/v1/auth/providers"),
+  );
+  const providers = await providersResponse.json();
+
+  assert.equal(providersResponse.status, 200);
+  assert.deepEqual(providers, ["@example/test-auth-provider"]);
+  assert.equal(
+    runtime.routes.some((route) => route.route.id === "@example/test-auth-provider"),
+    false,
+    "auth child services should not mount as top-level runtime routes",
+  );
+});
+
+test("service registry install state controls service activation on boot", async () => {
   const storeState = [
     {
-      name: "zelavis-ecommerce",
+      name: "@zelavis/ecommerce",
       status: "installed",
       order: 0,
     },
   ];
   const runtime = await zelavis({
-    plugins: {
+    services: {
+      entries: [
+        {
+          service: zelavisEcommerceService,
+          status: "installed",
+          source: "official",
+          order: 0,
+        },
+      ],
       store: {
         read() {
           return storeState;
@@ -373,40 +429,40 @@ test("plugin registry install state controls plugin activation on boot", async (
   );
 
   const configResponse = await runtime.fetch(
-    new Request("http://localhost/zelavis/api/v1/dashboard/config"),
+    new Request("http://localhost/zelavis/api/v1/runtime/config"),
   );
   const config = await configResponse.json();
 
-  assert.equal(config.plugins[0].status, "installed");
+  assert.equal(config.serviceRegistry[0].status, "installed");
   assert.equal(
-    config.plugins[0].menu.page.src,
-    "/zelavis/api/v1/dashboard/plugin-pages/zelavis-ecommerce/dashboard",
+    config.serviceRegistry[0].menu.page.src,
+    "/zelavis/api/v1/runtime/service-pages/%40zelavis%2Fecommerce/dashboard",
   );
   assert.ok(config.services.some((service) => service.name === "commerce"));
 
-  const pluginPageResponse = await runtime.fetch(
+  const servicePageResponse = await runtime.fetch(
     new Request(
-      "http://localhost/zelavis/api/v1/dashboard/plugin-pages/zelavis-ecommerce/dashboard",
+      "http://localhost/zelavis/api/v1/runtime/service-pages/%40zelavis%2Fecommerce/dashboard",
     ),
   );
-  const pluginPage = await pluginPageResponse.text();
+  const servicePage = await servicePageResponse.text();
 
-  assert.equal(pluginPageResponse.status, 200);
+  assert.equal(servicePageResponse.status, 200);
   assert.match(
-    pluginPageResponse.headers.get("content-type"),
+    servicePageResponse.headers.get("content-type"),
     /text\/html/,
   );
-  assert.match(pluginPage, /<!doctype html>/i);
-  assert.match(pluginPage, /<title>Ecommerce<\/title>/);
+  assert.match(servicePage, /<!doctype html>/i);
+  assert.match(servicePage, /<title>Ecommerce<\/title>/);
 });
 
-test("dashboard plugin registry can register ESM plugin sources", async () => {
+test("dashboard service registry can register ESM service sources", async () => {
   const runtime = await zelavis({});
   const specifier =
     "data:text/javascript," +
     encodeURIComponent(`
       export default {
-        name: "uploaded-plugin",
+        name: "@example/uploaded-service",
         version: "0.0.1",
         menu: {
           title: "Uploaded",
@@ -416,7 +472,7 @@ test("dashboard plugin registry can register ESM plugin sources", async () => {
     `);
 
   const createResponse = await runtime.fetch(
-    new Request("http://localhost/zelavis/api/v1/dashboard/plugins", {
+    new Request("http://localhost/zelavis/api/v1/runtime/services", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -430,24 +486,24 @@ test("dashboard plugin registry can register ESM plugin sources", async () => {
 
   assert.equal(createResponse.status, 201);
   assert.ok(
-    created.plugins.some(
-      (plugin) =>
-        plugin.name === "uploaded-plugin" &&
-        plugin.specifier === specifier &&
-        plugin.status === "available",
+    created.services.some(
+      (service) =>
+        service.name === "@example/uploaded-service" &&
+        service.specifier === specifier &&
+        service.status === "available",
     ),
   );
 
   const storeState = [
     {
-      name: "uploaded-plugin",
+      name: "@example/uploaded-service",
       specifier,
       status: "installed",
       source: "community",
     },
   ];
   const loadedRuntime = await zelavis({
-    plugins: {
+    services: {
       store: {
         read() {
           return storeState;
@@ -460,19 +516,19 @@ test("dashboard plugin registry can register ESM plugin sources", async () => {
     },
   });
   const configResponse = await loadedRuntime.fetch(
-    new Request("http://localhost/zelavis/api/v1/dashboard/config"),
+    new Request("http://localhost/zelavis/api/v1/runtime/config"),
   );
   const config = await configResponse.json();
-  const uploadedPlugin = config.plugins.find(
-    (plugin) => plugin.name === "uploaded-plugin",
+  const uploadedService = config.serviceRegistry.find(
+    (service) => service.name === "@example/uploaded-service",
   );
 
-  assert.equal(uploadedPlugin.status, "installed");
-  assert.equal(uploadedPlugin.specifier, specifier);
-  assert.equal(uploadedPlugin.menu.path, "/uploaded");
+  assert.equal(uploadedService.status, "installed");
+  assert.equal(uploadedService.specifier, specifier);
+  assert.equal(uploadedService.menu.path, "/uploaded");
 });
 
-test("dashboard plugin upload derives metadata from the selected module", async () => {
+test("dashboard service upload derives metadata from the selected module", async () => {
   const runtime = await zelavis({});
   const form = new FormData();
 
@@ -482,7 +538,7 @@ test("dashboard plugin upload derives metadata from the selected module", async 
       [
         `
           export default {
-            name: "picked-plugin",
+            name: "@example/picked-service",
             version: "0.0.2",
             menu: {
               title: "Picked",
@@ -493,32 +549,32 @@ test("dashboard plugin upload derives metadata from the selected module", async 
       ],
       { type: "text/javascript" },
     ),
-    "picked-plugin.mjs",
+    "picked-service.mjs",
   );
 
   const createResponse = await runtime.fetch(
-    new Request("http://localhost/zelavis/api/v1/dashboard/plugins", {
+    new Request("http://localhost/zelavis/api/v1/runtime/services", {
       method: "POST",
       body: form,
     }),
   );
   const created = await createResponse.json();
-  const plugin = created.plugins.find(
-    (plugin) => plugin.name === "picked-plugin",
+  const service = created.services.find(
+    (service) => service.name === "@example/picked-service",
   );
 
   assert.equal(createResponse.status, 201);
-  assert.equal(plugin.version, "0.0.2");
-  assert.equal(plugin.status, "available");
-  assert.match(plugin.specifier, /^data:text\/javascript;base64,/);
+  assert.equal(service.version, "0.0.2");
+  assert.equal(service.status, "available");
+  assert.match(service.specifier, /^data:text\/javascript;base64,/);
 });
 
-test("Zelavis instance recomposes runtime after plugin activation", async () => {
+test("Zelavis instance recomposes runtime after service activation", async () => {
   const specifier =
     "data:text/javascript," +
     encodeURIComponent(`
       export default {
-        name: "runtime-uploaded-plugin",
+        name: "@example/runtime-uploaded-service",
         version: "0.0.1",
         menu: {
           title: "Runtime Uploaded",
@@ -526,7 +582,7 @@ test("Zelavis instance recomposes runtime after plugin activation", async () => 
         },
         setup() {
           return {
-            services: [
+            runtimeServices: [
               {
                 name: "runtime-uploaded",
                 basePath: "/runtime-uploaded",
@@ -553,13 +609,13 @@ test("Zelavis instance recomposes runtime after plugin activation", async () => 
   const app = new Zelavis();
 
   const createResponse = await app.fetch(
-    new Request("http://localhost/zelavis/api/v1/dashboard/plugins", {
+    new Request("http://localhost/zelavis/api/v1/runtime/services", {
       method: "POST",
       headers: {
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        name: "runtime-uploaded-plugin",
+        name: "@example/runtime-uploaded-service",
         specifier,
         status: "installed",
       }),
@@ -571,19 +627,19 @@ test("Zelavis instance recomposes runtime after plugin activation", async () => 
   assert.equal(created.activation.status, "active");
 
   const configResponse = await app.fetch(
-    new Request("http://localhost/zelavis/api/v1/dashboard/config"),
+    new Request("http://localhost/zelavis/api/v1/runtime/config"),
   );
   const config = await configResponse.json();
 
   assert.equal(configResponse.status, 200);
-  assert.equal(config.pluginActivation.mode, "runtime");
-  assert.equal(config.pluginActivation.capabilities.strategy, "runtime-graph");
+  assert.equal(config.serviceActivation.mode, "runtime");
+  assert.equal(config.serviceActivation.capabilities.strategy, "runtime-graph");
   assert.equal(
-    config.pluginActivation.capabilities.supportsRuntimeInstall,
+    config.serviceActivation.capabilities.supportsRuntimeInstall,
     true,
   );
   assert.equal(
-    config.pluginActivation.capabilities.supportsUploadedSpecifiers,
+    config.serviceActivation.capabilities.supportsUploadedSpecifiers,
     true,
   );
 
@@ -596,17 +652,17 @@ test("Zelavis instance recomposes runtime after plugin activation", async () => 
   assert.deepEqual(health, { ok: true });
 });
 
-test("node adapter resolves uploaded plugin paths through its plugin cache importer", async () => {
+test("node adapter resolves uploaded service paths through its service cache importer", async () => {
   const { nodeAdapter } = await import("../dist/adapters/node.js");
-  const tempDirectory = await mkdtemp(join(tmpdir(), "zelavis-node-plugin-"));
+  const tempDirectory = await mkdtemp(join(tmpdir(), "zelavis-node-service-"));
 
   try {
-    const pluginPath = join(tempDirectory, "uploaded-plugin.mjs");
+    const servicePath = join(tempDirectory, "uploaded-service.mjs");
     await writeFile(
-      pluginPath,
+      servicePath,
       `
         export default {
-          name: "node-uploaded-plugin",
+          name: "@example/node-uploaded-service",
           version: "0.0.1",
           menu: {
             title: "Node Uploaded",
@@ -614,12 +670,12 @@ test("node adapter resolves uploaded plugin paths through its plugin cache impor
             page: {
               id: "dashboard",
               title: "Node Uploaded",
-              render: () => "<!doctype html><html><head><title>Node Uploaded</title></head><body><main>Node uploaded plugin page</main></body></html>"
+              render: () => "<!doctype html><html><head><title>Node Uploaded</title></head><body><main>Node uploaded service page</main></body></html>"
             }
           },
           setup() {
             return {
-              services: [
+              runtimeServices: [
                 {
                   name: "node-uploaded",
                   basePath: "/node-uploaded",
@@ -632,7 +688,7 @@ test("node adapter resolves uploaded plugin paths through its plugin cache impor
                         path: "/health",
                         handler: () => ({
                           status: 200,
-                          body: { ok: true, source: "node-plugin-cache" }
+                          body: { ok: true, source: "node-service-cache" }
                         })
                       }
                     ]
@@ -650,13 +706,13 @@ test("node adapter resolves uploaded plugin paths through its plugin cache impor
     });
 
     const createResponse = await app.fetch(
-      new Request("http://localhost/zelavis/api/v1/dashboard/plugins", {
+      new Request("http://localhost/zelavis/api/v1/runtime/services", {
         method: "POST",
         headers: {
           "content-type": "application/json",
         },
         body: JSON.stringify({
-          specifier: pluginPath,
+          specifier: servicePath,
           status: "installed",
         }),
       }),
@@ -672,23 +728,23 @@ test("node adapter resolves uploaded plugin paths through its plugin cache impor
     const health = await healthResponse.json();
 
     assert.equal(healthResponse.status, 200);
-    assert.deepEqual(health, { ok: true, source: "node-plugin-cache" });
+    assert.deepEqual(health, { ok: true, source: "node-service-cache" });
 
-    const pluginPageResponse = await app.fetch(
+    const servicePageResponse = await app.fetch(
       new Request(
-        "http://localhost/zelavis/api/v1/dashboard/plugin-pages/node-uploaded-plugin/dashboard",
+        "http://localhost/zelavis/api/v1/runtime/service-pages/%40example%2Fnode-uploaded-service/dashboard",
       ),
     );
-    const pluginPage = await pluginPageResponse.text();
+    const servicePage = await servicePageResponse.text();
 
-    assert.equal(pluginPageResponse.status, 200);
-    assert.match(pluginPage, /Node uploaded plugin page/);
+    assert.equal(servicePageResponse.status, 200);
+    assert.match(servicePage, /Node uploaded service page/);
   } finally {
     await rm(tempDirectory, { recursive: true, force: true });
   }
 });
 
-test("node adapter installs uploaded ZIP plugin packages", async () => {
+test("node adapter installs uploaded ZIP service packages", async () => {
   const { nodeAdapter } = await import("../dist/adapters/node.js");
   const tempDirectory = await mkdtemp(join(tmpdir(), "zelavis-node-package-"));
 
@@ -697,12 +753,12 @@ test("node adapter installs uploaded ZIP plugin packages", async () => {
       adapter: nodeAdapter({ dataDirectory: tempDirectory }),
     });
     const packageBytes = createStoredZip({
-      "zelavis.plugin.json": JSON.stringify({
+      "zelavis.service.json": JSON.stringify({
         entry: "./dist/index.mjs",
       }),
       "dist/index.mjs": `
         export default {
-          name: "zip-uploaded-plugin",
+          name: "@example/zip-uploaded-service",
           version: "0.0.3",
           menu: {
             title: "Zip Uploaded",
@@ -710,7 +766,7 @@ test("node adapter installs uploaded ZIP plugin packages", async () => {
           },
           setup() {
             return {
-              services: [
+              runtimeServices: [
                 {
                   name: "zip-uploaded",
                   basePath: "/zip-uploaded",
@@ -739,36 +795,36 @@ test("node adapter installs uploaded ZIP plugin packages", async () => {
     form.set(
       "file",
       new Blob([packageBytes], { type: "application/zip" }),
-      "zip-uploaded-plugin.zip",
+      "zip-uploaded-service.zip",
     );
     form.set("status", "installed");
 
     const configResponse = await app.fetch(
-      new Request("http://localhost/zelavis/api/v1/dashboard/config"),
+      new Request("http://localhost/zelavis/api/v1/runtime/config"),
     );
     const config = await configResponse.json();
 
     assert.equal(
-      config.pluginActivation.capabilities.supportsPackageUploads,
+      config.serviceActivation.capabilities.supportsPackageUploads,
       true,
     );
 
     const createResponse = await app.fetch(
-      new Request("http://localhost/zelavis/api/v1/dashboard/plugins", {
+      new Request("http://localhost/zelavis/api/v1/runtime/services", {
         method: "POST",
         body: form,
       }),
     );
     const created = await createResponse.json();
-    const plugin = created.plugins.find(
-      (plugin) => plugin.name === "zip-uploaded-plugin",
+    const service = created.services.find(
+      (service) => service.name === "@example/zip-uploaded-service",
     );
 
     assert.equal(createResponse.status, 201);
     assert.equal(created.activation.status, "active");
-    assert.equal(plugin.version, "0.0.3");
-    assert.equal(plugin.status, "installed");
-    assert.match(plugin.specifier, /plugins\/packages\/[a-f0-9]{64}\/dist\/index\.mjs$/);
+    assert.equal(service.version, "0.0.3");
+    assert.equal(service.status, "installed");
+    assert.match(service.specifier, /services\/packages\/[a-f0-9]{64}\/dist\/index\.mjs$/);
 
     const healthResponse = await app.fetch(
       new Request("http://localhost/zelavis/api/v1/zip-uploaded/health"),
@@ -789,9 +845,9 @@ test("zelavis can disable the database core service", async () => {
     },
   });
 
-  assert.equal(runtime.services.auth.name, "auth");
-  assert.equal(runtime.services.website.name, "website");
-  assert.equal(runtime.services.database, undefined);
+  assert.equal(runtime.services["@zelavis/auth"].name, "@zelavis/auth");
+  assert.equal(runtime.services["@zelavis/website"].name, "@zelavis/website");
+  assert.equal(runtime.services["@zelavis/db"], undefined);
   assert.ok(
     runtime.routes.every((route) => !route.route.id.startsWith("database.")),
   );
@@ -804,9 +860,9 @@ test("zelavis can disable the auth core service", async () => {
     },
   });
 
-  assert.equal(runtime.services.auth, undefined);
-  assert.equal(runtime.services.database.name, "database");
-  assert.equal(runtime.services.website.name, "website");
+  assert.equal(runtime.services["@zelavis/auth"], undefined);
+  assert.equal(runtime.services["@zelavis/db"].name, "@zelavis/db");
+  assert.equal(runtime.services["@zelavis/website"].name, "@zelavis/website");
   assert.ok(
     runtime.routes.every((route) => !route.route.id.startsWith("auth.")),
   );
@@ -819,10 +875,10 @@ test("zelavis can disable the dashboard core service", async () => {
     },
   });
 
-  assert.equal(runtime.services.dashboard, undefined);
-  assert.equal(runtime.services.auth.name, "auth");
-  assert.equal(runtime.services.database.name, "database");
-  assert.equal(runtime.services.website.name, "website");
+  assert.equal(runtime.services["@zelavis/ui"], undefined);
+  assert.equal(runtime.services["@zelavis/auth"].name, "@zelavis/auth");
+  assert.equal(runtime.services["@zelavis/db"].name, "@zelavis/db");
+  assert.equal(runtime.services["@zelavis/website"].name, "@zelavis/website");
   assert.ok(
     runtime.routes.every((route) => !route.route.id.startsWith("dashboard.")),
   );
@@ -843,7 +899,7 @@ test("zelavis uses a configurable root path for dashboard and APIs", async () =>
   assert.ok(routes.some((route) => route.fullPath === "/admin"));
   assert.ok(routes.some((route) => route.fullPath === "/admin/*path"));
   assert.ok(
-    routes.some((route) => route.fullPath === "/admin/api/v2/dashboard/config"),
+    routes.some((route) => route.fullPath === "/admin/api/v2/runtime/config"),
   );
   assert.ok(
     routes.some((route) => route.fullPath === "/admin/api/v2/auth/providers"),
@@ -907,12 +963,12 @@ test("zelavis supports mounting at the root path when explicitly configured", as
   assert.ok(runtime.routes.some((route) => route.fullPath === "/"));
   assert.ok(
     runtime.routes.some(
-      (route) => route.fullPath === "/api/v1/dashboard/config",
+      (route) => route.fullPath === "/api/v1/runtime/config",
     ),
   );
 
   const response = await runtime.fetch(
-    new Request("http://localhost/api/v1/dashboard/config"),
+    new Request("http://localhost/api/v1/runtime/config"),
   );
 
   assert.equal(response.status, 200);
@@ -1008,7 +1064,7 @@ test("zelavis can disable all core services", async () => {
 
 test("zelavis does not duplicate an explicitly provided database service", async () => {
   const databaseService = {
-    name: "database",
+    name: "@zelavis/db",
     service: { custom: true },
     api: {
       v1: [
@@ -1027,17 +1083,17 @@ test("zelavis does not duplicate an explicitly provided database service", async
       dashboard: false,
       website: false,
     },
-    services: [databaseService],
+    runtimeServices: [databaseService],
   });
 
-  assert.equal(runtime.services.database.service.custom, true);
+  assert.equal(runtime.services["@zelavis/db"].service.custom, true);
   assert.equal(runtime.routes.length, 1);
   assert.equal(runtime.routes[0].route.id, "custom.database");
 });
 
 test("zelavis does not duplicate an explicitly provided auth service", async () => {
   const authService = {
-    name: "auth",
+    name: "@zelavis/auth",
     service: { custom: true },
     api: {
       v1: [
@@ -1056,10 +1112,10 @@ test("zelavis does not duplicate an explicitly provided auth service", async () 
       database: false,
       website: false,
     },
-    services: [authService],
+    runtimeServices: [authService],
   });
 
-  assert.equal(runtime.services.auth.service.custom, true);
+  assert.equal(runtime.services["@zelavis/auth"].service.custom, true);
   assert.equal(runtime.routes.length, 1);
   assert.equal(runtime.routes[0].route.id, "custom.auth");
 });
@@ -1073,13 +1129,13 @@ test("zelavis can provide public website pages as a core service", async () => {
     },
   });
 
-  assert.equal(runtime.services.website.name, "website");
-  assert.equal(runtime.services.dashboard.name, "dashboard");
+  assert.equal(runtime.services["@zelavis/website"].name, "@zelavis/website");
+  assert.equal(runtime.services["@zelavis/ui"].name, "@zelavis/ui");
   assert.ok(runtime.routes.some((route) => route.fullPath === "/*path"));
   assert.ok(runtime.routes.some((route) => route.fullPath === "/zelavis"));
   assert.ok(
     runtime.routes.some(
-      (route) => route.fullPath === "/zelavis/api/v1/dashboard/config",
+      (route) => route.fullPath === "/zelavis/api/v1/runtime/config",
     ),
   );
   assert.ok(
@@ -1318,7 +1374,7 @@ test("zelavis rejects invalid persisted dashboard settings on read", async () =>
   });
 
   const response = await runtime.fetch(
-    new Request("http://localhost/zelavis/api/v1/dashboard/settings"),
+    new Request("http://localhost/zelavis/api/v1/runtime/settings"),
   );
 
   assert.equal(response.status, 400);

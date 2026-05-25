@@ -32,7 +32,7 @@ type NavChildItem = {
   search?: DashboardNavSearch;
   icon?: LucideIcon;
   panelLabel?: string;
-  pluginOwned?: boolean;
+  serviceOwned?: boolean;
   items?: readonly NavChildItem[];
 };
 
@@ -167,9 +167,9 @@ function panelTrailsEqual(left: readonly NavPanel[], right: readonly NavPanel[])
   );
 }
 
-function itemContainsPluginOwnedEntry(item: NavChildItem): boolean {
+function itemContainsServiceOwnedEntry(item: NavChildItem): boolean {
   return Boolean(
-    item.pluginOwned || item.items?.some((child) => itemContainsPluginOwnedEntry(child)),
+    item.serviceOwned || item.items?.some((child) => itemContainsServiceOwnedEntry(child)),
   );
 }
 
@@ -511,9 +511,9 @@ export function NavMain({
                   })}
                 </SidebarMenu>
                 {panel.title === "Workspace" &&
-                !panel.items.some((item) => itemContainsPluginOwnedEntry(item)) ? (
+                !panel.items.some((item) => itemContainsServiceOwnedEntry(item)) ? (
                   <div className="rounded-md border border-dashed bg-muted/35 px-3 py-3 text-sm text-muted-foreground">
-                    Install a plugin from Marketplace to give Workspace its first plugin area.
+                    Install a service from Marketplace to give Workspace its first service area.
                   </div>
                 ) : null}
               </div>

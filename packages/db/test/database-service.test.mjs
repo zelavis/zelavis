@@ -11,10 +11,10 @@ test("databaseService exposes database routes through the existing service contr
     prefix: "/api",
   });
 
-  assert.equal(runtime.services.database.service, database);
-  assert.equal(runtime.services.database.services[0].name, "documents");
-  assert.equal(runtime.services.database.services[1].name, "schemas");
-  assert.equal(runtime.services.database.services[2].name, "timeseries");
+  assert.equal(runtime.services["@zelavis/db"].service, database);
+  assert.equal(runtime.services["@zelavis/db"].services[0].name, "documents");
+  assert.equal(runtime.services["@zelavis/db"].services[1].name, "schemas");
+  assert.equal(runtime.services["@zelavis/db"].services[2].name, "timeseries");
   assert.equal(runtime.routes.length, 18);
   assert.deepEqual(
     runtime.routes.map((route) => route.fullPath),

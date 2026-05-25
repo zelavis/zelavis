@@ -11,8 +11,8 @@ With the default runtime settings:
 /zelavis
 /zelavis/settings
 /zelavis/assets/*
-/zelavis/api/v1/dashboard/config
-/zelavis/api/v1/dashboard/settings
+/zelavis/api/v1/runtime/config
+/zelavis/api/v1/runtime/settings
 /zelavis/api/v1/auth/*
 /zelavis/api/v1/database/*
 /zelavis/api/v1/storage/files/*
@@ -47,8 +47,8 @@ the mounted paths become:
 /admin
 /admin/settings
 /admin/assets/*
-/admin/api/v2/dashboard/config
-/admin/api/v2/dashboard/settings
+/admin/api/v2/runtime/config
+/admin/api/v2/runtime/settings
 /admin/api/v2/auth/*
 /admin/api/v2/database/*
 /admin/api/v2/storage/files/*
@@ -68,8 +68,23 @@ Important rules:
 - Zelavis reserves the configured dashboard root path and anything under it.
 - Creating a website page at the active dashboard root path is rejected.
 
+## Service app routes
+
+Services that declare an `app` field are synthesized into normal Zelavis service routes.
+
+System services keep the mount chosen by the operator. The built-in `@zelavis/ui` dashboard is a system app service, so the runtime mounts it under the configured dashboard root path.
+
+Workspace services are safer by default:
+
+- with `app.domainPolicy: "optional"`, a workspace app falls back to `/apps/<service-name>` when no verified domain binding exists
+- with `app.domainPolicy: "required"`, a workspace app is not served until the runtime has a verified domain binding for that workspace or service
+- when a verified binding exists, the app can serve its declared mount on that host, for example `/` on `shop.acme.com`
+
+Concrete hostnames live in runtime domain bindings, not in service package metadata.
+
 ## Related docs
 
 - [Dashboard Settings](./dashboard-settings.md)
+- [Service Model](../architecture/service-service-model.md)
 - [First Runtime](../getting-started/first-runtime.md)
 - [@zelavis/server](../packages/server.md)

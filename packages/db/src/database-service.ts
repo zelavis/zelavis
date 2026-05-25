@@ -1,7 +1,7 @@
 import {
   createMappedJsonErrorResponse,
   type ZelavisServerErrorStatusRule,
-  type ZelavisService,
+  type ZelavisRuntimeService,
 } from "@zelavis/server";
 import type { DatabaseApi } from "./core/types.js";
 import type {
@@ -214,13 +214,13 @@ function databaseErrorResponse(error: unknown, fallback = 500) {
   return createMappedJsonErrorResponse(error, databaseErrorRules, fallback);
 }
 
-export type DatabaseServiceDefinition = ZelavisService<DatabaseApi>;
+export type DatabaseServiceDefinition = ZelavisRuntimeService<DatabaseApi>;
 
 export function defineDatabaseService(
   database: DatabaseApi,
 ): DatabaseServiceDefinition {
   return {
-    name: "database",
+    name: "@zelavis/db",
     basePath: "database",
     menu: {
       title: "Database",
@@ -288,7 +288,7 @@ export function defineDatabaseService(
 
 export function defineDatabaseSqlService(
   database: DatabaseApi,
-): ZelavisService<DatabaseApi> {
+): ZelavisRuntimeService<DatabaseApi> {
   return {
     name: "sql",
     basePath: "sql",
@@ -362,7 +362,7 @@ export function defineDatabaseSqlService(
 
 export function defineDatabaseDocumentsService(
   database: DatabaseApi,
-): ZelavisService<DatabaseApi> {
+): ZelavisRuntimeService<DatabaseApi> {
   return {
     name: "documents",
     basePath: "documents",
@@ -526,7 +526,7 @@ export function defineDatabaseDocumentsService(
 
 export function defineDatabaseSchemasService(
   database: DatabaseApi,
-): ZelavisService<DatabaseApi> {
+): ZelavisRuntimeService<DatabaseApi> {
   return {
     name: "schemas",
     basePath: "schemas",
@@ -633,7 +633,7 @@ export function defineDatabaseSchemasService(
 
 export function defineDatabaseTimeSeriesService(
   database: DatabaseApi,
-): ZelavisService<DatabaseApi> {
+): ZelavisRuntimeService<DatabaseApi> {
   return {
     name: "timeseries",
     basePath: "timeseries",

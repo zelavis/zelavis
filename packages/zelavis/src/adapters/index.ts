@@ -1,39 +1,36 @@
 export {
-  createNodePluginImporter,
-  createNodePluginPackageInstaller,
+  createNodeServiceImporter,
+  createNodeServicePackageInstaller,
   nodeAdapter,
   nodeAdapter as zelavisNode,
 } from "./node.js";
 export type {
   NodeAdapterOptions,
   NodeAdapterDatabaseOptions,
-  NodeAdapterDashboardOptions,
-  NodeAdapterPluginOptions,
+  NodeAdapterServiceOptions,
 } from "./node.js";
-export { createFileDashboardSettingsStore } from "./node.js";
 
 export { bunAdapter, bunAdapter as zelavisBun } from "./bun.js";
 export type {
   BunAdapterOptions,
   BunAdapterDatabaseOptions,
-  BunAdapterDashboardOptions,
   BunAdapterFileStorageOptions,
   BunAdapterKeyValueOptions,
-  BunAdapterPluginOptions,
+  BunAdapterServiceOptions,
 } from "./bun.js";
 
 export {
   cloudflareAdapter,
   cloudflareAdapter as zelavisCloudflare,
-  createCloudflareDispatchPluginActivation,
+  createCloudflareDispatchServiceActivation,
 } from "./cloudflare.js";
 export type {
   CloudflareAdapterOptions,
   CloudflareAdapterEnv,
   CloudflareAdapterBindingNames,
-  CloudflareAdapterPluginOptions,
+  CloudflareAdapterServiceOptions,
   CloudflareDispatchNamespace,
-  CloudflareDispatchPluginActivationOptions,
+  CloudflareDispatchServiceActivationOptions,
 } from "./cloudflare.js";
 
 export { vercelAdapter, vercelAdapter as zelavisVercel } from "./vercel.js";

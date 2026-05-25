@@ -24,4 +24,4 @@ pnpm preview
 
 ## Deployment
 
-The site is configured for Cloudflare via `@astrojs/cloudflare`. See `wrangler.jsonc` for worker settings.
+The site builds as static Starlight output in `dist/`, suitable for Cloudflare Pages or any static host.
