@@ -1,1 +1,1 @@
-export * from "./username-password-plugin.js";
+export * from "./username-password-service.js";

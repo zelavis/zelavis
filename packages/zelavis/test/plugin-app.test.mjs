@@ -1,70 +1,66 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  activatePluginRegistry,
+  activateServiceRegistry,
   createInMemoryBundleStore,
   createSharedBundleStore,
   buildBundleStorageKey,
-  definePlugin,
+  defineService,
 } from "../dist/index.js";
 import { zelavisServer } from "@zelavis/server";
 
 const utf8 = (text) => new TextEncoder().encode(text);
 
-// ---------- definePlugin / app validation ----------
+// ---------- defineService / app validation ----------
 
-test("definePlugin accepts an app field and freezes it", () => {
-  const plugin = definePlugin({
-    name: "kanban",
+test("defineService accepts an app field and freezes it", () => {
+  const service = defineService({
+    name: "@example/kanban",
     app: {
       mount: "/kanban",
       bundle: "dist",
       mode: "spa",
-      domains: ["kanban.example.com", { host: "kanban.acme.com" }],
+      domainPolicy: "required",
     },
   });
 
-  assert.equal(plugin.app?.mount, "/kanban");
-  assert.equal(plugin.app?.bundle, "dist");
-  assert.equal(plugin.app?.mode, "spa");
-  assert.deepEqual(
-    plugin.app?.domains,
-    ["kanban.example.com", { host: "kanban.acme.com" }],
-  );
-  assert.equal(Object.isFrozen(plugin.app), true);
-  assert.equal(Object.isFrozen(plugin.app.domains), true);
+  assert.equal(service.app?.mount, "/kanban");
+  assert.equal(service.app?.bundle, "dist");
+  assert.equal(service.app?.mode, "spa");
+  assert.equal(service.app?.domainPolicy, "required");
+  assert.equal(Object.isFrozen(service.app), true);
 });
 
-test("definePlugin rejects an invalid app mode", () => {
+test("defineService rejects an invalid app mode", () => {
   assert.throws(
     () =>
-      definePlugin({
-        name: "bad-mode",
+      defineService({
+        name: "@example/bad-mode",
         app: { mount: "/", mode: "ssr" },
       }),
-    /Plugin app mode must be "spa" or "mpa"/,
+    /Service app mode must be "spa" or "mpa"/,
   );
 });
 
-test("definePlugin rejects an app mount without a leading slash", () => {
+test("defineService rejects an app mount without a leading slash", () => {
   assert.throws(
     () =>
-      definePlugin({
-        name: "no-leading-slash",
+      defineService({
+        name: "@example/no-leading-slash",
         app: { mount: "no-slash" },
       }),
-    /Plugin app mount must start with a leading slash/,
+    /Service app mount must start with a leading slash/,
   );
 });
 
-test("definePlugin rejects a non-string app domain entry", () => {
+test("defineService rejects an invalid app domain policy", () => {
   assert.throws(
     () =>
-      definePlugin({
-        name: "bad-domains",
-        app: { domains: [42] },
+      defineService({
+        name: "@example/bad-domain-policy",
+        app: { domainPolicy: "never" },
       }),
-    /domain entries must be strings or binding objects/,
+    /Service app domainPolicy must be "optional" or "required"/,
   );
 });
 
@@ -72,16 +68,16 @@ test("definePlugin rejects a non-string app domain entry", () => {
 
 test("buildBundleStorageKey encodes scope identity into a deterministic path", () => {
   const key = buildBundleStorageKey(
-    { workspaceId: "ws_1", pluginName: "kanban", bundle: "dist" },
+    { workspaceId: "ws_1", serviceName: "@example/kanban", bundle: "dist" },
     "assets/index.js",
   );
-  assert.equal(key, "apps/ws_1/kanban/dist/assets/index.js");
+  assert.equal(key, "apps/ws_1/@example/kanban/dist/assets/index.js");
 
   const systemKey = buildBundleStorageKey(
-    { pluginName: "dashboard", bundle: "dist" },
+    { serviceName: "@zelavis/ui", bundle: "dist" },
     "index.html",
   );
-  assert.equal(systemKey, "apps/system/dashboard/dist/index.html");
+  assert.equal(systemKey, "apps/system/@zelavis/ui/dist/index.html");
 });
 
 test("createSharedBundleStore reads through the underlying ZelavisFileStorage", async () => {
@@ -102,13 +98,13 @@ test("createSharedBundleStore reads through the underlying ZelavisFileStorage", 
   };
 
   stored.set(
-    "apps/system/kanban/dist/index.html",
+    "apps/system/@example/kanban/dist/index.html",
     utf8("<!doctype html><body>kanban</body>"),
   );
 
   const store = createSharedBundleStore({ storage: fakeStorage });
   const asset = await store.read(
-    { pluginName: "kanban", bundle: "dist" },
+    { serviceName: "@example/kanban", bundle: "dist" },
     "index.html",
   );
 
@@ -119,18 +115,18 @@ test("createSharedBundleStore reads through the underlying ZelavisFileStorage", 
 
 // ---------- Activation synthesizes asset-serving routes ----------
 
-test("activatePluginRegistry synthesizes an app service for system plugins", async () => {
-  const plugin = definePlugin({
-    name: "kanban",
+test("activateServiceRegistry synthesizes an app service for system services", async () => {
+  const service = defineService({
+    name: "@example/kanban",
     scope: "system",
     app: { mount: "/kanban", bundle: "dist" },
   });
 
   const bundleStore = createInMemoryBundleStore(
     new Map([
-      ["system/kanban/dist/index.html", utf8("<!doctype html>kanban shell")],
+      ["system/@example/kanban/dist/index.html", utf8("<!doctype html>kanban shell")],
       [
-        "system/kanban/dist/assets/main.js",
+        "system/@example/kanban/dist/assets/main.js",
         {
           body: utf8("console.log('hi')"),
           contentType: "text/javascript; charset=utf-8",
@@ -139,8 +135,8 @@ test("activatePluginRegistry synthesizes an app service for system plugins", asy
     ]),
   );
 
-  const { services } = await activatePluginRegistry(
-    [{ plugin, status: "installed" }],
+  const { services } = await activateServiceRegistry(
+    [{ service: service, status: "installed" }],
     {
       rootPath: "/",
       api: { prefix: "/api", version: "v1", basePath: "/api/v1" },
@@ -155,7 +151,7 @@ test("activatePluginRegistry synthesizes an app service for system plugins", asy
   );
 
   const resolvedServices = await Promise.all(services);
-  const appService = resolvedServices.find((s) => s.name === "kanban:app");
+  const appService = resolvedServices.find((s) => s.name === "@example/kanban:app");
 
   assert.ok(appService, "synthesized app service should be present");
   assert.equal(appService.basePath, "/kanban");
@@ -166,17 +162,17 @@ test("activatePluginRegistry synthesizes an app service for system plugins", asy
   );
 });
 
-test("workspace-scoped plugins are remounted under /apps/<name> regardless of declared mount", async () => {
-  const plugin = definePlugin({
-    name: "tenant-app",
+test("workspace-scoped services are remounted under /apps/<name> regardless of declared mount", async () => {
+  const service = defineService({
+    name: "@example/tenant-app",
     scope: "workspace",
     app: { mount: "/zelavis", bundle: "dist" },
   });
 
   const bundleStore = createInMemoryBundleStore(new Map());
 
-  const { services } = await activatePluginRegistry(
-    [{ plugin, status: "installed" }],
+  const { services } = await activateServiceRegistry(
+    [{ service: service, status: "installed" }],
     {
       rootPath: "/",
       api: { prefix: "/api", version: "v1", basePath: "/api/v1" },
@@ -191,13 +187,13 @@ test("workspace-scoped plugins are remounted under /apps/<name> regardless of de
   );
 
   const appService = (await Promise.all(services)).find(
-    (s) => s.name === "tenant-app:app",
+    (s) => s.name === "@example/tenant-app:app",
   );
 
   assert.ok(appService);
   assert.equal(
     appService.basePath,
-    "/apps/tenant-app",
+    "/apps/%40example%2Ftenant-app",
     "workspace mount should be rewritten",
   );
 });
@@ -205,8 +201,8 @@ test("workspace-scoped plugins are remounted under /apps/<name> regardless of de
 // ---------- End-to-end through zelavisServer + dispatcher ----------
 
 test("a synthesized SPA service serves the index for unmatched sub-paths", async () => {
-  const plugin = definePlugin({
-    name: "kanban",
+  const service = defineService({
+    name: "@example/kanban",
     scope: "system",
     app: { mount: "/kanban", bundle: "dist", mode: "spa" },
   });
@@ -214,14 +210,14 @@ test("a synthesized SPA service serves the index for unmatched sub-paths", async
   const bundleStore = createInMemoryBundleStore(
     new Map([
       [
-        "system/kanban/dist/index.html",
+        "system/@example/kanban/dist/index.html",
         {
           body: utf8("<!doctype html>kanban-spa"),
           contentType: "text/html; charset=utf-8",
         },
       ],
       [
-        "system/kanban/dist/assets/main.js",
+        "system/@example/kanban/dist/assets/main.js",
         {
           body: utf8("console.log('main')"),
           contentType: "text/javascript; charset=utf-8",
@@ -230,8 +226,8 @@ test("a synthesized SPA service serves the index for unmatched sub-paths", async
     ]),
   );
 
-  const { services } = await activatePluginRegistry(
-    [{ plugin, status: "installed" }],
+  const { services } = await activateServiceRegistry(
+    [{ service: service, status: "installed" }],
     {
       rootPath: "/",
       api: { prefix: "/api", version: "v1", basePath: "/api/v1" },
@@ -272,8 +268,8 @@ test("a synthesized SPA service serves the index for unmatched sub-paths", async
 });
 
 test("MPA mode resolves directory-style requests to .html and index.html, no SPA fallback", async () => {
-  const plugin = definePlugin({
-    name: "marketing",
+  const service = defineService({
+    name: "@example/marketing",
     scope: "system",
     app: { mount: "/marketing", bundle: "dist", mode: "mpa" },
   });
@@ -281,21 +277,21 @@ test("MPA mode resolves directory-style requests to .html and index.html, no SPA
   const bundleStore = createInMemoryBundleStore(
     new Map([
       [
-        "system/marketing/dist/index.html",
+        "system/@example/marketing/dist/index.html",
         {
           body: utf8("home"),
           contentType: "text/html; charset=utf-8",
         },
       ],
       [
-        "system/marketing/dist/about.html",
+        "system/@example/marketing/dist/about.html",
         {
           body: utf8("about-page"),
           contentType: "text/html; charset=utf-8",
         },
       ],
       [
-        "system/marketing/dist/docs/index.html",
+        "system/@example/marketing/dist/docs/index.html",
         {
           body: utf8("docs-index"),
           contentType: "text/html; charset=utf-8",
@@ -304,8 +300,8 @@ test("MPA mode resolves directory-style requests to .html and index.html, no SPA
     ]),
   );
 
-  const { services } = await activatePluginRegistry(
-    [{ plugin, status: "installed" }],
+  const { services } = await activateServiceRegistry(
+    [{ service: service, status: "installed" }],
     {
       rootPath: "/",
       api: { prefix: "/api", version: "v1", basePath: "/api/v1" },
@@ -343,8 +339,8 @@ test("MPA mode resolves directory-style requests to .html and index.html, no SPA
 // ---------- app.devUrl ----------
 
 test("app.devUrl short-circuits asset serving with a 307 redirect", async () => {
-  const plugin = definePlugin({
-    name: "vite-app",
+  const service = defineService({
+    name: "@example/vite-app",
     scope: "system",
     app: {
       mount: "/vite",
@@ -358,14 +354,14 @@ test("app.devUrl short-circuits asset serving with a 307 redirect", async () => 
   const bundleStore = createInMemoryBundleStore(
     new Map([
       [
-        "system/vite-app/dist/index.html",
+        "system/@example/vite-app/dist/index.html",
         { body: utf8("should-not-serve"), contentType: "text/html" },
       ],
     ]),
   );
 
-  const { services } = await activatePluginRegistry(
-    [{ plugin, status: "installed" }],
+  const { services } = await activateServiceRegistry(
+    [{ service: service, status: "installed" }],
     {
       rootPath: "/",
       api: { prefix: "/api", version: "v1", basePath: "/api/v1" },
@@ -419,8 +415,8 @@ test("app.devUrl can include its own base path that prefixes the relative path",
   // Common when the dev server itself is mounted under a sub-path
   // (e.g. `react-router dev --base /zelavis`) and zelavis needs to
   // redirect into that base.
-  const plugin = definePlugin({
-    name: "rr-app",
+  const service = defineService({
+    name: "@example/rr-app",
     scope: "system",
     app: {
       mount: "/zelavis",
@@ -429,8 +425,8 @@ test("app.devUrl can include its own base path that prefixes the relative path",
     },
   });
 
-  const { services } = await activatePluginRegistry(
-    [{ plugin, status: "installed" }],
+  const { services } = await activateServiceRegistry(
+    [{ service: service, status: "installed" }],
     {
       rootPath: "/",
       api: { prefix: "/api", version: "v1", basePath: "/api/v1" },
@@ -480,8 +476,8 @@ test("app.devUrl bypasses bundle store and shell.render entirely", async () => {
     },
   };
 
-  const plugin = definePlugin({
-    name: "dual-mode",
+  const service = defineService({
+    name: "@example/dual-mode",
     scope: "system",
     app: {
       mount: "/dual",
@@ -496,8 +492,8 @@ test("app.devUrl bypasses bundle store and shell.render entirely", async () => {
     },
   });
 
-  const { services } = await activatePluginRegistry(
-    [{ plugin, status: "installed" }],
+  const { services } = await activateServiceRegistry(
+    [{ service: service, status: "installed" }],
     {
       rootPath: "/",
       api: { prefix: "/api", version: "v1", basePath: "/api/v1" },
@@ -526,8 +522,8 @@ test("app.devUrl bypasses bundle store and shell.render entirely", async () => {
 
 test("shell.render is called for index requests and SPA-fallback misses", async () => {
   const calls = [];
-  const plugin = definePlugin({
-    name: "shellful",
+  const service = defineService({
+    name: "@example/shellful",
     scope: "system",
     app: {
       mount: "/app",
@@ -549,7 +545,7 @@ test("shell.render is called for index requests and SPA-fallback misses", async 
   const bundleStore = createInMemoryBundleStore(
     new Map([
       [
-        "system/shellful/dist/assets/main.js",
+        "system/@example/shellful/dist/assets/main.js",
         {
           body: utf8("console.log('main')"),
           contentType: "text/javascript; charset=utf-8",
@@ -558,8 +554,8 @@ test("shell.render is called for index requests and SPA-fallback misses", async 
     ]),
   );
 
-  const { services } = await activatePluginRegistry(
-    [{ plugin, status: "installed" }],
+  const { services } = await activateServiceRegistry(
+    [{ service: service, status: "installed" }],
     {
       rootPath: "/",
       api: { prefix: "/api", version: "v1", basePath: "/api/v1" },
@@ -608,8 +604,8 @@ test("shell.render is called for index requests and SPA-fallback misses", async 
 });
 
 test("shell.render can return non-200 for paths it wants to reject", async () => {
-  const plugin = definePlugin({
-    name: "gated",
+  const service = defineService({
+    name: "@example/gated",
     scope: "system",
     app: {
       mount: "/gated",
@@ -633,8 +629,8 @@ test("shell.render can return non-200 for paths it wants to reject", async () =>
     },
   });
 
-  const { services } = await activatePluginRegistry(
-    [{ plugin, status: "installed" }],
+  const { services } = await activateServiceRegistry(
+    [{ service: service, status: "installed" }],
     {
       rootPath: "/",
       api: { prefix: "/api", version: "v1", basePath: "/api/v1" },
@@ -663,21 +659,20 @@ test("shell.render can return non-200 for paths it wants to reject", async () =>
   assert.match(await pageResponse.text(), /gated/);
 });
 
-test("host-bound app routes only match the declared hostname", async () => {
-  const plugin = definePlugin({
-    name: "tenant",
+test("system app routes are host-agnostic by default", async () => {
+  const service = defineService({
+    name: "@example/tenant",
     scope: "system",
     app: {
       mount: "/",
       bundle: "dist",
-      domains: ["acme.example.com"],
     },
   });
 
   const bundleStore = createInMemoryBundleStore(
     new Map([
       [
-        "system/tenant/dist/index.html",
+        "system/@example/tenant/dist/index.html",
         {
           body: utf8("acme-home"),
           contentType: "text/html; charset=utf-8",
@@ -686,8 +681,8 @@ test("host-bound app routes only match the declared hostname", async () => {
     ]),
   );
 
-  const { services } = await activatePluginRegistry(
-    [{ plugin, status: "installed" }],
+  const { services } = await activateServiceRegistry(
+    [{ service: service, status: "installed" }],
     {
       rootPath: "/",
       api: { prefix: "/api", version: "v1", basePath: "/api/v1" },
@@ -709,8 +704,9 @@ test("host-bound app routes only match the declared hostname", async () => {
   assert.equal(matched.status, 200);
   assert.match(await matched.text(), /acme-home/);
 
-  const rejected = await runtime.fetch(
+  const otherHost = await runtime.fetch(
     new Request("http://other.example.com/"),
   );
-  assert.equal(rejected.status, 404);
+  assert.equal(otherHost.status, 200);
+  assert.match(await otherHost.text(), /acme-home/);
 });

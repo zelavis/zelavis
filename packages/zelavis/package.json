@@ -13,9 +13,9 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./plugin": {
-      "types": "./dist/plugin.d.ts",
-      "import": "./dist/plugin.js"
+    "./service": {
+      "types": "./dist/service.d.ts",
+      "import": "./dist/service.js"
     },
     "./adapters": {
       "types": "./dist/adapters/index.d.ts",
@@ -75,7 +75,7 @@
     }
   },
   "scripts": {
-    "build": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/db build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/ui build && node scripts/copy-dashboard.mjs && tsc -p tsconfig.json",
+    "build": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/db build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/ui build && tsc -p tsconfig.json",
     "build:runtime": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm run build && pnpm --filter @zelavis/ecommerce build && node --test test/*.test.mjs"
@@ -101,14 +101,15 @@
     "@zelavis/db-bun-sqlite": "workspace:*",
     "@zelavis/db-cloudflare-d1": "workspace:*",
     "@zelavis/db-node-sqlite": "workspace:*",
-    "@zelavis/server": "workspace:*"
+    "@zelavis/server": "workspace:*",
+    "@zelavis/ui": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.11.0",
     "elysia": "^1.4.28",
     "fastify": "^5.6.1",
     "h3": "2.0.1-rc.22",
-    "hono": "^4.12.19",
+    "hono": "^4.12.23",
     "next": "16.2.6",
     "typescript": "^5.9.0"
   },

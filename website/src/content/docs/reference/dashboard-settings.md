@@ -4,8 +4,8 @@ title: Dashboard Settings
 Zelavis exposes runtime-editable dashboard settings through:
 
 ```txt
-GET /zelavis/api/v1/dashboard/settings
-PATCH /zelavis/api/v1/dashboard/settings
+GET /zelavis/api/v1/runtime/settings
+PATCH /zelavis/api/v1/runtime/settings
 ```
 
 When `rootPath`, API prefix, or API version are customized, the mounted path changes with them.

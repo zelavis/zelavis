@@ -41,12 +41,12 @@ import {
   SheetTitle,
 } from "#/components/ui/sheet";
 import {
-  createDashboardPlugin,
+  createDashboardService,
   getRuntimeConfig,
-  listDashboardPlugins,
-  type RuntimePluginActivationCapabilities,
-  type RuntimePluginRegistryEntry,
-  updateDashboardPlugin,
+  listDashboardServices,
+  type RuntimeServiceActivationCapabilities,
+  type RuntimeServiceRegistryEntry,
+  updateDashboardService,
 } from "#/lib/runtime-api";
 import { useRuntimeResource } from "#/lib/use-runtime-resource";
 
@@ -66,20 +66,19 @@ type MarketplaceCatalogItem = {
   maintainer: string;
   installsLabel: string;
   version?: string;
-  runtimePluginName?: string;
   runtimeServiceName?: string;
   pageLabel?: string;
 };
 
 const communityCatalog: readonly MarketplaceCatalogItem[] = [
   {
-    name: "community-search",
+    name: "@community/search-kit",
     title: "Search Kit",
     badge: "community",
     category: "Search",
     summary: "Search, filters, and indexing workflows for content-heavy projects.",
     description:
-      "Placeholder listing for future community search plugins and provider-backed indexing packages.",
+      "Placeholder listing for future community search service packages and provider-backed indexing packages.",
     details: [
       "Planned catalog entry",
       "Provider contracts still in progress",
@@ -90,7 +89,7 @@ const communityCatalog: readonly MarketplaceCatalogItem[] = [
     installsLabel: "Preview listing",
   },
   {
-    name: "community-analytics",
+    name: "@community/analytics-bridge",
     title: "Analytics Bridge",
     badge: "community",
     category: "Analytics",
@@ -107,16 +106,16 @@ const communityCatalog: readonly MarketplaceCatalogItem[] = [
     installsLabel: "Preview listing",
   },
   {
-    name: "community-comments",
+    name: "@community/discussion-layer",
     title: "Discussion Layer",
     badge: "community",
     category: "Engagement",
     summary: "Forum, comments, and moderation tooling for content-driven apps.",
     description:
-      "Placeholder listing for community plugins that add higher-level collaboration or engagement surfaces.",
+      "Placeholder listing for community services that add higher-level collaboration or engagement surfaces.",
     details: [
       "Planned catalog entry",
-      "Would likely ship as a plugin with nested workspace panels",
+      "Would likely ship as a service with nested workspace panels",
       "Runtime contracts still exploratory",
     ],
     tags: ["comments", "moderation", "community"],
@@ -126,40 +125,39 @@ const communityCatalog: readonly MarketplaceCatalogItem[] = [
 ] as const;
 
 function createOfficialCatalog(
-  plugins: readonly RuntimePluginRegistryEntry[],
+  serviceRegistry: readonly RuntimeServiceRegistryEntry[],
 ): MarketplaceCatalogItem[] {
-  const pluginByName = new Map(plugins.map((plugin) => [plugin.name, plugin]));
+  const serviceByName = new Map(serviceRegistry.map((service) => [service.name, service]));
 
   return [
     {
-      name: "zelavis-ecommerce",
+      name: "@zelavis/ecommerce",
       title: "Zelavis Ecommerce",
       badge: "official",
       category: "Commerce",
       summary: "Products, orders, customers, coupons, and future storefront workflows.",
       description:
-        "Official Zelavis commerce plugin. This is the best current proving ground for plugin-owned workspace areas with nested panels.",
+        "Official Zelavis commerce service. This is the best current proving ground for service-owned workspace areas with nested panels.",
       details: [
-      "Promoted official plugin",
+      "Promoted official service",
       "Workspace area with nested slides",
-      "Install state is real; host activation applies the live plugin graph",
+      "Install state is real; host activation applies the live service graph",
       ],
       tags: ["products", "orders", "customers"],
       maintainer: "Zelavis team",
       installsLabel: "Official release",
-      version: pluginByName.get("zelavis-ecommerce")?.version ?? "0.1.0",
-      runtimePluginName: "zelavis-ecommerce",
-      runtimeServiceName: "commerce",
+      version: serviceByName.get("@zelavis/ecommerce")?.version ?? "0.1.0",
+      runtimeServiceName: "@zelavis/ecommerce",
       pageLabel: "Commerce",
     },
     {
-      name: "zelavis-payments",
+      name: "@zelavis/payments",
       title: "Zelavis Payments",
       badge: "official",
       category: "Payments",
-      summary: "Future payment orchestration, provider plugins, and settlement tooling.",
+      summary: "Future payment orchestration, provider services, and settlement tooling.",
       description:
-        "Placeholder for an official payments-focused plugin once the commerce and provider boundaries settle.",
+        "Placeholder for an official payments-focused service once the commerce and provider boundaries settle.",
       details: [
         "Official roadmap placeholder",
         "Would likely pair with commerce",
@@ -173,29 +171,29 @@ function createOfficialCatalog(
   ];
 }
 
-function getPluginStatus(
-  pluginName: string | undefined,
-  plugins: readonly RuntimePluginRegistryEntry[] | undefined,
+function getServiceStatus(
+  serviceName: string | undefined,
+  serviceRegistry: readonly RuntimeServiceRegistryEntry[] | undefined,
 ) {
-  if (!pluginName || !plugins) {
+  if (!serviceName || !serviceRegistry) {
     return undefined;
   }
 
-  return plugins.find((plugin) => plugin.name === pluginName)?.status;
+  return serviceRegistry.find((service) => service.name === serviceName)?.status;
 }
 
-function hasPendingPluginActivation(
+function hasPendingServiceActivation(
   item: MarketplaceCatalogItem,
-  baselinePlugins: readonly RuntimePluginRegistryEntry[] | undefined,
-  currentPlugins: readonly RuntimePluginRegistryEntry[] | undefined,
+  baselineServices: readonly RuntimeServiceRegistryEntry[] | undefined,
+  currentServices: readonly RuntimeServiceRegistryEntry[] | undefined,
   activeServices: readonly string[] | undefined,
 ) {
-  if (!item.runtimePluginName) {
+  if (!item.runtimeServiceName) {
     return false;
   }
 
-  const baselineStatus = getPluginStatus(item.runtimePluginName, baselinePlugins);
-  const currentStatus = getPluginStatus(item.runtimePluginName, currentPlugins);
+  const baselineStatus = getServiceStatus(item.runtimeServiceName, baselineServices);
+  const currentStatus = getServiceStatus(item.runtimeServiceName, currentServices);
   const installChanged =
     baselineStatus !== undefined &&
     currentStatus !== undefined &&
@@ -210,7 +208,7 @@ function hasPendingPluginActivation(
 }
 
 function formatActivationStrategy(
-  strategy: RuntimePluginActivationCapabilities["strategy"],
+  strategy: RuntimeServiceActivationCapabilities["strategy"],
 ) {
   switch (strategy) {
     case "runtime-graph":
@@ -229,7 +227,7 @@ function formatCapability(value: boolean) {
 }
 
 function getWorkerBoundaryMessage(
-  capabilities: RuntimePluginActivationCapabilities | undefined,
+  capabilities: RuntimeServiceActivationCapabilities | undefined,
 ) {
   if (!capabilities || capabilities.strategy !== "worker-boundary") {
     return undefined;
@@ -240,13 +238,13 @@ function getWorkerBoundaryMessage(
     capabilities.supportsUploadedSpecifiers &&
     capabilities.supportsIsolatedExecution
   ) {
-    return "Worker dispatch is configured for this host. Plugin installs can be activated through an isolated worker boundary.";
+    return "Worker dispatch is configured for this host. Service installs can be activated through an isolated worker boundary.";
   }
 
-  return "This host reports a worker-boundary strategy, but dispatch activation is incomplete. Marketplace can update metadata, but runtime plugin uploads may stay pending until the adapter supplies dispatch, uploaded source, and isolation support.";
+  return "This host reports a worker-boundary strategy, but dispatch activation is incomplete. Marketplace can update metadata, but runtime service uploads may stay pending until the adapter supplies dispatch, uploaded source, and isolation support.";
 }
 
-function MarketplacePluginCard({
+function MarketplaceServiceCard({
   item,
   status,
   pending,
@@ -282,7 +280,7 @@ function MarketplacePluginCard({
         </p>
       </CardContent>
       <CardFooter className="mt-auto flex min-h-14 items-center gap-2">
-        {item.runtimePluginName ? (
+        {item.runtimeServiceName ? (
           <Button
             size="sm"
             variant={isInstalled ? "outline" : "default"}
@@ -313,124 +311,124 @@ function MarketplacePluginCard({
 function Marketplace() {
   const runtime = useRuntimeResource(getRuntimeConfig);
   const runtimeConfig = runtime.data;
-  const pluginResource = useRuntimeResource(
-    async () => (runtimeConfig ? listDashboardPlugins(runtimeConfig) : undefined),
+  const serviceResource = useRuntimeResource(
+    async () => (runtimeConfig ? listDashboardServices(runtimeConfig) : undefined),
     [runtimeConfig?.api.basePath],
   );
-  const [pluginEntries, setPluginEntries] = useState<
-    readonly RuntimePluginRegistryEntry[] | undefined
+  const [serviceEntries, setServiceEntries] = useState<
+    readonly RuntimeServiceRegistryEntry[] | undefined
   >(undefined);
   const [actionError, setActionError] = useState<string>();
-  const [pluginSpecifier, setPluginSpecifier] = useState("");
-  const [selectedPluginFile, setSelectedPluginFile] = useState<File>();
-  const [pendingPluginName, setPendingPluginName] = useState<string>();
-  const [addingPlugin, setAddingPlugin] = useState(false);
+  const [serviceSpecifier, setServiceSpecifier] = useState("");
+  const [selectedServiceFile, setSelectedServiceFile] = useState<File>();
+  const [pendingServiceName, setPendingServiceName] = useState<string>();
+  const [addingService, setAddingService] = useState(false);
   const [activationRequired, setActivationRequired] = useState(false);
   const [activationMessage, setActivationMessage] = useState<string>();
   const [selectedItem, setSelectedItem] = useState<MarketplaceCatalogItem | null>(null);
 
   useEffect(() => {
-    if (pluginResource.data) {
-      setPluginEntries(pluginResource.data);
+    if (serviceResource.data) {
+      setServiceEntries(serviceResource.data);
     } else if (!runtimeConfig) {
-      setPluginEntries(undefined);
+      setServiceEntries(undefined);
     }
-  }, [pluginResource.data, runtimeConfig]);
+  }, [serviceResource.data, runtimeConfig]);
 
-  const effectivePlugins = pluginEntries;
+  const effectiveServices = serviceEntries;
   const officialCatalog = useMemo(
-    () => createOfficialCatalog(effectivePlugins ?? []),
-    [effectivePlugins],
+    () => createOfficialCatalog(effectiveServices ?? []),
+    [effectiveServices],
   );
-  const uploadedPlugins = useMemo(
+  const uploadedServices = useMemo(
     () =>
-      (effectivePlugins ?? []).filter(
-        (plugin) => plugin.source === "community" && plugin.specifier,
+      (effectiveServices ?? []).filter(
+        (service) => service.source === "community" && service.specifier,
       ),
-    [effectivePlugins],
+    [effectiveServices],
   );
   const activeServiceNames = runtimeConfig?.services.map((service) => service.name);
-  const activationCapabilities = runtimeConfig?.pluginActivation?.capabilities;
-  const canUploadPluginSource = Boolean(
+  const activationCapabilities = runtimeConfig?.serviceActivation?.capabilities;
+  const canUploadServiceSource = Boolean(
     activationCapabilities?.supportsPackageUploads ||
       activationCapabilities?.supportsUploadedSpecifiers,
   );
-  const canUploadPluginPackage =
+  const canUploadServicePackage =
     activationCapabilities?.supportsPackageUploads ?? false;
-  const canRegisterPluginSpecifier =
+  const canRegisterServiceSpecifier =
     activationCapabilities?.supportsUploadedSpecifiers ?? false;
   const workerBoundaryMessage = getWorkerBoundaryMessage(activationCapabilities);
   const marketplaceActivationRequired =
     activationRequired ||
     officialCatalog.some((item) =>
-      hasPendingPluginActivation(
+      hasPendingServiceActivation(
         item,
-        runtimeConfig?.plugins,
-        effectivePlugins,
+        runtimeConfig?.serviceRegistry,
+        effectiveServices,
         activeServiceNames,
       ),
     );
 
-  async function togglePlugin(pluginName: string, status: "installed" | "available") {
-    if (!runtimeConfig || pendingPluginName) {
+  async function toggleService(serviceName: string, status: "installed" | "available") {
+    if (!runtimeConfig || pendingServiceName) {
       return;
     }
 
-    setPendingPluginName(pluginName);
+    setPendingServiceName(serviceName);
     setActionError(undefined);
 
     try {
-      const result = await updateDashboardPlugin(runtimeConfig, pluginName, {
+      const result = await updateDashboardService(runtimeConfig, serviceName, {
         status,
       });
 
-      setPluginEntries(result.plugins);
+      setServiceEntries(result.serviceRegistry);
       setActivationRequired(result.activation?.status !== "active");
       setActivationMessage(result.activation?.message);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error));
     } finally {
-      setPendingPluginName(undefined);
+      setPendingServiceName(undefined);
     }
   }
 
-  async function addPluginSource(event: FormEvent<HTMLFormElement>) {
+  async function addServiceSource(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!runtimeConfig || addingPlugin) {
+    if (!runtimeConfig || addingService) {
       return;
     }
 
-    setAddingPlugin(true);
+    setAddingService(true);
     setActionError(undefined);
 
     try {
-      const result = await createDashboardPlugin(runtimeConfig, {
-        ...(selectedPluginFile
-          ? { file: selectedPluginFile }
-          : { specifier: pluginSpecifier.trim() }),
+      const result = await createDashboardService(runtimeConfig, {
+        ...(selectedServiceFile
+          ? { file: selectedServiceFile }
+          : { specifier: serviceSpecifier.trim() }),
         status: "available",
         source: "community",
       });
 
-      setPluginEntries(result.plugins);
-      setPluginSpecifier("");
-      setSelectedPluginFile(undefined);
+      setServiceEntries(result.serviceRegistry);
+      setServiceSpecifier("");
+      setSelectedServiceFile(undefined);
       setActivationRequired(result.activation?.status !== "active");
       setActivationMessage(result.activation?.message);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error));
     } finally {
-      setAddingPlugin(false);
+      setAddingService(false);
     }
   }
 
-  function selectPluginFile(event: ChangeEvent<HTMLInputElement>) {
+  function selectServiceFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.currentTarget.files?.[0];
 
-    setSelectedPluginFile(file);
+    setSelectedServiceFile(file);
     if (file) {
-      setPluginSpecifier("");
+      setServiceSpecifier("");
     }
   }
 
@@ -439,7 +437,7 @@ function Marketplace() {
       <PageHeader
         eyebrow="Community"
         title="Marketplace"
-        description="Official Zelavis plugins live up top, community plugins below, and plugin install state stays separate from runtime activation."
+        description="Official Zelavis services live up top, community services below, and service install state stays separate from runtime activation."
       />
 
       {marketplaceActivationRequired ? (
@@ -447,7 +445,7 @@ function Marketplace() {
           title="Host activation required"
           description={
             activationMessage ??
-            "Plugin install state has changed. Marketplace metadata updates now; mounted services activate when the current host applies its live plugin activation flow."
+            "Service install state has changed. Marketplace metadata updates now; mounted services activate when the current host applies its live service activation flow."
           }
         />
       ) : (
@@ -455,7 +453,7 @@ function Marketplace() {
           title="Install flow model"
           description={
             activationMessage ??
-            "The marketplace edits real plugin registry state. Hosts decide how activation happens: recompose the local runtime, create a worker/function, or attach another live function boundary."
+            "The marketplace edits real service registry state. Hosts decide how activation happens: recompose the local runtime, create a worker/function, or attach another live function boundary."
           }
         />
       )}
@@ -463,10 +461,10 @@ function Marketplace() {
       {activationCapabilities ? (
         <Card className="border-border/80">
           <CardHeader>
-            <CardTitle>Plugin activation</CardTitle>
+            <CardTitle>Service activation</CardTitle>
             <CardDescription>
               {activationCapabilities.description ??
-                "The current host declares how it can apply plugin registry changes."}
+                "The current host declares how it can apply service registry changes."}
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-2 text-sm sm:grid-cols-2 xl:grid-cols-5">
@@ -535,7 +533,7 @@ function Marketplace() {
               Worker dispatch
             </CardTitle>
             <CardDescription>
-              Plugins activate outside the main runtime through an isolated worker endpoint.
+              Services activate outside the main runtime through an isolated worker endpoint.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-2 text-sm md:grid-cols-3">
@@ -544,7 +542,7 @@ function Marketplace() {
                 Endpoint
               </p>
               <p className="mt-1 font-mono text-xs text-foreground">
-                /__zelavis/plugin/activate
+                /__zelavis/service/activate
               </p>
             </div>
             <div className="rounded-md border bg-muted/35 px-3 py-3">
@@ -552,7 +550,7 @@ function Marketplace() {
                 Registry changes
               </p>
               <p className="mt-1 font-medium text-foreground">
-                Sent to plugin Worker
+                Sent to service Worker
               </p>
             </div>
             <div className="rounded-md border bg-muted/35 px-3 py-3">
@@ -569,7 +567,7 @@ function Marketplace() {
 
       {actionError ? (
         <ResourceNotice
-          title="Plugin update failed"
+          title="Service update failed"
           description={actionError}
         />
       ) : null}
@@ -578,67 +576,67 @@ function Marketplace() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Upload className="size-4" />
-            Upload plugin
+            Upload service
           </CardTitle>
           <CardDescription>
-            Upload a ZIP plugin package or register an ESM source that the current host can activate through its live plugin flow.
+            Upload a ZIP service package or register an ESM source that the current host can activate through its live service flow.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form
-            id="plugin-source-form"
+            id="service-source-form"
             className="grid gap-4"
-            onSubmit={addPluginSource}
+            onSubmit={addServiceSource}
           >
             <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
               <label className="grid gap-2 text-sm font-medium text-foreground">
-                Plugin package
+                Service package
                 <Input
                   type="file"
                   accept=".zip,application/zip,application/x-zip-compressed"
-                  onChange={selectPluginFile}
-                  disabled={addingPlugin}
+                  onChange={selectServiceFile}
+                  disabled={addingService}
                 />
               </label>
               <Button
                 type="submit"
                 className="self-end"
                 disabled={
-                  addingPlugin ||
+                  addingService ||
                   !runtimeConfig ||
-                  !canUploadPluginSource ||
-                  (selectedPluginFile
-                    ? !canUploadPluginPackage
-                    : !canRegisterPluginSpecifier ||
-                      pluginSpecifier.trim().length === 0)
+                  !canUploadServiceSource ||
+                  (selectedServiceFile
+                    ? !canUploadServicePackage
+                    : !canRegisterServiceSpecifier ||
+                      serviceSpecifier.trim().length === 0)
                 }
               >
-                {addingPlugin ? "Adding..." : "Add plugin"}
+                {addingService ? "Adding..." : "Add service"}
               </Button>
             </div>
             <label className="grid gap-2 text-sm font-medium text-foreground">
               ESM specifier
               <Input
-                value={pluginSpecifier}
+                value={serviceSpecifier}
                 onChange={(event) => {
-                  setPluginSpecifier(event.target.value);
+                  setServiceSpecifier(event.target.value);
                   if (event.target.value.trim()) {
-                    setSelectedPluginFile(undefined);
+                    setSelectedServiceFile(undefined);
                   }
                 }}
-                placeholder="@scope/plugin, https://cdn.example/plugin.mjs, or /absolute/dist/index.js"
-                disabled={addingPlugin}
+                placeholder="@scope/service, https://cdn.example/service.mjs, or /absolute/dist/index.js"
+                disabled={addingService}
               />
             </label>
           </form>
           <p className="mt-3 text-sm text-muted-foreground">
-            {canUploadPluginSource
-              ? selectedPluginFile
-                ? canUploadPluginPackage
-                  ? `${selectedPluginFile.name} will be uploaded as a plugin package. The current host will unpack it, resolve its ESM entry, and read the plugin definition from there.`
+            {canUploadServiceSource
+              ? selectedServiceFile
+                ? canUploadServicePackage
+                  ? `${selectedServiceFile.name} will be uploaded as a service package. The current host will unpack it, resolve its ESM entry, and read the service definition from there.`
                   : "The current host does not support ZIP package uploads yet. Use the ESM specifier field instead."
-                : "Choose a ZIP plugin package or enter an ESM specifier. Browsers cannot expose the selected absolute file path, so local path installs still use the specifier field."
-              : "The current host does not declare uploaded ESM specifier support, so manual plugin sources are disabled here."}
+                : "Choose a ZIP service package or enter an ESM specifier. Browsers cannot expose the selected absolute file path, so local path installs still use the specifier field."
+              : "The current host does not declare uploaded ESM specifier support, so manual service sources are disabled here."}
           </p>
         </CardContent>
       </Card>
@@ -648,14 +646,14 @@ function Marketplace() {
           <div className="mb-3 flex items-center justify-between">
             <div>
               <p className="kicker">Official</p>
-              <h2 className="text-xl font-semibold tracking-tight">Promoted plugins</h2>
+              <h2 className="text-xl font-semibold tracking-tight">Promoted services</h2>
             </div>
           </div>
 
           <Carousel opts={{ align: "start", loop: false }} className="w-full py-1">
             <CarouselContent className="ml-0 gap-2">
               {officialCatalog.map((item) => {
-                const status = getPluginStatus(item.runtimePluginName, effectivePlugins);
+                const status = getServiceStatus(item.runtimeServiceName, effectiveServices);
                 const isInstalled = status === "installed";
 
                 return (
@@ -663,15 +661,15 @@ function Marketplace() {
                     key={item.name}
                     className="basis-full pl-0 md:basis-1/2 xl:basis-1/3 2xl:basis-1/4"
                   >
-                    <MarketplacePluginCard
+                    <MarketplaceServiceCard
                       item={item}
                       status={status}
-                      pending={pendingPluginName === item.runtimePluginName}
+                      pending={pendingServiceName === item.runtimeServiceName}
                       onInstallToggle={
-                        item.runtimePluginName
+                        item.runtimeServiceName
                           ? () =>
-                              togglePlugin(
-                                item.runtimePluginName!,
+                              toggleService(
+                                item.runtimeServiceName!,
                                 isInstalled ? "available" : "installed",
                               )
                           : undefined
@@ -694,7 +692,7 @@ function Marketplace() {
         <div className="flex items-end justify-between gap-4">
           <div>
             <p className="kicker">Community</p>
-            <h2 className="text-xl font-semibold tracking-tight">Plugin catalog</h2>
+            <h2 className="text-xl font-semibold tracking-tight">Service catalog</h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Placeholder community cards for the broader grid-based catalog experience.
             </p>
@@ -703,7 +701,7 @@ function Marketplace() {
 
         <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {communityCatalog.map((item) => (
-            <MarketplacePluginCard
+            <MarketplaceServiceCard
               key={item.name}
               item={item}
               onInfo={() => setSelectedItem(item)}
@@ -712,37 +710,37 @@ function Marketplace() {
         </div>
       </section>
 
-      {uploadedPlugins.length > 0 ? (
+      {uploadedServices.length > 0 ? (
         <section className="grid gap-4">
           <div>
             <p className="kicker">Local registry</p>
             <h2 className="text-xl font-semibold tracking-tight">Uploaded sources</h2>
           </div>
           <div className="grid gap-2 rounded-md border">
-            {uploadedPlugins.map((plugin) => (
+            {uploadedServices.map((service) => (
               <div
-                key={plugin.name}
+                key={service.name}
                 className="grid gap-2 border-b p-4 last:border-b-0 md:grid-cols-[minmax(0,1fr)_auto]"
               >
                 <div className="min-w-0">
-                  <p className="font-medium text-foreground">{plugin.name}</p>
+                  <p className="font-medium text-foreground">{service.name}</p>
                   <p className="truncate text-sm text-muted-foreground">
-                    {plugin.specifier}
+                    {service.specifier}
                   </p>
                 </div>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  disabled={pendingPluginName === plugin.name}
+                  disabled={pendingServiceName === service.name}
                   onClick={() =>
-                    togglePlugin(
-                      plugin.name,
-                      plugin.status === "installed" ? "available" : "installed",
+                    toggleService(
+                      service.name,
+                      service.status === "installed" ? "available" : "installed",
                     )
                   }
                 >
-                  {plugin.status === "installed" ? "Disable" : "Install"}
+                  {service.status === "installed" ? "Disable" : "Install"}
                 </Button>
               </div>
             ))}

@@ -107,7 +107,7 @@ class DatabaseRepositorySupport {
       await this.database.documents.createCollection({
         name,
         metadata: {
-          surface: "ecommerce-plugin",
+          surface: "ecommerce-service",
         },
       });
     }

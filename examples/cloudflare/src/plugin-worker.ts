@@ -1,19 +1,19 @@
-import type { ZelavisPluginActivationRequest } from "zelavis";
+import type { ZelavisServiceActivationRequest } from "zelavis";
 
-type PluginWorkerEnv = {
+type ServiceWorkerEnv = {
   ZELAVIS_ROOT_PATH?: string;
 };
 
 async function readActivationRequest(
   request: Request,
-): Promise<ZelavisPluginActivationRequest> {
+): Promise<ZelavisServiceActivationRequest> {
   const body = await request.json();
 
   if (
     typeof body !== "object" ||
     body === null ||
-    !("pluginName" in body) ||
-    typeof body.pluginName !== "string" ||
+    !("serviceName" in body) ||
+    typeof body.serviceName !== "string" ||
     !("action" in body) ||
     (body.action !== "register" &&
       body.action !== "install" &&
@@ -22,17 +22,17 @@ async function readActivationRequest(
     !("registry" in body) ||
     !Array.isArray(body.registry)
   ) {
-    throw new TypeError("Invalid Zelavis plugin activation request.");
+    throw new TypeError("Invalid Zelavis service activation request.");
   }
 
-  return body as ZelavisPluginActivationRequest;
+  return body as ZelavisServiceActivationRequest;
 }
 
 export default {
-  async fetch(request: Request, env: PluginWorkerEnv): Promise<Response> {
+  async fetch(request: Request, env: ServiceWorkerEnv): Promise<Response> {
     const url = new URL(request.url);
 
-    if (url.pathname !== "/__zelavis/plugin/activate") {
+    if (url.pathname !== "/__zelavis/service/activate") {
       return new Response("Not Found", { status: 404 });
     }
 
@@ -50,7 +50,7 @@ export default {
 
       return Response.json({
         status: "active",
-        message: `${activation.pluginName} ${activation.action} accepted at ${
+        message: `${activation.serviceName} ${activation.action} accepted at ${
           env.ZELAVIS_ROOT_PATH ?? "/zelavis"
         }.`,
       });

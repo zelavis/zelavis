@@ -1,1 +1,1 @@
-export * from "./stripe-plugin.js";
+export * from "./stripe-service.js";
