@@ -11,7 +11,7 @@ import { getRuntimeConfig } from '#/lib/runtime-api'
 import { useRuntimeResource } from '#/lib/use-runtime-resource'
 
 export const handle = {
-  pageLabel: "Plugins",
+  pageLabel: "Services",
   sidebarTrail: ["Settings"],
 } as const;
 
@@ -22,8 +22,8 @@ function Services() {
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
       <PageHeader
-        eyebrow="Plugins"
-        title="Runtime plugins"
+        eyebrow="Services"
+        title="Runtime services"
       />
 
       <Card>
@@ -38,7 +38,7 @@ function Services() {
             <DataRow
               key={service.name}
               label={service.name}
-              detail={`${service.core ? 'core plugin' : 'plugin/custom runtime'} · ${service.apiPath}`}
+              detail={`${service.core ? 'core service' : 'service/custom runtime'} · ${service.apiPath}`}
               meta={<StatusBadge state="ready" />}
             />
           ))}

@@ -1,23 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  activatePluginRegistry,
-  applyPluginRegistryState,
-  definePluginCatalog,
-  definePluginCatalogEntry,
-  definePlugin,
-  createPluginRegistry,
-  loadPlugin,
-  loadPluginRegistry,
-  removePluginFromRegistry,
-  resolvePluginModule,
-  serializePluginRegistryState,
-  isPluginExtensionAllowed,
-  ZELAVIS_PLUGIN_V1,
+  activateServiceRegistry,
+  applyServiceRegistryState,
+  defineServiceCatalog,
+  defineServiceCatalogEntry,
+  defineService,
+  createServiceRegistry,
+  loadService,
+  loadServiceRegistry,
+  removeServiceFromRegistry,
+  resolveServiceModule,
+  serializeServiceRegistryState,
+  isChildServiceAllowed,
+  ZELAVIS_SERVICE_V1,
 } from "../dist/index.js";
 
-test("definePlugin normalizes plugin metadata for developer-facing extensions", () => {
-  const service = {
+test("defineService normalizes service metadata for developer-facing extensions", () => {
+  const runtimeService = {
     name: "commerce",
     service: {},
     api: {
@@ -25,43 +25,34 @@ test("definePlugin normalizes plugin metadata for developer-facing extensions", 
     },
   };
 
-  const plugin = definePlugin({
-    name: "zelavis-ecommerce",
+  const service = defineService({
+    name: "@zelavis/ecommerce",
     version: "1.0.0",
-    extensionPoints: [
-      {
-        name: "payments",
-        policy: "reviewed",
-        allowedPlugins: ["stripe"],
-      },
-    ],
+    childServices: ["@zelavis/ecommerce-stripe"],
     menu: {
       title: "Ecommerce",
       path: "/commerce",
       pageLabel: "Commerce",
     },
-    services: [service],
+    runtimeServices: [runtimeService],
   });
 
-  assert.equal(plugin.name, "zelavis-ecommerce");
-  assert.equal(plugin.contractVersion, ZELAVIS_PLUGIN_V1);
-  assert.equal(plugin.menu.title, "Ecommerce");
-  assert.equal(plugin.menu.path, "/commerce");
-  assert.equal(plugin.extensionPoints[0].name, "payments");
-  assert.equal(plugin.extensionPoints[0].policy, "reviewed");
-  assert.deepEqual(plugin.extensionPoints[0].allowedPlugins, ["stripe"]);
-  assert.equal(plugin.services.length, 1);
-  assert.ok(Object.isFrozen(plugin));
-  assert.ok(Object.isFrozen(plugin.menu));
-  assert.ok(Object.isFrozen(plugin.services));
-  assert.ok(Object.isFrozen(plugin.extensionPoints));
-  assert.ok(Object.isFrozen(plugin.extensionPoints[0].allowedPlugins));
+  assert.equal(service.name, "@zelavis/ecommerce");
+  assert.equal(service.contractVersion, ZELAVIS_SERVICE_V1);
+  assert.equal(service.menu.title, "Ecommerce");
+  assert.equal(service.menu.path, "/commerce");
+  assert.deepEqual(service.childServices, ["@zelavis/ecommerce-stripe"]);
+  assert.equal(service.runtimeServices.length, 1);
+  assert.ok(Object.isFrozen(service));
+  assert.ok(Object.isFrozen(service.menu));
+  assert.ok(Object.isFrozen(service.runtimeServices));
+  assert.ok(Object.isFrozen(service.childServices));
 });
 
-test("definePlugin validates required plugin fields", () => {
+test("defineService validates required service fields", () => {
   assert.throws(
     () =>
-      definePlugin({
+      defineService({
         name: "",
       }),
     /string name/,
@@ -69,8 +60,8 @@ test("definePlugin validates required plugin fields", () => {
 
   assert.throws(
     () =>
-      definePlugin({
-        name: "broken-plugin",
+      defineService({
+        name: "@example/broken-service",
         menu: {
           title: "Broken",
           path: 123,
@@ -81,18 +72,18 @@ test("definePlugin validates required plugin fields", () => {
 
   assert.throws(
     () =>
-      definePlugin({
-        name: "future-plugin",
-        contractVersion: "ZELAVIS_PLUGIN_V2",
+      defineService({
+        name: "@example/future-service",
+        contractVersion: "ZELAVIS_SERVICE_V2",
       }),
-    /Unsupported plugin contract version/,
+    /Unsupported service contract version/,
   );
 
   // surface is now allowed in definitions — the activation layer strips it
-  // for workspace-scoped plugins at runtime, so no throw at define-time.
+  // for workspace-scoped services at runtime, so no throw at define-time.
   assert.doesNotThrow(() =>
-    definePlugin({
-      name: "surface-plugin",
+    defineService({
+      name: "@example/surface-service",
       menu: {
         title: "Surface",
         path: "/surface",
@@ -103,169 +94,131 @@ test("definePlugin validates required plugin fields", () => {
 
   assert.throws(
     () =>
-      definePlugin({
-        name: "stripe",
-        extends: {
-          plugin: "",
-          extensionPoint: "payments",
-        },
+      defineService({
+        name: "@zelavis/ecommerce-stripe",
+        extends: "",
       }),
-    /parent plugin name/,
+    /scoped package-style name/,
   );
 
   assert.throws(
     () =>
-      definePlugin({
-        name: "stripe",
-        extends: {
-          plugin: "zelavis-ecommerce",
-          extensionPoint: "payments",
-        },
+      defineService({
+        name: "@zelavis/ecommerce-stripe",
+        extends: "@zelavis/ecommerce",
         menu: {
           title: "Stripe",
           path: "/stripe",
         },
       }),
-    /Child plugins cannot declare top-level dashboard menu metadata/,
+    /Child services cannot declare top-level dashboard menu metadata/,
   );
 
   assert.throws(
     () =>
-      definePlugin({
-        name: "zelavis-ecommerce",
-        extensionPoints: [
-          {
-            name: "payments",
-            policy: "chaos",
-          },
-        ],
+      defineService({
+        name: "@zelavis/ecommerce",
+        childServices: ["@zelavis/ecommerce-stripe", "@zelavis/ecommerce-stripe"],
       }),
-    /policy must be "open", "reviewed", or "private"/,
+    /Duplicate: @zelavis\/ecommerce-stripe/,
   );
 
   assert.throws(
     () =>
-      definePlugin({
-        name: "zelavis-ecommerce",
-        extensionPoints: [
-          {
-            name: "payments",
-          },
-          {
-            name: "payments",
-          },
-        ],
+      defineService({
+        name: "stripe",
       }),
-    /unique names/,
+    /scoped package-style name/,
+  );
+
+  assert.throws(
+    () =>
+      defineService({
+        name: "@zelavis/ecommerce",
+        childServices: ["stripe"],
+      }),
+    /scoped package-style name/,
   );
 });
 
-test("definePlugin supports child plugin extension metadata", () => {
-  const plugin = definePlugin({
-    name: "stripe",
-    extends: {
-      plugin: "zelavis-ecommerce",
-      extensionPoint: "payments",
-    },
+test("defineService supports child service extension metadata", () => {
+  const service = defineService({
+    name: "@zelavis/ecommerce-stripe",
+    extends: "@zelavis/ecommerce",
   });
 
-  assert.equal(plugin.extends.plugin, "zelavis-ecommerce");
-  assert.equal(plugin.extends.extensionPoint, "payments");
-  assert.ok(Object.isFrozen(plugin.extends));
+  assert.equal(service.extends, "@zelavis/ecommerce");
 });
 
-test("isPluginExtensionAllowed applies parent extension point policies", () => {
+test("isChildServiceAllowed applies parent child service allow-list", () => {
   const parent = {
-    plugin: definePlugin({
-      name: "zelavis-ecommerce",
-      extensionPoints: [
-        {
-          name: "payments",
-          policy: "reviewed",
-          allowedPlugins: ["stripe"],
-        },
-        {
-          name: "shipping",
-          policy: "open",
-        },
-      ],
+    service: defineService({
+      name: "@zelavis/ecommerce",
+      childServices: ["@zelavis/ecommerce-stripe"],
     }),
     status: "installed",
   };
   const stripe = {
-    plugin: definePlugin({
-      name: "stripe",
-      extends: {
-        plugin: "zelavis-ecommerce",
-        extensionPoint: "payments",
-      },
+    service: defineService({
+      name: "@zelavis/ecommerce-stripe",
+      extends: "@zelavis/ecommerce",
     }),
     status: "installed",
   };
   const xyz = {
-    plugin: definePlugin({
-      name: "xyz-payments",
-      extends: {
-        plugin: "zelavis-ecommerce",
-        extensionPoint: "payments",
-      },
+    service: defineService({
+      name: "@example/xyz-payments",
+      extends: "@zelavis/ecommerce",
     }),
     status: "installed",
   };
   const shipping = {
-    plugin: definePlugin({
-      name: "ship-fast",
-      extends: {
-        plugin: "zelavis-ecommerce",
-        extensionPoint: "shipping",
-      },
+    service: defineService({
+      name: "@example/ship-fast",
+      extends: "@zelavis/ecommerce",
     }),
     status: "installed",
   };
 
-  assert.equal(isPluginExtensionAllowed(parent, stripe), true);
-  assert.equal(isPluginExtensionAllowed(parent, xyz), false);
-  assert.equal(isPluginExtensionAllowed(parent, shipping), true);
+  assert.equal(isChildServiceAllowed(parent, stripe), true);
+  assert.equal(isChildServiceAllowed(parent, xyz), false);
+  assert.equal(isChildServiceAllowed(parent, shipping), false);
 });
 
-test("definePluginCatalogEntry normalizes marketplace metadata", () => {
-  const entry = definePluginCatalogEntry({
-    name: "stripe",
+test("defineServiceCatalogEntry normalizes marketplace metadata", () => {
+  const entry = defineServiceCatalogEntry({
+    name: "@zelavis/ecommerce-stripe",
     package: "@zelavis/ecommerce-stripe",
     publisher: "zelavis",
     source: "official",
-    extends: {
-      plugin: "zelavis-ecommerce",
-      extensionPoint: "payments",
-    },
+    extends: "@zelavis/ecommerce",
     compatibility: {
       zelavis: "^1.0.0",
-      parentPlugin: "^1.0.0",
+      parentService: "^1.0.0",
     },
     links: {
       repository: "https://github.com/zelavis/zelavis",
     },
-    tags: ["payments", "stripe"],
+    tags: ["payments", "@zelavis/ecommerce-stripe"],
   });
 
   assert.equal(entry.reviewStatus, "official");
   assert.equal(entry.verified, true);
-  assert.equal(entry.extends.plugin, "zelavis-ecommerce");
+  assert.equal(entry.extends, "@zelavis/ecommerce");
   assert.equal(entry.compatibility.zelavis, "^1.0.0");
   assert.equal(entry.links.repository, "https://github.com/zelavis/zelavis");
-  assert.deepEqual(entry.tags, ["payments", "stripe"]);
+  assert.deepEqual(entry.tags, ["payments", "@zelavis/ecommerce-stripe"]);
   assert.ok(Object.isFrozen(entry));
-  assert.ok(Object.isFrozen(entry.extends));
   assert.ok(Object.isFrozen(entry.compatibility));
   assert.ok(Object.isFrozen(entry.links));
   assert.ok(Object.isFrozen(entry.tags));
 });
 
-test("definePluginCatalog validates marketplace entries", () => {
+test("defineServiceCatalog validates marketplace entries", () => {
   assert.throws(
     () =>
-      definePluginCatalogEntry({
-        name: "broken",
+      defineServiceCatalogEntry({
+        name: "@example/broken",
         package: "@example/broken",
         publisher: "example",
         source: "unknown",
@@ -275,8 +228,8 @@ test("definePluginCatalog validates marketplace entries", () => {
 
   assert.throws(
     () =>
-      definePluginCatalogEntry({
-        name: "broken",
+      defineServiceCatalogEntry({
+        name: "@example/broken",
         package: "@example/broken",
         publisher: "example",
         source: "community",
@@ -287,15 +240,15 @@ test("definePluginCatalog validates marketplace entries", () => {
 
   assert.throws(
     () =>
-      definePluginCatalog([
+      defineServiceCatalog([
         {
-          name: "analytics",
+          name: "@example/analytics",
           package: "@example/analytics",
           publisher: "example",
           source: "community",
         },
         {
-          name: "analytics",
+          name: "@example/analytics",
           package: "@example/analytics-two",
           publisher: "example",
           source: "community",
@@ -305,11 +258,11 @@ test("definePluginCatalog validates marketplace entries", () => {
   );
 });
 
-test("createPluginRegistry normalizes plugin registry entries", () => {
-  const registry = createPluginRegistry([
+test("createServiceRegistry normalizes service registry entries", () => {
+  const registry = createServiceRegistry([
     {
-      plugin: {
-        name: "zelavis-ecommerce",
+      service: {
+        name: "@zelavis/ecommerce",
         menu: {
           title: "Ecommerce",
           path: "/commerce",
@@ -327,13 +280,13 @@ test("createPluginRegistry normalizes plugin registry entries", () => {
   ]);
 
   assert.equal(registry.length, 1);
-  assert.equal(registry[0].plugin.menu.items[0].title, "Orders");
+  assert.equal(registry[0].service.menu.items[0].title, "Orders");
   assert.ok(Object.isFrozen(registry));
 });
 
-test("definePlugin allows nested menu groups without a fake path", () => {
-  const plugin = definePlugin({
-    name: "zelavis-ecommerce",
+test("defineService allows nested menu groups without a fake path", () => {
+  const service = defineService({
+    name: "@zelavis/ecommerce",
     menu: {
       title: "Ecommerce",
       path: "/commerce",
@@ -351,23 +304,23 @@ test("definePlugin allows nested menu groups without a fake path", () => {
     },
   });
 
-  assert.equal(plugin.menu.items[0].title, "More");
-  assert.equal(plugin.menu.items[0].path, undefined);
+  assert.equal(service.menu.items[0].title, "More");
+  assert.equal(service.menu.items[0].path, undefined);
 });
 
-test("resolvePluginModule accepts named or default ESM exports", () => {
-  const named = resolvePluginModule({
-    plugin: {
-      name: "named-plugin",
+test("resolveServiceModule accepts named or default ESM exports", () => {
+  const named = resolveServiceModule({
+    service: {
+      name: "@example/named-service",
       menu: {
         title: "Named",
         path: "/named",
       },
     },
   });
-  const byDefault = resolvePluginModule({
+  const byDefault = resolveServiceModule({
     default: {
-      name: "default-plugin",
+      name: "@example/default-service",
       menu: {
         title: "Default",
         path: "/default",
@@ -375,15 +328,17 @@ test("resolvePluginModule accepts named or default ESM exports", () => {
     },
   });
 
-  assert.equal(named.name, "named-plugin");
-  assert.equal(byDefault.name, "default-plugin");
+  assert.equal(named.name, "@example/named-service");
+  assert.equal(byDefault.name, "@example/default-service");
 });
 
-test("loadPlugin uses the provided ESM importer", async () => {
-  const plugin = await loadPlugin("virtual:ecommerce", {
+test("loadService uses the provided ESM importer", async () => {
+  const service = await loadService("virtual:ecommerce", {
     importer: async (specifier) => ({
-      plugin: {
-        name: specifier.replace("virtual:", "zelavis-"),
+      service: {
+        name: specifier.endsWith("ecommerce")
+          ? "@zelavis/ecommerce"
+          : "@example/unknown",
         menu: {
           title: "Ecommerce",
           path: "/commerce",
@@ -392,12 +347,12 @@ test("loadPlugin uses the provided ESM importer", async () => {
     }),
   });
 
-  assert.equal(plugin.name, "zelavis-ecommerce");
-  assert.equal(plugin.menu.path, "/commerce");
+  assert.equal(service.name, "@zelavis/ecommerce");
+  assert.equal(service.menu.path, "/commerce");
 });
 
-test("loadPluginRegistry normalizes imported plugin modules", async () => {
-  const registry = await loadPluginRegistry(
+test("loadServiceRegistry normalizes imported service modules", async () => {
+  const registry = await loadServiceRegistry(
     [
       {
         specifier: "virtual:ecommerce",
@@ -412,7 +367,9 @@ test("loadPluginRegistry normalizes imported plugin modules", async () => {
     {
       importer: async (specifier) => ({
         default: {
-          name: specifier.replace("virtual:", "zelavis-"),
+          name: specifier.endsWith("ecommerce")
+            ? "@zelavis/ecommerce"
+            : "@example/analytics",
           menu: {
             title: specifier.endsWith("ecommerce") ? "Ecommerce" : "Analytics",
             path: specifier.endsWith("ecommerce")
@@ -427,14 +384,14 @@ test("loadPluginRegistry normalizes imported plugin modules", async () => {
   assert.equal(registry.length, 2);
   assert.equal(registry[0].status, "installed");
   assert.equal(registry[1].status, "available");
-  assert.equal(registry[1].plugin.name, "zelavis-analytics");
+  assert.equal(registry[1].service.name, "@example/analytics");
 });
 
-test("removePluginFromRegistry removes entries without mutating the original registry", () => {
-  const registry = createPluginRegistry([
+test("removeServiceFromRegistry removes entries without mutating the original registry", () => {
+  const registry = createServiceRegistry([
     {
-      plugin: {
-        name: "zelavis-ecommerce",
+      service: {
+        name: "@zelavis/ecommerce",
         menu: {
           title: "Ecommerce",
           path: "/commerce",
@@ -444,8 +401,8 @@ test("removePluginFromRegistry removes entries without mutating the original reg
       source: "official",
     },
     {
-      plugin: {
-        name: "zelavis-analytics",
+      service: {
+        name: "@example/analytics",
         menu: {
           title: "Analytics",
           path: "/analytics",
@@ -456,39 +413,39 @@ test("removePluginFromRegistry removes entries without mutating the original reg
     },
   ]);
 
-  const nextRegistry = removePluginFromRegistry(registry, "zelavis-ecommerce");
+  const nextRegistry = removeServiceFromRegistry(registry, "@zelavis/ecommerce");
 
   assert.equal(registry.length, 2);
   assert.equal(nextRegistry.length, 1);
-  assert.equal(nextRegistry[0].plugin.name, "zelavis-analytics");
+  assert.equal(nextRegistry[0].service.name, "@example/analytics");
 });
 
-test("applyPluginRegistryState overlays stored install state and order", () => {
-  const registry = createPluginRegistry([
+test("applyServiceRegistryState overlays stored install state and order", () => {
+  const registry = createServiceRegistry([
     {
-      plugin: {
-        name: "zelavis-ecommerce",
+      service: {
+        name: "@zelavis/ecommerce",
       },
       status: "available",
       source: "official",
     },
     {
-      plugin: {
-        name: "zelavis-analytics",
+      service: {
+        name: "@example/analytics",
       },
       status: "available",
       source: "community",
     },
   ]);
 
-  const nextRegistry = applyPluginRegistryState(registry, [
+  const nextRegistry = applyServiceRegistryState(registry, [
     {
-      name: "zelavis-analytics",
+      name: "@example/analytics",
       status: "installed",
       order: 1,
     },
     {
-      name: "zelavis-ecommerce",
+      name: "@zelavis/ecommerce",
       status: "installed",
       order: 0,
     },
@@ -497,15 +454,15 @@ test("applyPluginRegistryState overlays stored install state and order", () => {
   assert.equal(nextRegistry[0].status, "installed");
   assert.equal(nextRegistry[0].order, 0);
   assert.equal(nextRegistry[1].status, "installed");
-  assert.deepEqual(serializePluginRegistryState(nextRegistry), [
+  assert.deepEqual(serializeServiceRegistryState(nextRegistry), [
     {
-      name: "zelavis-ecommerce",
+      name: "@zelavis/ecommerce",
       status: "installed",
       source: "official",
       order: 0,
     },
     {
-      name: "zelavis-analytics",
+      name: "@example/analytics",
       status: "installed",
       source: "community",
       order: 1,
@@ -513,25 +470,25 @@ test("applyPluginRegistryState overlays stored install state and order", () => {
   ]);
 });
 
-test("activatePluginRegistry runs installed plugins in order and collects services", async () => {
+test("activateServiceRegistry runs installed services in order and collects services", async () => {
   const activationOrder = [];
   const firstService = {
-    name: "first-plugin-service",
+    name: "first-service",
     service: {},
     api: { v1: [] },
   };
   const secondService = {
-    name: "second-plugin-service",
+    name: "second-service",
     service: {},
     api: { v1: [] },
   };
 
-  const registry = createPluginRegistry([
+  const registry = createServiceRegistry([
     {
-      plugin: definePlugin({
-        name: "second",
+      service: defineService({
+        name: "@example/second",
         setup(context) {
-          activationOrder.push(context.plugin.name);
+          activationOrder.push(context.service.name);
           context.addService(secondService);
         },
       }),
@@ -539,25 +496,25 @@ test("activatePluginRegistry runs installed plugins in order and collects servic
       order: 2,
     },
     {
-      plugin: definePlugin({
-        name: "first",
-        services: [firstService],
+      service: defineService({
+        name: "@example/first",
+        runtimeServices: [firstService],
         setup(context) {
-          activationOrder.push(context.plugin.name);
+          activationOrder.push(context.service.name);
         },
       }),
       status: "installed",
       order: 0,
     },
     {
-      plugin: definePlugin({
-        name: "available-only",
+      service: defineService({
+        name: "@example/available-only",
       }),
       status: "available",
     },
   ]);
 
-  const activated = await activatePluginRegistry(registry, {
+  const activated = await activateServiceRegistry(registry, {
     rootPath: "/zelavis",
     api: {
       prefix: "/api",
@@ -577,44 +534,35 @@ test("activatePluginRegistry runs installed plugins in order and collects servic
     },
   });
 
-  assert.deepEqual(activationOrder, ["first", "second"]);
+  assert.deepEqual(activationOrder, ["@example/first", "@example/second"]);
   assert.deepEqual(
     activated.services.map((service) => service.name),
-    ["first-plugin-service", "second-plugin-service"],
+    ["first-service", "second-service"],
   );
 });
 
-test("activatePluginRegistry gives child plugins to their parent without activating them directly", async () => {
+test("activateServiceRegistry gives child services to their parent without activating them directly", async () => {
   const activationOrder = [];
   let seenChildren = [];
 
-  const registry = createPluginRegistry([
+  const registry = createServiceRegistry([
     {
-      plugin: definePlugin({
-        name: "stripe",
-        extends: {
-          plugin: "zelavis-ecommerce",
-          extensionPoint: "payments",
-        },
+      service: defineService({
+        name: "@zelavis/ecommerce-stripe",
+        extends: "@zelavis/ecommerce",
         setup() {
-          activationOrder.push("stripe");
+          activationOrder.push("@zelavis/ecommerce-stripe");
         },
       }),
       status: "installed",
       order: 0,
     },
     {
-      plugin: definePlugin({
-        name: "zelavis-ecommerce",
-        extensionPoints: [
-          {
-            name: "payments",
-            policy: "reviewed",
-            allowedPlugins: ["stripe"],
-          },
-        ],
+      service: defineService({
+        name: "@zelavis/ecommerce",
+        childServices: ["@zelavis/ecommerce-stripe"],
         setup(context) {
-          activationOrder.push("zelavis-ecommerce");
+          activationOrder.push("@zelavis/ecommerce");
           seenChildren = context.children;
         },
       }),
@@ -623,7 +571,7 @@ test("activatePluginRegistry gives child plugins to their parent without activat
     },
   ]);
 
-  await activatePluginRegistry(registry, {
+  await activateServiceRegistry(registry, {
     rootPath: "/zelavis",
     api: {
       prefix: "/api",
@@ -641,40 +589,31 @@ test("activatePluginRegistry gives child plugins to their parent without activat
     },
   });
 
-  assert.deepEqual(activationOrder, ["zelavis-ecommerce"]);
+  assert.deepEqual(activationOrder, ["@zelavis/ecommerce"]);
   assert.equal(seenChildren.length, 1);
-  assert.equal(seenChildren[0].name, "stripe");
-  assert.equal(seenChildren[0].extends.extensionPoint, "payments");
+  assert.equal(seenChildren[0].name, "@zelavis/ecommerce-stripe");
+  assert.equal(seenChildren[0].extends, "@zelavis/ecommerce");
 });
 
-test("activatePluginRegistry withholds child plugins rejected by parent policy", async () => {
+test("activateServiceRegistry withholds child services not listed by the parent", async () => {
   let seenChildren = [];
 
-  const registry = createPluginRegistry([
+  const registry = createServiceRegistry([
     {
-      plugin: definePlugin({
-        name: "xyz-payments",
-        extends: {
-          plugin: "zelavis-ecommerce",
-          extensionPoint: "payments",
-        },
+      service: defineService({
+        name: "@example/xyz-payments",
+        extends: "@zelavis/ecommerce",
         setup() {
-          throw new Error("Rejected child plugins should not activate.");
+          throw new Error("Rejected child services should not activate.");
         },
       }),
       status: "installed",
       order: 0,
     },
     {
-      plugin: definePlugin({
-        name: "zelavis-ecommerce",
-        extensionPoints: [
-          {
-            name: "payments",
-            policy: "reviewed",
-            allowedPlugins: ["stripe"],
-          },
-        ],
+      service: defineService({
+        name: "@zelavis/ecommerce",
+        childServices: ["@zelavis/ecommerce-stripe"],
         setup(context) {
           seenChildren = context.children;
         },
@@ -684,7 +623,7 @@ test("activatePluginRegistry withholds child plugins rejected by parent policy",
     },
   ]);
 
-  await activatePluginRegistry(registry, {
+  await activateServiceRegistry(registry, {
     rootPath: "/zelavis",
     api: {
       prefix: "/api",
@@ -705,13 +644,13 @@ test("activatePluginRegistry withholds child plugins rejected by parent policy",
   assert.deepEqual(seenChildren, []);
 });
 
-test("activatePluginRegistry exposes standard platform context to plugin setup", async () => {
+test("activateServiceRegistry exposes standard platform context to service setup", async () => {
   let seenPlatform;
 
-  const registry = createPluginRegistry([
+  const registry = createServiceRegistry([
     {
-      plugin: definePlugin({
-        name: "platform-aware",
+      service: defineService({
+        name: "@example/platform-aware",
         setup(context) {
           seenPlatform = context.platform;
         },
@@ -721,7 +660,7 @@ test("activatePluginRegistry exposes standard platform context to plugin setup",
     },
   ]);
 
-  await activatePluginRegistry(registry, {
+  await activateServiceRegistry(registry, {
     rootPath: "/zelavis",
     api: {
       prefix: "/api",

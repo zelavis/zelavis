@@ -1,12 +1,12 @@
 import { DashboardNotFound } from '#/components/DashboardNotFound'
-import { PluginPageMount } from '#/components/PluginPageMount'
+import { ServicePageMount } from '#/components/ServicePageMount'
 
 export const handle = {
   pageLabel: "Not Found",
 } as const;
 
-function PluginFallbackRoute() {
-  return <PluginPageMount fallback={<DashboardNotFound />} />
+function ServiceFallbackRoute() {
+  return <ServicePageMount fallback={<DashboardNotFound />} />
 }
 
-export default PluginFallbackRoute;
+export default ServiceFallbackRoute;

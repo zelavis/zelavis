@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { zelavisEcommerceService } from "../../../plugins/ecommerce/dist/index.js";
 
 test("zelavis package exports runtime APIs, env adapters, and framework utility subpaths", async () => {
   const runtime = await import("zelavis");
@@ -21,13 +22,13 @@ test("zelavis package exports runtime APIs, env adapters, and framework utility 
   assert.equal(typeof runtime.zelavis, "function");
   assert.equal(typeof runtime.Zelavis, "function");
   assert.equal(typeof runtime.defineAdapter, "function");
-  assert.equal(typeof runtime.definePlugin, "function");
-  assert.equal(typeof runtime.createPluginRegistry, "function");
-  assert.equal(runtime.ZELAVIS_PLUGIN_V1, "ZELAVIS_PLUGIN_V1");
-  assert.equal(typeof runtime.loadPlugin, "function");
-  assert.equal(typeof runtime.loadPluginRegistry, "function");
-  assert.equal(typeof runtime.resolvePluginModule, "function");
-  assert.equal(typeof runtime.removePluginFromRegistry, "function");
+  assert.equal(typeof runtime.defineService, "function");
+  assert.equal(typeof runtime.createServiceRegistry, "function");
+  assert.equal(runtime.ZELAVIS_SERVICE_V1, "ZELAVIS_SERVICE_V1");
+  assert.equal(typeof runtime.loadService, "function");
+  assert.equal(typeof runtime.loadServiceRegistry, "function");
+  assert.equal(typeof runtime.resolveServiceModule, "function");
+  assert.equal(typeof runtime.removeServiceFromRegistry, "function");
   assert.equal(typeof runtime.createDatabase, "function");
   assert.equal(typeof runtime.createFileReference, "function");
   assert.equal(typeof runtime.createS3CompatibleFileStorage, "function");
@@ -38,9 +39,9 @@ test("zelavis package exports runtime APIs, env adapters, and framework utility 
   assert.equal(typeof adapters.zelavisNode, "function");
   assert.equal(typeof adapters.zelavisBun, "function");
   assert.equal(typeof adapters.zelavisCloudflare, "function");
-  assert.equal(typeof adapters.createNodePluginPackageInstaller, "function");
+  assert.equal(typeof adapters.createNodeServicePackageInstaller, "function");
   assert.equal(
-    typeof adapters.createCloudflareDispatchPluginActivation,
+    typeof adapters.createCloudflareDispatchServiceActivation,
     "function",
   );
   assert.equal(typeof adapters.zelavisVercel, "function");
@@ -48,13 +49,12 @@ test("zelavis package exports runtime APIs, env adapters, and framework utility 
 
   // Env adapters via deep paths (named exports)
   assert.equal(typeof nodeAdapter.nodeAdapter, "function");
-  assert.equal(typeof nodeAdapter.createNodePluginImporter, "function");
-  assert.equal(typeof nodeAdapter.createNodePluginPackageInstaller, "function");
-  assert.equal(typeof nodeAdapter.createFileDashboardSettingsStore, "function");
+  assert.equal(typeof nodeAdapter.createNodeServiceImporter, "function");
+  assert.equal(typeof nodeAdapter.createNodeServicePackageInstaller, "function");
   assert.equal(typeof bunAdapter.bunAdapter, "function");
   assert.equal(typeof cloudflareAdapter.cloudflareAdapter, "function");
   assert.equal(
-    typeof cloudflareAdapter.createCloudflareDispatchPluginActivation,
+    typeof cloudflareAdapter.createCloudflareDispatchServiceActivation,
     "function",
   );
   assert.equal(typeof netlifyAdapter.netlifyAdapter, "function");
@@ -146,10 +146,10 @@ test("cloudflare adapter infers KV and file resources from standard env bindings
   assert.equal(typeof resolved.resources.files.put, "function");
 });
 
-test("cloudflare dispatch plugin activation sends registry changes to a worker boundary", async () => {
+test("cloudflare dispatch service activation sends registry changes to a worker boundary", async () => {
   const {
     cloudflareAdapter,
-    createCloudflareDispatchPluginActivation,
+    createCloudflareDispatchServiceActivation,
   } = await import("zelavis/adapters/cloudflare");
   const database = {
     prepare() {
@@ -183,9 +183,9 @@ test("cloudflare dispatch plugin activation sends registry changes to a worker b
       };
     },
   };
-  const activation = createCloudflareDispatchPluginActivation({
+  const activation = createCloudflareDispatchServiceActivation({
     dispatchNamespace,
-    workerName: (request) => `plugin-${request.pluginName}`,
+    workerName: (request) => `service-${request.serviceName}`,
     bindings: { ZELAVIS_CONTEXT: "runtime" },
     dispatchOptions: { outbound: "allow" },
   });
@@ -193,12 +193,12 @@ test("cloudflare dispatch plugin activation sends registry changes to a worker b
     env: {
       ZELAVIS_DB: database,
     },
-    plugins: {
+    services: {
       activation,
     },
   }).resolve({});
-  const result = await resolved.resources.plugins.activate({
-    pluginName: "search",
+  const result = await resolved.resources.services.activate({
+    serviceName: "search",
     action: "install",
     specifier: "https://example.com/search.mjs",
     registry: [],
@@ -206,11 +206,11 @@ test("cloudflare dispatch plugin activation sends registry changes to a worker b
 
   assert.equal(result.status, "active");
   assert.equal(result.message, "activated through dispatch");
-  assert.equal(seen[0].name, "plugin-search");
+  assert.equal(seen[0].name, "service-search");
   assert.deepEqual(seen[0].bindings, { ZELAVIS_CONTEXT: "runtime" });
   assert.deepEqual(seen[0].options, { outbound: "allow" });
-  assert.equal(seen[1].url, "https://zelavis.internal/__zelavis/plugin/activate");
-  assert.equal(seen[1].body.pluginName, "search");
+  assert.equal(seen[1].url, "https://zelavis.internal/__zelavis/service/activate");
+  assert.equal(seen[1].body.serviceName, "search");
   assert.equal(seen[1].body.action, "install");
 });
 
@@ -230,7 +230,7 @@ test("Zelavis rejects internal runtime options on the public class constructor",
   assert.throws(
     () =>
       new Zelavis({
-        services: [],
+        runtimeServices: [],
       }),
     /does not accept internal runtime options/,
   );
@@ -340,12 +340,20 @@ test("Zelavis platform resources back dashboard settings, website pages, storage
 
   const zelavis = new Zelavis({
     adapter,
-    plugins: {
+    services: {
+      entries: [
+        {
+          service: zelavisEcommerceService,
+          status: "installed",
+          source: "official",
+          order: 0,
+        },
+      ],
       store: {
         read() {
           return [
             {
-              name: "zelavis-ecommerce",
+              name: "@zelavis/ecommerce",
               status: "installed",
               order: 0,
             },
@@ -364,7 +372,7 @@ test("Zelavis platform resources back dashboard settings, website pages, storage
   const commerceHealth = await commerceHealthResponse.json();
 
   assert.equal(commerceHealthResponse.status, 200);
-  assert.equal(commerceHealth.plugin, "zelavis-ecommerce");
+  assert.equal(commerceHealth.service, "@zelavis/ecommerce");
   assert.deepEqual(commerceHealth.platform.presets, ["storage-only"]);
   assert.deepEqual(commerceHealth.platform.resources, {
     keyValueStore: true,
@@ -464,12 +472,20 @@ test("Zelavis platform resources back dashboard settings, website pages, storage
     coreServices: {
       database: databaseBacked,
     },
-    plugins: {
+    services: {
+      entries: [
+        {
+          service: zelavisEcommerceService,
+          status: "installed",
+          source: "official",
+          order: 0,
+        },
+      ],
       store: {
         read() {
           return [
             {
-              name: "zelavis-ecommerce",
+              name: "@zelavis/ecommerce",
               status: "installed",
               order: 0,
             },
@@ -504,12 +520,20 @@ test("Zelavis platform resources back dashboard settings, website pages, storage
     coreServices: {
       database: databaseBacked,
     },
-    plugins: {
+    services: {
+      entries: [
+        {
+          service: zelavisEcommerceService,
+          status: "installed",
+          source: "official",
+          order: 0,
+        },
+      ],
       store: {
         read() {
           return [
             {
-              name: "zelavis-ecommerce",
+              name: "@zelavis/ecommerce",
               status: "installed",
               order: 0,
             },
@@ -532,7 +556,7 @@ test("Zelavis platform resources back dashboard settings, website pages, storage
   assert.equal(persistedProducts[0].title, "Persisted Mug");
 
   const updateResponse = await zelavis.fetch(
-    new Request("http://localhost/zelavis/api/v1/dashboard/settings", {
+    new Request("http://localhost/zelavis/api/v1/runtime/settings", {
       method: "PATCH",
       headers: {
         "content-type": "application/json",
@@ -619,15 +643,15 @@ test("Zelavis platform resources back dashboard settings, website pages, storage
   assert.equal(files.has("uploads/hello.txt"), false);
 });
 
-test("Zelavis rejects installed plugins that try to register reserved core service names", async () => {
-  const { Zelavis, definePlugin, createPluginRegistry } =
+test("Zelavis rejects installed services that try to register reserved core service names", async () => {
+  const { Zelavis, defineService, createServiceRegistry } =
     await import("zelavis");
 
-  const forbiddenPlugin = definePlugin({
-    name: "evil-auth-plugin",
-    services: [
+  const forbiddenService = defineService({
+    name: "@example/evil-auth-service",
+    runtimeServices: [
       {
-        name: "auth",
+        name: "@zelavis/auth",
         service: {},
         api: {
           v1: [],
@@ -637,10 +661,10 @@ test("Zelavis rejects installed plugins that try to register reserved core servi
   });
 
   const zelavis = new Zelavis({
-    plugins: {
-      entries: createPluginRegistry([
+    services: {
+      entries: createServiceRegistry([
         {
-          plugin: forbiddenPlugin,
+          service: forbiddenService,
           status: "installed",
         },
       ]),
@@ -649,6 +673,6 @@ test("Zelavis rejects installed plugins that try to register reserved core servi
 
   await assert.rejects(
     () => zelavis.runtime(),
-    /Plugins cannot register reserved core service names: auth/,
+    /Services cannot register reserved core service names: @zelavis\/auth/,
   );
 });

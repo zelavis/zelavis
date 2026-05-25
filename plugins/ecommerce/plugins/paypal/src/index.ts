@@ -1,1 +1,1 @@
-export * from "./paypal-plugin.js";
+export * from "./paypal-service.js";

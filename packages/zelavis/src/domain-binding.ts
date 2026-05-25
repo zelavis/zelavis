@@ -1,17 +1,18 @@
 /**
- * Domain bindings — the seam between "a plugin says it wants to be
- * reachable at `acme.com`" and "the dispatcher actually routes
- * requests for `acme.com` to that plugin".
+ * Domain bindings — the seam between "an operator verified `acme.com`
+ * for a workspace/service" and "the dispatcher actually routes requests
+ * for `acme.com` to that service".
  *
- * The risk this addresses: a workspace plugin (uploaded ZIP, marketplace
- * install) can declare any `app.domains` it wants. Without a gate, a
- * tenant could squat google.com or a sister tenant's hostname and the
- * dispatcher would happily serve them. That's a security hole.
+ * The risk this addresses: a workspace service (uploaded ZIP, marketplace
+ * install) must not be able to claim arbitrary hostnames from its own
+ * service definition. Without a verified runtime binding, a tenant could
+ * squat google.com or a sister tenant's hostname and the dispatcher
+ * would happily serve them. That's a security hole.
  *
  * The model is intentionally boring: bindings are stored objects with
  * a `verifiedAt` timestamp. Verification flips the field. The
  * synthesized route matcher only honors hosts that have a verified
- * binding pointing to this workspace+plugin. Unverified bindings are
+ * binding pointing to this workspace+service. Unverified bindings are
  * still stored (so admin UIs can show the pending state and reuse the
  * generated verification token) but don't influence routing.
  *
@@ -53,11 +54,11 @@ export interface DomainBinding {
    */
   workspaceId?: string;
   /**
-   * Plugin this binding is dedicated to. Omitted means the binding is
-   * workspace-level — any plugin in that workspace can claim the host
-   * via its `app.domains`.
+   * Service this binding is dedicated to. Omitted means the binding is
+   * workspace-level — any service in that workspace can use the host
+   * when its app policy allows host-bound routing.
    */
-  pluginName?: string;
+  serviceName?: string;
   /**
    * Random URL-safe token tied to this binding. The DNS-TXT / HTTP-01
    * verifiers compare this against external evidence; the `manual`
@@ -108,7 +109,7 @@ export interface DomainBindingStore {
    * are deterministic.
    */
   list(
-    filter?: { workspaceId?: string; pluginName?: string; verifiedOnly?: boolean },
+    filter?: { workspaceId?: string; serviceName?: string; verifiedOnly?: boolean },
   ): Promise<readonly DomainBinding[]>;
 }
 
@@ -186,7 +187,7 @@ export async function addDomainBinding(
   options: {
     host: string;
     workspaceId?: string;
-    pluginName?: string;
+    serviceName?: string;
     metadata?: Record<string, string>;
   },
 ): Promise<DomainBinding> {
@@ -195,7 +196,7 @@ export async function addDomainBinding(
   const binding: DomainBinding = {
     host,
     workspaceId: options.workspaceId,
-    pluginName: options.pluginName,
+    serviceName: options.serviceName,
     verificationToken: generateVerificationToken(),
     createdAt: now,
     updatedAt: now,
@@ -298,8 +299,8 @@ export function createInMemoryDomainBindingStore(
           continue;
         }
         if (
-          filter.pluginName !== undefined &&
-          binding.pluginName !== filter.pluginName
+          filter.serviceName !== undefined &&
+          binding.serviceName !== filter.serviceName
         ) {
           continue;
         }
@@ -412,8 +413,8 @@ export function createKeyValueDomainBindingStore(
           continue;
         }
         if (
-          filter.pluginName !== undefined &&
-          binding.pluginName !== filter.pluginName
+          filter.serviceName !== undefined &&
+          binding.serviceName !== filter.serviceName
         ) {
           continue;
         }
@@ -429,61 +430,54 @@ export function createKeyValueDomainBindingStore(
 }
 
 /**
- * Filter a list of declared hostnames down to the ones the plugin is
- * authorized to serve, per the binding store. Returns the same list
- * unmodified for system-scope plugins (operator deployed them, they're
- * trusted to declare any host).
+ * Return verified hostnames the service is authorized to serve, per the
+ * binding store.
  *
- * Workspace-scope plugins only get hosts where:
- *   - a binding exists for the host
- *   - the binding is verified (`verifiedAt` is set)
- *   - the binding's owner matches this plugin's owner (workspaceId,
- *     and pluginName if the binding specifies one)
+ * System-scope services are host-agnostic here: the operator decides how
+ * they are mounted. Workspace-scope services only get hosts where:
+ *   - a verified binding exists
+ *   - the binding's workspace matches this service's workspace
+ *   - the binding is either workspace-wide or dedicated to this service
  *
- * Used by `synthesizePluginAppService` so that workspace plugins
- * declaring `app.domains: ["acme.com"]` only actually route from
- * acme.com if a verified binding says they're allowed to.
+ * Used by `synthesizeServiceAppService` so service app definitions stay
+ * portable: concrete hostnames live in runtime activation state instead
+ * of inside the service package.
  */
-export async function filterAuthorizedHostsForPlugin(
-  declaredHosts: readonly string[],
+export async function listAuthorizedHostsForService(
   options: {
     scope: "system" | "workspace";
     workspaceId?: string;
-    pluginName: string;
+    serviceName: string;
     domainBindings?: DomainBindingStore;
   },
 ): Promise<readonly string[]> {
   if (options.scope === "system") {
-    return declaredHosts;
+    return [];
   }
-  if (!options.domainBindings || declaredHosts.length === 0) {
+  if (!options.domainBindings || !options.workspaceId) {
     // No store configured → no way to verify → no host-bound routing.
+    // No workspace ownership → no safe binding lookup.
     // Returning [] here means the synthesizer won't emit host matchers;
-    // the plugin still works at its path-based `/apps/<name>` mount.
+    // the service still works at its path-based `/apps/<name>` mount.
     return [];
   }
 
+  const bindings = await options.domainBindings.list({
+    workspaceId: options.workspaceId,
+    verifiedOnly: true,
+  });
   const allowed: string[] = [];
-  for (const host of declaredHosts) {
-    if (host === "*") {
-      // Workspace plugins are NEVER allowed to claim wildcard hosts.
-      // That'd let any tenant swallow every unmatched request.
-      continue;
-    }
-    const binding = await options.domainBindings.get(host);
-    if (!binding || !binding.verifiedAt) {
-      continue;
-    }
-    if (binding.workspaceId !== options.workspaceId) {
+  for (const binding of bindings) {
+    if (binding.host === "*") {
       continue;
     }
     if (
-      binding.pluginName !== undefined &&
-      binding.pluginName !== options.pluginName
+      binding.serviceName !== undefined &&
+      binding.serviceName !== options.serviceName
     ) {
       continue;
     }
-    allowed.push(host);
+    allowed.push(binding.host);
   }
-  return allowed;
+  return Object.freeze(allowed);
 }

@@ -4,10 +4,10 @@ import {
   type ZelavisServerErrorStatusRule,
 } from "@zelavis/server";
 import {
-  definePlugin,
-  type ZelavisPluginDefinition,
-  type ZelavisPluginSetupContext,
-} from "zelavis/plugin";
+  defineService,
+  type ZelavisServiceDefinition,
+  type ZelavisServiceSetupContext,
+} from "zelavis/service";
 import { createEcommerce } from "./core/create-ecommerce.js";
 import { createDatabaseEcommerceRepositories } from "./repositories/database.js";
 import type {
@@ -20,7 +20,7 @@ import type { CreateCouponInput } from "./services/coupon-service.js";
 import type { CreateCustomerInput } from "./services/customer-service.js";
 import type { CreateOrderInput } from "./services/order-service.js";
 import type { CreateProductInput } from "./services/product-service.js";
-import type { EcommercePlugin } from "./ecommerce-plugin.js";
+import type { EcommerceService } from "./ecommerce-service.js";
 
 const commerceErrorRules: readonly ZelavisServerErrorStatusRule[] = [
   {
@@ -54,7 +54,7 @@ function escapeHtml(value: string): string {
   });
 }
 
-function createPluginDocumentPage(options: {
+function createServiceDocumentPage(options: {
   title: string;
   eyebrow: string;
   description: string;
@@ -256,13 +256,12 @@ function isDatabaseApi(value: unknown): value is DatabaseApi {
   );
 }
 
-function isEcommercePaymentPlugin(
-  plugin: Readonly<ZelavisPluginDefinition<any>>,
-): plugin is EcommercePlugin {
+function isEcommercePaymentService(
+  service: Readonly<ZelavisServiceDefinition<any>>,
+): service is EcommerceService {
   return (
-    plugin.extends?.plugin === "zelavis-ecommerce" &&
-    plugin.extends.extensionPoint === "payments" &&
-    typeof plugin.setup === "function"
+    service.extends === "@zelavis/ecommerce" &&
+    typeof service.setup === "function"
   );
 }
 
@@ -437,16 +436,12 @@ function parseOrderInput(body: unknown): CreateOrderInput {
   };
 }
 
-export const zelavisEcommercePlugin = definePlugin<ZelavisPluginSetupContext>({
-  name: "zelavis-ecommerce",
+export const zelavisEcommerceService = defineService<ZelavisServiceSetupContext>({
+  name: "@zelavis/ecommerce",
   version: "0.1.0",
-  extensionPoints: [
-    {
-      name: "payments",
-      policy: "reviewed",
-      allowedPlugins: ["stripe", "paypal"],
-    },
-  ],
+  kind: "plugin",
+  capabilities: ["api:routes", "dashboard:menu"],
+  childServices: ["@zelavis/ecommerce-stripe", "@zelavis/ecommerce-paypal"],
   menu: {
     title: "Ecommerce",
     path: "/commerce",
@@ -455,16 +450,16 @@ export const zelavisEcommercePlugin = definePlugin<ZelavisPluginSetupContext>({
       id: "dashboard",
       title: "Commerce",
       render() {
-        return createPluginDocumentPage({
+        return createServiceDocumentPage({
           title: "Ecommerce",
           eyebrow: "Commerce",
           description:
-            "Plugin-owned workspace area rendered through a full-document iframe, independent from the host dashboard framework.",
+            "Service-owned workspace area rendered through a full-document iframe, independent from the host dashboard framework.",
           sections: [
             {
               title: "Catalog",
               detail:
-                "Products, prices, and catalog workflows stay inside the plugin document.",
+                "Products, prices, and catalog workflows stay inside the service document.",
             },
             {
               title: "Orders",
@@ -474,7 +469,7 @@ export const zelavisEcommercePlugin = definePlugin<ZelavisPluginSetupContext>({
             {
               title: "Providers",
               detail:
-                "Payment and shipping plugins can grow under this plugin-owned area later.",
+                "Payment and shipping services can grow under this service-owned area later.",
             },
           ],
         });
@@ -488,16 +483,16 @@ export const zelavisEcommercePlugin = definePlugin<ZelavisPluginSetupContext>({
           id: "products",
           title: "Products",
           render() {
-            return createPluginDocumentPage({
+            return createServiceDocumentPage({
               title: "Products",
               eyebrow: "Commerce",
               description:
-                "A standalone plugin page can own product tooling, previews, scripts, and styles without React coupling.",
+                "A standalone service page can own product tooling, previews, scripts, and styles without React coupling.",
               sections: [
                 {
                   title: "Product table",
                   detail:
-                    "The plugin can render its own listing UI, filters, and creation flows.",
+                    "The service can render its own listing UI, filters, and creation flows.",
                 },
                 {
                   title: "Design freedom",
@@ -516,16 +511,16 @@ export const zelavisEcommercePlugin = definePlugin<ZelavisPluginSetupContext>({
           id: "orders",
           title: "Orders",
           render() {
-            return createPluginDocumentPage({
+            return createServiceDocumentPage({
               title: "Orders",
               eyebrow: "Commerce",
               description:
-                "Order workflows can stay completely plugin-owned while still living inside the Zelavis workspace shell.",
+                "Order workflows can stay completely service-owned while still living inside the Zelavis workspace shell.",
               sections: [
                 {
                   title: "Drafts",
                   detail:
-                    "Draft creation, fulfillment, and payment tracking can be handled inside the plugin document.",
+                    "Draft creation, fulfillment, and payment tracking can be handled inside the service document.",
                 },
                 {
                   title: "Isolation",
@@ -547,7 +542,7 @@ export const zelavisEcommercePlugin = definePlugin<ZelavisPluginSetupContext>({
               id: "customers",
               title: "Customers",
               render() {
-                return createPluginDocumentPage({
+                return createServiceDocumentPage({
                   title: "Customers",
                   eyebrow: "Commerce",
                   description:
@@ -556,7 +551,7 @@ export const zelavisEcommercePlugin = definePlugin<ZelavisPluginSetupContext>({
                     {
                       title: "Profiles",
                       detail:
-                        "Customer profile views, notes, and account linking can be handled in plugin space.",
+                        "Customer profile views, notes, and account linking can be handled in service space.",
                     },
                   ],
                 });
@@ -570,7 +565,7 @@ export const zelavisEcommercePlugin = definePlugin<ZelavisPluginSetupContext>({
               id: "coupons",
               title: "Coupons",
               render() {
-                return createPluginDocumentPage({
+                return createServiceDocumentPage({
                   title: "Coupons",
                   eyebrow: "Commerce",
                   description:
@@ -579,7 +574,7 @@ export const zelavisEcommercePlugin = definePlugin<ZelavisPluginSetupContext>({
                     {
                       title: "Discount rules",
                       detail:
-                        "Coupon editors, previews, and validation UI all stay fully plugin-owned.",
+                        "Coupon editors, previews, and validation UI all stay fully service-owned.",
                     },
                   ],
                 });
@@ -591,18 +586,18 @@ export const zelavisEcommercePlugin = definePlugin<ZelavisPluginSetupContext>({
     ],
   },
   async setup(context) {
-    const paymentPlugins = context.children.filter(
-      isEcommercePaymentPlugin,
-    ) as readonly EcommercePlugin[];
+    const paymentServices = context.children.filter(
+      isEcommercePaymentService,
+    ) as readonly EcommerceService[];
     const commerce = await createEcommerce({
-      plugins: paymentPlugins,
+      services: paymentServices,
       repositories: isDatabaseApi(context.core.database)
         ? createDatabaseEcommerceRepositories(context.core.database)
         : undefined,
     });
 
     return {
-      services: [
+      runtimeServices: [
         {
           name: "commerce",
           basePath: "/commerce",
@@ -616,7 +611,7 @@ export const zelavisEcommercePlugin = definePlugin<ZelavisPluginSetupContext>({
                 handler: () => ({
                   status: 200,
                   body: {
-                    plugin: context.plugin.name,
+                    service: context.service.name,
                     rootPath: context.rootPath,
                     apiBasePath: context.api.basePath,
                     platform: {
@@ -798,17 +793,14 @@ export const zelavisEcommercePlugin = definePlugin<ZelavisPluginSetupContext>({
                   status: 200,
                   body: {
                     providers: service.payments.listProviders().map((name: string) => {
-                      const childPlugin = service.context.childPlugins.find(
-                        (plugin: { name: string; extends: { extensionPoint?: string; plugin?: string } }) => plugin.name === name,
+                      const childService = service.context.childServices.find(
+                        (service: { name: string; extends?: string }) => service.name === name,
                       );
 
                       return {
                         name,
-                        extensionPoint:
-                          childPlugin?.extends.extensionPoint ?? "payments",
-                        parentPlugin:
-                          childPlugin?.extends.plugin ?? "zelavis-ecommerce",
-                        childPlugin: true,
+                        parentService: childService?.extends ?? "@zelavis/ecommerce",
+                        childService: true,
                       };
                     }),
                   },
@@ -864,5 +856,4 @@ export const zelavisEcommercePlugin = definePlugin<ZelavisPluginSetupContext>({
   },
 });
 
-export const plugin = zelavisEcommercePlugin;
-export default zelavisEcommercePlugin;
+export default zelavisEcommerceService;

@@ -9,6 +9,6 @@ Architecture docs should describe real current behavior and stable design constr
 
 ## Pages
 
-- [Cloudflare Plugin Workers](./cloudflare-plugin-workers.md)
-- [Plugin and Service Model](./plugin-service-model.md)
+- [Cloudflare Service Workers](./cloudflare-service-workers.md)
+- [Service Model](./service-service-model.md)
 - [Website Core Service](./website-core-service.md)
