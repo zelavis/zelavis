@@ -40,5 +40,5 @@ Current non-goals for the first slice include:
 
 - [@zelavis/server](./server.md)
 - [@zelavis/auth](./auth.md)
-- [Service and Plugin Authoring](../guides/service-and-plugin-authoring.md)
+- [Service Authoring](../guides/service-authoring.md)
 - [Reference](../reference/index.md)

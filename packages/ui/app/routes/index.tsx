@@ -115,7 +115,7 @@ function Overview() {
             {[
               {
                 label: 'Runtime config',
-                detail: config?.api.basePath ?? '/api/v1/dashboard/config',
+                detail: config?.api.basePath ?? '/api/v1/runtime/config',
                 time: runtime.loading ? 'loading' : runtime.error ? 'offline' : 'ready',
               },
               {

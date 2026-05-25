@@ -1,12 +1,12 @@
 # @zelavis/ecommerce-paypal
 
-PayPal payment provider plugin for `@zelavis/ecommerce`.
+PayPal payment provider service for `@zelavis/ecommerce`.
 
 This package uses PayPal's official server SDK and the Orders/Payments APIs for one-time payments, and PayPal's official Billing Subscriptions REST APIs for recurring billing.
 
 ## Runtime model
 
-Use one PayPal plugin package across different deployments by either:
+Use one PayPal service package across different deployments by either:
 
 - passing a preconfigured PayPal `Client`
 - passing `clientConfig`
@@ -16,7 +16,7 @@ The package does not hardcode any specific deployment provider or backend framew
 
 ## Environment option
 
-`paypalPlugin` accepts `environment` as either PayPal SDK enum values or plain strings:
+`paypalService` accepts `environment` as either PayPal SDK enum values or plain strings:
 
 - `"sandbox"`
 - `"production"`

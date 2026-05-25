@@ -51,7 +51,7 @@ function formatBytes(value: number | undefined): string {
 function StorageRoute() {
   const runtime = useRuntimeResource(getRuntimeConfig);
   const config = runtime.data;
-  const storageEnabled = config?.services.some((service) => service.name === "storage");
+  const storageEnabled = config?.services.some((service) => service.name === "@zelavis/storage");
   const [prefix, setPrefix] = useState("");
   const [uploadPath, setUploadPath] = useState("");
   const [uploadLabel, setUploadLabel] = useState("");
@@ -84,7 +84,7 @@ function StorageRoute() {
   );
 
   const fileCount = filesResource.data?.files.length ?? 0;
-  const databaseEnabled = config?.services.some((service) => service.name === "database");
+  const databaseEnabled = config?.services.some((service) => service.name === "@zelavis/db");
   const totalSize = useMemo(
     () =>
       (filesResource.data?.files ?? []).reduce(

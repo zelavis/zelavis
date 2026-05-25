@@ -2,13 +2,12 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
-import cloudflare from '@astrojs/cloudflare';
-
 // https://astro.build/config
 export default defineConfig({
   integrations: [
       starlight({
           title: 'Zelavis Docs',
+          expressiveCode: false,
           social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/zelavis/zelavis' }],
           sidebar: [
               {
@@ -39,7 +38,4 @@ export default defineConfig({
       }),
 	],
 
-  adapter: cloudflare({
-    prerenderEnvironment: 'node',
-  }),
 });

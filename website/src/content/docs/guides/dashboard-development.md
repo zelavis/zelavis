@@ -26,12 +26,14 @@ The UI package is internal workspace infrastructure, not the public application-
 
 ## Embedded dashboard behavior
 
-The `zelavis` package embeds built dashboard assets during its build process.
+The `@zelavis/ui` package embeds built dashboard assets into its dashboard
+service during its build process.
 
 That means:
 
 - editing UI source alone does not update embedded runtime assets
-- when you need the embedded dashboard updated, rebuild `zelavis`
+- when you need the embedded dashboard updated, rebuild `@zelavis/ui` or run the
+  normal `zelavis` package build, which builds the UI package first
 
 ```bash
 pnpm --filter zelavis build

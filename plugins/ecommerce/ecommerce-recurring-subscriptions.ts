@@ -1,6 +1,6 @@
 import { createEcommerce } from "@zelavis/ecommerce";
-import { paypalPlugin } from "@zelavis/ecommerce-paypal";
-import { stripePlugin } from "@zelavis/ecommerce-stripe";
+import { paypalService } from "@zelavis/ecommerce-paypal";
+import { stripeService } from "@zelavis/ecommerce-stripe";
 
 function requiredEnv(name: string): string {
   const value = process.env[name];
@@ -13,11 +13,11 @@ function requiredEnv(name: string): string {
 
 async function main(): Promise<void> {
   const commerce = await createEcommerce({
-    plugins: [
-      stripePlugin({
+    services: [
+      stripeService({
         secretKey: requiredEnv("STRIPE_SECRET_KEY"),
       }),
-      paypalPlugin({
+      paypalService({
         clientId: requiredEnv("PAYPAL_CLIENT_ID"),
         clientSecret: requiredEnv("PAYPAL_CLIENT_SECRET"),
         environment: "sandbox",

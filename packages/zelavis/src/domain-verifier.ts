@@ -24,7 +24,7 @@
  *
  * Both methods flip `verifiedAt` and `verificationMethod` on the
  * binding the same way `verifyDomainBindingManually` does, so the
- * downstream gating (`filterAuthorizedHostsForPlugin`) is unchanged.
+ * downstream gating (`listAuthorizedHostsForService`) is unchanged.
  *
  * **Runtime portability:** DNS and HTTP both have runtime-specific
  * APIs. We use injectable `DnsTxtResolver` + `fetch` so callers can
@@ -34,11 +34,15 @@
  * Workers (where the caller wires their own).
  */
 
-import type { ZelavisService, ZelavisServerRoute } from "@zelavis/server";
+import type { ZelavisRuntimeService, ZelavisServerRoute } from "@zelavis/server";
 import type { DomainBinding, DomainBindingStore } from "./domain-binding.js";
 
 const DEFAULT_DNS_CHALLENGE_PREFIX = "_zelavis-challenge";
 const DEFAULT_HTTP_CHALLENGE_PATH = "/.well-known/zelavis-challenge";
+
+type NodeDnsPromisesModule = {
+  resolveTxt(host: string): Promise<string[][]>;
+};
 
 /**
  * Minimal DNS-TXT resolver interface. Mirrors the shape of Node's
@@ -73,7 +77,11 @@ export function createNodeDnsTxtResolver(): DnsTxtResolver {
     if (!cached) {
       cached = (async () => {
         try {
-          const dns = await import("node:dns/promises");
+          const importRuntimeModule = new Function(
+            "specifier",
+            "return import(specifier)",
+          ) as (specifier: string) => Promise<NodeDnsPromisesModule>;
+          const dns = await importRuntimeModule("node:dns/promises");
           return dns.resolveTxt;
         } catch {
           throw new Error(
@@ -328,13 +336,13 @@ export interface CreateDomainChallengeServiceOptions {
  * bindings (that's the whole point — verification flips the field
  * AFTER the operator sees the endpoint responding correctly).
  *
- * Returns a regular `ZelavisService` with `basePath: "/"` so the
+ * Returns a regular `ZelavisRuntimeService` with `basePath: "/"` so the
  * route's full path is exactly the challenge URL.
  */
 export function createDomainChallengeService(
   store: DomainBindingStore,
   options: CreateDomainChallengeServiceOptions = {},
-): ZelavisService {
+): ZelavisRuntimeService {
   const path = (options.challengePath ?? DEFAULT_HTTP_CHALLENGE_PATH).replace(
     /\/+$/,
     "",

@@ -4,12 +4,11 @@ import { AuthenticationService } from "../services/authentication-service.js";
 import { CredentialService } from "../services/credential-service.js";
 import { SessionService } from "../services/session-service.js";
 import { createInMemoryAuthRepositories } from "../storage/in-memory.js";
-import type { AuthPlugin } from "./define-auth-plugin.js";
-import type { AuthApi } from "./types.js";
+import type { AuthApi, AuthProviderService } from "./types.js";
 
 export interface CreateAuthOptions {
   config?: Record<string, unknown>;
-  plugins?: AuthPlugin[];
+  services?: readonly AuthProviderService[];
   repositories?: Partial<AuthRepositories>;
 }
 
@@ -27,6 +26,7 @@ export async function createAuth(options: CreateAuthOptions = {}): Promise<AuthA
   const api: AuthApi = {
     context: {
       config: options.config ?? {},
+      childServices: Object.freeze([...(options.services ?? [])]),
     },
     repositories,
     accounts,
@@ -35,8 +35,8 @@ export async function createAuth(options: CreateAuthOptions = {}): Promise<AuthA
     authentication,
   };
 
-  for (const plugin of options.plugins ?? []) {
-    await plugin.setup(api);
+  for (const service of options.services ?? []) {
+    await service.setup?.(api);
   }
 
   return api;

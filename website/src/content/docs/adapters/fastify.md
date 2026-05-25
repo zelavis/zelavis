@@ -1,7 +1,7 @@
 ---
 title: Fastify
 ---
-Use the Fastify utility when Zelavis should be mounted as a Fastify plugin inside an existing Fastify application.
+Use the Fastify utility when Zelavis should be mounted as a Fastify service inside an existing Fastify application.
 
 ## Basic usage
 
@@ -27,7 +27,7 @@ fastifyPlugin(zelavis: Zelavis): FastifyPluginAsync
 ## Good fit
 
 - Existing Fastify services
-- Apps that want Fastify plugins and hooks around Zelavis
+- Apps that want Fastify services and hooks around Zelavis
 - Self-hosted deployments using one Fastify process
 
 ## Notes

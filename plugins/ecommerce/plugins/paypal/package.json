@@ -2,7 +2,7 @@
   "name": "@zelavis/ecommerce-paypal",
   "version": "0.1.0-alpha.1",
   "private": false,
-  "description": "PayPal payment provider plugin for @zelavis/ecommerce.",
+  "description": "PayPal payment provider service for @zelavis/ecommerce.",
   "author": "Ivan Jeremic",
   "license": "MIT",
   "type": "module",
@@ -50,6 +50,6 @@
     "commerce",
     "ecommerce",
     "payments",
-    "plugin"
+    "service"
   ]
 }
