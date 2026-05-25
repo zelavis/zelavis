@@ -11,8 +11,7 @@ import { fileURLToPath } from "node:url";
 const packageRoot = dirname(
   fileURLToPath(new URL("../package.json", import.meta.url)),
 );
-const workspaceRoot = resolve(packageRoot, "../..");
-const source = resolve(workspaceRoot, "packages/ui/build/client");
+const source = resolve(packageRoot, "build/client");
 const target = resolve(packageRoot, "src/generated/dashboard-assets.ts");
 
 if (!existsSync(source)) {
@@ -56,7 +55,6 @@ const assets = files
   .filter((filePath) => filePath !== shellPath)
   .map((filePath) => {
     const routePath = `/${relative(source, filePath).split(sep).join("/")}`;
-    const isFingerprintedAsset = routePath.startsWith("/assets/");
     const contentType = getContentType(routePath);
     const isText =
       contentType.startsWith("text/") ||
@@ -67,9 +65,7 @@ const assets = files
     return {
       path: routePath,
       contentType,
-      cacheControl: isFingerprintedAsset
-        ? "public, max-age=31536000, immutable"
-        : "public, max-age=300",
+      cacheControl: "no-cache",
       kind: isText ? "text" : "base64",
       content: isText
         ? readFileSync(filePath, "utf8")

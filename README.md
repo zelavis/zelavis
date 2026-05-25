@@ -14,7 +14,7 @@ Today, Zelavis is still foundation-first. It already has working packages for au
 - Framework-agnostic by default.
 - Strong contracts over hidden magic.
 - Small, composable package surfaces.
-- Clear extension points for providers, adapters, and plugins.
+- Clear provider, adapter, and service boundaries.
 
 This repository is intended for developers building custom software, internal tools, multi-tenant backends, CMS systems, platform services, plugins, and reusable infrastructure components.
 
@@ -52,25 +52,25 @@ Current packages:
 - [packages/db/adapters/node-sqlite](packages/db/adapters/node-sqlite)
   A Node.js SQLite adapter package for `@zelavis/db` using `better-sqlite3`.
 - [packages/auth](packages/auth)
-  A low-level authentication core for accounts, credentials, sessions, and opt-in auth method plugins.
+  A low-level authentication core for accounts, credentials, sessions, and opt-in auth method services.
 - [packages/server](packages/server)
   Shared endpoint contracts and framework adapters that mount service APIs from Zelavis packages.
 - [packages/ui](packages/ui)
   The admin/dashboard frontend used by the high-level runtime.
 - [plugins/ecommerce](plugins/ecommerce)
-  An optional low-level ecommerce core for building custom commerce platforms, CMS plugins, and embedded commerce workflows.
+  An optional low-level ecommerce core for building custom commerce platforms, CMS services, and embedded commerce workflows.
 - []()
   An Express adapter package for exposing the ecommerce core over HTTP.
 - []()
   A Hono adapter package for exposing the ecommerce core over HTTP.
 - [plugins/ecommerce/plugins/stripe](plugins/ecommerce/plugins/stripe)
-  A Stripe payment provider plugin for `@zelavis/ecommerce`.
+  A Stripe payment provider service for `@zelavis/ecommerce`.
 - [plugins/ecommerce/plugins/paypal](plugins/ecommerce/plugins/paypal)
-  A PayPal payment provider plugin for `@zelavis/ecommerce`.
+  A PayPal payment provider service for `@zelavis/ecommerce`.
 - [packages/auth/plugins/email-password](packages/auth/plugins/email-password)
-  An email/password auth plugin for `@zelavis/auth`.
+  An email/password auth provider service for `@zelavis/auth`.
 - [packages/auth/plugins/username-password](packages/auth/plugins/username-password)
-  A username/password auth plugin for `@zelavis/auth`.
+  A username/password auth provider service for `@zelavis/auth`.
 
 ## Runtime Defaults
 
@@ -158,14 +158,14 @@ await zelavis({
 });
 ```
 
-Configure the built-in auth service through `coreServices.auth`, including auth plugins and repositories:
+Configure the built-in auth service through `coreServices.auth`, including auth provider services and repositories:
 
 ```ts
 await zelavis({
   coreServices: {
     auth: {
       authOptions: {
-        plugins: [emailPasswordPlugin({ verifyPasswordHash })],
+        services: [emailPasswordService({ verifyPasswordHash })],
       },
     },
   },
@@ -202,7 +202,7 @@ Current architecture includes:
 - Typed domain models for customers, products, coupons, orders, and payment attempts.
 - Repository contracts that isolate persistence from business logic.
 - In-memory repository implementations for development and tests.
-- A plugin-oriented payment layer for providers such as Stripe, PayPal, and others.
+- A service-oriented payment layer for providers such as Stripe, PayPal, and others.
 
 
 This package is meant to support use cases such as:
@@ -283,8 +283,8 @@ Near-term areas:
 - Better admin and developer experience around the runtime package.
 - Persistence adapters for tools like Prisma and Drizzle.
 - Durable database drivers for different runtimes.
-- Payment provider plugins for Stripe, PayPal, and similar gateways.
-- Auth method plugins and storage adapters for `@zelavis/auth`.
+- Payment provider services for Stripe, PayPal, and similar gateways.
+- Auth method services and storage adapters for `@zelavis/auth`.
 - Better tests, fixtures, and package-level examples.
 
 ## Contributing

@@ -92,7 +92,7 @@ test("resolveMountedEndpoints skips services without routes for the selected ver
 
 test("resolveMountedEndpoints recursively mounts nested services", () => {
   const service = {
-    name: "database",
+    name: "@zelavis/db",
     basePath: "database",
     service: {},
     api: {
@@ -107,7 +107,7 @@ test("resolveMountedEndpoints recursively mounts nested services", () => {
     },
     services: [
       {
-        name: "documents",
+        name: "@zelavis/db-documents",
         basePath: "documents",
         service: {},
         api: {

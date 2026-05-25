@@ -2,19 +2,19 @@
 
 Low-level authentication building blocks for custom backends, internal platforms, CMS systems, and application adapters.
 
-This package is intentionally auth-method agnostic. The core package provides accounts, sessions, repository contracts, and plugin registration, but it does not assume password login, magic links, OAuth, or any specific authentication flow by default.
+This package is intentionally auth-method agnostic. The core package provides accounts, sessions, repository contracts, and service registration, but it does not assume password login, magic links, OAuth, or any specific authentication flow by default.
 
 ## Architecture
 
 - Typed domain models for accounts, sessions, and credentials.
 - Repository contracts that isolate persistence from auth logic.
 - In-memory repositories for development and tests.
-- Plugin-oriented credential registration so auth methods stay optional.
+- Service-oriented credential registration so auth methods stay optional.
 
 ## Initial surface
 
 - `createAuth(options)`
-- `defineAuthPlugin(plugin)`
+- child auth provider services declared with `defineService(...)`
 - `AccountService`
 - `SessionService`
 - `AuthenticationService`
@@ -26,11 +26,11 @@ This package is intentionally auth-method agnostic. The core package provides ac
 
 ```ts
 import { createAuth } from "@zelavis/auth";
-import { emailPasswordPlugin } from "@zelavis/auth-email-password";
+import { emailPasswordService } from "@zelavis/auth-email-password";
 
 const auth = await createAuth({
-  plugins: [
-    emailPasswordPlugin({
+  services: [
+    emailPasswordService({
       verifyPasswordHash: async ({ password, passwordHash }) => password === passwordHash,
     }),
   ],
@@ -60,13 +60,13 @@ const result = await auth.authentication.authenticate("email-password", {
 `@zelavis/auth` exports a server service surface:
 
 - `defineAuthService(auth)`
-- `authService({ authOptions, plugins })`
+- `authService({ authOptions, services })`
 
 The main service-definition entrypoint lives in
 [packages/auth/src/auth-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/auth/src/auth-service.ts),
-so package authors can immediately see the `ZelavisService` shape in one place.
+and uses the same `defineService(...)` builder as installable, static, and provider services.
 
-In the default flow, no auth-specific server plugin is required. `authService()` can be passed directly to `zelavisServer(...)`, and routing is configured centrally via `prefix`, `servicePrefixes`, and `pathOverrides`.
+In the default flow, no auth-specific server extension hook is required. `authService()` can be passed directly to `zelavisServer(...)`, and routing is configured centrally via `prefix`, `servicePrefixes`, and `pathOverrides`.
 
 ## Error handling
 

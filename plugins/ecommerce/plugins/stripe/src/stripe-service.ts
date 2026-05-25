@@ -9,7 +9,7 @@ import {
   type PaymentProvider,
   type RefundPaymentInput,
 } from "@zelavis/ecommerce";
-import { definePlugin } from "zelavis/plugin";
+import { defineService } from "zelavis/service";
 import Stripe from "stripe";
 
 const DEFAULT_APP_INFO = {
@@ -26,7 +26,7 @@ export interface StripeRuntimeConfig {
   stripeContext?: Stripe.StripeConfig["stripeContext"];
 }
 
-export interface StripePluginOptions {
+export interface StripeServiceOptions {
   secretKey?: string;
   client?: Stripe;
   apiVersion?: Stripe.LatestApiVersion;
@@ -51,13 +51,13 @@ export interface FetchStripeRuntimeOptions {
   stripeContext?: Stripe.StripeConfig["stripeContext"];
 }
 
-export function createStripeClient(options: StripePluginOptions): Stripe {
+export function createStripeClient(options: StripeServiceOptions): Stripe {
   if (options.client) {
     return options.client;
   }
 
   if (!options.secretKey) {
-    throw new TypeError("Stripe plugin requires either a configured client or a secretKey.");
+    throw new TypeError("Stripe service requires either a configured client or a secretKey.");
   }
 
   return new Stripe(options.secretKey, {
@@ -279,7 +279,7 @@ function toRefundPaymentAttempt(
   };
 }
 
-export function createStripePaymentProvider(options: StripePluginOptions = {}): PaymentProvider {
+export function createStripePaymentProvider(options: StripeServiceOptions = {}): PaymentProvider {
   const stripe = createStripeClient(options);
 
   return {
@@ -424,13 +424,10 @@ export function createStripePaymentProvider(options: StripePluginOptions = {}): 
   };
 }
 
-export function stripePlugin(options: StripePluginOptions = {}) {
-  return definePlugin<EcommerceApi>({
-    name: "stripe",
-    extends: {
-      plugin: "zelavis-ecommerce",
-      extensionPoint: "payments",
-    },
+export function stripeService(options: StripeServiceOptions = {}) {
+  return defineService<EcommerceApi>({
+    name: "@zelavis/ecommerce-stripe",
+    extends: "@zelavis/ecommerce",
     setup(api) {
       api.payments.registerProvider("stripe", createStripePaymentProvider(options));
     },

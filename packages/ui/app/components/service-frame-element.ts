@@ -1,6 +1,6 @@
-const ELEMENT_NAME = "zelavis-plugin-frame";
+const ELEMENT_NAME = "zelavis-service-frame";
 
-class ZelavisPluginFrameElement extends HTMLElement {
+class ZelavisServiceFrameElement extends HTMLElement {
   static get observedAttributes() {
     return ["src", "title"];
   }
@@ -61,7 +61,7 @@ class ZelavisPluginFrameElement extends HTMLElement {
 
     this.loading = document.createElement("div");
     this.loading.className = "loading";
-    this.loading.textContent = "Loading plugin page...";
+    this.loading.textContent = "Loading service page...";
 
     this.iframe = document.createElement("iframe");
     this.iframe.setAttribute("loading", "lazy");
@@ -87,7 +87,7 @@ class ZelavisPluginFrameElement extends HTMLElement {
 
   private sync() {
     const src = this.getAttribute("src") ?? "about:blank";
-    const title = this.getAttribute("title") ?? "Plugin page";
+    const title = this.getAttribute("title") ?? "Service page";
 
     if (this.iframe.getAttribute("src") !== src) {
       this.loading.dataset.hidden = "false";
@@ -98,14 +98,14 @@ class ZelavisPluginFrameElement extends HTMLElement {
   }
 }
 
-export function definePluginFrameElement() {
+export function defineServiceFrameElement() {
   if (typeof window === "undefined") {
     return;
   }
 
   if (!window.customElements.get(ELEMENT_NAME)) {
-    window.customElements.define(ELEMENT_NAME, ZelavisPluginFrameElement);
+    window.customElements.define(ELEMENT_NAME, ZelavisServiceFrameElement);
   }
 }
 
-export { ELEMENT_NAME as pluginFrameElementName };
+export { ELEMENT_NAME as serviceFrameElementName };

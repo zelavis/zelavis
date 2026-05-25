@@ -46,7 +46,7 @@ export default function Home() {
             </a>
             <a
               className={styles.secondary}
-              href="/zelavis/api/v1/dashboard/config"
+              href="/zelavis/api/v1/runtime/config"
             >
               Open config endpoint
             </a>
@@ -60,8 +60,8 @@ export default function Home() {
             </li>
             <li>
               Config API:{" "}
-              <a href="/zelavis/api/v1/dashboard/config">
-                /zelavis/api/v1/dashboard/config
+              <a href="/zelavis/api/v1/runtime/config">
+                /zelavis/api/v1/runtime/config
               </a>
             </li>
           </ul>

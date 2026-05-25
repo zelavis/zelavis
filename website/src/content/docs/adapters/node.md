@@ -25,8 +25,8 @@ nodeAdapter({
   dataDirectory?: string;           // default: ".zelavis"
   database?: false | { /* ... */ };
   dashboard?: false | { /* ... */ };
-  plugins?: false | {
-    directory?: string;             // default: ".zelavis/plugins"
+  services?: false | {
+    directory?: string;             // default: ".zelavis/services"
     allowRemote?: boolean;          // default: true
   };
   files?: false | { rootDirectory?: string };
@@ -51,21 +51,21 @@ import { createFileDashboardSettingsStore } from "zelavis/adapters/node";
 
 Use it when you want runtime-editable dashboard settings persisted to disk.
 
-## Runtime plugin imports
+## Runtime service imports
 
-The Node adapter provides a plugin importer for registry entries with ESM specifiers. It supports:
+The Node adapter provides a service importer for registry entries with ESM specifiers. It supports:
 
 - package specifiers, resolved by normal Node ESM rules
 - absolute, `./`, `../`, and `file:` paths
 - `data:` URLs for tests and small experiments
-- `http:` and `https:` ESM modules, downloaded into `.zelavis/plugins` before import
+- `http:` and `https:` ESM modules, downloaded into `.zelavis/services` before import
 
-This is the Node-specific implementation of runtime plugin activation. Zelavis core still only sees an ESM specifier and a standard dynamic import boundary.
+This is the Node-specific implementation of runtime service activation. Zelavis core still only sees an ESM specifier and a standard dynamic import boundary.
 
 ```ts
 nodeAdapter({
-  plugins: {
-    directory: ".zelavis/plugins",
+  services: {
+    directory: ".zelavis/services",
     allowRemote: true,
   },
 });

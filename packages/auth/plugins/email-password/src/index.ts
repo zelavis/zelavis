@@ -1,1 +1,1 @@
-export * from "./email-password-plugin.js";
+export * from "./email-password-service.js";

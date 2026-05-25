@@ -58,7 +58,7 @@ const declarations = await readFile(join(root, "dist", "index.d.ts")).catch(
   () => undefined,
 );
 const files = {
-  "zelavis.plugin.json": `${JSON.stringify({ entry: "./dist/index.js" }, null, 2)}\n`,
+  "zelavis.service.json": `${JSON.stringify({ entry: "./dist/index.js" }, null, 2)}\n`,
   "dist/index.js": index,
 };
 

@@ -1,17 +1,16 @@
 import { join, resolve } from "node:path";
 import {
-  createFileStoragePluginRegistryStore,
+  createFileStorageServiceRegistryStore,
   defineAdapter,
   type ZelavisOptions,
   type ZelavisResolvedPlatformOptions,
 } from "../index.js";
-import { createFileDashboardSettingsStore } from "./node.js";
 import { createLocalFileStorage, createMemoryKeyValueStore } from "./_shared.js";
 import {
   normalizeDataDirectory,
-  createLocalRuntimePluginPackageInstaller,
-  createLocalRuntimePluginImporter,
-  type LocalRuntimePluginOptions,
+  createLocalRuntimeServicePackageInstaller,
+  createLocalRuntimeServiceImporter,
+  type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
 
 export interface BunAdapterDatabaseOptions {
@@ -19,10 +18,6 @@ export interface BunAdapterDatabaseOptions {
   readonly?: boolean;
   create?: boolean;
   defaultTenantId?: string;
-}
-
-export interface BunAdapterDashboardOptions {
-  settingsFile?: string;
 }
 
 export interface BunAdapterFileStorageOptions {
@@ -33,15 +28,14 @@ export interface BunAdapterKeyValueOptions {
   kind?: "memory";
 }
 
-export type BunAdapterPluginOptions = LocalRuntimePluginOptions;
+export type BunAdapterServiceOptions = LocalRuntimeServiceOptions;
 
 export interface BunAdapterOptions {
   dataDirectory?: string;
   database?: false | BunAdapterDatabaseOptions;
-  dashboard?: false | BunAdapterDashboardOptions;
   files?: false | BunAdapterFileStorageOptions;
   kv?: false | BunAdapterKeyValueOptions;
-  plugins?: false | BunAdapterPluginOptions;
+  services?: false | BunAdapterServiceOptions;
 }
 
 export function bunAdapter(options: BunAdapterOptions = {}) {
@@ -71,19 +65,8 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
         };
       }
 
-      if (options.dashboard !== false) {
-        const dashboardOptions = options.dashboard ?? {};
-        nextCoreServices.dashboard = {
-          settingsStore: createFileDashboardSettingsStore(
-            dashboardOptions.settingsFile
-              ? resolve(dashboardOptions.settingsFile)
-              : join(dataDirectory, "dashboard-settings.json"),
-          ),
-        };
-      }
-
-      const pluginOptions = options.plugins === false ? undefined : options.plugins;
-      const pluginDirectory = join(dataDirectory, "plugins");
+      const serviceOptions = options.services === false ? undefined : options.services;
+      const serviceDirectory = join(dataDirectory, "services");
       const fileStorage =
         options.files === false
           ? undefined
@@ -95,27 +78,27 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
 
       return {
         coreServices: nextCoreServices,
-        plugins:
-          options.plugins === false
+        services:
+          options.services === false
             ? undefined
             : {
-                importer: createLocalRuntimePluginImporter({
-                  directory: pluginDirectory,
-                  ...(pluginOptions ?? {}),
+                importer: createLocalRuntimeServiceImporter({
+                  directory: serviceDirectory,
+                  ...(serviceOptions ?? {}),
                 }),
                 ...(fileStorage
-                  ? { store: createFileStoragePluginRegistryStore(fileStorage) }
+                  ? { store: createFileStorageServiceRegistryStore(fileStorage) }
                   : {}),
               },
         resources: {
           kv: options.kv === false ? undefined : createMemoryKeyValueStore(),
           files: fileStorage,
-          pluginPackages:
-            options.plugins === false
+          servicePackages:
+            options.services === false
               ? undefined
-              : createLocalRuntimePluginPackageInstaller({
-                  directory: pluginDirectory,
-                  ...(pluginOptions ?? {}),
+              : createLocalRuntimeServicePackageInstaller({
+                  directory: serviceDirectory,
+                  ...(serviceOptions ?? {}),
                 }),
         },
         metadata: {

@@ -3,7 +3,7 @@ import type { FormEvent } from "react";
 ;
 
 import { PageHeader, ResourceNotice } from "#/components/DashboardPage";
-import { PluginPageMount } from "#/components/PluginPageMount";
+import { ServicePageMount } from "#/components/ServicePageMount";
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
@@ -67,7 +67,7 @@ function CommerceCoupons() {
   }
 
   return (
-    <PluginPageMount fallback={
+    <ServicePageMount fallback={
     <section className="mx-auto grid w-full max-w-7xl gap-6">
       <PageHeader eyebrow="Commerce" title="Coupons" />
 

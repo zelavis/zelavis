@@ -5,21 +5,27 @@ import {
   defineAuthService,
   type AuthServiceDefinition,
 } from "../auth-service.js";
-import type { AuthServicePlugin } from "./plugins.js";
+import type { AuthProviderService } from "../core/types.js";
 
 export interface AuthServiceOptions {
   auth?: AuthApi;
   authOptions?: CreateAuthOptions;
-  plugins?: AuthServicePlugin[];
+  childServices?: readonly string[];
+  services?: readonly AuthProviderService[];
 }
 
 export async function authService(options: AuthServiceOptions = {}): Promise<AuthServiceDefinition> {
-  const auth = options.auth ?? (await createAuth(options.authOptions));
-  let service = defineAuthService(auth);
+  const auth =
+    options.auth ??
+    (await createAuth({
+      ...(options.authOptions ?? {}),
+      services: [
+        ...(options.authOptions?.services ?? []),
+        ...(options.services ?? []),
+      ],
+    }));
 
-  for (const plugin of options.plugins ?? []) {
-    service = await plugin(service);
-  }
-
-  return service;
+  return defineAuthService(auth, {
+    childServices: options.childServices,
+  });
 }

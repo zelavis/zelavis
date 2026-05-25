@@ -46,6 +46,6 @@
     "authentication",
     "credentials",
     "sessions",
-    "plugins"
+    "services"
   ]
 }

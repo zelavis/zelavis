@@ -115,7 +115,7 @@ const myAdapter = defineAdapter({
 });
 ```
 
-Adapters can also expose plugin activation through `resources.plugins`. That controller is the host boundary for runtime plugin installs: a local server might recompose the in-process runtime graph, while a serverless adapter might route installed plugin code through a worker or function boundary. Core only consumes the declared capability shape and stays filesystem/provider neutral.
+Adapters can also expose service activation through `resources.services`. That controller is the host boundary for runtime service installs: a local server might recompose the in-process runtime graph, while a serverless adapter might route installed service code through a worker or function boundary. Core only consumes the declared capability shape and stays filesystem/provider neutral.
 
 The full shape:
 
