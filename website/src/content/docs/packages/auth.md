@@ -13,17 +13,17 @@ It currently provides:
 - session models and services
 - credential models and services
 - repository contracts
-- plugin registration
+- service registration
 
 ## Design rule
 
 The core auth package should not assume one fixed authentication method.
 
-Provider-style auth methods stay optional through plugins.
+Provider-style auth methods stay optional through services.
 
 ## Current examples
 
-Official method plugins currently include:
+Official method services currently include:
 
 - `@zelavis/auth-email-password`
 - `@zelavis/auth-username-password`
@@ -32,4 +32,4 @@ Official method plugins currently include:
 
 - [zelavis](./zelavis.md)
 - [@zelavis/server](./server.md)
-- [Service and Plugin Authoring](../guides/service-and-plugin-authoring.md)
+- [Service Authoring](../guides/service-authoring.md)

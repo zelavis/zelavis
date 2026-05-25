@@ -1,21 +1,11 @@
-import {
-  existsSync,
-  readFileSync,
-  mkdirSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { createBetterSqlite3DatabaseDriver } from "@zelavis/db-node-sqlite";
 import {
-  createFileStoragePluginRegistryStore,
+  createFileStorageServiceRegistryStore,
   defineAdapter,
-  type ZelavisDashboardSettingsStore,
-  type ZelavisDashboardSettingsUpdate,
-  type ZelavisDashboardThemeMode,
   type ZelavisOptions,
-  type ZelavisPluginLoadOptions,
-  type ZelavisPluginPackageInstaller,
+  type ZelavisServiceLoadOptions,
+  type ZelavisServicePackageInstaller,
   type ZelavisResolvedPlatformOptions,
 } from "../index.js";
 import {
@@ -24,108 +14,10 @@ import {
 } from "./_shared.js";
 import {
   normalizeDataDirectory,
-  createLocalRuntimePluginPackageInstaller,
-  createLocalRuntimePluginImporter,
-  type LocalRuntimePluginOptions,
+  createLocalRuntimeServicePackageInstaller,
+  createLocalRuntimeServiceImporter,
+  type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
-
-function normalizePathPart(part: string | undefined): string {
-  if (!part) {
-    return "";
-  }
-
-  const trimmed = part.trim();
-  if (!trimmed || trimmed === "/") {
-    return "";
-  }
-
-  return trimmed.replace(/^\/+/, "").replace(/\/+$/, "");
-}
-
-function normalizePath(path: string | undefined, fallback: string): string {
-  if (path === undefined) {
-    return fallback;
-  }
-
-  const trimmed = path.trim();
-  if (!trimmed) {
-    return fallback;
-  }
-
-  if (trimmed === "/") {
-    return "/";
-  }
-
-  const normalized = normalizePathPart(trimmed);
-  return normalized ? `/${normalized}` : fallback;
-}
-
-function normalizeEditableRootPath(
-  path: string | undefined,
-): string | undefined {
-  if (path === undefined) {
-    return undefined;
-  }
-
-  return normalizePath(path, "/");
-}
-
-function isDashboardThemeMode(
-  value: unknown,
-): value is ZelavisDashboardThemeMode {
-  return value === "light" || value === "dark" || value === "auto";
-}
-
-export function createFileDashboardSettingsStore(
-  filePath = ".zelavis/dashboard-settings.json",
-): ZelavisDashboardSettingsStore {
-  const resolvedPath = resolve(filePath);
-
-  function read(): ZelavisDashboardSettingsUpdate {
-    if (!existsSync(resolvedPath)) {
-      return {};
-    }
-
-    const parsed = JSON.parse(readFileSync(resolvedPath, "utf8")) as Record<
-      string,
-      unknown
-    >;
-    const settings: ZelavisDashboardSettingsUpdate = {};
-
-    if (typeof parsed.rootPath === "string") {
-      settings.rootPath = normalizeEditableRootPath(parsed.rootPath);
-    }
-
-    if (isDashboardThemeMode(parsed.theme)) {
-      settings.theme = parsed.theme;
-    }
-
-    if (typeof parsed.pageBuilderEnabled === "boolean") {
-      settings.pageBuilderEnabled = parsed.pageBuilderEnabled;
-    }
-
-    return settings;
-  }
-
-  function write(update: ZelavisDashboardSettingsUpdate) {
-    const next = {
-      ...read(),
-      ...update,
-    };
-    const temporaryPath = `${resolvedPath}.tmp`;
-
-    mkdirSync(dirname(resolvedPath), { recursive: true });
-    writeFileSync(temporaryPath, `${JSON.stringify(next, null, 2)}\n`);
-    renameSync(temporaryPath, resolvedPath);
-
-    return next;
-  }
-
-  return {
-    read,
-    write,
-  };
-}
 
 export interface NodeAdapterDatabaseOptions {
   filename?: string;
@@ -135,17 +27,12 @@ export interface NodeAdapterDatabaseOptions {
   pragma?: readonly string[];
 }
 
-export interface NodeAdapterDashboardOptions {
-  settingsFile?: string;
-}
-
-export type NodeAdapterPluginOptions = LocalRuntimePluginOptions;
+export type NodeAdapterServiceOptions = LocalRuntimeServiceOptions;
 
 export interface NodeAdapterOptions {
   dataDirectory?: string;
   database?: false | NodeAdapterDatabaseOptions;
-  dashboard?: false | NodeAdapterDashboardOptions;
-  plugins?: false | NodeAdapterPluginOptions;
+  services?: false | NodeAdapterServiceOptions;
   files?: false | {
     rootDirectory?: string;
   };
@@ -154,9 +41,8 @@ export interface NodeAdapterOptions {
   };
 }
 
-// Back-compat exports so existing code importing from node.ts still works.
-export const createNodePluginPackageInstaller = createLocalRuntimePluginPackageInstaller;
-export const createNodePluginImporter = createLocalRuntimePluginImporter;
+export const createNodeServicePackageInstaller = createLocalRuntimeServicePackageInstaller;
+export const createNodeServiceImporter = createLocalRuntimeServiceImporter;
 
 export function nodeAdapter(options: NodeAdapterOptions = {}) {
   return defineAdapter({
@@ -183,19 +69,8 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         };
       }
 
-      if (options.dashboard !== false) {
-        const dashboardOptions = options.dashboard ?? {};
-        nextCoreServices.dashboard = {
-          settingsStore: createFileDashboardSettingsStore(
-            dashboardOptions.settingsFile
-              ? resolve(dashboardOptions.settingsFile)
-              : join(dataDirectory, "dashboard-settings.json"),
-          ),
-        };
-      }
-
-      const pluginOptions = options.plugins === false ? undefined : options.plugins;
-      const pluginDirectory = join(dataDirectory, "plugins");
+      const serviceOptions = options.services === false ? undefined : options.services;
+      const serviceDirectory = join(dataDirectory, "services");
       const fileStorage =
         options.files === false
           ? undefined
@@ -207,27 +82,27 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
 
       return {
         coreServices: nextCoreServices,
-        plugins:
-          options.plugins === false
+        services:
+          options.services === false
             ? undefined
             : {
-                importer: createLocalRuntimePluginImporter({
-                  directory: pluginDirectory,
-                  ...(pluginOptions ?? {}),
+                importer: createLocalRuntimeServiceImporter({
+                  directory: serviceDirectory,
+                  ...(serviceOptions ?? {}),
                 }),
                 ...(fileStorage
-                  ? { store: createFileStoragePluginRegistryStore(fileStorage) }
+                  ? { store: createFileStorageServiceRegistryStore(fileStorage) }
                   : {}),
               },
         resources: {
           kv: options.kv === false ? undefined : createMemoryKeyValueStore(),
           files: fileStorage,
-          pluginPackages:
-            options.plugins === false
+          servicePackages:
+            options.services === false
               ? undefined
-              : createLocalRuntimePluginPackageInstaller({
-                  directory: pluginDirectory,
-                  ...(pluginOptions ?? {}),
+              : createLocalRuntimeServicePackageInstaller({
+                  directory: serviceDirectory,
+                  ...(serviceOptions ?? {}),
                 }),
         },
         metadata: {

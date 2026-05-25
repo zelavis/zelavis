@@ -21,7 +21,7 @@ Then open:
 
 - `/hello`
 - `/zelavis`
-- `/zelavis/api/v1/dashboard/config`
+- `/zelavis/api/v1/runtime/config`
 
 ## Key file
 

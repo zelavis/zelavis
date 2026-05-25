@@ -28,9 +28,9 @@ import {
 import type {
   RuntimeService,
   RuntimeServiceMenuDefinition,
-  RuntimePluginPageDefinition,
-  RuntimePluginMenuDefinition,
-  RuntimePluginRegistryEntry,
+  RuntimeServicePageDefinition,
+  RuntimeServiceRegistryMenuDefinition,
+  RuntimeServiceRegistryEntry,
 } from "#/lib/runtime-api";
 import type { ContentTypeRow } from "#/lib/content-studio";
 
@@ -80,7 +80,7 @@ export type DashboardNavItem = {
   icon: LucideIcon;
   panelLabel?: string;
   pageLabel?: string;
-  pluginOwned?: boolean;
+  serviceOwned?: boolean;
   items?: readonly DashboardNavItem[];
 };
 
@@ -91,22 +91,22 @@ export type DashboardPackageItem = {
   pageLabel?: string;
 };
 
-export type DashboardPluginMenuItem = {
+export type DashboardServiceRegistryMenuItem = {
   title: string;
   url?: DashboardRoutePath;
   search?: DashboardNavSearch;
   icon: LucideIcon;
   panelLabel?: string;
   pageLabel?: string;
-  page?: RuntimePluginPageDefinition;
-  pluginOwned?: boolean;
-  items?: readonly DashboardPluginMenuItem[];
+  page?: RuntimeServicePageDefinition;
+  serviceOwned?: boolean;
+  items?: readonly DashboardServiceRegistryMenuItem[];
 };
 
-export type DashboardWorkspacePluginItem = {
+export type DashboardWorkspaceServiceItem = {
   id: string;
   name: string;
-  menu: DashboardPluginMenuItem;
+  menu: DashboardServiceRegistryMenuItem;
   status: "installed" | "available";
   source?: "official" | "community";
 };
@@ -138,7 +138,7 @@ export const sidebarTeams: readonly DashboardTeamItem[] = [
   {
     name: "Core",
     logo: Database,
-    plan: "Plugins",
+    plan: "Services",
   },
 ] as const;
 
@@ -150,7 +150,7 @@ function toDashboardRoutePath(path: string): DashboardRoutePath | undefined {
   return path as DashboardRoutePath;
 }
 
-function slugifyPluginName(name: string) {
+function slugifyServiceName(name: string) {
   return name
     .trim()
     .toLowerCase()
@@ -158,7 +158,7 @@ function slugifyPluginName(name: string) {
     .replace(/^-+|-+$/g, "");
 }
 
-function getPluginMenuIcon(title: string, path?: string): LucideIcon {
+function getServiceRegistryMenuIcon(title: string, path?: string): LucideIcon {
   switch (path) {
     case "/commerce":
       return Store;
@@ -192,30 +192,30 @@ function getPluginMenuIcon(title: string, path?: string): LucideIcon {
   }
 }
 
-function createDashboardPluginMenuItem(
-  menu: RuntimePluginMenuDefinition,
-): DashboardPluginMenuItem {
+function createDashboardServiceRegistryMenuItem(
+  menu: RuntimeServiceRegistryMenuDefinition,
+): DashboardServiceRegistryMenuItem {
   return {
     title: menu.title,
     url: menu.path ? toDashboardRoutePath(menu.path) : undefined,
-    icon: getPluginMenuIcon(menu.title, menu.path),
+    icon: getServiceRegistryMenuIcon(menu.title, menu.path),
     pageLabel: menu.pageLabel,
     panelLabel: menu.panelLabel,
     page: menu.page,
-    pluginOwned: true,
-    items: menu.items?.map(createDashboardPluginMenuItem),
+    serviceOwned: true,
+    items: menu.items?.map(createDashboardServiceRegistryMenuItem),
   };
 }
 
 function getServiceMenuIcon(title: string, serviceName?: string): LucideIcon {
   switch (serviceName ?? title.toLowerCase()) {
-    case "auth":
+    case "@zelavis/auth":
       return Fingerprint;
-    case "database":
+    case "@zelavis/db":
       return Database;
-    case "storage":
+    case "@zelavis/storage":
       return Files;
-    case "website":
+    case "@zelavis/website":
       return PanelsTopLeft;
     default:
       return Server;
@@ -242,33 +242,33 @@ function getServiceMenuSurface(service: RuntimeService): DashboardServiceSurface
   return service.menu?.surface ?? "core";
 }
 
-export function buildDashboardPluginRegistryEntries(
-  plugins?: readonly RuntimePluginRegistryEntry[],
-): readonly DashboardWorkspacePluginItem[] {
-  return [...(plugins ?? [])]
+export function buildDashboardServiceRegistryEntries(
+  serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
+): readonly DashboardWorkspaceServiceItem[] {
+  return [...(serviceRegistry ?? [])]
     .sort((left, right) => {
       const leftOrder = left.order ?? Number.MAX_SAFE_INTEGER
       const rightOrder = right.order ?? Number.MAX_SAFE_INTEGER
       return leftOrder - rightOrder || left.name.localeCompare(right.name)
     })
-    .flatMap((plugin) =>
-    plugin.menu
+    .flatMap((service) =>
+    service.menu
       ? [
           {
-            id: slugifyPluginName(plugin.name),
-            name: plugin.name,
-            status: plugin.status,
-            source: plugin.source,
-            menu: createDashboardPluginMenuItem(plugin.menu),
+            id: slugifyServiceName(service.name),
+            name: service.name,
+            status: service.status,
+            source: service.source,
+            menu: createDashboardServiceRegistryMenuItem(service.menu),
           },
         ]
       : [],
   )
 }
 
-const defaultRuntimePluginRegistry = [
+const defaultRuntimeServiceRegistry = [
   {
-    name: "zelavis-ecommerce",
+    name: "@zelavis/ecommerce",
     version: "0.1.0",
     status: "available",
     source: "official",
@@ -301,28 +301,28 @@ const defaultRuntimePluginRegistry = [
       ],
     },
   },
-] as const satisfies readonly RuntimePluginRegistryEntry[];
+] as const satisfies readonly RuntimeServiceRegistryEntry[];
 
-export const dashboardPluginRegistryEntries =
-  buildDashboardPluginRegistryEntries(defaultRuntimePluginRegistry);
+export const dashboardServiceRegistryEntries =
+  buildDashboardServiceRegistryEntries(defaultRuntimeServiceRegistry);
 
-export function buildWorkspacePluginNavItems(
-  plugins?: readonly RuntimePluginRegistryEntry[],
-): readonly DashboardPluginMenuItem[] {
-  // Installable plugins intentionally get exactly one root workspace area.
+export function buildWorkspaceServiceNavItems(
+  serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
+): readonly DashboardServiceRegistryMenuItem[] {
+  // Installable services intentionally get exactly one root workspace area.
   // Any nested navigation must live under that one root item so first-slide
   // ownership stays reserved for built-in product surfaces and core services.
-  return buildDashboardPluginRegistryEntries(plugins)
-    .filter((plugin) => plugin.status === "installed")
-    .map((plugin) => plugin.menu);
+  return buildDashboardServiceRegistryEntries(serviceRegistry)
+    .filter((service) => service.status === "installed")
+    .map((service) => service.menu);
 }
 
-export const workspacePluginNavItems =
-  buildWorkspacePluginNavItems(defaultRuntimePluginRegistry);
+export const workspaceServiceNavItems =
+  buildWorkspaceServiceNavItems(defaultRuntimeServiceRegistry);
 
 const defaultRuntimeServices: readonly RuntimeService[] = [
   {
-    name: "dashboard",
+    name: "@zelavis/ui",
     core: true,
     apiPath: "/",
     menu: {
@@ -331,7 +331,7 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
     },
   },
   {
-    name: "auth",
+    name: "@zelavis/auth",
     core: true,
     apiPath: "/api/v1/auth",
     menu: {
@@ -340,7 +340,7 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
     },
   },
   {
-    name: "database",
+    name: "@zelavis/db",
     core: true,
     apiPath: "/api/v1/database",
     menu: {
@@ -363,7 +363,7 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
     },
   },
   {
-    name: "storage",
+    name: "@zelavis/storage",
     core: true,
     apiPath: "/api/v1/storage",
     menu: {
@@ -372,7 +372,7 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
     },
   },
   {
-    name: "website",
+    name: "@zelavis/website",
     core: true,
     apiPath: "/",
     menu: {
@@ -385,13 +385,13 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
 
 export function buildPlatformNavItems(
   services?: readonly RuntimeService[],
-  plugins?: readonly RuntimePluginRegistryEntry[],
+  serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
   databaseCollections?: readonly { name: string }[],
   contentTypes?: readonly ContentTypeRow[],
 ): readonly DashboardNavItem[] {
-  const pluginNavItems = buildWorkspacePluginNavItems(plugins);
+  const workspaceRegistryNavItems = buildWorkspaceServiceNavItems(serviceRegistry);
   const serviceNavItems = (services ?? [])
-    .filter((service) => service.core && service.name !== "dashboard")
+    .filter((service) => service.core && service.name !== "@zelavis/ui")
     .map((service) => {
       const baseMenu = service.menu
         ? createDashboardServiceMenuItem(service.menu, service.name)
@@ -400,7 +400,7 @@ export function buildPlatformNavItems(
             icon: getServiceMenuIcon(service.name, service.name),
           };
 
-      if (service.name !== "database") {
+      if (service.name !== "@zelavis/db") {
         return {
           item: baseMenu,
           surface: getServiceMenuSurface(service),
@@ -566,7 +566,7 @@ export function buildPlatformNavItems(
           ],
         },
         ...workspaceServiceNavItems,
-        ...pluginNavItems,
+        ...workspaceRegistryNavItems,
       ],
     },
     {
@@ -580,7 +580,7 @@ export function buildPlatformNavItems(
           pageLabel: "Settings",
         },
         {
-          title: "Plugins",
+          title: "Services",
           url: "/services",
           icon: Server,
         },
@@ -597,13 +597,13 @@ export function buildPlatformNavItems(
 
 export const platformNavItems = buildPlatformNavItems(
   defaultRuntimeServices,
-  defaultRuntimePluginRegistry,
+  defaultRuntimeServiceRegistry,
 );
 
 export function buildMarketplacePackageItems(
-  plugins?: readonly RuntimePluginRegistryEntry[],
+  serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
 ): readonly DashboardPackageItem[] {
-  const registryEntries = buildDashboardPluginRegistryEntries(plugins);
+  const registryEntries = buildDashboardServiceRegistryEntries(serviceRegistry);
 
   return [
     {
@@ -612,17 +612,17 @@ export function buildMarketplacePackageItems(
       icon: Boxes,
       pageLabel: "Marketplace",
     },
-    ...registryEntries.map((plugin) => ({
-      name: plugin.name,
-      url: plugin.status === "installed" ? plugin.menu.url : undefined,
-      icon: plugin.menu.icon ?? Package,
-      pageLabel: plugin.menu.pageLabel,
+    ...registryEntries.map((service) => ({
+      name: service.name,
+      url: service.status === "installed" ? service.menu.url : undefined,
+      icon: service.menu.icon ?? Package,
+      pageLabel: service.menu.pageLabel,
     })),
   ] as const;
 }
 
 export const marketplacePackageItems = buildMarketplacePackageItems(
-  defaultRuntimePluginRegistry,
+  defaultRuntimeServiceRegistry,
 );
 
 export const secondaryNavItems: readonly DashboardSecondaryItem[] = [
@@ -659,11 +659,11 @@ function flattenPlatformItems(
 
 export function buildDashboardNavItems(
   services?: readonly RuntimeService[],
-  plugins?: readonly RuntimePluginRegistryEntry[],
+  serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
 ) {
   return [
-    ...flattenPlatformItems(buildPlatformNavItems(services, plugins)),
-    ...buildMarketplacePackageItems(plugins)
+    ...flattenPlatformItems(buildPlatformNavItems(services, serviceRegistry)),
+    ...buildMarketplacePackageItems(serviceRegistry)
       .filter(
         (item): item is DashboardPackageItem & { url: DashboardRoutePath } =>
           Boolean(item.url),
@@ -678,16 +678,16 @@ export function buildDashboardNavItems(
 
 export const dashboardNavItems = buildDashboardNavItems(
   defaultRuntimeServices,
-  defaultRuntimePluginRegistry,
+  defaultRuntimeServiceRegistry,
 );
 
-export function findPluginMenuPageByPath(
+export function findServiceMenuPageByPath(
   pathname: string,
-  plugins?: readonly RuntimePluginRegistryEntry[],
-): RuntimePluginPageDefinition | undefined {
+  serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
+): RuntimeServicePageDefinition | undefined {
   const search = (
-    items: readonly DashboardPluginMenuItem[],
-  ): RuntimePluginPageDefinition | undefined => {
+    items: readonly DashboardServiceRegistryMenuItem[],
+  ): RuntimeServicePageDefinition | undefined => {
     for (const item of items) {
       if (item.url === pathname && item.page) {
         return item.page;
@@ -702,39 +702,39 @@ export function findPluginMenuPageByPath(
     return undefined;
   };
 
-  return search(buildWorkspacePluginNavItems(plugins));
+  return search(buildWorkspaceServiceNavItems(serviceRegistry));
 }
 
 export function getDashboardPageLabel(
   pathname: string,
   services?: readonly RuntimeService[],
-  plugins?: readonly RuntimePluginRegistryEntry[],
+  serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
 ) {
   if (pathname.startsWith("/database/")) {
     return "Database";
   }
 
   return (
-    buildDashboardNavItems(services, plugins).find((item) => item.to === pathname)
+    buildDashboardNavItems(services, serviceRegistry).find((item) => item.to === pathname)
       ?.label ?? "Not Found"
   );
 }
 
 export const serviceRows = [
   {
-    name: "dashboard",
+    name: "@zelavis/ui",
     path: "/zelavis",
     state: "ready",
     scope: "core",
   },
   {
-    name: "auth",
+    name: "@zelavis/auth",
     path: "/zelavis/api/v1/auth",
     state: "ready",
     scope: "core",
   },
   {
-    name: "database",
+    name: "@zelavis/db",
     path: "/zelavis/api/v1/database",
     state: "ready",
     scope: "core",
@@ -770,7 +770,7 @@ export const capabilityCards = [
     title: "Auth",
     value: "2 providers",
     icon: ShieldCheck,
-    detail: "email and username plugins ready for registration",
+    detail: "email and username services ready for registration",
   },
   {
     title: "Database",
@@ -780,8 +780,8 @@ export const capabilityCards = [
   },
   {
     title: "Payments",
-    value: "provider plugins",
+    value: "provider services",
     icon: CreditCard,
-    detail: "Stripe and PayPal boundaries are package-level plugins",
+    detail: "Stripe and PayPal boundaries are package-level services",
   },
 ] as const;

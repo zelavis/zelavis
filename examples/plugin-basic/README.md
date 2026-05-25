@@ -1,14 +1,14 @@
-# Basic Uploadable Plugin Example
+# Basic Uploadable Service Example
 
-This example is a real Zelavis plugin that builds to an ESM module and a ZIP package you can upload through the dashboard Marketplace while the Node.js example is running.
+This example is a real Zelavis service that builds to an ESM module and a ZIP package you can upload through the dashboard Marketplace while the Node.js example is running.
 
 It is intentionally small:
 
-- one plugin root menu item: `Example Basic`
+- one service root menu item: `Example Basic`
 - one iframe-rendered dashboard page at `/zelavis/example-basic`
-- one plugin-owned API route at `/zelavis/api/v1/example-basic/health`
+- one service-owned API route at `/zelavis/api/v1/example-basic/health`
 
-## Build the plugin
+## Build the service
 
 From the workspace root:
 
@@ -30,9 +30,9 @@ Start the Node.js example:
 pnpm --filter @zelavis/example-nodejs dev
 ```
 
-Open `http://localhost:3000/zelavis/marketplace`, then use **Upload plugin**:
+Open `http://localhost:3000/zelavis/marketplace`, then use **Upload service**:
 
-- Plugin package: select `dist/example-basic.zip`
+- Service package: select `dist/example-basic.zip`
 
 The upload registers the source first. In **Uploaded sources**, click **Install** to activate it.
 
@@ -44,8 +44,8 @@ After install:
 ## What to upload
 
 For Node.js local development, select `dist/example-basic.zip` in the browser file
-picker. The Node adapter unpacks it into `.zelavis/plugins`, reads
-`zelavis.plugin.json`, and imports the declared ESM entry from there.
+picker. The Node adapter unpacks it into `.zelavis/services`, reads
+`zelavis.service.json`, and imports the declared ESM entry from there.
 
 You can still paste the absolute `dist/index.js` path into the ESM specifier
 field when you want to test path-based local imports directly.

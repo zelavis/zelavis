@@ -9,7 +9,7 @@ Packages expose server services through a shared contract, and adapters mount or
 
 ## Core ideas
 
-- packages export services as plain `ZelavisService` object literals
+- packages export services as plain `ZelavisRuntimeService` object literals
 - core packages should expose one obvious top-level service-definition file so package authors can find the service entrypoint without hunting through nested folders
 - services can compose nested services
 - `zelavisServer(...)` resolves routes once and exposes reusable runtime handlers
@@ -31,4 +31,4 @@ This package is the transport boundary that keeps domain packages mountable with
 
 - [zelavis](./zelavis.md)
 - [Node adapter](../adapters/node.md)
-- [Service and Plugin Authoring](../guides/service-and-plugin-authoring.md)
+- [Service Authoring](../guides/service-authoring.md)
