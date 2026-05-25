@@ -41,25 +41,33 @@ export function GET(request: Request) {
 }
 ```
 
-Use scoped packages when building lower-level primitives, adapters, plugins, or tests that need direct package APIs:
+Use scoped packages when building lower-level primitives, adapters, services, or tests that need direct package APIs:
 
 ```ts
 import { createDatabase } from "@zelavis/db";
-import { definePlugin } from "zelavis";
+import { defineService } from "zelavis";
 import { authService } from "@zelavis/auth";
 ```
 
-For installable product capabilities, prefer plugin language in developer-facing APIs. Zelavis now also exports a small `createPlugin(...)` helper for declarative plugin metadata such as dashboard menu ownership.
+Services are the public extension unit. A service can be a dashboard extension,
+provider, hosted website/webapp, or a combination of those capabilities.
 
-Plugin loading should stay pure ESM. Zelavis also exposes helpers such as `loadPlugin(...)`, `loadPluginRegistry(...)`, `resolvePluginModule(...)`, and `removePluginFromRegistry(...)` so plugin install/load/remove flows can stay inside standard JavaScript module semantics instead of Node-specific loaders.
+Service loading stays pure ESM. Zelavis exposes helpers such as
+`loadService(...)`, `loadServiceRegistry(...)`, `resolveServiceModule(...)`,
+and `removeServiceFromRegistry(...)` so install/load/remove flows stay inside
+standard JavaScript module semantics instead of Node-specific loaders.
 
-For runtime composition, Zelavis also supports a plugin registry option with real install state and activation order:
+For runtime composition, Zelavis supports a service registry option with real
+install state and activation order:
 
 ```ts
-import { createPlugin, createPluginRegistry, Zelavis } from "zelavis";
+import { createServiceRegistry, defineService, Zelavis } from "zelavis";
 
-const ecommerce = createPlugin({
-  name: "zelavis-ecommerce",
+const ecommerce = defineService({
+  name: "@zelavis/ecommerce",
+  kind: "plugin",
+  capabilities: ["api:routes", "dashboard:menu"],
+  childServices: ["@zelavis/ecommerce-stripe", "@zelavis/ecommerce-paypal"],
   menu: {
     title: "Ecommerce",
     path: "/commerce",
@@ -67,10 +75,10 @@ const ecommerce = createPlugin({
 });
 
 const zelavis = new Zelavis({
-  plugins: {
-    entries: createPluginRegistry([
+  services: {
+    entries: createServiceRegistry([
       {
-        plugin: ecommerce,
+        service: ecommerce,
         status: "installed",
         source: "official",
         order: 0,
@@ -80,16 +88,19 @@ const zelavis = new Zelavis({
 });
 ```
 
-Plugin setup receives standard JavaScript data only:
+Service setup receives standard JavaScript data only:
 
 - mounted `rootPath`
 - API path information
 - platform summary (`presets`, resource availability, metadata)
-- already collected services plus `addService(...)`
+- already collected runtime services plus `addService(...)`
 
-That keeps plugin setup runtime-neutral while still giving plugins enough context to register extra services.
+That keeps service setup runtime-neutral while still giving services enough
+context to register extra runtime routes.
 
-Use the lower-level `zelavis(...)` function only when you need internal runtime controls such as `coreServices`, direct `services`, or path/mount overrides. See [Advanced Runtime Composition](../../website/src/content/docs/guides/advanced-runtime-composition.md) for the focused version of that story.
+Use the lower-level `zelavis(...)` function only when you need internal runtime
+controls such as `coreServices`, direct `runtimeServices`, or path/mount
+overrides. See [Advanced Runtime Composition](../../website/src/content/docs/guides/advanced-runtime-composition.md) for the focused version of that story.
 
 ## Usage
 
@@ -110,11 +121,11 @@ When you do not need a framework-specific adapter, use the Web-style runtime han
 const zelavis = new Zelavis({});
 
 const response = await zelavis.fetch(
-  new Request("http://localhost/zelavis/api/v1/dashboard/config"),
+  new Request("http://localhost/zelavis/api/v1/runtime/config"),
 );
 ```
 
-`new Zelavis(...)` is the guarded high-level entrypoint. It accepts app-facing options such as adapters, platforms, root path, plugin registry state, and error handling. Internal runtime knobs like `services`, `coreServices`, and path overrides stay on the lower-level `zelavis(...)` function.
+`new Zelavis(...)` is the guarded high-level entrypoint. It accepts app-facing options such as adapters, platforms, root path, service registry state, and error handling. Internal runtime knobs like `runtimeServices`, `coreServices`, and path overrides stay on the lower-level `zelavis(...)` function.
 
 That split is intentional:
 
@@ -126,9 +137,8 @@ By default, Zelavis owns one safe namespace:
 ```txt
 /zelavis
 /zelavis/settings
-/zelavis/assets/*
-/zelavis/api/v1/dashboard/config
-/zelavis/api/v1/dashboard/settings
+/zelavis/api/v1/runtime/config
+/zelavis/api/v1/runtime/settings
 /zelavis/api/v1/auth
 /zelavis/api/v1/database
 /zelavis/api/v1/storage/files/*
@@ -148,19 +158,41 @@ That moves the dashboard and APIs together:
 ```txt
 /admin
 /admin/settings
-/admin/assets/*
-/admin/api/v1/dashboard/config
-/admin/api/v1/dashboard/settings
+/admin/api/v1/runtime/config
+/admin/api/v1/runtime/settings
 /admin/api/v1/auth
 /admin/api/v1/database
 /admin/api/v1/storage/files/*
 /admin/api/v1/website/pages
 ```
 
-The dashboard UI is built from the `@zelavis/ui` workspace package and copied
-into this package during `pnpm --filter zelavis build`. Application users should
-serve it through `zelavis`; they do not need to import `@zelavis/ui`
-directly.
+The dashboard itself is supplied by the `@zelavis/ui` service. The `zelavis`
+runtime only wires the service into the service graph and exposes the runtime API
+state it needs.
+
+Services can also ship full web apps through the `app` field:
+
+```ts
+import { defineService } from "zelavis";
+
+export default defineService({
+  name: "@acme/storefront",
+  kind: "web-app",
+  capabilities: ["web:app", "api:routes"],
+  app: {
+    mount: "/",
+    mode: "spa",
+    bundle: "dist",
+    domainPolicy: "optional",
+  },
+});
+```
+
+Apps declare their serving shape and domain policy, not concrete hostnames.
+Verified domain bindings live in runtime state. Workspace apps with
+`domainPolicy: "optional"` fall back to `/apps/<service-name>` when no verified
+domain exists; apps with `domainPolicy: "required"` are not served until a
+verified binding exists.
 
 The runtime supports two complementary integration patterns:
 
@@ -223,30 +255,40 @@ export default {
 
 `cloudflareAdapter()` expects a D1 binding at `env.ZELAVIS_DB` and will also pick up `env.ZELAVIS_KV` and `env.ZELAVIS_FILES` automatically when they are present. Use `bindings` only when your Cloudflare binding names differ from the Zelavis defaults.
 
-Dashboard client routes are served as SPA shell routes by the dashboard core
-service, so direct visits such as `/zelavis/settings` work in Node and Express.
-
 The dashboard settings endpoint exposes runtime-editable dashboard preferences:
 
 ```txt
-GET /zelavis/api/v1/dashboard/settings
-PATCH /zelavis/api/v1/dashboard/settings
+GET /zelavis/api/v1/runtime/settings
+PATCH /zelavis/api/v1/runtime/settings
 ```
 
-The dashboard plugin registry also has runtime endpoints:
+The dashboard service registry also has runtime endpoints:
 
 ```txt
-GET /zelavis/api/v1/dashboard/plugins
-POST /zelavis/api/v1/dashboard/plugins
-PATCH /zelavis/api/v1/dashboard/plugins/:name
-GET /zelavis/api/v1/dashboard/plugin-pages/:plugin/:page
+GET /zelavis/api/v1/runtime/services
+POST /zelavis/api/v1/runtime/services
+PATCH /zelavis/api/v1/runtime/services/:name
+GET /zelavis/api/v1/runtime/service-pages/:service/:page
 ```
 
-When a plugin registry store is configured, these endpoints read and update real install state instead of a hardcoded list. Dashboard metadata updates immediately, while plugin service activation is adapter-controlled: a long-running server can recompose its runtime graph, while serverless hosts can map the same activation request to a worker/function boundary or another live host capability. Runtime config exposes the current adapter's plugin activation capabilities so the dashboard can show whether uploaded specifiers, runtime installs, and isolated execution are actually supported by the active host.
+When a service registry store is configured, these endpoints read and update
+real install state instead of a hardcoded list. Dashboard metadata updates
+immediately, while service activation is adapter-controlled: a long-running
+server can recompose its runtime graph, while serverless hosts can map the same
+activation request to a worker/function boundary or another live host
+capability. Runtime config exposes the current adapter's service activation
+capabilities so the dashboard can show whether uploaded specifiers, runtime
+installs, and isolated execution are actually supported by the active host.
 
-`POST /dashboard/plugins` registers a non-marketplace ESM source with `{ name, specifier }`. The best portable input is a module specifier or hosted ESM entry point that the active host knows how to resolve. A raw folder or zip is intentionally not the runtime contract because serverless platforms cannot all import arbitrary uploaded files the same way.
+`POST /runtime/services` registers a non-marketplace ESM source with
+`{ name, specifier }`. The best portable input is a module specifier or hosted
+ESM entry point that the active host knows how to resolve.
 
-Installed plugins can also attach iframe-backed dashboard documents to their menu items with `menu.page`. The dashboard receives a safe `src` URL from runtime config and mounts it through the `zelavis-plugin-frame` web component, so plugin UI can be a full HTML document instead of a React component tied to Zelavis dashboard internals.
+Installed services can also attach iframe-backed dashboard documents to their
+menu items with `menu.page`. The dashboard receives a safe `src` URL from
+runtime config and mounts it through the `zelavis-service-frame` web component,
+so service UI can be a full HTML document instead of a React component tied to
+Zelavis dashboard internals.
 
 When a file storage resource exists, Zelavis can also expose a built-in storage core service:
 
@@ -271,8 +313,8 @@ Use it when you want the normal Zelavis storage contract, metadata, and file-ref
 Root path changes are saved as pending settings and report `restartRequired`
 because mounted routes cannot move safely while the runtime is already running.
 Pass `coreServices.dashboard.settingsStore` when you want to back these settings
-with your own storage. For the built-in Node file-backed store, import
-`createFileDashboardSettingsStore()` from `zelavis/adapters/node`.
+with your own storage. Platform resources such as KV or file storage are used as
+defaults when they are available.
 
 For local dashboard work, point Zelavis at the mounted dashboard base URL of a running UI dev server:
 
@@ -288,8 +330,8 @@ await zelavis({
 });
 ```
 
-When `devServerUrl` is set, dashboard route requests redirect to the live UI dev
-server instead of serving the embedded built dashboard assets.
+When `devServerUrl` is set, dashboard app requests redirect to the live UI dev
+server instead of the built service bundle.
 
 The dashboard, auth, database, and website core services are included by default. The storage core service is enabled when Zelavis has a file storage resource to expose. Disable any of them when you need a smaller server or want to supply replacements:
 
@@ -310,15 +352,15 @@ await zelavis({
 Configure the built-in auth service when the defaults are not enough:
 
 ```ts
-import { emailPasswordPlugin } from "@zelavis/auth-email-password";
+import { emailPasswordService } from "@zelavis/auth-email-password";
 import { zelavis } from "zelavis";
 
 await zelavis({
   coreServices: {
     auth: {
       authOptions: {
-        plugins: [
-          emailPasswordPlugin({
+        services: [
+          emailPasswordService({
             verifyPasswordHash: async ({ password, passwordHash }) =>
               password === passwordHash,
           }),

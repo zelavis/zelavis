@@ -136,7 +136,7 @@ async function main() {
 
   console.log("Preparing Zelavis runtime packages for dashboard dev...");
   runSetup(
-    "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/db build && pnpm --filter @zelavis/db-node-sqlite build && pnpm --filter @zelavis/auth build && pnpm --filter zelavis build:runtime",
+    "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/db build && pnpm --filter @zelavis/db-node-sqlite build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/ui build:plugin && pnpm --filter zelavis build:runtime",
   );
 
   await recycleUnhealthyPreferredPort({
@@ -193,6 +193,7 @@ async function main() {
         "exec",
         "vite",
         "dev",
+        "--force",
         "--host",
         "127.0.0.1",
         "--port",

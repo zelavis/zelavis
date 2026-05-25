@@ -23,7 +23,7 @@ export interface ZelavisRouteResponse {
  * when omitted) means host-agnostic.
  *
  * This is the route-level half of the (host, path) two-pass matching the
- * dispatcher does. It exists primarily for plugin `app` mounts that want
+ * dispatcher does. It exists primarily for service `app` mounts that want
  * to bind to a tenant domain.
  */
 export type ZelavisRouteHostMatcher = string | readonly string[];
@@ -43,34 +43,34 @@ export interface ZelavisServerRoute<TService = unknown> {
   ) => Promise<ZelavisRouteResponse> | ZelavisRouteResponse;
 }
 
-export interface ZelavisServiceMenuDefinition {
+export interface ZelavisRuntimeServiceMenuDefinition {
   title: string;
   path?: string;
   pageLabel?: string;
   panelLabel?: string;
   surface?: "root" | "core" | "workspace" | "settings";
-  items?: readonly ZelavisServiceMenuDefinition[];
+  items?: readonly ZelavisRuntimeServiceMenuDefinition[];
 }
 
-export interface ZelavisService<TService = unknown> {
+export interface ZelavisRuntimeService<TService = unknown> {
   name: string;
   basePath?: string;
   api: Record<string, readonly ZelavisServerRoute<TService>[]>;
   service: TService;
-  menu?: ZelavisServiceMenuDefinition;
-  services?: readonly ZelavisAnyServiceInput[];
+  menu?: ZelavisRuntimeServiceMenuDefinition;
+  services?: readonly ZelavisAnyRuntimeServiceInput[];
 }
 
-export type ZelavisServiceInput<TService = unknown> =
-  | ZelavisService<TService>
-  | Promise<ZelavisService<TService>>;
+export type ZelavisRuntimeServiceInput<TService = unknown> =
+  | ZelavisRuntimeService<TService>
+  | Promise<ZelavisRuntimeService<TService>>;
 
-export type ZelavisAnyServiceInput =
-  | ZelavisService<any>
-  | Promise<ZelavisService<any>>;
+export type ZelavisAnyRuntimeServiceInput =
+  | ZelavisRuntimeService<any>
+  | Promise<ZelavisRuntimeService<any>>;
 
 export interface ZelavisResolvedRoute<TService = unknown> {
-  service: ZelavisService<TService>;
+  service: ZelavisRuntimeService<TService>;
   route: ZelavisServerRoute<TService>;
   fullPath: string;
 }
@@ -140,11 +140,11 @@ export type ZelavisServerPlainHandler<TService = unknown> = (
 export interface ZelavisServerOptions<
   TService = unknown,
 > extends ZelavisServerMountOptions<TService> {
-  services: readonly ZelavisAnyServiceInput[];
+  services: readonly ZelavisAnyRuntimeServiceInput[];
 }
 
 export interface ZelavisServerRuntime<TService = unknown> {
-  services: Record<string, ZelavisService<any>>;
+  services: Record<string, ZelavisRuntimeService<any>>;
   routes: readonly ZelavisResolvedRoute<TService>[];
   dispatch: ZelavisServerDispatchHandler<TService>;
   fetch: ZelavisServerFetchHandler<TService>;

@@ -1,5 +1,5 @@
 import {
-  createFileStoragePluginRegistryStore,
+  createFileStorageServiceRegistryStore,
   defineAdapter,
   type ZelavisOptions,
   type ZelavisFileStorage,
@@ -197,8 +197,8 @@ export function vercelAdapter(options: VercelAdapterOptions = {}) {
 
       return {
         coreServices: nextCoreServices,
-        plugins: fileStorage
-          ? { store: createFileStoragePluginRegistryStore(fileStorage) }
+        services: fileStorage
+          ? { store: createFileStorageServiceRegistryStore(fileStorage) }
           : undefined,
         resources: {
           kv: options.kv ? options.kv.store : undefined,

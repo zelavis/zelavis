@@ -4,8 +4,15 @@ import type { AuthenticationService } from "../services/authentication-service.j
 import type { CredentialService } from "../services/credential-service.js";
 import type { SessionService } from "../services/session-service.js";
 
+export interface AuthProviderService {
+  name: string;
+  extends: "@zelavis/auth";
+  setup?: (api: AuthApi) => void | Promise<void>;
+}
+
 export interface AuthContext {
   config: Record<string, unknown>;
+  childServices: readonly AuthProviderService[];
 }
 
 export interface AuthApi {

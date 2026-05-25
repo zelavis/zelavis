@@ -1,14 +1,14 @@
 /**
- * BundleStore — read-side abstraction for plugin app assets.
+ * BundleStore — read-side abstraction for service app assets.
  *
- * The dispatcher needs to serve static files belonging to a plugin's `app`
- * field. The plugin doesn't care where those bytes live; the host doesn't
+ * The dispatcher needs to serve static files belonging to a service's `app`
+ * field. The service doesn't care where those bytes live; the host doesn't
  * want to bake in a single storage backend. `BundleStore` is the seam.
  *
  * Two implementations ship by default:
  *
  * - `SharedBundleStore` (this file) — single underlying `ZelavisFileStorage`,
- *   workspace and plugin identity encoded into the key prefix. The simpler
+ *   workspace and service identity encoded into the key prefix. The simpler
  *   default; fine for multi-tenant deployments at the small-and-mid scale.
  * - (future) `IsolatedBundleStore` — one storage backend per workspace.
  *   Opt-in for tenants with physical-isolation or compliance requirements.
@@ -28,14 +28,14 @@ import type {
  * fold `workspaceId` into the key prefix; isolated stores use it to pick a
  * physical backend.
  *
- * For `scope: "system"` plugins (e.g. the dashboard itself), `workspaceId`
- * is left undefined; the shared store maps that to a `system/` prefix.
+ * For `scope: "system"` services, `workspaceId` is left undefined; the shared
+ * store maps that to a `system/` prefix.
  */
 export interface BundleScope {
-  /** Workspace owner of this bundle. Undefined for system-scope plugins. */
+  /** Workspace owner of this bundle. Undefined for system-scope services. */
   workspaceId?: string;
-  /** Plugin name as declared in `definePlugin({ name })`. */
-  pluginName: string;
+  /** Service name as declared in `defineService({ name })`. */
+  serviceName: string;
   /** Bundle identifier as declared in `app.bundle`. Defaults to `"dist"`. */
   bundle: string;
 }
@@ -94,11 +94,11 @@ export interface CreateSharedBundleStoreOptions {
 /**
  * Encode a bundle scope + asset path into a storage key.
  *
- * Layout: `<prefix>/<workspaceId | systemKey>/<pluginName>/<bundle>/<path>`
+ * Layout: `<prefix>/<workspaceId | systemKey>/<serviceName>/<bundle>/<path>`
  *
  * Exposed (not just internal) so tooling can read/write the same layout
  * outside the runtime — e.g. an installer that pushes a built bundle into
- * blob storage before the plugin is activated.
+ * blob storage before the service is activated.
  */
 export function buildBundleStorageKey(
   scope: BundleScope,
@@ -109,7 +109,7 @@ export function buildBundleStorageKey(
   const systemKey = options.systemKey ?? "system";
   const owner = scope.workspaceId ?? systemKey;
   const normalizedAsset = assetPath.replace(/^\/+/, "");
-  return `${prefix}/${owner}/${scope.pluginName}/${scope.bundle}/${normalizedAsset}`;
+  return `${prefix}/${owner}/${scope.serviceName}/${scope.bundle}/${normalizedAsset}`;
 }
 
 /**
@@ -166,14 +166,13 @@ export function createSharedBundleStore(
 
 /**
  * Lightweight in-memory `BundleStore` — useful for tests and for system
- * plugins that want to bundle their assets directly into source (e.g. the
- * dashboard's `embeddedDashboardAssets`).
+ * services that want to bundle their assets directly into source.
  */
 export function createInMemoryBundleStore(
   assets: ReadonlyMap<string, Uint8Array | { body: Uint8Array; contentType?: string; cacheControl?: string }>,
 ): BundleStore {
   const keyFor = (scope: BundleScope, path: string) =>
-    `${scope.workspaceId ?? "system"}/${scope.pluginName}/${scope.bundle}/${path.replace(/^\/+/, "")}`;
+    `${scope.workspaceId ?? "system"}/${scope.serviceName}/${scope.bundle}/${path.replace(/^\/+/, "")}`;
 
   return {
     async read(scope, path) {
@@ -194,7 +193,7 @@ export function createInMemoryBundleStore(
     },
     async list(scope, prefix) {
       const base = keyFor(scope, prefix ?? "");
-      const baseNoPrefix = `${scope.workspaceId ?? "system"}/${scope.pluginName}/${scope.bundle}/`;
+      const baseNoPrefix = `${scope.workspaceId ?? "system"}/${scope.serviceName}/${scope.bundle}/`;
       const out: string[] = [];
       for (const key of assets.keys()) {
         if (key.startsWith(base)) {

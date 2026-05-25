@@ -6,7 +6,7 @@ It is intended to be the common adapter layer for platform packages such as `@ze
 
 ## Core ideas
 
-- Packages export server services as plain `ZelavisService` object literals with `{ name, api: { v1: [...] } }`.
+- Packages define service entrypoints with `defineService(...)`; the normalized result is also mountable as a `ZelavisRuntimeService`.
 - Core packages should expose one obvious top-level service-definition file, such as `src/auth-service.ts` or `src/database-service.ts`, so package authors can find the service entrypoint immediately.
 - Services may compose nested `services`, and nested services are mounted below the parent service path.
 - `zelavisServer({ services })` resolves routes once and exposes reusable runtime handlers.

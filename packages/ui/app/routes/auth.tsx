@@ -28,7 +28,7 @@ function Auth() {
       <PageHeader
         eyebrow="Auth"
         title="Authentication"
-        description="Core auth service with provider plugins mounted through the runtime."
+        description="Core auth service with provider services mounted through the runtime."
       />
 
       <section className="grid gap-4 md:grid-cols-3">
@@ -75,7 +75,7 @@ function Auth() {
                 description={
                   providers.error
                     ? 'The auth endpoint is not reachable from this dashboard session.'
-                    : 'Install an auth provider plugin to expose a credential method.'
+                    : 'Install an auth provider service to expose a credential method.'
                 }
               />
             </div>

@@ -1,13 +1,13 @@
 import { Zelavis } from "zelavis";
 import {
   cloudflareAdapter,
-  createCloudflareDispatchPluginActivation,
+  createCloudflareDispatchServiceActivation,
   type CloudflareAdapterEnv,
   type CloudflareDispatchNamespace,
 } from "zelavis/adapters/cloudflare";
 
 type Env = CloudflareAdapterEnv & {
-  ZELAVIS_PLUGIN_DISPATCHER?: CloudflareDispatchNamespace;
+  ZELAVIS_SERVICE_DISPATCHER?: CloudflareDispatchNamespace;
 };
 
 let zelavisInstance: Zelavis | undefined;
@@ -20,11 +20,11 @@ function getZelavis(env: Env) {
   zelavisInstance = new Zelavis({
     adapter: cloudflareAdapter({
       env,
-      plugins: env.ZELAVIS_PLUGIN_DISPATCHER
+      services: env.ZELAVIS_SERVICE_DISPATCHER
         ? {
-            activation: createCloudflareDispatchPluginActivation({
-              dispatchNamespace: env.ZELAVIS_PLUGIN_DISPATCHER,
-              workerName: (request) => `plugin-${request.pluginName}`,
+            activation: createCloudflareDispatchServiceActivation({
+              dispatchNamespace: env.ZELAVIS_SERVICE_DISPATCHER,
+              workerName: (request) => `service-`,
               bindings: {
                 ZELAVIS_ROOT_PATH: "/zelavis",
               },
