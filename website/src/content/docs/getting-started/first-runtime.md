@@ -41,8 +41,8 @@ Default root namespace:
 /zelavis
 /zelavis/settings
 /zelavis/assets/*
-/zelavis/api/v1/dashboard/config
-/zelavis/api/v1/dashboard/settings
+/zelavis/api/v1/runtime/config
+/zelavis/api/v1/runtime/settings
 /zelavis/api/v1/auth
 /zelavis/api/v1/database
 /zelavis/api/v1/storage/files/*
@@ -92,7 +92,7 @@ import { Zelavis } from "zelavis";
 
 const zelavis = new Zelavis();
 const response = await zelavis.fetch(
-  new Request("http://localhost/zelavis/api/v1/dashboard/config"),
+  new Request("http://localhost/zelavis/api/v1/runtime/config"),
 );
 ```
 

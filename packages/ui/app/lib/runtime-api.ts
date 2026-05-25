@@ -14,38 +14,38 @@ export interface RuntimeService {
   menu?: RuntimeServiceMenuDefinition;
 }
 
-export interface RuntimePluginPageDefinition {
+export interface RuntimeServicePageDefinition {
   id: string;
   title?: string;
   src: string;
 }
 
-export interface RuntimePluginMenuDefinition {
+export interface RuntimeServiceRegistryMenuDefinition {
   title: string;
   path?: string;
   pageLabel?: string;
   panelLabel?: string;
-  page?: RuntimePluginPageDefinition;
-  items?: readonly RuntimePluginMenuDefinition[];
+  page?: RuntimeServicePageDefinition;
+  items?: readonly RuntimeServiceRegistryMenuDefinition[];
 }
 
-export interface RuntimePluginRegistryEntry {
+export interface RuntimeServiceRegistryEntry {
   name: string;
   version?: string;
   specifier?: string;
   status: "installed" | "available";
   source?: "official" | "community";
   order?: number;
-  menu?: RuntimePluginMenuDefinition;
+  menu?: RuntimeServiceRegistryMenuDefinition;
 }
 
-export interface RuntimePluginRegistryUpdate {
+export interface RuntimeServiceRegistryUpdate {
   status?: "installed" | "available";
   source?: "official" | "community";
   order?: number;
 }
 
-export interface RuntimePluginRegistryCreate {
+export interface RuntimeServiceRegistryCreate {
   specifier?: string;
   file?: File;
   name?: string;
@@ -54,12 +54,12 @@ export interface RuntimePluginRegistryCreate {
   order?: number;
 }
 
-export interface RuntimePluginActivationResult {
+export interface RuntimeServiceActivationResult {
   status: "active" | "pending";
   message?: string;
 }
 
-export interface RuntimePluginActivationCapabilities {
+export interface RuntimeServiceActivationCapabilities {
   strategy: "runtime-graph" | "worker-boundary" | "function-boundary" | "custom";
   supportsRuntimeInstall: boolean;
   supportsUploadedSpecifiers: boolean;
@@ -68,14 +68,14 @@ export interface RuntimePluginActivationCapabilities {
   description?: string;
 }
 
-export interface RuntimePluginActivation {
+export interface RuntimeServiceActivation {
   mode: "runtime" | "host";
-  capabilities: RuntimePluginActivationCapabilities;
+  capabilities: RuntimeServiceActivationCapabilities;
 }
 
-export interface RuntimePluginRegistryMutationResult {
-  plugins: RuntimePluginRegistryEntry[];
-  activation?: RuntimePluginActivationResult;
+export interface RuntimeServiceRegistryMutationResult {
+  serviceRegistry: RuntimeServiceRegistryEntry[];
+  activation?: RuntimeServiceActivationResult;
 }
 
 export interface RuntimeConfig {
@@ -93,8 +93,8 @@ export interface RuntimeConfig {
     assetRoot: string;
   };
   services: RuntimeService[];
-  plugins: RuntimePluginRegistryEntry[];
-  pluginActivation?: RuntimePluginActivation;
+  serviceRegistry: RuntimeServiceRegistryEntry[];
+  serviceActivation?: RuntimeServiceActivation;
 }
 
 export type DashboardThemeMode = "light" | "dark" | "auto";
@@ -235,9 +235,8 @@ export interface CommerceSubscription {
 
 export interface CommerceProvider {
   name: string;
-  extensionPoint: "payments";
-  targetPlugin: "zelavis-ecommerce";
-  childPlugin: boolean;
+  parentService: string;
+  childService: boolean;
 }
 
 export interface StorageFile {
@@ -378,7 +377,7 @@ const fallbackConfig: RuntimeConfig = {
   },
   services: [
     {
-      name: "dashboard",
+      name: "@zelavis/ui",
       core: true,
       apiPath: "/",
       menu: {
@@ -388,7 +387,7 @@ const fallbackConfig: RuntimeConfig = {
       },
     },
     {
-      name: "auth",
+      name: "@zelavis/auth",
       core: true,
       apiPath: "/api/v1/auth",
       menu: {
@@ -398,7 +397,7 @@ const fallbackConfig: RuntimeConfig = {
       },
     },
     {
-      name: "database",
+      name: "@zelavis/db",
       core: true,
       apiPath: "/api/v1/database",
       menu: {
@@ -422,7 +421,7 @@ const fallbackConfig: RuntimeConfig = {
       },
     },
     {
-      name: "storage",
+      name: "@zelavis/storage",
       core: true,
       apiPath: "/api/v1/storage",
       menu: {
@@ -432,7 +431,7 @@ const fallbackConfig: RuntimeConfig = {
       },
     },
     {
-      name: "website",
+      name: "@zelavis/website",
       core: true,
       apiPath: "/",
       menu: {
@@ -442,9 +441,9 @@ const fallbackConfig: RuntimeConfig = {
       },
     },
   ],
-  plugins: [
+  serviceRegistry: [
     {
-      name: "zelavis-ecommerce",
+      name: "@zelavis/ecommerce",
       version: "0.1.0",
       status: "available",
       source: "official",
@@ -478,7 +477,7 @@ const fallbackConfig: RuntimeConfig = {
       },
     },
   ],
-  pluginActivation: {
+  serviceActivation: {
     mode: "runtime",
     capabilities: {
       strategy: "runtime-graph",
@@ -624,7 +623,7 @@ export async function getRuntimeConfig(): Promise<RuntimeConfig> {
 
   try {
     const config = await readJson<RuntimeConfig>(
-      `${rootPath}/api/v1/dashboard/config`,
+      `${rootPath}/api/v1/runtime/config`,
     );
     return {
       ...config,
@@ -644,9 +643,9 @@ export async function getRuntimeConfig(): Promise<RuntimeConfig> {
         fallbackConfig.services.map((service) => ({
           ...service,
           apiPath:
-            service.name === "dashboard"
+            service.name === "@zelavis/ui"
               ? fallbackRootPath || "/"
-              : `${fallbackRootPath}/api/v1/${service.name}`,
+              : `${fallbackRootPath}${service.apiPath}`,
         })),
       ),
     };
@@ -657,7 +656,7 @@ export async function getDashboardSettings(
   config: RuntimeConfig,
 ): Promise<DashboardSettings> {
   return readJson<DashboardSettings>(
-    `${config.api.basePath}/dashboard/settings`,
+    `${config.api.basePath}/runtime/settings`,
   );
 }
 
@@ -666,7 +665,7 @@ export async function updateDashboardSettings(
   input: DashboardSettingsUpdate,
 ): Promise<DashboardSettings> {
   return readJson<DashboardSettings>(
-    `${config.api.basePath}/dashboard/settings`,
+    `${config.api.basePath}/runtime/settings`,
     {
       method: "PATCH",
       body: JSON.stringify(input),
@@ -674,34 +673,42 @@ export async function updateDashboardSettings(
   );
 }
 
-export async function listDashboardPlugins(
+export async function listDashboardServices(
   config: RuntimeConfig,
-): Promise<RuntimePluginRegistryEntry[]> {
-  const result = await readJson<{ plugins: RuntimePluginRegistryEntry[] }>(
-    `${config.api.basePath}/dashboard/plugins`,
+): Promise<RuntimeServiceRegistryEntry[]> {
+  const result = await readJson<{ services: RuntimeServiceRegistryEntry[] }>(
+    `${config.api.basePath}/runtime/services`,
   );
 
-  return result.plugins;
+  return result.services;
 }
 
-export async function updateDashboardPlugin(
+export async function updateDashboardService(
   config: RuntimeConfig,
   name: string,
-  input: RuntimePluginRegistryUpdate,
-): Promise<RuntimePluginRegistryMutationResult> {
-  return readJson<RuntimePluginRegistryMutationResult>(
-    `${config.api.basePath}/dashboard/plugins/${encodeURIComponent(name)}`,
+  input: RuntimeServiceRegistryUpdate,
+): Promise<RuntimeServiceRegistryMutationResult> {
+  const result = await readJson<{
+    services: RuntimeServiceRegistryEntry[];
+    activation?: RuntimeServiceActivationResult;
+  }>(
+    `${config.api.basePath}/runtime/services/${encodeURIComponent(name)}`,
     {
       method: "PATCH",
       body: JSON.stringify(input),
     },
   );
+
+  return {
+    serviceRegistry: result.services,
+    activation: result.activation,
+  };
 }
 
-export async function createDashboardPlugin(
+export async function createDashboardService(
   config: RuntimeConfig,
-  input: RuntimePluginRegistryCreate,
-): Promise<RuntimePluginRegistryMutationResult> {
+  input: RuntimeServiceRegistryCreate,
+): Promise<RuntimeServiceRegistryMutationResult> {
   const body =
     input.file !== undefined
       ? (() => {
@@ -728,13 +735,21 @@ export async function createDashboardPlugin(
         })()
       : JSON.stringify(input);
 
-  return readJson<RuntimePluginRegistryMutationResult>(
-    `${config.api.basePath}/dashboard/plugins`,
+  const result = await readJson<{
+    services: RuntimeServiceRegistryEntry[];
+    activation?: RuntimeServiceActivationResult;
+  }>(
+    `${config.api.basePath}/runtime/services`,
     {
       method: "POST",
       body,
     },
   );
+
+  return {
+    serviceRegistry: result.services,
+    activation: result.activation,
+  };
 }
 
 export async function listWebsitePages(config: RuntimeConfig) {

@@ -19,10 +19,10 @@ new Elysia().use(await elysiaPlugin(zelavis)).listen(3000);
 ## API
 
 ```ts
-elysiaPlugin(zelavis: Zelavis): Promise<Elysia plugin instance>
+elysiaPlugin(zelavis: Zelavis): Promise<Elysia service instance>
 ```
 
-Returns a promise because the plugin binds to a resolved runtime.
+Returns a promise because the service binds to a resolved runtime.
 
 ## Good fit
 
