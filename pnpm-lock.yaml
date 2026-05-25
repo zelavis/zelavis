@@ -59,14 +59,14 @@ importers:
         version: link:../../packages/zelavis
     devDependencies:
       '@cloudflare/workers-types':
-        specifier: ^4.20260504.1
-        version: 4.20260506.1
+        specifier: ^4.20260525.1
+        version: 4.20260525.1
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
       wrangler:
         specifier: ^4.87.0
-        version: 4.87.0(@cloudflare/workers-types@4.20260506.1)
+        version: 4.87.0(@cloudflare/workers-types@4.20260525.1)
 
   examples/elysia:
     dependencies:
@@ -270,8 +270,8 @@ importers:
   examples/vercel:
     dependencies:
       '@vercel/blob':
-        specifier: ^2.3.3
-        version: 2.3.3
+        specifier: ^2.4.0
+        version: 2.4.0
       next:
         specifier: 16.2.6
         version: 16.2.6(@opentelemetry/api@1.9.0)(@playwright/test@1.60.0)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
@@ -377,8 +377,8 @@ importers:
         version: link:../..
     devDependencies:
       '@cloudflare/workers-types':
-        specifier: ^4.20260504.1
-        version: 4.20260506.1
+        specifier: ^4.20260525.1
+        version: 4.20260525.1
       better-sqlite3:
         specifier: ^11.5.0
         version: 11.10.0
@@ -454,8 +454,8 @@ importers:
   packages/ui:
     dependencies:
       '@base-ui/react':
-        specifier: ^1.4.1
-        version: 1.4.1(@types/react@19.2.15)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+        specifier: ^1.5.0
+        version: 1.5.0(@types/react@19.2.15)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
       '@lexical/history':
         specifier: ^0.44.0
         version: 0.44.0
@@ -531,7 +531,7 @@ importers:
         version: 1.60.0
       '@react-router/dev':
         specifier: 7.15.1
-        version: 7.15.1(@react-router/serve@7.15.1(react-router@7.15.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@5.9.3))(@types/node@25.9.1)(jiti@2.7.0)(lightningcss@1.32.0)(react-router@7.15.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@5.9.3)(vite@8.0.14(@types/node@25.9.1)(esbuild@0.27.7)(jiti@2.7.0))(wrangler@4.87.0(@cloudflare/workers-types@4.20260506.1))
+        version: 7.15.1(@react-router/serve@7.15.1(react-router@7.15.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@5.9.3))(@types/node@25.9.1)(jiti@2.7.0)(lightningcss@1.32.0)(react-router@7.15.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@5.9.3)(vite@8.0.14(@types/node@25.9.1)(esbuild@0.27.7)(jiti@2.7.0))(wrangler@4.87.0(@cloudflare/workers-types@4.20260525.1))
       '@tailwindcss/typography':
         specifier: ^0.5.16
         version: 0.5.19(tailwindcss@4.3.0)
@@ -664,10 +664,10 @@ importers:
     dependencies:
       '@astrojs/starlight':
         specifier: ^0.39.2
-        version: 0.39.2(astro@6.3.4(@netlify/blobs@10.7.8)(@types/node@25.9.1)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.2))(typescript@5.9.3)
+        version: 0.39.2(astro@6.3.4(@netlify/blobs@10.7.8)(@types/node@25.9.1)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.2))(typescript@5.9.3)
       astro:
         specifier: ^6.3.1
-        version: 6.3.4(@netlify/blobs@10.7.8)(@types/node@25.9.1)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.2)
+        version: 6.3.4(@netlify/blobs@10.7.8)(@types/node@25.9.1)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.2)
       sharp:
         specifier: ^0.34.5
         version: 0.34.5
@@ -906,8 +906,8 @@ packages:
     resolution: {integrity: sha512-LwdZHpScM4Qz8Xw2iKSzS+cfglZzJGvofQICy7W7v4caru4EaAmyUuO6BGrbyQ2mYV11W0U8j5mBhd14dd3B0A==}
     engines: {node: '>=6.9.0'}
 
-  '@base-ui/react@1.4.1':
-    resolution: {integrity: sha512-Ab5/LIhcmL8BQcsBUYiOfkSDRdLpvgUBzMK30cu684JPcLclYlztharvCZyNNgzJtbAiREzI9q0pI5erHCMgCw==}
+  '@base-ui/react@1.5.0':
+    resolution: {integrity: sha512-z1gSAlced1yY+iM+mHDEtIkD8UI3Ebs52MuBPxvV6f5hRutk+xvCH/wuB7hDqDzK9JG5FoMz5nhrqtSs1wjt1A==}
     engines: {node: '>=14.0.0'}
     peerDependencies:
       '@date-fns/tz': ^1.2.0
@@ -923,8 +923,8 @@ packages:
       date-fns:
         optional: true
 
-  '@base-ui/utils@0.2.8':
-    resolution: {integrity: sha512-jvOi+c+ftGlGotNcKnzPVg2IhCaDTB6/6R3JeqdjdXktuAJi3wKH9T7+svuaKh1mmfVU11UWzUZVH74JDfi/wQ==}
+  '@base-ui/utils@0.2.9':
+    resolution: {integrity: sha512-x/PDDCYzoqPpjrdyb3VcyylTI2IjUXEtYDGi5foh7KsnmNJIIaVwA2GLgDH1dps1GgXiJbA60hM+AyuTfQzIvw==}
     peerDependencies:
       '@types/react': ^17 || ^18 || ^19
       react: 19.2.5
@@ -1050,8 +1050,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@cloudflare/workers-types@4.20260506.1':
-    resolution: {integrity: sha512-IKv/C08utEbAqEu2zr0/3CMf1MbYrl7x0Z1UsrnMs4xxfIN81vtGTRduCZb7xJQpaICQPe0Sa6fhHlZmUXrMjw==}
+  '@cloudflare/workers-types@4.20260525.1':
+    resolution: {integrity: sha512-vQSjvQINGx2i3dovvVyszew4HU3+82eAuD2ryNmedBIzLcLwluKsnPLTAuL4FDVRyz+MikQEihEBsUmcTElEVQ==}
 
   '@cspotcode/source-map-support@0.8.1':
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
@@ -2942,8 +2942,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@vercel/blob@2.3.3':
-    resolution: {integrity: sha512-MtD7VLo6hU07eHR7bmk5SIMD290q574UaNYTe46qeyRT+hWrCy26CoAqfd7PnIefVXvRehRZBzukxuTO9iGTVg==}
+  '@vercel/blob@2.4.0':
+    resolution: {integrity: sha512-ncQ8CRb6XoEAYJwjOTRGpACRT6h/AeY+/33gLyeVxG5BIes27OPm1jmqreF+JHjcTmGhClTP+kBpmyLfbV0xew==}
     engines: {node: '>=20.0.0'}
 
   '@vitest/expect@3.2.4':
@@ -6018,8 +6018,8 @@ packages:
     resolution: {integrity: sha512-QT7FVMXfWOYFbeRBF6nu+I6tr2Tf3u0q8RIEjNob/heKY/nh7drD/k7eeMFmSQgnTtCzLDcCu/XEnpW2wk4xCQ==}
     engines: {node: '>=9.3.0 || >=8.10.0 <9.0.0'}
 
-  reselect@5.1.1:
-    resolution: {integrity: sha512-K/BG6eIky/SBpzfHZv/dd+9JBFiS4SWV7FIujVyJRux6e45+73RaUHXLmIR1f7WOMaQ0U1km6qwklRQxpJJY0w==}
+  reselect@5.2.0:
+    resolution: {integrity: sha512-AgZ3UOZm3YndfrJ4OYjgrT7bmCm/1iqkjvEfH/oYjzh6PD2qw4QuT3jjnXIrpdt4MTpMXclMT3lXbmRY+XRakw==}
 
   resolve-from@4.0.0:
     resolution: {integrity: sha512-pb/MYmXstAkysRFx8piNI1tGFNQIFA3vkE3Gq4EuA1dF6gHp/+vgZqsCGJapvy8N3Q+4o7FwvquPJcnZ7RYy4g==}
@@ -7318,12 +7318,12 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@astrojs/mdx@5.0.6(astro@6.3.4(@netlify/blobs@10.7.8)(@types/node@25.9.1)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.2))':
+  '@astrojs/mdx@5.0.6(astro@6.3.4(@netlify/blobs@10.7.8)(@types/node@25.9.1)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.2))':
     dependencies:
       '@astrojs/markdown-remark': 7.1.2
       '@mdx-js/mdx': 3.1.1
       acorn: 8.16.0
-      astro: 6.3.4(@netlify/blobs@10.7.8)(@types/node@25.9.1)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.2)
+      astro: 6.3.4(@netlify/blobs@10.7.8)(@types/node@25.9.1)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.2)
       es-module-lexer: 2.1.0
       estree-util-visit: 2.0.0
       hast-util-to-html: 9.0.5
@@ -7347,17 +7347,17 @@ snapshots:
       stream-replace-string: 2.0.0
       zod: 4.4.3
 
-  '@astrojs/starlight@0.39.2(astro@6.3.4(@netlify/blobs@10.7.8)(@types/node@25.9.1)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.2))(typescript@5.9.3)':
+  '@astrojs/starlight@0.39.2(astro@6.3.4(@netlify/blobs@10.7.8)(@types/node@25.9.1)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.2))(typescript@5.9.3)':
     dependencies:
       '@astrojs/markdown-remark': 7.1.2
-      '@astrojs/mdx': 5.0.6(astro@6.3.4(@netlify/blobs@10.7.8)(@types/node@25.9.1)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.2))
+      '@astrojs/mdx': 5.0.6(astro@6.3.4(@netlify/blobs@10.7.8)(@types/node@25.9.1)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.2))
       '@astrojs/sitemap': 3.7.2
       '@pagefind/default-ui': 1.5.2
       '@types/hast': 3.0.4
       '@types/js-yaml': 4.0.9
       '@types/mdast': 4.0.4
-      astro: 6.3.4(@netlify/blobs@10.7.8)(@types/node@25.9.1)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.2)
-      astro-expressive-code: 0.42.0(astro@6.3.4(@netlify/blobs@10.7.8)(@types/node@25.9.1)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.2))
+      astro: 6.3.4(@netlify/blobs@10.7.8)(@types/node@25.9.1)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.2)
+      astro-expressive-code: 0.42.0(astro@6.3.4(@netlify/blobs@10.7.8)(@types/node@25.9.1)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.2))
       bcp-47: 2.1.0
       hast-util-from-html: 2.0.3
       hast-util-select: 6.0.4
@@ -7578,10 +7578,10 @@ snapshots:
       '@babel/helper-string-parser': 7.27.1
       '@babel/helper-validator-identifier': 7.28.5
 
-  '@base-ui/react@1.4.1(@types/react@19.2.15)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)':
+  '@base-ui/react@1.5.0(@types/react@19.2.15)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)':
     dependencies:
       '@babel/runtime': 7.29.2
-      '@base-ui/utils': 0.2.8(@types/react@19.2.15)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+      '@base-ui/utils': 0.2.9(@types/react@19.2.15)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
       '@floating-ui/react-dom': 2.1.8(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
       '@floating-ui/utils': 0.2.11
       react: 19.2.5
@@ -7590,13 +7590,13 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.15
 
-  '@base-ui/utils@0.2.8(@types/react@19.2.15)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)':
+  '@base-ui/utils@0.2.9(@types/react@19.2.15)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)':
     dependencies:
       '@babel/runtime': 7.29.2
       '@floating-ui/utils': 0.2.11
       react: 19.2.5
       react-dom: 19.2.5(react@19.2.5)
-      reselect: 5.1.1
+      reselect: 5.2.0
       use-sync-external-store: 1.6.0(react@19.2.5)
     optionalDependencies:
       '@types/react': 19.2.15
@@ -7789,7 +7789,7 @@ snapshots:
   '@cloudflare/workerd-windows-64@1.20260430.1':
     optional: true
 
-  '@cloudflare/workers-types@4.20260506.1': {}
+  '@cloudflare/workers-types@4.20260525.1': {}
 
   '@cspotcode/source-map-support@0.8.1':
     dependencies:
@@ -8830,7 +8830,7 @@ snapshots:
 
   '@preact/signals-core@1.14.1': {}
 
-  '@react-router/dev@7.15.1(@react-router/serve@7.15.1(react-router@7.15.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@5.9.3))(@types/node@25.9.1)(jiti@2.7.0)(lightningcss@1.32.0)(react-router@7.15.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@5.9.3)(vite@8.0.14(@types/node@25.9.1)(esbuild@0.27.7)(jiti@2.7.0))(wrangler@4.87.0(@cloudflare/workers-types@4.20260506.1))':
+  '@react-router/dev@7.15.1(@react-router/serve@7.15.1(react-router@7.15.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@5.9.3))(@types/node@25.9.1)(jiti@2.7.0)(lightningcss@1.32.0)(react-router@7.15.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@5.9.3)(vite@8.0.14(@types/node@25.9.1)(esbuild@0.27.7)(jiti@2.7.0))(wrangler@4.87.0(@cloudflare/workers-types@4.20260525.1))':
     dependencies:
       '@babel/core': 7.29.0
       '@babel/generator': 7.29.1
@@ -8865,7 +8865,7 @@ snapshots:
     optionalDependencies:
       '@react-router/serve': 7.15.1(react-router@7.15.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@5.9.3)
       typescript: 5.9.3
-      wrangler: 4.87.0(@cloudflare/workers-types@4.20260506.1)
+      wrangler: 4.87.0(@cloudflare/workers-types@4.20260525.1)
     transitivePeerDependencies:
       - '@types/node'
       - babel-plugin-macros
@@ -9494,7 +9494,7 @@ snapshots:
   '@unrs/resolver-binding-win32-x64-msvc@1.11.1':
     optional: true
 
-  '@vercel/blob@2.3.3':
+  '@vercel/blob@2.4.0':
     dependencies:
       async-retry: 1.3.3
       is-buffer: 2.0.5
@@ -9726,12 +9726,12 @@ snapshots:
 
   astring@1.9.0: {}
 
-  astro-expressive-code@0.42.0(astro@6.3.4(@netlify/blobs@10.7.8)(@types/node@25.9.1)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.2)):
+  astro-expressive-code@0.42.0(astro@6.3.4(@netlify/blobs@10.7.8)(@types/node@25.9.1)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.2)):
     dependencies:
-      astro: 6.3.4(@netlify/blobs@10.7.8)(@types/node@25.9.1)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.2)
+      astro: 6.3.4(@netlify/blobs@10.7.8)(@types/node@25.9.1)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.2)
       rehype-expressive-code: 0.42.0
 
-  astro@6.3.4(@netlify/blobs@10.7.8)(@types/node@25.9.1)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.2):
+  astro@6.3.4(@netlify/blobs@10.7.8)(@types/node@25.9.1)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.2):
     dependencies:
       '@astrojs/compiler': 4.0.0
       '@astrojs/internal-helpers': 0.9.1
@@ -9781,7 +9781,7 @@ snapshots:
       ultrahtml: 1.6.0
       unifont: 0.7.4
       unist-util-visit: 5.1.0
-      unstorage: 1.17.5(@netlify/blobs@10.7.8)(@vercel/blob@2.3.3)
+      unstorage: 1.17.5(@netlify/blobs@10.7.8)(@vercel/blob@2.4.0)
       vfile: 6.0.3
       vite: 7.3.3(@types/node@25.9.1)(jiti@2.7.0)(lightningcss@1.32.0)
       vitefu: 1.1.3(vite@7.3.3(@types/node@25.9.1)(jiti@2.7.0)(lightningcss@1.32.0))
@@ -13440,7 +13440,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  reselect@5.1.1: {}
+  reselect@5.2.0: {}
 
   resolve-from@4.0.0: {}
 
@@ -14353,7 +14353,7 @@ snapshots:
       '@unrs/resolver-binding-win32-ia32-msvc': 1.11.1
       '@unrs/resolver-binding-win32-x64-msvc': 1.11.1
 
-  unstorage@1.17.5(@netlify/blobs@10.7.8)(@vercel/blob@2.3.3):
+  unstorage@1.17.5(@netlify/blobs@10.7.8)(@vercel/blob@2.4.0):
     dependencies:
       anymatch: 3.1.3
       chokidar: 5.0.0
@@ -14365,7 +14365,7 @@ snapshots:
       ufo: 1.6.4
     optionalDependencies:
       '@netlify/blobs': 10.7.8
-      '@vercel/blob': 2.3.3
+      '@vercel/blob': 2.4.0
 
   until-async@3.0.2: {}
 
@@ -14595,7 +14595,7 @@ snapshots:
       '@cloudflare/workerd-linux-arm64': 1.20260430.1
       '@cloudflare/workerd-windows-64': 1.20260430.1
 
-  wrangler@4.87.0(@cloudflare/workers-types@4.20260506.1):
+  wrangler@4.87.0(@cloudflare/workers-types@4.20260525.1):
     dependencies:
       '@cloudflare/kv-asset-handler': 0.5.0
       '@cloudflare/unenv-preset': 2.16.1(unenv@2.0.0-rc.24)(workerd@1.20260430.1)
@@ -14606,7 +14606,7 @@ snapshots:
       unenv: 2.0.0-rc.24
       workerd: 1.20260430.1
     optionalDependencies:
-      '@cloudflare/workers-types': 4.20260506.1
+      '@cloudflare/workers-types': 4.20260525.1
       fsevents: 2.3.3
     transitivePeerDependencies:
       - bufferutil
