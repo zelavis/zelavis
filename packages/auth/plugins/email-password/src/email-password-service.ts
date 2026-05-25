@@ -1,7 +1,7 @@
-import type { AuthenticationResult, CredentialProvider } from "@zelavis/auth";
-import { defineAuthPlugin } from "@zelavis/auth";
+import type { AuthenticationResult, AuthApi, CredentialProvider } from "@zelavis/auth";
+import { defineService } from "zelavis/service";
 
-export interface EmailPasswordPluginOptions {
+export interface EmailPasswordServiceOptions {
   createSession?: boolean;
   getSessionExpiry?: () => Date;
   verifyPasswordHash(input: { password: string; passwordHash: string }): Promise<boolean>;
@@ -12,10 +12,10 @@ function invalidCredentials(): never {
 }
 
 export function createEmailPasswordProvider(
-  options: EmailPasswordPluginOptions,
+  options: EmailPasswordServiceOptions,
 ): CredentialProvider {
   return {
-    name: "email-password",
+    name: "@zelavis/auth-email-password",
     async authenticate(input, api): Promise<AuthenticationResult> {
       if (!input.identifier || typeof input.identifier !== "string") {
         throw new TypeError("Email/password authentication requires an identifier.");
@@ -66,9 +66,12 @@ export function createEmailPasswordProvider(
   };
 }
 
-export function emailPasswordPlugin(options: EmailPasswordPluginOptions) {
-  return defineAuthPlugin({
-    name: "email-password",
+export function emailPasswordService(options: EmailPasswordServiceOptions) {
+  return defineService<AuthApi>({
+    name: "@zelavis/auth-email-password",
+    kind: "provider",
+    capabilities: ["provider:auth"],
+    extends: "@zelavis/auth",
     setup(api) {
       api.authentication.registerProvider(createEmailPasswordProvider(options));
     },

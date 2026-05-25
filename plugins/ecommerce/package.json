@@ -2,7 +2,7 @@
   "name": "@zelavis/ecommerce",
   "version": "1.0.1-alpha.2",
   "private": false,
-  "description": "Official Zelavis ecommerce package with runtime plugin, commerce domain APIs, and provider extension points.",
+  "description": "Official Zelavis ecommerce service with runtime APIs, commerce domain APIs, and child provider services.",
   "license": "MIT",
   "author": "Ivan Jeremic",
   "type": "module",
@@ -47,7 +47,7 @@
   },
   "keywords": [
     "zelavis",
-    "plugin",
+    "service",
     "ecommerce",
     "marketplace",
     "payments",

@@ -25,7 +25,7 @@ export default function Home() {
             </a>
             <a
               className="inline-flex h-11 items-center justify-center rounded-full border border-black/10 px-5 text-sm font-medium text-black transition hover:bg-black/5 dark:border-white/10 dark:text-white dark:hover:bg-white/5"
-              href="/zelavis/api/v1/dashboard/config"
+              href="/zelavis/api/v1/runtime/config"
             >
               Inspect runtime config
             </a>
@@ -50,7 +50,7 @@ export default function Home() {
             <div className="rounded-2xl bg-zinc-950 px-4 py-3 font-mono text-xs leading-6 text-zinc-100 dark:bg-zinc-900">
               <div>GET /zelavis</div>
               <div>GET /zelavis/settings</div>
-              <div>GET /zelavis/api/v1/dashboard/config</div>
+              <div>GET /zelavis/api/v1/runtime/config</div>
               <div>GET /zelavis/api/v1/auth/providers</div>
             </div>
           </div>

@@ -1,6 +1,6 @@
 import {
-  definePlugin,
-  type ZelavisPluginSetupContext,
+  defineService,
+  type ZelavisServiceSetupContext,
 } from "zelavis";
 
 function createPluginPage({
@@ -17,7 +17,7 @@ function createPluginPage({
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Example Basic Plugin</title>
+    <title>Example Basic Service</title>
     <style>
       :root {
         color-scheme: light dark;
@@ -75,24 +75,24 @@ function createPluginPage({
   </head>
   <body>
     <main>
-      <p class="eyebrow">Uploaded plugin</p>
-      <h1>Example Basic Plugin</h1>
+      <p class="eyebrow">Uploaded service</p>
+      <h1>Example Basic Service</h1>
       <p>
-        This page is rendered by an uploaded ESM plugin through the Zelavis
-        plugin iframe boundary.
+        This page is rendered by an uploaded ESM service through the Zelavis
+        service iframe boundary.
       </p>
       <section class="panel">
         <h2>Runtime checks</h2>
         <p>Dashboard root: <code>${rootPath}</code></p>
-        <p>Plugin API: <a href="${healthPath}" target="_blank" rel="noreferrer">${healthPath}</a></p>
+        <p>Service API: <a href="${healthPath}" target="_blank" rel="noreferrer">${healthPath}</a></p>
       </section>
     </main>
   </body>
 </html>`;
 }
 
-export default definePlugin<ZelavisPluginSetupContext>({
-  name: "example-basic",
+export default defineService<ZelavisServiceSetupContext>({
+  name: "@zelavis/example-plugin-basic",
   version: "0.1.0",
   menu: {
     title: "Example Basic",
@@ -111,10 +111,10 @@ export default definePlugin<ZelavisPluginSetupContext>({
   },
   setup(context) {
     context.addService({
-      name: "example-basic",
+      name: "@zelavis/example-basic-runtime",
       basePath: "/example-basic",
       service: {
-        message: "Hello from an uploaded Zelavis plugin.",
+        message: "Hello from an uploaded Zelavis service.",
       },
       api: {
         v1: [
@@ -126,8 +126,8 @@ export default definePlugin<ZelavisPluginSetupContext>({
               status: 200,
               body: {
                 ok: true,
-                plugin: "example-basic",
-                message: "Hello from an uploaded Zelavis plugin.",
+                service: "@zelavis/example-basic-runtime",
+                message: "Hello from an uploaded Zelavis service.",
               },
             }),
           },

@@ -121,7 +121,7 @@ Framework utilities are simple functions that take a `Zelavis` instance and retu
 | Hono | `zelavis/hono` → `honoMiddleware(zelavis)` | `MiddlewareHandler` |
 | Fastify | `zelavis/fastify` → `fastifyPlugin(zelavis)` | `FastifyPluginAsync` |
 | h3 | `zelavis/h3` → `h3Handler(zelavis)` | h3 handler |
-| Elysia | `zelavis/elysia` → `elysiaPlugin(zelavis)` | Elysia plugin instance |
+| Elysia | `zelavis/elysia` → `elysiaPlugin(zelavis)` | Elysia service instance |
 | Next.js Pages Router | `zelavis/nextjs/pages` → `nextjsPagesRouterHandler(zelavis, options?)` | `NextApiHandler` |
 | Node HTTP server | `zelavis/node` → `createNodeServer(zelavis)` | `Promise<http.Server>` |
 
@@ -158,7 +158,7 @@ interface ZelavisAdapter {
 }
 ```
 
-If a host supports runtime plugin installs, its adapter should expose that through `resources.plugins`. The plugin activation controller declares whether the host can apply runtime installs, resolve uploaded ESM specifiers, and isolate plugin execution. This keeps Node-style filesystem caches, Cloudflare-style worker dispatch, and other host mechanics outside portable core.
+If a host supports runtime service installs, its adapter should expose that through `resources.services`. The service activation controller declares whether the host can apply runtime installs, resolve uploaded ESM specifiers, and isolate service execution. This keeps Node-style filesystem caches, Cloudflare-style worker dispatch, and other host mechanics outside portable core.
 
 ## Why no `zelavis.adapter.xxx` anymore
 

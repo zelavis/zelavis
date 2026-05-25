@@ -100,7 +100,7 @@ function reorderVisibleFiles(
 function MediaRoute() {
   const runtime = useRuntimeResource(getRuntimeConfig);
   const config = runtime.data;
-  const storageEnabled = config?.services.some((service) => service.name === "storage");
+  const storageEnabled = config?.services.some((service) => service.name === "@zelavis/storage");
   const settings = useRuntimeResource(
     async () => (config ? getDashboardSettings(config) : undefined),
     [config],

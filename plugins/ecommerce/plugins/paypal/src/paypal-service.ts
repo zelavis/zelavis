@@ -21,7 +21,7 @@ import {
   type PaymentProvider,
   type RefundPaymentInput,
 } from "@zelavis/ecommerce";
-import { definePlugin } from "zelavis/plugin";
+import { defineService } from "zelavis/service";
 
 const ZERO_DECIMAL_CURRENCIES = new Set([
   "BIF",
@@ -44,7 +44,7 @@ const ZERO_DECIMAL_CURRENCIES = new Set([
 
 const THREE_DECIMAL_CURRENCIES = new Set(["BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"]);
 
-export interface PayPalPluginOptions {
+export interface PayPalServiceOptions {
   client?: Client;
   clientConfig?: Partial<Configuration>;
   clientId?: string;
@@ -102,7 +102,7 @@ function toBasicAuthHeader(clientId: string, clientSecret: string): string {
 }
 
 function normalizePayPalEnvironment(
-  value: PayPalPluginOptions["environment"] | Configuration["environment"] | undefined,
+  value: PayPalServiceOptions["environment"] | Configuration["environment"] | undefined,
 ): Environment {
   if (!value) {
     return Environment.Sandbox;
@@ -124,7 +124,7 @@ function normalizePayPalEnvironment(
   return Environment.Sandbox;
 }
 
-function createPayPalClient(options: PayPalPluginOptions): Client {
+function createPayPalClient(options: PayPalServiceOptions): Client {
   if (options.client) {
     return options.client;
   }
@@ -135,7 +135,7 @@ function createPayPalClient(options: PayPalPluginOptions): Client {
 
   if (!options.clientId || !options.clientSecret) {
     throw new TypeError(
-      "PayPal plugin requires either a configured client, clientConfig, or clientId/clientSecret credentials.",
+      "PayPal service requires either a configured client, clientConfig, or clientId/clientSecret credentials.",
     );
   }
 
@@ -148,7 +148,7 @@ function createPayPalClient(options: PayPalPluginOptions): Client {
   });
 }
 
-function resolvePayPalBaseUrl(options: PayPalPluginOptions): string {
+function resolvePayPalBaseUrl(options: PayPalServiceOptions): string {
   if (options.apiBaseUrl) {
     return options.apiBaseUrl.replace(/\/$/, "");
   }
@@ -161,7 +161,7 @@ function resolvePayPalBaseUrl(options: PayPalPluginOptions): string {
     : "https://api-m.sandbox.paypal.com";
 }
 
-async function getPayPalAccessToken(options: PayPalPluginOptions): Promise<string> {
+async function getPayPalAccessToken(options: PayPalServiceOptions): Promise<string> {
   if (options.getAccessToken) {
     return options.getAccessToken();
   }
@@ -264,7 +264,7 @@ function mapPayPalSubscriptionStatus(status?: string): BillingSubscription["stat
 }
 
 async function paypalRequest<TResponse>(
-  options: PayPalPluginOptions,
+  options: PayPalServiceOptions,
   accessToken: string,
   path: string,
   init: RequestInit,
@@ -481,7 +481,7 @@ function toRefundPaymentAttempt(refund: Refund, originalOrderId: string, capture
 }
 
 export function createPayPalPaymentProvider(
-  options: PayPalPluginOptions = {},
+  options: PayPalServiceOptions = {},
 ): PaymentProvider {
   const client = createPayPalClient(options);
   const orders = new OrdersController(client);
@@ -697,13 +697,10 @@ export function createPayPalPaymentProvider(
   };
 }
 
-export function paypalPlugin(options: PayPalPluginOptions = {}) {
-  return definePlugin<EcommerceApi>({
-    name: "paypal",
-    extends: {
-      plugin: "zelavis-ecommerce",
-      extensionPoint: "payments",
-    },
+export function paypalService(options: PayPalServiceOptions = {}) {
+  return defineService<EcommerceApi>({
+    name: "@zelavis/ecommerce-paypal",
+    extends: "@zelavis/ecommerce",
     setup(api) {
       api.payments.registerProvider("paypal", createPayPalPaymentProvider(options));
     },
