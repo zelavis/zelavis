@@ -270,8 +270,8 @@ importers:
   examples/vercel:
     dependencies:
       '@vercel/blob':
-        specifier: ^2.3.3
-        version: 2.3.3
+        specifier: ^2.4.0
+        version: 2.4.0
       next:
         specifier: 16.2.6
         version: 16.2.6(@opentelemetry/api@1.9.0)(@playwright/test@1.60.0)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
@@ -655,13 +655,13 @@ importers:
     dependencies:
       '@astrojs/cloudflare':
         specifier: ^13.5.1
-        version: 13.5.2(@types/node@24.12.4)(astro@6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4))(jiti@2.7.0)(lightningcss@1.32.0)(workerd@1.20260515.1)(wrangler@4.92.0)
+        version: 13.5.2(@types/node@24.12.4)(astro@6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4))(jiti@2.7.0)(lightningcss@1.32.0)(workerd@1.20260515.1)(wrangler@4.92.0)
       '@astrojs/starlight':
         specifier: ^0.39.2
-        version: 0.39.2(astro@6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4))(typescript@5.9.3)
+        version: 0.39.2(astro@6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4))(typescript@5.9.3)
       astro:
         specifier: ^6.3.1
-        version: 6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4)
+        version: 6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4)
       sharp:
         specifier: ^0.34.5
         version: 0.34.5
@@ -3145,8 +3145,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@vercel/blob@2.3.3':
-    resolution: {integrity: sha512-MtD7VLo6hU07eHR7bmk5SIMD290q574UaNYTe46qeyRT+hWrCy26CoAqfd7PnIefVXvRehRZBzukxuTO9iGTVg==}
+  '@vercel/blob@2.4.0':
+    resolution: {integrity: sha512-ncQ8CRb6XoEAYJwjOTRGpACRT6h/AeY+/33gLyeVxG5BIes27OPm1jmqreF+JHjcTmGhClTP+kBpmyLfbV0xew==}
     engines: {node: '>=20.0.0'}
 
   '@vitest/expect@3.2.4':
@@ -7541,12 +7541,12 @@ snapshots:
 
   '@asamuzakjp/nwsapi@2.3.9': {}
 
-  '@astrojs/cloudflare@13.5.2(@types/node@24.12.4)(astro@6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4))(jiti@2.7.0)(lightningcss@1.32.0)(workerd@1.20260515.1)(wrangler@4.92.0)':
+  '@astrojs/cloudflare@13.5.2(@types/node@24.12.4)(astro@6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4))(jiti@2.7.0)(lightningcss@1.32.0)(workerd@1.20260515.1)(wrangler@4.92.0)':
     dependencies:
       '@astrojs/internal-helpers': 0.9.1
       '@astrojs/underscore-redirects': 1.0.3
       '@cloudflare/vite-plugin': 1.37.1(vite@7.3.3(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0))(workerd@1.20260515.1)(wrangler@4.92.0)
-      astro: 6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4)
+      astro: 6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4)
       piccolore: 0.1.3
       tinyglobby: 0.2.16
       vite: 7.3.3(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0)
@@ -7599,12 +7599,12 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@astrojs/mdx@5.0.6(astro@6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4))':
+  '@astrojs/mdx@5.0.6(astro@6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4))':
     dependencies:
       '@astrojs/markdown-remark': 7.1.2
       '@mdx-js/mdx': 3.1.1
       acorn: 8.16.0
-      astro: 6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4)
+      astro: 6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4)
       es-module-lexer: 2.1.0
       estree-util-visit: 2.0.0
       hast-util-to-html: 9.0.5
@@ -7628,17 +7628,17 @@ snapshots:
       stream-replace-string: 2.0.0
       zod: 4.4.3
 
-  '@astrojs/starlight@0.39.2(astro@6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4))(typescript@5.9.3)':
+  '@astrojs/starlight@0.39.2(astro@6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4))(typescript@5.9.3)':
     dependencies:
       '@astrojs/markdown-remark': 7.1.2
-      '@astrojs/mdx': 5.0.6(astro@6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4))
+      '@astrojs/mdx': 5.0.6(astro@6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4))
       '@astrojs/sitemap': 3.7.2
       '@pagefind/default-ui': 1.5.2
       '@types/hast': 3.0.4
       '@types/js-yaml': 4.0.9
       '@types/mdast': 4.0.4
-      astro: 6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4)
-      astro-expressive-code: 0.42.0(astro@6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4))
+      astro: 6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4)
+      astro-expressive-code: 0.42.0(astro@6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4))
       bcp-47: 2.1.0
       hast-util-from-html: 2.0.3
       hast-util-select: 6.0.4
@@ -9908,7 +9908,7 @@ snapshots:
   '@unrs/resolver-binding-win32-x64-msvc@1.11.1':
     optional: true
 
-  '@vercel/blob@2.3.3':
+  '@vercel/blob@2.4.0':
     dependencies:
       async-retry: 1.3.3
       is-buffer: 2.0.5
@@ -10140,12 +10140,12 @@ snapshots:
 
   astring@1.9.0: {}
 
-  astro-expressive-code@0.42.0(astro@6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4)):
+  astro-expressive-code@0.42.0(astro@6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4)):
     dependencies:
-      astro: 6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4)
+      astro: 6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4)
       rehype-expressive-code: 0.42.0
 
-  astro@6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.3.3)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4):
+  astro@6.3.4(@netlify/blobs@10.7.4)(@types/node@24.12.4)(@vercel/blob@2.4.0)(jiti@2.7.0)(lightningcss@1.32.0)(rollup@4.60.4):
     dependencies:
       '@astrojs/compiler': 4.0.0
       '@astrojs/internal-helpers': 0.9.1
@@ -10195,7 +10195,7 @@ snapshots:
       ultrahtml: 1.6.0
       unifont: 0.7.4
       unist-util-visit: 5.1.0
-      unstorage: 1.17.5(@netlify/blobs@10.7.4)(@vercel/blob@2.3.3)
+      unstorage: 1.17.5(@netlify/blobs@10.7.4)(@vercel/blob@2.4.0)
       vfile: 6.0.3
       vite: 7.3.3(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0)
       vitefu: 1.1.3(vite@7.3.3(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.32.0))
@@ -14797,7 +14797,7 @@ snapshots:
       '@unrs/resolver-binding-win32-ia32-msvc': 1.11.1
       '@unrs/resolver-binding-win32-x64-msvc': 1.11.1
 
-  unstorage@1.17.5(@netlify/blobs@10.7.4)(@vercel/blob@2.3.3):
+  unstorage@1.17.5(@netlify/blobs@10.7.4)(@vercel/blob@2.4.0):
     dependencies:
       anymatch: 3.1.3
       chokidar: 5.0.0
@@ -14809,7 +14809,7 @@ snapshots:
       ufo: 1.6.4
     optionalDependencies:
       '@netlify/blobs': 10.7.4
-      '@vercel/blob': 2.3.3
+      '@vercel/blob': 2.4.0
 
   until-async@3.0.2: {}
 
