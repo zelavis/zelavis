@@ -141,7 +141,7 @@ Do not manually edit generated files unless the user explicitly asks for it and 
 ## Code Change Expectations
 
 - Make the smallest coherent change that moves the repo forward.
-- Preserve backward compatibility when reasonable, but early-stage cleanup is acceptable if the user prefers it.
+- Do not preserve backward compatibility by default. This project is still early, so prefer removing stale shapes and legacy paths instead of carrying compatibility baggage forward.
 - Update docs when public API or architecture changes.
 - Add or update tests when a test setup exists.
 - If there is no test coverage yet, keep code easy to validate and call out the gap.
@@ -168,7 +168,7 @@ When acting as an agent in this repo:
 - Prefer implementing changes over only suggesting them.
 - Explain tradeoffs when they materially affect architecture or maintenance.
 - Prefer repo-consistent patterns over inventing new abstractions.
-- Do not add compatibility aliases or legacy shims unless the user wants them.
+- Do not add compatibility aliases, legacy shims, or stale fallback behavior unless the user explicitly wants them.
 - For UI tasks, remember that the runtime and UI may run separately in dev and together in production.
 - If something looks generated, verify before editing.
 

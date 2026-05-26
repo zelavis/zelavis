@@ -1,5 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 
+import type { RuntimeConfig } from '../../app/lib/runtime-api'
+
 function normalizeDashboardBasePath(path: string) {
   if (!path || path === '/') {
     return ''
@@ -34,6 +36,57 @@ async function gotoDashboard(page: Page, path: string) {
 
 async function waitForDashboardHydration(page: Page) {
   await page.locator('html[data-zelavis-hydrated="true"]').waitFor()
+}
+
+function createMockRuntimeConfig(): RuntimeConfig {
+  return {
+    name: 'zelavis',
+    rootPath: '/zelavis',
+    api: {
+      prefix: '/api',
+      version: 'v1',
+      basePath: '/zelavis/api/v1',
+    },
+    dashboard: {
+      title: 'Zelavis Dashboard',
+      clientRoutes: [],
+      assetRoot: '/zelavis',
+    },
+    services: [
+      {
+        name: '@zelavis/ui',
+        core: true,
+        apiPath: '/zelavis',
+        menu: {
+          title: 'Dashboard',
+          path: '/',
+          surface: 'root',
+        },
+      },
+      {
+        name: '@zelavis/auth',
+        core: true,
+        apiPath: '/zelavis/api/v1/auth',
+        menu: {
+          title: 'Auth',
+          path: '/auth',
+          surface: 'core',
+        },
+      },
+      {
+        name: '@zelavis/db',
+        core: true,
+        apiPath: '/zelavis/api/v1/database',
+        menu: {
+          title: 'Database',
+          path: '/database',
+          surface: 'core',
+        },
+      },
+    ],
+    serviceRegistry: [],
+    configSource: 'embedded' as const,
+  }
 }
 
 async function getTranslateX(track: Locator) {
@@ -258,6 +311,205 @@ test('database direct system table routes restore the matching sidebar slide', a
     }),
   ).toBeVisible()
   await expect(page).toHaveURL(/systemTable=_documents/)
+})
+
+test('content studio creates a new type and inserts a starter document with title and slug', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  const runtimeConfig = createMockRuntimeConfig()
+  const dashboardSettings = {
+    rootPath: '/zelavis',
+    apiBasePath: '/zelavis/api/v1',
+    theme: 'auto',
+    pageBuilderEnabled: true,
+    preferences: {},
+    persistence: 'runtime',
+    editable: {
+      rootPath: true,
+      theme: true,
+      pageBuilder: true,
+    },
+    restartRequired: false,
+  }
+
+  var createdCollectionName: string | undefined
+  var createdSchemaDocument: Record<string, unknown> | undefined
+  var insertPayload: Record<string, unknown> | undefined
+
+  await page.addInitScript((config) => {
+    ;(window as typeof window & { __ZELAVIS_RUNTIME_CONFIG__?: unknown }).__ZELAVIS_RUNTIME_CONFIG__ =
+      config
+  }, runtimeConfig)
+
+  await page.route('**/zelavis/api/v1/**', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    const pathname = url.pathname
+    const method = request.method()
+
+    const json = async () => JSON.parse(request.postData() ?? '{}') as Record<string, unknown>
+
+    if (pathname === '/zelavis/api/v1/runtime/settings' && method === 'GET') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(dashboardSettings) })
+      return
+    }
+
+    if (pathname === '/zelavis/api/v1/database/documents/collections' && method === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          collections: createdCollectionName
+            ? [
+                {
+                  name: createdCollectionName,
+                  tenantId: 'default',
+                  createdAt: '2026-05-26T00:00:00.000Z',
+                  documentCount: 0,
+                },
+              ]
+            : [],
+        }),
+      })
+      return
+    }
+
+    if (pathname === '/zelavis/api/v1/database/schemas/collections' && method === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          collections: createdCollectionName
+            ? [
+                {
+                  collection: createdCollectionName,
+                  activeVersion: 1,
+                  versions: [1],
+                },
+              ]
+            : [],
+        }),
+      })
+      return
+    }
+
+    if (pathname === '/zelavis/api/v1/database/documents/collections' && method === 'POST') {
+      const body = await json()
+      createdCollectionName = String(body.name)
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          name: createdCollectionName,
+          tenantId: 'default',
+          createdAt: '2026-05-26T00:00:00.000Z',
+          documentCount: 0,
+        }),
+      })
+      return
+    }
+
+    if (
+      pathname === `/zelavis/api/v1/database/schemas/${encodeURIComponent(createdCollectionName ?? 'animals')}` &&
+      method === 'POST'
+    ) {
+      const body = await json()
+      createdSchemaDocument = body.document as Record<string, unknown>
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          collection: createdCollectionName,
+          version: 1,
+          active: true,
+          document: createdSchemaDocument,
+          metadata: body.metadata ?? {},
+        }),
+      })
+      return
+    }
+
+    if (
+      pathname === `/zelavis/api/v1/database/schemas/${encodeURIComponent(createdCollectionName ?? 'animals')}` &&
+      method === 'GET'
+    ) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          collection: createdCollectionName ?? 'animals',
+          schemas: createdSchemaDocument
+            ? [
+                {
+                  collection: createdCollectionName ?? 'animals',
+                  version: 1,
+                  active: true,
+                  document: createdSchemaDocument,
+                  metadata: {
+                    createdBy: 'content-studio',
+                  },
+                },
+              ]
+            : [],
+        }),
+      })
+      return
+    }
+
+    if (
+      pathname === `/zelavis/api/v1/database/documents/${encodeURIComponent(createdCollectionName ?? 'animals')}` &&
+      method === 'POST'
+    ) {
+      const body = await json()
+      insertPayload = body.data as Record<string, unknown>
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: String(body.id || 'doc_1'),
+          version: 1,
+          tenantId: 'default',
+          collection: createdCollectionName ?? 'animals',
+          data: insertPayload,
+          createdAt: '2026-05-26T00:00:00.000Z',
+          updatedAt: '2026-05-26T00:00:00.000Z',
+        }),
+      })
+      return
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({}),
+    })
+  })
+
+  await gotoDashboard(page, '/content/new')
+
+  await page.getByLabel('Content type label').fill('Animals')
+  await page.getByRole('button', { name: 'Create and Open Editor' }).click()
+
+  await expect(page).toHaveURL(/\/content\/animals\/edit$/)
+  await expect(page.getByText('Collection editor', { exact: true })).toBeVisible()
+
+  const sampleDocument = page.getByLabel('Sample document id').locator('..').locator('textarea')
+  await expect(sampleDocument).toContainText('"title": "Untitled draft"')
+  await expect(sampleDocument).toContainText('"slug": "draft-')
+  await expect(sampleDocument).not.toContainText('"name"')
+
+  await page.getByRole('button', { name: 'Insert sample document' }).click()
+
+  await expect(page.getByText('Done')).toBeVisible()
+  expect(insertPayload).toBeTruthy()
+  expect(insertPayload).toMatchObject({
+    title: 'Untitled draft',
+    status: 'draft',
+  })
+  expect(typeof insertPayload?.slug).toBe('string')
+  expect(insertPayload).not.toHaveProperty('name')
 })
 
 test('content can navigate to the dedicated new content type route', async ({
