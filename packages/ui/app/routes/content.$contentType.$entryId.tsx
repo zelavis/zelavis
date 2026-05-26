@@ -457,7 +457,7 @@ function RelationFieldInput(props: {
   );
   const [search, setSearch] = useState("");
   const options = (relatedDocuments.data ?? []).filter((document) => {
-    const label = String(document.data.title ?? document.data.name ?? document.id).toLowerCase();
+    const label = String(document.data.title ?? document.id).toLowerCase();
     const slug = String(document.data.slug ?? "").toLowerCase();
     const query = search.trim().toLowerCase();
     return query.length === 0 || label.includes(query) || slug.includes(query) || document.id.toLowerCase().includes(query);
@@ -477,11 +477,11 @@ function RelationFieldInput(props: {
       >
         <option value="">Select related entry…</option>
         {options.map((document) => (
-          <option key={document.id} value={document.id}>
-            {String(document.data.title ?? document.data.name ?? document.id)}
+        <option key={document.id} value={document.id}>
+            {String(document.data.title ?? document.id)}
             {document.data.slug ? ` · ${String(document.data.slug)}` : ""}
-          </option>
-        ))}
+        </option>
+      ))}
       </select>
       <p className="text-xs font-normal text-muted-foreground">
         {relationCollection

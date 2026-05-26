@@ -7,6 +7,10 @@ import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import {
+  createStarterContentEntry,
+  createStarterContentTypeSchema,
+} from "#/lib/content-schema";
+import {
   activateDatabaseSchemaVersion,
   createDatabaseCollection,
   createDatabaseSchema,
@@ -150,8 +154,12 @@ function insertFileReferenceIntoSampleDocument(input: {
     return JSON.stringify(parsed, null, 2);
   }
 
-  if (typeof parsed.name !== "string") {
-    parsed.name = "Draft item";
+  if (typeof parsed.title !== "string") {
+    parsed.title = "Draft item";
+  }
+
+  if (typeof parsed.slug !== "string") {
+    parsed.slug = `draft-${Date.now()}`;
   }
 
   parsed[input.fieldName] = createSampleFileReference(input.fieldName, input.kind);
@@ -172,10 +180,12 @@ function ContentTypeEditorRoute() {
   const [schemaJson, setSchemaJson] = useState(
     activeSchema
       ? JSON.stringify(activeSchema.document, null, 2)
-      : '{\n  "type": "object",\n  "additionalProperties": false,\n  "required": ["name"],\n  "properties": {\n    "name": { "type": "string", "minLength": 1 }\n  }\n}',
+      : JSON.stringify(createStarterContentTypeSchema(), null, 2),
   );
   const [documentId, setDocumentId] = useState("");
-  const [documentJson, setDocumentJson] = useState('{\n  "name": "Draft item"\n}');
+  const [documentJson, setDocumentJson] = useState(
+    JSON.stringify(createStarterContentEntry(), null, 2),
+  );
   const [schemaFieldName, setSchemaFieldName] = useState("heroImage");
   const [schemaFieldKind, setSchemaFieldKind] = useState<FileSchemaTemplateKind>("image");
   const [schemaFieldRequired, setSchemaFieldRequired] = useState(true);
