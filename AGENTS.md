@@ -146,6 +146,12 @@ Do not manually edit generated files unless the user explicitly asks for it and 
 - Add or update tests when a test setup exists.
 - If there is no test coverage yet, keep code easy to validate and call out the gap.
 
+## Git and PR Workflow
+
+- The `main` branch is protected and does not allow direct pushes.
+- Changes must be pushed to a branch and merged through a pull request.
+- Do not assume GitHub app or automation credentials can open PRs automatically; if that fails, leave the branch pushed and provide the PR URL to the user.
+
 ## Documentation Expectations
 
 - Each package should have a focused README with purpose, scope, and basic usage.
