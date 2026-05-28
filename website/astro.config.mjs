@@ -34,6 +34,10 @@ export default defineConfig({
                   items: [{ autogenerate: { directory: 'packages' } }],
               },
               {
+                  label: 'CLI',
+                  items: [{ autogenerate: { directory: 'cli' } }],
+              },
+              {
                   label: 'Adapters',
                   items: [{ autogenerate: { directory: 'adapters' } }],
               },
