@@ -14,7 +14,7 @@ const runtime = await zelavis({
   coreServices: {
     database: {
       driver: createBunSqliteDatabaseDriver({
-        filename: "./.data/zelavis.sqlite",
+        filename: "./.zelavis/zelavis.sqlite",
       }),
     },
   },

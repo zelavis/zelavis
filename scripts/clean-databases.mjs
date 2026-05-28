@@ -26,10 +26,10 @@ const TARGETS = [
   // ui:dev creates `.zelavis/` inside the zelavis package because that's the cwd
   "packages/zelavis/.zelavis",
 
-  // Examples that opt into a `./.data` directory for their SQLite file
+  // Legacy example state from before local adapters standardized on `.zelavis`
   "examples/*/.data",
 
-  // Examples that accidentally fall through to the default `.zelavis` dir
+  // Local runtime state created by examples and local adapters
   "examples/*/.zelavis",
 
   // Miniflare state (D1, KV, cache) under wrangler-backed examples

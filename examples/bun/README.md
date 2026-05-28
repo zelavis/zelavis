@@ -21,7 +21,7 @@ Then open:
 
 - `index.ts` starts a Bun server with `Bun.serve()` and configures `zelavisBun()`
 - `zelavisBun()` provides the Bun SQLite driver and local file storage defaults
-- data is stored in `.data/zelavis.sqlite`
+- data is stored in `.zelavis/zelavis.sqlite`
 
 ## Why this exists
 
