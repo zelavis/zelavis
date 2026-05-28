@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#0f172a"/>
+  <path fill="#17213a" d="M0 488 1200 270v360H0Z"/>
+  <g transform="translate(88 138)">
+    <rect width="188" height="188" rx="40" fill="#fff"/>
+    <path fill="#0f172a" d="M54 37h91c7 0 10 9 5 14L73 133h66c7 0 10 9 5 14l-10 11c-3 3-7 5-11 5H32c-7 0-10-9-5-14l77-82H40c-7 0-10-9-5-14l10-11c3-3 6-5 9-5Z"/>
+    <path fill="#0f172a" fill-opacity=".38" d="M104 67h41c7 0 10-9 5-14l-10-11c-3-3-6-5-10-5H92L73 67h31ZM84 133H44c-7 0-10 9-5 14l10 11c3 3 6 5 10 5h39l20-30H84Z"/>
+  </g>
+  <text x="320" y="262" fill="#fff" font-family="Inter, Arial, Helvetica, sans-serif" font-size="122" font-weight="800" letter-spacing="0">Zelavis</text>
+  <text x="326" y="334" fill="#cbd5e1" font-family="Inter, Arial, Helvetica, sans-serif" font-size="34" font-weight="500" letter-spacing="0">Composable backend platform</text>
+</svg>

@@ -25,6 +25,7 @@ import {
   Users,
   type LucideIcon,
 } from "lucide-react";
+import { ZelavisMark } from "#/components/zelavis-mark";
 import type {
   RuntimeService,
   RuntimeServiceMenuDefinition,
@@ -127,7 +128,7 @@ export type DashboardTeamItem = {
 export const sidebarTeams: readonly DashboardTeamItem[] = [
   {
     name: "Zelavis",
-    logo: Server,
+    logo: ZelavisMark,
     plan: "Runtime",
   },
   {

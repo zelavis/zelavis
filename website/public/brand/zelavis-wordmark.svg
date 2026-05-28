@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 180">
+  <rect width="720" height="180" rx="36" fill="#fff"/>
+  <g transform="translate(38 34)">
+    <rect width="112" height="112" rx="24" fill="#0f172a"/>
+    <path fill="#fff" d="M32 22h54c4 0 6 5 3 8L43 79h39c4 0 6 5 3 8l-6 6c-2 2-4 3-6 3H19c-4 0-6-5-3-8l46-49H24c-4 0-6-5-3-8l6-6c2-2 3-3 5-3Z"/>
+    <path fill="#fff" fill-opacity=".38" d="M62 39h24c4 0 6-5 3-8l-6-6c-2-2-3-3-5-3H55L43 39h19ZM50 79H27c-4 0-6 5-3 8l6 6c2 2 3 3 5 3h23l12-17H50Z"/>
+  </g>
+  <text x="184" y="112" fill="#0f172a" font-family="Inter, Arial, Helvetica, sans-serif" font-size="74" font-weight="800" letter-spacing="0">Zelavis</text>
+</svg>
