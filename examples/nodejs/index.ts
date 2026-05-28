@@ -1,14 +1,12 @@
-import { fileURLToPath } from "node:url";
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
 import { createNodeServer } from "zelavis/node";
 
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
-  const dataDirectory = fileURLToPath(new URL("./.data", import.meta.url));
 
   const zelavis = new Zelavis({
-    adapter: nodeAdapter({ dataDirectory }),
+    adapter: nodeAdapter(),
     onError: ({ error }) => ({
       status: 400,
       body: { error: error instanceof Error ? error.message : "Unknown error" },

@@ -1,12 +1,10 @@
-import { fileURLToPath } from "node:url";
 import { Zelavis } from "zelavis";
 import { bunAdapter } from "zelavis/adapters/bun";
 
 const port = Number(Bun.env.PORT ?? 3000);
-const dataDirectory = fileURLToPath(new URL("./.data", import.meta.url));
 
 const zelavis = new Zelavis({
-  adapter: bunAdapter({ dataDirectory }),
+  adapter: bunAdapter(),
   onError: ({ error }) => ({
     status: 400,
     body: { error: error instanceof Error ? error.message : "Unknown error" },
@@ -40,8 +38,4 @@ server = Bun.serve({
 });
 
 console.log("database driver", runtime.services.database.service.driver.name);
-console.log(
-  "database file",
-  fileURLToPath(new URL("./.data/zelavis.sqlite", import.meta.url)),
-);
 console.log(`zelavis Bun example listening on http://localhost:${port}`);
