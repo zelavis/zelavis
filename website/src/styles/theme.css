@@ -1,0 +1,31 @@
+/* Dark mode (default) — orange accent, neutral-dark grays */
+:root {
+	--sl-color-accent-low: hsl(26, 60%, 18%);
+	--sl-color-accent: hsl(26, 100%, 58%);
+	--sl-color-accent-high: hsl(26, 100%, 83%);
+
+	/* Neutral near-black grays (strip the blue tint from Starlight's default) */
+	--sl-color-gray-1: hsl(0, 0%, 93%);
+	--sl-color-gray-2: hsl(0, 0%, 76%);
+	--sl-color-gray-3: hsl(0, 0%, 55%);
+	--sl-color-gray-4: hsl(0, 0%, 35%);
+	--sl-color-gray-5: hsl(0, 0%, 22%);
+	--sl-color-gray-6: hsl(0, 0%, 15%);
+	--sl-color-black: hsl(0, 0%, 9%);
+}
+
+/* Light mode overrides */
+:root[data-theme='light'] {
+	--sl-color-accent-high: hsl(26, 85%, 25%);
+	--sl-color-accent: hsl(26, 100%, 50%);
+	--sl-color-accent-low: hsl(26, 100%, 92%);
+
+	--sl-color-gray-1: hsl(0, 0%, 15%);
+	--sl-color-gray-2: hsl(0, 0%, 22%);
+	--sl-color-gray-3: hsl(0, 0%, 36%);
+	--sl-color-gray-4: hsl(0, 0%, 55%);
+	--sl-color-gray-5: hsl(0, 0%, 76%);
+	--sl-color-gray-6: hsl(0, 0%, 93%);
+	--sl-color-gray-7: hsl(0, 0%, 97%);
+	--sl-color-black: hsl(0, 0%, 100%);
+}
