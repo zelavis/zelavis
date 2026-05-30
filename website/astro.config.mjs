@@ -8,9 +8,9 @@ export default defineConfig({
   integrations: [
       starlight({
           title: 'Zelavis Docs',
+          customCss: ['./src/styles/theme.css'],
           description: 'Composable backend platform for self-hostable app foundations.',
           favicon: '/favicon.svg',
-          expressiveCode: false,
           head: [
               { tag: 'meta', attrs: { property: 'og:image', content: 'https://www.zelavis.com/brand/zelavis-social-card.png' } },
               { tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },
@@ -24,6 +24,10 @@ export default defineConfig({
               {
                   label: 'Getting Started',
                   items: [{ autogenerate: { directory: 'getting-started' } }],
+              },
+              {
+                  label: 'API',
+                  items: [{ autogenerate: { directory: 'api' } }],
               },
               {
                   label: 'Architecture',
