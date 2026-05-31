@@ -1,13 +1,27 @@
 import { cancel, intro, isCancel, log, outro, select, spinner } from "@clack/prompts";
 import { bootstrapNextjs, type NextjsRouter } from "./nextjs.js";
 import { bootstrapReactRouter, type BootstrapAdapter } from "./react-router.js";
+import {
+  formatActivationResult,
+  formatRuntimeServiceList,
+  listRuntimeServices,
+  registerRuntimeService,
+  updateRuntimeService,
+  type RuntimeServiceSource,
+} from "./services.js";
 
 interface ParsedArgs {
   command?: string;
   target?: string;
+  name?: string;
   adapter?: BootstrapAdapter;
   router?: NextjsRouter;
   cwd?: string;
+  url?: string;
+  specifier?: string;
+  source?: RuntimeServiceSource;
+  order?: number;
+  install: boolean;
   yes: boolean;
   help: boolean;
 }
@@ -36,14 +50,28 @@ function printHelp() {
 Usage:
   zelavis bootstrap react-router [--adapter <adapter>] [--yes] [--cwd <path>]
   zelavis bootstrap nextjs [--router app|pages] [--adapter <adapter>] [--yes] [--cwd <path>]
+  zelavis services list [--url <url>]
+  zelavis services install <name> [--url <url>]
+  zelavis services disable <name> [--url <url>]
+  zelavis services register --specifier <specifier> [--name <name>] [--install] [--url <url>]
 
 Commands:
   bootstrap react-router   Add a Zelavis catch-all endpoint to a React Router 7 app.
   bootstrap nextjs         Add a Zelavis catch-all endpoint to a Next.js app.
+  services list            List runtime service registry entries.
+  services install         Mark a registered service as installed.
+  services disable         Mark an installed service as available.
+  services register        Register an ESM service specifier.
 
 Options:
   --adapter <adapter>      node, bun, cloudflare, vercel, or netlify.
   --router <router>        Next.js router target: app or pages.
+  --url <url>              Zelavis root URL. Defaults to http://localhost:3000/zelavis.
+  --specifier <specifier>  ESM specifier for services register.
+  --name <name>            Optional service name override for services register.
+  --source <source>        Service source: official or community.
+  --order <number>         Service display order.
+  --install                Register the service as installed instead of available.
   --yes, -y               Use defaults and skip prompts.
   --cwd <path>            Project directory. Defaults to the current directory.
   --help, -h              Show this help message.
@@ -51,7 +79,7 @@ Options:
 }
 
 function parseArgs(args: readonly string[]): ParsedArgs {
-  const parsed: ParsedArgs = { yes: false, help: false };
+  const parsed: ParsedArgs = { install: false, yes: false, help: false };
   const positional: string[] = [];
 
   for (let index = 0; index < args.length; index += 1) {
@@ -100,6 +128,99 @@ function parseArgs(args: readonly string[]): ParsedArgs {
       continue;
     }
 
+    if (arg === "--url") {
+      const value = args[index + 1];
+      if (!value) {
+        throw new Error("--url requires a URL.");
+      }
+      parsed.url = value;
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--url=")) {
+      parsed.url = arg.slice("--url=".length);
+      continue;
+    }
+
+    if (arg === "--specifier") {
+      const value = args[index + 1];
+      if (!value) {
+        throw new Error("--specifier requires a value.");
+      }
+      parsed.specifier = value;
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--specifier=")) {
+      parsed.specifier = arg.slice("--specifier=".length);
+      continue;
+    }
+
+    if (arg === "--name") {
+      const value = args[index + 1];
+      if (!value) {
+        throw new Error("--name requires a value.");
+      }
+      parsed.name = value;
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--name=")) {
+      parsed.name = arg.slice("--name=".length);
+      continue;
+    }
+
+    if (arg === "--source") {
+      const value = args[index + 1];
+      if (value !== "official" && value !== "community") {
+        throw new Error(
+          `Unsupported source "${value ?? ""}". Expected "official" or "community".`,
+        );
+      }
+      parsed.source = value;
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--source=")) {
+      const value = arg.slice("--source=".length);
+      if (value !== "official" && value !== "community") {
+        throw new Error(
+          `Unsupported source "${value}". Expected "official" or "community".`,
+        );
+      }
+      parsed.source = value;
+      continue;
+    }
+
+    if (arg === "--order") {
+      const value = args[index + 1];
+      const order = Number(value);
+      if (!Number.isInteger(order) || order < 0) {
+        throw new Error("--order requires a non-negative integer.");
+      }
+      parsed.order = order;
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith("--order=")) {
+      const order = Number(arg.slice("--order=".length));
+      if (!Number.isInteger(order) || order < 0) {
+        throw new Error("--order requires a non-negative integer.");
+      }
+      parsed.order = order;
+      continue;
+    }
+
+    if (arg === "--install") {
+      parsed.install = true;
+      continue;
+    }
+
     if (arg === "--router") {
       const value = args[index + 1];
       if (value !== "app" && value !== "pages") {
@@ -137,6 +258,7 @@ function parseArgs(args: readonly string[]): ParsedArgs {
 
   parsed.command = positional[0];
   parsed.target = positional[1];
+  parsed.name = parsed.name ?? positional[2];
   return parsed;
 }
 
@@ -238,6 +360,11 @@ export async function runCli(args: readonly string[] = process.argv.slice(2)) {
     return;
   }
 
+  if (parsed.command === "services") {
+    await runServicesCommand(parsed);
+    return;
+  }
+
   if (
     parsed.command !== "bootstrap" ||
     (parsed.target !== "react-router" && parsed.target !== "nextjs")
@@ -305,6 +432,85 @@ export async function runCli(args: readonly string[] = process.argv.slice(2)) {
     outro(`Zelavis is mounted at ${result.mountPath}.`);
   } catch (error) {
     task.stop("Bootstrap failed");
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+}
+
+async function runServicesCommand(parsed: ParsedArgs) {
+  try {
+    if (parsed.target === "list") {
+      const services = await listRuntimeServices({ url: parsed.url });
+      console.log(formatRuntimeServiceList(services));
+      return;
+    }
+
+    if (parsed.target === "install" || parsed.target === "enable") {
+      if (!parsed.name) {
+        throw new Error("services install requires a service name.");
+      }
+
+      const result = await updateRuntimeService(
+        parsed.name,
+        { status: "installed" },
+        { url: parsed.url },
+      );
+      const activation = formatActivationResult(result.activation);
+      console.log(`Installed ${parsed.name}.`);
+      if (activation) {
+        console.log(activation);
+      }
+      return;
+    }
+
+    if (parsed.target === "disable" || parsed.target === "uninstall") {
+      if (!parsed.name) {
+        throw new Error("services disable requires a service name.");
+      }
+
+      const result = await updateRuntimeService(
+        parsed.name,
+        { status: "available" },
+        { url: parsed.url },
+      );
+      const activation = formatActivationResult(result.activation);
+      console.log(`Disabled ${parsed.name}.`);
+      if (activation) {
+        console.log(activation);
+      }
+      return;
+    }
+
+    if (parsed.target === "register") {
+      if (!parsed.specifier) {
+        throw new Error("services register requires --specifier.");
+      }
+
+      const result = await registerRuntimeService(
+        {
+          specifier: parsed.specifier,
+          name: parsed.name,
+          source: parsed.source,
+          order: parsed.order,
+          status: parsed.install ? "installed" : "available",
+        },
+        { url: parsed.url },
+      );
+      const service = result.services.find(
+        (entry) => entry.specifier === parsed.specifier || entry.name === parsed.name,
+      );
+      const activation = formatActivationResult(result.activation);
+      console.log(`Registered ${service?.name ?? parsed.specifier}.`);
+      if (activation) {
+        console.log(activation);
+      }
+      return;
+    }
+
+    throw new Error(
+      `Unknown services command "${parsed.target ?? ""}". Expected list, register, install, or disable.`,
+    );
+  } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
   }

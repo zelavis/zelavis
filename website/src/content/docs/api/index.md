@@ -7,11 +7,7 @@ The `Zelavis` class is the main entry point. It holds configuration, lazily init
 ```ts
 import { Zelavis } from 'zelavis';
 
-const zv = new Zelavis({ adapter });
-
-export function getZelavis() {
-  return zv;
-}
+export const zv = new Zelavis({ adapter });
 ```
 
 ## Constructor
@@ -50,18 +46,18 @@ Handles an incoming request and returns a standard `Response`. This is the metho
 ```ts
 // React Router resource route
 export async function loader({ request }: LoaderFunctionArgs) {
-  return getZelavis().fetch(request);
+  return zv.fetch(request);
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  return getZelavis().fetch(request);
+  return zv.fetch(request);
 }
 ```
 
 ### `dispatch`
 
 ```ts
-zelavis.dispatch(request: Request, context?: ZelavisServerExecutionContext): Promise<ZelavisDispatchResult>
+zv.dispatch(request: Request, context?: ZelavisServerExecutionContext): Promise<ZelavisDispatchResult>
 ```
 
 Lower-level alternative to `fetch`. Returns a structured result object instead of a `Response`, useful when you need to inspect the matched route or response metadata before sending.
@@ -69,7 +65,7 @@ Lower-level alternative to `fetch`. Returns a structured result object instead o
 ### `plain`
 
 ```ts
-zelavis.plain(request): Promise<ZelavisPlainResult>
+zv.plain(request): Promise<ZelavisPlainResult>
 ```
 
 Handles a plain (non-fetch-API) request object. Used by adapters that wrap non-standard request shapes before passing them to the runtime.

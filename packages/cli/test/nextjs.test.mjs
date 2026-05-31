@@ -35,13 +35,14 @@ test("bootstrapNextjs creates App Router catch-all route", async () => {
       "utf8",
     );
     assert.match(runtime, /vercelAdapter\(\)/);
+    assert.match(runtime, /export const zv = new Zelavis/);
 
     const route = await readFile(
       join(directory, "app/zelavis/[[...path]]/route.ts"),
       "utf8",
     );
     assert.match(route, /export const runtime = "nodejs"/);
-    assert.match(route, /getZelavis\(\)\.fetch\(request\)/);
+    assert.match(route, /zv\.fetch\(request\)/);
     assert.match(route, /export const DELETE = handle/);
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -74,7 +75,7 @@ test("bootstrapNextjs creates Pages Router API route and rewrite config", async 
       join(directory, "pages/api/zelavis/[[...path]].ts"),
       "utf8",
     );
-    assert.match(apiRoute, /nextjsPagesRouterHandler\(getZelavis\(\)/);
+    assert.match(apiRoute, /nextjsPagesRouterHandler\(zv/);
     assert.match(apiRoute, /bodyParser: false/);
 
     const nextConfig = await readFile(join(directory, "next.config.ts"), "utf8");

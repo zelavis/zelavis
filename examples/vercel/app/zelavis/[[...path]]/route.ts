@@ -1,10 +1,10 @@
-import { getZelavis } from "@/lib/zelavis";
+import { zv } from "@/lib/zelavis";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 async function handle(request: Request): Promise<Response> {
-  return getZelavis().fetch(request);
+  return zv.fetch(request);
 }
 
 export const GET = handle;

@@ -49,12 +49,13 @@ export default [
       "utf8",
     );
     assert.match(runtime, /nodeAdapter\(\)/);
+    assert.match(runtime, /export const zv = new Zelavis/);
 
     const route = await readFile(
       join(directory, "app/routes/zelavis.$.ts"),
       "utf8",
     );
-    assert.match(route, /getZelavis\(\)\.fetch\(request\)/);
+    assert.match(route, /zv\.fetch\(request\)/);
 
     const routeConfig = await readFile(join(directory, "app/routes.ts"), "utf8");
     assert.match(
