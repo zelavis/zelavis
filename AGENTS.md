@@ -50,7 +50,8 @@ Each package should remain independently useful and focused.
 
 ## Current Important Runtime Facts
 
-- The main public runtime entry point is `zelavis()`, not `zelavisServer()`.
+- The main public runtime entry point is `new Zelavis(...)`; `zelavis()` is an internal/low-level composition function.
+- Public docs and examples should name the local `Zelavis` instance `zv`.
 - The default dashboard root path is `/zelavis`.
 - The runtime now supports a dashboard dev-server mode via `coreServices.dashboard.devServerUrl` or `ZELAVIS_UI_DEV_SERVER`.
 - The main local dashboard workflow is `pnpm run ui:dev`.

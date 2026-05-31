@@ -3,7 +3,7 @@ import { bunAdapter } from "zelavis/adapters/bun";
 
 const port = Number(Bun.env.PORT ?? 3000);
 
-const zelavis = new Zelavis({
+const zv = new Zelavis({
   adapter: bunAdapter(),
   onError: ({ error }) => ({
     status: 400,
@@ -11,7 +11,7 @@ const zelavis = new Zelavis({
   }),
 });
 
-const runtime = await zelavis.runtime();
+const runtime = await zv.runtime();
 
 let server: ReturnType<typeof Bun.serve>;
 server = Bun.serve({

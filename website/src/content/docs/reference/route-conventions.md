@@ -30,7 +30,7 @@ With the default runtime settings:
 With:
 
 ```ts
-new Zelavis({
+const zv = new Zelavis({
   rootPath: "/admin",
   api: {
     prefix: "/api",
@@ -39,7 +39,7 @@ new Zelavis({
 });
 ```
 
-That example uses the preferred high-level entrypoint. Use the lower-level `zelavis(...)` function only when you need internal runtime composition controls in addition to route customization.
+That example uses the preferred high-level entrypoint and the standard `zv` local instance name.
 
 the mounted paths become:
 

@@ -7,10 +7,10 @@ It exists so the database core can stay runtime-neutral while Bun applications g
 ## Usage
 
 ```ts
-import { zelavis } from "zelavis";
+import { Zelavis } from "zelavis";
 import { createBunSqliteDatabaseDriver } from "@zelavis/db-bun-sqlite";
 
-const runtime = await zelavis({
+const zv = new Zelavis({
   coreServices: {
     database: {
       driver: createBunSqliteDatabaseDriver({

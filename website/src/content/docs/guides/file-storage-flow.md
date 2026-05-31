@@ -52,10 +52,10 @@ Use the database schema helpers when the field is meant to store a file referenc
 import { Zelavis } from "zelavis";
 import { imageFileSchema } from "@zelavis/db";
 
-const zelavis = new Zelavis();
+const zv = new Zelavis();
 
-await zelavis.db.documents.createCollection({ name: "posts" });
-await zelavis.db.schemas.register({
+await zv.db.documents.createCollection({ name: "posts" });
+await zv.db.schemas.register({
   collection: "posts",
   version: 1,
   activate: true,
@@ -86,7 +86,7 @@ Other helpers are available too:
 After copying the reference JSON from the storage panel, insert it directly into a document:
 
 ```ts
-await zelavis.db.documents.insert({
+await zv.db.documents.insert({
   collection: "posts",
   data: {
     title: "Spring launch",

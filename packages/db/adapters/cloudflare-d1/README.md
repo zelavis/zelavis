@@ -4,11 +4,11 @@
 
 ```ts
 import { createCloudflareD1DatabaseDriver } from "@zelavis/db-cloudflare-d1";
-import { zelavis } from "zelavis";
+import { Zelavis } from "zelavis";
 
 export default {
   async fetch(request, env, ctx) {
-    const runtime = await zelavis({
+    const zv = new Zelavis({
       coreServices: {
         database: {
           driver: createCloudflareD1DatabaseDriver({
@@ -19,7 +19,7 @@ export default {
       },
     });
 
-    return runtime.fetch(request, {
+    return zv.fetch(request, {
       platform: {
         cloudflare: {
           env,

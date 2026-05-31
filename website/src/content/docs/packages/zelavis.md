@@ -22,7 +22,7 @@ Today, that mostly means:
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
 
-const zelavis = new Zelavis({
+const zv = new Zelavis({
   adapter: nodeAdapter(),
 });
 ```
@@ -34,8 +34,7 @@ Treat this as the normal public API.
 Prefer these layers in order:
 
 1. `new Zelavis(...)` for application/runtime work
-2. `await zelavis(...)` when you intentionally need advanced runtime composition
-3. scoped packages like `@zelavis/server` for primitive-level infrastructure
+2. scoped packages like `@zelavis/server` for primitive-level infrastructure
 
 The lower-level `zelavis()` function still exists, but it now intentionally owns the internal runtime controls such as:
 
@@ -44,7 +43,7 @@ The lower-level `zelavis()` function still exists, but it now intentionally owns
 
 The `Zelavis` class is the product-facing entrypoint. Built-in services are part of the runtime by default; lower-level route mounting knobs stay on `zelavis()`.
 
-For the focused lower-level story, see [Advanced Runtime Composition](../guides/advanced-runtime-composition.md).
+Examples use `zv` as the short local name for a `Zelavis` runtime instance.
 
 ## Default behavior
 
@@ -55,14 +54,14 @@ The dashboard stays mounted under the configured root path, while API services s
 Application code can access core service APIs through the runtime instance:
 
 ```ts
-await zelavis.db.documents.createCollection({ name: "posts" });
+await zv.db.documents.createCollection({ name: "posts" });
 
-const doc = await zelavis.db.documents.insert({
+const doc = await zv.db.documents.insert({
   collection: "posts",
   data: { title: "Hello" },
 });
 
-const account = await zelavis.auth.accounts.create({
+const account = await zv.auth.accounts.create({
   id: "owner",
   email: "owner@example.com",
 });
@@ -76,7 +75,7 @@ Use scoped packages directly when you need lower-level control over primitives, 
 - `@zelavis/db`
 - `@zelavis/auth`
 
-The lower-level `zelavis()` function still exists for direct runtime composition, but the main public application-facing entry point is the `Zelavis` class plus an environment adapter.
+The lower-level `zelavis()` function still exists for internal runtime composition, but the main public application-facing entry point is the `Zelavis` class plus an environment adapter.
 
 Available environment adapters:
 
@@ -86,7 +85,7 @@ Available environment adapters:
 - `zelavis/adapters/netlify`
 - `zelavis/adapters/vercel`
 
-Framework utilities (small wrappers around `zelavis.fetch`) live at:
+Framework utilities (small wrappers around `zv.fetch`) live at:
 
 - `zelavis/express`, `zelavis/hono`, `zelavis/fastify`, `zelavis/h3`, `zelavis/elysia`
 - `zelavis/nextjs/pages` (Next.js Pages Router)

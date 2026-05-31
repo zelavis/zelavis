@@ -4,7 +4,7 @@ Cloudflare Workers are fetch-native: they receive a standard `Request` and retur
 
 ## What it demonstrates
 
-- Cloudflare Workers call `zelavis.fetch(request)` directly
+- Cloudflare Workers call `zv.fetch(request)` directly
 - `zelavisCloudflare({ env })` infers the standard Cloudflare bindings for D1, KV, and R2
 - the worker can still keep its own host routes like `/hello`
 - Zelavis stays mounted at `/zelavis/*`

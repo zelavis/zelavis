@@ -5,7 +5,7 @@ import { elysiaPlugin } from "zelavis/elysia";
 
 const port = Number(process.env.PORT ?? 3000);
 
-const zelavis = new Zelavis({
+const zv = new Zelavis({
   adapter: bunAdapter(),
   onError: ({ error }) => ({
     status: 400,
@@ -15,7 +15,7 @@ const zelavis = new Zelavis({
 
 new Elysia()
   .get("/hello", "Hello Elysia")
-  .use(await elysiaPlugin(zelavis))
+  .use(await elysiaPlugin(zv))
   .listen(port);
 
 console.log(`zelavis Elysia example listening on http://localhost:${port}`);

@@ -2,7 +2,7 @@
 title: Database
 ---
 
-Zelavis includes a database core service with documents, events, schemas, projections, and time-series. Application code should usually access it through the `Zelavis` runtime as `zelavis.db`.
+Zelavis includes a database core service with documents, events, schemas, projections, and time-series. Application code should usually access it through the `Zelavis` runtime as `zv.db`.
 
 ## Setup
 
@@ -11,45 +11,45 @@ The database core service is enabled by default:
 ```ts
 import { Zelavis } from 'zelavis';
 
-const zelavis = new Zelavis({
+const zv = new Zelavis({
   adapter,
 });
 ```
 
-## `zelavis.db`
+## `zv.db`
 
 ```ts
 import { Zelavis } from 'zelavis';
 
-const zelavis = new Zelavis();
+const zv = new Zelavis();
 
-await zelavis.db.documents.createCollection({ name: 'posts' });
+await zv.db.documents.createCollection({ name: 'posts' });
 
-const doc = await zelavis.db.documents.insert({
+const doc = await zv.db.documents.insert({
   collection: 'posts',
   data: { title: 'Hello', published: false },
 });
 
-const found = await zelavis.db.documents.findById({
+const found = await zv.db.documents.findById({
   collection: 'posts',
   id: doc.id,
 });
 
-await zelavis.db.documents.update({
+await zv.db.documents.update({
   collection: 'posts',
   id: doc.id,
   data: { published: true },
   mode: 'merge', // or 'replace'
 });
 
-await zelavis.db.documents.delete({ collection: 'posts', id: doc.id });
+await zv.db.documents.delete({ collection: 'posts', id: doc.id });
 ```
 
-`zelavis.db` resolves to the same database API instance mounted by the Zelavis runtime, so dashboard routes, services, and application code share one database service.
+`zv.db` resolves to the same database API instance mounted by the Zelavis runtime, so dashboard routes, services, and application code share one database service.
 
 ## API surface
 
-`zelavis.db` exposes scoped APIs for each database capability.
+`zv.db` exposes scoped APIs for each database capability.
 
 | Property | Type | Description |
 |---|---|---|
@@ -66,52 +66,52 @@ await zelavis.db.documents.delete({ collection: 'posts', id: doc.id });
 ## `documents`
 
 ```ts
-zelavis.db.documents.createCollection(input): Promise<DatabaseCollection>
-zelavis.db.documents.listCollections(input?): Promise<DatabaseCollection[]>
-zelavis.db.documents.collectionExists(input): Promise<boolean>
-zelavis.db.documents.insert<TData>(input): Promise<DatabaseDocument<TData>>
-zelavis.db.documents.findById(input): Promise<DatabaseDocument | null>
-zelavis.db.documents.findMany(input): Promise<DatabaseDocument[]>
-zelavis.db.documents.update<TData>(input): Promise<DatabaseDocument<TData>>
-zelavis.db.documents.delete(input): Promise<boolean>
+zv.db.documents.createCollection(input): Promise<DatabaseCollection>
+zv.db.documents.listCollections(input?): Promise<DatabaseCollection[]>
+zv.db.documents.collectionExists(input): Promise<boolean>
+zv.db.documents.insert<TData>(input): Promise<DatabaseDocument<TData>>
+zv.db.documents.findById(input): Promise<DatabaseDocument | null>
+zv.db.documents.findMany(input): Promise<DatabaseDocument[]>
+zv.db.documents.update<TData>(input): Promise<DatabaseDocument<TData>>
+zv.db.documents.delete(input): Promise<boolean>
 ```
 
 Documents are JSON objects stored in named collections. Each document gets an auto-generated `id` unless one is provided.
 
 ```ts
-await zelavis.db.documents.createCollection({ name: 'posts' });
+await zv.db.documents.createCollection({ name: 'posts' });
 
-const doc = await zelavis.db.documents.insert({
+const doc = await zv.db.documents.insert({
   collection: 'posts',
   data: { title: 'Hello', published: false },
 });
 
-const found = await zelavis.db.documents.findById({
+const found = await zv.db.documents.findById({
   collection: 'posts',
   id: doc.id,
 });
 
-await zelavis.db.documents.update({
+await zv.db.documents.update({
   collection: 'posts',
   id: doc.id,
   data: { published: true },
   mode: 'merge', // or 'replace'
 });
 
-await zelavis.db.documents.delete({ collection: 'posts', id: doc.id });
+await zv.db.documents.delete({ collection: 'posts', id: doc.id });
 ```
 
 ## `events`
 
 ```ts
-zelavis.db.events.append<TPayload>(input): Promise<DatabaseEvent<TPayload>>
-zelavis.db.events.read(input?): Promise<DatabaseEvent[]>
+zv.db.events.append<TPayload>(input): Promise<DatabaseEvent<TPayload>>
+zv.db.events.read(input?): Promise<DatabaseEvent[]>
 ```
 
 The event log is append-only. Events are the source of truth for projections and time-series.
 
 ```ts
-await zelavis.db.events.append({
+await zv.db.events.append({
   type: 'post.published',
   payload: { postId: '123', at: Date.now() },
 });
@@ -120,19 +120,19 @@ await zelavis.db.events.append({
 ## `schemas`
 
 ```ts
-zelavis.db.schemas.register(schema): Promise<DatabaseCollectionSchema>
-zelavis.db.schemas.registerMany(schemas): Promise<void>
-zelavis.db.schemas.listCollections(): DatabaseCollectionSchemaSummary[]
-zelavis.db.schemas.listVersions(collection): DatabaseCollectionSchema[]
-zelavis.db.schemas.getActiveSchema(collection): DatabaseCollectionSchema | null
-zelavis.db.schemas.activate(collection, version): Promise<DatabaseCollectionSchema>
-zelavis.db.schemas.validate(input): ValidateDatabaseDocumentResult
+zv.db.schemas.register(schema): Promise<DatabaseCollectionSchema>
+zv.db.schemas.registerMany(schemas): Promise<void>
+zv.db.schemas.listCollections(): DatabaseCollectionSchemaSummary[]
+zv.db.schemas.listVersions(collection): DatabaseCollectionSchema[]
+zv.db.schemas.getActiveSchema(collection): DatabaseCollectionSchema | null
+zv.db.schemas.activate(collection, version): Promise<DatabaseCollectionSchema>
+zv.db.schemas.validate(input): ValidateDatabaseDocumentResult
 ```
 
 Schemas describe the shape of documents in a collection. Multiple versions can coexist; one version is active at a time.
 
 ```ts
-await zelavis.db.schemas.register({
+await zv.db.schemas.register({
   collection: 'posts',
   version: 1,
   activate: true,
@@ -150,19 +150,19 @@ await zelavis.db.schemas.register({
 ## `projections`
 
 ```ts
-zelavis.db.projections.register(definition): Promise<void>
-zelavis.db.projections.list(): Promise<DatabaseProjectionSummary[]>
-zelavis.db.projections.rebuild(input?): Promise<DatabaseProjectionRebuildResult>
+zv.db.projections.register(definition): Promise<void>
+zv.db.projections.list(): Promise<DatabaseProjectionSummary[]>
+zv.db.projections.rebuild(input?): Promise<DatabaseProjectionRebuildResult>
 ```
 
 Projections consume events and maintain derived state. Rebuilding replays the event log from the beginning.
 
 ```ts
-await zelavis.db.projections.register({
+await zv.db.projections.register({
   name: 'published-posts',
   source: { eventTypes: ['post.published'] },
   apply: async (event) => {
-    await zelavis.db.documents.update({
+    await zv.db.documents.update({
       collection: 'posts',
       id: event.payload.postId,
       data: { published: true },
@@ -175,15 +175,15 @@ await zelavis.db.projections.register({
 ## `timeseries`
 
 ```ts
-zelavis.db.timeseries.define(definition): Promise<void>
-zelavis.db.timeseries.list(): Promise<DatabaseTimeSeriesSummary[]>
-zelavis.db.timeseries.get(name): DatabaseTimeSeriesHandle
+zv.db.timeseries.define(definition): Promise<void>
+zv.db.timeseries.list(): Promise<DatabaseTimeSeriesSummary[]>
+zv.db.timeseries.get(name): DatabaseTimeSeriesHandle
 ```
 
 Time-series are defined by mapping events to data points. Once defined, use the handle returned by `get` to query ranges or aggregates.
 
 ```ts
-await zelavis.db.timeseries.define({
+await zv.db.timeseries.define({
   name: 'publish-rate',
   source: { eventTypes: ['post.published'] },
   map: (event) => ({
@@ -192,7 +192,7 @@ await zelavis.db.timeseries.define({
   }),
 });
 
-const handle = await zelavis.db.timeseries.get('publish-rate');
+const handle = await zv.db.timeseries.get('publish-rate');
 
 const points = await handle.range({ order: 'desc', limit: 50 });
 

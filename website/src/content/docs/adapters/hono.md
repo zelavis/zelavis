@@ -13,9 +13,9 @@ import { nodeAdapter } from "zelavis/adapters/node";
 import { honoMiddleware } from "zelavis/hono";
 
 const app = new Hono();
-const zelavis = new Zelavis({ adapter: nodeAdapter() });
+const zv = new Zelavis({ adapter: nodeAdapter() });
 
-app.use(honoMiddleware(zelavis));
+app.use(honoMiddleware(zv));
 
 serve({ fetch: app.fetch, port: 3000 });
 ```
@@ -30,9 +30,9 @@ import { honoMiddleware } from "zelavis/hono";
 
 export default {
   fetch(request: Request, env) {
-    const zelavis = new Zelavis({ adapter: cloudflareAdapter({ env }) });
+    const zv = new Zelavis({ adapter: cloudflareAdapter({ env }) });
     const app = new Hono();
-    app.use(honoMiddleware(zelavis));
+    app.use(honoMiddleware(zv));
     return app.fetch(request);
   },
 };
@@ -41,7 +41,7 @@ export default {
 ## API
 
 ```ts
-honoMiddleware(zelavis: Zelavis): MiddlewareHandler
+honoMiddleware(zv: Zelavis): MiddlewareHandler
 ```
 
 ## Good fit

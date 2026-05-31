@@ -9,7 +9,7 @@ async function main(): Promise<void> {
 
   app.get("/hello", () => "Hello h3");
 
-  const zelavis = new Zelavis({
+  const zv = new Zelavis({
     adapter: nodeAdapter(),
     onError: ({ error }) => ({
       status: 400,
@@ -17,7 +17,7 @@ async function main(): Promise<void> {
     }),
   });
 
-  app.use("/**", h3Handler(zelavis));
+  app.use("/**", h3Handler(zv));
 
   serve(app, {
     port,

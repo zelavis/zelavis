@@ -23,4 +23,4 @@ Then open:
 
 ## Key file
 
-- `index.ts` creates an `H3` app, constructs `new Zelavis({ adapter: nodeAdapter() })`, and mounts the Zelavis runtime via `app.use("/**", h3Handler(zelavis))` from `zelavis/h3`
+- `index.ts` creates an `H3` app, constructs `new Zelavis({ adapter: nodeAdapter() })`, and mounts the Zelavis runtime via `app.use("/**", h3Handler(zv))` from `zelavis/h3`

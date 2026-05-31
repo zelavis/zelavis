@@ -7,7 +7,7 @@ The `Zelavis` class is the main entry point. It holds configuration, lazily init
 ```ts
 import { Zelavis } from 'zelavis';
 
-export const zelavis = new Zelavis({ adapter });
+export const zv = new Zelavis({ adapter });
 ```
 
 ## Constructor
@@ -38,7 +38,7 @@ new Zelavis(options?: ZelavisOptions)
 ### `fetch`
 
 ```ts
-zelavis.fetch(request: Request, context?: ZelavisServerExecutionContext): Promise<Response>
+zv.fetch(request: Request, context?: ZelavisServerExecutionContext): Promise<Response>
 ```
 
 Handles an incoming request and returns a standard `Response`. This is the method called by framework route handlers and edge runtimes that speak the fetch API.
@@ -46,18 +46,18 @@ Handles an incoming request and returns a standard `Response`. This is the metho
 ```ts
 // React Router resource route
 export async function loader({ request }: LoaderFunctionArgs) {
-  return zelavis.fetch(request);
+  return zv.fetch(request);
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  return zelavis.fetch(request);
+  return zv.fetch(request);
 }
 ```
 
 ### `dispatch`
 
 ```ts
-zelavis.dispatch(request: Request, context?: ZelavisServerExecutionContext): Promise<ZelavisDispatchResult>
+zv.dispatch(request: Request, context?: ZelavisServerExecutionContext): Promise<ZelavisDispatchResult>
 ```
 
 Lower-level alternative to `fetch`. Returns a structured result object instead of a `Response`, useful when you need to inspect the matched route or response metadata before sending.
@@ -65,7 +65,7 @@ Lower-level alternative to `fetch`. Returns a structured result object instead o
 ### `plain`
 
 ```ts
-zelavis.plain(request): Promise<ZelavisPlainResult>
+zv.plain(request): Promise<ZelavisPlainResult>
 ```
 
 Handles a plain (non-fetch-API) request object. Used by adapters that wrap non-standard request shapes before passing them to the runtime.
@@ -73,7 +73,7 @@ Handles a plain (non-fetch-API) request object. Used by adapters that wrap non-s
 ### `runtime`
 
 ```ts
-zelavis.runtime(): Promise<ZelavisServerRuntime>
+zv.runtime(): Promise<ZelavisServerRuntime>
 ```
 
 Returns the initialized server runtime. The runtime is created lazily on the first call and cached for subsequent requests. Calling this manually is rarely needed — `fetch` and `dispatch` call it internally.
@@ -81,7 +81,7 @@ Returns the initialized server runtime. The runtime is created lazily on the fir
 ## `platform`
 
 ```ts
-zelavis.platform: ZelavisPlatformContext
+zv.platform: ZelavisPlatformContext
 ```
 
 Read-only accessor for the resolved platform context, available after the first call to `runtime()`. Contains the resources and metadata provided by the adapter.

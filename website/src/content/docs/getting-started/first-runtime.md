@@ -10,17 +10,17 @@ import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
 import { createNodeServer } from "zelavis/node";
 
-const zelavis = new Zelavis({
+const zv = new Zelavis({
   adapter: nodeAdapter(),
 });
-const server = await createNodeServer(zelavis);
+const server = await createNodeServer(zv);
 
 server.listen(3000);
 ```
 
-This is the preferred application-facing shape. Reach for `await zelavis(...)` only when you deliberately want lower-level runtime composition.
+This is the preferred application-facing shape. Examples use `zv` as the short local name for a `Zelavis` runtime instance.
 
-When you do want that lower-level path, jump to [Advanced Runtime Composition](../guides/advanced-runtime-composition.md).
+When you need direct access to the initialized runtime object, jump to [Advanced Runtime Access](../guides/advanced-runtime-composition.md).
 
 ## What you get by default
 
@@ -69,13 +69,13 @@ Root path changes are stored as pending runtime settings and require a restart b
 
 ## Use the fetch-style runtime directly
 
-When the host already speaks the Web `Request` → `Response` model (Cloudflare Workers, Bun, Next.js App Router, etc.), no framework helper is needed — call `zelavis.fetch(request)` directly:
+When the host already speaks the Web `Request` → `Response` model (Cloudflare Workers, Bun, Next.js App Router, etc.), no framework helper is needed — call `zv.fetch(request)` directly:
 
 ```ts
 import { Zelavis } from "zelavis";
 
-const zelavis = new Zelavis();
-const response = await zelavis.fetch(
+const zv = new Zelavis();
+const response = await zv.fetch(
   new Request("http://localhost/zelavis/api/v1/runtime/config"),
 );
 ```

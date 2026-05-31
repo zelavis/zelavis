@@ -11,15 +11,15 @@ import { Zelavis } from "zelavis";
 import { bunAdapter } from "zelavis/adapters/bun";
 import { elysiaPlugin } from "zelavis/elysia";
 
-const zelavis = new Zelavis({ adapter: bunAdapter() });
+const zv = new Zelavis({ adapter: bunAdapter() });
 
-new Elysia().use(await elysiaPlugin(zelavis)).listen(3000);
+new Elysia().use(await elysiaPlugin(zv)).listen(3000);
 ```
 
 ## API
 
 ```ts
-elysiaPlugin(zelavis: Zelavis): Promise<Elysia service instance>
+elysiaPlugin(zv: Zelavis): Promise<Elysia service instance>
 ```
 
 Returns a promise because the service binds to a resolved runtime.

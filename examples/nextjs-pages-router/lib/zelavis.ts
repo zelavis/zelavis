@@ -1,6 +1,6 @@
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
 
-export const zelavis = new Zelavis({
+export const zv = new Zelavis({
   adapter: nodeAdapter(),
 });

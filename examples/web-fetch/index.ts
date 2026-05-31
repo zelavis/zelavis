@@ -4,7 +4,7 @@ import { Zelavis } from "zelavis";
 // This module exports a standard fetch handler for Web-native hosts,
 // but it does not start a standalone local server by itself.
 
-const zelavis = new Zelavis();
+const zv = new Zelavis();
 
 export interface ZelavisFetchPlatformContext {
   env?: unknown;
@@ -15,7 +15,7 @@ export async function fetch(
   request: Request,
   context: ZelavisFetchPlatformContext = {},
 ): Promise<Response> {
-  return zelavis.fetch(request, {
+  return zv.fetch(request, {
     platform: {
       web: context,
     },

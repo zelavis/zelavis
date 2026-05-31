@@ -9,11 +9,11 @@ import { cloudflareAdapter } from "zelavis/adapters/cloudflare";
 
 export default {
   fetch(request: Request, env: Env) {
-    const zelavis = new Zelavis({
+    const zv = new Zelavis({
       adapter: cloudflareAdapter({ env }),
     });
 
-    return zelavis.fetch(request);
+    return zv.fetch(request);
   },
 };
 ```

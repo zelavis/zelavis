@@ -12,12 +12,12 @@ import { nodeAdapter } from "zelavis/adapters/node";
 import { expressMiddleware } from "zelavis/express";
 
 const app = express();
-const zelavis = new Zelavis({
+const zv = new Zelavis({
   adapter: nodeAdapter(),
 });
 
 app.use(express.json());
-app.use(expressMiddleware(zelavis));
+app.use(expressMiddleware(zv));
 
 app.listen(3000);
 ```
@@ -25,7 +25,7 @@ app.listen(3000);
 ## API
 
 ```ts
-expressMiddleware(zelavis: Zelavis): RequestHandler
+expressMiddleware(zv: Zelavis): RequestHandler
 ```
 
 Takes a `Zelavis` instance, returns an Express middleware that lazy-initializes the runtime on first request.
@@ -38,7 +38,7 @@ Takes a `Zelavis` instance, returns an Express middleware that lazy-initializes 
 
 ## Notes
 
-- Register any app-specific Express middleware before `expressMiddleware(zelavis)` when those routes should see parsed request bodies or custom headers first.
+- Register any app-specific Express middleware before `expressMiddleware(zv)` when those routes should see parsed request bodies or custom headers first.
 - Zelavis still serves the dashboard under its configured `rootPath`, for example `/zelavis`.
 - The Express app can keep its own routes outside the Zelavis namespace.
 

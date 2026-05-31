@@ -3,7 +3,7 @@ title: Platform Adapters
 ---
 Platform adapters contribute host-level infrastructure to Zelavis: database drivers, KV stores, file storage, and dashboard settings persistence. They are the `adapter:` option you pass to `new Zelavis({...})`.
 
-In Zelavis there is only one *kind* of adapter — the environment adapter. There are no "framework adapters" — framework integration is handled by small utility functions like `expressMiddleware(zelavis)` from `zelavis/express`.
+In Zelavis there is only one *kind* of adapter — the environment adapter. There are no "framework adapters" — framework integration is handled by small utility functions like `expressMiddleware(zv)` from `zelavis/express`.
 
 ## Import
 
@@ -41,10 +41,10 @@ import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
 import { createNodeServer } from "zelavis/node";
 
-const zelavis = new Zelavis({
+const zv = new Zelavis({
   adapter: nodeAdapter({ dataDirectory: ".zelavis" }),
 });
-const server = await createNodeServer(zelavis);
+const server = await createNodeServer(zv);
 server.listen(3000);
 ```
 
@@ -61,9 +61,9 @@ Bun-oriented defaults:
 import { Zelavis } from "zelavis";
 import { bunAdapter } from "zelavis/adapters/bun";
 
-const zelavis = new Zelavis({ adapter: bunAdapter() });
+const zv = new Zelavis({ adapter: bunAdapter() });
 
-export default { fetch: (req) => zelavis.fetch(req) };
+export default { fetch: (req) => zv.fetch(req) };
 ```
 
 ### `cloudflareAdapter({ env, bindings? })`
@@ -80,8 +80,8 @@ import { cloudflareAdapter } from "zelavis/adapters/cloudflare";
 
 export default {
   async fetch(request, env, ctx) {
-    const zelavis = new Zelavis({ adapter: cloudflareAdapter({ env }) });
-    return zelavis.fetch(request, ctx);
+    const zv = new Zelavis({ adapter: cloudflareAdapter({ env }) });
+    return zv.fetch(request, ctx);
   },
 };
 ```
@@ -100,14 +100,14 @@ For file storage, Vercel Blob is the natural fit via `createVercelBlobFileStorag
 import { Zelavis } from "zelavis";
 import { vercelAdapter } from "zelavis/adapters/vercel";
 
-const zelavis = new Zelavis({
+const zv = new Zelavis({
   adapter: vercelAdapter({
     files: { blobStore: myVercelBlobClient },
   }),
 });
 
 export async function GET(request: Request) {
-  return zelavis.fetch(request);
+  return zv.fetch(request);
 }
 ```
 
@@ -120,7 +120,7 @@ import { getStore } from "@netlify/blobs";
 import { Zelavis } from "zelavis";
 import { netlifyAdapter } from "zelavis/adapters/netlify";
 
-const zelavis = new Zelavis({
+const zv = new Zelavis({
   adapter: netlifyAdapter({
     kv: { blobsStore: getStore("zelavis-kv") },
     files: { blobsStore: getStore("zelavis-files") },
@@ -130,7 +130,7 @@ const zelavis = new Zelavis({
 
 ## Platform resources
 
-Adapters contribute runtime resources accessible through `zelavis.platform.resources`:
+Adapters contribute runtime resources accessible through `zv.platform.resources`:
 
 - `kv` — used for dashboard settings persistence
 - `files` — used for file storage and website page persistence

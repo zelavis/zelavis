@@ -44,12 +44,12 @@ export function getZelavis(env: CloudflareAdapterEnv) {
     return existing;
   }
 
-  const zelavis = new Zelavis({
+  const zv = new Zelavis({
     adapter: cloudflareAdapter({ env }),
   });
 
-  instances.set(env, zelavis);
-  return zelavis;
+  instances.set(env, zv);
+  return zv;
 }
 `;
   }
@@ -71,7 +71,7 @@ export function getZelavis(env: CloudflareAdapterEnv) {
   return `import { Zelavis } from "zelavis";
 ${adapterImport}
 
-export const zelavis = new Zelavis({
+export const zv = new Zelavis({
   adapter: ${adapterCall},
 });
 `;
@@ -135,14 +135,14 @@ export async function action({
 `;
   }
 
-  return `import { zelavis } from "~/lib/zelavis.server";
+  return `import { zv } from "~/lib/zelavis.server";
 
 export async function loader({ request }: { request: Request }) {
-  return zelavis.fetch(request);
+  return zv.fetch(request);
 }
 
 export async function action({ request }: { request: Request }) {
-  return zelavis.fetch(request);
+  return zv.fetch(request);
 }
 `;
 }

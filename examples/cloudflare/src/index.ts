@@ -10,14 +10,14 @@ type Env = CloudflareAdapterEnv & {
   ZELAVIS_SERVICE_DISPATCHER?: CloudflareDispatchNamespace;
 };
 
-let zelavisInstance: Zelavis | undefined;
+let zv: Zelavis | undefined;
 
 function getZelavis(env: Env) {
-  if (zelavisInstance) {
-    return zelavisInstance;
+  if (zv) {
+    return zv;
   }
 
-  zelavisInstance = new Zelavis({
+  zv = new Zelavis({
     adapter: cloudflareAdapter({
       env,
       services: env.ZELAVIS_SERVICE_DISPATCHER
@@ -34,7 +34,7 @@ function getZelavis(env: Env) {
     }),
   });
 
-  return zelavisInstance;
+  return zv;
 }
 
 export default {

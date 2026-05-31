@@ -2,7 +2,7 @@ import { getStore } from "@netlify/blobs";
 import { Zelavis } from "zelavis";
 import { netlifyAdapter } from "zelavis/adapters/netlify";
 
-const zelavis = new Zelavis({
+const zv = new Zelavis({
   adapter: netlifyAdapter({
     kv: {
       blobsStore: getStore("zelavis-kv"),
@@ -14,5 +14,5 @@ const zelavis = new Zelavis({
 });
 
 export default async function handler(request: Request): Promise<Response> {
-  return zelavis.fetch(request);
+  return zv.fetch(request);
 }
