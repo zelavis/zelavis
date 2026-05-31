@@ -39,11 +39,10 @@ Prefer these layers in order:
 
 The lower-level `zelavis()` function still exists, but it now intentionally owns the internal runtime controls such as:
 
-- `coreServices`
 - direct `services`
 - path and mount overrides
 
-The `Zelavis` class is the safer product-facing entrypoint and does not accept those internal knobs.
+The `Zelavis` class is the product-facing entrypoint and accepts high-level `coreServices` options for built-in services such as database, auth, dashboard, storage, and website. Lower-level route mounting knobs stay on `zelavis()`.
 
 For the focused lower-level story, see [Advanced Runtime Composition](../guides/advanced-runtime-composition.md).
 
@@ -52,6 +51,22 @@ For the focused lower-level story, see [Advanced Runtime Composition](../guides/
 By default, Zelavis owns one safe namespace under `/zelavis` and includes dashboard, auth, database, and website core services.
 
 The dashboard stays mounted under the configured root path, while API services stay grouped under `/api/<version>/...`.
+
+Application code can access core service APIs through the runtime instance:
+
+```ts
+await zelavis.db.documents.createCollection({ name: "posts" });
+
+const doc = await zelavis.db.documents.insert({
+  collection: "posts",
+  data: { title: "Hello" },
+});
+
+const account = await zelavis.auth.accounts.create({
+  id: "owner",
+  email: "owner@example.com",
+});
+```
 
 ## When to use lower-level packages instead
 

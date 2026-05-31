@@ -5,6 +5,7 @@ import {
   AuthValidationError,
   type AuthServiceOptions,
   type AuthProviderService,
+  type AuthApi,
 } from "@zelavis/auth";
 import {
   createDatabase,
@@ -66,7 +67,11 @@ import type {
 } from "./service.js";
 export * from "./storage/s3.js";
 
-export * from "@zelavis/db";
+export type {
+  CreateDatabaseOptions,
+  DatabaseApi,
+  DatabaseJsonObject,
+} from "@zelavis/db";
 export {
   type ZelavisAnyRuntimeServiceInput,
   type ZelavisServerErrorHandler,
@@ -674,6 +679,7 @@ export interface ZelavisOptions {
   rootPath?: string;
   api?: ZelavisApiOptions;
   services?: ZelavisServiceRegistryOptions;
+  coreServices?: ZelavisCoreServicesOptions;
   onError?: ZelavisServerErrorHandler;
   adapter?: ZelavisAdapter;
 }
@@ -3519,7 +3525,6 @@ function assertNoInternalConstructorOptions(
   const raw = options as Record<string, unknown>;
   const forbiddenKeys = [
     "runtimeServices",
-    "coreServices",
     "serviceContext",
     "servicePrefixes",
     "pathOverrides",
@@ -3590,8 +3595,91 @@ function mergeCoreServicesOptions(
     auth: mergeMaybeRecord(base.auth, override.auth),
     dashboard: mergeMaybeRecord(base.dashboard, override.dashboard),
     database: mergeMaybeRecord(base.database, override.database),
+    storage: mergeMaybeRecord(base.storage, override.storage),
     website: mergeMaybeRecord(base.website, override.website),
   };
+}
+
+function assertResolvedServiceApi<TService>(
+  value: unknown,
+  serviceName: string,
+): asserts value is TService {
+  if (!value) {
+    throw new Error(
+      `Zelavis core service \`${serviceName}\` is not enabled on this runtime.`,
+    );
+  }
+}
+
+function readResolvedPath(
+  root: unknown,
+  path: readonly PropertyKey[],
+): { found: true; value: unknown } | { found: false } {
+  let value = root;
+
+  for (const property of path) {
+    if (
+      (typeof value !== "object" && typeof value !== "function") ||
+      value === null ||
+      !(property in value)
+    ) {
+      return { found: false };
+    }
+
+    value = (value as Record<PropertyKey, unknown>)[property];
+  }
+
+  return { found: true, value };
+}
+
+function createRuntimeServiceApiProxy<TService>(
+  resolve: () => Promise<TService>,
+  resolved: () => TService | undefined,
+  path: readonly PropertyKey[] = [],
+): TService {
+  return new Proxy(function () {}, {
+    get(_target, property) {
+      if (property === "then") {
+        return undefined;
+      }
+
+      if (property === Symbol.toStringTag) {
+        return "ZelavisRuntimeServiceApi";
+      }
+
+      const current = resolved();
+      if (current) {
+        const read = readResolvedPath(current, [...path, property]);
+        if (read.found) {
+          return read.value;
+        }
+      }
+
+      return createRuntimeServiceApiProxy(resolve, resolved, [
+        ...path,
+        property,
+      ]);
+    },
+    apply(_target, _thisArg, args) {
+      return resolve().then((service) => {
+        let receiver: unknown = service;
+        let value: unknown = service;
+
+        for (const property of path) {
+          receiver = value;
+          value = (value as Record<PropertyKey, unknown>)[property];
+        }
+
+        if (typeof value !== "function") {
+          throw new TypeError(
+            `Zelavis service member \`${path.map(String).join(".")}\` is not callable.`,
+          );
+        }
+
+        return value.apply(receiver, args);
+      });
+    },
+  }) as TService;
 }
 
 function mergeZelavisServerOptions(
@@ -3780,15 +3868,27 @@ export class Zelavis {
   private readonly options: ZelavisOptions;
   private readonly serviceRegistryStore = createMemoryServiceRegistryStore([]);
   private runtimePromise?: Promise<ZelavisServerRuntime<unknown>>;
+  private resolvedAuthApi?: AuthApi;
+  private resolvedDatabaseApi?: DatabaseApi;
   private resolvedPlatformContext: ZelavisPlatformContext = {
     presets: [],
     resources: {},
     metadata: {},
   };
+  readonly auth: AuthApi;
+  readonly db: DatabaseApi;
 
   constructor(options: ZelavisOptions = {}) {
     assertNoInternalConstructorOptions(options);
     this.options = options;
+    this.auth = createRuntimeServiceApiProxy(
+      () => this.resolveAuthApi(),
+      () => this.resolvedAuthApi,
+    );
+    this.db = createRuntimeServiceApiProxy(
+      () => this.resolveDatabaseApi(),
+      () => this.resolvedDatabaseApi,
+    );
   }
 
   get platform(): ZelavisPlatformContext {
@@ -3797,6 +3897,8 @@ export class Zelavis {
 
   private invalidateRuntime() {
     this.runtimePromise = undefined;
+    this.resolvedAuthApi = undefined;
+    this.resolvedDatabaseApi = undefined;
   }
 
   async runtime(): Promise<ZelavisServerRuntime<unknown>> {
@@ -3875,6 +3977,30 @@ export class Zelavis {
     })();
 
     return this.runtimePromise;
+  }
+
+  async resolveAuthApi(): Promise<AuthApi> {
+    if (this.resolvedAuthApi) {
+      return this.resolvedAuthApi;
+    }
+
+    const runtime = await this.runtime();
+    const service = runtime.services["@zelavis/auth"]?.service;
+    assertResolvedServiceApi<AuthApi>(service, "@zelavis/auth");
+    this.resolvedAuthApi = service;
+    return service;
+  }
+
+  async resolveDatabaseApi(): Promise<DatabaseApi> {
+    if (this.resolvedDatabaseApi) {
+      return this.resolvedDatabaseApi;
+    }
+
+    const runtime = await this.runtime();
+    const service = runtime.services["@zelavis/db"]?.service;
+    assertResolvedServiceApi<DatabaseApi>(service, "@zelavis/db");
+    this.resolvedDatabaseApi = service;
+    return service;
   }
 
   async fetch(

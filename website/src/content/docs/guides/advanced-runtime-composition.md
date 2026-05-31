@@ -7,7 +7,6 @@ Use `await zelavis(...)` when you intentionally need lower-level runtime assembl
 
 Reach for the lower-level function when you need things like:
 
-- `coreServices` overrides
 - direct `services` injection
 - custom `servicePrefixes`
 - custom `pathOverrides`
@@ -21,6 +20,9 @@ import { nodeAdapter } from "zelavis/adapters/node";
 
 const zelavis = new Zelavis({
   adapter: nodeAdapter(),
+  coreServices: {
+    database: true,
+  },
 });
 ```
 
@@ -33,7 +35,7 @@ There are two layers:
 2. `await zelavis(...)`
    The advanced runtime-facing entrypoint.
 
-The class is intentionally guarded and does not accept internal runtime knobs like `coreServices` or direct `services`.
+The class accepts high-level `coreServices` options and exposes core APIs such as `zelavis.db` and `zelavis.auth`. The lower-level function is for direct runtime graph controls such as injected runtime services, service prefix overrides, and path overrides.
 
 ## Example
 

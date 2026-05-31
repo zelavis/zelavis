@@ -29,7 +29,7 @@ test("zelavis package exports runtime APIs, env adapters, and framework utility 
   assert.equal(typeof runtime.loadServiceRegistry, "function");
   assert.equal(typeof runtime.resolveServiceModule, "function");
   assert.equal(typeof runtime.removeServiceFromRegistry, "function");
-  assert.equal(typeof runtime.createDatabase, "function");
+  assert.equal("createDatabase" in runtime, false);
   assert.equal(typeof runtime.createFileReference, "function");
   assert.equal(typeof runtime.createS3CompatibleFileStorage, "function");
   assert.equal(typeof runtime.resolveS3CacheControlPreset, "function");
@@ -214,18 +214,39 @@ test("cloudflare dispatch service activation sends registry changes to a worker 
   assert.equal(seen[1].body.action, "install");
 });
 
-test("Zelavis rejects internal runtime options on the public class constructor", async () => {
+test("Zelavis accepts high-level core service options and exposes core APIs", async () => {
   const { Zelavis } = await import("zelavis");
 
-  assert.throws(
-    () =>
-      new Zelavis({
-        coreServices: {
-          dashboard: false,
-        },
-      }),
-    /does not accept internal runtime options/,
+  const zelavis = new Zelavis({
+    coreServices: {
+      dashboard: false,
+      database: true,
+    },
+  });
+
+  await zelavis.db.documents.createCollection({ name: "posts" });
+  const doc = await zelavis.db.documents.insert({
+    collection: "posts",
+    data: { title: "Hello", published: false },
+  });
+  const found = await zelavis.db.documents.findById({
+    collection: "posts",
+    id: doc.id,
+  });
+
+  assert.equal(found.data.title, "Hello");
+  const database = await zelavis.resolveDatabaseApi();
+  const runtime = await zelavis.runtime();
+  assert.equal(
+    database.documents,
+    runtime.services["@zelavis/db"].service.documents,
   );
+  assert.equal(zelavis.db.context.defaultTenantId, "default");
+  assert.equal(typeof zelavis.auth.accounts.create, "function");
+});
+
+test("Zelavis rejects internal runtime options on the public class constructor", async () => {
+  const { Zelavis } = await import("zelavis");
 
   assert.throws(
     () =>
@@ -269,8 +290,9 @@ test("Zelavis applies adapter resolve output as platform resources, metadata, an
 });
 
 test("Zelavis platform resources back dashboard settings, website pages, storage service, and ecommerce persistence", async () => {
-  const { Zelavis, defineAdapter, createDatabase, zelavis: createZelavis } =
+  const { Zelavis, defineAdapter, zelavis: createZelavis } =
     await import("zelavis");
+  const { createDatabase } = await import("@zelavis/db");
 
   const kv = new Map();
   const files = new Map();

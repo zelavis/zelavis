@@ -3,7 +3,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
-import { createDatabase, defineService, Zelavis, zelavis } from "../dist/index.js";
+import { createDatabase } from "@zelavis/db";
+import { defineService, Zelavis, zelavis } from "../dist/index.js";
 import { zelavisEcommerceService } from "../../../plugins/ecommerce/dist/index.js";
 
 function createStoredZip(files) {

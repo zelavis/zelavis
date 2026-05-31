@@ -51,18 +51,24 @@ Use the database schema helpers when the field is meant to store a file referenc
 ```ts
 import { createDatabase, imageFileSchema } from "@zelavis/db";
 
-const database = createDatabase();
+const database = await createDatabase();
 
-await database.createCollection({
-  name: "posts",
-  schema: {
-    title: {
-      type: "string",
+await database.documents.createCollection({ name: "posts" });
+await database.schemas.register({
+  collection: "posts",
+  version: 1,
+  activate: true,
+  document: {
+    type: "object",
+    properties: {
+      title: {
+        type: "string",
+      },
+      heroImage: imageFileSchema({
+        maxSize: 5_000_000,
+      }),
     },
-    heroImage: imageFileSchema({
-      optional: true,
-      maxSize: 5_000_000,
-    }),
+    required: ["title"],
   },
 });
 ```
@@ -79,7 +85,7 @@ Other helpers are available too:
 After copying the reference JSON from the storage panel, insert it directly into a document:
 
 ```ts
-await database.insertDocument({
+await database.documents.insert({
   collection: "posts",
   data: {
     title: "Spring launch",
