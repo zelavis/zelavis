@@ -44,7 +44,6 @@ export function GET(request: Request) {
 Use scoped packages when building lower-level primitives, adapters, services, or tests that need direct package APIs:
 
 ```ts
-import { createDatabase } from "@zelavis/db";
 import { defineService } from "zelavis";
 import { authService } from "@zelavis/auth";
 ```

@@ -306,7 +306,7 @@ Prefer these names:
 Avoid names that make the entrypoint harder to spot:
 
 - `createAuthServerService(...)`
-- `createDatabaseServerService(...)`
+- database server service aliases that only rename the real entrypoint
 - deeply nested `service.ts`
 - deeply nested `define-service.ts`
 
