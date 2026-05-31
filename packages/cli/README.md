@@ -25,3 +25,18 @@ For non-interactive usage:
 ```bash
 zelavis bootstrap react-router --adapter node --yes
 ```
+
+## Runtime operations
+
+The CLI is the intended home for operator-facing runtime workflows such as
+installing, activating, disabling, or removing services. Those commands should
+talk to official Zelavis runtime APIs and adapter-provided capabilities rather
+than asking application code to pass service toggles into `new Zelavis(...)`.
+
+Adapter-specific behavior should stay behind adapter boundaries. The CLI can
+ship first-party commands for supported adapters, but concrete host mechanics
+such as local file caches, Cloudflare worker dispatch, or serverless deployment
+hooks should live in adapter modules that the CLI orchestrates.
+
+Today, `@zelavis/cli` ships bootstrap commands. Runtime service management is
+not implemented yet.

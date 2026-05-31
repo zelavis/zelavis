@@ -42,7 +42,7 @@ The lower-level `zelavis()` function still exists, but it now intentionally owns
 - direct `services`
 - path and mount overrides
 
-The `Zelavis` class is the product-facing entrypoint and accepts high-level `coreServices` options for built-in services such as database, auth, dashboard, storage, and website. Lower-level route mounting knobs stay on `zelavis()`.
+The `Zelavis` class is the product-facing entrypoint. Built-in services are part of the runtime by default; lower-level route mounting knobs stay on `zelavis()`.
 
 For the focused lower-level story, see [Advanced Runtime Composition](../guides/advanced-runtime-composition.md).
 

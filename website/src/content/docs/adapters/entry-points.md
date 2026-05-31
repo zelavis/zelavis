@@ -107,7 +107,6 @@ const myAdapter = defineAdapter({
   name: "my-host",
   async resolve(_options) {
     return {
-      coreServices: { /* ... */ },
       resources: { kv: myStore, files: myStorage },
       metadata: { runtime: "my-host" },
     };

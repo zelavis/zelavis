@@ -52,22 +52,6 @@ Default root namespace:
 
 The website core service also mounts public website pages at `/`, while still reserving the dashboard namespace under `/zelavis`.
 
-## Disable built-in services when needed
-
-```ts
-import { zelavis } from "zelavis";
-
-await zelavis({
-  coreServices: {
-    auth: false,
-    dashboard: false,
-    database: false,
-    storage: false,
-    website: false,
-  },
-});
-```
-
 ## Dashboard settings
 
 The built-in dashboard settings endpoint currently exposes:

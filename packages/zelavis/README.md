@@ -125,7 +125,7 @@ const response = await zelavis.fetch(
 );
 ```
 
-`new Zelavis(...)` is the guarded high-level entrypoint. It accepts app-facing options such as adapters, platforms, root path, service registry state, high-level `coreServices`, and error handling. Internal runtime knobs like direct `runtimeServices` and path overrides stay on the lower-level `zelavis(...)` function.
+`new Zelavis(...)` is the guarded high-level entrypoint. It accepts app-facing options such as adapters, platforms, root path, service registry state, and error handling. Internal runtime knobs like direct `runtimeServices` and path overrides stay on the lower-level `zelavis(...)` function.
 
 That split is intentional:
 
@@ -330,75 +330,13 @@ Use it when you want the normal Zelavis storage contract, metadata, and file-ref
 
 Root path changes are saved as pending settings and report `restartRequired`
 because mounted routes cannot move safely while the runtime is already running.
-Pass `coreServices.dashboard.settingsStore` when you want to back these settings
-with your own storage. Platform resources such as KV or file storage are used as
-defaults when they are available.
+Platform resources such as KV or file storage are used as settings defaults when
+they are available.
 
-For local dashboard work, point Zelavis at the mounted dashboard base URL of a running UI dev server:
+For local dashboard work, use the `pnpm run ui:dev` workflow. It starts the
+runtime and UI dev server together and wires dashboard requests to the live UI
+build.
 
-```ts
-import { zelavis } from "zelavis";
-
-await zelavis({
-  coreServices: {
-    dashboard: {
-      devServerUrl: "http://127.0.0.1:3001/zelavis",
-    },
-  },
-});
-```
-
-When `devServerUrl` is set, dashboard app requests redirect to the live UI dev
-server instead of the built service bundle.
-
-The dashboard, auth, database, and website core services are included by default. The storage core service is enabled when Zelavis has a file storage resource to expose. Disable any of them when you need a smaller server or want to supply replacements:
-
-```ts
-import { zelavis } from "zelavis";
-
-await zelavis({
-  coreServices: {
-    auth: false,
-    dashboard: false,
-    database: false,
-    storage: false,
-    website: false,
-  },
-});
-```
-
-Configure the built-in auth service when the defaults are not enough:
-
-```ts
-import { emailPasswordService } from "@zelavis/auth-email-password";
-import { zelavis } from "zelavis";
-
-await zelavis({
-  coreServices: {
-    auth: {
-      authOptions: {
-        services: [
-          emailPasswordService({
-            verifyPasswordHash: async ({ password, passwordHash }) =>
-              password === passwordHash,
-          }),
-        ],
-      },
-    },
-  },
-});
-```
-
-Configure the built-in database service when the defaults are not enough:
-
-```ts
-import { zelavis } from "zelavis";
-
-await zelavis({
-  coreServices: {
-    database: {
-      defaultTenantId: "acme",
-    },
-  },
-});
-```
+The dashboard, auth, database, and website core services are included by
+default. The storage core service is enabled when Zelavis has a file storage
+resource to expose.
