@@ -77,12 +77,15 @@ Current packages:
 Applications should usually import from `zelavis`, where core services are included by default:
 
 ```ts
-import { zelavis } from "zelavis";
+import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
+import { createNodeServer } from "zelavis/node";
 
-const runtime = await zelavis();
-const server = nodeAdapter(runtime);
+const zv = new Zelavis({ adapter: nodeAdapter() });
+const server = await createNodeServer(zv);
 ```
+
+Examples use `zv` as the short local name for a `Zelavis` runtime instance.
 
 Maintainers publishing packages should follow the [release workflow](CONTRIBUTING.md#release-workflow) in CONTRIBUTING.md.
 If you use `NPM_TOKEN`, set it in your local shell or CI secret store. Do not
@@ -91,16 +94,16 @@ commit tokens to this repository.
 Zelavis can also run directly as a Web-style handler when an adapter is unnecessary:
 
 ```ts
-import { zelavis } from "zelavis";
+import { Zelavis } from "zelavis";
 
-const runtime = await zelavis({});
+const zv = new Zelavis({});
 
-const response = await runtime.fetch(
+const response = await zv.fetch(
   new Request("http://localhost/zelavis/api/v1/dashboard/config"),
 );
 ```
 
-When a host framework needs fallthrough-aware mounting, use its thin adapter instead. For example, h3 apps can use `app.use("/**", h3Adapter(runtime))` while still keeping Zelavis at `/zelavis`.
+When a host framework needs fallthrough-aware mounting, use its thin utility instead. For example, h3 apps can use `app.use("/**", h3Handler(zv))` while still keeping Zelavis at `/zelavis`.
 
 By default, Zelavis owns one safe namespace:
 
@@ -113,7 +116,7 @@ By default, Zelavis owns one safe namespace:
 Customize that namespace with `rootPath`:
 
 ```ts
-await zelavis({
+const zv = new Zelavis({
   rootPath: "/admin",
 });
 ```
@@ -130,14 +133,14 @@ Use scoped packages such as `@zelavis/server`, `@zelavis/db`, and `@zelavis/auth
 
 ## Core Services
 
-Core services use the same service contract as extension services. The high-level `zelavis` runtime currently includes dashboard delivery, auth, and database by default.
+Core services use the same service contract as extension services. The high-level `Zelavis` runtime currently includes dashboard delivery, auth, and database by default.
 
 The dashboard and admin experience are still evolving. The runtime already serves the current UI package, but the overall product surface should be treated as early and subject to change.
 
 Disable built-in core services when you need a smaller server:
 
 ```ts
-await zelavis({
+const zv = new Zelavis({
   coreServices: {
     auth: false,
     dashboard: false,
@@ -149,7 +152,7 @@ await zelavis({
 Configure the built-in database service when the defaults are not enough:
 
 ```ts
-await zelavis({
+const zv = new Zelavis({
   coreServices: {
     database: {
       defaultTenantId: "acme",
@@ -161,7 +164,7 @@ await zelavis({
 Configure the built-in auth service through `coreServices.auth`, including auth provider services and repositories:
 
 ```ts
-await zelavis({
+const zv = new Zelavis({
   coreServices: {
     auth: {
       authOptions: {

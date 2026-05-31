@@ -44,12 +44,12 @@ export function getZelavis(env: CloudflareAdapterEnv) {
     return existing;
   }
 
-  const zelavis = new Zelavis({
+  const zv = new Zelavis({
     adapter: cloudflareAdapter({ env }),
   });
 
-  instances.set(env, zelavis);
-  return zelavis;
+  instances.set(env, zv);
+  return zv;
 }
 `;
   }
@@ -71,12 +71,12 @@ export function getZelavis(env: CloudflareAdapterEnv) {
   return `import { Zelavis } from "zelavis";
 ${adapterImport}
 
-const zelavis = new Zelavis({
+const zv = new Zelavis({
   adapter: ${adapterCall},
 });
 
 export function getZelavis() {
-  return zelavis;
+  return zv;
 }
 `;
 }

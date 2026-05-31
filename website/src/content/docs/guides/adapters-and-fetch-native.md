@@ -4,9 +4,9 @@ title: Adapters and Framework Utilities
 Zelavis has a clean two-layer integration model:
 
 1. **Adapters** = the *environment* Zelavis runs on. Node, Bun, Cloudflare Workers, Vercel, Netlify. Adapters provide infrastructure: database driver, KV store, file storage.
-2. **Framework utilities** = small helper functions that wrap `zelavis.fetch(request)` for a specific host framework (Express, Hono, Fastify, etc.). They are not adapters — they are convenience functions.
+2. **Framework utilities** = small helper functions that wrap `zv.fetch(request)` for a specific host framework (Express, Hono, Fastify, etc.). They are not adapters — they are convenience functions.
 
-For fetch-native hosts (Cloudflare Workers, Bun, Next.js App Router, etc.) you do not need a framework utility at all — call `zelavis.fetch(request)` directly.
+For fetch-native hosts (Cloudflare Workers, Bun, Next.js App Router, etc.) you do not need a framework utility at all — call `zv.fetch(request)` directly.
 
 ## Quick examples
 
@@ -17,8 +17,8 @@ import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
 import { createNodeServer } from "zelavis/node";
 
-const zelavis = new Zelavis({ adapter: nodeAdapter() });
-const server = await createNodeServer(zelavis);
+const zv = new Zelavis({ adapter: nodeAdapter() });
+const server = await createNodeServer(zv);
 server.listen(3000);
 ```
 
@@ -30,9 +30,9 @@ import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
 import { expressMiddleware } from "zelavis/express";
 
-const zelavis = new Zelavis({ adapter: nodeAdapter() });
+const zv = new Zelavis({ adapter: nodeAdapter() });
 const app = express();
-app.use(expressMiddleware(zelavis));
+app.use(expressMiddleware(zv));
 app.listen(3000);
 ```
 
@@ -46,9 +46,9 @@ import { honoMiddleware } from "zelavis/hono";
 
 export default {
   fetch(request: Request, env: CloudflareAdapterEnv) {
-    const zelavis = new Zelavis({ adapter: cloudflareAdapter({ env }) });
+    const zv = new Zelavis({ adapter: cloudflareAdapter({ env }) });
     const app = new Hono();
-    app.use(honoMiddleware(zelavis));
+    app.use(honoMiddleware(zv));
     return app.fetch(request);
   },
 };
@@ -60,10 +60,10 @@ export default {
 import { Zelavis } from "zelavis";
 import { vercelAdapter } from "zelavis/adapters/vercel";
 
-const zelavis = new Zelavis({ adapter: vercelAdapter() });
+const zv = new Zelavis({ adapter: vercelAdapter() });
 
 export async function GET(request: Request) {
-  return zelavis.fetch(request);
+  return zv.fetch(request);
 }
 ```
 
@@ -75,8 +75,8 @@ import { cloudflareAdapter } from "zelavis/adapters/cloudflare";
 
 export default {
   fetch(request: Request, env) {
-    const zelavis = new Zelavis({ adapter: cloudflareAdapter({ env }) });
-    return zelavis.fetch(request);
+    const zv = new Zelavis({ adapter: cloudflareAdapter({ env }) });
+    return zv.fetch(request);
   },
 };
 ```
@@ -117,13 +117,13 @@ Framework utilities are simple functions that take a `Zelavis` instance and retu
 
 | Framework | Import | Returns |
 |---|---|---|
-| Express | `zelavis/express` → `expressMiddleware(zelavis)` | `RequestHandler` |
-| Hono | `zelavis/hono` → `honoMiddleware(zelavis)` | `MiddlewareHandler` |
-| Fastify | `zelavis/fastify` → `fastifyPlugin(zelavis)` | `FastifyPluginAsync` |
-| h3 | `zelavis/h3` → `h3Handler(zelavis)` | h3 handler |
-| Elysia | `zelavis/elysia` → `elysiaPlugin(zelavis)` | Elysia service instance |
-| Next.js Pages Router | `zelavis/nextjs/pages` → `nextjsPagesRouterHandler(zelavis, options?)` | `NextApiHandler` |
-| Node HTTP server | `zelavis/node` → `createNodeServer(zelavis)` | `Promise<http.Server>` |
+| Express | `zelavis/express` → `expressMiddleware(zv)` | `RequestHandler` |
+| Hono | `zelavis/hono` → `honoMiddleware(zv)` | `MiddlewareHandler` |
+| Fastify | `zelavis/fastify` → `fastifyPlugin(zv)` | `FastifyPluginAsync` |
+| h3 | `zelavis/h3` → `h3Handler(zv)` | h3 handler |
+| Elysia | `zelavis/elysia` → `elysiaPlugin(zv)` | Elysia service instance |
+| Next.js Pages Router | `zelavis/nextjs/pages` → `nextjsPagesRouterHandler(zv, options?)` | `NextApiHandler` |
+| Node HTTP server | `zelavis/node` → `createNodeServer(zv)` | `Promise<http.Server>` |
 
 Each utility internally lazy-initializes the runtime on first request, so you can construct your `Zelavis` instance at module top level.
 
@@ -162,7 +162,7 @@ If a host supports runtime service installs, its adapter should expose that thro
 
 ## Why no `zelavis.adapter.xxx` anymore
 
-In earlier iterations the framework integration was modeled as an "adapter" object that the runtime mounted (`zelavis.adapter.expressMiddleware()`). We removed that because framework integration is not actually an adapter pattern — it's a small request/response converter. The new shape (`expressMiddleware(zelavis)`) is simpler, has no lifecycle coupling, and produces clean type inference.
+In earlier iterations the framework integration was modeled as an "adapter" object that the runtime mounted (`zelavis.adapter.expressMiddleware()`). We removed that because framework integration is not actually an adapter pattern — it's a small request/response converter. The new shape (`expressMiddleware(zv)`) is simpler, has no lifecycle coupling, and produces clean type inference.
 
 The only real adapter pattern in Zelavis is the environment adapter, and that's what `defineAdapter` is for.
 

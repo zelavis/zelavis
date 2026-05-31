@@ -12,7 +12,7 @@ async function main(): Promise<void> {
   });
   app.use(express.json());
 
-  const zelavis = new Zelavis({
+  const zv = new Zelavis({
     adapter: nodeAdapter(),
     onError: ({ error }) => ({
       status: 400,
@@ -20,7 +20,7 @@ async function main(): Promise<void> {
     }),
   });
 
-  app.use(expressMiddleware(zelavis));
+  app.use(expressMiddleware(zv));
   app.listen(port, () => {
     console.log(
       `zelavis Express example listening on http://localhost:${port}`,

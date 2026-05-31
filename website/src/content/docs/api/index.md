@@ -7,10 +7,10 @@ The `Zelavis` class is the main entry point. It holds configuration, lazily init
 ```ts
 import { Zelavis } from 'zelavis';
 
-const zelavis = new Zelavis({ adapter });
+const zv = new Zelavis({ adapter });
 
 export function getZelavis() {
-  return zelavis;
+  return zv;
 }
 ```
 
@@ -42,7 +42,7 @@ new Zelavis(options?: ZelavisOptions)
 ### `fetch`
 
 ```ts
-zelavis.fetch(request: Request, context?: ZelavisServerExecutionContext): Promise<Response>
+zv.fetch(request: Request, context?: ZelavisServerExecutionContext): Promise<Response>
 ```
 
 Handles an incoming request and returns a standard `Response`. This is the method called by framework route handlers and edge runtimes that speak the fetch API.
@@ -77,7 +77,7 @@ Handles a plain (non-fetch-API) request object. Used by adapters that wrap non-s
 ### `runtime`
 
 ```ts
-zelavis.runtime(): Promise<ZelavisServerRuntime>
+zv.runtime(): Promise<ZelavisServerRuntime>
 ```
 
 Returns the initialized server runtime. The runtime is created lazily on the first call and cached for subsequent requests. Calling this manually is rarely needed — `fetch` and `dispatch` call it internally.
@@ -85,7 +85,7 @@ Returns the initialized server runtime. The runtime is created lazily on the fir
 ## `platform`
 
 ```ts
-zelavis.platform: ZelavisPlatformContext
+zv.platform: ZelavisPlatformContext
 ```
 
 Read-only accessor for the resolved platform context, available after the first call to `runtime()`. Contains the resources and metadata provided by the adapter.

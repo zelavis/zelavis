@@ -25,7 +25,7 @@ async function putBlob(
   return put(pathname, normalizedBody, options);
 }
 
-const zelavis = new Zelavis({
+const zv = new Zelavis({
   adapter: vercelAdapter({
     files: {
       blobStore: {
@@ -40,5 +40,5 @@ const zelavis = new Zelavis({
 });
 
 export function getZelavis() {
-  return zelavis;
+  return zv;
 }

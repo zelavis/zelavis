@@ -1,7 +1,7 @@
 import { Zelavis } from "zelavis";
 
-const zelavis = new Zelavis();
+const zv = new Zelavis();
 
 export function getZelavisRuntime() {
-  return zelavis.runtime();
+  return zv.runtime();
 }

@@ -46,23 +46,23 @@ import {
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
 
-const zelavis = new Zelavis({ adapter: nodeAdapter() });
+const zv = new Zelavis({ adapter: nodeAdapter() });
 ```
 
-Fetch-native hosts use the adapter for infrastructure and call `zelavis.fetch(request)` directly — no framework utility needed.
+Fetch-native hosts use the adapter for infrastructure and call `zv.fetch(request)` directly — no framework utility needed.
 
 ## Framework utilities
 
 Framework utilities take a `Zelavis` instance and return whatever shape the framework expects. They live at `zelavis/<framework>`:
 
 ```txt
-zelavis/express       — expressMiddleware(zelavis)
-zelavis/hono          — honoMiddleware(zelavis)
-zelavis/fastify       — fastifyPlugin(zelavis)
-zelavis/h3            — h3Handler(zelavis)
-zelavis/elysia        — elysiaPlugin(zelavis)
-zelavis/nextjs/pages  — nextjsPagesRouterHandler(zelavis, options?)
-zelavis/node          — createNodeServer(zelavis)
+zelavis/express       — expressMiddleware(zv)
+zelavis/hono          — honoMiddleware(zv)
+zelavis/fastify       — fastifyPlugin(zv)
+zelavis/h3            — h3Handler(zv)
+zelavis/elysia        — elysiaPlugin(zv)
+zelavis/nextjs/pages  — nextjsPagesRouterHandler(zv, options?)
+zelavis/node          — createNodeServer(zv)
 ```
 
 Typical usage:
@@ -73,12 +73,12 @@ import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
 import { expressMiddleware } from "zelavis/express";
 
-const zelavis = new Zelavis({ adapter: nodeAdapter() });
+const zv = new Zelavis({ adapter: nodeAdapter() });
 const app = express();
-app.use(expressMiddleware(zelavis));
+app.use(expressMiddleware(zv));
 ```
 
-These are *not* adapters — they are helper functions. The `Zelavis` instance is constructed once with its environment adapter, and the utility just wraps `zelavis.fetch` for a specific framework signature.
+These are *not* adapters — they are helper functions. The `Zelavis` instance is constructed once with its environment adapter, and the utility just wraps `zv.fetch` for a specific framework signature.
 
 ## Lower-level server adapters
 

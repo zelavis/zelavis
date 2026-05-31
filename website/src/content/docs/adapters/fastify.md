@@ -12,16 +12,16 @@ import { nodeAdapter } from "zelavis/adapters/node";
 import { fastifyPlugin } from "zelavis/fastify";
 
 const app = Fastify();
-const zelavis = new Zelavis({ adapter: nodeAdapter() });
+const zv = new Zelavis({ adapter: nodeAdapter() });
 
-await app.register(fastifyPlugin(zelavis));
+await app.register(fastifyPlugin(zv));
 await app.listen({ port: 3000, host: "127.0.0.1" });
 ```
 
 ## API
 
 ```ts
-fastifyPlugin(zelavis: Zelavis): FastifyPluginAsync
+fastifyPlugin(zv: Zelavis): FastifyPluginAsync
 ```
 
 ## Good fit

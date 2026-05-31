@@ -11,10 +11,9 @@ Today, that mostly means auth, database, website delivery, server mounting, and 
 Use the package in this order:
 
 1. `new Zelavis(...)` for application/runtime code
-2. `await zelavis(...)` only when you intentionally need low-level runtime composition
-3. scoped packages like `@zelavis/server` when you are building primitives, tests, or custom infrastructure
+2. scoped packages like `@zelavis/server` when you are building primitives, tests, or custom infrastructure
 
-The class is the safe batteries-included API. The function is the advanced escape hatch.
+The class is the safe batteries-included API. The lower-level `zelavis(...)` function exists for internal runtime composition and is not the public application convention.
 
 ## Import split
 
@@ -25,19 +24,21 @@ import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
 import { createNodeServer } from "zelavis/node";
 
-const zelavis = new Zelavis({ adapter: nodeAdapter() });
-const server = await createNodeServer(zelavis);
+const zv = new Zelavis({ adapter: nodeAdapter() });
+const server = await createNodeServer(zv);
 ```
+
+Examples use `zv` as the short local name for a `Zelavis` runtime instance.
 
 Or embed the runtime directly in a Web/fetch environment:
 
 ```ts
 import { Zelavis } from "zelavis";
 
-const zelavis = new Zelavis({});
+const zv = new Zelavis({});
 
 export function GET(request: Request) {
-  return zelavis.fetch(request);
+  return zv.fetch(request);
 }
 ```
 
@@ -73,7 +74,7 @@ const ecommerce = defineService({
   },
 });
 
-const zelavis = new Zelavis({
+const zv = new Zelavis({
   services: {
     entries: createServiceRegistry([
       {
@@ -97,10 +98,9 @@ Service setup receives standard JavaScript data only:
 That keeps service setup runtime-neutral while still giving services enough
 context to register extra runtime routes.
 
-Use the lower-level `zelavis(...)` function only when you need internal runtime
-controls such as direct `runtimeServices` or path/mount overrides. See
-[Advanced Runtime Composition](../../website/src/content/docs/guides/advanced-runtime-composition.md)
-for the focused version of that story.
+The lower-level `zelavis(...)` function owns internal runtime controls such as
+direct `runtimeServices` or path/mount overrides. Public application examples
+should use `new Zelavis(...)`.
 
 ## Usage
 
@@ -109,8 +109,8 @@ import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
 import { createNodeServer } from "zelavis/node";
 
-const zelavis = new Zelavis({ adapter: nodeAdapter() });
-const server = await createNodeServer(zelavis);
+const zv = new Zelavis({ adapter: nodeAdapter() });
+const server = await createNodeServer(zv);
 
 server.listen(3000);
 ```
@@ -118,9 +118,9 @@ server.listen(3000);
 When you do not need a framework-specific adapter, use the Web-style runtime handlers directly:
 
 ```ts
-const zelavis = new Zelavis({});
+const zv = new Zelavis({});
 
-const response = await zelavis.fetch(
+const response = await zv.fetch(
   new Request("http://localhost/zelavis/api/v1/runtime/config"),
 );
 ```
@@ -130,19 +130,19 @@ const response = await zelavis.fetch(
 That split is intentional:
 
 - the class is for real application code
-- the function is for advanced composition and internal/runtime-facing work
+- the function is for internal/runtime-facing work
 
 Application code can use the core services through the runtime instance:
 
 ```ts
-await zelavis.db.documents.createCollection({ name: "posts" });
+await zv.db.documents.createCollection({ name: "posts" });
 
-const doc = await zelavis.db.documents.insert({
+const doc = await zv.db.documents.insert({
   collection: "posts",
   data: { title: "Hello", published: false },
 });
 
-await zelavis.db.documents.update({
+await zv.db.documents.update({
   collection: "posts",
   id: doc.id,
   data: { published: true },
@@ -166,7 +166,7 @@ By default, Zelavis owns one safe namespace:
 Customize that namespace with `rootPath`:
 
 ```ts
-new Zelavis({
+const zv = new Zelavis({
   rootPath: "/admin",
 });
 ```
@@ -215,9 +215,9 @@ verified binding exists.
 The runtime supports two complementary integration patterns:
 
 - **environment adapters** (`zelavis/adapters/*`) — describe the environment Zelavis runs on, supply database/KV/file storage defaults
-- **framework utilities** (`zelavis/<framework>`) — small helper functions that wrap `zelavis.fetch` for a specific framework signature
+- **framework utilities** (`zelavis/<framework>`) — small helper functions that wrap `zv.fetch` for a specific framework signature
 
-For fetch-native hosts (Cloudflare Workers, Bun, Next.js App Router), no framework utility is needed — call `zelavis.fetch(request)` directly.
+For fetch-native hosts (Cloudflare Workers, Bun, Next.js App Router), no framework utility is needed — call `zv.fetch(request)` directly.
 
 Available environment adapters:
 
@@ -232,13 +232,13 @@ zelavis/adapters/vercel
 Available framework utilities:
 
 ```txt
-zelavis/express       expressMiddleware(zelavis)
-zelavis/hono          honoMiddleware(zelavis)
-zelavis/fastify       fastifyPlugin(zelavis)
-zelavis/h3            h3Handler(zelavis)
-zelavis/elysia        elysiaPlugin(zelavis)
-zelavis/nextjs/pages  nextjsPagesRouterHandler(zelavis, options?)
-zelavis/node          createNodeServer(zelavis)
+zelavis/express       expressMiddleware(zv)
+zelavis/hono          honoMiddleware(zv)
+zelavis/fastify       fastifyPlugin(zv)
+zelavis/h3            h3Handler(zv)
+zelavis/elysia        elysiaPlugin(zv)
+zelavis/nextjs/pages  nextjsPagesRouterHandler(zv, options?)
+zelavis/node          createNodeServer(zv)
 ```
 
 Platform resources now also feed real core-service persistence in the high-level `Zelavis` class:
@@ -255,11 +255,11 @@ import { cloudflareAdapter } from "zelavis/adapters/cloudflare";
 
 export default {
   fetch(request: Request, env: { ZELAVIS_DB: unknown }, ctx: ExecutionContext) {
-    const zelavis = new Zelavis({
+    const zv = new Zelavis({
       adapter: cloudflareAdapter({ env }),
     });
 
-    return zelavis.fetch(request, {
+    return zv.fetch(request, {
       platform: {
         cloudflare: {
           env,

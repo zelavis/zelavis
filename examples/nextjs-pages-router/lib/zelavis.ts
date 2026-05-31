@@ -1,14 +1,14 @@
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
 
-const zelavis = new Zelavis({
+const zv = new Zelavis({
   adapter: nodeAdapter(),
 });
 
 export function getZelavis() {
-  return zelavis;
+  return zv;
 }
 
 export function getZelavisRuntime() {
-  return zelavis.runtime();
+  return zv.runtime();
 }

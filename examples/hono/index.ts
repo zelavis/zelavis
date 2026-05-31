@@ -12,7 +12,7 @@ async function main(): Promise<void> {
     return context.text("Hello Hono");
   });
 
-  const zelavis = new Zelavis({
+  const zv = new Zelavis({
     adapter: nodeAdapter(),
     onError: ({ error }) => ({
       status: 400,
@@ -20,7 +20,7 @@ async function main(): Promise<void> {
     }),
   });
 
-  app.use(honoMiddleware(zelavis));
+  app.use(honoMiddleware(zv));
 
   serve(
     {

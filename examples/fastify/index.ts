@@ -9,7 +9,7 @@ async function main(): Promise<void> {
 
   app.get("/hello", async () => "Hello Fastify");
 
-  const zelavis = new Zelavis({
+  const zv = new Zelavis({
     adapter: nodeAdapter(),
     onError: ({ error }) => ({
       status: 400,
@@ -17,7 +17,7 @@ async function main(): Promise<void> {
     }),
   });
 
-  await app.register(fastifyPlugin(zelavis));
+  await app.register(fastifyPlugin(zv));
   await app.listen({
     port,
     host: "127.0.0.1",

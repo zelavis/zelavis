@@ -1,16 +1,15 @@
 ---
-title: Advanced Runtime Composition
+title: Advanced Runtime Access
 ---
-Use `await zelavis(...)` when you intentionally need lower-level runtime assembly instead of the guarded `new Zelavis(...)` class API.
+Use `new Zelavis(...)` for public application code. The lower-level `zelavis(...)` function is reserved for internal runtime composition.
 
 ## When to use it
 
-Reach for the lower-level function when you need things like:
+Reach for the runtime instance when you need things like:
 
-- direct `services` injection
-- custom `servicePrefixes`
-- custom `pathOverrides`
-- explicit low-level runtime composition in tests or internal infrastructure
+- direct `fetch(...)` handling
+- access to the initialized runtime through `zv.runtime()`
+- core service APIs such as `zv.db` and `zv.auth`
 
 For normal application code, prefer:
 
@@ -18,34 +17,28 @@ For normal application code, prefer:
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
 
-const zelavis = new Zelavis({
+const zv = new Zelavis({
   adapter: nodeAdapter(),
 });
 ```
 
 ## Core idea
 
-There are two layers:
-
-1. `new Zelavis(...)`
-   The safe product-facing entrypoint.
-2. `await zelavis(...)`
-   The advanced runtime-facing entrypoint.
-
-The class exposes core APIs such as `zelavis.db` and `zelavis.auth`. The lower-level function is for direct runtime graph controls such as injected runtime services, service prefix overrides, and path overrides.
+`new Zelavis(...)` is the product-facing entrypoint. It exposes core APIs such as `zv.db` and `zv.auth`, lazily initializes the server runtime, and provides `fetch`, `dispatch`, and `runtime` methods.
 
 ## Example
 
 ```ts
-import { zelavis } from "zelavis";
+import { Zelavis } from "zelavis";
 
-const runtime = await zelavis({
+const zv = new Zelavis({
   rootPath: "/admin",
-  services: [],
 });
+
+const runtime = await zv.runtime();
 ```
 
-That returns a lower-level mounted runtime object with `fetch`, `dispatch`, `plain`, resolved routes, and the service map.
+That returns the mounted runtime object with `fetch`, `dispatch`, `plain`, resolved routes, and the service map.
 
 ## How built-in core services are created
 
@@ -55,7 +48,7 @@ The pattern is:
 
 1. A package exposes a normal server-service factory.
 2. That factory returns a plain `ZelavisRuntimeService` object literal.
-3. The high-level `zelavis(...)` runtime decides when to call that factory and include the result as a built-in core service.
+3. The high-level `Zelavis` runtime decides when to call that factory and include the result as a built-in core service.
 
 For example:
 
@@ -68,7 +61,7 @@ Concretely:
 
 - `@zelavis/db` exports `defineDatabaseService(database)`
 - that function returns a plain `{ name, basePath, service, api }` object
-- then `zelavis(...)` calls `resolveDatabaseCoreService(...)`, wraps the returned database API with `defineDatabaseService(...)`, and adds it to the built-in core service list
+- then the runtime calls `resolveDatabaseCoreService(...)`, wraps the returned database API with `defineDatabaseService(...)`, and adds it to the built-in core service list
 
 The same shape is used for auth, dashboard, website, and storage.
 

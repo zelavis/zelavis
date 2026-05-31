@@ -7,10 +7,10 @@ It exists so the database core can stay runtime-neutral while Node applications 
 ## Usage
 
 ```ts
-import { zelavis } from "zelavis";
+import { Zelavis } from "zelavis";
 import { createBetterSqlite3DatabaseDriver } from "@zelavis/db-node-sqlite";
 
-const runtime = await zelavis({
+const zv = new Zelavis({
   coreServices: {
     database: {
       driver: createBetterSqlite3DatabaseDriver({

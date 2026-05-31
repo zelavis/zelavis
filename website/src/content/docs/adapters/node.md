@@ -4,7 +4,7 @@ title: Node.js
 The Node.js integration has two pieces:
 
 - `nodeAdapter()` from `zelavis/adapters/node` — the environment adapter that provides SQLite, file storage, and dashboard settings persistence.
-- `createNodeServer(zelavis)` from `zelavis/node` — a utility that creates a standalone Node HTTP server bound to Zelavis.
+- `createNodeServer(zv)` from `zelavis/node` — a utility that creates a standalone Node HTTP server bound to Zelavis.
 
 ## Basic usage
 
@@ -13,8 +13,8 @@ import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
 import { createNodeServer } from "zelavis/node";
 
-const zelavis = new Zelavis({ adapter: nodeAdapter() });
-const server = await createNodeServer(zelavis);
+const zv = new Zelavis({ adapter: nodeAdapter() });
+const server = await createNodeServer(zv);
 server.listen(3000);
 ```
 
