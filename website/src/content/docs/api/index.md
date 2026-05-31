@@ -7,11 +7,7 @@ The `Zelavis` class is the main entry point. It holds configuration, lazily init
 ```ts
 import { Zelavis } from 'zelavis';
 
-const zelavis = new Zelavis({ adapter });
-
-export function getZelavis() {
-  return zelavis;
-}
+export const zelavis = new Zelavis({ adapter });
 ```
 
 ## Constructor
@@ -50,11 +46,11 @@ Handles an incoming request and returns a standard `Response`. This is the metho
 ```ts
 // React Router resource route
 export async function loader({ request }: LoaderFunctionArgs) {
-  return getZelavis().fetch(request);
+  return zelavis.fetch(request);
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  return getZelavis().fetch(request);
+  return zelavis.fetch(request);
 }
 ```
 
