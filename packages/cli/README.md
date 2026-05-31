@@ -39,4 +39,19 @@ such as local file caches, Cloudflare worker dispatch, or serverless deployment
 hooks should live in adapter modules that the CLI orchestrates.
 
 Today, `@zelavis/cli` ships bootstrap commands. Runtime service management is
-not implemented yet.
+available through the `services` command group:
+
+```bash
+zelavis services list
+zelavis services register --specifier https://example.com/service.mjs
+zelavis services register --specifier https://example.com/service.mjs --install
+zelavis services install @zelavis/ecommerce
+zelavis services disable @zelavis/ecommerce
+```
+
+The commands talk to `http://localhost:3000/zelavis` by default. Use `--url`
+when the runtime is mounted elsewhere:
+
+```bash
+zelavis services list --url http://localhost:8787/zelavis
+```
