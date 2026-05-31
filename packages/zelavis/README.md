@@ -99,8 +99,9 @@ That keeps service setup runtime-neutral while still giving services enough
 context to register extra runtime routes.
 
 Use the lower-level `zelavis(...)` function only when you need internal runtime
-controls such as `coreServices`, direct `runtimeServices`, or path/mount
-overrides. See [Advanced Runtime Composition](../../website/src/content/docs/guides/advanced-runtime-composition.md) for the focused version of that story.
+controls such as direct `runtimeServices` or path/mount overrides. See
+[Advanced Runtime Composition](../../website/src/content/docs/guides/advanced-runtime-composition.md)
+for the focused version of that story.
 
 ## Usage
 
@@ -125,12 +126,30 @@ const response = await zelavis.fetch(
 );
 ```
 
-`new Zelavis(...)` is the guarded high-level entrypoint. It accepts app-facing options such as adapters, platforms, root path, service registry state, and error handling. Internal runtime knobs like `runtimeServices`, `coreServices`, and path overrides stay on the lower-level `zelavis(...)` function.
+`new Zelavis(...)` is the guarded high-level entrypoint. It accepts app-facing options such as adapters, platforms, root path, service registry state, high-level `coreServices`, and error handling. Internal runtime knobs like direct `runtimeServices` and path overrides stay on the lower-level `zelavis(...)` function.
 
 That split is intentional:
 
 - the class is for real application code
 - the function is for advanced composition and internal/runtime-facing work
+
+Application code can use the core services through the runtime instance:
+
+```ts
+await zelavis.db.documents.createCollection({ name: "posts" });
+
+const doc = await zelavis.db.documents.insert({
+  collection: "posts",
+  data: { title: "Hello", published: false },
+});
+
+await zelavis.db.documents.update({
+  collection: "posts",
+  id: doc.id,
+  data: { published: true },
+  mode: "merge",
+});
+```
 
 By default, Zelavis owns one safe namespace:
 
