@@ -24,9 +24,9 @@ const zelavis = new Zelavis({
 | Value | Description |
 |---|---|
 | `true` | Enable with the default in-memory driver. |
-| `CreateDatabaseOptions` from `@zelavis/db` | Enable with a specific driver or schemas. |
-| `DatabaseApi` from `@zelavis/db` | Pass a pre-created `DatabaseApi` instance. |
-| `Promise<DatabaseApi>` from `@zelavis/db` | Async database creation (e.g. async driver init). |
+| `false` | Disable the database core service. |
+| database options | Enable with a specific driver or schemas. |
+| database service instance | Use a pre-created database service instance. |
 
 ## `zelavis.db`
 
@@ -63,15 +63,7 @@ await zelavis.db.documents.delete({ collection: 'posts', id: doc.id });
 
 `zelavis.db` resolves to the same database API instance mounted by the Zelavis runtime, so dashboard routes, services, and application code share one database service.
 
-If you need a standalone database primitive outside the runtime, import it from the lower-level package:
-
-```ts
-import { createDatabase } from '@zelavis/db';
-
-const db = await createDatabase(options);
-```
-
-### `CreateDatabaseOptions`
+### Database options
 
 | Option | Type | Description |
 |---|---|---|
@@ -80,9 +72,9 @@ const db = await createDatabase(options);
 | `defaultTenantId` | `string` | Default tenant. Defaults to `"default"`. |
 | `defaultNodeId` | `string` | Default node identifier. Defaults to `"local"`. |
 
-## `DatabaseApi`
+## API surface
 
-The object exposed through `zelavis.db` and returned by `createDatabase` from `@zelavis/db`. Each property is a scoped API for a different capability.
+`zelavis.db` exposes scoped APIs for each database capability.
 
 | Property | Type | Description |
 |---|---|---|
@@ -99,14 +91,14 @@ The object exposed through `zelavis.db` and returned by `createDatabase` from `@
 ## `documents`
 
 ```ts
-db.documents.createCollection(input): Promise<DatabaseCollection>
-db.documents.listCollections(input?): Promise<DatabaseCollection[]>
-db.documents.collectionExists(input): Promise<boolean>
-db.documents.insert<TData>(input): Promise<DatabaseDocument<TData>>
-db.documents.findById(input): Promise<DatabaseDocument | null>
-db.documents.findMany(input): Promise<DatabaseDocument[]>
-db.documents.update<TData>(input): Promise<DatabaseDocument<TData>>
-db.documents.delete(input): Promise<boolean>
+zelavis.db.documents.createCollection(input): Promise<DatabaseCollection>
+zelavis.db.documents.listCollections(input?): Promise<DatabaseCollection[]>
+zelavis.db.documents.collectionExists(input): Promise<boolean>
+zelavis.db.documents.insert<TData>(input): Promise<DatabaseDocument<TData>>
+zelavis.db.documents.findById(input): Promise<DatabaseDocument | null>
+zelavis.db.documents.findMany(input): Promise<DatabaseDocument[]>
+zelavis.db.documents.update<TData>(input): Promise<DatabaseDocument<TData>>
+zelavis.db.documents.delete(input): Promise<boolean>
 ```
 
 Documents are JSON objects stored in named collections. Each document gets an auto-generated `id` unless one is provided.
@@ -137,8 +129,8 @@ await zelavis.db.documents.delete({ collection: 'posts', id: doc.id });
 ## `events`
 
 ```ts
-db.events.append<TPayload>(input): Promise<DatabaseEvent<TPayload>>
-db.events.read(input?): Promise<DatabaseEvent[]>
+zelavis.db.events.append<TPayload>(input): Promise<DatabaseEvent<TPayload>>
+zelavis.db.events.read(input?): Promise<DatabaseEvent[]>
 ```
 
 The event log is append-only. Events are the source of truth for projections and time-series.
@@ -153,13 +145,13 @@ await zelavis.db.events.append({
 ## `schemas`
 
 ```ts
-db.schemas.register(schema): Promise<DatabaseCollectionSchema>
-db.schemas.registerMany(schemas): Promise<void>
-db.schemas.listCollections(): DatabaseCollectionSchemaSummary[]
-db.schemas.listVersions(collection): DatabaseCollectionSchema[]
-db.schemas.getActiveSchema(collection): DatabaseCollectionSchema | null
-db.schemas.activate(collection, version): Promise<DatabaseCollectionSchema>
-db.schemas.validate(input): ValidateDatabaseDocumentResult
+zelavis.db.schemas.register(schema): Promise<DatabaseCollectionSchema>
+zelavis.db.schemas.registerMany(schemas): Promise<void>
+zelavis.db.schemas.listCollections(): DatabaseCollectionSchemaSummary[]
+zelavis.db.schemas.listVersions(collection): DatabaseCollectionSchema[]
+zelavis.db.schemas.getActiveSchema(collection): DatabaseCollectionSchema | null
+zelavis.db.schemas.activate(collection, version): Promise<DatabaseCollectionSchema>
+zelavis.db.schemas.validate(input): ValidateDatabaseDocumentResult
 ```
 
 Schemas describe the shape of documents in a collection. Multiple versions can coexist; one version is active at a time.
@@ -183,9 +175,9 @@ await zelavis.db.schemas.register({
 ## `projections`
 
 ```ts
-db.projections.register(definition): Promise<void>
-db.projections.list(): Promise<DatabaseProjectionSummary[]>
-db.projections.rebuild(input?): Promise<DatabaseProjectionRebuildResult>
+zelavis.db.projections.register(definition): Promise<void>
+zelavis.db.projections.list(): Promise<DatabaseProjectionSummary[]>
+zelavis.db.projections.rebuild(input?): Promise<DatabaseProjectionRebuildResult>
 ```
 
 Projections consume events and maintain derived state. Rebuilding replays the event log from the beginning.
@@ -208,9 +200,9 @@ await zelavis.db.projections.register({
 ## `timeseries`
 
 ```ts
-db.timeseries.define(definition): Promise<void>
-db.timeseries.list(): Promise<DatabaseTimeSeriesSummary[]>
-db.timeseries.get(name): DatabaseTimeSeriesHandle
+zelavis.db.timeseries.define(definition): Promise<void>
+zelavis.db.timeseries.list(): Promise<DatabaseTimeSeriesSummary[]>
+zelavis.db.timeseries.get(name): DatabaseTimeSeriesHandle
 ```
 
 Time-series are defined by mapping events to data points. Once defined, use the handle returned by `get` to query ranges or aggregates.
@@ -238,13 +230,3 @@ const total = await handle.aggregate({ op: 'count' });
 |---|---|
 | `range(input?)` | Returns raw data points. Supports `start`, `end`, `limit`, `order`. |
 | `aggregate(input)` | Returns a single number. `op` is one of `avg`, `sum`, `min`, `max`, `count`. |
-
-## `defineDatabaseService`
-
-```ts
-import { defineDatabaseService } from '@zelavis/db';
-
-const service = defineDatabaseService(db);
-```
-
-Wraps a `DatabaseApi` as a Zelavis runtime service, exposing the REST API used by the dashboard. You only need this in lower-level runtime composition — `coreServices.database` does it automatically.

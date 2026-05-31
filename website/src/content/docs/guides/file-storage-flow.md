@@ -49,12 +49,17 @@ After the upload, Zelavis gives you:
 Use the database schema helpers when the field is meant to store a file reference:
 
 ```ts
-import { createDatabase, imageFileSchema } from "@zelavis/db";
+import { Zelavis } from "zelavis";
+import { imageFileSchema } from "@zelavis/db";
 
-const database = await createDatabase();
+const zelavis = new Zelavis({
+  coreServices: {
+    database: true,
+  },
+});
 
-await database.documents.createCollection({ name: "posts" });
-await database.schemas.register({
+await zelavis.db.documents.createCollection({ name: "posts" });
+await zelavis.db.schemas.register({
   collection: "posts",
   version: 1,
   activate: true,
@@ -85,7 +90,7 @@ Other helpers are available too:
 After copying the reference JSON from the storage panel, insert it directly into a document:
 
 ```ts
-await database.documents.insert({
+await zelavis.db.documents.insert({
   collection: "posts",
   data: {
     title: "Spring launch",
