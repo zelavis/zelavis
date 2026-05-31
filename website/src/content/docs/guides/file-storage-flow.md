@@ -52,11 +52,7 @@ Use the database schema helpers when the field is meant to store a file referenc
 import { Zelavis } from "zelavis";
 import { imageFileSchema } from "@zelavis/db";
 
-const zelavis = new Zelavis({
-  coreServices: {
-    database: true,
-  },
-});
+const zelavis = new Zelavis();
 
 await zelavis.db.documents.createCollection({ name: "posts" });
 await zelavis.db.schemas.register({

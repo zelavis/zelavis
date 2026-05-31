@@ -679,7 +679,6 @@ export interface ZelavisOptions {
   rootPath?: string;
   api?: ZelavisApiOptions;
   services?: ZelavisServiceRegistryOptions;
-  coreServices?: ZelavisCoreServicesOptions;
   onError?: ZelavisServerErrorHandler;
   adapter?: ZelavisAdapter;
 }
@@ -3525,6 +3524,7 @@ function assertNoInternalConstructorOptions(
   const raw = options as Record<string, unknown>;
   const forbiddenKeys = [
     "runtimeServices",
+    "coreServices",
     "serviceContext",
     "servicePrefixes",
     "pathOverrides",

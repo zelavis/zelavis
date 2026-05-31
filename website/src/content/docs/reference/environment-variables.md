@@ -9,20 +9,6 @@ This page documents the current environment variables used by Zelavis runtime an
 
 Used by the `zelavis` dashboard core service when you want dashboard requests to redirect to a live UI dev server instead of serving embedded built assets.
 
-Equivalent code-level option:
-
-```ts
-import { zelavis } from "zelavis";
-
-await zelavis({
-  coreServices: {
-    dashboard: {
-      devServerUrl: "http://127.0.0.1:3001/zelavis",
-    },
-  },
-});
-```
-
 Notes:
 
 - Point this at the mounted dashboard base URL, not just the bare dev-server origin, when the UI dev server is mounted below `/zelavis`.

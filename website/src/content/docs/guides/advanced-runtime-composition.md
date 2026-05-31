@@ -20,9 +20,6 @@ import { nodeAdapter } from "zelavis/adapters/node";
 
 const zelavis = new Zelavis({
   adapter: nodeAdapter(),
-  coreServices: {
-    database: true,
-  },
 });
 ```
 
@@ -35,7 +32,7 @@ There are two layers:
 2. `await zelavis(...)`
    The advanced runtime-facing entrypoint.
 
-The class accepts high-level `coreServices` options and exposes core APIs such as `zelavis.db` and `zelavis.auth`. The lower-level function is for direct runtime graph controls such as injected runtime services, service prefix overrides, and path overrides.
+The class exposes core APIs such as `zelavis.db` and `zelavis.auth`. The lower-level function is for direct runtime graph controls such as injected runtime services, service prefix overrides, and path overrides.
 
 ## Example
 
@@ -44,10 +41,6 @@ import { zelavis } from "zelavis";
 
 const runtime = await zelavis({
   rootPath: "/admin",
-  coreServices: {
-    dashboard: false,
-    database: false,
-  },
   services: [],
 });
 ```

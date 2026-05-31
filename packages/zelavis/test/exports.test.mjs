@@ -214,15 +214,10 @@ test("cloudflare dispatch service activation sends registry changes to a worker 
   assert.equal(seen[1].body.action, "install");
 });
 
-test("Zelavis accepts high-level core service options and exposes core APIs", async () => {
+test("Zelavis exposes default core APIs", async () => {
   const { Zelavis } = await import("zelavis");
 
-  const zelavis = new Zelavis({
-    coreServices: {
-      dashboard: false,
-      database: true,
-    },
-  });
+  const zelavis = new Zelavis();
 
   await zelavis.db.documents.createCollection({ name: "posts" });
   const doc = await zelavis.db.documents.insert({
@@ -252,6 +247,16 @@ test("Zelavis rejects internal runtime options on the public class constructor",
     () =>
       new Zelavis({
         runtimeServices: [],
+      }),
+    /does not accept internal runtime options/,
+  );
+
+  assert.throws(
+    () =>
+      new Zelavis({
+        coreServices: {
+          database: false,
+        },
       }),
     /does not accept internal runtime options/,
   );

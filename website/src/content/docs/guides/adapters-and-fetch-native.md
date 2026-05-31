@@ -140,7 +140,7 @@ export function herokuAdapter() {
     async resolve(_options) {
       // Reuse nodeAdapter() resolve logic, then override Heroku specifics
       return {
-        // coreServices, resources, metadata
+        // resources, metadata
       };
     },
   });

@@ -6,38 +6,22 @@ Zelavis includes a database core service with documents, events, schemas, projec
 
 ## Setup
 
-The database core service is enabled by default. Pass a `database` option to `coreServices` when you want to be explicit or provide a custom backing driver:
+The database core service is enabled by default:
 
 ```ts
 import { Zelavis } from 'zelavis';
 
 const zelavis = new Zelavis({
   adapter,
-  coreServices: {
-    database: true, // in-memory default
-  },
 });
 ```
-
-`coreServices.database` accepts:
-
-| Value | Description |
-|---|---|
-| `true` | Enable with the default in-memory driver. |
-| `false` | Disable the database core service. |
-| database options | Enable with a specific driver or schemas. |
-| database service instance | Use a pre-created database service instance. |
 
 ## `zelavis.db`
 
 ```ts
 import { Zelavis } from 'zelavis';
 
-const zelavis = new Zelavis({
-  coreServices: {
-    database: true,
-  },
-});
+const zelavis = new Zelavis();
 
 await zelavis.db.documents.createCollection({ name: 'posts' });
 
@@ -62,15 +46,6 @@ await zelavis.db.documents.delete({ collection: 'posts', id: doc.id });
 ```
 
 `zelavis.db` resolves to the same database API instance mounted by the Zelavis runtime, so dashboard routes, services, and application code share one database service.
-
-### Database options
-
-| Option | Type | Description |
-|---|---|---|
-| `driver` | `DatabaseDriver` | Storage backend. Defaults to the built-in in-memory driver. |
-| `schemas` | `DatabaseCollectionSchema[]` | Schemas to register at startup. |
-| `defaultTenantId` | `string` | Default tenant. Defaults to `"default"`. |
-| `defaultNodeId` | `string` | Default node identifier. Defaults to `"local"`. |
 
 ## API surface
 
