@@ -35,7 +35,7 @@ route("zelavis/*", "routes/zelavis.$.ts")
 ```
 
 The generated resource route forwards loaders and actions directly to
-`getZelavis().fetch(request)`. React Router already uses standard Web
+`zelavis.fetch(request)`. React Router already uses standard Web
 `Request` and `Response` objects, so no framework wrapper is needed.
 
 ## Next.js App Router
@@ -152,4 +152,3 @@ modules and route files are skipped so local edits are not overwritten.
 
 For route config files, the CLI performs small conservative edits. If it cannot
 update a config safely, it prints the change to make manually.
-

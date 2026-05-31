@@ -42,13 +42,13 @@ export const DELETE = handle;
 `;
   }
 
-  return `import { getZelavis } from "${runtimeImportPath}";
+  return `import { zelavis } from "${runtimeImportPath}";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 async function handle(request: Request): Promise<Response> {
-  return getZelavis().fetch(request);
+  return zelavis.fetch(request);
 }
 
 export const GET = handle;
@@ -61,7 +61,7 @@ export const DELETE = handle;
 
 function getPagesRouterApiTemplate(): string {
   return `import { nextjsPagesRouterHandler } from "zelavis/nextjs/pages";
-import { getZelavis } from "@/lib/zelavis";
+import { zelavis } from "@/lib/zelavis";
 
 export const config = {
   api: {
@@ -70,7 +70,7 @@ export const config = {
   },
 };
 
-export default nextjsPagesRouterHandler(getZelavis(), {
+export default nextjsPagesRouterHandler(zelavis, {
   routePrefix: "/api/zelavis",
   mountPath: "/zelavis",
 });
