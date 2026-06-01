@@ -524,8 +524,8 @@ importers:
         specifier: ^5.1.36
         version: 5.1.40
       lexical:
-        specifier: ^0.44.0
-        version: 0.44.0
+        specifier: ^0.45.0
+        version: 0.45.0
       lucide-react:
         specifier: ^0.577.0
         version: 0.577.0(react@19.2.5)
