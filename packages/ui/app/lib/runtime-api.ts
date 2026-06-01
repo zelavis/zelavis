@@ -403,7 +403,7 @@ const fallbackConfig: RuntimeConfig = {
       menu: {
         title: "Database",
         surface: "core",
-        panelLabel: "Tables",
+        panelLabel: "Database",
         items: [
           {
             title: "System Tables",

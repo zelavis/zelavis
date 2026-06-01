@@ -63,7 +63,6 @@ export type DashboardRoutePath =
   | `/${string}`;
 
 export type DashboardNavSearch = {
-  table?: string;
   systemTable?:
     | "_collections"
     | "_documents"
@@ -346,7 +345,7 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
     apiPath: "/api/v1/database",
     menu: {
       title: "Database",
-      panelLabel: "Tables",
+      panelLabel: "Database",
       items: [
         {
           title: "System Tables",
@@ -387,7 +386,6 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
 export function buildPlatformNavItems(
   services?: readonly RuntimeService[],
   serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
-  databaseCollections?: readonly { name: string }[],
   contentTypes?: readonly ContentTypeRow[],
 ): readonly DashboardNavItem[] {
   const workspaceRegistryNavItems = buildWorkspaceServiceNavItems(serviceRegistry);
@@ -414,24 +412,8 @@ export function buildPlatformNavItems(
       return {
         item: {
           ...baseMenu,
-          panelLabel: baseMenu.panelLabel ?? "Tables",
+          panelLabel: "Database",
           items: [
-            ...(databaseCollections && databaseCollections.length > 0
-              ? databaseCollections.map((collection) => ({
-                  title: collection.name,
-                  url: "/database" as const,
-                  search: { table: collection.name },
-                  icon: Database,
-                  pageLabel: "Database",
-                }))
-              : [
-                  {
-                    title: "Tables",
-                    url: "/database" as const,
-                    icon: Database,
-                    pageLabel: "Database",
-                  },
-                ]),
             ...(systemTableItems.length > 0
               ? [
                   {
