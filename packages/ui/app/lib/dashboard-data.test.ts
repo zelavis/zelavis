@@ -111,4 +111,47 @@ describe("dashboard navigation ownership", () => {
     const settings = nav.find((item) => item.title === "Settings");
     expect(settings?.items?.some((item) => item.title === "Jobs")).toBe(true);
   });
+
+  it("keeps document collections out of the database sidebar slide", () => {
+    const services = [
+      {
+        name: "@zelavis/db",
+        core: true,
+        apiPath: "/api/v1/database",
+        menu: {
+          title: "Database",
+          surface: "core",
+          panelLabel: "Database",
+          items: [
+            {
+              title: "System Tables",
+              panelLabel: "System Tables",
+              items: [
+                { title: "_collections", path: "/database" },
+                { title: "_documents", path: "/database" },
+              ],
+            },
+          ],
+        },
+      },
+    ] satisfies readonly RuntimeService[];
+
+    const nav = buildPlatformNavItems(services, [], [
+      {
+        name: "fruits",
+        label: "Fruits",
+        documentCount: 1,
+        tenantId: "default",
+        activeVersion: null,
+        versions: [],
+        pinned: false,
+        pinnedIndex: Number.MAX_SAFE_INTEGER,
+      },
+    ]);
+
+    const database = findNavItem(nav, "Database");
+    expect(database?.items?.map((item) => item.title)).toEqual(["System Tables"]);
+    expect(findNavItem(database?.items ?? [], "fruits")).toBeUndefined();
+    expect(findNavItem(database?.items ?? [], "_collections")).toBeDefined();
+  });
 });

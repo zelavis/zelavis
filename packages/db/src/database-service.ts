@@ -225,7 +225,7 @@ export function defineDatabaseService(
     menu: {
       title: "Database",
       surface: "core",
-      panelLabel: "Tables",
+      panelLabel: "Database",
       items: [
         {
           title: "System Tables",

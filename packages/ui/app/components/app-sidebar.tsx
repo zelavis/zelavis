@@ -21,6 +21,7 @@ import {
   secondaryNavItems,
   sidebarTeams,
 } from "#/lib/dashboard-data";
+import { filterUserDatabaseCollections } from "#/lib/database-collections";
 import {
   getDashboardSettings,
   getResolvedDashboardPreferences,
@@ -55,7 +56,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const contentTypes = React.useMemo(
     () =>
       buildContentTypeRows(
-        databaseCollections.data ?? [],
+        filterUserDatabaseCollections(databaseCollections.data ?? []),
         schemaCollections.data ?? [],
         getResolvedDashboardPreferences(settings.data).content,
       ),
@@ -67,11 +68,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         ? buildPlatformNavItems(
             runtime.data.services,
             runtime.data.serviceRegistry,
-            databaseCollections.data,
             contentTypes,
           )
         : platformNavItems,
-    [contentTypes, databaseCollections.data, runtime.data?.serviceRegistry, runtime.data?.services],
+    [contentTypes, runtime.data?.serviceRegistry, runtime.data?.services],
   );
 
   return (
