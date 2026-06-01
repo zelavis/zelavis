@@ -52,7 +52,7 @@
     "@lexical/list": "^0.44.0",
     "@lexical/react": "^0.44.0",
     "@lexical/rich-text": "^0.44.0",
-    "@lexical/selection": "^0.44.0",
+    "@lexical/selection": "^0.45.0",
     "@react-router/node": "7.15.1",
     "@react-router/serve": "7.15.1",
     "@remixicon/react": "^4.9.0",
