@@ -49,3 +49,26 @@ test("buildContentTypeRows respects pinned type order from preferences", () => {
   expect(rows[0]?.pinnedIndex).toBe(0);
   expect(rows[1]?.pinnedIndex).toBe(1);
 });
+
+test("buildContentTypeRows hides internal platform collections", () => {
+  const rows = buildContentTypeRows(
+    [
+      {
+        name: "zelavis_system",
+        tenantId: "default",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        documentCount: 0,
+      },
+      {
+        name: "posts",
+        tenantId: "default",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        documentCount: 2,
+      },
+    ],
+    [],
+    undefined,
+  );
+
+  expect(rows.map((row) => row.name)).toEqual(["posts"]);
+});

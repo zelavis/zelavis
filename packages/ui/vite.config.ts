@@ -40,6 +40,7 @@ export default defineConfig({
     ],
   },
   resolve: {
+    dedupe: ["react", "react-dom", "react/jsx-runtime"],
     alias: {
       "#": fileURLToPath(new URL("./app", import.meta.url)),
     },
