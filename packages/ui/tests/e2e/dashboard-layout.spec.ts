@@ -727,8 +727,10 @@ test('sidebar route panels restore from the current route on refresh', async ({
   await waitForDashboardHydration(page)
 
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const activeSlide = sidebar.locator('.swiper-slide-active').first()
 
-  await expect(sidebar.getByRole('button', { name: 'Database' })).toBeVisible()
+  await expect(activeSlide).toContainText('Database')
+  await expect(activeSlide.getByRole('link', { name: '_collections', exact: true })).toBeVisible()
 })
 
 test('sidebar has one internal link per dashboard route', async ({
