@@ -729,7 +729,7 @@ test('sidebar route panels restore from the current route on refresh', async ({
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
   const activeSlide = sidebar.locator('.swiper-slide-active').first()
 
-  await expect(activeSlide).toContainText('Database')
+  await expect(activeSlide).toContainText('System Tables')
   await expect(activeSlide.getByRole('link', { name: '_collections', exact: true })).toBeVisible()
 })
 
