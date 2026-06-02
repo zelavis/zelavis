@@ -17,19 +17,21 @@ const DEFAULT_APP_INFO = {
   version: "1.0.0",
 };
 
+type StripeClientConfig = NonNullable<ConstructorParameters<typeof Stripe>[1]>;
+
 export interface StripeRuntimeConfig {
-  httpClient?: Stripe.StripeConfig["httpClient"];
-  maxNetworkRetries?: Stripe.StripeConfig["maxNetworkRetries"];
-  timeout?: Stripe.StripeConfig["timeout"];
-  telemetry?: Stripe.StripeConfig["telemetry"];
-  stripeAccount?: Stripe.StripeConfig["stripeAccount"];
-  stripeContext?: Stripe.StripeConfig["stripeContext"];
+  httpClient?: StripeClientConfig["httpClient"];
+  maxNetworkRetries?: StripeClientConfig["maxNetworkRetries"];
+  timeout?: StripeClientConfig["timeout"];
+  telemetry?: StripeClientConfig["telemetry"];
+  stripeAccount?: StripeClientConfig["stripeAccount"];
+  stripeContext?: StripeClientConfig["stripeContext"];
 }
 
 export interface StripeServiceOptions {
   secretKey?: string;
   client?: Stripe;
-  apiVersion?: Stripe.LatestApiVersion;
+  apiVersion?: StripeClientConfig["apiVersion"];
   runtime?: StripeRuntimeConfig;
   getPaymentIntentParams?: (
     input: CreatePaymentInput,
@@ -39,16 +41,16 @@ export interface StripeServiceOptions {
   getRefundPaymentIdempotencyKey?: (input: RefundPaymentInput) => string | undefined;
   getCreateSubscriptionIdempotencyKey?: (input: CreateSubscriptionInput) => string | undefined;
   getCancelSubscriptionIdempotencyKey?: (input: CancelSubscriptionInput) => string | undefined;
-  appInfo?: Stripe.StripeConfig["appInfo"];
+  appInfo?: StripeClientConfig["appInfo"];
 }
 
 export interface FetchStripeRuntimeOptions {
-  fetchFn?: Function;
-  maxNetworkRetries?: Stripe.StripeConfig["maxNetworkRetries"];
-  timeout?: Stripe.StripeConfig["timeout"];
-  telemetry?: Stripe.StripeConfig["telemetry"];
-  stripeAccount?: Stripe.StripeConfig["stripeAccount"];
-  stripeContext?: Stripe.StripeConfig["stripeContext"];
+  fetchFn?: Parameters<typeof Stripe.createFetchHttpClient>[0];
+  maxNetworkRetries?: StripeClientConfig["maxNetworkRetries"];
+  timeout?: StripeClientConfig["timeout"];
+  telemetry?: StripeClientConfig["telemetry"];
+  stripeAccount?: StripeClientConfig["stripeAccount"];
+  stripeContext?: StripeClientConfig["stripeContext"];
 }
 
 export function createStripeClient(options: StripeServiceOptions): Stripe {
@@ -80,7 +82,9 @@ export function createFetchStripeRuntime(
   };
 }
 
-export function createStripeWebhookCryptoProvider(subtleCrypto?: unknown): Stripe.CryptoProvider {
+export function createStripeWebhookCryptoProvider(
+  subtleCrypto?: Parameters<typeof Stripe.createSubtleCryptoProvider>[0],
+): ReturnType<typeof Stripe.createSubtleCryptoProvider> {
   return Stripe.createSubtleCryptoProvider(subtleCrypto);
 }
 
