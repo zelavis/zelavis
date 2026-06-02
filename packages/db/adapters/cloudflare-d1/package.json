@@ -39,7 +39,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260601.1",
-    "better-sqlite3": "^11.5.0",
+    "better-sqlite3": "^12.10.0",
     "typescript": "^5.9.0"
   },
   "keywords": [
