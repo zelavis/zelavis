@@ -453,17 +453,16 @@ export function NavMain({
               ].join(" ")}
             >
               <div className="flex min-h-0 w-full shrink-0 flex-col gap-1">
-                {panelIndex === 0 ? (
-                  <SidebarGroupLabel>Platform</SidebarGroupLabel>
-                ) : panel.panelLabel ? (
-                  <SidebarGroupLabel>{panel.panelLabel}</SidebarGroupLabel>
-                ) : null}
+                {panelIndex === 0 ? <SidebarGroupLabel>Platform</SidebarGroupLabel> : null}
                 <SidebarMenu>
                   {panelIndex > 0 ? (
                     <SidebarMenuItem>
-                      <SidebarMenuButton onClick={goBack} tooltip="Back">
+                      <SidebarMenuButton
+                        onClick={goBack}
+                        tooltip={`Back from ${panel.panelLabel ?? panel.title}`}
+                      >
                         <ChevronLeft className="rtl:rotate-180" />
-                        <span>{panel.title}</span>
+                        <span>{panel.panelLabel ?? panel.title}</span>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   ) : null}

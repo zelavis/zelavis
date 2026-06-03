@@ -180,6 +180,17 @@ export interface CommerceProduct {
   updatedAt: string;
 }
 
+export interface AuthAccount {
+  id: string;
+  email?: string;
+  username?: string;
+  displayName?: string;
+  verified: boolean;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CommerceOrder {
   id: string;
   customerId: string;
@@ -946,6 +957,10 @@ export async function getDatabaseHealth(config: RuntimeConfig) {
 
 export async function listAuthProviders(config: RuntimeConfig) {
   return readJson<string[]>(`${config.api.basePath}/auth/providers`);
+}
+
+export async function listAuthAccounts(config: RuntimeConfig) {
+  return readJson<AuthAccount[]>(`${config.api.basePath}/auth/accounts`);
 }
 
 export async function listCommerceProducts(config: RuntimeConfig) {
