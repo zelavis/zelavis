@@ -1,4 +1,5 @@
-;
+import type * as React from "react";
+import { useLoaderData, useRevalidator } from "react-router";
 import { useState } from "react";
 
 import { PageHeader, ResourceNotice } from "#/components/DashboardPage";
@@ -10,20 +11,22 @@ import {
   getRuntimeConfig,
   listWebsitePages,
 } from "#/lib/runtime-api";
-import { useRuntimeResource } from "#/lib/use-runtime-resource";
+import type { Route } from './+types/builder.pages';
 
 export const handle = {
   pageLabel: "Builder",
   sidebarTrail: ["Workspace", "Builder"],
 } as const;
 
+export async function clientLoader(_args: Route.ClientLoaderArgs) {
+  const runtime = await getRuntimeConfig();
+  const pages = await listWebsitePages(runtime).catch(() => [] as Awaited<ReturnType<typeof listWebsitePages>>);
+  return { pages };
+}
+
 function BuilderPages() {
-  const runtime = useRuntimeResource(getRuntimeConfig);
-  const config = runtime.data;
-  const pages = useRuntimeResource(
-    async () => (config ? listWebsitePages(config) : undefined),
-    [config],
-  );
+  const { pages } = useLoaderData<typeof clientLoader>();
+  const revalidator = useRevalidator();
   const [title, setTitle] = useState("");
   const [path, setPath] = useState("");
   const [headline, setHeadline] = useState("");
@@ -31,27 +34,28 @@ function BuilderPages() {
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
-  const hasHomePage = pages.data?.some((page) => page.path === "/") ?? false;
+  const hasHomePage = pages.some((page) => page.path === "/");
 
   async function handleCreatePage(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!config || saving) {
+    if (saving) {
       return;
     }
 
+    const runtime = await getRuntimeConfig();
     setSaving(true);
     setMessage(undefined);
     setError(undefined);
 
     try {
-      const created = await createWebsitePage(config, {
+      const created = await createWebsitePage(runtime, {
         title,
         path,
         headline: headline || undefined,
         description: description || undefined,
       });
-      await pages.reload();
+      revalidator.revalidate();
       setTitle("");
       setPath("");
       setHeadline("");
@@ -154,7 +158,7 @@ function BuilderPages() {
 
             <div className="flex items-center justify-between gap-3">
               <p className="text-sm text-muted-foreground">
-                Existing pages: {pages.data?.length ?? 0}
+                Existing pages: {pages.length}
               </p>
               <Button type="submit" disabled={saving}>
                 {saving ? "Creating…" : "Create page"}

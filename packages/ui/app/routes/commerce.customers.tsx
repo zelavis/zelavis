@@ -1,6 +1,6 @@
+import { useLoaderData, useRevalidator } from "react-router";
 import { useState } from "react";
 import type { FormEvent } from "react";
-;
 
 import { PageHeader, ResourceNotice } from "#/components/DashboardPage";
 import { ServicePageMount } from "#/components/ServicePageMount";
@@ -12,20 +12,21 @@ import {
   getRuntimeConfig,
   listCommerceCustomers,
 } from "#/lib/runtime-api";
-import { useRuntimeResource } from "#/lib/use-runtime-resource";
 
 export const handle = {
   pageLabel: "Commerce",
   sidebarTrail: ["Workspace", "Ecommerce", "More"],
 } as const;
 
+export async function clientLoader() {
+  const runtime = await getRuntimeConfig();
+  const customers = await listCommerceCustomers(runtime).catch(() => [] as Awaited<ReturnType<typeof listCommerceCustomers>>);
+  return { customers };
+}
+
 function CommerceCustomers() {
-  const runtime = useRuntimeResource(getRuntimeConfig);
-  const config = runtime.data;
-  const customers = useRuntimeResource(
-    async () => (config ? listCommerceCustomers(config) : []),
-    [config],
-  );
+  const { customers } = useLoaderData<typeof clientLoader>();
+  const revalidator = useRevalidator();
   const [email, setEmail] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -36,15 +37,16 @@ function CommerceCustomers() {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!config || saving) {
+    if (saving) {
       return;
     }
 
+    const runtime = await getRuntimeConfig();
     setSaving(true);
     setMessage(undefined);
     setError(undefined);
     try {
-      const created = await createCommerceCustomer(config, {
+      const created = await createCommerceCustomer(runtime, {
         email,
         firstName: firstName || undefined,
         lastName: lastName || undefined,
@@ -55,7 +57,7 @@ function CommerceCustomers() {
       setLastName("");
       setAccountId("");
       setMessage(`Created ${created.email}.`);
-      await customers.reload();
+      revalidator.revalidate();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -74,11 +76,7 @@ function CommerceCustomers() {
             <CardTitle>Customer records</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            {customers.error ? (
-              <div className="p-4">
-                <ResourceNotice title="Customers unavailable" description={customers.error.message} />
-              </div>
-            ) : customers.data && customers.data.length > 0 ? (
+            {customers.length > 0 ? (
               <div className="overflow-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
@@ -90,7 +88,7 @@ function CommerceCustomers() {
                     </tr>
                   </thead>
                   <tbody>
-                    {customers.data.map((customer) => (
+                    {customers.map((customer) => (
                       <tr key={customer.id} className="border-t">
                         <td className="px-4 py-3 font-medium text-foreground">{customer.email}</td>
                         <td className="px-4 py-3">

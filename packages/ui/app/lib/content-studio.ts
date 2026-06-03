@@ -3,7 +3,7 @@ import type {
   DatabaseCollection,
   DatabaseSchemaCollectionSummary,
 } from "#/lib/runtime-api";
-import { isInternalDatabaseCollection } from "#/lib/database-collections";
+import { isContentTypeDatabaseCollection, isInternalDatabaseCollection } from "#/lib/database-collections";
 
 export interface ContentTypeRow {
   name: string;
@@ -46,7 +46,7 @@ export function buildContentTypeRows(
   );
 
   return collections
-    .filter((collection) => !isInternalDatabaseCollection(collection.name))
+    .filter((collection) => !isInternalDatabaseCollection(collection.name) && isContentTypeDatabaseCollection(collection))
     .map((collection) => ({
       name: collection.name,
       label: getContentTypeLabel(collection.name, preferences),

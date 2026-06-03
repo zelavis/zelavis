@@ -1,10 +1,9 @@
 import * as React from "react";
-import { useLocation } from "react-router";
+import { useLocation, useRouteLoaderData } from "react-router";
 
 import { ServiceFrame } from "#/components/ServiceFrame";
 import { findServiceMenuPageByPath } from "#/lib/dashboard-data";
-import { getRuntimeConfig } from "#/lib/runtime-api";
-import { useRuntimeResource } from "#/lib/use-runtime-resource";
+import type { clientLoader as rootClientLoader } from '../root';
 
 export function ServicePageMount({
   fallback,
@@ -12,8 +11,8 @@ export function ServicePageMount({
   fallback: React.ReactNode;
 }) {
   const pathname = useLocation().pathname;
-  const runtime = useRuntimeResource(getRuntimeConfig);
-  const page = findServiceMenuPageByPath(pathname, runtime.data?.serviceRegistry);
+  const { runtime } = useRouteLoaderData<typeof rootClientLoader>('root')!;
+  const page = findServiceMenuPageByPath(pathname, runtime.serviceRegistry);
 
   if (!page) {
     return <>{fallback}</>;

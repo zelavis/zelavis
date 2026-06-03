@@ -1,4 +1,4 @@
-;
+import { useLoaderData, useRevalidator, useRouteLoaderData } from "react-router";
 import { Files, Trash2, Upload } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 
@@ -21,12 +21,33 @@ import {
   listStorageFiles,
   uploadStorageFile,
 } from "#/lib/runtime-api";
-import { useRuntimeResource } from "#/lib/use-runtime-resource";
+import { parseAsString, useTypedSearchParams } from "#/lib/use-typed-search-params";
+import type { clientLoader as rootClientLoader } from '../root';
+import type { Route } from './+types/storage';
 
 export const handle = {
   pageLabel: "Storage",
   sidebarTrail: ["Core"],
 } as const;
+
+export async function clientLoader({ request }: Route.ClientLoaderArgs) {
+  const runtime = await getRuntimeConfig();
+  const storageEnabled = runtime.services.some((s) => s.name === "@zelavis/storage");
+  const url = new URL(request.url);
+  const prefix = url.searchParams.get('prefix') || undefined;
+  const selectedPath = url.searchParams.get('path') || undefined;
+
+  if (!storageEnabled) {
+    return { files: undefined, metadata: undefined };
+  }
+
+  const [filesResult, metadata] = await Promise.all([
+    listStorageFiles(runtime, prefix).catch(() => undefined),
+    selectedPath ? getStorageFileMetadata(runtime, selectedPath).catch(() => undefined) : Promise.resolve(undefined),
+  ]);
+
+  return { files: filesResult, metadata };
+}
 
 function formatBytes(value: number | undefined): string {
   if (value === undefined) {
@@ -48,11 +69,19 @@ function formatBytes(value: number | undefined): string {
   return `${size.toFixed(size >= 10 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
+const storageSchema = {
+  prefix: parseAsString,
+  path: parseAsString,
+} as const;
+
 function StorageRoute() {
-  const runtime = useRuntimeResource(getRuntimeConfig);
-  const config = runtime.data;
-  const storageEnabled = config?.services.some((service) => service.name === "@zelavis/storage");
-  const [prefix, setPrefix] = useState("");
+  const { files: filesResult, metadata } = useLoaderData<typeof clientLoader>();
+  const { runtime: config } = useRouteLoaderData<typeof rootClientLoader>('root')!;
+  const storageEnabled = config.services.some((service) => service.name === "@zelavis/storage");
+  const [{ prefix, path: selectedPath }, setParams] = useTypedSearchParams(storageSchema);
+  const setPrefix = (value: string) => setParams({ prefix: value || null });
+  const setSelectedPath = (value: string | undefined) => setParams({ path: value ?? null });
+
   const [uploadPath, setUploadPath] = useState("");
   const [uploadLabel, setUploadLabel] = useState("");
   const [uploadAltText, setUploadAltText] = useState("");
@@ -60,7 +89,6 @@ function StorageRoute() {
   const [uploadCacheControl, setUploadCacheControl] = useState("");
   const [uploadContentDisposition, setUploadContentDisposition] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | undefined>();
-  const [selectedPath, setSelectedPath] = useState<string>();
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -69,22 +97,12 @@ function StorageRoute() {
   const [copyMessage, setCopyMessage] = useState<string>();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const filesResource = useRuntimeResource(
-    async () =>
-      config && storageEnabled ? listStorageFiles(config, prefix || undefined) : undefined,
-    [config, storageEnabled, prefix],
-  );
-
-  const metadataResource = useRuntimeResource(
-    async () =>
-      config && storageEnabled && selectedPath
-        ? getStorageFileMetadata(config, selectedPath)
-        : undefined,
-    [config, storageEnabled, selectedPath],
-  );
+  const revalidator = useRevalidator();
+  const filesResource = { data: filesResult };
+  const metadataResource = { data: metadata };
 
   const fileCount = filesResource.data?.files.length ?? 0;
-  const databaseEnabled = config?.services.some((service) => service.name === "@zelavis/db");
+  const databaseEnabled = config.services.some((service) => service.name === "@zelavis/db");
   const totalSize = useMemo(
     () =>
       (filesResource.data?.files ?? []).reduce(
@@ -97,7 +115,7 @@ function StorageRoute() {
   async function handleUpload(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!config || !storageEnabled || !selectedFile || busy) {
+    if (!storageEnabled || !selectedFile || busy) {
       return;
     }
 
@@ -130,7 +148,7 @@ function StorageRoute() {
         onProgress: ({ percent }) => setUploadProgress(percent),
       });
 
-      await filesResource.reload();
+      revalidator.revalidate();
       setSelectedPath(created.file.path);
       setUploadPath("");
       setUploadLabel("");
@@ -153,7 +171,7 @@ function StorageRoute() {
   }
 
   async function handleDelete(path: string) {
-    if (!config || !storageEnabled || busy) {
+    if (!storageEnabled || busy) {
       return;
     }
 
@@ -163,7 +181,7 @@ function StorageRoute() {
 
     try {
       await deleteStorageFile(config, path);
-      await filesResource.reload();
+      revalidator.revalidate();
       if (selectedPath === path) {
         setSelectedPath(undefined);
       }
@@ -177,7 +195,7 @@ function StorageRoute() {
 
   async function handleInsertSampleDocument() {
     const reference = metadataResource.data?.reference;
-    if (!config || !databaseEnabled || !reference || busy) {
+    if (!databaseEnabled || !reference || busy) {
       return;
     }
 
@@ -513,7 +531,7 @@ function StorageRoute() {
                 />
               ))}
 
-              {!filesResource.loading && fileCount === 0 ? (
+              {fileCount === 0 ? (
                 <div className="p-4">
                   <ResourceNotice
                     title="No files yet"

@@ -1,3 +1,4 @@
+import { useRouteLoaderData } from 'react-router'
 import { Boxes } from 'lucide-react'
 
 import {
@@ -7,8 +8,7 @@ import {
   StatusBadge,
 } from '#/components/DashboardPage'
 import { Card, CardContent, CardHeader, CardTitle } from '#/components/ui/card'
-import { getRuntimeConfig } from '#/lib/runtime-api'
-import { useRuntimeResource } from '#/lib/use-runtime-resource'
+import type { clientLoader as rootClientLoader } from '../root'
 
 export const handle = {
   pageLabel: "Services",
@@ -16,8 +16,8 @@ export const handle = {
 } as const;
 
 function Services() {
-  const runtime = useRuntimeResource(getRuntimeConfig)
-  const services = runtime.data?.services ?? []
+  const { runtime } = useRouteLoaderData<typeof rootClientLoader>('root')!
+  const services = runtime.services
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">

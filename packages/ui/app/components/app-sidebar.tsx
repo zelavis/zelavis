@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useLocation } from "react-router";
 
 import { NavMain } from "#/components/nav-main";
 import { NavSecondary } from "#/components/nav-secondary";
@@ -22,14 +23,14 @@ import {
   sidebarTeams,
 } from "#/lib/dashboard-data";
 import { filterUserDatabaseCollections } from "#/lib/database-collections";
+import { readSearchParams } from "#/lib/routing";
 import {
-  getDashboardSettings,
+  type DashboardSettings,
   getResolvedDashboardPreferences,
-  getRuntimeConfig,
-  listDatabaseCollections,
-  listDatabaseSchemaCollections,
+  type DatabaseCollection,
+  type DatabaseSchemaCollectionSummary,
+  type RuntimeConfig,
 } from "#/lib/runtime-api";
-import { useRuntimeResource } from "#/lib/use-runtime-resource";
 
 const data = {
   user: {
@@ -39,39 +40,70 @@ const data = {
   },
 };
 
-export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-  const runtime = useRuntimeResource(getRuntimeConfig);
-  const settings = useRuntimeResource(
-    async () => (runtime.data ? getDashboardSettings(runtime.data) : undefined),
-    [runtime.data],
-  );
-  const databaseCollections = useRuntimeResource(
-    async () => (runtime.data ? listDatabaseCollections(runtime.data) : []),
-    [runtime.data],
-  );
-  const schemaCollections = useRuntimeResource(
-    async () => (runtime.data ? listDatabaseSchemaCollections(runtime.data) : []),
-    [runtime.data],
-  );
+export function AppSidebar({
+  runtime,
+  settings,
+  databaseCollections,
+  schemaCollections,
+  ...props
+}: React.ComponentProps<typeof Sidebar> & {
+  runtime?: RuntimeConfig;
+  settings?: DashboardSettings;
+  databaseCollections?: readonly DatabaseCollection[];
+  schemaCollections?: readonly DatabaseSchemaCollectionSummary[];
+}) {
+  const location = useLocation();
+  const selectedDatabaseTable = React.useMemo(() => {
+    const search = readSearchParams(location.search);
+    return typeof search.databaseTable === "string" && search.databaseTable.length > 0
+      ? search.databaseTable
+      : undefined;
+  }, [location.search]);
+  const effectiveDatabaseCollections = React.useMemo(() => {
+    const collections = [...(databaseCollections ?? [])];
+    if (
+      selectedDatabaseTable &&
+      !collections.some((collection) => collection.name === selectedDatabaseTable)
+    ) {
+      collections.push({
+        name: selectedDatabaseTable,
+        tenantId: "default",
+        createdAt: new Date().toISOString(),
+        documentCount: 0,
+        metadata: {
+          surface: "database",
+          kind: "table",
+        },
+      });
+    }
+
+    return collections;
+  }, [databaseCollections, selectedDatabaseTable]);
   const contentTypes = React.useMemo(
     () =>
       buildContentTypeRows(
-        filterUserDatabaseCollections(databaseCollections.data ?? []),
-        schemaCollections.data ?? [],
-        getResolvedDashboardPreferences(settings.data).content,
+        filterUserDatabaseCollections(effectiveDatabaseCollections),
+        schemaCollections ?? [],
+        getResolvedDashboardPreferences(settings).content,
       ),
-    [databaseCollections.data, schemaCollections.data, settings.data],
+    [effectiveDatabaseCollections, schemaCollections, settings],
   );
   const items = React.useMemo(
     () =>
-      runtime.data
+      runtime
         ? buildPlatformNavItems(
-            runtime.data.services,
-            runtime.data.serviceRegistry,
+            runtime.services,
+            runtime.serviceRegistry,
             contentTypes,
+            filterUserDatabaseCollections(effectiveDatabaseCollections),
           )
         : platformNavItems,
-    [contentTypes, runtime.data?.serviceRegistry, runtime.data?.services],
+    [
+      contentTypes,
+      effectiveDatabaseCollections,
+      runtime?.serviceRegistry,
+      runtime?.services,
+    ],
   );
 
   return (

@@ -1,19 +1,13 @@
-import { Link, Outlet, useParams } from "react-router";
+import { Link, Outlet, useParams, useRouteLoaderData } from "react-router";
 
 import { PageHeader, ResourceNotice, StatusBadge } from "#/components/DashboardPage";
 import { buttonVariants } from "#/components/ui/button";
 import { Card, CardContent } from "#/components/ui/card";
 import { buildContentTypeRows } from "#/lib/content-studio";
-import {
-  getDashboardSettings,
-  getResolvedDashboardPreferences,
-  getRuntimeConfig,
-  listDatabaseCollections,
-  listDatabaseSchemaCollections,
-} from "#/lib/runtime-api";
-import { useRuntimeResource } from "#/lib/use-runtime-resource";
+import { getResolvedDashboardPreferences } from "#/lib/runtime-api";
 import { toDashboardPath } from "#/lib/routing";
 import { cn } from "#/lib/utils";
+import type { clientLoader as rootClientLoader } from '../root';
 
 export const handle = {
   pageLabel: "Content",
@@ -22,24 +16,11 @@ export const handle = {
 
 function ContentTypeLayout() {
   const contentTypeName = useParams().contentType ?? "";
-  const runtime = useRuntimeResource(getRuntimeConfig);
-  const config = runtime.data;
-  const settings = useRuntimeResource(
-    async () => (config ? getDashboardSettings(config) : undefined),
-    [config],
-  );
-  const collections = useRuntimeResource(
-    async () => (config ? listDatabaseCollections(config) : []),
-    [config],
-  );
-  const schemaCollections = useRuntimeResource(
-    async () => (config ? listDatabaseSchemaCollections(config) : []),
-    [config],
-  );
+  const { settings, databaseCollections, schemaCollections } = useRouteLoaderData<typeof rootClientLoader>('root')!;
   const contentType = buildContentTypeRows(
-    collections.data ?? [],
-    schemaCollections.data ?? [],
-    getResolvedDashboardPreferences(settings.data).content,
+    databaseCollections,
+    schemaCollections,
+    getResolvedDashboardPreferences(settings).content,
   ).find((row) => row.name === contentTypeName);
   const contentTypePath = encodeURIComponent(contentType?.name ?? "");
 

@@ -1,4 +1,4 @@
-import { Link, useParams } from "react-router";
+import { Link, useLoaderData, useRevalidator } from "react-router";
 import { ArrowDown, ArrowUp, PencilLine, Plus, Save, SquarePen, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -24,14 +24,20 @@ import {
   getRuntimeConfig,
   listDatabaseSchemaVersions,
 } from "#/lib/runtime-api";
-import { useRuntimeResource } from "#/lib/use-runtime-resource";
 import { toDashboardPath } from "#/lib/routing";
+import type { Route } from './+types/content.$contentType.fields';
 import { cn } from "#/lib/utils";
 
 export const handle = {
   pageLabel: "Content",
   sidebarTrail: ["Content"],
 } as const;
+
+export async function clientLoader({ params }: Route.ClientLoaderArgs) {
+  const runtime = await getRuntimeConfig();
+  const schemas = await listDatabaseSchemaVersions(runtime, params.contentType);
+  return { schemas, contentType: params.contentType };
+}
 
 const fieldTypeOptions: Array<{
   value: ContentFieldBuilderKind;
@@ -55,14 +61,9 @@ const fieldTypeOptions: Array<{
 ];
 
 function ContentTypeFieldsRoute() {
-  const contentType = useParams().contentType ?? "";
-  const runtime = useRuntimeResource(getRuntimeConfig);
-  const config = runtime.data;
-  const schemas = useRuntimeResource(
-    async () => (config ? listDatabaseSchemaVersions(config, contentType) : []),
-    [config, contentType],
-  );
-  const activeSchema = schemas.data?.find((schema) => schema.active) ?? schemas.data?.at(-1);
+  const { schemas, contentType } = useLoaderData<typeof clientLoader>();
+  const revalidator = useRevalidator();
+  const activeSchema = schemas.find((schema) => schema.active) ?? schemas.at(-1);
   const [schemaDraft, setSchemaDraft] = useState<Record<string, unknown>>();
   const [selectedFieldName, setSelectedFieldName] = useState<string>();
   const [newFieldName, setNewFieldName] = useState("");
@@ -262,16 +263,17 @@ function ContentTypeFieldsRoute() {
   }
 
   async function handleSaveSchema() {
-    if (!config || !schemaDraft || !activeSchema || saving) {
+    if (!schemaDraft || !activeSchema || saving) {
       return;
     }
 
+    const runtime = await getRuntimeConfig();
     setSaving(true);
     setMessage(undefined);
     setError(undefined);
     try {
       const nextVersion = (activeSchema.version ?? 0) + 1;
-      await createDatabaseSchema(config, {
+      await createDatabaseSchema(runtime, {
         collection: contentType,
         version: nextVersion,
         activate: true,
@@ -281,7 +283,7 @@ function ContentTypeFieldsRoute() {
           basedOnVersion: activeSchema.version,
         },
       });
-      await schemas.reload();
+      revalidator.revalidate();
       setMessage(`Saved and activated schema v${nextVersion}.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));

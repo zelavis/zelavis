@@ -1,3 +1,4 @@
+import { useRevalidator, useRouteLoaderData } from 'react-router'
 import { Moon, Paintbrush, Sun } from 'lucide-react'
 
 import { PageHeader } from '#/components/DashboardPage'
@@ -10,13 +11,9 @@ import {
   CardTitle,
 } from '#/components/ui/card'
 import { createDashboardSettings } from '#/lib/dashboard-settings'
-import {
-  getDashboardSettings,
-  getRuntimeConfig,
-  updateDashboardSettings,
-} from '#/lib/runtime-api'
+import { updateDashboardSettings } from '#/lib/runtime-api'
 import { useResolvedThemeMode, useThemeMode } from '#/lib/theme'
-import { useRuntimeResource } from '#/lib/use-runtime-resource'
+import type { clientLoader as rootClientLoader } from '../root'
 
 export const handle = {
   pageLabel: "Settings",
@@ -24,14 +21,10 @@ export const handle = {
 } as const;
 
 function AppearanceSettings() {
-  const runtime = useRuntimeResource(getRuntimeConfig)
-  const config = runtime.data
-  const remoteSettings = useRuntimeResource(
-    async () => (config ? getDashboardSettings(config) : undefined),
-    [config],
-  )
-  const [theme, setTheme] = useThemeMode(remoteSettings.data?.theme ?? 'auto')
-  const settings = createDashboardSettings(config, theme, remoteSettings.data)
+  const revalidator = useRevalidator()
+  const { runtime, settings: remoteSettings } = useRouteLoaderData<typeof rootClientLoader>('root')!
+  const [theme, setTheme] = useThemeMode(remoteSettings?.theme ?? 'auto')
+  const settings = createDashboardSettings(runtime, theme, remoteSettings)
   const resolvedTheme = useResolvedThemeMode(settings.theme)
   const themeLabel =
     settings.theme === 'auto'
@@ -45,14 +38,14 @@ function AppearanceSettings() {
   async function handleThemeChange(nextTheme: typeof theme) {
     setTheme(nextTheme)
 
-    if (!config || !settings.editable.theme) {
+    if (!settings.editable.theme) {
       return
     }
 
-    await updateDashboardSettings(config, {
+    await updateDashboardSettings(runtime, {
       theme: nextTheme,
     })
-    remoteSettings.reload()
+    revalidator.revalidate()
   }
 
   return (

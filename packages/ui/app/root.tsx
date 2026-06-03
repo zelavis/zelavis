@@ -6,11 +6,18 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
+  useLoaderData,
 } from "react-router";
 
 import { DashboardNotFound } from "#/components/DashboardNotFound";
 import { DashboardShell } from "#/components/DashboardShell";
 import { DirectionProvider } from "#/components/ui/direction";
+import {
+  getDashboardSettings,
+  getRuntimeConfig,
+  listDatabaseCollections,
+  listDatabaseSchemaCollections,
+} from "#/lib/runtime-api";
 import type { Route } from "./+types/root";
 import "@glideapps/glide-data-grid/dist/index.css";
 import "./styles.css";
@@ -20,6 +27,28 @@ const DEFAULT_DIRECTION = "ltr";
 
 export function meta() {
   return [{ title: "Zelavis Dashboard" }];
+}
+
+export async function clientLoader() {
+  const runtime = await getRuntimeConfig();
+  const [settings, databaseCollections, schemaCollections] = await Promise.all([
+    getDashboardSettings(runtime),
+    listDatabaseCollections(runtime),
+    listDatabaseSchemaCollections(runtime),
+  ]);
+
+  return {
+    runtime,
+    settings,
+    databaseCollections,
+    schemaCollections,
+  };
+}
+
+clientLoader.hydrate = true as const;
+
+export function shouldRevalidate() {
+  return true;
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -44,8 +73,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  const loaderData = useLoaderData<typeof clientLoader>();
+
   return (
-    <DashboardShell>
+    <DashboardShell dashboardData={loaderData}>
       <Outlet />
     </DashboardShell>
   );

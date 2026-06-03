@@ -1,6 +1,6 @@
 ---
 name: zelavis-dashboard-ui
-description: Use when working on the Zelavis dashboard UI in packages/ui, including TanStack Start routes, the slide-based sidebar, mounted /zelavis dev behavior, and embedded-runtime dashboard integration.
+description: Use when working on the Zelavis dashboard UI in packages/ui, including React Router v7 routes, the slide-based sidebar, mounted /zelavis dev behavior, and embedded-runtime dashboard integration.
 ---
 
 # Zelavis Dashboard UI
@@ -11,24 +11,87 @@ Use this skill for changes in:
 - embedded dashboard behavior in `packages/zelavis`
 - dashboard routing, settings, theme, and navigation
 
+## Stack
+
+- **Router**: React Router v7 in SPA mode (`ssr: false`) — not TanStack Router
+- **Styling**: Tailwind CSS v4 + shadcn/ui (Base UI components)
+- **Build**: Vite via `@react-router/dev`
+- **Generated types**: `.react-router/types/app/routes/+types/` — do not hand-edit
+- **Route files**: `app/routes/` — edit these, typegen runs automatically
+
+## Data loading rules
+
+Every route that fetches data must use a `clientLoader`. Never fetch data in `useEffect` for page-level data.
+
+```ts
+// Correct
+export async function clientLoader({ params, request }: Route.ClientLoaderArgs) {
+  const runtime = await getRuntimeConfig(); // cached after first call — always fast
+  const data = await fetchSomething(runtime, params.id);
+  return { data };
+}
+
+function MyRoute() {
+  const { data } = useLoaderData<typeof clientLoader>();
+}
+```
+
+Root loader data (`runtime`, `settings`, `databaseCollections`, `schemaCollections`) is already fetched once and available in every child route:
+
+```ts
+import type { clientLoader as rootClientLoader } from '../root';
+const { runtime, settings } = useRouteLoaderData<typeof rootClientLoader>('root')!;
+```
+
+After mutations, trigger a loader rerun with `useRevalidator().revalidate()` — do not manually refetch.
+
+For sub-component data not tied to a URL (e.g. loading related documents for a field editor), use `useFetcher` pointing at a resource route under `app/routes/api.*.tsx`.
+
+## URL search param rules
+
+**Everything that can survive a reload must be in the URL.** Use `useTypedSearchParams` from `app/lib/use-typed-search-params.ts` — never manage filterable or selectable state with `useState`.
+
+```ts
+// Define schema at module level (stable reference — not inside the component)
+const mySchema = {
+  prefix: parseAsString,
+  view: parseAsStringLiteral(['grid', 'list'] as const).withDefault('grid'),
+} as const;
+
+// In component
+const [params, setParams] = useTypedSearchParams(mySchema);
+setParams({ prefix: 'images/' });
+setParams({ view: null }); // null removes the key from the URL
+```
+
+For a single param, use the convenience wrapper:
+
+```ts
+const [prefix, setPrefix] = useTypedSearchParam('prefix', parseAsString.withDefault(''));
+```
+
+Available parsers: `parseAsString`, `parseAsStringLiteral`. Add new parsers to `use-typed-search-params.ts` following the `createParser` factory pattern — do not reach for external libraries.
+
+`clientLoader` reads search params from `request.url` (not `useLocation`) so data loading and URL state are always in sync on reload.
+
+## Sidebar rules
+
+- The sidebar uses a Swiper-based slide navigation model — each slide is a distinct panel
+- Top-level sections that have a natural entry page declare `landingUrl` in `dashboard-data.ts`; this navigates the main content area when the section is opened from the Platform root
+- Add `landingUrl` to any new top-level section that has a clear entry page
+- Do not hand-edit the sidebar slide structure unless the task explicitly changes navigation
+- `Community` is content inside the first sidebar slide
+
 ## Working rules
 
-- Use `pnpm run ui:dev` for end-to-end dashboard work.
-- The mounted dashboard path is `/zelavis`, including in dev mode.
-- Do not hand-edit `packages/ui/src/routeTree.gen.ts`.
-- Keep the existing slide-based sidebar model intact unless the task explicitly changes navigation structure.
-- Keep dashboard and runtime behavior aligned; dev mode should not drift from production mounting rules.
-
-## UI expectations
-
-- Preserve the current design language unless the task asks for a redesign.
-- Prefer existing shadcn/TanStack patterns already in the package.
-- Be careful with layout regressions in the sidebar and header.
-- Treat `Community` as content inside the first sidebar slide.
+- Use `pnpm run ui:dev` for end-to-end dashboard work
+- The mounted dashboard path is `/zelavis`, including in dev mode
+- Keep dashboard and runtime behavior aligned; dev mode must not drift from production mounting rules
+- Preserve the existing design language unless the task explicitly asks for a redesign
+- Be careful with layout regressions in the sidebar and header
+- **No backward compatibility.** Pre-release, no public users. Remove stale shapes cleanly — no shims, no legacy fallbacks, no "for old data" branches.
 
 ## Validation
-
-Use the smallest relevant checks:
 
 ```bash
 pnpm run ui:dev

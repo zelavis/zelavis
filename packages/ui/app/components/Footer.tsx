@@ -1,11 +1,10 @@
+import { useRouteLoaderData } from 'react-router'
 import { StatusBadge } from '#/components/DashboardPage'
-import { getRuntimeConfig } from '#/lib/runtime-api'
-import { useRuntimeResource } from '#/lib/use-runtime-resource'
+import type { clientLoader as rootClientLoader } from '../root'
 
 export default function Footer() {
-  const runtime = useRuntimeResource(getRuntimeConfig)
-  const config = runtime.data
-  const source = config?.configSource ?? (runtime.loading ? 'checking' : 'offline')
+  const { runtime } = useRouteLoaderData<typeof rootClientLoader>('root')!
+  const source = runtime.configSource ?? 'checking'
 
   return (
     <footer className="border-t px-4 py-4 text-sm text-muted-foreground">
@@ -13,7 +12,7 @@ export default function Footer() {
         <span>Zelavis dashboard shell</span>
         <span className="flex flex-wrap items-center gap-2">
           <StatusBadge state={source} />
-          <span>{config?.api.basePath ?? '/zelavis/api/v1'}</span>
+          <span>{runtime.api.basePath}</span>
         </span>
       </div>
     </footer>

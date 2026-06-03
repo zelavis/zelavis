@@ -115,25 +115,29 @@ When creating a new core package, service package, or plugin package:
 
 `packages/ui` is a special package with extra constraints:
 
-- It uses TanStack Start, TanStack Router, shadcn/ui, and Tailwind CSS.
-- Stay on the current Radix-based shadcn approach unless the user explicitly wants a migration.
-- `packages/ui/src/routeTree.gen.ts` is generated. Do not hand-edit it.
-- Prefer changing route source files under `packages/ui/src/routes/*` and letting build/dev regenerate the route tree.
+- It uses **React Router v7** (SPA mode, `ssr: false`) — not TanStack Router or TanStack Start.
+- Styling is Tailwind CSS v4 + shadcn/ui (Base UI components).
+- Generated route types live in `.react-router/types/`. Do not hand-edit them.
+- Route source files are under `packages/ui/app/routes/`. Edit these; typegen runs automatically.
 - The dashboard sidebar uses a slide-based navigation model. Treat each slide as a distinct sidebar panel.
 - The "Community" section is intentionally rendered inside the first navigation slide.
 - Dummy community entries may exist as markup-only placeholders and do not imply real routes.
 
+**Data loading**: every route that fetches data uses a `clientLoader` + `useLoaderData`. Never fetch in `useEffect` for page-level data. After mutations, use `useRevalidator().revalidate()`. Root loader data (`runtime`, `settings`, `databaseCollections`, `schemaCollections`) is accessed in child routes via `useRouteLoaderData<typeof rootClientLoader>('root')`.
+
+**URL state**: everything that can survive a reload must be in the URL. Use `useTypedSearchParams` / `useTypedSearchParam` from `app/lib/use-typed-search-params.ts`. `clientLoader` reads search params from `request.url` so data and URL are always in sync on reload.
+
 When working on UI behavior:
 
 - Prefer `pnpm run ui:dev` for end-to-end dashboard iteration.
-- Use `pnpm --filter ./packages/ui build` and `pnpm --filter ./packages/ui test` to validate UI-only changes.
+- Use `pnpm --filter @zelavis/ui typecheck` and `pnpm --filter @zelavis/ui build` to validate UI-only changes.
 - Preserve the existing design language unless the task explicitly asks for redesign.
 
 ## Generated and Sensitive Files
 
 Treat these carefully:
 
-- `packages/ui/src/routeTree.gen.ts` is generated.
+- `packages/ui/.react-router/types/` is generated. Do not hand-edit it.
 - `packages/*/dist/*` is build output.
 - `website/.astro/*` and `website/dist/*` are generated site output.
 
@@ -142,7 +146,7 @@ Do not manually edit generated files unless the user explicitly asks for it and 
 ## Code Change Expectations
 
 - Make the smallest coherent change that moves the repo forward.
-- Do not preserve backward compatibility by default. This project is still early, so prefer removing stale shapes and legacy paths instead of carrying compatibility baggage forward.
+- **No backward compatibility.** This project is pre-release with no public users. Remove stale shapes and legacy paths outright — do not add shims, fallbacks, or "legacy support" branches. If something needs to change, change it cleanly.
 - Update docs when public API or architecture changes.
 - Add or update tests when a test setup exists.
 - If there is no test coverage yet, keep code easy to validate and call out the gap.
