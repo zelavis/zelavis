@@ -104,3 +104,31 @@ export interface DeleteDocumentInput {
   collection: string;
   id: string;
 }
+
+export const DATABASE_COLLECTION_NAME_PATTERN =
+  /^[A-Za-z_][A-Za-z0-9_-]*$/;
+
+export const DATABASE_RESERVED_COLLECTION_NAMES = new Set([
+  "_collections",
+  "_events",
+  "_schemas",
+  "_time_series_checkpoints",
+  "_time_series_points",
+  "collections",
+  "events",
+  "schemas",
+  "time_series_checkpoints",
+  "time_series_points",
+]);
+
+export function validateDatabaseCollectionName(name: string): void {
+  if (!DATABASE_COLLECTION_NAME_PATTERN.test(name)) {
+    throw new TypeError(
+      "Collection names must start with a letter or underscore and contain only letters, numbers, underscores, or hyphens.",
+    );
+  }
+
+  if (DATABASE_RESERVED_COLLECTION_NAMES.has(name)) {
+    throw new TypeError(`Collection name "${name}" is reserved.`);
+  }
+}

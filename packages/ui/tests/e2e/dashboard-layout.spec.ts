@@ -276,12 +276,12 @@ test('database slide lists logical tables and system tables', async ({
 
   await expect(tablesSlide.getByRole('button', { name: 'Database', exact: true })).toBeVisible()
 
-  await gotoDashboard(page, '/database?systemTable=_documents')
+  await gotoDashboard(page, '/database?systemTable=_events')
 
   const systemTablesSlide = sidebar.locator('.swiper-slide-active').first()
 
   await expect(systemTablesSlide.getByRole('button', { name: 'System Tables', exact: true })).toBeVisible()
-  await expect(systemTablesSlide.getByRole('link', { name: '_documents', exact: true })).toBeVisible()
+  await expect(systemTablesSlide.getByRole('link', { name: '_events', exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Core Database' })).toBeVisible()
 })
 
@@ -290,14 +290,14 @@ test('database direct system table routes restore the matching sidebar slide', a
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
-  await gotoDashboard(page, '/database?systemTable=_documents')
+  await gotoDashboard(page, '/database?systemTable=_events')
 
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
   const activeSlide = sidebar.locator('.swiper-slide-active').first()
 
-  await expect(activeSlide.getByRole('link', { name: '_documents', exact: true })).toBeVisible()
+  await expect(activeSlide.getByRole('link', { name: '_events', exact: true })).toBeVisible()
   await expect(activeSlide.getByRole('button', { name: 'System Tables', exact: true })).toBeVisible()
-  await expect(page).toHaveURL(/systemTable=_documents/)
+  await expect(page).toHaveURL(/systemTable=_events/)
 })
 
 test('content studio creates a new type and inserts a starter document with title and slug', async ({
@@ -499,6 +499,142 @@ test('content studio creates a new type and inserts a starter document with titl
   expect(insertPayload).not.toHaveProperty('name')
 })
 
+test('database table creation revalidates sidebar tables', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  const runtimeConfig = createMockRuntimeConfig()
+  const dashboardSettings = {
+    rootPath: '/zelavis',
+    apiBasePath: '/zelavis/api/v1',
+    theme: 'auto',
+    pageBuilderEnabled: true,
+    preferences: {},
+    persistence: 'runtime',
+    editable: {
+      rootPath: true,
+      theme: true,
+      pageBuilder: true,
+    },
+    restartRequired: false,
+  }
+
+  var createdCollectionName: string | undefined
+
+  await page.addInitScript((config) => {
+    ;(window as typeof window & { __ZELAVIS_RUNTIME_CONFIG__?: unknown }).__ZELAVIS_RUNTIME_CONFIG__ =
+      config
+  }, runtimeConfig)
+
+  await page.route('**/zelavis/api/v1/**', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    const pathname = url.pathname
+    const method = request.method()
+
+    const collections = createdCollectionName
+      ? [
+          {
+            name: createdCollectionName,
+            tenantId: 'default',
+            createdAt: '2026-05-26T00:00:00.000Z',
+            documentCount: 0,
+            metadata: {
+              surface: 'database',
+              kind: 'table',
+            },
+          },
+        ]
+      : []
+
+    if (pathname === '/zelavis/api/v1/runtime/settings' && method === 'GET') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(dashboardSettings) })
+      return
+    }
+
+    if (pathname === '/zelavis/api/v1/database/documents/collections' && method === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ collections }),
+      })
+      return
+    }
+
+    if (pathname === '/zelavis/api/v1/database/sql/system/_collections' && method === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          table: '_collections',
+          rows: collections.map((collection) => ({
+            tenant_id: collection.tenantId,
+            name: collection.name,
+            created_at: collection.createdAt,
+            document_count: collection.documentCount,
+            metadata_json: JSON.stringify(collection.metadata),
+          })),
+        }),
+      })
+      return
+    }
+
+    if (pathname === '/zelavis/api/v1/database/schemas/collections' && method === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ collections: [] }),
+      })
+      return
+    }
+
+    if (pathname === '/zelavis/api/v1/database/documents/collections' && method === 'POST') {
+      const body = JSON.parse(request.postData() ?? '{}') as Record<string, unknown>
+      createdCollectionName = String(body.name)
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(collections[0] ?? {
+          name: createdCollectionName,
+          tenantId: 'default',
+          createdAt: '2026-05-26T00:00:00.000Z',
+          documentCount: 0,
+          metadata: body.metadata,
+        }),
+      })
+      return
+    }
+
+    if (pathname === '/zelavis/api/v1/database/documents/invoices/query' && method === 'POST') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ documents: [] }),
+      })
+      return
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({}),
+    })
+  })
+
+  await gotoDashboard(page, '/database/new')
+
+  await page.getByLabel('Table name').fill('invoices')
+  await page.getByRole('button', { name: 'Create and Open Table' }).click()
+
+  await expect(page).toHaveURL(/databaseTable=invoices/)
+
+  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const activeSlide = sidebar.locator('.swiper-slide-active').first()
+
+  await expect(activeSlide.getByRole('link', { name: 'invoices', exact: true })).toBeVisible()
+})
+
 test('content can navigate to the dedicated new content type route', async ({
   page,
 }, testInfo) => {
@@ -681,6 +817,36 @@ test('sidebar panels animate between slides', async ({ page }, testInfo) => {
   expect(backTranslateX).toBeGreaterThan(-viewportWidth + 1)
 
   await expect.poll(() => getTranslateX(track)).toBeGreaterThanOrEqual(-10)
+})
+
+test('sidebar back to platform returns the page to overview', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await gotoDashboard(page, '/')
+
+  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  let activeSlide = sidebar.locator('.swiper-slide-active').first()
+
+  await activeSlide.getByRole('button', { name: 'Core', exact: true }).click()
+  activeSlide = sidebar.locator('.swiper-slide-active').first()
+  await activeSlide.getByRole('button', { name: 'Database', exact: true }).click()
+  activeSlide = sidebar.locator('.swiper-slide-active').first()
+  await activeSlide.getByRole('link', { name: 'Create Table', exact: true }).click()
+
+  await expect(page.getByRole('heading', { name: 'New Table' })).toBeVisible()
+  await activeSlide.getByRole('button', { name: 'Core', exact: true }).click()
+  activeSlide = sidebar.locator('.swiper-slide-active').first()
+
+  await expect(activeSlide.getByRole('button', { name: 'Platform', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'New Table' })).toBeVisible()
+  await activeSlide.getByRole('button', { name: 'Platform', exact: true }).click()
+
+  await expect(page.getByRole('heading', { name: 'Zelavis runtime' })).toBeVisible()
+  const url = new URL(page.url())
+  expect(url.pathname).toBe(toDashboardPath('/'))
+  expect(url.search).toBe('')
 })
 
 test('sidebar panel state survives refresh through the router', async ({

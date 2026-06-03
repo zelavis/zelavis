@@ -48,6 +48,9 @@ export interface ZelavisRuntimeServiceMenuDefinition {
   path?: string;
   pageLabel?: string;
   panelLabel?: string;
+  fixed?: boolean;
+  fixedOrder?: number;
+  sectionLabel?: string;
   surface?: "root" | "core" | "workspace" | "settings";
   items?: readonly ZelavisRuntimeServiceMenuDefinition[];
 }

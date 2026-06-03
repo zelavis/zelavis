@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import type * as React from 'react'
 
@@ -17,6 +17,7 @@ export function useRuntimeResource<TData>(
   const [error, setError] = useState<Error>()
   const [loading, setLoading] = useState(true)
   const [version, setVersion] = useState(0)
+  const reload = useCallback(() => setVersion((current) => current + 1), [])
 
   useEffect(() => {
     let active = true
@@ -49,6 +50,6 @@ export function useRuntimeResource<TData>(
     data,
     error,
     loading,
-    reload: () => setVersion((current) => current + 1),
+    reload,
   }
 }

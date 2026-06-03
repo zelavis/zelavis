@@ -6,6 +6,7 @@ import type {
   DatabaseEventPayload,
   ReadDatabaseEventsInput,
 } from "../contracts/events.js";
+import { validateDatabaseCollectionName } from "../contracts/documents.js";
 
 function withTenantId<TInput extends { tenantId?: string }>(
   input: TInput,
@@ -27,6 +28,8 @@ export class EventService implements DatabaseEventsApi {
   append<TPayload extends DatabaseEventPayload>(
     input: DatabaseAppendEventInput<TPayload>,
   ): Promise<DatabaseEvent<TPayload>> {
+    validateDatabaseCollectionName(input.collection);
+
     return this.driver.append({
       ...withTenantId(input, this.defaultTenantId),
       nodeId: input.nodeId ?? this.defaultNodeId,

@@ -135,7 +135,6 @@ function readOptionalPositiveInteger(value: unknown, fallback: number) {
 
 const systemTableMap = {
   _collections: "collections",
-  _documents: "documents",
   _events: "events",
   _schemas: "schemas",
   _time_series_checkpoints: "time_series_checkpoints",
@@ -156,8 +155,6 @@ function systemTableOrderBy(table: DatabaseSystemTableName) {
   switch (table) {
     case "_collections":
       return "tenant_id ASC, name ASC";
-    case "_documents":
-      return "updated_at DESC, id ASC";
     case "_events":
       return "sequence DESC";
     case "_schemas":
@@ -233,10 +230,6 @@ export function defineDatabaseService(
           items: [
             {
               title: "_collections",
-              path: "/database",
-            },
-            {
-              title: "_documents",
               path: "/database",
             },
             {

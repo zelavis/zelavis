@@ -1,15 +1,16 @@
 import type { DatabaseDocumentsApi } from "../contracts/api.js";
 import type { DatabaseProjectionDriver } from "../contracts/driver.js";
-import type {
-  CreateCollectionInput,
-  DatabaseCollection,
-  DatabaseDocument,
-  DeleteDocumentInput,
-  FindDocumentByIdInput,
-  FindDocumentsInput,
-  InsertDocumentInput,
-  ListCollectionsInput,
-  UpdateDocumentInput,
+import {
+  validateDatabaseCollectionName,
+  type CreateCollectionInput,
+  type DatabaseCollection,
+  type DatabaseDocument,
+  type DeleteDocumentInput,
+  type FindDocumentByIdInput,
+  type FindDocumentsInput,
+  type InsertDocumentInput,
+  type ListCollectionsInput,
+  type UpdateDocumentInput,
 } from "../contracts/documents.js";
 import type { DatabaseDocumentUpsertedPayload } from "../contracts/events.js";
 import type { DatabaseJsonObject } from "../contracts/json.js";
@@ -67,6 +68,7 @@ export class DocumentService implements DatabaseDocumentsApi {
 
   createCollection(input: CreateCollectionInput): Promise<DatabaseCollection> {
     const resolved = withTenantId(input, this.defaultTenantId);
+    validateDatabaseCollectionName(resolved.name);
 
     return this.events
       .append({
@@ -113,6 +115,7 @@ export class DocumentService implements DatabaseDocumentsApi {
     input: InsertDocumentInput<TData>,
   ): Promise<DatabaseDocument<TData>> {
     const resolved = withTenantId(input, this.defaultTenantId);
+    validateDatabaseCollectionName(resolved.collection);
     const id =
       resolved.id && resolved.id.length > 0
         ? resolved.id
@@ -151,12 +154,14 @@ export class DocumentService implements DatabaseDocumentsApi {
   }
 
   findById(input: FindDocumentByIdInput): Promise<DatabaseDocument | null> {
+    validateDatabaseCollectionName(input.collection);
     return this.projections.findDocumentById(
       withTenantId(input, this.defaultTenantId),
     );
   }
 
   findMany(input: FindDocumentsInput): Promise<DatabaseDocument[]> {
+    validateDatabaseCollectionName(input.collection);
     return this.projections.findDocuments({
       ...withTenantId(input, this.defaultTenantId),
       where: input.where ?? [],
@@ -170,6 +175,7 @@ export class DocumentService implements DatabaseDocumentsApi {
     input: UpdateDocumentInput<TData>,
   ): Promise<DatabaseDocument<TData>> {
     const resolved = withTenantId(input, this.defaultTenantId);
+    validateDatabaseCollectionName(resolved.collection);
 
     return this.projections
       .findDocumentById({
@@ -225,6 +231,7 @@ export class DocumentService implements DatabaseDocumentsApi {
 
   delete(input: DeleteDocumentInput): Promise<boolean> {
     const resolved = withTenantId(input, this.defaultTenantId);
+    validateDatabaseCollectionName(resolved.collection);
 
     return this.projections
       .findDocumentById({
