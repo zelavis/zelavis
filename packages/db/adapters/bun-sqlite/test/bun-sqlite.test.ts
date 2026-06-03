@@ -108,10 +108,16 @@ test("bun:sqlite database preserves data across reopen and exposes SQL capabilit
     expect(found?.data.name).toBe("Persisted shirt");
     expect(reopened.capabilities.sql).toBe(true);
 
+    const tables = await reopened.sql?.query({
+      statement: "SELECT name FROM sqlite_master WHERE type = 'table'",
+    });
+    const tableNames = new Set(tables?.rows.map((row) => row.name));
+    expect(tableNames.has("products")).toBe(true);
+    expect(tableNames.has("documents")).toBe(false);
+
     const query = await reopened.sql?.query({
-      statement:
-        "SELECT COUNT(*) AS count FROM documents WHERE tenant_id = ? AND collection_name = ?",
-      parameters: ["default", "products"],
+      statement: 'SELECT COUNT(*) AS count FROM "products" WHERE tenant_id = ?',
+      parameters: ["default"],
     });
 
     expect(query?.rows).toEqual([{ count: 1 }]);

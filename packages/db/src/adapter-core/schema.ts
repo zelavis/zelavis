@@ -15,17 +15,6 @@ export const SCHEMA_STATEMENTS = [
     metadata_json TEXT,
     PRIMARY KEY (tenant_id, name)
   )`,
-  `CREATE TABLE IF NOT EXISTS documents (
-    tenant_id TEXT NOT NULL,
-    collection_name TEXT NOT NULL,
-    id TEXT NOT NULL,
-    data_json TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    version INTEGER NOT NULL,
-    schema_version INTEGER NOT NULL DEFAULT 1,
-    PRIMARY KEY (tenant_id, collection_name, id)
-  )`,
   `CREATE TABLE IF NOT EXISTS events (
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id TEXT NOT NULL UNIQUE,
@@ -74,8 +63,6 @@ export const SCHEMA_STATEMENTS = [
       point_index
     )
   )`,
-  `CREATE INDEX IF NOT EXISTS documents_lookup_idx
-    ON documents (tenant_id, collection_name, updated_at, id)`,
   `CREATE INDEX IF NOT EXISTS events_tenant_sequence_idx
     ON events (tenant_id, sequence)`,
   `CREATE INDEX IF NOT EXISTS events_stream_idx

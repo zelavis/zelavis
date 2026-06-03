@@ -6,6 +6,11 @@ The package is now event-first internally. Document APIs remain the main ergonom
 
 The document read model is the first built-in projection. A projection registry contract now exists so future derived models can be introduced explicitly instead of being hidden behind adapter-specific behavior.
 
+SQLite-compatible drivers store each document collection in its own physical
+table and keep only collection metadata in the internal collection registry.
+The event log remains shared across collections so projections and time-series
+models can still replay ordered changes.
+
 The first time-series slice is now also present as a public contract. Series definitions can declare projection references, event-source filters, mapper functions, and optional definition versions. In-memory queries derive points from the event stream directly, while SQLite-backed drivers can persist mapped samples and query them incrementally.
 
 Collection schemas can also validate Zelavis-style file references natively through `type: "file"`, so documents can carry structured links to the storage service without treating those fields as untyped blobs.
@@ -13,6 +18,7 @@ Collection schemas can also validate Zelavis-style file references natively thro
 ## Scope
 
 - Tenant-aware document collections.
+- Per-collection document tables for SQLite-compatible durable drivers.
 - Event log contract plus projection contract.
 - Collection schema registry and write-time validation.
 - In-memory driver for local development and tests.
@@ -92,6 +98,10 @@ await zelavisServer({
   services: [defineDatabaseService(database)],
 });
 ```
+
+Collection names must start with a letter or underscore and may contain letters,
+numbers, underscores, or hyphens. SQLite-compatible drivers use that collection
+name as the quoted physical table name for the collection's document projection.
 
 The main service-definition entrypoint lives in
 [packages/db/src/database-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/db/src/database-service.ts),

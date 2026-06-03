@@ -121,6 +121,36 @@ function matchesIdempotentAppend<TPayload extends DatabaseEventPayload>(
   );
 }
 
+function quoteIdentifier(identifier: string): string {
+  return `"${identifier.replaceAll('"', '""')}"`;
+}
+
+function collectionTable(collection: string): string {
+  return quoteIdentifier(collection);
+}
+
+function collectionIndex(collection: string): string {
+  return quoteIdentifier(`${collection}_documents_lookup_idx`);
+}
+
+function createCollectionTableStatement(collection: string): string {
+  return `CREATE TABLE IF NOT EXISTS ${collectionTable(collection)} (
+    tenant_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    data_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (tenant_id, id)
+  )`;
+}
+
+function createCollectionLookupIndexStatement(collection: string): string {
+  return `CREATE INDEX IF NOT EXISTS ${collectionIndex(collection)}
+    ON ${collectionTable(collection)} (tenant_id, updated_at, id)`;
+}
+
 /**
  * Applies the shared DDL to a gateway. Uses `gateway.batch` when available
  * (D1, libSQL) and falls back to per-statement `exec` otherwise.
@@ -210,12 +240,22 @@ export function createSqliteCompatibleDriver(
 
     async findDocumentById(input: TenantScoped<FindDocumentByIdInput>) {
       return withReady(async () => {
+        const collection = await projections.getCollection({
+          tenantId: input.tenantId,
+          name: input.collection,
+        });
+        if (!collection) {
+          throw new DatabaseNotFoundError(
+            `Collection "${input.collection}" does not exist for tenant "${input.tenantId}".`,
+          );
+        }
+
         const row = await gateway.get<DocumentRow>(
-          `SELECT tenant_id, collection_name, id, data_json, created_at, updated_at, version, schema_version
-           FROM documents
-           WHERE tenant_id = ? AND collection_name = ? AND id = ?
+          `SELECT tenant_id, ? AS collection_name, id, data_json, created_at, updated_at, version, schema_version
+           FROM ${collectionTable(input.collection)}
+           WHERE tenant_id = ? AND id = ?
            LIMIT 1`,
-          [input.tenantId, input.collection, input.id],
+          [input.collection, input.tenantId, input.id],
         );
         return row ? toDocument(row) : null;
       });
@@ -230,18 +270,28 @@ export function createSqliteCompatibleDriver(
       },
     ): Promise<DatabaseDocument[]> {
       return withReady(async () => {
+        const collection = await projections.getCollection({
+          tenantId: input.tenantId,
+          name: input.collection,
+        });
+        if (!collection) {
+          throw new DatabaseNotFoundError(
+            `Collection "${input.collection}" does not exist for tenant "${input.tenantId}".`,
+          );
+        }
+
         const fragment = buildDocumentQueryFragment(
           input.where,
           input.orderBy,
         );
-        const sql = `SELECT tenant_id, collection_name, id, data_json, created_at, updated_at, version, schema_version
-          FROM documents
-          WHERE tenant_id = ? AND collection_name = ?${fragment.whereSql}
+        const sql = `SELECT tenant_id, ? AS collection_name, id, data_json, created_at, updated_at, version, schema_version
+          FROM ${collectionTable(input.collection)}
+          WHERE tenant_id = ?${fragment.whereSql}
           ${fragment.orderSql}
           LIMIT ? OFFSET ?`;
         const rows = await gateway.all<DocumentRow>(sql, [
-          input.tenantId,
           input.collection,
+          input.tenantId,
           ...fragment.whereParams,
           input.limit,
           input.offset,
@@ -419,6 +469,8 @@ export function createSqliteCompatibleDriver(
                 ),
               ],
             );
+            await tx.exec(createCollectionTableStatement(input.collection));
+            await tx.exec(createCollectionLookupIndexStatement(input.collection));
           });
 
           const sequence = await lookupEventSequence(eventId);
@@ -460,10 +512,10 @@ export function createSqliteCompatibleDriver(
           // with deferred writes (D1) still pick the correct branch — their
           // reads-during-transaction would otherwise see stale state.
           const existing = await gateway.get<{ id: string }>(
-            `SELECT id FROM documents
-             WHERE tenant_id = ? AND collection_name = ? AND id = ?
+            `SELECT id FROM ${collectionTable(input.collection)}
+             WHERE tenant_id = ? AND id = ?
              LIMIT 1`,
-            [input.tenantId, input.collection, input.documentId],
+            [input.tenantId, input.documentId],
           );
 
           await gateway.transaction(async (tx) => {
@@ -483,28 +535,26 @@ export function createSqliteCompatibleDriver(
 
             if (existing) {
               await tx.run(
-                `UPDATE documents
+                `UPDATE ${collectionTable(input.collection)}
                  SET data_json = ?, updated_at = ?, version = ?, schema_version = ?
-                 WHERE tenant_id = ? AND collection_name = ? AND id = ?`,
+                 WHERE tenant_id = ? AND id = ?`,
                 [
                   JSON.stringify(cloneJson(payload.data)),
                   timestamp,
                   nextRevision,
                   schemaVersion,
                   input.tenantId,
-                  input.collection,
                   input.documentId,
                 ],
               );
             } else {
               await tx.run(
-                `INSERT INTO documents (
-                  tenant_id, collection_name, id, data_json,
+                `INSERT INTO ${collectionTable(input.collection)} (
+                  tenant_id, id, data_json,
                   created_at, updated_at, version, schema_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
                 [
                   input.tenantId,
-                  input.collection,
                   input.documentId,
                   JSON.stringify(cloneJson(payload.data)),
                   timestamp,
@@ -548,11 +598,21 @@ export function createSqliteCompatibleDriver(
         // Pre-flight existence check — same reasoning as the upsert path:
         // adapters with deferred writes (D1) can't observe `changes` count
         // inside the transaction, so we verify before queuing.
+        const collection = await gateway.get<{ name: string }>(
+          `SELECT name FROM collections WHERE tenant_id = ? AND name = ? LIMIT 1`,
+          [input.tenantId, input.collection],
+        );
+        if (!collection) {
+          throw new DatabaseNotFoundError(
+            `Collection "${input.collection}" does not exist for tenant "${input.tenantId}".`,
+          );
+        }
+
         const targetDocument = await gateway.get<{ id: string }>(
-          `SELECT id FROM documents
-           WHERE tenant_id = ? AND collection_name = ? AND id = ?
+          `SELECT id FROM ${collectionTable(input.collection)}
+           WHERE tenant_id = ? AND id = ?
            LIMIT 1`,
-          [input.tenantId, input.collection, input.documentId],
+          [input.tenantId, input.documentId],
         );
         if (!targetDocument) {
           throw new DatabaseNotFoundError(
@@ -575,9 +635,9 @@ export function createSqliteCompatibleDriver(
             payloadJson,
           });
           await tx.run(
-            `DELETE FROM documents
-             WHERE tenant_id = ? AND collection_name = ? AND id = ?`,
-            [input.tenantId, input.collection, input.documentId],
+            `DELETE FROM ${collectionTable(input.collection)}
+             WHERE tenant_id = ? AND id = ?`,
+            [input.tenantId, input.documentId],
           );
           await tx.run(
             `UPDATE collections SET document_count = document_count - 1

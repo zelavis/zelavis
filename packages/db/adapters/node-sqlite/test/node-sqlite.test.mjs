@@ -114,10 +114,16 @@ test("better-sqlite3 database preserves data across reopen and exposes SQL capab
     assert.equal(found?.data.name, "Persisted shirt");
     assert.equal(reopened.capabilities.sql, true);
 
+    const tables = await reopened.sql?.query({
+      statement: "SELECT name FROM sqlite_master WHERE type = 'table'",
+    });
+    const tableNames = new Set(tables?.rows.map((row) => row.name));
+    assert.equal(tableNames.has("products"), true);
+    assert.equal(tableNames.has("documents"), false);
+
     const query = await reopened.sql?.query({
-      statement:
-        "SELECT COUNT(*) AS count FROM documents WHERE tenant_id = ? AND collection_name = ?",
-      parameters: ["default", "products"],
+      statement: 'SELECT COUNT(*) AS count FROM "products" WHERE tenant_id = ?',
+      parameters: ["default"],
     });
 
     assert.deepEqual(query?.rows, [{ count: 1 }]);

@@ -112,7 +112,7 @@ describe("dashboard navigation ownership", () => {
     expect(settings?.items?.some((item) => item.title === "Jobs")).toBe(true);
   });
 
-  it("keeps document collections out of the database sidebar slide", () => {
+  it("lists database collections as tables in the database sidebar slide", () => {
     const services = [
       {
         name: "@zelavis/db",
@@ -128,7 +128,7 @@ describe("dashboard navigation ownership", () => {
               panelLabel: "System Tables",
               items: [
                 { title: "_collections", path: "/database" },
-                { title: "_documents", path: "/database" },
+                { title: "_events", path: "/database" },
               ],
             },
           ],
@@ -136,22 +136,54 @@ describe("dashboard navigation ownership", () => {
       },
     ] satisfies readonly RuntimeService[];
 
-    const nav = buildPlatformNavItems(services, [], [
-      {
-        name: "fruits",
-        label: "Fruits",
-        documentCount: 1,
-        tenantId: "default",
-        activeVersion: null,
-        versions: [],
-        pinned: false,
-        pinnedIndex: Number.MAX_SAFE_INTEGER,
-      },
-    ]);
+    const nav = buildPlatformNavItems(
+      services,
+      [],
+      [
+        {
+          name: "fruits",
+          label: "Fruits",
+          documentCount: 1,
+          tenantId: "default",
+          activeVersion: null,
+          versions: [],
+          pinned: false,
+          pinnedIndex: Number.MAX_SAFE_INTEGER,
+        },
+      ],
+      [
+        {
+          name: "fruits",
+          documentCount: 1,
+          tenantId: "default",
+          createdAt: "2026-06-03T00:00:00.000Z",
+        },
+      ],
+    );
 
     const database = findNavItem(nav, "Database");
-    expect(database?.items?.map((item) => item.title)).toEqual(["System Tables"]);
-    expect(findNavItem(database?.items ?? [], "fruits")).toBeUndefined();
+    expect(database?.items?.map((item) => item.title)).toEqual([
+      "Create Table",
+      "Fruits",
+      "System Tables",
+    ]);
+    expect(findNavItem(database?.items ?? [], "Create Table")).toMatchObject({
+      url: "/database/new",
+      fixed: true,
+      fixedOrder: 1,
+    });
+    expect(findNavItem(nav, "All Content Types")).toMatchObject({
+      fixed: true,
+      fixedOrder: 1,
+    });
+    expect(findNavItem(nav, "Add Content Type")).toMatchObject({
+      fixed: true,
+      fixedOrder: 2,
+    });
+    expect(findNavItem(database?.items ?? [], "Fruits")?.search).toEqual({
+      databaseTable: "fruits",
+      systemTable: undefined,
+    });
     expect(findNavItem(database?.items ?? [], "_collections")).toBeDefined();
   });
 });
