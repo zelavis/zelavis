@@ -1,3 +1,4 @@
+import { useLoaderData, useRouteLoaderData } from 'react-router'
 import { KeyRound, ShieldCheck, UserRoundCog } from 'lucide-react'
 
 import {
@@ -8,20 +9,22 @@ import {
 } from '#/components/DashboardPage'
 import { Card, CardContent, CardHeader, CardTitle } from '#/components/ui/card'
 import { getRuntimeConfig, listAuthProviders } from '#/lib/runtime-api'
-import { useRuntimeResource } from '#/lib/use-runtime-resource'
+import type { clientLoader as rootClientLoader } from '../root'
 
 export const handle = {
   pageLabel: "Auth",
   sidebarTrail: ["Core"],
 } as const;
 
+export async function clientLoader() {
+  const runtime = await getRuntimeConfig()
+  const providers = await listAuthProviders(runtime)
+  return { providers }
+}
+
 function Auth() {
-  const runtime = useRuntimeResource(getRuntimeConfig)
-  const providers = useRuntimeResource(
-    async () => (runtime.data ? listAuthProviders(runtime.data) : []),
-    [runtime.data],
-  )
-  const providerNames = providers.data ?? []
+  const { providers } = useLoaderData<typeof clientLoader>()
+  const { runtime } = useRouteLoaderData<typeof rootClientLoader>('root')!
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
@@ -40,10 +43,10 @@ function Auth() {
         />
         <StatCard
           label="Providers"
-          value={`${providerNames.length} registered`}
+          value={`${providers.length} registered`}
           detail={
-            providerNames.length > 0
-              ? providerNames.join(', ')
+            providers.length > 0
+              ? providers.join(', ')
               : 'no credential providers registered yet'
           }
           icon={UserRoundCog}
@@ -61,22 +64,18 @@ function Auth() {
           <CardTitle>Credential Providers</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          {providerNames.map((provider) => (
+          {providers.map((provider) => (
             <DataRow
               key={provider}
               label={provider}
-              detail={`${runtime.data?.api.basePath ?? '/api/v1'}/auth/authenticate/${provider}`}
+              detail={`${runtime.api.basePath}/auth/authenticate/${provider}`}
             />
           ))}
-          {providerNames.length === 0 ? (
+          {providers.length === 0 ? (
             <div className="p-4">
               <ResourceNotice
-                title={providers.loading ? 'Loading providers' : 'No providers registered'}
-                description={
-                  providers.error
-                    ? 'The auth endpoint is not reachable from this dashboard session.'
-                    : 'Install an auth provider service to expose a credential method.'
-                }
+                title="No providers registered"
+                description="Install an auth provider service to expose a credential method."
               />
             </div>
           ) : null}

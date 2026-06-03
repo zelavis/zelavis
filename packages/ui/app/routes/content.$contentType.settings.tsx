@@ -1,4 +1,4 @@
-import { useParams } from "react-router";
+import { useParams, useRevalidator, useRouteLoaderData } from "react-router";
 import { Copy, Pin, PinOff, Save } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -9,15 +9,11 @@ import { Input } from "#/components/ui/input";
 import {
   createDatabaseCollection,
   createDatabaseSchema,
-  getDashboardSettings,
   getResolvedDashboardPreferences,
-  getRuntimeConfig,
-  listDatabaseCollections,
-  listDatabaseSchemaCollections,
   listDatabaseSchemaVersions,
   updateDashboardSettings,
 } from "#/lib/runtime-api";
-import { useRuntimeResource } from "#/lib/use-runtime-resource";
+import type { clientLoader as rootClientLoader } from '../root';
 
 export const handle = {
   pageLabel: "Content",
@@ -26,26 +22,15 @@ export const handle = {
 
 function ContentTypeSettingsRoute() {
   const contentType = useParams().contentType ?? "";
-  const runtime = useRuntimeResource(getRuntimeConfig);
-  const config = runtime.data;
-  const settings = useRuntimeResource(
-    async () => (config ? getDashboardSettings(config) : undefined),
-    [config],
-  );
-  const collections = useRuntimeResource(
-    async () => (config ? listDatabaseCollections(config) : []),
-    [config],
-  );
-  const schemaCollections = useRuntimeResource(
-    async () => (config ? listDatabaseSchemaCollections(config) : []),
-    [config],
-  );
+  const revalidator = useRevalidator();
+  const { runtime, settings, databaseCollections, schemaCollections } = useRouteLoaderData<typeof rootClientLoader>('root')!;
   const row = useMemo(
-    () => collections.data?.find((collection) => collection.name === contentType),
-    [collections.data, contentType],
+    () => databaseCollections.find((collection) => collection.name === contentType),
+    [databaseCollections, contentType],
   );
+  const contentPreferences = getResolvedDashboardPreferences(settings).content;
   const [labelDraft, setLabelDraft] = useState(
-    getResolvedDashboardPreferences(settings.data).content?.labels?.[contentType] ?? contentType,
+    contentPreferences?.labels?.[contentType] ?? contentType,
   );
   const [duplicateLabel, setDuplicateLabel] = useState(`${contentType} Copy`);
   const [duplicateName, setDuplicateName] = useState(`${contentType}-copy`);
@@ -54,8 +39,7 @@ function ContentTypeSettingsRoute() {
   const [saving, setSaving] = useState(false);
 
   const activeSchemaVersion =
-    schemaCollections.data?.find((entry) => entry.collection === contentType)?.activeVersion ?? null;
-  const contentPreferences = getResolvedDashboardPreferences(settings.data).content;
+    schemaCollections.find((entry) => entry.collection === contentType)?.activeVersion ?? null;
   const pinnedTypes = contentPreferences?.pinnedTypes ?? [];
   const isPinned = pinnedTypes.includes(contentType);
 
@@ -64,7 +48,7 @@ function ContentTypeSettingsRoute() {
   }, [contentPreferences?.labels, contentType]);
 
   async function handleSaveLabel() {
-    if (!config || !labelDraft.trim() || saving) {
+    if (!labelDraft.trim() || saving) {
       return;
     }
 
@@ -72,7 +56,7 @@ function ContentTypeSettingsRoute() {
     setMessage(undefined);
     setError(undefined);
     try {
-      await updateDashboardSettings(config, {
+      await updateDashboardSettings(runtime, {
         preferences: {
           content: {
             labels: {
@@ -81,7 +65,7 @@ function ContentTypeSettingsRoute() {
           },
         },
       });
-      await settings.reload();
+      revalidator.revalidate();
       setMessage(`Updated editor label for ${contentType}.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -91,7 +75,7 @@ function ContentTypeSettingsRoute() {
   }
 
   async function handleTogglePin() {
-    if (!config || saving) {
+    if (saving) {
       return;
     }
 
@@ -103,14 +87,14 @@ function ContentTypeSettingsRoute() {
     setMessage(undefined);
     setError(undefined);
     try {
-      await updateDashboardSettings(config, {
+      await updateDashboardSettings(runtime, {
         preferences: {
           content: {
             pinnedTypes: nextPinnedTypes,
           },
         },
       });
-      await settings.reload();
+      revalidator.revalidate();
       setMessage(
         isPinned
           ? `Removed ${contentType} from pinned content types.`
@@ -124,7 +108,7 @@ function ContentTypeSettingsRoute() {
   }
 
   async function handleDuplicateType() {
-    if (!config || !duplicateName.trim() || saving) {
+    if (!duplicateName.trim() || saving) {
       return;
     }
 
@@ -132,10 +116,10 @@ function ContentTypeSettingsRoute() {
     setMessage(undefined);
     setError(undefined);
     try {
-      const sourceSchemas = await listDatabaseSchemaVersions(config, contentType);
+      const sourceSchemas = await listDatabaseSchemaVersions(runtime, contentType);
       const activeSchema =
         sourceSchemas.find((schema) => schema.active) ?? sourceSchemas.at(-1);
-      const created = await createDatabaseCollection(config, {
+      const created = await createDatabaseCollection(runtime, {
         name: duplicateName.trim(),
         metadata: {
           surface: "content-studio",
@@ -145,7 +129,7 @@ function ContentTypeSettingsRoute() {
       });
 
       if (activeSchema) {
-        await createDatabaseSchema(config, {
+        await createDatabaseSchema(runtime, {
           collection: created.name,
           version: 1,
           activate: true,
@@ -157,7 +141,7 @@ function ContentTypeSettingsRoute() {
         });
       }
 
-      await updateDashboardSettings(config, {
+      await updateDashboardSettings(runtime, {
         preferences: {
           content: {
             labels:
@@ -169,7 +153,7 @@ function ContentTypeSettingsRoute() {
           },
         },
       });
-      await Promise.all([collections.reload(), schemaCollections.reload(), settings.reload()]);
+      revalidator.revalidate();
       setMessage(`Duplicated ${contentType} into ${created.name}.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));

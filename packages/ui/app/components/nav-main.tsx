@@ -29,9 +29,13 @@ import { getDashboardSidebarTrailFromMatches } from "#/lib/dashboard-route-handl
 type NavChildItem = {
   title: string;
   url?: string;
+  landingUrl?: string;
   search?: DashboardNavSearch;
   icon?: LucideIcon;
   panelLabel?: string;
+  fixed?: boolean;
+  fixedOrder?: number;
+  sectionLabel?: string;
   serviceOwned?: boolean;
   items?: readonly NavChildItem[];
 };
@@ -39,6 +43,7 @@ type NavChildItem = {
 type NavPanel = {
   title: string;
   panelLabel?: string;
+  landingUrl?: string;
   items: readonly NavChildItem[];
 };
 
@@ -86,6 +91,7 @@ function findActiveTrail(
       {
         title: item.title,
         panelLabel: item.panelLabel,
+        landingUrl: item.landingUrl,
         items: item.items,
       },
     ];
@@ -129,6 +135,7 @@ function findTrailByTitles(
     panels.push({
       title: match.title,
       panelLabel: match.panelLabel,
+      landingUrl: 'landingUrl' in match ? match.landingUrl as string | undefined : undefined,
       items: match.items,
     });
     currentItems = match.items;
@@ -163,7 +170,15 @@ function routeIdentity(pathname: string, search: string) {
 function panelTrailsEqual(left: readonly NavPanel[], right: readonly NavPanel[]) {
   return (
     left.length === right.length &&
-    left.every((panel, index) => panel.title === right[index]?.title)
+    left.every((panel, index) => {
+      const rightPanel = right[index];
+
+      return (
+        panel.title === rightPanel?.title &&
+        panel.panelLabel === rightPanel.panelLabel &&
+        panel.items === rightPanel.items
+      );
+    })
   );
 }
 
@@ -171,6 +186,34 @@ function itemContainsServiceOwnedEntry(item: NavChildItem): boolean {
   return Boolean(
     item.serviceOwned || item.items?.some((child) => itemContainsServiceOwnedEntry(child)),
   );
+}
+
+function sortFixedItems(items: readonly NavChildItem[]) {
+  return [...items].sort(
+    (left, right) =>
+      (left.fixedOrder ?? Number.MAX_SAFE_INTEGER) -
+        (right.fixedOrder ?? Number.MAX_SAFE_INTEGER) ||
+      left.title.localeCompare(right.title),
+  );
+}
+
+function groupItemsBySection(items: readonly NavChildItem[]) {
+  const groups: Array<{ label?: string; items: NavChildItem[] }> = [];
+
+  for (const item of items) {
+    const previous = groups.at(-1);
+    if (previous && previous.label === item.sectionLabel) {
+      previous.items.push(item);
+      continue;
+    }
+
+    groups.push({
+      label: item.sectionLabel,
+      items: [item],
+    });
+  }
+
+  return groups;
 }
 
 export function NavMain({
@@ -381,6 +424,37 @@ export function NavMain({
     shouldAnimateNextSlideRef.current = true;
     manualTrailOverrideRef.current = nextTrail;
     setTrail(nextTrail);
+
+    // When opening a top-level section from the root Platform slide, navigate
+    // to the section's canonical landing page so the URL stays coherent.
+    const isFromRoot = trail.length === 0;
+    if (isFromRoot && panel.landingUrl && !pathname.startsWith(panel.landingUrl)) {
+      navigate(
+        {
+          pathname: panel.landingUrl,
+          search: mergeSearchParams("", { sidebar: panelSearchValue(nextTrail) }),
+        },
+        { replace: false },
+      );
+    } else {
+      syncSidebarSearch(nextTrail, false);
+    }
+  }
+
+  function completeBackNavigation(nextTrail: NavPanel[]) {
+    setTrail(nextTrail);
+
+    if (nextTrail.length === 0) {
+      navigate(
+        {
+          pathname: "/",
+          search: "",
+        },
+        { replace: false },
+      );
+      return;
+    }
+
     syncSidebarSearch(nextTrail, false);
   }
 
@@ -394,8 +468,7 @@ export function NavMain({
     manualTrailOverrideRef.current = nextTrail;
 
     if (!swiper) {
-      setTrail(nextTrail);
-      syncSidebarSearch(nextTrail, false);
+      completeBackNavigation(nextTrail);
       return;
     }
 
@@ -408,8 +481,7 @@ export function NavMain({
 
       hasFinished = true;
       cleanup();
-      setTrail(nextTrail);
-      syncSidebarSearch(nextTrail, false);
+      completeBackNavigation(nextTrail);
       backAnimationCleanupRef.current = null;
     };
     const fallback = window.setTimeout(finishBackAnimation, 1500);
@@ -435,90 +507,123 @@ export function NavMain({
         onSwiper={setSwiper}
         aria-label="Platform navigation"
       >
-        {panels.map((panel, panelIndex) => (
-          <SwiperSlide
-            key={`${panel.title}-${panelIndex}`}
-            className="h-full min-w-0"
-            aria-hidden={panelIndex !== currentIndex}
-          >
-            <div
-              ref={(node) => {
-                panelContentRefs.current[panelIndex] = node;
-              }}
-              className={[
-                "flex h-full min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain pr-1",
-                hideScrollbars
-                  ? "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                  : "",
-              ].join(" ")}
-            >
-              <div className="flex min-h-0 w-full shrink-0 flex-col gap-1">
-                {panelIndex === 0 ? <SidebarGroupLabel>Platform</SidebarGroupLabel> : null}
-                <SidebarMenu>
-                  {panelIndex > 0 ? (
-                    <SidebarMenuItem>
-                      <SidebarMenuButton
-                        onClick={goBack}
-                        tooltip={`Back from ${panel.panelLabel ?? panel.title}`}
-                      >
-                        <ChevronLeft className="rtl:rotate-180" />
-                        <span>{panel.panelLabel ?? panel.title}</span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ) : null}
+        {panels.map((panel, panelIndex) => {
+          const previousPanel = panels[panelIndex - 1];
+          const fixedItems = sortFixedItems(
+            panel.items.filter((item) => item.fixed),
+          );
+          const scrollItems = panel.items.filter((item) => !item.fixed);
+          const scrollGroups = groupItemsBySection(scrollItems);
 
-                  {panel.items.map((item) => {
-                    const hasChildren = Boolean(item.items?.length);
-                    const isActive = itemContainsPath(item, pathname, locationSearch);
-                    const Icon = item.icon;
+          const renderItem = (item: NavChildItem) => {
+            const hasChildren = Boolean(item.items?.length);
+            const isActive = itemContainsPath(item, pathname, locationSearch);
+            const Icon = item.icon;
 
-                    return (
-                      <SidebarMenuItem key={item.title}>
-                        {hasChildren && item.items ? (
-                          <SidebarMenuButton
-                            isActive={isActive}
-                            tooltip={item.title}
-                            onClick={() =>
-                              openPanel({
-                                title: item.title,
-                                panelLabel: item.panelLabel,
-                                items: item.items ?? [],
-                              })
-                            }
-                          >
-                            {Icon ? <Icon /> : null}
-                            <span>{item.title}</span>
-                            <ChevronRight className="ms-auto rtl:rotate-180" />
-                          </SidebarMenuButton>
-                        ) : item.url ? (
-                          <SidebarMenuButton
-                            render={
-                              <Link
-                                to={toDashboardPath(item.url, item.search)}
-                                aria-current={isActive ? "page" : undefined}
-                              />
-                            }
-                            isActive={isActive}
-                            tooltip={item.title}
-                          >
-                            {Icon ? <Icon /> : null}
-                            <span>{item.title}</span>
-                          </SidebarMenuButton>
-                        ) : null}
-                      </SidebarMenuItem>
-                    );
-                  })}
-                </SidebarMenu>
-                {panel.title === "Workspace" &&
-                !panel.items.some((item) => itemContainsServiceOwnedEntry(item)) ? (
-                  <div className="rounded-md border border-dashed bg-muted/35 px-3 py-3 text-sm text-muted-foreground">
-                    Install a service from Marketplace to give Workspace its first service area.
-                  </div>
+            return (
+              <SidebarMenuItem key={item.title}>
+                {hasChildren && item.items ? (
+                  <SidebarMenuButton
+                    isActive={isActive}
+                    tooltip={item.title}
+                    onClick={() =>
+                      openPanel({
+                        title: item.title,
+                        panelLabel: item.panelLabel,
+                        landingUrl: item.landingUrl,
+                        items: item.items ?? [],
+                      })
+                    }
+                  >
+                    {Icon ? <Icon /> : null}
+                    <span>{item.title}</span>
+                    <ChevronRight className="ms-auto rtl:rotate-180" />
+                  </SidebarMenuButton>
+                ) : item.url ? (
+                  <SidebarMenuButton
+                    render={
+                      <Link
+                        to={toDashboardPath(item.url, item.search)}
+                        aria-current={isActive ? "page" : undefined}
+                      />
+                    }
+                    isActive={isActive}
+                    tooltip={item.title}
+                  >
+                    {Icon ? <Icon /> : null}
+                    <span>{item.title}</span>
+                  </SidebarMenuButton>
                 ) : null}
+              </SidebarMenuItem>
+            );
+          };
+
+          return (
+            <SwiperSlide
+              key={`${panel.title}-${panelIndex}`}
+              className="h-full min-w-0"
+              aria-hidden={panelIndex !== currentIndex}
+            >
+              <div className="flex h-full min-h-0 flex-col gap-1 pr-1">
+                <div className="shrink-0">
+                  <SidebarMenu>
+                    {panelIndex > 0 && previousPanel ? (
+                      <SidebarMenuItem>
+                        <SidebarMenuButton
+                          onClick={goBack}
+                          tooltip={`Back to ${previousPanel.panelLabel ?? previousPanel.title}`}
+                        >
+                          <ChevronLeft className="rtl:rotate-180" />
+                          <span>{previousPanel.panelLabel ?? previousPanel.title}</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    ) : null}
+                  </SidebarMenu>
+                  <SidebarGroupLabel>
+                    {panel.panelLabel ?? panel.title}
+                  </SidebarGroupLabel>
+                  {fixedItems.length > 0 ? (
+                    <SidebarMenu>{fixedItems.map(renderItem)}</SidebarMenu>
+                  ) : null}
+                </div>
+
+                <div
+                  ref={(node) => {
+                    panelContentRefs.current[panelIndex] = node;
+                  }}
+                  className={[
+                    "min-h-0 flex-1 overflow-y-auto overscroll-contain",
+                    hideScrollbars
+                      ? "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                      : "",
+                  ].join(" ")}
+                >
+                  <div className="flex min-h-0 w-full shrink-0 flex-col gap-1">
+                    {scrollGroups.map((group, groupIndex) => (
+                      <div
+                        key={`${group.label ?? "ungrouped"}-${groupIndex}`}
+                        className="grid gap-1"
+                      >
+                        {group.label ? (
+                          <SidebarGroupLabel className="h-6">
+                            {group.label}
+                          </SidebarGroupLabel>
+                        ) : null}
+                        <SidebarMenu>{group.items.map(renderItem)}</SidebarMenu>
+                      </div>
+                    ))}
+                    {panel.title === "Workspace" &&
+                    !panel.items.some((item) => itemContainsServiceOwnedEntry(item)) ? (
+                      <div className="rounded-md border border-dashed bg-muted/35 px-3 py-3 text-sm text-muted-foreground">
+                        Install a service from Marketplace to give Workspace its first service area.
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
               </div>
-            </div>
-          </SwiperSlide>
-        ))}
+            </SwiperSlide>
+          );
+        })}
       </Swiper>
     </SidebarGroup>
   );

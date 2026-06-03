@@ -1,11 +1,10 @@
+import { useLoaderData, useRevalidator, useRouteLoaderData } from "react-router";
 import {
   type ChangeEvent,
   type FormEvent,
-  useEffect,
   useMemo,
   useState,
 } from "react";
-;
 import {
   ServerCog,
   Sparkles,
@@ -48,11 +47,17 @@ import {
   type RuntimeServiceRegistryEntry,
   updateDashboardService,
 } from "#/lib/runtime-api";
-import { useRuntimeResource } from "#/lib/use-runtime-resource";
+import type { clientLoader as rootClientLoader } from '../root';
 
 export const handle = {
   pageLabel: "Marketplace",
 } as const;
+
+export async function clientLoader() {
+  const runtime = await getRuntimeConfig();
+  const serviceEntries = await listDashboardServices(runtime).catch(() => undefined);
+  return { serviceEntries };
+}
 
 type MarketplaceCatalogItem = {
   name: string;
@@ -309,15 +314,12 @@ function MarketplaceServiceCard({
 }
 
 function Marketplace() {
-  const runtime = useRuntimeResource(getRuntimeConfig);
-  const runtimeConfig = runtime.data;
-  const serviceResource = useRuntimeResource(
-    async () => (runtimeConfig ? listDashboardServices(runtimeConfig) : undefined),
-    [runtimeConfig?.api.basePath],
-  );
+  const { serviceEntries: initialServiceEntries } = useLoaderData<typeof clientLoader>();
+  const { runtime: runtimeConfig } = useRouteLoaderData<typeof rootClientLoader>('root')!;
+  const revalidator = useRevalidator();
   const [serviceEntries, setServiceEntries] = useState<
     readonly RuntimeServiceRegistryEntry[] | undefined
-  >(undefined);
+  >(initialServiceEntries);
   const [actionError, setActionError] = useState<string>();
   const [serviceSpecifier, setServiceSpecifier] = useState("");
   const [selectedServiceFile, setSelectedServiceFile] = useState<File>();
@@ -326,14 +328,6 @@ function Marketplace() {
   const [activationRequired, setActivationRequired] = useState(false);
   const [activationMessage, setActivationMessage] = useState<string>();
   const [selectedItem, setSelectedItem] = useState<MarketplaceCatalogItem | null>(null);
-
-  useEffect(() => {
-    if (serviceResource.data) {
-      setServiceEntries(serviceResource.data);
-    } else if (!runtimeConfig) {
-      setServiceEntries(undefined);
-    }
-  }, [serviceResource.data, runtimeConfig]);
 
   const effectiveServices = serviceEntries;
   const officialCatalog = useMemo(
@@ -370,7 +364,7 @@ function Marketplace() {
     );
 
   async function toggleService(serviceName: string, status: "installed" | "available") {
-    if (!runtimeConfig || pendingServiceName) {
+    if (pendingServiceName) {
       return;
     }
 
@@ -395,7 +389,7 @@ function Marketplace() {
   async function addServiceSource(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!runtimeConfig || addingService) {
+    if (addingService) {
       return;
     }
 
@@ -603,7 +597,6 @@ function Marketplace() {
                 className="self-end"
                 disabled={
                   addingService ||
-                  !runtimeConfig ||
                   !canUploadServiceSource ||
                   (selectedServiceFile
                     ? !canUploadServicePackage

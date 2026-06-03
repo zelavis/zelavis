@@ -1,4 +1,4 @@
-import { Link } from "react-router";
+import { Link, useLoaderData, useRevalidator, useRouteLoaderData } from "react-router";
 import {
   ArrowDownUp,
   CheckSquare,
@@ -23,9 +23,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import {
   deleteStorageFile,
-  getDashboardSettings,
-  getResolvedDashboardPreferences,
   getRuntimeConfig,
+  getResolvedDashboardPreferences,
   getStorageFileMetadata,
   getStorageFileUrl,
   isRenderableImageFile,
@@ -34,12 +33,33 @@ import {
   updateDashboardSettings,
   uploadStorageFile,
 } from "#/lib/runtime-api";
-import { useRuntimeResource } from "#/lib/use-runtime-resource";
+import { parseAsString, useTypedSearchParams } from "#/lib/use-typed-search-params";
+import type { clientLoader as rootClientLoader } from '../root';
+import type { Route } from './+types/media';
 import { cn } from "#/lib/utils";
 
 export const handle = {
   pageLabel: "Media",
 } as const;
+
+export async function clientLoader({ request }: Route.ClientLoaderArgs) {
+  const runtime = await getRuntimeConfig();
+  const storageEnabled = runtime.services.some((s) => s.name === "@zelavis/storage");
+  const url = new URL(request.url);
+  const prefix = url.searchParams.get('prefix') || undefined;
+  const selectedPath = url.searchParams.get('path') || undefined;
+
+  if (!storageEnabled) {
+    return { files: undefined, metadata: undefined };
+  }
+
+  const [filesResult, metadata] = await Promise.all([
+    listStorageFiles(runtime, prefix).catch(() => undefined),
+    selectedPath ? getStorageFileMetadata(runtime, selectedPath).catch(() => undefined) : Promise.resolve(undefined),
+  ]);
+
+  return { files: filesResult, metadata };
+}
 
 const EMPTY_STORAGE_FILES: StorageFile[] = [];
 const EMPTY_PATHS: string[] = [];
@@ -97,23 +117,30 @@ function reorderVisibleFiles(
   });
 }
 
+const mediaSchema = {
+  prefix: parseAsString.withDefault(""),
+  type: parseAsString.withDefault(""),
+  label: parseAsString.withDefault(""),
+  purpose: parseAsString.withDefault(""),
+  path: parseAsString,
+} as const;
+
 function MediaRoute() {
-  const runtime = useRuntimeResource(getRuntimeConfig);
-  const config = runtime.data;
-  const storageEnabled = config?.services.some((service) => service.name === "@zelavis/storage");
-  const settings = useRuntimeResource(
-    async () => (config ? getDashboardSettings(config) : undefined),
-    [config],
-  );
-  const [prefix, setPrefix] = useState("");
-  const [typeFilter, setTypeFilter] = useState("");
-  const [labelFilter, setLabelFilter] = useState("");
-  const [purposeFilter, setPurposeFilter] = useState("");
+  const { files: filesResult, metadata } = useLoaderData<typeof clientLoader>();
+  const { runtime: config, settings } = useRouteLoaderData<typeof rootClientLoader>('root')!;
+  const revalidator = useRevalidator();
+  const storageEnabled = config.services.some((service) => service.name === "@zelavis/storage");
+  const [{ prefix, type: typeFilter, label: labelFilter, purpose: purposeFilter, path: selectedPath }, setParams] = useTypedSearchParams(mediaSchema);
+  const setPrefix = (value: string) => setParams({ prefix: value || null });
+  const setTypeFilter = (value: string) => setParams({ type: value || null });
+  const setLabelFilter = (value: string) => setParams({ label: value || null });
+  const setPurposeFilter = (value: string) => setParams({ purpose: value || null });
+  const setSelectedPath = (value: string | undefined) => setParams({ path: value ?? null });
+
   const [uploadPath, setUploadPath] = useState("");
   const [uploadLabel, setUploadLabel] = useState("");
   const [uploadAltText, setUploadAltText] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | undefined>();
-  const [selectedPath, setSelectedPath] = useState<string>();
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -125,19 +152,8 @@ function MediaRoute() {
   const [draggedAssetPath, setDraggedAssetPath] = useState<string>();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const filesResource = useRuntimeResource(
-    async () =>
-      config && storageEnabled ? listStorageFiles(config, prefix || undefined) : undefined,
-    [config, storageEnabled, prefix],
-  );
-
-  const metadataResource = useRuntimeResource(
-    async () =>
-      config && storageEnabled && selectedPath
-        ? getStorageFileMetadata(config, selectedPath)
-        : undefined,
-    [config, storageEnabled, selectedPath],
-  );
+  const filesResource = { data: filesResult };
+  const metadataResource = { data: metadata };
 
   const visibleFiles = filesResource.data?.files ?? EMPTY_STORAGE_FILES;
   const filteredFiles = useMemo(
@@ -169,7 +185,7 @@ function MediaRoute() {
   const selectedAsset = visibleFiles.find((file) => file.path === selectedPath);
   const selectedAssets = orderedFiles.filter((file) => selectedPaths.includes(file.path));
   const persistedOrderedPaths =
-    getResolvedDashboardPreferences(settings.data).media?.orderedPaths ?? EMPTY_PATHS;
+    getResolvedDashboardPreferences(settings).media?.orderedPaths ?? EMPTY_PATHS;
 
   useEffect(() => {
     setOrderedPaths((current) => {
@@ -193,10 +209,6 @@ function MediaRoute() {
   }, [filteredFiles, persistedOrderedPaths]);
 
   async function persistMediaOrder(nextOrderedPaths: string[]) {
-    if (!config) {
-      return;
-    }
-
     const mergedOrderedPaths = [
       ...nextOrderedPaths,
       ...persistedOrderedPaths.filter((path) => !nextOrderedPaths.includes(path)),
@@ -209,13 +221,13 @@ function MediaRoute() {
         },
       },
     });
-    await settings.reload();
+    revalidator.revalidate();
   }
 
   async function handleUpload(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!config || !storageEnabled || !selectedFile || busy) {
+    if (!storageEnabled || !selectedFile || busy) {
       return;
     }
 
@@ -246,7 +258,7 @@ function MediaRoute() {
         onProgress: ({ percent }) => setUploadProgress(percent),
       });
 
-      await filesResource.reload();
+      revalidator.revalidate();
       setSelectedPath(created.file.path);
       setSelectedPaths((current) =>
         current.includes(created.file.path) ? current : [...current, created.file.path],
@@ -295,7 +307,7 @@ function MediaRoute() {
   }
 
   async function handleCopyUrl() {
-    if (!config || !selectedAsset || typeof navigator === "undefined" || !navigator.clipboard) {
+    if (!selectedAsset || typeof navigator === "undefined" || !navigator.clipboard) {
       return;
     }
 
@@ -316,7 +328,7 @@ function MediaRoute() {
   }
 
   async function handleCopySelectedUrls() {
-    if (!config || selectedAssets.length === 0 || !navigator.clipboard) {
+    if (selectedAssets.length === 0 || !navigator.clipboard) {
       return;
     }
 
@@ -334,7 +346,7 @@ function MediaRoute() {
   }
 
   async function handleCopySelectedReferences() {
-    if (!config || selectedAssets.length === 0 || !navigator.clipboard) {
+    if (selectedAssets.length === 0 || !navigator.clipboard) {
       return;
     }
 
@@ -354,7 +366,7 @@ function MediaRoute() {
   }
 
   async function handleDeleteSelected() {
-    if (!config || selectedAssets.length === 0 || busy) {
+    if (selectedAssets.length === 0 || busy) {
       return;
     }
 
@@ -365,7 +377,7 @@ function MediaRoute() {
 
     try {
       await Promise.all(selectedAssets.map((file) => deleteStorageFile(config, file.path)));
-      await filesResource.reload();
+      revalidator.revalidate();
       if (selectedPath && selectedPaths.includes(selectedPath)) {
         setSelectedPath(undefined);
       }
@@ -729,7 +741,7 @@ function MediaRoute() {
                 );
               })}
 
-              {!filesResource.loading && visibleFiles.length === 0 ? (
+              {visibleFiles.length === 0 ? (
                 <div className="sm:col-span-2 xl:col-span-3">
                   <ResourceNotice
                     title="No media yet"

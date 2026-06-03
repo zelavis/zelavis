@@ -1,4 +1,4 @@
-import { Link, useNavigate } from "react-router";
+import { Link, useNavigate, useRevalidator, useRouteLoaderData } from "react-router";
 import { Plus, Save } from "lucide-react";
 import { useState } from "react";
 
@@ -11,13 +11,11 @@ import { slugifyContentTypeLabel } from "#/lib/content-studio";
 import {
   createDatabaseCollection,
   createDatabaseSchema,
-  getDashboardSettings,
   getResolvedDashboardPreferences,
-  getRuntimeConfig,
   updateDashboardSettings,
 } from "#/lib/runtime-api";
-import { useRuntimeResource } from "#/lib/use-runtime-resource";
 import { cn } from "#/lib/utils";
+import type { clientLoader as rootClientLoader } from '../root';
 
 export const handle = {
   pageLabel: "Content",
@@ -26,12 +24,8 @@ export const handle = {
 
 function NewContentTypeRoute() {
   const navigate = useNavigate();
-  const runtime = useRuntimeResource(getRuntimeConfig);
-  const config = runtime.data;
-  const settings = useRuntimeResource(
-    async () => (config ? getDashboardSettings(config) : undefined),
-    [config],
-  );
+  const revalidator = useRevalidator();
+  const { runtime, settings } = useRouteLoaderData<typeof rootClientLoader>('root')!;
   const [label, setLabel] = useState("");
   const [name, setName] = useState("");
   const [message, setMessage] = useState<string>();
@@ -40,7 +34,7 @@ function NewContentTypeRoute() {
 
   async function handleCreate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!config || !name.trim() || saving) {
+    if (!name.trim() || saving) {
       return;
     }
 
@@ -51,14 +45,14 @@ function NewContentTypeRoute() {
     setMessage(undefined);
     setError(undefined);
     try {
-      const collection = await createDatabaseCollection(config, {
+      const collection = await createDatabaseCollection(runtime, {
         name: normalizedName,
         metadata: {
           surface: "content-studio",
           kind: "content-type",
         },
       });
-      await createDatabaseSchema(config, {
+      await createDatabaseSchema(runtime, {
         collection: collection.name,
         version: 1,
         activate: true,
@@ -69,8 +63,8 @@ function NewContentTypeRoute() {
       });
 
       if (normalizedLabel !== collection.name) {
-        const current = getResolvedDashboardPreferences(settings.data).content;
-        await updateDashboardSettings(config, {
+        const current = getResolvedDashboardPreferences(settings).content;
+        await updateDashboardSettings(runtime, {
           preferences: {
             content: {
               labels: {
@@ -80,7 +74,7 @@ function NewContentTypeRoute() {
             },
           },
         });
-        await settings.reload();
+        revalidator.revalidate();
       }
 
       setMessage(`Created ${normalizedLabel} (${collection.name}).`);

@@ -1,6 +1,6 @@
+import { useLoaderData, useRevalidator } from "react-router";
 import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
-;
 
 import { PageHeader, ResourceNotice } from "#/components/DashboardPage";
 import { ServicePageMount } from "#/components/ServicePageMount";
@@ -14,12 +14,20 @@ import {
   listCommerceOrders,
   listCommerceProducts,
 } from "#/lib/runtime-api";
-import { useRuntimeResource } from "#/lib/use-runtime-resource";
-
 export const handle = {
   pageLabel: "Commerce",
   sidebarTrail: ["Workspace", "Ecommerce"],
 } as const;
+
+export async function clientLoader() {
+  const runtime = await getRuntimeConfig();
+  const [orders, customers, products] = await Promise.all([
+    listCommerceOrders(runtime).catch(() => [] as Awaited<ReturnType<typeof listCommerceOrders>>),
+    listCommerceCustomers(runtime).catch(() => [] as Awaited<ReturnType<typeof listCommerceCustomers>>),
+    listCommerceProducts(runtime).catch(() => [] as Awaited<ReturnType<typeof listCommerceProducts>>),
+  ]);
+  return { orders, customers, products };
+}
 
 function formatMoney(amount: number, currency: string) {
   return new Intl.NumberFormat(undefined, {
@@ -29,20 +37,8 @@ function formatMoney(amount: number, currency: string) {
 }
 
 function CommerceOrders() {
-  const runtime = useRuntimeResource(getRuntimeConfig);
-  const config = runtime.data;
-  const orders = useRuntimeResource(
-    async () => (config ? listCommerceOrders(config) : []),
-    [config],
-  );
-  const customers = useRuntimeResource(
-    async () => (config ? listCommerceCustomers(config) : []),
-    [config],
-  );
-  const products = useRuntimeResource(
-    async () => (config ? listCommerceProducts(config) : []),
-    [config],
-  );
+  const { orders, customers, products } = useLoaderData<typeof clientLoader>();
+  const revalidator = useRevalidator();
   const [customerId, setCustomerId] = useState("");
   const [productId, setProductId] = useState("");
   const [quantity, setQuantity] = useState("1");
@@ -52,8 +48,8 @@ function CommerceOrders() {
   const [error, setError] = useState<string>();
 
   const selectedProduct = useMemo(
-    () => (products.data ?? []).find((product) => product.id === productId),
-    [productId, products.data],
+    () => products.find((product) => product.id === productId),
+    [productId, products],
   );
   const unitPrice = selectedProduct?.price.amount ?? 0;
   const computedQuantity = Math.max(1, Number(quantity || "1"));
@@ -61,15 +57,16 @@ function CommerceOrders() {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!config || saving || !selectedProduct) {
+    if (saving || !selectedProduct) {
       return;
     }
 
+    const runtime = await getRuntimeConfig();
     setSaving(true);
     setMessage(undefined);
     setError(undefined);
     try {
-      const created = await createCommerceOrder(config, {
+      const created = await createCommerceOrder(runtime, {
         customerId,
         items: [
           {
@@ -91,7 +88,7 @@ function CommerceOrders() {
       setQuantity("1");
       setCurrency(selectedProduct.price.currency);
       setMessage(`Created draft order ${created.id}.`);
-      await orders.reload();
+      revalidator.revalidate();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -110,11 +107,7 @@ function CommerceOrders() {
             <CardTitle>Orders</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            {orders.error ? (
-              <div className="p-4">
-                <ResourceNotice title="Orders unavailable" description={orders.error.message} />
-              </div>
-            ) : orders.data && orders.data.length > 0 ? (
+            {orders.length > 0 ? (
               <div className="overflow-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
@@ -127,7 +120,7 @@ function CommerceOrders() {
                     </tr>
                   </thead>
                   <tbody>
-                    {orders.data.map((order) => (
+                    {orders.map((order) => (
                       <tr key={order.id} className="border-t">
                         <td className="px-4 py-3 font-mono text-xs text-foreground">{order.id}</td>
                         <td className="px-4 py-3 text-muted-foreground">{order.customerId}</td>
@@ -156,7 +149,7 @@ function CommerceOrders() {
             <CardTitle>New order</CardTitle>
           </CardHeader>
           <CardContent>
-            {customers.data && customers.data.length > 0 && products.data && products.data.length > 0 ? (
+            {customers.length > 0 && products.length > 0 ? (
               <form className="grid gap-3" onSubmit={(event) => void handleSubmit(event)}>
                 <select
                   value={customerId}
@@ -164,7 +157,7 @@ function CommerceOrders() {
                   className="h-10 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 >
                   <option value="">Customer</option>
-                  {customers.data.map((customer) => (
+                  {customers.map((customer) => (
                     <option key={customer.id} value={customer.id}>
                       {customer.email}
                     </option>
@@ -175,7 +168,7 @@ function CommerceOrders() {
                   onChange={(event) => {
                     const nextProductId = event.target.value;
                     setProductId(nextProductId);
-                    const nextProduct = (products.data ?? []).find((product) => product.id === nextProductId);
+                    const nextProduct = products.find((product) => product.id === nextProductId);
                     if (nextProduct) {
                       setCurrency(nextProduct.price.currency);
                     }
@@ -183,7 +176,7 @@ function CommerceOrders() {
                   className="h-10 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 >
                   <option value="">Product</option>
-                  {products.data.map((product) => (
+                  {products.map((product) => (
                     <option key={product.id} value={product.id}>
                       {product.title}
                     </option>

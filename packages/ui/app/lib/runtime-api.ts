@@ -3,6 +3,9 @@ export interface RuntimeServiceMenuDefinition {
   path?: string;
   pageLabel?: string;
   panelLabel?: string;
+  fixed?: boolean;
+  fixedOrder?: number;
+  sectionLabel?: string;
   surface?: "root" | "core" | "workspace" | "settings";
   items?: readonly RuntimeServiceMenuDefinition[];
 }
@@ -25,6 +28,9 @@ export interface RuntimeServiceRegistryMenuDefinition {
   path?: string;
   pageLabel?: string;
   panelLabel?: string;
+  fixed?: boolean;
+  fixedOrder?: number;
+  sectionLabel?: string;
   page?: RuntimeServicePageDefinition;
   items?: readonly RuntimeServiceRegistryMenuDefinition[];
 }
@@ -95,6 +101,21 @@ export interface RuntimeConfig {
   services: RuntimeService[];
   serviceRegistry: RuntimeServiceRegistryEntry[];
   serviceActivation?: RuntimeServiceActivation;
+}
+
+export const DATABASE_COLLECTION_CREATED_EVENT =
+  "zelavis:database-collection-created";
+
+function dispatchDatabaseCollectionCreated(collection: DatabaseCollection) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.dispatchEvent(
+    new CustomEvent<DatabaseCollection>(DATABASE_COLLECTION_CREATED_EVENT, {
+      detail: collection,
+    }),
+  );
 }
 
 export type DashboardThemeMode = "light" | "dark" | "auto";
@@ -316,7 +337,6 @@ export interface DatabaseSchemaCollectionSummary {
 export interface DatabaseSystemTableSummary {
   name:
     | "_collections"
-    | "_documents"
     | "_events"
     | "_schemas"
     | "_time_series_checkpoints"
@@ -376,6 +396,7 @@ const fallbackConfig: RuntimeConfig = {
       "/content",
       "/content/new",
       "/database",
+      "/database/new",
       "/media",
       "/marketplace",
       "/services",
@@ -421,7 +442,6 @@ const fallbackConfig: RuntimeConfig = {
             panelLabel: "System Tables",
             items: [
               { title: "_collections", path: "/database" },
-              { title: "_documents", path: "/database" },
               { title: "_events", path: "/database" },
               { title: "_schemas", path: "/database" },
               { title: "_time_series_checkpoints", path: "/database" },
@@ -618,7 +638,9 @@ async function readJson<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function getRuntimeConfig(): Promise<RuntimeConfig> {
+let _runtimeConfigCache: Promise<RuntimeConfig> | undefined;
+
+async function _fetchRuntimeConfig(): Promise<RuntimeConfig> {
   if (typeof window !== "undefined" && window.__ZELAVIS_RUNTIME_CONFIG__) {
     return {
       ...window.__ZELAVIS_RUNTIME_CONFIG__,
@@ -661,6 +683,11 @@ export async function getRuntimeConfig(): Promise<RuntimeConfig> {
       ),
     };
   }
+}
+
+export function getRuntimeConfig(): Promise<RuntimeConfig> {
+  _runtimeConfigCache ??= _fetchRuntimeConfig();
+  return _runtimeConfigCache;
 }
 
 export async function getDashboardSettings(
@@ -1063,11 +1090,62 @@ export async function listCommerceSubscriptions(config: RuntimeConfig) {
 }
 
 export async function listDatabaseCollections(config: RuntimeConfig) {
+  const cacheBuster = Date.now().toString(36);
   const result = await readJson<{ collections: DatabaseCollection[] }>(
-    `${config.api.basePath}/database/documents/collections`,
+    `${config.api.basePath}/database/documents/collections?refresh=${cacheBuster}`,
   );
 
-  return result.collections;
+  const collectionsByKey = new Map(
+    result.collections.map((collection) => [
+      `${collection.tenantId}:${collection.name}`,
+      collection,
+    ]),
+  );
+
+  try {
+    const systemResult = await readJson<{
+      rows: Array<{
+        tenant_id?: unknown;
+        name?: unknown;
+        created_at?: unknown;
+        document_count?: unknown;
+        metadata_json?: unknown;
+      }>;
+    }>(
+      `${config.api.basePath}/database/sql/system/_collections?limit=500&refresh=${cacheBuster}`,
+    );
+
+    for (const row of systemResult.rows) {
+      if (typeof row.name !== "string") {
+        continue;
+      }
+
+      const tenantId =
+        typeof row.tenant_id === "string" ? row.tenant_id : "default";
+      const metadata =
+        typeof row.metadata_json === "string" && row.metadata_json.length > 0
+          ? (JSON.parse(row.metadata_json) as Record<string, unknown> | null)
+          : undefined;
+
+      collectionsByKey.set(`${tenantId}:${row.name}`, {
+        name: row.name,
+        tenantId,
+        createdAt:
+          typeof row.created_at === "string"
+            ? row.created_at
+            : new Date().toISOString(),
+        documentCount:
+          typeof row.document_count === "number" ? row.document_count : 0,
+        metadata: metadata ?? undefined,
+      });
+    }
+  } catch {
+    // Drivers without SQL support can still use the document collection endpoint.
+  }
+
+  return [...collectionsByKey.values()].sort((left, right) =>
+    left.name.localeCompare(right.name),
+  );
 }
 
 export async function createDatabaseCollection(
@@ -1078,13 +1156,17 @@ export async function createDatabaseCollection(
     tenantId?: string;
   },
 ) {
-  return readJson<DatabaseCollection>(
+  const collection = await readJson<DatabaseCollection>(
     `${config.api.basePath}/database/documents/collections`,
     {
       method: "POST",
       body: JSON.stringify(input),
     },
   );
+
+  dispatchDatabaseCollectionCreated(collection);
+
+  return collection;
 }
 
 export async function listDatabaseSchemaCollections(config: RuntimeConfig) {

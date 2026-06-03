@@ -1,4 +1,4 @@
-import { useLocation, useNavigate } from "react-router";
+import { useLoaderData, useRouteLoaderData } from "react-router";
 import {
   DataEditor,
   type DataEditorProps,
@@ -16,16 +16,31 @@ import { Input } from "#/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "#/components/ui/sheet";
 import {
   getRuntimeConfig,
+  queryDatabaseDocuments,
   queryDatabaseSystemTable,
 } from "#/lib/runtime-api";
-import { mergeSearchParams, readSearchParams } from "#/lib/routing";
-import { useRuntimeResource } from "#/lib/use-runtime-resource";
+import { parseAsString, parseAsStringLiteral, useTypedSearchParams } from "#/lib/use-typed-search-params";
+import type { clientLoader as rootClientLoader } from '../root';
 import { cn } from "#/lib/utils";
 
 export const handle = {
   pageLabel: "Database",
   sidebarTrail: ["Core", "Database"],
 } as const;
+
+export async function clientLoader({ request }: import("./+types/database").Route.ClientLoaderArgs) {
+  const runtime = await getRuntimeConfig();
+  const url = new URL(request.url);
+  const databaseTable = url.searchParams.get('databaseTable') || undefined;
+  const systemTable = url.searchParams.get('systemTable') || undefined;
+
+  const [systemRows, tableRows] = await Promise.all([
+    systemTable ? queryDatabaseSystemTable(runtime, systemTable as Parameters<typeof queryDatabaseSystemTable>[1], { limit: 100 }).catch(() => []) : Promise.resolve([]),
+    databaseTable ? queryDatabaseDocuments(runtime, databaseTable).catch(() => []) : Promise.resolve([]),
+  ]);
+
+  return { systemRows, tableRows };
+}
 
 type DatabaseGridRow = {
   id: string;
@@ -36,7 +51,6 @@ type DatabaseGridRow = {
 
 type DatabaseSystemTableName =
   | "_collections"
-  | "_documents"
   | "_events"
   | "_schemas"
   | "_time_series_checkpoints"
@@ -49,7 +63,7 @@ type DatabaseGridSorting = {
 
 type SavedDatabaseView = {
   name: string;
-  target: DatabaseSystemTableName;
+  target: string;
   columnVisibility: Record<string, boolean>;
   pinnedColumns: string[];
   columnSizing: Record<string, number>;
@@ -62,7 +76,6 @@ const DATABASE_GRID_VIEWS_STORAGE_KEY = "zelavis:database-grid-views";
 const ACTIONS_COLUMN = "__zelavis_actions";
 const DATABASE_SYSTEM_TABLES = [
   "_collections",
-  "_documents",
   "_events",
   "_schemas",
   "_time_series_checkpoints",
@@ -95,7 +108,7 @@ function parseSavedDatabaseViews(value: unknown): SavedDatabaseView[] {
     }
 
     const view = entry as Partial<SavedDatabaseView>;
-    return typeof view.name === "string" && isSystemTableName(view.target);
+    return typeof view.name === "string" && typeof view.target === "string";
   });
 }
 
@@ -194,13 +207,13 @@ function DatabaseDataGrid(props: {
   collection: string;
   rows: DatabaseGridRow[];
   columns: string[];
-  target: DatabaseSystemTableName;
+  target: string;
   selectedDocumentId?: string;
   activeSavedViewName?: string;
   onSelectDocument: (id: string) => void;
   onClearSelectedDocument: () => void;
   onSavedViewNameChange?: (name?: string) => void;
-  onActivateSavedViewTarget?: (target: DatabaseSystemTableName, viewName?: string) => void;
+  onActivateSavedViewTarget?: (target: string, viewName?: string) => void;
 }) {
   const [globalFilter, setGlobalFilter] = useState("");
   const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>({});
@@ -726,32 +739,29 @@ function DatabaseDataGrid(props: {
   );
 }
 
+const databaseSchema = {
+  databaseTable: parseAsString,
+  systemTable: parseAsStringLiteral(DATABASE_SYSTEM_TABLES).withDefault(DEFAULT_SYSTEM_TABLE),
+  inspectedId: parseAsString,
+  view: parseAsString,
+  sidebar: parseAsString,
+} as const;
+
 function DatabaseRoute() {
-  const navigate = useNavigate();
-  const location = useLocation();
-  const search = useMemo(() => readSearchParams(location.search), [location.search]);
-  const updateSearch = (nextSearch: Record<string, string | undefined>, replace = true) => {
-    navigate(
-      {
-        pathname: location.pathname,
-        search: mergeSearchParams(location.search, nextSearch),
-      },
-      { replace },
-    );
-  };
-  const [selectedDocumentId, setSelectedDocumentId] = useState<string>();
-  const runtime = useRuntimeResource(getRuntimeConfig);
-  const config = runtime.data;
-  const selectedSystemTable = readSystemTableName(search.systemTable);
+  const [search, setParams] = useTypedSearchParams(databaseSchema);
+  const { systemRows: systemRowsData, tableRows: tableRowsData } = useLoaderData<typeof clientLoader>();
+  const { runtime: config } = useRouteLoaderData<typeof rootClientLoader>('root')!;
+  const selectedDocumentId = search.inspectedId;
+  const setSelectedDocumentId = (id: string | undefined) => setParams({ inspectedId: id ?? null });
+  const selectedDatabaseTable = search.databaseTable || undefined;
+  const selectedSystemTable = selectedDatabaseTable ? undefined : search.systemTable;
+  const selectedTarget = selectedDatabaseTable ?? selectedSystemTable ?? DEFAULT_SYSTEM_TABLE;
   const activeViewName = search.view;
-  const desiredSidebar = "Core/Database/System Tables";
-  const systemRowsResource = useRuntimeResource(
-    async () =>
-      config && selectedSystemTable
-        ? queryDatabaseSystemTable(config, selectedSystemTable, { limit: 100 })
-        : [],
-    [config, selectedSystemTable],
-  );
+  const desiredSidebar = selectedDatabaseTable
+    ? "Core/Database"
+    : "Core/Database/System Tables";
+  const systemRowsResource = { data: systemRowsData, loading: false, error: undefined as Error | undefined };
+  const tableRowsResource = { data: tableRowsData, loading: false, error: undefined as Error | undefined };
 
   const systemRows = useMemo(
     () =>
@@ -768,43 +778,66 @@ function DatabaseRoute() {
       })),
     [selectedSystemTable, systemRowsResource.data],
   );
+  const tableRows = useMemo(
+    () =>
+      (tableRowsResource.data ?? []).map((document) => ({
+        id: document.id,
+        version: document.version,
+        updatedAt: document.updatedAt,
+        data: {
+          tenant_id: document.tenantId,
+          id: document.id,
+          data_json: document.data,
+          created_at: document.createdAt,
+          updated_at: document.updatedAt,
+          version: document.version,
+          schema_version: document.schemaVersion,
+        },
+      })),
+    [tableRowsResource.data],
+  );
+  const activeRows = selectedDatabaseTable ? tableRows : systemRows;
+  const activeResource = selectedDatabaseTable ? tableRowsResource : systemRowsResource;
+  const activeKind = selectedDatabaseTable ? "Collection table" : "System table";
+  const emptyDescription = selectedDatabaseTable
+    ? `The collection table ${selectedDatabaseTable} has no documents yet.`
+    : `The system table ${selectedSystemTable} is empty or unavailable.`;
   const documentColumns = useMemo(() => {
     const keys = new Set<string>();
-    for (const document of systemRows) {
+    for (const document of activeRows) {
       for (const key of Object.keys(document.data)) {
         keys.add(key);
       }
     }
 
     return Array.from(keys).sort((left, right) => left.localeCompare(right));
-  }, [systemRows]);
+  }, [activeRows]);
 
   useEffect(() => {
+    if (selectedDatabaseTable) {
+      return;
+    }
+
     if (search.systemTable === selectedSystemTable) {
       return;
     }
 
-    updateSearch({
-      systemTable: selectedSystemTable,
-    });
-  }, [search.systemTable, selectedSystemTable]);
+    setParams({ systemTable: selectedSystemTable });
+  }, [search.systemTable, selectedDatabaseTable, selectedSystemTable]);
 
   useEffect(() => {
     if (search.sidebar === desiredSidebar) {
       return;
     }
 
-    updateSearch({ sidebar: desiredSidebar });
+    setParams({ sidebar: desiredSidebar });
   }, [desiredSidebar, search.sidebar]);
 
-  useEffect(() => {
-    if (
-      selectedDocumentId &&
-      !systemRows.some((document) => document.id === selectedDocumentId)
-    ) {
-      setSelectedDocumentId(undefined);
-    }
-  }, [selectedDocumentId, systemRows]);
+  // Clear inspectedId from URL if the selected document no longer exists in the active table
+  const selectedDocumentExists = !selectedDocumentId || activeRows.some((document) => document.id === selectedDocumentId);
+  if (!selectedDocumentExists) {
+    setParams({ inspectedId: null });
+  }
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
@@ -812,51 +845,63 @@ function DatabaseRoute() {
 
       <div className="grid gap-4">
         <div className="grid gap-2">
-          <h2 className="text-lg font-semibold">System Table: {selectedSystemTable}</h2>
+          <h2 className="text-lg font-semibold">
+            {activeKind}: {selectedTarget}
+          </h2>
           <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
             <span className="rounded-md border bg-muted/20 px-2 py-1">
-              System table
+              {activeKind}
             </span>
             <span className="rounded-md border bg-muted/20 px-2 py-1">
-              {systemRows.length} rows loaded
+              {activeRows.length} rows loaded
             </span>
             <span className="rounded-md border bg-muted/20 px-2 py-1">
-              SQL read-only
+              {selectedDatabaseTable ? "Document projection" : "SQL read-only"}
             </span>
           </div>
         </div>
 
-        {systemRowsResource.error ? (
+        {activeResource.error ? (
           <ResourceNotice
-            title="Could not read this system table"
+            title={
+              selectedDatabaseTable
+                ? "Could not read this collection table"
+                : "Could not read this system table"
+            }
             description={
-              systemRowsResource.error instanceof Error
-                ? systemRowsResource.error.message
-                : String(systemRowsResource.error)
+              activeResource.error instanceof Error
+                ? activeResource.error.message
+                : String(activeResource.error)
             }
           />
-        ) : systemRows.length === 0 ? (
+        ) : activeRows.length === 0 ? (
           <ResourceNotice
-            title="No rows in this system table"
-            description={`The system table ${selectedSystemTable} is empty or unavailable.`}
+            title={
+              selectedDatabaseTable
+                ? "No rows in this collection table"
+                : "No rows in this system table"
+            }
+            description={emptyDescription}
           />
         ) : (
           <DatabaseDataGrid
-            collection={selectedSystemTable}
-            target={selectedSystemTable}
-            rows={systemRows}
+            collection={selectedTarget}
+            target={selectedTarget}
+            rows={activeRows}
             columns={documentColumns}
             selectedDocumentId={selectedDocumentId}
             activeSavedViewName={activeViewName}
             onSelectDocument={setSelectedDocumentId}
             onClearSelectedDocument={() => setSelectedDocumentId(undefined)}
             onSavedViewNameChange={(view) => {
-              updateSearch({ view });
+              setParams({ view: view ?? null });
             }}
             onActivateSavedViewTarget={(target, viewName) => {
-              updateSearch({
-                systemTable: target,
-                view: viewName ?? search.view,
+              setParams({
+                ...(isSystemTableName(target)
+                  ? { systemTable: target, databaseTable: null }
+                  : { databaseTable: target, systemTable: null }),
+                view: viewName ?? search.view ?? null,
               });
             }}
           />

@@ -14,6 +14,7 @@ import {
   PanelsTopLeft,
   Package,
   Pencil,
+  Plus,
   ReceiptText,
   Send,
   Server,
@@ -27,6 +28,7 @@ import {
 } from "lucide-react";
 import { ZelavisMark } from "#/components/zelavis-mark";
 import type {
+  DatabaseCollection,
   RuntimeService,
   RuntimeServiceMenuDefinition,
   RuntimeServicePageDefinition,
@@ -53,6 +55,7 @@ export type DashboardRoutePath =
   | `/content/${string}/fields`
   | `/content/${string}/settings`
   | "/database"
+  | "/database/new"
   | "/media"
   | "/marketplace"
   | "/services"
@@ -65,21 +68,26 @@ export type DashboardRoutePath =
 export type DashboardNavSearch = {
   systemTable?:
     | "_collections"
-    | "_documents"
     | "_events"
     | "_schemas"
     | "_time_series_checkpoints"
     | "_time_series_points";
+  databaseTable?: string;
   sidebar?: string;
 };
 
 export type DashboardNavItem = {
   title: string;
   url?: DashboardRoutePath;
+  /** Canonical landing page navigated to when this panel section is opened from the root. */
+  landingUrl?: DashboardRoutePath;
   search?: DashboardNavSearch;
   icon: LucideIcon;
   panelLabel?: string;
   pageLabel?: string;
+  fixed?: boolean;
+  fixedOrder?: number;
+  sectionLabel?: string;
   serviceOwned?: boolean;
   items?: readonly DashboardNavItem[];
 };
@@ -98,6 +106,9 @@ export type DashboardServiceRegistryMenuItem = {
   icon: LucideIcon;
   panelLabel?: string;
   pageLabel?: string;
+  fixed?: boolean;
+  fixedOrder?: number;
+  sectionLabel?: string;
   page?: RuntimeServicePageDefinition;
   serviceOwned?: boolean;
   items?: readonly DashboardServiceRegistryMenuItem[];
@@ -201,6 +212,9 @@ function createDashboardServiceRegistryMenuItem(
     icon: getServiceRegistryMenuIcon(menu.title, menu.path),
     pageLabel: menu.pageLabel,
     panelLabel: menu.panelLabel,
+    fixed: menu.fixed,
+    fixedOrder: menu.fixedOrder,
+    sectionLabel: menu.sectionLabel,
     page: menu.page,
     serviceOwned: true,
     items: menu.items?.map(createDashboardServiceRegistryMenuItem),
@@ -232,6 +246,9 @@ function createDashboardServiceMenuItem(
     icon: getServiceMenuIcon(menu.title, serviceName),
     pageLabel: menu.pageLabel,
     panelLabel: menu.panelLabel,
+    fixed: menu.fixed,
+    fixedOrder: menu.fixedOrder,
+    sectionLabel: menu.sectionLabel,
     items: menu.items?.map((item) => createDashboardServiceMenuItem(item, serviceName)),
   };
 }
@@ -352,7 +369,6 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
           panelLabel: "System Tables",
           items: [
             { title: "_collections", path: "/database" },
-            { title: "_documents", path: "/database" },
             { title: "_events", path: "/database" },
             { title: "_schemas", path: "/database" },
             { title: "_time_series_checkpoints", path: "/database" },
@@ -387,8 +403,25 @@ export function buildPlatformNavItems(
   services?: readonly RuntimeService[],
   serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
   contentTypes?: readonly ContentTypeRow[],
+  databaseCollections?: readonly DatabaseCollection[],
 ): readonly DashboardNavItem[] {
   const workspaceRegistryNavItems = buildWorkspaceServiceNavItems(serviceRegistry);
+  const contentTypesByName = new Map(
+    (contentTypes ?? []).map((contentType) => [contentType.name, contentType]),
+  );
+  const databaseTableItems = [...(databaseCollections ?? [])]
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map((collection) => {
+      const contentType = contentTypesByName.get(collection.name);
+      return {
+        title: contentType?.label ?? collection.name,
+        url: "/database" as const,
+        search: { databaseTable: collection.name, systemTable: undefined },
+        icon: Database,
+        pageLabel: "Database",
+        sectionLabel: "Tables",
+      };
+    });
   const serviceNavItems = (services ?? [])
     .filter((service) => service.core && service.name !== "@zelavis/ui")
     .map((service) => {
@@ -414,6 +447,15 @@ export function buildPlatformNavItems(
           ...baseMenu,
           panelLabel: "Database",
           items: [
+            {
+              title: "Create Table",
+              url: "/database/new" as const,
+              icon: Plus,
+              pageLabel: "Database",
+              fixed: true,
+              fixedOrder: 1,
+            },
+            ...databaseTableItems,
             ...(systemTableItems.length > 0
               ? [
                   {
@@ -423,7 +465,10 @@ export function buildPlatformNavItems(
                     items: systemTableItems.map((item) => ({
                       ...item,
                       url: "/database" as const,
-                      search: { systemTable: item.title as DashboardNavSearch["systemTable"] },
+                      search: {
+                        systemTable: item.title as DashboardNavSearch["systemTable"],
+                        databaseTable: undefined,
+                      },
                       icon: Database,
                       pageLabel: "Database",
                     })),
@@ -453,17 +498,22 @@ export function buildPlatformNavItems(
       url: "/content",
       icon: FileText,
       pageLabel: "Content",
+      fixed: true,
+      fixedOrder: 1,
     },
     {
       title: "Add Content Type",
       url: "/content/new",
       icon: Package,
       pageLabel: "Content",
+      fixed: true,
+      fixedOrder: 2,
     },
     ...((contentTypes ?? []).map((contentType) => ({
       title: contentType.label,
       icon: FileText,
       panelLabel: "Views",
+      sectionLabel: "Collections",
       items: [
         {
           title: "Entries",
@@ -507,6 +557,7 @@ export function buildPlatformNavItems(
     {
       title: "Content",
       icon: FileText,
+      landingUrl: "/content",
       panelLabel: "Content Types",
       items: contentItems,
     },
@@ -555,6 +606,7 @@ export function buildPlatformNavItems(
     {
       title: "Settings",
       icon: Settings2,
+      landingUrl: "/settings",
       items: [
         {
           title: "Runtime",

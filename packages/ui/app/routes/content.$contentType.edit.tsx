@@ -1,4 +1,4 @@
-import { useParams } from "react-router";
+import { useLoaderData, useRevalidator } from "react-router";
 import { FileImage, Files, FileText, Save, Volume2, Video } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -18,12 +18,18 @@ import {
   insertDatabaseDocument,
   listDatabaseSchemaVersions,
 } from "#/lib/runtime-api";
-import { useRuntimeResource } from "#/lib/use-runtime-resource";
+import type { Route } from './+types/content.$contentType.edit';
 
 export const handle = {
   pageLabel: "Content",
   sidebarTrail: ["Content"],
 } as const;
+
+export async function clientLoader({ params }: Route.ClientLoaderArgs) {
+  const runtime = await getRuntimeConfig();
+  const schemaVersions = await listDatabaseSchemaVersions(runtime, params.contentType);
+  return { schemaVersions, contentType: params.contentType };
+}
 
 type FileSchemaTemplateKind =
   | "image"
@@ -167,14 +173,9 @@ function insertFileReferenceIntoSampleDocument(input: {
 }
 
 function ContentTypeEditorRoute() {
-  const contentType = useParams().contentType ?? "";
-  const runtime = useRuntimeResource(getRuntimeConfig);
-  const config = runtime.data;
-  const schemaVersions = useRuntimeResource(
-    async () => (config ? listDatabaseSchemaVersions(config, contentType) : []),
-    [config, contentType],
-  );
-  const activeSchema = schemaVersions.data?.find((schema) => schema.active) ?? schemaVersions.data?.at(-1);
+  const { schemaVersions, contentType } = useLoaderData<typeof clientLoader>();
+  const revalidator = useRevalidator();
+  const activeSchema = schemaVersions.find((schema) => schema.active) ?? schemaVersions.at(-1);
 
   const [schemaVersion, setSchemaVersion] = useState(String((activeSchema?.version ?? 0) + 1));
   const [schemaJson, setSchemaJson] = useState(
@@ -193,7 +194,7 @@ function ContentTypeEditorRoute() {
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
 
-  const schemaCount = schemaVersions.data?.length ?? 0;
+  const schemaCount = schemaVersions.length;
 
   const nextVersion = useMemo(() => {
     const requested = Number(schemaVersion);
@@ -202,15 +203,16 @@ function ContentTypeEditorRoute() {
 
   async function handleRegisterSchema(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!config || saving || !Number.isInteger(nextVersion)) {
+    if (saving || !Number.isInteger(nextVersion)) {
       return;
     }
 
+    const runtime = await getRuntimeConfig();
     setSaving(true);
     setMessage(undefined);
     setError(undefined);
     try {
-      await createDatabaseCollection(config, {
+      await createDatabaseCollection(runtime, {
         name: contentType,
         metadata: {
           surface: "content-studio",
@@ -218,7 +220,7 @@ function ContentTypeEditorRoute() {
         },
       }).catch(() => undefined);
 
-      const created = await createDatabaseSchema(config, {
+      const created = await createDatabaseSchema(runtime, {
         collection: contentType,
         version: nextVersion,
         document: JSON.parse(schemaJson) as Record<string, unknown>,
@@ -227,7 +229,7 @@ function ContentTypeEditorRoute() {
           source: "content-type-editor",
         },
       });
-      await schemaVersions.reload();
+      revalidator.revalidate();
       setSchemaVersion(String(created.version + 1));
       setMessage(`Registered schema v${created.version} for ${contentType}.`);
     } catch (caught) {
@@ -238,19 +240,20 @@ function ContentTypeEditorRoute() {
   }
 
   async function handleActivate(version: number) {
-    if (!config || saving) {
+    if (saving) {
       return;
     }
 
+    const runtime = await getRuntimeConfig();
     setSaving(true);
     setMessage(undefined);
     setError(undefined);
     try {
-      await activateDatabaseSchemaVersion(config, {
+      await activateDatabaseSchemaVersion(runtime, {
         collection: contentType,
         version,
       });
-      await schemaVersions.reload();
+      revalidator.revalidate();
       setMessage(`Activated schema v${version} for ${contentType}.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -261,15 +264,16 @@ function ContentTypeEditorRoute() {
 
   async function handleInsertSampleDocument(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!config || saving) {
+    if (saving) {
       return;
     }
 
+    const runtime = await getRuntimeConfig();
     setSaving(true);
     setMessage(undefined);
     setError(undefined);
     try {
-      const inserted = await insertDatabaseDocument(config, {
+      const inserted = await insertDatabaseDocument(runtime, {
         collection: contentType,
         id: documentId.trim(),
         data: JSON.parse(documentJson) as Record<string, unknown>,
@@ -389,8 +393,8 @@ function ContentTypeEditorRoute() {
             <CardTitle>Schema versions</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-2 p-4">
-            {(schemaVersions.data ?? []).length > 0 ? (
-              (schemaVersions.data ?? []).map((schema) => (
+            {schemaVersions.length > 0 ? (
+              schemaVersions.map((schema) => (
                 <div key={`${schema.collection}:${schema.version}`} className="rounded-md border p-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>

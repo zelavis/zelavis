@@ -1,4 +1,4 @@
-import { Link, Outlet, useLocation } from 'react-router'
+import { Link, Outlet, useLocation, useRevalidator, useRouteLoaderData } from 'react-router'
 import type * as React from 'react'
 import { useEffect, useState } from 'react'
 import { Boxes, Paintbrush, Save } from 'lucide-react'
@@ -8,13 +8,9 @@ import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '#/components/ui/card'
 import { Input } from '#/components/ui/input'
 import { createDashboardSettings } from '#/lib/dashboard-settings'
-import {
-  getDashboardSettings,
-  getRuntimeConfig,
-  updateDashboardSettings,
-} from '#/lib/runtime-api'
+import { updateDashboardSettings } from '#/lib/runtime-api'
 import { useThemeMode } from '#/lib/theme'
-import { useRuntimeResource } from '#/lib/use-runtime-resource'
+import type { clientLoader as rootClientLoader } from '../root'
 
 export const handle = {
   pageLabel: "Settings",
@@ -23,20 +19,16 @@ export const handle = {
 
 function Settings() {
   const location = useLocation()
-  const runtime = useRuntimeResource(getRuntimeConfig)
-  const config = runtime.data
-  const remoteSettings = useRuntimeResource(
-    async () => (config ? getDashboardSettings(config) : undefined),
-    [config],
-  )
+  const revalidator = useRevalidator()
+  const { runtime, settings: remoteSettings } = useRouteLoaderData<typeof rootClientLoader>('root')!
   const [theme] = useThemeMode()
-  const settings = createDashboardSettings(config, theme, remoteSettings.data)
+  const settings = createDashboardSettings(runtime, theme, remoteSettings)
   const rootPathValue = settings.pendingRootPath ?? settings.rootPath
   const [draftRootPath, setDraftRootPath] = useState(rootPathValue)
   const [message, setMessage] = useState<string>()
   const [error, setError] = useState<string>()
   const [saving, setSaving] = useState(false)
-  const canEditRootPath = settings.editable.rootPath && Boolean(config)
+  const canEditRootPath = settings.editable.rootPath
   const rootPathChanged = draftRootPath.trim() !== rootPathValue
 
   useEffect(() => {
@@ -50,7 +42,7 @@ function Settings() {
   async function handleRootPathSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
-    if (!config || !canEditRootPath || !rootPathChanged) {
+    if (!canEditRootPath || !rootPathChanged) {
       return
     }
 
@@ -59,10 +51,10 @@ function Settings() {
     setError(undefined)
 
     try {
-      const nextSettings = await updateDashboardSettings(config, {
+      const nextSettings = await updateDashboardSettings(runtime, {
         rootPath: draftRootPath,
       })
-      remoteSettings.reload()
+      revalidator.revalidate()
       setMessage(
         nextSettings.restartRequired
           ? `Saved ${nextSettings.pendingRootPath}. Restart the runtime to apply the new root path.`
@@ -103,15 +95,15 @@ function Settings() {
           <DataRow label="API prefix" detail={settings.apiBasePath} />
           <DataRow
             label="Runtime config"
-            detail={config?.configSource ?? 'checking'}
+            detail={runtime.configSource ?? 'checking'}
           />
           <DataRow
             label="Core services"
             detail={
-              config?.services
+              runtime.services
                 .filter((service) => service.core)
                 .map((service) => service.name)
-                .join(', ') ?? 'dashboard, auth, database'
+                .join(', ') || 'dashboard, auth, database'
             }
           />
         </CardContent>

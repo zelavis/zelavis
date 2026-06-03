@@ -1,3 +1,4 @@
+import { useLoaderData } from "react-router"
 import { CheckCircle2, Circle, Search, UserRound } from "lucide-react"
 import { useMemo, useState } from "react"
 
@@ -11,7 +12,6 @@ import {
   listAuthAccounts,
   type AuthAccount,
 } from "#/lib/runtime-api"
-import { useRuntimeResource } from "#/lib/use-runtime-resource"
 
 export const handle = {
   pageLabel: "Users",
@@ -21,19 +21,21 @@ type UserFilter = "All" | "Verified" | "Unverified"
 
 const userFilters: UserFilter[] = ["All", "Verified", "Unverified"]
 
+export async function clientLoader() {
+  const runtime = await getRuntimeConfig()
+  const accounts = await listAuthAccounts(runtime)
+  return { accounts }
+}
+
 function UsersRoute() {
+  const { accounts } = useLoaderData<typeof clientLoader>()
   const [query, setQuery] = useState("")
   const [activeFilter, setActiveFilter] = useState<UserFilter>("All")
-  const runtime = useRuntimeResource(getRuntimeConfig)
-  const accounts = useRuntimeResource(
-    async () => (runtime.data ? listAuthAccounts(runtime.data) : []),
-    [runtime.data],
-  )
 
   const filteredAccounts = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
 
-    return (accounts.data ?? []).filter((account) => {
+    return accounts.filter((account) => {
       if (activeFilter === "Verified" && !account.verified) {
         return false
       }
@@ -51,7 +53,7 @@ function UsersRoute() {
         account.id,
       ].some((value) => value?.toLowerCase().includes(normalizedQuery))
     })
-  }, [accounts.data, activeFilter, query])
+  }, [accounts, activeFilter, query])
 
   return (
     <section className="w-full">
@@ -61,9 +63,7 @@ function UsersRoute() {
             <div className="min-w-0">
               <h1 className="text-base font-semibold">Users</h1>
               <p className="text-sm text-muted-foreground">
-                {accounts.loading
-                  ? "Loading accounts"
-                  : `${filteredAccounts.length} account${filteredAccounts.length === 1 ? "" : "s"}`}
+                {`${filteredAccounts.length} account${filteredAccounts.length === 1 ? "" : "s"}`}
               </p>
             </div>
             <div className="flex flex-wrap gap-1.5">
@@ -92,29 +92,14 @@ function UsersRoute() {
         </div>
 
         <ul className="divide-y">
-          {accounts.error ? (
-            <li className="p-4">
-              <ResourceNotice
-                title="Could not load users"
-                description={accounts.error.message}
-              />
-            </li>
-          ) : null}
-          {!accounts.error && accounts.loading ? (
-            <li className="p-4 text-sm text-muted-foreground">
-              Loading users...
-            </li>
-          ) : null}
-          {!accounts.error && !accounts.loading && filteredAccounts.length === 0 ? (
+          {filteredAccounts.length === 0 ? (
             <li className="p-4 text-sm text-muted-foreground">
               No users found
             </li>
           ) : null}
-          {!accounts.error && !accounts.loading
-            ? filteredAccounts.map((account) => (
-                <UserListItem key={account.id} account={account} />
-              ))
-            : null}
+          {filteredAccounts.map((account) => (
+            <UserListItem key={account.id} account={account} />
+          ))}
         </ul>
       </div>
     </section>

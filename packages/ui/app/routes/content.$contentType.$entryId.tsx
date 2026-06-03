@@ -1,4 +1,4 @@
-import { Link, useParams } from "react-router";
+import { Link, useLoaderData, useRevalidator, useRouteLoaderData, useFetcher } from "react-router";
 import { ChevronDown, ChevronUp, Plus, Save, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -25,58 +25,49 @@ import {
   listStorageFiles,
   updateDatabaseDocument,
 } from "#/lib/runtime-api";
-import { useRuntimeResource } from "#/lib/use-runtime-resource";
 import { cn } from "#/lib/utils";
+import type { Route } from './+types/content.$contentType.$entryId';
+import type { clientLoader as rootClientLoader } from '../root';
 
 export const handle = {
   pageLabel: "Content",
   sidebarTrail: ["Content"],
 } as const;
 
+export async function clientLoader({ params }: Route.ClientLoaderArgs) {
+  const runtime = await getRuntimeConfig();
+  const [schemas, entry, media] = await Promise.all([
+    listDatabaseSchemaVersions(runtime, params.contentType),
+    getDatabaseDocument(runtime, { collection: params.contentType, id: params.entryId }),
+    listStorageFiles(runtime).catch(() => ({ files: [], references: [] })),
+  ]);
+  return { schemas, entry, media, contentType: params.contentType, entryId: params.entryId };
+}
+
 function ContentEntryEditorRoute() {
-  const params = useParams();
-  const contentType = params.contentType ?? "";
-  const entryId = params.entryId ?? "";
+  const { schemas, entry, media, contentType, entryId } = useLoaderData<typeof clientLoader>();
+  const revalidator = useRevalidator();
   const contentTypePath = encodeURIComponent(contentType);
-  const runtime = useRuntimeResource(getRuntimeConfig);
-  const config = runtime.data;
-  const schemas = useRuntimeResource(
-    async () => (config ? listDatabaseSchemaVersions(config, contentType) : []),
-    [config, contentType],
-  );
-  const entry = useRuntimeResource(
-    async () =>
-      config
-        ? getDatabaseDocument(config, {
-            collection: contentType,
-            id: entryId,
-          })
-        : undefined,
-    [config, contentType, entryId],
-  );
-  const media = useRuntimeResource(
-    async () => (config ? listStorageFiles(config) : { files: [], references: [] }),
-    [config],
-  );
   const [draft, setDraft] = useState<Record<string, unknown>>({});
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
 
-  const activeSchema = schemas.data?.find((schema) => schema.active) ?? schemas.data?.at(-1);
+  const activeSchema = schemas.find((schema) => schema.active) ?? schemas.at(-1);
   const fields = useMemo(
     () => getContentSchemaFields(activeSchema?.document),
     [activeSchema?.document],
   );
-  const documentData = (entry.data?.data ?? {}) as Record<string, unknown>;
+  const documentData = (entry.data as Record<string, unknown>) ?? {};
+  const { runtime } = useRouteLoaderData<typeof rootClientLoader>('root')!;
+
   const mediaItems = useMemo(
     () =>
-      config
-        ? (media.data?.files ?? [])
+      (media.files ?? [])
             .filter((file) => file.contentType?.startsWith("image/"))
             .slice(0, 12)
             .map((file) => ({
-              src: getStorageFileUrl(config, file.path),
+              src: getStorageFileUrl(runtime, file.path),
               altText:
                 typeof file.metadata?.alt === "string"
                   ? file.metadata.alt
@@ -87,15 +78,13 @@ function ContentEntryEditorRoute() {
                 typeof file.metadata?.label === "string"
                   ? file.metadata.label
                   : file.path.split("/").pop() ?? file.path,
-            }))
-        : [],
-    [config, media.data?.files],
+            })),
+    [media.files, runtime],
   );
   const fileItems = useMemo(
     () =>
-      config
-        ? (media.data?.files ?? []).slice(0, 16).map((file) => ({
-            href: getStorageFileUrl(config, file.path),
+      (media.files ?? []).slice(0, 16).map((file) => ({
+            href: getStorageFileUrl(runtime, file.path),
             label:
               typeof file.metadata?.label === "string"
                 ? file.metadata.label
@@ -108,13 +97,12 @@ function ContentEntryEditorRoute() {
             ]
               .filter(Boolean)
               .join(" · "),
-          }))
-        : [],
-    [config, media.data?.files],
+          })),
+    [media.files, runtime],
   );
 
   useEffect(() => {
-    if (!entry.data || fields.length === 0) {
+    if (!entry || fields.length === 0) {
       return;
     }
 
@@ -140,7 +128,7 @@ function ContentEntryEditorRoute() {
     }
 
     setDraft(nextDraft);
-  }, [documentData, entry.data, fields]);
+  }, [documentData, entry, fields]);
 
   function updateDraftValue(name: string, value: unknown) {
     setDraft((current) => ({
@@ -150,7 +138,7 @@ function ContentEntryEditorRoute() {
   }
 
   async function handleSaveEntry() {
-    if (!config || !entry.data || !activeSchema || saving) {
+    if (!activeSchema || saving) {
       return;
     }
 
@@ -179,13 +167,13 @@ function ContentEntryEditorRoute() {
     setMessage(undefined);
     setError(undefined);
     try {
-      await updateDatabaseDocument(config, {
+      await updateDatabaseDocument(runtime, {
         collection: contentType,
         id: entryId,
         data: updates,
         mode: "merge",
       });
-      await entry.reload();
+      revalidator.revalidate();
       setMessage(`Saved ${entryId}.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -221,11 +209,6 @@ function ContentEntryEditorRoute() {
             <ResourceNotice
               title="No active schema"
               description="Activate a schema first."
-            />
-          ) : !entry.data ? (
-            <ResourceNotice
-              title="Loading entry"
-              description="Loading the current document."
             />
           ) : fields.length === 0 ? (
             <ResourceNotice
@@ -264,11 +247,7 @@ function ContentEntryEditorRoute() {
           />
           <DataRow
             label="Updated"
-            detail={
-              entry.data?.updatedAt
-                ? new Date(entry.data.updatedAt).toLocaleString()
-                : "Loading…"
-            }
+            detail={new Date(entry.updatedAt).toLocaleString()}
           />
         </CardContent>
       </Card>
@@ -439,8 +418,6 @@ function RelationFieldInput(props: {
   value: string;
   onChange: (value: unknown) => void;
 }) {
-  const runtime = useRuntimeResource(getRuntimeConfig);
-  const config = runtime.data;
   const relationCollection =
     typeof props.definition.relation === "object" &&
     props.definition.relation &&
@@ -448,15 +425,15 @@ function RelationFieldInput(props: {
       ? (props.definition.relation as { collection: string }).collection
       : undefined;
 
-  const relatedDocuments = useRuntimeResource(
-    async () =>
-      config && relationCollection
-        ? queryDatabaseDocuments(config, relationCollection)
-        : [],
-    [config, relationCollection],
-  );
+  const fetcher = useFetcher<{ documents: Awaited<ReturnType<typeof queryDatabaseDocuments>> }>();
   const [search, setSearch] = useState("");
-  const options = (relatedDocuments.data ?? []).filter((document) => {
+
+  if (relationCollection && fetcher.state === "idle" && !fetcher.data) {
+    fetcher.load(`/_api/relations/${encodeURIComponent(relationCollection)}`);
+  }
+
+  const relatedDocuments = fetcher.data?.documents ?? [];
+  const options = relatedDocuments.filter((document) => {
     const label = String(document.data.title ?? document.id).toLowerCase();
     const slug = String(document.data.slug ?? "").toLowerCase();
     const query = search.trim().toLowerCase();

@@ -1,6 +1,6 @@
+import { useLoaderData, useRevalidator } from "react-router";
 import { useState } from "react";
 import type { FormEvent } from "react";
-;
 
 import { PageHeader, ResourceNotice } from "#/components/DashboardPage";
 import { ServicePageMount } from "#/components/ServicePageMount";
@@ -12,20 +12,21 @@ import {
   getRuntimeConfig,
   listCommerceCoupons,
 } from "#/lib/runtime-api";
-import { useRuntimeResource } from "#/lib/use-runtime-resource";
 
 export const handle = {
   pageLabel: "Commerce",
   sidebarTrail: ["Workspace", "Ecommerce", "More"],
 } as const;
 
+export async function clientLoader() {
+  const runtime = await getRuntimeConfig();
+  const coupons = await listCommerceCoupons(runtime).catch(() => [] as Awaited<ReturnType<typeof listCommerceCoupons>>);
+  return { coupons };
+}
+
 function CommerceCoupons() {
-  const runtime = useRuntimeResource(getRuntimeConfig);
-  const config = runtime.data;
-  const coupons = useRuntimeResource(
-    async () => (config ? listCommerceCoupons(config) : []),
-    [config],
-  );
+  const { coupons } = useLoaderData<typeof clientLoader>();
+  const revalidator = useRevalidator();
   const [code, setCode] = useState("");
   const [description, setDescription] = useState("");
   const [discountType, setDiscountType] = useState<"percentage" | "fixed">("percentage");
@@ -37,15 +38,16 @@ function CommerceCoupons() {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!config || saving) {
+    if (saving) {
       return;
     }
 
+    const runtime = await getRuntimeConfig();
     setSaving(true);
     setMessage(undefined);
     setError(undefined);
     try {
-      const created = await createCommerceCoupon(config, {
+      const created = await createCommerceCoupon(runtime, {
         code,
         description: description || undefined,
         discountType,
@@ -58,7 +60,7 @@ function CommerceCoupons() {
       setDiscountValue("10");
       setActive(true);
       setMessage(`Created coupon ${created.code}.`);
-      await coupons.reload();
+      revalidator.revalidate();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -77,11 +79,7 @@ function CommerceCoupons() {
             <CardTitle>Coupon codes</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            {coupons.error ? (
-              <div className="p-4">
-                <ResourceNotice title="Coupons unavailable" description={coupons.error.message} />
-              </div>
-            ) : coupons.data && coupons.data.length > 0 ? (
+            {coupons.length > 0 ? (
               <div className="overflow-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
@@ -93,7 +91,7 @@ function CommerceCoupons() {
                     </tr>
                   </thead>
                   <tbody>
-                    {coupons.data.map((coupon) => (
+                    {coupons.map((coupon) => (
                       <tr key={coupon.code} className="border-t">
                         <td className="px-4 py-3 font-mono text-sm font-medium text-foreground">
                           {coupon.code}

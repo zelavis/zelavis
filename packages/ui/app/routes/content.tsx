@@ -1,4 +1,4 @@
-import { Outlet, Link, useLocation } from "react-router";
+import { Outlet, Link, useLocation, useRevalidator, useRouteLoaderData } from "react-router";
 import {
   Copy,
   GripVertical,
@@ -27,17 +27,13 @@ import {
 import {
   createDatabaseCollection,
   createDatabaseSchema,
-  getDashboardSettings,
   getResolvedDashboardPreferences,
-  getRuntimeConfig,
-  listDatabaseCollections,
-  listDatabaseSchemaCollections,
   listDatabaseSchemaVersions,
   updateDashboardSettings,
 } from "#/lib/runtime-api";
-import { useRuntimeResource } from "#/lib/use-runtime-resource";
 import { toDashboardPath } from "#/lib/routing";
 import { cn } from "#/lib/utils";
+import type { clientLoader as rootClientLoader } from '../root';
 
 export const handle = {
   pageLabel: "Content",
@@ -46,12 +42,8 @@ export const handle = {
 
 function Content() {
   const pathname = useLocation().pathname;
-  const runtime = useRuntimeResource(getRuntimeConfig);
-  const config = runtime.data;
-  const settings = useRuntimeResource(
-    async () => (config ? getDashboardSettings(config) : undefined),
-    [config],
-  );
+  const revalidator = useRevalidator();
+  const { runtime, settings, databaseCollections, schemaCollections } = useRouteLoaderData<typeof rootClientLoader>('root')!;
   const [editingLabelFor, setEditingLabelFor] = useState<string>();
   const [labelDraft, setLabelDraft] = useState("");
   const [duplicatingType, setDuplicatingType] = useState<string>();
@@ -63,24 +55,15 @@ function Content() {
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
 
-  const collections = useRuntimeResource(
-    async () => (config ? listDatabaseCollections(config) : []),
-    [config],
-  );
-  const schemaCollections = useRuntimeResource(
-    async () => (config ? listDatabaseSchemaCollections(config) : []),
-    [config],
-  );
-
-  const contentPreferences = getResolvedDashboardPreferences(settings.data).content;
+  const contentPreferences = getResolvedDashboardPreferences(settings).content;
   const contentTypeRows = useMemo(
     () =>
       buildContentTypeRows(
-        collections.data ?? [],
-        schemaCollections.data ?? [],
+        databaseCollections,
+        schemaCollections,
         contentPreferences,
       ),
-    [collections.data, contentPreferences, schemaCollections.data],
+    [databaseCollections, contentPreferences, schemaCollections],
   );
   const pinnedTypes = contentPreferences?.pinnedTypes ?? [];
 
@@ -94,11 +77,7 @@ function Content() {
       labels?: Record<string, string>;
     },
   ) {
-    if (!config) {
-      return;
-    }
-
-    await updateDashboardSettings(config, {
+    await updateDashboardSettings(runtime, {
       preferences: {
         content: {
           ...(update.pinnedTypes ? { pinnedTypes: update.pinnedTypes } : {}),
@@ -106,11 +85,11 @@ function Content() {
         },
       },
     });
-    await settings.reload();
+    revalidator.revalidate();
   }
 
   async function handlePinToggle(name: string) {
-    if (!config || saving) {
+    if (saving) {
       return;
     }
 
@@ -136,7 +115,7 @@ function Content() {
   }
 
   async function handleDropPinnedType(targetName: string) {
-    if (!config || saving || !draggingPinnedType || draggingPinnedType === targetName) {
+    if (saving || !draggingPinnedType || draggingPinnedType === targetName) {
       setDraggingPinnedType(undefined);
       setDragOverPinnedType(undefined);
       return;
@@ -173,7 +152,7 @@ function Content() {
 
   async function handleSaveLabel(name: string) {
     const normalizedLabel = labelDraft.trim();
-    if (!config || !normalizedLabel || saving) {
+    if (!normalizedLabel || saving) {
       return;
     }
 
@@ -197,7 +176,7 @@ function Content() {
   }
 
   async function handleDuplicateType(sourceName: string) {
-    if (!config || !duplicateName.trim() || saving) {
+    if (!duplicateName.trim() || saving) {
       return;
     }
 
@@ -209,11 +188,11 @@ function Content() {
     setError(undefined);
 
     try {
-      const sourceSchemas = await listDatabaseSchemaVersions(config, sourceName);
+      const sourceSchemas = await listDatabaseSchemaVersions(runtime, sourceName);
       const activeSchema =
         sourceSchemas.find((schema) => schema.active) ?? sourceSchemas.at(-1);
 
-      const created = await createDatabaseCollection(config, {
+      const created = await createDatabaseCollection(runtime, {
         name: nextName,
         metadata: {
           surface: "content-studio",
@@ -223,7 +202,7 @@ function Content() {
       });
 
       if (activeSchema) {
-        await createDatabaseSchema(config, {
+        await createDatabaseSchema(runtime, {
           collection: created.name,
           version: 1,
           activate: true,
@@ -243,7 +222,7 @@ function Content() {
         });
       }
 
-      await Promise.all([collections.reload(), schemaCollections.reload()]);
+      revalidator.revalidate();
       setDuplicatingType(undefined);
       setDuplicateLabel("");
       setDuplicateName("");

@@ -1,4 +1,4 @@
-import { Link, useNavigate, useParams } from "react-router";
+import { Link, useLoaderData, useNavigate, useRevalidator } from "react-router";
 import { Copy, Pencil, Plus, Save, SquarePen, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -14,20 +14,25 @@ import {
   updateDatabaseDocument,
   type DatabaseDocument,
 } from "#/lib/runtime-api";
-import { useRuntimeResource } from "#/lib/use-runtime-resource";
 import { cn } from "#/lib/utils";
+import type { Route } from './+types/content.$contentType.index';
 
 export const handle = {
   pageLabel: "Content",
   sidebarTrail: ["Content"],
 } as const;
 
+export async function clientLoader({ params }: Route.ClientLoaderArgs) {
+  const runtime = await getRuntimeConfig();
+  const contentType = params.contentType;
+  const entries = await queryDatabaseDocuments(runtime, contentType);
+  return { entries, contentType };
+}
+
 function ContentTypeEntriesRoute() {
-  const contentType = useParams().contentType ?? "";
-  const contentTypePath = encodeURIComponent(contentType);
+  const { entries, contentType } = useLoaderData<typeof clientLoader>();
+  const revalidator = useRevalidator();
   const navigate = useNavigate();
-  const runtime = useRuntimeResource(getRuntimeConfig);
-  const config = runtime.data;
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
@@ -35,30 +40,29 @@ function ContentTypeEntriesRoute() {
   const [entryTitleDraft, setEntryTitleDraft] = useState("");
   const [entrySlugDraft, setEntrySlugDraft] = useState("");
 
-  const entries = useRuntimeResource(
-    async () => (config && contentType ? queryDatabaseDocuments(config, contentType) : []),
-    [config, contentType],
-  );
+  const contentTypePath = encodeURIComponent(contentType);
 
   const sortedEntries = useMemo(
-    () => [...(entries.data ?? [])].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
-    [entries.data],
+    () => [...entries].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    [entries],
   );
 
   async function handleCreateDraftEntry() {
-    if (!config || !contentType || saving) {
+    if (saving) {
       return;
     }
+
+    const runtime = await getRuntimeConfig();
 
     setSaving(true);
     setMessage(undefined);
     setError(undefined);
     try {
-      const created = await insertDatabaseDocument(config, {
+      const created = await insertDatabaseDocument(runtime, {
         collection: contentType,
         data: createStarterContentEntry(),
       });
-      await entries.reload();
+      revalidator.revalidate();
       setMessage(`Created draft entry ${created.id}.`);
       await navigate(`/content/${contentTypePath}/${encodeURIComponent(created.id)}`);
     } catch (caught) {
@@ -76,16 +80,18 @@ function ContentTypeEntriesRoute() {
   }
 
   async function handleSaveEntry(entry: DatabaseDocument) {
-    if (!config || !editingEntryId || saving) {
+    if (!editingEntryId || saving) {
       return;
     }
+
+    const runtime = await getRuntimeConfig();
 
     setSaving(true);
     setMessage(undefined);
     setError(undefined);
     try {
-      await updateDatabaseDocument(config, {
-        collection: contentType,
+      await updateDatabaseDocument(runtime, {
+        collection: entry.collection,
         id: entry.id,
         data: {
           title: entryTitleDraft.trim() || "Untitled draft",
@@ -93,7 +99,7 @@ function ContentTypeEntriesRoute() {
         },
         mode: "merge",
       });
-      await entries.reload();
+      revalidator.revalidate();
       setEditingEntryId(undefined);
       setEntryTitleDraft("");
       setEntrySlugDraft("");
@@ -106,10 +112,11 @@ function ContentTypeEntriesRoute() {
   }
 
   async function handleDuplicateEntry(entry: DatabaseDocument) {
-    if (!config || saving) {
+    if (saving) {
       return;
     }
 
+    const runtime = await getRuntimeConfig();
     const data = entry.data as Record<string, unknown>;
     const title = typeof data.title === "string" ? data.title : entry.id;
     const slug = typeof data.slug === "string" ? data.slug : entry.id;
@@ -118,8 +125,8 @@ function ContentTypeEntriesRoute() {
     setMessage(undefined);
     setError(undefined);
     try {
-      const created = await insertDatabaseDocument(config, {
-        collection: contentType,
+      const created = await insertDatabaseDocument(runtime, {
+        collection: entry.collection,
         data: {
           ...data,
           title: `${title} Copy`,
@@ -127,7 +134,7 @@ function ContentTypeEntriesRoute() {
           status: typeof data.status === "string" ? data.status : "draft",
         },
       });
-      await entries.reload();
+      revalidator.revalidate();
       setMessage(`Duplicated ${entry.id} into ${created.id}.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));

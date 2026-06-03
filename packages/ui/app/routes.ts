@@ -23,6 +23,7 @@ export default [
     ]),
   ]),
   route("database", "routes/database.tsx"),
+  route("database/new", "routes/database.new.tsx"),
   route("marketplace", "routes/marketplace.tsx"),
   route("media", "routes/media.tsx"),
   route("services", "routes/services.tsx"),
@@ -31,5 +32,6 @@ export default [
   ]),
   route("storage", "routes/storage.tsx"),
   route("users", "routes/users.tsx"),
+  route("_api/relations/:collection", "routes/api.relations.$collection.tsx"),
   route("*", "routes/$.tsx"),
 ] satisfies RouteConfig;

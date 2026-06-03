@@ -1,6 +1,6 @@
+import { useLoaderData, useRevalidator } from "react-router";
 import { useState } from "react";
 import type { FormEvent } from "react";
-;
 
 import { PageHeader, ResourceNotice } from "#/components/DashboardPage";
 import { ServicePageMount } from "#/components/ServicePageMount";
@@ -12,12 +12,17 @@ import {
   getRuntimeConfig,
   listCommerceProducts,
 } from "#/lib/runtime-api";
-import { useRuntimeResource } from "#/lib/use-runtime-resource";
 
 export const handle = {
   pageLabel: "Commerce",
   sidebarTrail: ["Workspace", "Ecommerce"],
 } as const;
+
+export async function clientLoader() {
+  const runtime = await getRuntimeConfig();
+  const products = await listCommerceProducts(runtime).catch(() => [] as Awaited<ReturnType<typeof listCommerceProducts>>);
+  return { products };
+}
 
 function formatMoney(amount: number, currency: string) {
   return new Intl.NumberFormat(undefined, {
@@ -27,12 +32,8 @@ function formatMoney(amount: number, currency: string) {
 }
 
 function CommerceProducts() {
-  const runtime = useRuntimeResource(getRuntimeConfig);
-  const config = runtime.data;
-  const products = useRuntimeResource(
-    async () => (config ? listCommerceProducts(config) : []),
-    [config],
-  );
+  const { products } = useLoaderData<typeof clientLoader>();
+  const revalidator = useRevalidator();
   const [title, setTitle] = useState("");
   const [slug, setSlug] = useState("");
   const [description, setDescription] = useState("");
@@ -44,15 +45,16 @@ function CommerceProducts() {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!config || saving) {
+    if (saving) {
       return;
     }
 
+    const runtime = await getRuntimeConfig();
     setSaving(true);
     setMessage(undefined);
     setError(undefined);
     try {
-      const created = await createCommerceProduct(config, {
+      const created = await createCommerceProduct(runtime, {
         title,
         slug: slug || undefined,
         description: description || undefined,
@@ -67,7 +69,7 @@ function CommerceProducts() {
       setAmount("5900");
       setCurrency(created.price.currency);
       setMessage(`Created ${created.title}.`);
-      await products.reload();
+      revalidator.revalidate();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -86,11 +88,7 @@ function CommerceProducts() {
             <CardTitle>Catalog</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            {products.error ? (
-              <div className="p-4">
-                <ResourceNotice title="Products unavailable" description={products.error.message} />
-              </div>
-            ) : products.data && products.data.length > 0 ? (
+            {products.length > 0 ? (
               <div className="overflow-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
@@ -102,7 +100,7 @@ function CommerceProducts() {
                     </tr>
                   </thead>
                   <tbody>
-                    {products.data.map((product) => (
+                    {products.map((product) => (
                       <tr key={product.id} className="border-t">
                         <td className="px-4 py-3">
                           <div className="font-medium text-foreground">{product.title}</div>

@@ -1,3 +1,4 @@
+import { useLoaderData, useRouteLoaderData } from 'react-router'
 import { Activity, Boxes, Database, ShieldCheck } from 'lucide-react'
 
 import {
@@ -15,32 +16,31 @@ import {
   getRuntimeConfig,
   listAuthProviders,
 } from '#/lib/runtime-api'
-import { useRuntimeResource } from '#/lib/use-runtime-resource'
 import {
   Card,
   CardContent,
   CardHeader,
   CardTitle,
 } from '#/components/ui/card'
+import type { clientLoader as rootClientLoader } from '../root'
 
 export const handle = {
   pageLabel: "Overview",
 } as const;
 
+export async function clientLoader() {
+  const runtime = await getRuntimeConfig()
+  const [databaseHealth, providers] = await Promise.all([
+    getDatabaseHealth(runtime).catch(() => undefined),
+    listAuthProviders(runtime).catch(() => [] as string[]),
+  ])
+  return { databaseHealth, providers }
+}
+
 function Overview() {
-  const runtime = useRuntimeResource(getRuntimeConfig)
-  const config = runtime.data
-  const database = useRuntimeResource(
-    async () => (config ? getDatabaseHealth(config) : undefined),
-    [config],
-  )
-  const providers = useRuntimeResource(
-    async () => (config ? listAuthProviders(config) : undefined),
-    [config],
-  )
-  const databaseHealth = database.data
-  const authProviders = providers.data ?? []
-  const services = config?.services ?? []
+  const { databaseHealth, providers } = useLoaderData<typeof clientLoader>()
+  const { runtime } = useRouteLoaderData<typeof rootClientLoader>('root')!
+  const services = runtime.services
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
@@ -69,10 +69,10 @@ function Overview() {
         />
         <StatCard
           label="Auth"
-          value={`${authProviders.length} providers`}
+          value={`${providers.length} providers`}
           detail={
-            authProviders.length > 0
-              ? authProviders.join(', ')
+            providers.length > 0
+              ? providers.join(', ')
               : 'no credential providers registered yet'
           }
           icon={ShieldCheck}
@@ -115,23 +115,23 @@ function Overview() {
             {[
               {
                 label: 'Runtime config',
-                detail: config?.api.basePath ?? '/api/v1/runtime/config',
-                time: runtime.loading ? 'loading' : runtime.error ? 'offline' : 'ready',
+                detail: runtime.api.basePath ?? '/api/v1/runtime/config',
+                time: 'ready',
               },
               {
                 label: 'Database health',
                 detail: databaseHealth
                   ? `${databaseHealth.status} · ${databaseHealth.driver}`
                   : '/database/health',
-                time: database.loading ? 'loading' : database.error ? 'offline' : 'ready',
+                time: databaseHealth ? 'ready' : 'offline',
               },
               {
                 label: 'Auth providers',
                 detail:
-                  authProviders.length > 0
-                    ? authProviders.join(', ')
+                  providers.length > 0
+                    ? providers.join(', ')
                     : '/auth/providers',
-                time: providers.loading ? 'loading' : providers.error ? 'offline' : 'ready',
+                time: providers.length > 0 ? 'ready' : 'offline',
               },
             ].map((item) => (
               <DataRow

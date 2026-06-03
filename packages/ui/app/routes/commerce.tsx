@@ -1,4 +1,4 @@
-import { Link, Outlet, useLocation } from "react-router";
+import { Link, Outlet, useLoaderData, useLocation } from "react-router";
 
 import {
   DataRow,
@@ -17,41 +17,27 @@ import {
   listCommerceProducts,
   listCommerceProviders,
 } from "#/lib/runtime-api";
-import { useRuntimeResource } from "#/lib/use-runtime-resource";
-
 export const handle = {
   pageLabel: "Commerce",
   sidebarTrail: ["Workspace", "Ecommerce"],
 } as const;
 
+export async function clientLoader() {
+  const runtime = await getRuntimeConfig();
+  const [products, orders, customers, coupons, providers, paymentAttempts] = await Promise.all([
+    listCommerceProducts(runtime).catch(() => [] as Awaited<ReturnType<typeof listCommerceProducts>>),
+    listCommerceOrders(runtime).catch(() => [] as Awaited<ReturnType<typeof listCommerceOrders>>),
+    listCommerceCustomers(runtime).catch(() => [] as Awaited<ReturnType<typeof listCommerceCustomers>>),
+    listCommerceCoupons(runtime).catch(() => [] as Awaited<ReturnType<typeof listCommerceCoupons>>),
+    listCommerceProviders(runtime).catch(() => [] as Awaited<ReturnType<typeof listCommerceProviders>>),
+    listCommercePaymentAttempts(runtime).catch(() => [] as Awaited<ReturnType<typeof listCommercePaymentAttempts>>),
+  ]);
+  return { products, orders, customers, coupons, providers, paymentAttempts };
+}
+
 function Commerce() {
   const pathname = useLocation().pathname;
-  const runtime = useRuntimeResource(getRuntimeConfig);
-  const config = runtime.data;
-  const products = useRuntimeResource(
-    async () => (config ? listCommerceProducts(config) : []),
-    [config],
-  );
-  const orders = useRuntimeResource(
-    async () => (config ? listCommerceOrders(config) : []),
-    [config],
-  );
-  const customers = useRuntimeResource(
-    async () => (config ? listCommerceCustomers(config) : []),
-    [config],
-  );
-  const coupons = useRuntimeResource(
-    async () => (config ? listCommerceCoupons(config) : []),
-    [config],
-  );
-  const providers = useRuntimeResource(
-    async () => (config ? listCommerceProviders(config) : []),
-    [config],
-  );
-  const paymentAttempts = useRuntimeResource(
-    async () => (config ? listCommercePaymentAttempts(config) : []),
-    [config],
-  );
+  const { products, orders, customers, coupons, providers, paymentAttempts } = useLoaderData<typeof clientLoader>();
 
   if (pathname !== "/commerce") {
     return <Outlet />;
@@ -70,22 +56,22 @@ function Commerce() {
           <CardContent className="p-0">
             <DataRow
               label="Products"
-              detail={`${products.data?.length ?? 0} items`}
+              detail={`${products.length} items`}
               meta={<Link to="/commerce/products" className="text-sm text-primary">Open</Link>}
             />
             <DataRow
               label="Orders"
-              detail={`${orders.data?.length ?? 0} orders`}
+              detail={`${orders.length} orders`}
               meta={<Link to="/commerce/orders" className="text-sm text-primary">Open</Link>}
             />
             <DataRow
               label="Customers"
-              detail={`${customers.data?.length ?? 0} records`}
+              detail={`${customers.length} records`}
               meta={<Link to="/commerce/customers" className="text-sm text-primary">Open</Link>}
             />
             <DataRow
               label="Coupons"
-              detail={`${coupons.data?.length ?? 0} codes`}
+              detail={`${coupons.length} codes`}
               meta={<Link to="/commerce/coupons" className="text-sm text-primary">Open</Link>}
             />
           </CardContent>
@@ -98,18 +84,18 @@ function Commerce() {
           <CardContent className="p-0">
             <DataRow
               label="Child services"
-              detail={`${providers.data?.length ?? 0} payment providers`}
+              detail={`${providers.length} payment providers`}
               meta={
                 <StatusBadge
-                  state={providers.data && providers.data.length > 0 ? "ready" : "planned"}
+                  state={providers.length > 0 ? "ready" : "planned"}
                 />
               }
             />
             <DataRow
               label="Attempts"
-              detail={`${paymentAttempts.data?.length ?? 0} payment attempts`}
+              detail={`${paymentAttempts.length} payment attempts`}
             />
-            {(providers.data ?? []).map((provider) => (
+            {providers.map((provider) => (
               <DataRow
                 key={provider.name}
                 label={provider.name}
@@ -117,14 +103,6 @@ function Commerce() {
                 meta={<StatusBadge state={provider.childService ? "ready" : "planned"} />}
               />
             ))}
-            {providers.error ? (
-              <div className="p-4">
-                <ResourceNotice
-                  title="Payments unavailable"
-                  description={providers.error.message}
-                />
-              </div>
-            ) : null}
           </CardContent>
         </Card>
       </div>
