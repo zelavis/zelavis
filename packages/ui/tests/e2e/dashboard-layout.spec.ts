@@ -197,7 +197,7 @@ test('mounted dev server can serve the dashboard from /zelavis/', async ({
   await expect(page.locator('html[data-zelavis-hydrated="true"]')).toBeVisible()
 })
 
-test('overview nav is only active on the overview route', async ({ page }, testInfo) => {
+test('database route restores the system tables sidebar panel', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
   await gotoDashboard(page, '/database')
@@ -208,7 +208,8 @@ test('overview nav is only active on the overview route', async ({ page }, testI
     .locator('.swiper-slide-active')
     .first()
 
-  await expect(activeSlide.getByRole('button', { name: 'Database' })).toBeVisible()
+  await expect(activeSlide.getByRole('button', { name: 'System Tables', exact: true })).toBeVisible()
+  await expect(activeSlide.getByRole('link', { name: '_collections', exact: true })).toBeVisible()
 })
 
 test('storage lives under the core slide for advanced runtime management', async ({
@@ -243,10 +244,10 @@ test('users is a top-level item on the first sidebar slide', async ({
 
   await expect(rootSlide.getByRole('link', { name: 'Users', exact: true })).toBeVisible()
   await expect(rootSlide.getByRole('button', { name: 'Core' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Users & accounts' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Users' })).toBeVisible()
 })
 
-test('content is a top-level item on the first sidebar slide', async ({
+test('content route restores the content types sidebar panel', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
@@ -256,8 +257,7 @@ test('content is a top-level item on the first sidebar slide', async ({
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
   const activeSlide = sidebar.locator('.swiper-slide-active').first()
 
-  await expect(activeSlide.getByRole('button', { name: 'Content', exact: true })).toBeVisible()
-  await expect(activeSlide.getByText('Content Types', { exact: true })).toBeVisible()
+  await expect(activeSlide.getByRole('button', { name: 'Content Types', exact: true })).toBeVisible()
   await expect(
     activeSlide.getByRole('link', { name: 'All Content Types', exact: true }),
   ).toBeVisible()
@@ -274,21 +274,12 @@ test('database slide lists logical tables and system tables', async ({
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
   const tablesSlide = sidebar.locator('.swiper-slide-active').first()
 
-  await expect(
-    tablesSlide.locator('[data-slot="sidebar-group-label"]', {
-      hasText: 'Tables',
-    }),
-  ).toBeVisible()
+  await expect(tablesSlide.getByRole('button', { name: 'Database', exact: true })).toBeVisible()
 
   await gotoDashboard(page, '/database?systemTable=_documents')
 
   const systemTablesSlide = sidebar.locator('.swiper-slide-active').first()
 
-  await expect(
-    systemTablesSlide.locator('[data-slot="sidebar-group-label"]', {
-      hasText: 'System Tables',
-    }),
-  ).toBeVisible()
   await expect(systemTablesSlide.getByRole('button', { name: 'System Tables', exact: true })).toBeVisible()
   await expect(systemTablesSlide.getByRole('link', { name: '_documents', exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Core Database' })).toBeVisible()
@@ -305,11 +296,7 @@ test('database direct system table routes restore the matching sidebar slide', a
   const activeSlide = sidebar.locator('.swiper-slide-active').first()
 
   await expect(activeSlide.getByRole('link', { name: '_documents', exact: true })).toBeVisible()
-  await expect(
-    activeSlide.locator('[data-slot="sidebar-group-label"]', {
-      hasText: 'System Tables',
-    }),
-  ).toBeVisible()
+  await expect(activeSlide.getByRole('button', { name: 'System Tables', exact: true })).toBeVisible()
   await expect(page).toHaveURL(/systemTable=_documents/)
 })
 
@@ -550,7 +537,7 @@ test('navigation can leave media gallery after visiting it', async ({
   await sidebar.getByRole('link', { name: 'Users', exact: true }).click()
 
   await expect(page).toHaveURL(/\/users$/)
-  await expect(page.getByRole('heading', { name: 'Users & accounts' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Users' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Media Gallery' })).toHaveCount(0)
 })
 
