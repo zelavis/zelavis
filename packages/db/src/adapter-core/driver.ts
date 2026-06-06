@@ -171,6 +171,7 @@ export function parseWriteTargetTable(statement: string): string | null {
     : (match[2] ?? null);
 }
 
+
 /**
  * Applies the shared DDL to a gateway. Uses `gateway.batch` when available
  * (D1, libSQL) and falls back to per-statement `exec` otherwise.
