@@ -36,6 +36,7 @@ import type {
   RuntimeServiceRegistryEntry,
 } from "#/lib/runtime-api";
 import type { ContentTypeRow } from "#/lib/content-studio";
+import { isContentTypeDatabaseCollection } from "#/lib/database-collections";
 
 export type DashboardRoutePath =
   | "/"
@@ -410,6 +411,7 @@ export function buildPlatformNavItems(
     (contentTypes ?? []).map((contentType) => [contentType.name, contentType]),
   );
   const databaseTableItems = [...(databaseCollections ?? [])]
+    .filter(isContentTypeDatabaseCollection)
     .sort((left, right) => left.name.localeCompare(right.name))
     .map((collection) => {
       const contentType = contentTypesByName.get(collection.name);
@@ -419,7 +421,7 @@ export function buildPlatformNavItems(
         search: { databaseTable: collection.name, systemTable: undefined },
         icon: Database,
         pageLabel: "Database",
-        sectionLabel: "Tables",
+        sectionLabel: "Collections",
       };
     });
   const serviceNavItems = (services ?? [])

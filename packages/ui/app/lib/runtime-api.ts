@@ -309,11 +309,14 @@ export interface DatabaseHealth {
   defaultTenantId: string;
 }
 
+export type DatabaseCollectionSurface = "content-studio";
+
 export interface DatabaseCollection {
   name: string;
   tenantId: string;
   createdAt: string;
   documentCount: number;
+  surface?: DatabaseCollectionSurface;
   metadata?: Record<string, unknown>;
 }
 
@@ -1126,6 +1129,10 @@ export async function listDatabaseCollections(config: RuntimeConfig) {
         typeof row.metadata_json === "string" && row.metadata_json.length > 0
           ? (JSON.parse(row.metadata_json) as Record<string, unknown> | null)
           : undefined;
+      const surface =
+        metadata?.surface === "content-studio"
+          ? ("content-studio" as const)
+          : undefined;
 
       collectionsByKey.set(`${tenantId}:${row.name}`, {
         name: row.name,
@@ -1136,6 +1143,7 @@ export async function listDatabaseCollections(config: RuntimeConfig) {
             : new Date().toISOString(),
         documentCount:
           typeof row.document_count === "number" ? row.document_count : 0,
+        surface,
         metadata: metadata ?? undefined,
       });
     }
@@ -1152,6 +1160,7 @@ export async function createDatabaseCollection(
   config: RuntimeConfig,
   input: {
     name: string;
+    surface?: DatabaseCollectionSurface;
     metadata?: Record<string, unknown>;
     tenantId?: string;
   },

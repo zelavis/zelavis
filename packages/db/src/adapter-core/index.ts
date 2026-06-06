@@ -2,6 +2,7 @@ export type { SqliteGateway, GatewayRunResult } from "./gateway.js";
 export {
   applySqliteCompatibleSchema,
   createSqliteCompatibleDriver,
+  parseWriteTargetTable,
   type CreateSqliteCompatibleDriverOptions,
 } from "./driver.js";
 export { SCHEMA_STATEMENTS } from "./schema.js";

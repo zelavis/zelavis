@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   DatabaseConflictError,
+  DatabaseDomainError,
   DatabaseRevisionMismatchError,
   createDatabase,
 } from "@zelavis/db";
@@ -433,6 +434,69 @@ test("better-sqlite3 database persists time-series samples across reopen and reb
       ),
       [20, 40, 60],
     );
+  } finally {
+    rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
+test("sql.execute() blocks direct writes to registered collection tables", async () => {
+  const temp = createTempDatabasePath();
+
+  try {
+    const database = await createBetterSqlite3Database({ filename: temp.filename });
+
+    await database.documents.createCollection({ name: "fruits" });
+
+    // INSERT is blocked.
+    await assert.rejects(
+      () =>
+        database.sql.execute({
+          statement:
+            'INSERT INTO "fruits" (tenant_id, id, data_json, created_at, updated_at, version, schema_version) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          parameters: ["default", "x", "{}", "2026-01-01", "2026-01-01", 1, 1],
+        }),
+      (err) => {
+        assert.ok(err instanceof DatabaseDomainError);
+        assert.match(err.message, /fruits/);
+        assert.match(err.message, /documents API/i);
+        return true;
+      },
+    );
+
+    // UPDATE is blocked.
+    await assert.rejects(
+      () =>
+        database.sql.execute({
+          statement: 'UPDATE "fruits" SET data_json = ? WHERE id = ?',
+          parameters: ["{}", "x"],
+        }),
+      DatabaseDomainError,
+    );
+
+    // DELETE is blocked.
+    await assert.rejects(
+      () =>
+        database.sql.execute({
+          statement: 'DELETE FROM "fruits" WHERE id = ?',
+          parameters: ["x"],
+        }),
+      DatabaseDomainError,
+    );
+
+    // Writes to non-collection system tables are still allowed.
+    await assert.doesNotReject(() =>
+      database.sql.execute({
+        statement:
+          "INSERT OR IGNORE INTO collections (tenant_id, name, created_at, document_count) VALUES (?, ?, ?, ?)",
+        parameters: ["default", "canary", new Date().toISOString(), 0],
+      }),
+    );
+
+    // Reads against collection tables are unaffected.
+    const result = await database.sql.query({
+      statement: 'SELECT COUNT(*) AS c FROM "fruits"',
+    });
+    assert.equal(result.rows[0].c, 0);
   } finally {
     rmSync(temp.directory, { recursive: true, force: true });
   }

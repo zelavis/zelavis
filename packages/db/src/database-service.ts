@@ -5,6 +5,7 @@ import {
 } from "@zelavis/server";
 import type { DatabaseApi } from "./core/types.js";
 import type {
+  DatabaseCollectionSurface,
   DatabaseDocumentFilter,
   DatabaseDocumentSort,
 } from "./contracts/documents.js";
@@ -39,6 +40,14 @@ function readBodyObject(body: unknown): Record<string, unknown> {
 
 function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+const VALID_COLLECTION_SURFACES = new Set<DatabaseCollectionSurface>(["content-studio"]);
+
+function readCollectionSurface(value: unknown): DatabaseCollectionSurface | undefined {
+  return typeof value === "string" && VALID_COLLECTION_SURFACES.has(value as DatabaseCollectionSurface)
+    ? (value as DatabaseCollectionSurface)
+    : undefined;
 }
 
 function readJsonObject(value: unknown): DatabaseJsonObject {
@@ -396,6 +405,7 @@ export function defineDatabaseDocumentsService(
                 body: await service.documents.createCollection({
                   name,
                   tenantId: readString(input.tenantId),
+                  surface: readCollectionSurface(input.surface),
                   metadata:
                     input.metadata &&
                     typeof input.metadata === "object" &&

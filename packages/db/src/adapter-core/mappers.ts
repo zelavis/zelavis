@@ -1,5 +1,6 @@
 import type {
   DatabaseCollection,
+  DatabaseCollectionSurface,
   DatabaseDocument,
 } from "../contracts/documents.js";
 import type {
@@ -94,13 +95,24 @@ export function toEvent<
   };
 }
 
+const VALID_SURFACES = new Set<DatabaseCollectionSurface>(["content-studio"]);
+
+function parseSurface(metadata: Record<string, unknown> | null | undefined): DatabaseCollectionSurface | undefined {
+  const value = metadata?.surface;
+  return typeof value === "string" && VALID_SURFACES.has(value as DatabaseCollectionSurface)
+    ? (value as DatabaseCollectionSurface)
+    : undefined;
+}
+
 export function toCollection(row: CollectionRow): DatabaseCollection {
+  const metadata = parseOptionalJson<Record<string, unknown>>(row.metadata_json);
   return {
     name: row.name,
     tenantId: row.tenant_id,
     createdAt: new Date(row.created_at),
     documentCount: row.document_count,
-    metadata: parseOptionalJson<Record<string, unknown>>(row.metadata_json),
+    surface: parseSurface(metadata),
+    metadata,
   };
 }
 

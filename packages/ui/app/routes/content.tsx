@@ -194,8 +194,8 @@ function Content() {
 
       const created = await createDatabaseCollection(runtime, {
         name: nextName,
+        surface: "content-studio",
         metadata: {
-          surface: "content-studio",
           kind: "content-type",
           duplicatedFrom: sourceName,
         },
