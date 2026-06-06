@@ -1,16 +1,19 @@
 # AGENTS.md
 
-## Project Overview
+## Project Vision
 
-`zelavis` is an early-stage backend platform and pnpm workspace for composable TypeScript packages.
+Zelavis is a unified, self-hostable App Platform. It replaces — and combines — several categories of tools that teams currently stitch together separately:
 
-The current product direction is a self-hostable and embeddable Firebase/Supabase-style foundation with these primary building blocks:
+| Inspiration | What Zelavis covers |
+|---|---|
+| Firebase / Supabase | Backend-as-a-service: auth, database, real-time, self-hostable |
+| Vitess (for MySQL) | SQL-database-agnostic query routing, replication, and sharding — not tied to one engine |
+| WordPress | Content management: content types, entries, schemas, media |
+| cPanel / Plesk / Coolify / Dokploy / Vercel / Netlify | Server, app, hosting, and deploy management |
+| phpMyAdmin | Database administration UI (collections, tables, queries, events) |
+| Claude / Codex chat | AI chat area built into the dashboard for interacting with Zelavis and building via AI |
 
-- auth
-- database
-- shared server/runtime composition
-- admin/dashboard UI
-- optional higher-level domain packages such as ecommerce
+The difference from Firebase/Supabase is depth and ownership: Zelavis is fully self-hostable, runtime-neutral, and built to scale beyond a single database engine. The database layer is the deepest differentiator — `@zelavis/db` extends SQL with a Document DB model (event-sourced, tenant-aware, per-collection tables) while keeping the storage engine swappable (SQLite, D1, libSQL, and future engines). Replication and sharding are on the roadmap; the event log is the natural replication stream and `tenant_id` is the natural shard key. That is the same role Vitess plays for MySQL, but Zelavis is not coupled to any single SQL engine.
 
 Core platform work currently centers on:
 

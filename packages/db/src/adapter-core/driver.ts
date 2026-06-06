@@ -1,6 +1,7 @@
 import { defineDatabaseDriver } from "../core/define-database-driver.js";
 import {
   DatabaseConflictError,
+  DatabaseDomainError,
   DatabaseNotFoundError,
   DatabaseRevisionMismatchError,
   DatabaseValidationError,
@@ -149,6 +150,25 @@ function createCollectionTableStatement(collection: string): string {
 function createCollectionLookupIndexStatement(collection: string): string {
   return `CREATE INDEX IF NOT EXISTS ${collectionIndex(collection)}
     ON ${collectionTable(collection)} (tenant_id, updated_at, id)`;
+}
+
+/**
+ * Extracts the target table name from a SQL write statement (DML + destructive
+ * DDL). Returns null for read-only statements or unrecognised syntax.
+ *
+ * Handles both double-quoted identifiers ("My Table") and bare identifiers,
+ * and optional schema prefixes (schema.table / "schema"."table").
+ */
+export function parseWriteTargetTable(statement: string): string | null {
+  const match = statement
+    .trimStart()
+    .match(
+      /^(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE\s+(?:OR\s+\w+\s+)?|DELETE\s+FROM|DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?|ALTER\s+TABLE\s+)\s*(?:(?:"(?:[^"]|"")*"|[A-Za-z_][A-Za-z0-9_$]*)\s*\.\s*)?(?:"((?:[^"]|"")*)"|([A-Za-z_][A-Za-z0-9_$]*))/i,
+    );
+  if (!match) return null;
+  return match[1] !== undefined
+    ? match[1].replaceAll('""', '"')
+    : (match[2] ?? null);
 }
 
 /**
@@ -958,6 +978,18 @@ export function createSqliteCompatibleDriver(
 
     async execute(input: SqlExecuteInput): Promise<SqlExecuteResult> {
       return withReady(async () => {
+        const targetTable = parseWriteTargetTable(input.statement);
+        if (targetTable !== null) {
+          const collection = await gateway.get<{ name: string }>(
+            `SELECT name FROM collections WHERE name = ? LIMIT 1`,
+            [targetTable],
+          );
+          if (collection) {
+            throw new DatabaseDomainError(
+              `Direct SQL writes to collection table "${targetTable}" are not permitted. Use the documents API.`,
+            );
+          }
+        }
         const params = (input.parameters ?? []).map(toSqlParameter);
         const result = await gateway.run(input.statement, params);
         return {

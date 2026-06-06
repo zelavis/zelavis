@@ -121,8 +121,8 @@ function ContentTypeSettingsRoute() {
         sourceSchemas.find((schema) => schema.active) ?? sourceSchemas.at(-1);
       const created = await createDatabaseCollection(runtime, {
         name: duplicateName.trim(),
+        surface: "content-studio",
         metadata: {
-          surface: "content-studio",
           kind: "content-type",
           duplicatedFrom: contentType,
         },

@@ -6,6 +6,7 @@ import {
   documentFileSchema,
   fileSchema,
   imageFileSchema,
+  parseWriteTargetTable,
   richTextHtmlSchema,
   videoFileSchema,
 } from "../dist/index.js";
@@ -711,3 +712,39 @@ test("database executes mapped time-series range and aggregate queries from even
   assert.equal(sum, 60);
   assert.equal(count, 2);
 });
+
+test("parseWriteTargetTable extracts table names from DML and DDL write statements", () => {
+  // DML — bare identifiers
+  assert.equal(parseWriteTargetTable("INSERT INTO products VALUES (?)"), "products");
+  assert.equal(parseWriteTargetTable("INSERT OR REPLACE INTO products VALUES (?)"), "products");
+  assert.equal(parseWriteTargetTable("REPLACE INTO products VALUES (?)"), "products");
+  assert.equal(parseWriteTargetTable("UPDATE products SET name = ?"), "products");
+  assert.equal(parseWriteTargetTable("UPDATE OR IGNORE products SET name = ?"), "products");
+  assert.equal(parseWriteTargetTable("DELETE FROM products WHERE id = ?"), "products");
+
+  // DML — double-quoted identifiers (quoteIdentifier output)
+  assert.equal(parseWriteTargetTable('INSERT INTO "Fruits" VALUES (?)'), "Fruits");
+  assert.equal(parseWriteTargetTable('UPDATE "My Collection" SET data_json = ?'), "My Collection");
+  assert.equal(parseWriteTargetTable('DELETE FROM "items" WHERE tenant_id = ?'), "items");
+
+  // DML — quoted identifiers with escaped quotes
+  assert.equal(parseWriteTargetTable('INSERT INTO "A""B" VALUES (?)'), 'A"B');
+
+  // DML — schema-qualified
+  assert.equal(parseWriteTargetTable('INSERT INTO main."Fruits" VALUES (?)'), "Fruits");
+  assert.equal(parseWriteTargetTable("INSERT INTO main.products VALUES (?)"), "products");
+
+  // DDL
+  assert.equal(parseWriteTargetTable('DROP TABLE "Fruits"'), "Fruits");
+  assert.equal(parseWriteTargetTable('DROP TABLE IF EXISTS "Fruits"'), "Fruits");
+  assert.equal(parseWriteTargetTable('ALTER TABLE "Fruits" ADD COLUMN foo TEXT'), "Fruits");
+
+  // Leading whitespace and mixed case
+  assert.equal(parseWriteTargetTable("  insert into Products values (?)"), "Products");
+
+  // Read-only — should return null
+  assert.equal(parseWriteTargetTable("SELECT * FROM products"), null);
+  assert.equal(parseWriteTargetTable("CREATE TABLE products (id TEXT)"), null);
+  assert.equal(parseWriteTargetTable("PRAGMA table_info(products)"), null);
+});
+

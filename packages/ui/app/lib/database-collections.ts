@@ -15,10 +15,7 @@ export function filterUserDatabaseCollections(
 /**
  * Returns true if a collection belongs to Content Studio (i.e. was created as
  * a content type, not as a raw database table).
- *
- * Requires explicit `metadata.surface === "content-studio"`. Collections without
- * this metadata are excluded — there is no backward compatibility shim.
  */
 export function isContentTypeDatabaseCollection(collection: DatabaseCollection) {
-  return collection.metadata?.surface === "content-studio";
+  return collection.surface === "content-studio";
 }

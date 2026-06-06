@@ -47,8 +47,8 @@ function NewContentTypeRoute() {
     try {
       const collection = await createDatabaseCollection(runtime, {
         name: normalizedName,
+        surface: "content-studio",
         metadata: {
-          surface: "content-studio",
           kind: "content-type",
         },
       });

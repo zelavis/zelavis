@@ -14,11 +14,14 @@ export interface DatabaseFileReference {
   checksum?: string;
 }
 
+export type DatabaseCollectionSurface = "content-studio";
+
 export interface DatabaseCollection {
   name: string;
   tenantId: DatabaseTenantId;
   createdAt: Date;
   documentCount: number;
+  surface?: DatabaseCollectionSurface;
   metadata?: Record<string, unknown>;
 }
 
@@ -38,6 +41,7 @@ export interface DatabaseDocument<
 export interface CreateCollectionInput {
   tenantId?: DatabaseTenantId;
   name: string;
+  surface?: DatabaseCollectionSurface;
   metadata?: Record<string, unknown>;
 }
 

@@ -214,8 +214,8 @@ function ContentTypeEditorRoute() {
     try {
       await createDatabaseCollection(runtime, {
         name: contentType,
+        surface: "content-studio",
         metadata: {
-          surface: "content-studio",
           kind: "content-type",
         },
       }).catch(() => undefined);

@@ -157,6 +157,7 @@ describe("dashboard navigation ownership", () => {
           documentCount: 1,
           tenantId: "default",
           createdAt: "2026-06-03T00:00:00.000Z",
+          surface: "content-studio" as const,
         },
       ],
     );

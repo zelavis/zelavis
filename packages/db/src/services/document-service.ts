@@ -70,6 +70,11 @@ export class DocumentService implements DatabaseDocumentsApi {
     const resolved = withTenantId(input, this.defaultTenantId);
     validateDatabaseCollectionName(resolved.name);
 
+    const metadata: Record<string, unknown> = {
+      ...(resolved.metadata ?? {}),
+      ...(resolved.surface ? { surface: resolved.surface } : {}),
+    };
+
     return this.events
       .append({
         tenantId: resolved.tenantId,
@@ -78,7 +83,7 @@ export class DocumentService implements DatabaseDocumentsApi {
         type: "collection.created",
         expectedRevision: 0,
         payload: {
-          metadata: resolved.metadata,
+          metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
         },
       })
       .then(async () => {
