@@ -1125,7 +1125,7 @@ export async function listDatabaseCollections(config: RuntimeConfig) {
         metadata_json?: unknown;
       }>;
     }>(
-      `${config.api.basePath}/database/sql/system/_collections?limit=500&refresh=${cacheBuster}`,
+      `${config.api.basePath}/database/sql/system/zv_collections?limit=500&refresh=${cacheBuster}`,
     );
 
     for (const row of systemResult.rows) {
