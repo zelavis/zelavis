@@ -58,7 +58,7 @@ jobs:
         run: pnpm --filter @zelavis/ui exec playwright install --with-deps chromium
 
       - name: Build runtime packages for e2e
-        run: pnpm --filter @zelavis/server build && pnpm --filter @zelavis/db build && pnpm --filter @zelavis/db-node-sqlite build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/ui build:plugin && pnpm --filter zelavis build:runtime
+        run: pnpm --filter @zelavis/server build && pnpm --filter @zelavis/db build && pnpm --filter @zelavis/db-node-sqlite build && pnpm --filter @zelavis/db-bun-sqlite build && pnpm --filter @zelavis/db-cloudflare-d1 build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/ui build:plugin && pnpm --filter zelavis build:runtime
 
       - name: Start example runtime server
         run: |
