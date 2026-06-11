@@ -104,13 +104,14 @@ function parseSurface(value: string | null): DatabaseCollectionSurface | undefin
 }
 
 export function toCollection(row: CollectionRow): DatabaseCollection {
+  const metadata = parseOptionalJson<Record<string, unknown>>(row.metadata_json);
   return {
     name: row.name,
     tenantId: row.tenant_id,
     createdAt: new Date(row.created_at),
     documentCount: row.document_count,
     surface: parseSurface(row.surface),
-    metadata: parseOptionalJson<Record<string, unknown>>(row.metadata_json),
+    metadata,
   };
 }
 
