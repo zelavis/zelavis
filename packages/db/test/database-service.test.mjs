@@ -91,12 +91,12 @@ test("database projection registration surfaces domain conflicts", async () => {
   );
 });
 
-test("databaseService can register and activate collection schemas", async () => {
+test("databaseService can save and activate collection schemas", async () => {
   const database = await createDatabase();
   const service = defineDatabaseService(database);
   const schemas = await service.services[1];
-  const registerSchema = schemas.api.v1.find(
-    (route) => route.id === "database.schemas.register",
+  const saveSchema = schemas.api.v1.find(
+    (route) => route.id === "database.schemas.save",
   );
   const activateSchema = schemas.api.v1.find(
     (route) => route.id === "database.schemas.activate",
@@ -105,41 +105,31 @@ test("databaseService can register and activate collection schemas", async () =>
     (route) => route.id === "database.schemas.versions.list",
   );
 
-  const created = await registerSchema.handler({
+  const created = await saveSchema.handler({
     service: database,
     params: { collection: "products" },
     query: new URLSearchParams(),
     body: {
       version: 1,
       activate: true,
-      document: {
-        type: "object",
-        additionalProperties: false,
-        required: ["name"],
-        properties: {
-          name: { type: "string", minLength: 1 },
-        },
-      },
+      fields: [
+        { name: "name", field: { _tag: "TextField", label: "Name", required: true } },
+      ],
     },
     headers: {},
     request: undefined,
   });
 
-  const updated = await registerSchema.handler({
+  const updated = await saveSchema.handler({
     service: database,
     params: { collection: "products" },
     query: new URLSearchParams(),
     body: {
       version: 2,
-      document: {
-        type: "object",
-        additionalProperties: false,
-        required: ["name", "status"],
-        properties: {
-          name: { type: "string", minLength: 1 },
-          status: { type: "string", enum: ["draft", "published"] },
-        },
-      },
+      fields: [
+        { name: "name", field: { _tag: "TextField", label: "Name", required: true } },
+        { name: "status", field: { _tag: "TextField", label: "Status", required: true } },
+      ],
     },
     headers: {},
     request: undefined,
@@ -181,18 +171,14 @@ test("databaseService can register and activate collection schemas", async () =>
 test("databaseService returns 400 for schema validation failures", async () => {
   const database = await createDatabase();
   await database.documents.createCollection({ name: "products" });
-  await database.schemas.register({
+  await database.schemas.save({
     collection: "products",
     version: 1,
     activate: true,
-    document: {
-      type: "object",
-      additionalProperties: false,
-      required: ["name"],
-      properties: {
-        name: { type: "string", minLength: 3 },
-      },
-    },
+    fields: [
+      { name: "name", field: { _tag: "TextField", label: "Name", required: true } },
+      { name: "price", field: { _tag: "NumberField", label: "Price", required: true, min: 0 } },
+    ],
   });
 
   const service = defineDatabaseService(database);

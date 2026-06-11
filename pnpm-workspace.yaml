@@ -28,6 +28,7 @@ allowBuilds:
   better-sqlite3: true
   esbuild: true
   lightningcss: true
+  msgpackr-extract: true
   msw: true
   sharp: true
   unrs-resolver: true

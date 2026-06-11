@@ -6,7 +6,7 @@ import { PageHeader, ResourceNotice } from "#/components/DashboardPage";
 import { Button, buttonVariants } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
-import { createStarterContentTypeSchema } from "#/lib/content-schema";
+import { createStarterContentTypeFields } from "#/lib/content-schema";
 import { slugifyContentTypeLabel } from "#/lib/content-studio";
 import {
   createDatabaseCollection,
@@ -56,10 +56,7 @@ function NewContentTypeRoute() {
         collection: collection.name,
         version: 1,
         activate: true,
-        document: createStarterContentTypeSchema(),
-        metadata: {
-          createdBy: "content-studio",
-        },
+        fields: createStarterContentTypeFields(),
       });
 
       if (normalizedLabel !== collection.name) {

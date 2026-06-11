@@ -23,11 +23,7 @@ import type {
 } from "../contracts/events.js";
 import { DatabaseEventIdempotencyConflictError } from "../contracts/events.js";
 import type { DatabaseJson, DatabaseJsonObject } from "../contracts/json.js";
-import type {
-  DatabaseCollectionSchema,
-  DatabaseObjectSchemaDefinition,
-  DatabaseStoredCollectionSchema,
-} from "../contracts/schemas.js";
+import type { StoredCollectionSchema } from "../schema/index.js";
 import { defineDatabaseDriver } from "../core/define-database-driver.js";
 import {
   DatabaseConflictError,
@@ -65,11 +61,6 @@ function cloneRecord<T extends Record<string, unknown>>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function cloneSchemaDefinition<T extends DatabaseObjectSchemaDefinition>(
-  value: T,
-): T {
-  return JSON.parse(JSON.stringify(value)) as T;
-}
 
 function cloneDocument<TData extends DatabaseJsonObject>(
   document: DatabaseDocument<TData>,
@@ -92,15 +83,6 @@ function cloneCollection(collection: DatabaseCollection): DatabaseCollection {
   };
 }
 
-function cloneSchemaRecord(
-  schema: DatabaseStoredCollectionSchema,
-): DatabaseStoredCollectionSchema {
-  return {
-    ...schema,
-    document: cloneSchemaDefinition(schema.document),
-    metadata: schema.metadata ? cloneRecord(schema.metadata) : undefined,
-  };
-}
 
 function cloneEvent<TPayload extends DatabaseEventPayload>(
   event: DatabaseEvent<TPayload>,
@@ -306,10 +288,7 @@ export function createInMemoryDatabaseDriver(): DatabaseDriver {
   const revisions = new Map<string, number>();
   const events: DatabaseEvent[] = [];
   const eventsByIdempotencyKey = new Map<string, DatabaseEvent>();
-  const schemas = new Map<
-    string,
-    Map<number, DatabaseStoredCollectionSchema>
-  >();
+  const schemas = new Map<string, Map<number, StoredCollectionSchema>>();
   let sequence = 0;
 
   function preflightAppend<TPayload extends DatabaseEventPayload>(
@@ -607,27 +586,21 @@ export function createInMemoryDatabaseDriver(): DatabaseDriver {
       return [...schemas.values()]
         .flatMap((versions) => [...versions.values()])
         .sort((left, right) => {
-          const collectionOrder = left.collection.localeCompare(
-            right.collection,
-          );
-          return collectionOrder !== 0
-            ? collectionOrder
-            : left.version - right.version;
+          const collectionOrder = left.collection.localeCompare(right.collection);
+          return collectionOrder !== 0 ? collectionOrder : left.version - right.version;
         })
-        .map((schema) => cloneSchemaRecord(schema));
+        .map((schema) => ({ ...schema, fields: [...schema.fields] }));
     },
 
-    async save(schema: DatabaseCollectionSchema) {
+    async save(schema: StoredCollectionSchema) {
       const versions =
-        schemas.get(schema.collection) ??
-        new Map<number, DatabaseStoredCollectionSchema>();
+        schemas.get(schema.collection) ?? new Map<number, StoredCollectionSchema>();
       const existing = versions.get(schema.version);
       versions.set(schema.version, {
         collection: schema.collection,
         version: schema.version,
-        document: cloneSchemaDefinition(schema.document),
-        metadata: schema.metadata ? cloneRecord(schema.metadata) : undefined,
-        active: existing?.active ?? false,
+        fields: [...schema.fields],
+        active: existing?.active ?? schema.active,
       });
       schemas.set(schema.collection, versions);
     },
@@ -641,11 +614,9 @@ export function createInMemoryDatabaseDriver(): DatabaseDriver {
         );
       }
 
-      for (const record of versions.values()) {
-        record.active = false;
+      for (const [v, record] of versions) {
+        versions.set(v, { ...record, active: v === version });
       }
-
-      schema.active = true;
     },
   };
 

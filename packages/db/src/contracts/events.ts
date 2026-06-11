@@ -1,4 +1,4 @@
-import type { DatabaseCollection, DatabaseTenantId } from "./documents.js";
+import type { DatabaseCollection, DatabaseCollectionSurface, DatabaseTenantId } from "./documents.js";
 import type { DatabaseJsonObject } from "./json.js";
 import { DatabaseConflictError } from "../core/errors.js";
 
@@ -8,6 +8,7 @@ export type DatabaseEventType =
   | "document.deleted";
 
 export interface DatabaseCollectionCreatedPayload {
+  surface?: DatabaseCollectionSurface;
   metadata?: DatabaseCollection["metadata"];
 }
 

@@ -17,12 +17,11 @@ import type {
 } from "./events.js";
 import type { DatabaseJson, DatabaseJsonObject } from "./json.js";
 import type {
-  DatabaseCollectionSchema,
-  DatabaseCollectionSchemaSummary,
-  DatabaseStoredCollectionSchema,
-  ValidateDatabaseDocumentInput,
-  ValidateDatabaseDocumentResult,
-} from "./schemas.js";
+  CollectionSchema,
+  CollectionSchemaSummary,
+  SchemaValidationResult,
+  StoredCollectionSchema,
+} from "../schema/index.js";
 
 export interface DatabaseContext {
   config: Record<string, unknown>;
@@ -55,25 +54,13 @@ export interface DatabaseDocumentsApi {
 }
 
 export interface DatabaseSchemasApi {
-  register<TData extends DatabaseJsonObject>(
-    schema: DatabaseCollectionSchema<TData>,
-  ): Promise<DatabaseCollectionSchema<TData>>;
-  registerMany(schemas: readonly DatabaseCollectionSchema[]): Promise<void>;
-  listCollections(): DatabaseCollectionSchemaSummary[];
-  listVersions(collection: string): DatabaseCollectionSchema[];
-  listVersionRecords(collection: string): DatabaseStoredCollectionSchema[];
-  getSchema(
-    collection: string,
-    version: number,
-  ): DatabaseCollectionSchema | null;
-  getActiveSchema(collection: string): DatabaseCollectionSchema | null;
-  activate(
-    collection: string,
-    version: number,
-  ): Promise<DatabaseCollectionSchema>;
-  validate<TData extends DatabaseJsonObject>(
-    input: ValidateDatabaseDocumentInput<TData>,
-  ): ValidateDatabaseDocumentResult;
+  save(schema: CollectionSchema): Promise<StoredCollectionSchema>;
+  listCollections(): CollectionSchemaSummary[];
+  listVersions(collection: string): StoredCollectionSchema[];
+  getVersion(collection: string, version: number): StoredCollectionSchema | null;
+  getActive(collection: string): StoredCollectionSchema | null;
+  activate(collection: string, version: number): Promise<StoredCollectionSchema>;
+  validate(collection: string, data: DatabaseJsonObject): SchemaValidationResult;
 }
 
 export interface DatabaseProjectionSummary {

@@ -12,6 +12,7 @@ import type {
 } from "../contracts/api.js";
 import type {
   DatabaseAppendEventInput,
+  DatabaseCollectionCreatedPayload,
   DatabaseEvent,
   DatabaseEventPayload,
   ReadDatabaseEventsInput,
@@ -23,10 +24,7 @@ import type {
   FindDocumentsInput,
   ListCollectionsInput,
 } from "../contracts/documents.js";
-import type {
-  DatabaseCollectionSchema,
-  DatabaseStoredCollectionSchema,
-} from "../contracts/schemas.js";
+import type { StoredCollectionSchema } from "../schema/index.js";
 import type { DatabaseJsonObject } from "../contracts/json.js";
 import type { DatabaseDriver } from "../contracts/driver.js";
 import type {
@@ -219,8 +217,8 @@ export function createSqliteCompatibleDriver(
     ) {
       return withReady(async () => {
         const row = await gateway.get<CollectionRow>(
-          `SELECT tenant_id, name, created_at, document_count, metadata_json
-           FROM collections
+          `SELECT tenant_id, name, created_at, document_count, surface, metadata_json
+           FROM zv_collections
            WHERE tenant_id = ? AND name = ?
            LIMIT 1`,
           [input.tenantId, input.name],
@@ -234,8 +232,8 @@ export function createSqliteCompatibleDriver(
     ): Promise<DatabaseCollection[]> {
       return withReady(async () => {
         const rows = await gateway.all<CollectionRow>(
-          `SELECT tenant_id, name, created_at, document_count, metadata_json
-           FROM collections
+          `SELECT tenant_id, name, created_at, document_count, surface, metadata_json
+           FROM zv_collections
            WHERE tenant_id = ?
            ORDER BY name ASC`,
           [input.tenantId],
@@ -250,7 +248,7 @@ export function createSqliteCompatibleDriver(
       return withReady(async () => {
         const row = await gateway.get<{ present: number }>(
           `SELECT 1 AS present
-           FROM collections
+           FROM zv_collections
            WHERE tenant_id = ? AND name = ?
            LIMIT 1`,
           [input.tenantId, input.name],
@@ -328,10 +326,10 @@ export function createSqliteCompatibleDriver(
     documentId: string | undefined,
   ): Promise<number> {
     const sql = documentId
-      ? `SELECT revision FROM events
+      ? `SELECT revision FROM zv_events
          WHERE tenant_id = ? AND collection_name = ? AND document_id = ?
          ORDER BY sequence DESC LIMIT 1`
-      : `SELECT revision FROM events
+      : `SELECT revision FROM zv_events
          WHERE tenant_id = ? AND collection_name = ? AND document_id IS NULL
          ORDER BY sequence DESC LIMIT 1`;
     const params = documentId
@@ -343,7 +341,7 @@ export function createSqliteCompatibleDriver(
 
   async function lookupEventSequence(eventId: string): Promise<number> {
     const row = await gateway.get<{ sequence: number }>(
-      `SELECT sequence FROM events WHERE event_id = ? LIMIT 1`,
+      `SELECT sequence FROM zv_events WHERE event_id = ? LIMIT 1`,
       [eventId],
     );
     return row?.sequence ?? 0;
@@ -366,7 +364,7 @@ export function createSqliteCompatibleDriver(
     },
   ): Promise<void> {
     await tx.run(
-      `INSERT INTO events (
+      `INSERT INTO zv_events (
         event_id, idempotency_key, node_id, tenant_id, collection_name,
         document_id, type, revision, timestamp, schema_version, payload_json
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -394,7 +392,7 @@ export function createSqliteCompatibleDriver(
         if (input.idempotencyKey) {
           const existingRow = await gateway.get<EventRow>(
             `SELECT sequence, event_id, idempotency_key, node_id, tenant_id, collection_name, document_id, type, revision, timestamp, schema_version, payload_json
-             FROM events
+             FROM zv_events
              WHERE tenant_id = ? AND idempotency_key = ?
              LIMIT 1`,
             [input.tenantId, input.idempotencyKey],
@@ -475,19 +473,17 @@ export function createSqliteCompatibleDriver(
               schemaVersion,
               payloadJson,
             });
+            const createdPayload = input.payload as DatabaseCollectionCreatedPayload;
+            const collectionMetadata = readOptionalRecord(createdPayload.metadata) ?? null;
             await tx.run(
-              `INSERT INTO collections (tenant_id, name, created_at, document_count, metadata_json)
-               VALUES (?, ?, ?, 0, ?)`,
+              `INSERT INTO zv_collections (tenant_id, name, created_at, document_count, surface, metadata_json)
+               VALUES (?, ?, ?, 0, ?, ?)`,
               [
                 input.tenantId,
                 input.collection,
                 timestamp,
-                JSON.stringify(
-                  readOptionalRecord(
-                    (input.payload as { metadata?: Record<string, unknown> })
-                      .metadata,
-                  ) ?? null,
-                ),
+                createdPayload.surface ?? null,
+                collectionMetadata ? JSON.stringify(collectionMetadata) : null,
               ],
             );
             await tx.exec(createCollectionTableStatement(input.collection));
@@ -519,7 +515,7 @@ export function createSqliteCompatibleDriver(
           }
 
           const collection = await gateway.get<{ name: string }>(
-            `SELECT name FROM collections WHERE tenant_id = ? AND name = ? LIMIT 1`,
+            `SELECT name FROM zv_collections WHERE tenant_id = ? AND name = ? LIMIT 1`,
             [input.tenantId, input.collection],
           );
           if (!collection) {
@@ -585,7 +581,7 @@ export function createSqliteCompatibleDriver(
                 ],
               );
               await tx.run(
-                `UPDATE collections SET document_count = document_count + 1
+                `UPDATE zv_collections SET document_count = document_count + 1
                  WHERE tenant_id = ? AND name = ?`,
                 [input.tenantId, input.collection],
               );
@@ -620,7 +616,7 @@ export function createSqliteCompatibleDriver(
         // adapters with deferred writes (D1) can't observe `changes` count
         // inside the transaction, so we verify before queuing.
         const collection = await gateway.get<{ name: string }>(
-          `SELECT name FROM collections WHERE tenant_id = ? AND name = ? LIMIT 1`,
+          `SELECT name FROM zv_collections WHERE tenant_id = ? AND name = ? LIMIT 1`,
           [input.tenantId, input.collection],
         );
         if (!collection) {
@@ -661,7 +657,7 @@ export function createSqliteCompatibleDriver(
             [input.tenantId, input.documentId],
           );
           await tx.run(
-            `UPDATE collections SET document_count = document_count - 1
+            `UPDATE zv_collections SET document_count = document_count - 1
              WHERE tenant_id = ? AND name = ? AND document_count > 0`,
             [input.tenantId, input.collection],
           );
@@ -691,7 +687,7 @@ export function createSqliteCompatibleDriver(
       return withReady(async () => {
         const rows = await gateway.all<EventRow>(
           `SELECT sequence, event_id, idempotency_key, node_id, tenant_id, collection_name, document_id, type, revision, timestamp, schema_version, payload_json
-           FROM events
+           FROM zv_events
            WHERE tenant_id = ?
              AND (? IS NULL OR collection_name = ?)
              AND (? IS NULL OR document_id = ?)
@@ -714,37 +710,25 @@ export function createSqliteCompatibleDriver(
   } satisfies DatabaseDriver["events"];
 
   const schemas = {
-    async list(): Promise<DatabaseStoredCollectionSchema[]> {
+    async list(): Promise<StoredCollectionSchema[]> {
       return withReady(async () => {
         const rows = await gateway.all<SchemaRow>(
-          `SELECT collection_name, version, document_json, metadata_json, is_active
-           FROM schemas
+          `SELECT collection_name, version, fields_json, is_active
+           FROM zv_schemas
            ORDER BY collection_name ASC, version ASC`,
         );
         return rows.map((row) => toStoredSchema(row));
       });
     },
 
-    async save<TData extends DatabaseJsonObject = DatabaseJsonObject>(
-      schema: DatabaseCollectionSchema<TData>,
-    ): Promise<void> {
+    async save(schema: StoredCollectionSchema): Promise<void> {
       return withReady(async () => {
         await gateway.run(
-          `INSERT INTO schemas (
-            collection_name, version, document_json, metadata_json, is_active
-          ) VALUES (?, ?, ?, ?, COALESCE((SELECT is_active FROM schemas WHERE collection_name = ? AND version = ?), 0))
-          ON CONFLICT(collection_name, version)
-          DO UPDATE SET
-            document_json = excluded.document_json,
-            metadata_json = excluded.metadata_json`,
-          [
-            schema.collection,
-            schema.version,
-            JSON.stringify(schema.document),
-            schema.metadata ? JSON.stringify(cloneRecord(schema.metadata)) : null,
-            schema.collection,
-            schema.version,
-          ],
+          `INSERT INTO zv_schemas (collection_name, version, fields_json, is_active)
+           VALUES (?, ?, ?, 0)
+           ON CONFLICT(collection_name, version)
+           DO UPDATE SET fields_json = excluded.fields_json`,
+          [schema.collection, schema.version, JSON.stringify(schema.fields)],
         );
       });
     },
@@ -753,7 +737,7 @@ export function createSqliteCompatibleDriver(
       return withReady(async () => {
         await gateway.transaction(async (tx) => {
           const activated = await tx.run(
-            `UPDATE schemas SET is_active = 1
+            `UPDATE zv_schemas SET is_active = 1
              WHERE collection_name = ? AND version = ?`,
             [collection, version],
           );
@@ -763,7 +747,7 @@ export function createSqliteCompatibleDriver(
             );
           }
           await tx.run(
-            `UPDATE schemas SET is_active = 0
+            `UPDATE zv_schemas SET is_active = 0
              WHERE collection_name = ? AND version != ?`,
             [collection, version],
           );
@@ -780,7 +764,7 @@ export function createSqliteCompatibleDriver(
           last_sequence: number;
         }>(
           `SELECT definition_version, last_sequence
-           FROM time_series_checkpoints
+           FROM zv_time_series_checkpoints
            WHERE tenant_id = ? AND series_name = ?
            LIMIT 1`,
           [input.tenantId, input.series],
@@ -799,12 +783,12 @@ export function createSqliteCompatibleDriver(
       return withReady(async () => {
         await gateway.transaction(async (tx) => {
           await tx.run(
-            `DELETE FROM time_series_points
+            `DELETE FROM zv_time_series_points
              WHERE tenant_id = ? AND series_name = ?`,
             [input.tenantId, input.series],
           );
           await tx.run(
-            `INSERT INTO time_series_checkpoints (
+            `INSERT INTO zv_time_series_checkpoints (
               tenant_id, series_name, definition_version, last_sequence, updated_at
             ) VALUES (?, ?, ?, 0, ?)
             ON CONFLICT(tenant_id, series_name)
@@ -826,7 +810,7 @@ export function createSqliteCompatibleDriver(
     async append(input: DatabaseTimeSeriesStorageAppendInput) {
       return withReady(async () => {
         const checkpointUpsert = {
-          sql: `INSERT INTO time_series_checkpoints (
+          sql: `INSERT INTO zv_time_series_checkpoints (
             tenant_id, series_name, definition_version, last_sequence, updated_at
           ) VALUES (?, ?, ?, ?, ?)
           ON CONFLICT(tenant_id, series_name)
@@ -844,7 +828,7 @@ export function createSqliteCompatibleDriver(
         };
 
         const pointStatements = input.points.map((entry) => ({
-          sql: `INSERT INTO time_series_points (
+          sql: `INSERT INTO zv_time_series_points (
             tenant_id, series_name, definition_version, source_sequence, point_index,
             timestamp_ms, value, tags_json, fields_json
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -892,7 +876,7 @@ export function createSqliteCompatibleDriver(
         const direction = input.order === "desc" ? "DESC" : "ASC";
         const rows = await gateway.all<TimeSeriesPointRow>(
           `SELECT timestamp_ms, value, tags_json, fields_json
-           FROM time_series_points
+           FROM zv_time_series_points
            WHERE tenant_id = ?
              AND series_name = ?
              AND definition_version = ?
@@ -934,7 +918,7 @@ export function createSqliteCompatibleDriver(
           operation === "COUNT" ? `${operation}(*)` : `${operation}(value)`;
         const row = await gateway.get<{ value: number | null }>(
           `SELECT ${select} AS value
-           FROM time_series_points
+           FROM zv_time_series_points
            WHERE tenant_id = ?
              AND series_name = ?
              AND definition_version = ?
@@ -982,7 +966,7 @@ export function createSqliteCompatibleDriver(
         const targetTable = parseWriteTargetTable(input.statement);
         if (targetTable !== null) {
           const collection = await gateway.get<{ name: string }>(
-            `SELECT name FROM collections WHERE name = ? LIMIT 1`,
+            `SELECT name FROM zv_collections WHERE name = ? LIMIT 1`,
             [targetTable],
           );
           if (collection) {

@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import {
   createStarterContentEntry,
-  createStarterContentTypeSchema,
+  createStarterContentTypeFields,
 } from "#/lib/content-schema";
 import {
   activateDatabaseSchemaVersion,
@@ -120,33 +120,29 @@ function insertFileFieldIntoSchema(input: {
   kind: FileSchemaTemplateKind;
   required: boolean;
 }) {
-  const parsed = JSON.parse(input.schemaJson) as Record<string, unknown>;
-
-  if (parsed.type !== "object") {
-    throw new Error("The schema root must be an object before adding a file field.");
+  const fields = JSON.parse(input.schemaJson) as Array<{ name: string }>;
+  if (!Array.isArray(fields)) {
+    throw new Error("The schema must be a fields array.");
   }
-
-  const properties =
-    parsed.properties && typeof parsed.properties === "object"
-      ? ({ ...(parsed.properties as Record<string, unknown>) })
-      : {};
-
-  if (input.fieldName in properties) {
-    throw new Error(`A schema field named "${input.fieldName}" already exists.`);
+  if (fields.some((f) => f.name === input.fieldName)) {
+    throw new Error(`A field named "${input.fieldName}" already exists.`);
   }
-
-  properties[input.fieldName] = createFileSchemaTemplate(input.kind);
-  parsed.properties = properties;
-
-  const existingRequired = Array.isArray(parsed.required)
-    ? parsed.required.filter((value): value is string => typeof value === "string")
-    : [];
-
-  parsed.required = input.required
-    ? [...new Set([...existingRequired, input.fieldName])]
-    : existingRequired.filter((value) => value !== input.fieldName);
-
-  return JSON.stringify(parsed, null, 2);
+  const template = createFileSchemaTemplate(input.kind);
+  const tag =
+    input.kind === "image" ? "ImageField"
+    : input.kind === "audio" ? "AudioField"
+    : input.kind === "video" ? "VideoField"
+    : "FileField";
+  const newEntry = {
+    name: input.fieldName,
+    field: {
+      _tag: tag,
+      label: input.fieldName.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+      required: input.required,
+      accept: "mimeTypes" in template ? template.mimeTypes : undefined,
+    },
+  };
+  return JSON.stringify([...fields, newEntry], null, 2);
 }
 
 function insertFileReferenceIntoSampleDocument(input: {
@@ -180,8 +176,8 @@ function ContentTypeEditorRoute() {
   const [schemaVersion, setSchemaVersion] = useState(String((activeSchema?.version ?? 0) + 1));
   const [schemaJson, setSchemaJson] = useState(
     activeSchema
-      ? JSON.stringify(activeSchema.document, null, 2)
-      : JSON.stringify(createStarterContentTypeSchema(), null, 2),
+      ? JSON.stringify(activeSchema.fields ?? [], null, 2)
+      : JSON.stringify(createStarterContentTypeFields(), null, 2),
   );
   const [documentId, setDocumentId] = useState("");
   const [documentJson, setDocumentJson] = useState(
@@ -223,11 +219,8 @@ function ContentTypeEditorRoute() {
       const created = await createDatabaseSchema(runtime, {
         collection: contentType,
         version: nextVersion,
-        document: JSON.parse(schemaJson) as Record<string, unknown>,
+        fields: JSON.parse(schemaJson) as never,
         activate: schemaCount === 0,
-        metadata: {
-          source: "content-type-editor",
-        },
       });
       revalidator.revalidate();
       setSchemaVersion(String(created.version + 1));

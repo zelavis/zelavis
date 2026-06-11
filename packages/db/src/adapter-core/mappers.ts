@@ -8,7 +8,7 @@ import type {
   DatabaseEventPayload,
 } from "../contracts/events.js";
 import type { DatabaseJson, DatabaseJsonObject } from "../contracts/json.js";
-import type { DatabaseStoredCollectionSchema } from "../contracts/schemas.js";
+import type { StoredCollectionSchema } from "../schema/index.js";
 import type { DatabaseTimeSeriesPoint } from "../contracts/api.js";
 import { parseOptionalJson, parseRequiredJson } from "./helpers.js";
 
@@ -43,14 +43,14 @@ export interface CollectionRow {
   tenant_id: string;
   created_at: string;
   document_count: number;
+  surface: string | null;
   metadata_json: string | null;
 }
 
 export interface SchemaRow {
   collection_name: string;
   version: number;
-  document_json: string;
-  metadata_json: string | null;
+  fields_json: string;
   is_active: number;
 }
 
@@ -97,31 +97,28 @@ export function toEvent<
 
 const VALID_SURFACES = new Set<DatabaseCollectionSurface>(["content-studio"]);
 
-function parseSurface(metadata: Record<string, unknown> | null | undefined): DatabaseCollectionSurface | undefined {
-  const value = metadata?.surface;
+function parseSurface(value: string | null): DatabaseCollectionSurface | undefined {
   return typeof value === "string" && VALID_SURFACES.has(value as DatabaseCollectionSurface)
     ? (value as DatabaseCollectionSurface)
     : undefined;
 }
 
 export function toCollection(row: CollectionRow): DatabaseCollection {
-  const metadata = parseOptionalJson<Record<string, unknown>>(row.metadata_json);
   return {
     name: row.name,
     tenantId: row.tenant_id,
     createdAt: new Date(row.created_at),
     documentCount: row.document_count,
-    surface: parseSurface(metadata),
-    metadata,
+    surface: parseSurface(row.surface),
+    metadata: parseOptionalJson<Record<string, unknown>>(row.metadata_json),
   };
 }
 
-export function toStoredSchema(row: SchemaRow): DatabaseStoredCollectionSchema {
+export function toStoredSchema(row: SchemaRow): StoredCollectionSchema {
   return {
     collection: row.collection_name,
     version: row.version,
-    document: parseRequiredJson(row.document_json),
-    metadata: parseOptionalJson<Record<string, unknown>>(row.metadata_json),
+    fields: parseRequiredJson(row.fields_json),
     active: Boolean(row.is_active),
   };
 }

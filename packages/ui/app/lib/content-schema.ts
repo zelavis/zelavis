@@ -1,3 +1,5 @@
+import type { CollectionFieldEntry } from "./runtime-api";
+
 export type ContentSchemaControl = "text" | "textarea" | "rich-text";
 export type ContentSchemaEditor = "lexical";
 export type ContentFieldBuilderKind =
@@ -84,43 +86,53 @@ export function getContentSchemaUi(
   return definition.ui as ContentSchemaUiDefinition;
 }
 
-export function getContentSchemaProperties(
-  document: unknown,
-): Record<string, ContentSchemaDefinition> {
-  if (!document || typeof document !== "object" || Array.isArray(document)) {
-    return {};
-  }
+// ─── Derive a display-layer ContentSchemaDefinition from a CollectionField ──
 
-  if (!("properties" in document)) {
-    return {};
+function collectionFieldToDefinition(
+  field: CollectionFieldEntry["field"],
+): ContentSchemaDefinition {
+  const label = field.label;
+  switch (field._tag) {
+    case "RichTextField":
+      return {
+        type: "string",
+        format: "html",
+        label,
+        ui: { control: "rich-text", editor: "lexical" },
+      };
+    case "NumberField":
+      return { type: "number", label };
+    case "BooleanField":
+      return { type: "boolean", label };
+    case "ImageField":
+    case "AudioField":
+    case "VideoField":
+    case "FileField": {
+      const accept = field.accept as string[] | undefined;
+      return { type: "file", label, ...(accept?.length ? { mimeTypes: accept } : {}) };
+    }
+    case "RepeaterField":
+      return {
+        type: "array",
+        label,
+        items: { type: "object", additionalProperties: true },
+      };
+    case "TextField":
+    default:
+      return { type: "string", label };
   }
-
-  const properties = (document as { properties?: unknown }).properties;
-  if (!properties || typeof properties !== "object" || Array.isArray(properties)) {
-    return {};
-  }
-
-  return properties as Record<string, ContentSchemaDefinition>;
 }
 
-export function getContentSchemaFields(document: unknown): ContentSchemaField[] {
-  const properties = getContentSchemaProperties(document);
-  const required = Array.isArray((document as { required?: unknown }).required)
-    ? ((document as { required: unknown[] }).required.filter(
-        (value): value is string => typeof value === "string",
-      ) as string[])
-    : [];
+// ─── Public field utilities ───────────────────────────────────────────────────
 
-  return Object.entries(properties).map(([name, definition]) => ({
-    name,
-    label:
-      typeof definition.label === "string" && definition.label.trim().length > 0
-        ? definition.label
-        : humanizeFieldName(name),
-    description:
-      typeof definition.description === "string" ? definition.description : undefined,
-    required: required.includes(name),
-    definition,
+export function getContentSchemaFields(
+  entries: CollectionFieldEntry[],
+): ContentSchemaField[] {
+  return entries.map((entry) => ({
+    name: entry.name,
+    label: entry.field.label || humanizeFieldName(entry.name),
+    required: entry.field.required,
+    definition: collectionFieldToDefinition(entry.field),
   }));
 }
 
@@ -128,10 +140,7 @@ export function isRichTextSchemaField(
   name: string,
   definition: ContentSchemaDefinition,
 ): boolean {
-  if (definition.type !== "string") {
-    return false;
-  }
-
+  if (definition.type !== "string") return false;
   const ui = getContentSchemaUi(definition);
   return (
     ui?.control === "rich-text" ||
@@ -140,50 +149,33 @@ export function isRichTextSchemaField(
   );
 }
 
-export function createStarterContentTypeSchema(): Record<string, unknown> {
-  return {
-    type: "object",
-    additionalProperties: false,
-    required: ["title", "slug"],
-    properties: {
-      title: {
-        type: "string",
-        minLength: 1,
-        label: "Title",
-      },
-      slug: {
-        type: "string",
-        minLength: 1,
-        label: "Slug",
-        description: "Stable URL segment for this entry.",
-      },
-      excerpt: {
-        type: "string",
-        label: "Excerpt",
-        ui: {
-          control: "textarea",
-          rows: 4,
-          placeholder: "Short summary for cards, listings, and previews.",
-        },
-      },
-      _content: {
-        type: "string",
-        format: "html",
-        label: "Content",
-        description: "Primary rich-text body for this content type.",
-        ui: {
-          control: "rich-text",
-          editor: "lexical",
-          placeholder: "Start writing...",
-        },
-      },
-      status: {
-        type: "string",
-        label: "Status",
-        enum: ["draft", "review", "published"],
-      },
-    },
-  };
+export function inferFieldKindFromEntry(
+  entry: CollectionFieldEntry,
+): ContentFieldBuilderKind {
+  switch (entry.field._tag) {
+    case "RichTextField": return "rich-text";
+    case "NumberField": return "number";
+    case "BooleanField": return "boolean";
+    case "ImageField": return "image";
+    case "AudioField": return "audio";
+    case "VideoField": return "video";
+    case "FileField": return "file";
+    case "RepeaterField": return "repeater";
+    case "TextField":
+    default: return "text";
+  }
+}
+
+// ─── Starter schema ───────────────────────────────────────────────────────────
+
+export function createStarterContentTypeFields(): CollectionFieldEntry[] {
+  return [
+    { name: "title", field: { _tag: "TextField", label: "Title", required: true } },
+    { name: "slug", field: { _tag: "TextField", label: "Slug", required: true } },
+    { name: "excerpt", field: { _tag: "TextField", label: "Excerpt", required: false } },
+    { name: "_content", field: { _tag: "RichTextField", label: "Content", required: false } },
+    { name: "status", field: { _tag: "TextField", label: "Status", required: false } },
+  ];
 }
 
 export function createStarterContentEntry(timestamp = Date.now()): Record<string, unknown> {
@@ -196,291 +188,142 @@ export function createStarterContentEntry(timestamp = Date.now()): Record<string
   };
 }
 
-function createFileFieldDefinition(kind: Extract<ContentFieldBuilderKind, "file" | "image" | "audio" | "video" | "document">): ContentSchemaDefinition {
-  switch (kind) {
+// ─── Field builder input → CollectionFieldEntry ───────────────────────────────
+
+export function contentBuilderInputToEntry(
+  input: ContentFieldBuilderInput,
+): CollectionFieldEntry {
+  const label = input.label?.trim() || humanizeFieldName(input.name);
+  const required = input.required ?? false;
+  const name = input.name.trim();
+
+  if (!name) throw new Error("A field name is required.");
+
+  let field: CollectionFieldEntry["field"];
+  switch (input.kind) {
+    case "rich-text":
+      field = { _tag: "RichTextField", label, required };
+      break;
+    case "number":
+      field = { _tag: "NumberField", label, required };
+      break;
+    case "boolean":
+      field = { _tag: "BooleanField", label, required };
+      break;
     case "image":
-      return {
-        type: "file",
-        label: "Image",
-        mimeTypes: ["image/png", "image/jpeg", "image/webp", "image/gif"],
-        maxSize: 5_000_000,
+      field = {
+        _tag: "ImageField",
+        label,
+        required,
+        accept: ["image/png", "image/jpeg", "image/webp", "image/gif"],
       };
+      break;
     case "audio":
-      return {
-        type: "file",
-        label: "Audio",
-        mimeTypes: ["audio/mpeg", "audio/wav", "audio/ogg", "audio/webm"],
-        maxSize: 20_000_000,
+      field = {
+        _tag: "AudioField",
+        label,
+        required,
+        accept: ["audio/mpeg", "audio/wav", "audio/ogg", "audio/webm"],
       };
+      break;
     case "video":
-      return {
-        type: "file",
-        label: "Video",
-        mimeTypes: ["video/mp4", "video/webm", "video/ogg", "video/quicktime"],
-        maxSize: 50_000_000,
+      field = {
+        _tag: "VideoField",
+        label,
+        required,
+        accept: ["video/mp4", "video/webm", "video/ogg", "video/quicktime"],
       };
+      break;
     case "document":
-      return {
-        type: "file",
-        label: "Document",
-        mimeTypes: [
+      field = {
+        _tag: "FileField",
+        label,
+        required,
+        accept: [
           "application/pdf",
           "text/plain",
           "application/json",
           "application/zip",
         ],
-        maxSize: 10_000_000,
       };
+      break;
     case "file":
-    default:
-      return {
-        type: "file",
-      };
-  }
-}
-
-function createUiDefinition(input: ContentFieldBuilderInput): ContentSchemaUiDefinition | undefined {
-  const ui: ContentSchemaUiDefinition = {
-    ...(input.group?.trim() ? { group: input.group.trim() } : {}),
-    ...(input.placeholder?.trim() ? { placeholder: input.placeholder.trim() } : {}),
-    ...(input.helpText?.trim() ? { helpText: input.helpText.trim() } : {}),
-    ...(typeof input.rows === "number" && input.rows > 0 ? { rows: input.rows } : {}),
-  };
-
-  return Object.keys(ui).length > 0 ? ui : undefined;
-}
-
-export function createContentFieldDefinition(
-  input: ContentFieldBuilderInput,
-): ContentSchemaDefinition {
-  const ui = createUiDefinition(input);
-  const shared = {
-    ...(input.label?.trim() ? { label: input.label.trim() } : {}),
-    ...(input.description?.trim() ? { description: input.description.trim() } : {}),
-  };
-
-  switch (input.kind) {
-    case "text":
-      return {
-        type: "string",
-        ...shared,
-        ...(ui ? { ui } : {}),
-      };
-    case "long-text":
-      return {
-        type: "string",
-        ...shared,
-        ui: {
-          control: "textarea",
-          rows: input.rows ?? 5,
-          ...ui,
-        },
-      };
-    case "rich-text":
-      return {
-        type: "string",
-        format: "html",
-        ...shared,
-        ui: {
-          control: "rich-text",
-          editor: "lexical",
-          placeholder: input.placeholder?.trim() || "Start writing...",
-          ...ui,
-        },
-      };
-    case "number":
-      return {
-        type: "number",
-        ...shared,
-        ...(ui ? { ui } : {}),
-      };
-    case "boolean":
-      return {
-        type: "boolean",
-        ...shared,
-        ...(ui ? { ui } : {}),
-      };
-    case "status":
-      return {
-        type: "string",
-        ...shared,
-        enum: ["draft", "review", "published"],
-        ...(ui ? { ui } : {}),
-      };
-    case "relation":
-      return {
-        type: "string",
-        format: "collection-reference",
-        ...shared,
-        relation: {
-          collection: input.relationCollection?.trim() || "entries",
-        },
-        ...(ui ? { ui } : {}),
-      };
+      field = { _tag: "FileField", label, required };
+      break;
     case "repeater":
-      return {
-        type: "array",
-        ...shared,
-        items: {
-          type: "object",
-          additionalProperties: true,
-        },
-        ui: {
-          control: "textarea",
-          rows: input.rows ?? 10,
-          ...ui,
-        },
-      };
+      field = { _tag: "RepeaterField", label, required, fields: [] };
+      break;
+    case "text":
+    case "long-text":
+    case "status":
+    case "relation":
     case "json":
-      return {
-        type: "object",
-        ...shared,
-        ...(ui ? { ui } : {}),
-      };
-    case "file":
-    case "image":
-    case "audio":
-    case "video":
-    case "document":
-      return {
-        ...createFileFieldDefinition(input.kind),
-        ...shared,
-        ...(ui ? { ui } : {}),
-      };
     default:
-      return {
-        type: "string",
-        ...shared,
-        ...(ui ? { ui } : {}),
-      };
+      field = { _tag: "TextField", label, required };
+      break;
   }
+
+  return { name, field };
 }
 
-export function insertFieldIntoSchemaDocument(input: {
-  document: Record<string, unknown>;
-  field: ContentFieldBuilderInput;
-}): Record<string, unknown> {
-  const nextDocument = structuredClone(input.document) as Record<string, unknown>;
-  if (nextDocument.type !== "object") {
-    throw new Error("The schema root must be an object.");
+// ─── Schema draft mutations (operate on CollectionFieldEntry[]) ───────────────
+
+export function insertCollectionField(
+  fields: CollectionFieldEntry[],
+  input: ContentFieldBuilderInput,
+): CollectionFieldEntry[] {
+  const name = input.name.trim();
+  if (!name) throw new Error("A field name is required.");
+  if (fields.some((f) => f.name === name)) {
+    throw new Error(`A field named "${name}" already exists.`);
   }
-
-  const fieldName = input.field.name.trim();
-  if (!fieldName) {
-    throw new Error("A field name is required.");
-  }
-
-  const properties =
-    nextDocument.properties && typeof nextDocument.properties === "object"
-      ? ({ ...(nextDocument.properties as Record<string, unknown>) })
-      : {};
-
-  if (fieldName in properties) {
-    throw new Error(`A field named "${fieldName}" already exists.`);
-  }
-
-  properties[fieldName] = createContentFieldDefinition(input.field);
-  nextDocument.properties = properties;
-
-  const required = Array.isArray(nextDocument.required)
-    ? (nextDocument.required.filter(
-        (value): value is string => typeof value === "string",
-      ) as string[])
-    : [];
-
-  nextDocument.required = input.field.required
-    ? [...new Set([...required, fieldName])]
-    : required.filter((value) => value !== fieldName);
-
-  return nextDocument;
+  return [...fields, contentBuilderInputToEntry(input)];
 }
 
-export function updateFieldInSchemaDocument(input: {
-  document: Record<string, unknown>;
-  fieldName: string;
-  field: ContentFieldBuilderInput;
-}): Record<string, unknown> {
-  const nextDocument = structuredClone(input.document) as Record<string, unknown>;
-  const properties =
-    nextDocument.properties && typeof nextDocument.properties === "object"
-      ? ({ ...(nextDocument.properties as Record<string, unknown>) })
-      : {};
-
-  if (!(input.fieldName in properties)) {
-    throw new Error(`The field "${input.fieldName}" does not exist.`);
+export function updateCollectionField(
+  fields: CollectionFieldEntry[],
+  fieldName: string,
+  input: ContentFieldBuilderInput,
+): CollectionFieldEntry[] {
+  if (!fields.some((f) => f.name === fieldName)) {
+    throw new Error(`The field "${fieldName}" does not exist.`);
   }
-
-  properties[input.fieldName] = createContentFieldDefinition(input.field);
-  nextDocument.properties = properties;
-
-  const required = Array.isArray(nextDocument.required)
-    ? (nextDocument.required.filter(
-        (value): value is string => typeof value === "string",
-      ) as string[])
-    : [];
-
-  nextDocument.required = input.field.required
-    ? [...new Set([...required, input.fieldName])]
-    : required.filter((value) => value !== input.fieldName);
-
-  return nextDocument;
+  return fields.map((f) =>
+    f.name === fieldName ? contentBuilderInputToEntry({ ...input, name: fieldName }) : f,
+  );
 }
 
-export function moveFieldInSchemaDocument(input: {
-  document: Record<string, unknown>;
-  fieldName: string;
-  direction: -1 | 1;
-}): Record<string, unknown> {
-  const nextDocument = structuredClone(input.document) as Record<string, unknown>;
-  const entries = Object.entries(getContentSchemaProperties(nextDocument));
-  const index = entries.findIndex(([name]) => name === input.fieldName);
-  const nextIndex = index + input.direction;
-  if (index === -1 || nextIndex < 0 || nextIndex >= entries.length) {
-    return nextDocument;
-  }
-
-  const reordered = [...entries];
-  [reordered[index], reordered[nextIndex]] = [reordered[nextIndex], reordered[index]];
-  nextDocument.properties = Object.fromEntries(reordered);
-  return nextDocument;
+export function removeCollectionField(
+  fields: CollectionFieldEntry[],
+  fieldName: string,
+): CollectionFieldEntry[] {
+  return fields.filter((f) => f.name !== fieldName);
 }
 
-export function removeFieldFromSchemaDocument(input: {
-  document: Record<string, unknown>;
-  fieldName: string;
-}): Record<string, unknown> {
-  const nextDocument = structuredClone(input.document) as Record<string, unknown>;
-  const properties =
-    nextDocument.properties && typeof nextDocument.properties === "object"
-      ? ({ ...(nextDocument.properties as Record<string, unknown>) })
-      : {};
-
-  delete properties[input.fieldName];
-  nextDocument.properties = properties;
-
-  const required = Array.isArray(nextDocument.required)
-    ? (nextDocument.required.filter(
-        (value): value is string => typeof value === "string",
-      ) as string[])
-    : [];
-
-  nextDocument.required = required.filter((value) => value !== input.fieldName);
-  return nextDocument;
+export function moveCollectionField(
+  fields: CollectionFieldEntry[],
+  fieldName: string,
+  direction: -1 | 1,
+): CollectionFieldEntry[] {
+  const index = fields.findIndex((f) => f.name === fieldName);
+  const next = index + direction;
+  if (index === -1 || next < 0 || next >= fields.length) return fields;
+  const reordered = [...fields];
+  [reordered[index], reordered[next]] = [reordered[next], reordered[index]];
+  return reordered;
 }
+
+// ─── Form value helpers (used by entry editor) ────────────────────────────────
 
 export function normalizeSchemaFieldValue(
   definition: ContentSchemaDefinition,
   rawValue: unknown,
 ): unknown {
-  if (rawValue === undefined) {
-    return undefined;
-  }
+  if (rawValue === undefined) return undefined;
 
   switch (definition.type) {
     case "number": {
-      if (rawValue === "" || rawValue === null) {
-        return undefined;
-      }
+      if (rawValue === "" || rawValue === null) return undefined;
       const numeric = Number(rawValue);
       return Number.isFinite(numeric) ? numeric : rawValue;
     }
@@ -489,12 +332,8 @@ export function normalizeSchemaFieldValue(
     case "object":
     case "array":
     case "file":
-      if (typeof rawValue !== "string") {
-        return rawValue;
-      }
-      if (rawValue.trim().length === 0) {
-        return undefined;
-      }
+      if (typeof rawValue !== "string") return rawValue;
+      if (rawValue.trim().length === 0) return undefined;
       return JSON.parse(rawValue) as unknown;
     default:
       return rawValue;
@@ -505,10 +344,7 @@ export function stringifySchemaFieldValue(
   definition: ContentSchemaDefinition,
   value: unknown,
 ): string {
-  if (value === undefined || value === null) {
-    return "";
-  }
-
+  if (value === undefined || value === null) return "";
   switch (definition.type) {
     case "object":
     case "array":

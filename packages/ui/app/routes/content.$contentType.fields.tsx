@@ -8,17 +8,18 @@ import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import { Switch } from "#/components/ui/switch";
 import {
-  createContentFieldDefinition,
   getContentSchemaFields,
   getContentSchemaUi,
-  insertFieldIntoSchemaDocument,
+  inferFieldKindFromEntry,
+  insertCollectionField,
   isRichTextSchemaField,
-  moveFieldInSchemaDocument,
-  removeFieldFromSchemaDocument,
-  updateFieldInSchemaDocument,
+  moveCollectionField,
+  removeCollectionField,
+  updateCollectionField,
   type ContentFieldBuilderKind,
   type ContentSchemaDefinition,
 } from "#/lib/content-schema";
+import type { CollectionFieldEntry } from "#/lib/runtime-api";
 import {
   createDatabaseSchema,
   getRuntimeConfig,
@@ -64,7 +65,7 @@ function ContentTypeFieldsRoute() {
   const { schemas, contentType } = useLoaderData<typeof clientLoader>();
   const revalidator = useRevalidator();
   const activeSchema = schemas.find((schema) => schema.active) ?? schemas.at(-1);
-  const [schemaDraft, setSchemaDraft] = useState<Record<string, unknown>>();
+  const [schemaDraft, setSchemaDraft] = useState<CollectionFieldEntry[]>();
   const [selectedFieldName, setSelectedFieldName] = useState<string>();
   const [newFieldName, setNewFieldName] = useState("");
   const [newFieldLabel, setNewFieldLabel] = useState("");
@@ -93,17 +94,16 @@ function ContentTypeFieldsRoute() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!activeSchema?.document || typeof activeSchema.document !== "object") {
+    if (!activeSchema) {
       setSchemaDraft(undefined);
       setSelectedFieldName(undefined);
       return;
     }
-
-    setSchemaDraft(structuredClone(activeSchema.document) as Record<string, unknown>);
-  }, [activeSchema?.document]);
+    setSchemaDraft([...(activeSchema.fields ?? [])]);
+  }, [activeSchema]);
 
   const fields = useMemo(
-    () => getContentSchemaFields(schemaDraft),
+    () => getContentSchemaFields(schemaDraft ?? []),
     [schemaDraft],
   );
   const fieldGroups = useMemo(() => {
@@ -144,27 +144,21 @@ function ContentTypeFieldsRoute() {
   }
 
   function handleAddField() {
-    if (!schemaDraft) {
-      return;
-    }
-
+    if (!schemaDraft) return;
     try {
-      const nextDocument = insertFieldIntoSchemaDocument({
-        document: schemaDraft,
-        field: {
-          name: newFieldName,
-          label: newFieldLabel,
-          description: newFieldDescription,
-          group: newFieldGroup,
-          kind: newFieldKind,
-          required: newFieldRequired,
-          placeholder: newFieldPlaceholder,
-          helpText: newFieldHelpText,
-          rows: Number.isFinite(Number(newFieldRows)) ? Number(newFieldRows) : undefined,
-          relationCollection: newFieldRelationCollection,
-        },
+      const next = insertCollectionField(schemaDraft, {
+        name: newFieldName,
+        label: newFieldLabel,
+        description: newFieldDescription,
+        group: newFieldGroup,
+        kind: newFieldKind,
+        required: newFieldRequired,
+        placeholder: newFieldPlaceholder,
+        helpText: newFieldHelpText,
+        rows: Number.isFinite(Number(newFieldRows)) ? Number(newFieldRows) : undefined,
+        relationCollection: newFieldRelationCollection,
       });
-      setSchemaDraft(nextDocument);
+      setSchemaDraft(next);
       setSelectedFieldName(newFieldName.trim());
       setError(undefined);
       setMessage(`Prepared field "${newFieldName.trim()}" in the draft schema.`);
@@ -176,68 +170,43 @@ function ContentTypeFieldsRoute() {
   }
 
   function handleRemoveField(fieldName: string) {
-    if (!schemaDraft) {
-      return;
-    }
-
-    const nextDocument = removeFieldFromSchemaDocument({
-      document: schemaDraft,
-      fieldName,
-    });
-    setSchemaDraft(nextDocument);
+    if (!schemaDraft) return;
+    setSchemaDraft(removeCollectionField(schemaDraft, fieldName));
     setError(undefined);
     setMessage(`Removed field "${fieldName}" from the draft schema.`);
   }
 
   function beginEditingField(fieldName: string) {
-    const field = fields.find((entry) => entry.name === fieldName);
-    if (!field) {
-      return;
-    }
-
-    setEditingFieldName(field.name);
-    setEditingFieldLabel(field.label);
-    setEditingFieldDescription(field.description ?? "");
-    setEditingFieldGroup(getContentSchemaUi(field.definition)?.group?.trim() || "Content");
-    setEditingFieldKind(inferFieldKind(field.name, field.definition));
-    setEditingFieldRequired(field.required);
-    setEditingFieldPlaceholder(getContentSchemaUi(field.definition)?.placeholder ?? "");
-    setEditingFieldHelpText(getContentSchemaUi(field.definition)?.helpText ?? "");
-    setEditingFieldRows(String(getContentSchemaUi(field.definition)?.rows ?? 5));
-    setEditingFieldRelationCollection(
-      typeof field.definition.relation === "object" &&
-        field.definition.relation &&
-        typeof (field.definition.relation as { collection?: unknown }).collection === "string"
-        ? ((field.definition.relation as { collection: string }).collection)
-        : "",
-    );
+    const entry = schemaDraft?.find((e) => e.name === fieldName);
+    if (!entry) return;
+    setEditingFieldName(entry.name);
+    setEditingFieldLabel(entry.field.label);
+    setEditingFieldDescription("");
+    setEditingFieldGroup("Content");
+    setEditingFieldKind(inferFieldKindFromEntry(entry));
+    setEditingFieldRequired(entry.field.required);
+    setEditingFieldPlaceholder("");
+    setEditingFieldHelpText("");
+    setEditingFieldRows("5");
+    setEditingFieldRelationCollection("");
   }
 
   function handleSaveFieldEdits() {
-    if (!schemaDraft || !editingFieldName) {
-      return;
-    }
-
+    if (!schemaDraft || !editingFieldName) return;
     try {
-      const nextDocument = updateFieldInSchemaDocument({
-        document: schemaDraft,
-        fieldName: editingFieldName,
-        field: {
-          name: editingFieldName,
-          label: editingFieldLabel,
-          description: editingFieldDescription,
-          group: editingFieldGroup,
-          kind: editingFieldKind,
-          required: editingFieldRequired,
-          placeholder: editingFieldPlaceholder,
-          helpText: editingFieldHelpText,
-          rows: Number.isFinite(Number(editingFieldRows))
-            ? Number(editingFieldRows)
-            : undefined,
-          relationCollection: editingFieldRelationCollection,
-        },
+      const next = updateCollectionField(schemaDraft, editingFieldName, {
+        name: editingFieldName,
+        label: editingFieldLabel,
+        description: editingFieldDescription,
+        group: editingFieldGroup,
+        kind: editingFieldKind,
+        required: editingFieldRequired,
+        placeholder: editingFieldPlaceholder,
+        helpText: editingFieldHelpText,
+        rows: Number.isFinite(Number(editingFieldRows)) ? Number(editingFieldRows) : undefined,
+        relationCollection: editingFieldRelationCollection,
       });
-      setSchemaDraft(nextDocument);
+      setSchemaDraft(next);
       setMessage(`Updated field "${editingFieldName}".`);
       setError(undefined);
       setEditingFieldName(undefined);
@@ -248,16 +217,8 @@ function ContentTypeFieldsRoute() {
   }
 
   function handleMoveField(fieldName: string, direction: -1 | 1) {
-    if (!schemaDraft) {
-      return;
-    }
-
-    const nextDocument = moveFieldInSchemaDocument({
-      document: schemaDraft,
-      fieldName,
-      direction,
-    });
-    setSchemaDraft(nextDocument);
+    if (!schemaDraft) return;
+    setSchemaDraft(moveCollectionField(schemaDraft, fieldName, direction));
     setError(undefined);
     setMessage(`Reordered field "${fieldName}".`);
   }
@@ -277,11 +238,7 @@ function ContentTypeFieldsRoute() {
         collection: contentType,
         version: nextVersion,
         activate: true,
-        document: schemaDraft,
-        metadata: {
-          source: "content-fields-builder",
-          basedOnVersion: activeSchema.version,
-        },
+        fields: schemaDraft,
       });
       revalidator.revalidate();
       setMessage(`Saved and activated schema v${nextVersion}.`);
@@ -589,32 +546,15 @@ function ContentTypeFieldsRoute() {
                     </p>
                   </div>
                 ) : null}
-                {inferFieldKind(selectedField.name, selectedField.definition) === "relation" ? (
-                  <div className="mt-4 rounded-md border bg-background p-3">
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      Relation target
-                    </p>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      {typeof selectedField.definition.relation === "object" &&
-                      selectedField.definition.relation &&
-                      typeof (selectedField.definition.relation as { collection?: unknown }).collection === "string"
-                        ? (selectedField.definition.relation as { collection: string }).collection
-                        : "No collection set"}
-                    </p>
-                  </div>
-                ) : null}
               </div>
 
               <div className="rounded-md border bg-muted/15 p-4">
-                <p className="text-sm font-medium text-foreground">Schema preview</p>
+                <p className="text-sm font-medium text-foreground">Field preview</p>
                 <pre className="mt-3 overflow-x-auto rounded-md border bg-background p-4 text-xs leading-6 text-muted-foreground">
-                  {JSON.stringify(createContentFieldDefinition({
-                    name: selectedField.name,
-                    label: selectedField.label,
-                    description: selectedField.description,
-                    required: selectedField.required,
-                    kind: inferFieldKind(selectedField.name, selectedField.definition),
-                  }), null, 2)}
+                  {JSON.stringify(
+                    schemaDraft?.find((e) => e.name === selectedField.name)?.field,
+                    null, 2
+                  )}
                 </pre>
               </div>
               {editingFieldName ? (
@@ -736,75 +676,15 @@ function ContentTypeFieldsRoute() {
 
 function renderFieldType(definition: ContentSchemaDefinition) {
   if (definition.type === "file" && Array.isArray(definition.mimeTypes)) {
-    if (definition.mimeTypes.some((value) => String(value).startsWith("image/"))) {
-      return "image";
-    }
-    if (definition.mimeTypes.some((value) => String(value).startsWith("audio/"))) {
-      return "audio";
-    }
-    if (definition.mimeTypes.some((value) => String(value).startsWith("video/"))) {
-      return "video";
-    }
-    if (definition.mimeTypes.some((value) => String(value).includes("pdf"))) {
-      return "document";
-    }
+    const mimes = definition.mimeTypes as string[];
+    if (mimes.some((v) => v.startsWith("image/"))) return "image";
+    if (mimes.some((v) => v.startsWith("audio/"))) return "audio";
+    if (mimes.some((v) => v.startsWith("video/"))) return "video";
+    if (mimes.some((v) => v.includes("pdf"))) return "document";
     return "file";
   }
-
-  if (isRichTextSchemaField("_content", definition)) {
-    return "rich text";
-  }
-
+  if (isRichTextSchemaField("_content", definition)) return "rich text";
   return typeof definition.type === "string" ? definition.type : "custom";
-}
-
-function inferFieldKind(
-  name: string,
-  definition: ContentSchemaDefinition,
-): ContentFieldBuilderKind {
-  if (isRichTextSchemaField(name, definition)) {
-    return "rich-text";
-  }
-
-  if (definition.type === "file") {
-    return renderFieldType(definition) as ContentFieldBuilderKind;
-  }
-
-  if (
-    definition.type === "string" &&
-    typeof definition.format === "string" &&
-    definition.format === "collection-reference"
-  ) {
-    return "relation";
-  }
-
-  if (definition.type === "array") {
-    return "repeater";
-  }
-
-  if (definition.type === "string" && getContentSchemaUi(definition)?.control === "textarea") {
-    return "long-text";
-  }
-
-  if (
-    definition.type === "string" &&
-    Array.isArray(definition.enum) &&
-    definition.enum.join(",") === "draft,review,published"
-  ) {
-    return "status";
-  }
-
-  switch (definition.type) {
-    case "number":
-      return "number";
-    case "boolean":
-      return "boolean";
-    case "object":
-      return "json";
-    case "string":
-    default:
-      return "text";
-  }
 }
 
 function FieldPropertyCard(props: { label: string; value: string }) {

@@ -55,8 +55,8 @@ function ContentEntryEditorRoute() {
 
   const activeSchema = schemas.find((schema) => schema.active) ?? schemas.at(-1);
   const fields = useMemo(
-    () => getContentSchemaFields(activeSchema?.document),
-    [activeSchema?.document],
+    () => getContentSchemaFields(activeSchema?.fields ?? []),
+    [activeSchema?.fields],
   );
   const documentData = (entry.data as Record<string, unknown>) ?? {};
   const { runtime } = useRouteLoaderData<typeof rootClientLoader>('root')!;

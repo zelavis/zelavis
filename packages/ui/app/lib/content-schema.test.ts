@@ -2,15 +2,15 @@ import { expect, test } from "vitest";
 
 import {
   createStarterContentEntry,
-  createStarterContentTypeSchema,
+  createStarterContentTypeFields,
 } from "./content-schema";
 
-test("starter content type schema requires title and slug", () => {
-  expect(createStarterContentTypeSchema()).toMatchObject({
-    type: "object",
-    additionalProperties: false,
-    required: ["title", "slug"],
-  });
+test("starter content type fields include title and slug", () => {
+  const fields = createStarterContentTypeFields();
+  expect(fields.some((f) => f.name === "title")).toBe(true);
+  expect(fields.some((f) => f.name === "slug")).toBe(true);
+  expect(fields.find((f) => f.name === "title")?.field.required).toBe(true);
+  expect(fields.find((f) => f.name === "slug")?.field.required).toBe(true);
 });
 
 test("starter content entry matches the starter content type schema shape", () => {
