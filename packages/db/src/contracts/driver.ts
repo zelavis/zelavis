@@ -18,11 +18,7 @@ import type {
   DatabaseEventPayload,
   ReadDatabaseEventsInput,
 } from "./events.js";
-import type {
-  DatabaseCollectionSchema,
-  DatabaseStoredCollectionSchema,
-} from "./schemas.js";
-import type { DatabaseJsonObject } from "./json.js";
+import type { StoredCollectionSchema } from "../schema/index.js";
 import type { SqlDatabase } from "./sql.js";
 
 type TenantScoped<TInput extends { tenantId?: string }> = Omit<
@@ -71,10 +67,8 @@ export interface DatabaseEventDriver {
 }
 
 export interface DatabaseSchemaStorageDriver {
-  list(): Promise<DatabaseStoredCollectionSchema[]>;
-  save<TData extends DatabaseJsonObject = DatabaseJsonObject>(
-    schema: DatabaseCollectionSchema<TData>,
-  ): Promise<void>;
+  list(): Promise<StoredCollectionSchema[]>;
+  save(schema: StoredCollectionSchema): Promise<void>;
   activate(collection: string, version: number): Promise<void>;
 }
 

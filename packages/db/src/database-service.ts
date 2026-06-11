@@ -11,22 +11,18 @@ import type {
 } from "./contracts/documents.js";
 import type { DatabaseJsonObject } from "./contracts/json.js";
 import type {
-  DatabaseCollectionSchema,
-  DatabaseObjectSchemaDefinition,
-} from "./contracts/schemas.js";
-import type {
   DatabaseTimeSeriesAggregateOperation,
   DatabaseTimeSeriesRangeInput,
 } from "./contracts/api.js";
 import {
   DatabaseEventIdempotencyConflictError,
 } from "./contracts/events.js";
-import { DatabaseSchemaValidationError } from "./contracts/schemas.js";
 import {
   DatabaseConflictError,
   DatabaseDomainError,
   DatabaseNotFoundError,
   DatabaseRevisionMismatchError,
+  DatabaseSchemaValidationError,
   DatabaseValidationError,
 } from "./core/errors.js";
 
@@ -143,11 +139,11 @@ function readOptionalPositiveInteger(value: unknown, fallback: number) {
 }
 
 const systemTableMap = {
-  _collections: "collections",
-  _events: "events",
-  _schemas: "schemas",
-  _time_series_checkpoints: "time_series_checkpoints",
-  _time_series_points: "time_series_points",
+  zv_collections: "zv_collections",
+  zv_events: "zv_events",
+  zv_schemas: "zv_schemas",
+  zv_time_series_checkpoints: "zv_time_series_checkpoints",
+  zv_time_series_points: "zv_time_series_points",
 } as const;
 
 type DatabaseSystemTableName = keyof typeof systemTableMap;
@@ -162,34 +158,21 @@ function readSystemTableName(value: unknown): DatabaseSystemTableName {
 
 function systemTableOrderBy(table: DatabaseSystemTableName) {
   switch (table) {
-    case "_collections":
+    case "zv_collections":
       return "tenant_id ASC, name ASC";
-    case "_events":
+    case "zv_events":
       return "sequence DESC";
-    case "_schemas":
+    case "zv_schemas":
       return "collection_name ASC, version DESC";
-    case "_time_series_checkpoints":
+    case "zv_time_series_checkpoints":
       return "updated_at DESC";
-    case "_time_series_points":
+    case "zv_time_series_points":
       return "timestamp_ms DESC, point_index DESC";
     default:
       return "1";
   }
 }
 
-function readSchemaDefinition(value: unknown): DatabaseObjectSchemaDefinition {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new TypeError("A schema document definition is required.");
-  }
-
-  if ((value as { type?: unknown }).type !== "object") {
-    throw new TypeError(
-      "Schema document definitions must use an object root type.",
-    );
-  }
-
-  return value as DatabaseObjectSchemaDefinition;
-}
 
 const databaseErrorRules: readonly ZelavisServerErrorStatusRule[] = [
   {
@@ -237,26 +220,11 @@ export function defineDatabaseService(
           title: "System Tables",
           panelLabel: "System Tables",
           items: [
-            {
-              title: "_collections",
-              path: "/database",
-            },
-            {
-              title: "_events",
-              path: "/database",
-            },
-            {
-              title: "_schemas",
-              path: "/database",
-            },
-            {
-              title: "_time_series_checkpoints",
-              path: "/database",
-            },
-            {
-              title: "_time_series_points",
-              path: "/database",
-            },
+            { title: "zv_collections", path: "/database" },
+            { title: "zv_events", path: "/database" },
+            { title: "zv_schemas", path: "/database" },
+            { title: "zv_time_series_checkpoints", path: "/database" },
+            { title: "zv_time_series_points", path: "/database" },
           ],
         },
       ],
@@ -553,34 +521,32 @@ export function defineDatabaseSchemasService(
           handler: ({ service, params }) => ({
             body: {
               collection: params.collection,
-              schemas: service.schemas.listVersionRecords(params.collection),
+              schemas: service.schemas.listVersions(params.collection),
             },
           }),
         },
         {
-          id: "database.schemas.register",
+          id: "database.schemas.save",
           method: "POST",
           path: "/:collection",
           handler: async ({ service, params, body }) => {
             const input = readBodyObject(body);
-
             try {
-              const schema: DatabaseCollectionSchema = {
-                collection: params.collection,
-                version: readRequiredNumber(input.version, "Schema version"),
-                activate: input.activate === true,
-                document: readSchemaDefinition(input.document),
-                metadata:
-                  input.metadata &&
-                  typeof input.metadata === "object" &&
-                  !Array.isArray(input.metadata)
-                    ? (input.metadata as Record<string, unknown>)
-                    : undefined,
-              };
-
+              const fields = input.fields;
+              if (!Array.isArray(fields)) {
+                return {
+                  status: 400,
+                  body: { error: "fields must be an array of field definitions." },
+                };
+              }
               return {
                 status: 201,
-                body: await service.schemas.register(schema),
+                body: await service.schemas.save({
+                  collection: params.collection,
+                  version: readRequiredNumber(input.version, "Schema version"),
+                  activate: input.activate === true,
+                  fields: fields as never,
+                }),
               };
             } catch (error) {
               return databaseErrorResponse(error, 400);
@@ -593,7 +559,6 @@ export function defineDatabaseSchemasService(
           path: "/:collection/activate",
           handler: async ({ service, params, body }) => {
             const input = readBodyObject(body);
-
             try {
               return {
                 body: await service.schemas.activate(
@@ -612,17 +577,12 @@ export function defineDatabaseSchemasService(
           path: "/:collection/validate",
           handler: ({ service, params, body }) => {
             const input = readBodyObject(body);
-
             try {
               return {
-                body: service.schemas.validate({
-                  collection: params.collection,
-                  version:
-                    typeof input.version === "number"
-                      ? input.version
-                      : undefined,
-                  data: readJsonObject(input.data),
-                }),
+                body: service.schemas.validate(
+                  params.collection,
+                  readJsonObject(input.data),
+                ),
               };
             } catch (error) {
               return databaseErrorResponse(error, 400);

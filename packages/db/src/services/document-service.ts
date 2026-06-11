@@ -14,7 +14,7 @@ import {
 } from "../contracts/documents.js";
 import type { DatabaseDocumentUpsertedPayload } from "../contracts/events.js";
 import type { DatabaseJsonObject } from "../contracts/json.js";
-import { DatabaseSchemaValidationError } from "../contracts/schemas.js";
+import { DatabaseSchemaValidationError } from "../core/errors.js";
 import { DatabaseNotFoundError } from "../core/errors.js";
 import type { EventService } from "./event-service.js";
 import type { SchemaService } from "./schema-service.js";
@@ -42,16 +42,13 @@ export class DocumentService implements DatabaseDocumentsApi {
     collection: string,
     data: TData,
   ): number {
-    const result = this.schemas.validate({
-      collection,
-      data,
-    });
+    const result = this.schemas.validate(collection, data);
 
-    if (!result.validation.valid) {
+    if (!result.valid) {
       throw new DatabaseSchemaValidationError({
         collection,
         schemaVersion: result.schemaVersion,
-        issues: result.validation.issues,
+        issues: result.issues,
       });
     }
 
@@ -70,11 +67,6 @@ export class DocumentService implements DatabaseDocumentsApi {
     const resolved = withTenantId(input, this.defaultTenantId);
     validateDatabaseCollectionName(resolved.name);
 
-    const metadata: Record<string, unknown> = {
-      ...(resolved.metadata ?? {}),
-      ...(resolved.surface ? { surface: resolved.surface } : {}),
-    };
-
     return this.events
       .append({
         tenantId: resolved.tenantId,
@@ -83,7 +75,10 @@ export class DocumentService implements DatabaseDocumentsApi {
         type: "collection.created",
         expectedRevision: 0,
         payload: {
-          metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+          surface: resolved.surface,
+          metadata: resolved.metadata && Object.keys(resolved.metadata).length > 0
+            ? resolved.metadata
+            : undefined,
         },
       })
       .then(async () => {

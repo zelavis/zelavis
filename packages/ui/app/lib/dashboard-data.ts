@@ -68,11 +68,11 @@ export type DashboardRoutePath =
 
 export type DashboardNavSearch = {
   systemTable?:
-    | "_collections"
-    | "_events"
-    | "_schemas"
-    | "_time_series_checkpoints"
-    | "_time_series_points";
+    | "zv_collections"
+    | "zv_events"
+    | "zv_schemas"
+    | "zv_time_series_checkpoints"
+    | "zv_time_series_points";
   databaseTable?: string;
   sidebar?: string;
 };
@@ -369,11 +369,11 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
           title: "System Tables",
           panelLabel: "System Tables",
           items: [
-            { title: "_collections", path: "/database" },
-            { title: "_events", path: "/database" },
-            { title: "_schemas", path: "/database" },
-            { title: "_time_series_checkpoints", path: "/database" },
-            { title: "_time_series_points", path: "/database" },
+            { title: "zv_collections", path: "/database" },
+            { title: "zv_events", path: "/database" },
+            { title: "zv_schemas", path: "/database" },
+            { title: "zv_time_series_checkpoints", path: "/database" },
+            { title: "zv_time_series_points", path: "/database" },
           ],
         },
       ],

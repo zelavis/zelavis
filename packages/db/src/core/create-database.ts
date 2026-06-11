@@ -1,5 +1,5 @@
 import type { DatabaseDriver } from "../contracts/driver.js";
-import type { DatabaseCollectionSchema } from "../contracts/schemas.js";
+import type { CollectionSchema } from "../schema/index.js";
 import { DocumentService } from "../services/document-service.js";
 import { EventService } from "../services/event-service.js";
 import {
@@ -16,7 +16,7 @@ export interface CreateDatabaseOptions {
   config?: Record<string, unknown>;
   defaultTenantId?: string;
   defaultNodeId?: string;
-  schemas?: readonly DatabaseCollectionSchema[];
+  schemas?: readonly CollectionSchema[];
 }
 
 export async function createDatabase(
@@ -45,7 +45,9 @@ export async function createDatabase(
   );
   const schemas = new SchemaService(driver.schemas);
   await schemas.hydrate();
-  await schemas.registerMany(options.schemas ?? []);
+  for (const schema of options.schemas ?? []) {
+    await schemas.save(schema);
+  }
 
   return {
     context,

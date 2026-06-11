@@ -339,19 +339,28 @@ export interface DatabaseSchemaCollectionSummary {
 
 export interface DatabaseSystemTableSummary {
   name:
-    | "_collections"
-    | "_events"
-    | "_schemas"
-    | "_time_series_checkpoints"
-    | "_time_series_points";
+    | "zv_collections"
+    | "zv_events"
+    | "zv_schemas"
+    | "zv_time_series_checkpoints"
+    | "zv_time_series_points";
   physicalName: string;
+}
+
+export interface CollectionFieldEntry {
+  name: string;
+  field: {
+    _tag: string;
+    label: string;
+    required: boolean;
+    [key: string]: unknown;
+  };
 }
 
 export interface DatabaseStoredCollectionSchema {
   collection: string;
   version: number;
-  document: Record<string, unknown>;
-  metadata?: Record<string, unknown>;
+  fields: CollectionFieldEntry[];
   active: boolean;
 }
 
@@ -444,11 +453,11 @@ const fallbackConfig: RuntimeConfig = {
             title: "System Tables",
             panelLabel: "System Tables",
             items: [
-              { title: "_collections", path: "/database" },
-              { title: "_events", path: "/database" },
-              { title: "_schemas", path: "/database" },
-              { title: "_time_series_checkpoints", path: "/database" },
-              { title: "_time_series_points", path: "/database" },
+              { title: "zv_collections", path: "/database" },
+              { title: "zv_events", path: "/database" },
+              { title: "zv_schemas", path: "/database" },
+              { title: "zv_time_series_checkpoints", path: "/database" },
+              { title: "zv_time_series_points", path: "/database" },
             ],
           },
         ],
@@ -1112,10 +1121,11 @@ export async function listDatabaseCollections(config: RuntimeConfig) {
         name?: unknown;
         created_at?: unknown;
         document_count?: unknown;
+        surface?: unknown;
         metadata_json?: unknown;
       }>;
     }>(
-      `${config.api.basePath}/database/sql/system/_collections?limit=500&refresh=${cacheBuster}`,
+      `${config.api.basePath}/database/sql/system/zv_collections?limit=500&refresh=${cacheBuster}`,
     );
 
     for (const row of systemResult.rows) {
@@ -1130,9 +1140,7 @@ export async function listDatabaseCollections(config: RuntimeConfig) {
           ? (JSON.parse(row.metadata_json) as Record<string, unknown> | null)
           : undefined;
       const surface =
-        metadata?.surface === "content-studio"
-          ? ("content-studio" as const)
-          : undefined;
+        row.surface === "content-studio" ? ("content-studio" as const) : undefined;
 
       collectionsByKey.set(`${tenantId}:${row.name}`, {
         name: row.name,
@@ -1206,8 +1214,7 @@ export async function createDatabaseSchema(
     collection: string;
     version: number;
     activate?: boolean;
-    document: Record<string, unknown>;
-    metadata?: Record<string, unknown>;
+    fields: CollectionFieldEntry[];
   },
 ) {
   return readJson<DatabaseStoredCollectionSchema>(
@@ -1217,8 +1224,7 @@ export async function createDatabaseSchema(
       body: JSON.stringify({
         version: input.version,
         activate: input.activate ?? false,
-        document: input.document,
-        metadata: input.metadata,
+        fields: input.fields,
       }),
     },
   );

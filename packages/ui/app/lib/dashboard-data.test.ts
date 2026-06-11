@@ -127,8 +127,8 @@ describe("dashboard navigation ownership", () => {
               title: "System Tables",
               panelLabel: "System Tables",
               items: [
-                { title: "_collections", path: "/database" },
-                { title: "_events", path: "/database" },
+                { title: "zv_collections", path: "/database" },
+                { title: "zv_events", path: "/database" },
               ],
             },
           ],
@@ -185,6 +185,6 @@ describe("dashboard navigation ownership", () => {
       databaseTable: "fruits",
       systemTable: undefined,
     });
-    expect(findNavItem(database?.items ?? [], "_collections")).toBeDefined();
+    expect(findNavItem(database?.items ?? [], "zv_collections")).toBeDefined();
   });
 });

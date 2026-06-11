@@ -1,14 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  audioFileSchema,
   createDatabase,
-  documentFileSchema,
-  fileSchema,
-  imageFileSchema,
   parseWriteTargetTable,
-  richTextHtmlSchema,
-  videoFileSchema,
 } from "../dist/index.js";
 
 test("database documents support tenant-aware CRUD operations", async () => {
@@ -118,19 +112,11 @@ test("database validates documents against registered collection schemas", async
         collection: "products",
         version: 1,
         activate: true,
-        document: {
-          type: "object",
-          additionalProperties: false,
-          required: ["name", "price", "status"],
-          properties: {
-            name: { type: "string", minLength: 1 },
-            price: { type: "number", minimum: 0 },
-            status: {
-              type: "string",
-              enum: ["draft", "published"],
-            },
-          },
-        },
+        fields: [
+          { name: "name", field: { _tag: "TextField", label: "Name", required: true } },
+          { name: "price", field: { _tag: "NumberField", label: "Price", required: true, min: 0 } },
+          { name: "status", field: { _tag: "TextField", label: "Status", required: true } },
+        ],
       },
     ],
   });
@@ -167,64 +153,32 @@ test("database validates documents against registered collection schemas", async
   assert.equal(valid.schemaVersion, 1);
 });
 
-test("database schema validation reports both structural and custom issues", async () => {
+test("database schema validation reports structural issues", async () => {
   const database = await createDatabase({
     schemas: [
       {
         collection: "products",
         version: 1,
         activate: true,
-        document: {
-          type: "object",
-          additionalProperties: false,
-          required: ["name", "price"],
-          properties: {
-            name: { type: "string", minLength: 3 },
-            price: { type: "number", minimum: 0 },
-          },
-        },
-        validate(input) {
-          if (input.name === "bad") {
-            return {
-              valid: false,
-              issues: [
-                {
-                  path: "$.name",
-                  message: "must not be reserved",
-                },
-              ],
-            };
-          }
-        },
+        fields: [
+          { name: "name", field: { _tag: "TextField", label: "Name", required: true } },
+          { name: "price", field: { _tag: "NumberField", label: "Price", required: true, min: 0 } },
+        ],
       },
     ],
   });
 
-  const result = database.schemas.validate({
-    collection: "products",
-    data: {
-      name: "bad",
-      price: -5,
-      extra: true,
-    },
+  const result = database.schemas.validate("products", {
+    name: "hello",
+    price: -5,
+    extra: true,
   });
 
   assert.equal(result.schemaVersion, 1);
-  assert.equal(result.validation.valid, false);
-  assert.deepEqual(result.validation.issues, [
-    {
-      path: "$.price",
-      message: "must be >= 0",
-    },
-    {
-      path: "$.extra",
-      message: "is not allowed",
-    },
-    {
-      path: "$.name",
-      message: "must not be reserved",
-    },
-  ]);
+  assert.equal(result.valid, false);
+  assert.ok(result.issues.length > 0);
+  assert.ok(result.issues.some((i) => i.path.includes("price")));
+  assert.ok(result.issues.some((i) => i.path.includes("extra")));
 });
 
 test("database can activate newer schema versions for later writes", async () => {
@@ -234,14 +188,9 @@ test("database can activate newer schema versions for later writes", async () =>
         collection: "products",
         version: 1,
         activate: true,
-        document: {
-          type: "object",
-          additionalProperties: false,
-          required: ["name"],
-          properties: {
-            name: { type: "string", minLength: 1 },
-          },
-        },
+        fields: [
+          { name: "name", field: { _tag: "TextField", label: "Name", required: true } },
+        ],
       },
     ],
   });
@@ -251,28 +200,18 @@ test("database can activate newer schema versions for later writes", async () =>
   const created = await database.documents.insert({
     collection: "products",
     id: "product_1",
-    data: {
-      name: "First version",
-    },
+    data: { name: "First version" },
   });
 
   assert.equal(created.schemaVersion, 1);
 
-  await database.schemas.register({
+  await database.schemas.save({
     collection: "products",
     version: 2,
-    document: {
-      type: "object",
-      additionalProperties: false,
-      required: ["name", "status"],
-      properties: {
-        name: { type: "string", minLength: 1 },
-        status: {
-          type: "string",
-          enum: ["draft", "published"],
-        },
-      },
-    },
+    fields: [
+      { name: "name", field: { _tag: "TextField", label: "Name", required: true } },
+      { name: "status", field: { _tag: "TextField", label: "Status", required: true } },
+    ],
   });
   await database.schemas.activate("products", 2);
 
@@ -280,9 +219,7 @@ test("database can activate newer schema versions for later writes", async () =>
     database.documents.update({
       collection: "products",
       id: created.id,
-      data: {
-        name: "Missing status",
-      },
+      data: { name: "Missing status" },
       mode: "replace",
     }),
   );
@@ -290,10 +227,7 @@ test("database can activate newer schema versions for later writes", async () =>
   const updated = await database.documents.update({
     collection: "products",
     id: created.id,
-    data: {
-      name: "Second version",
-      status: "draft",
-    },
+    data: { name: "Second version", status: "draft" },
     mode: "replace",
   });
 
@@ -307,26 +241,17 @@ test("database can activate newer schema versions for later writes", async () =>
   ]);
 });
 
-test("database schemas can validate Zelavis file references natively", async () => {
+test("database schemas can validate file reference fields natively", async () => {
   const database = await createDatabase({
     schemas: [
       {
         collection: "assets",
         version: 1,
         activate: true,
-        document: {
-          type: "object",
-          additionalProperties: false,
-          required: ["title", "file"],
-          properties: {
-            title: { type: "string", minLength: 1 },
-            file: {
-              type: "file",
-              mimeTypes: ["image/png"],
-              maxSize: 1024,
-            },
-          },
-        },
+        fields: [
+          { name: "title", field: { _tag: "TextField", label: "Title", required: true } },
+          { name: "image", field: { _tag: "ImageField", label: "Image", required: true, accept: ["image/png"] } },
+        ],
       },
     ],
   });
@@ -337,15 +262,13 @@ test("database schemas can validate Zelavis file references natively", async () 
     collection: "assets",
     data: {
       title: "Logo",
-      file: {
+      image: {
         kind: "file",
         path: "branding/logo.png",
         href: "/zelavis/api/v1/storage/files/branding/logo.png",
-        metadataHref:
-          "/zelavis/api/v1/storage/files/branding/logo.png?format=metadata",
+        metadataHref: "/zelavis/api/v1/storage/files/branding/logo.png?format=metadata",
         contentType: "image/png",
         size: 512,
-        checksum: "abc123",
       },
     },
   });
@@ -357,59 +280,22 @@ test("database schemas can validate Zelavis file references natively", async () 
       database.documents.insert({
         collection: "assets",
         data: {
-          title: "Too large",
-          file: {
+          title: "PDF",
+          image: {
             kind: "file",
-            path: "branding/manual.pdf",
-            href: "/zelavis/api/v1/storage/files/branding/manual.pdf",
-            metadataHref:
-              "/zelavis/api/v1/storage/files/branding/manual.pdf?format=metadata",
+            path: "doc.pdf",
+            href: "/zelavis/api/v1/storage/files/doc.pdf",
+            metadataHref: "/zelavis/api/v1/storage/files/doc.pdf?format=metadata",
             contentType: "application/pdf",
-            size: 4096,
           },
         },
       }),
     (error) => {
       assert.equal(error.name, "DatabaseSchemaValidationError");
-      assert.match(error.message, /must use one of image\/png/);
+      assert.match(error.message, /image\/png/);
       return true;
     },
   );
-});
-
-test("database exports schema helpers for file reference fields", async () => {
-  assert.deepEqual(fileSchema(), { type: "file" });
-  assert.deepEqual(imageFileSchema({ maxSize: 2048 }), {
-    type: "file",
-    mimeTypes: ["image/png", "image/jpeg", "image/webp", "image/gif"],
-    maxSize: 2048,
-  });
-  assert.deepEqual(audioFileSchema(), {
-    type: "file",
-    mimeTypes: ["audio/mpeg", "audio/wav", "audio/ogg", "audio/webm"],
-  });
-  assert.deepEqual(videoFileSchema(), {
-    type: "file",
-    mimeTypes: ["video/mp4", "video/webm", "video/ogg", "video/quicktime"],
-  });
-  assert.deepEqual(documentFileSchema(), {
-    type: "file",
-    mimeTypes: [
-      "application/pdf",
-      "text/plain",
-      "application/json",
-      "application/zip",
-    ],
-  });
-  assert.deepEqual(richTextHtmlSchema({ label: "Content" }), {
-    type: "string",
-    format: "html",
-    label: "Content",
-    ui: {
-      control: "rich-text",
-      editor: "lexical",
-    },
-  });
 });
 
 test("database deduplicates repeated event appends by idempotency key", async () => {

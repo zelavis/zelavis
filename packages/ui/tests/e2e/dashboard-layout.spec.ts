@@ -209,7 +209,7 @@ test('database route restores the system tables sidebar panel', async ({ page },
     .first()
 
   await expect(activeSlide.getByRole('button', { name: 'System Tables', exact: true })).toBeVisible()
-  await expect(activeSlide.getByRole('link', { name: '_collections', exact: true })).toBeVisible()
+  await expect(activeSlide.getByRole('link', { name: 'zv_collections', exact: true })).toBeVisible()
 })
 
 test('storage lives under the core slide for advanced runtime management', async ({
@@ -276,12 +276,12 @@ test('database slide lists logical tables and system tables', async ({
 
   await expect(tablesSlide.getByRole('button', { name: 'Database', exact: true })).toBeVisible()
 
-  await gotoDashboard(page, '/database?systemTable=_events')
+  await gotoDashboard(page, '/database?systemTable=zv_events')
 
   const systemTablesSlide = sidebar.locator('.swiper-slide-active').first()
 
   await expect(systemTablesSlide.getByRole('button', { name: 'System Tables', exact: true })).toBeVisible()
-  await expect(systemTablesSlide.getByRole('link', { name: '_events', exact: true })).toBeVisible()
+  await expect(systemTablesSlide.getByRole('link', { name: 'zv_events', exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Core Database' })).toBeVisible()
 })
 
@@ -290,14 +290,14 @@ test('database direct system table routes restore the matching sidebar slide', a
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
-  await gotoDashboard(page, '/database?systemTable=_events')
+  await gotoDashboard(page, '/database?systemTable=zv_events')
 
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
   const activeSlide = sidebar.locator('.swiper-slide-active').first()
 
-  await expect(activeSlide.getByRole('link', { name: '_events', exact: true })).toBeVisible()
+  await expect(activeSlide.getByRole('link', { name: 'zv_events', exact: true })).toBeVisible()
   await expect(activeSlide.getByRole('button', { name: 'System Tables', exact: true })).toBeVisible()
-  await expect(page).toHaveURL(/systemTable=_events/)
+  await expect(page).toHaveURL(/systemTable=zv_events/)
 })
 
 test('content studio creates a new type and inserts a starter document with title and slug', async ({
@@ -322,7 +322,7 @@ test('content studio creates a new type and inserts a starter document with titl
   }
 
   var createdCollectionName: string | undefined
-  var createdSchemaDocument: Record<string, unknown> | undefined
+  var createdSchemaFields: unknown[] | undefined
   var insertPayload: Record<string, unknown> | undefined
 
   await page.addInitScript((config) => {
@@ -355,6 +355,7 @@ test('content studio creates a new type and inserts a starter document with titl
                   tenantId: 'default',
                   createdAt: '2026-05-26T00:00:00.000Z',
                   documentCount: 0,
+                  surface: 'content-studio',
                 },
               ]
             : [],
@@ -393,6 +394,7 @@ test('content studio creates a new type and inserts a starter document with titl
           tenantId: 'default',
           createdAt: '2026-05-26T00:00:00.000Z',
           documentCount: 0,
+          surface: 'content-studio',
         }),
       })
       return
@@ -403,7 +405,7 @@ test('content studio creates a new type and inserts a starter document with titl
       method === 'POST'
     ) {
       const body = await json()
-      createdSchemaDocument = body.document as Record<string, unknown>
+      createdSchemaFields = body.fields as unknown[]
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -411,8 +413,7 @@ test('content studio creates a new type and inserts a starter document with titl
           collection: createdCollectionName,
           version: 1,
           active: true,
-          document: createdSchemaDocument,
-          metadata: body.metadata ?? {},
+          fields: createdSchemaFields,
         }),
       })
       return
@@ -427,16 +428,13 @@ test('content studio creates a new type and inserts a starter document with titl
         contentType: 'application/json',
         body: JSON.stringify({
           collection: createdCollectionName ?? 'animals',
-          schemas: createdSchemaDocument
+          schemas: createdSchemaFields
             ? [
                 {
                   collection: createdCollectionName ?? 'animals',
                   version: 1,
                   active: true,
-                  document: createdSchemaDocument,
-                  metadata: {
-                    createdBy: 'content-studio',
-                  },
+                  fields: createdSchemaFields,
                 },
               ]
             : [],
@@ -562,12 +560,12 @@ test('database table creation revalidates sidebar tables', async ({
       return
     }
 
-    if (pathname === '/zelavis/api/v1/database/sql/system/_collections' && method === 'GET') {
+    if (pathname === '/zelavis/api/v1/database/sql/system/zv_collections' && method === 'GET') {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          table: '_collections',
+          table: 'zv_collections',
           rows: collections.map((collection) => ({
             tenant_id: collection.tenantId,
             name: collection.name,
@@ -883,7 +881,7 @@ test('sidebar route panels restore from the current route on refresh', async ({
   const activeSlide = sidebar.locator('.swiper-slide-active').first()
 
   await expect(activeSlide).toContainText('System Tables')
-  await expect(activeSlide.getByRole('link', { name: '_collections', exact: true })).toBeVisible()
+  await expect(activeSlide.getByRole('link', { name: 'zv_collections', exact: true })).toBeVisible()
 })
 
 test('sidebar has one internal link per dashboard route', async ({

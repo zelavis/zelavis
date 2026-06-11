@@ -30,6 +30,16 @@ A collection is identified as a Content Studio collection by `surface: "content-
 ### Tenant routing
 Every collection table row has `tenant_id`. The driver already declares `tenantRouting: true` capability. `tenant_id` is the intended shard key when sharding is implemented.
 
+### System tables — NOT collections
+`zv_collections`, `zv_events`, `zv_schemas`, `zv_time_series_checkpoints`, and `zv_time_series_points` are raw SQLite tables created via DDL. They are completely separate from the document collection system:
+
+- They are NOT created via `createCollection` and are NOT in the event sourcing pipeline
+- They cannot be accessed via `documents.insert`, `documents.findMany`, etc.
+- The `zv_collections` table IS the registry that write protection reads — it is not itself a collection entry
+- Any name starting with `zv_` is reserved for Zelavis internals; `validateDatabaseCollectionName` rejects it
+
+The `_` prefix convention visible in the dashboard UI (e.g. the `systemTable` URL param) is a UI artifact and does not reflect physical table names. Physical names are `zv_*`.
+
 ### Sharding / replication (roadmap)
 The event log is the replication stream. Replay events on replicas to rebuild collection tables. Tenant-level routing is the planned sharding boundary.
 
@@ -44,7 +54,8 @@ The sidebar structure is built in `packages/ui/app/lib/dashboard-data.ts` → `b
 ## Collection Name Rules
 
 - Pattern: `/^[A-Za-z_][A-Za-z0-9_-]*$/`
-- Reserved names: `collections`, `events`, `schemas`, `time_series_checkpoints`, `time_series_points` (and underscore-prefixed variants)
+- Reserved names: `zv_collections`, `zv_events`, `zv_schemas`, `zv_time_series_checkpoints`, `zv_time_series_points`
+- Any name starting with `zv_` is blanket-reserved for future Zelavis internals
 - Validated in `validateDatabaseCollectionName` in `packages/db/src/contracts/documents.ts`
 
 ## Content Studio Routes (UI)
@@ -74,6 +85,13 @@ await createDatabaseCollection(runtime, {
 - `@zelavis/ui`: Vitest for unit tests, Playwright for e2e. Run with `pnpm --filter @zelavis/ui test`.
 - After any `@zelavis/db` contract change, rebuild with `pnpm --filter @zelavis/db build` before running adapter tests.
 - After any `@zelavis/ui` source change that affects the compiled dashboard, rebuild with `pnpm --filter @zelavis/ui build` to regenerate `packages/ui/src/generated/dashboard-assets.ts`.
+
+## Effect Version
+
+- Use [Effect v4](https://raw.githubusercontent.com/Effect-TS/effect-smol/refs/heads/main/LLMS.md) instead of Effect v3.
+  - When using Schema, refer to the v4 documentation at [SCHEMA.md](https://raw.githubusercontent.com/Effect-TS/effect-smol/refs/heads/main/packages/effect/SCHEMA.md)
+  - When using HttpApi, refer to the v4 documentation at [HTTPAPI.md](https://raw.githubusercontent.com/Effect-TS/effect-smol/refs/heads/main/packages/effect/HTTPAPI.md)
+  - If the docs are insufficient, browse the source at https://github.com/Effect-TS/effect-smol/tree/main/packages/effect/src
 
 ## Things That Must Not Happen
 

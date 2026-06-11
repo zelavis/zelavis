@@ -141,32 +141,22 @@ test("better-sqlite3 database preserves schemas and active versions across reope
       filename: temp.filename,
     });
 
-    await first.schemas.register({
+    await first.schemas.save({
       collection: "products",
       version: 1,
       activate: true,
-      document: {
-        type: "object",
-        additionalProperties: false,
-        required: ["name"],
-        properties: {
-          name: { type: "string", minLength: 1 },
-        },
-      },
+      fields: [
+        { name: "name", field: { _tag: "TextField", label: "Name", required: true } },
+      ],
     });
-    await first.schemas.register({
+    await first.schemas.save({
       collection: "products",
       version: 2,
       activate: true,
-      document: {
-        type: "object",
-        additionalProperties: false,
-        required: ["name", "status"],
-        properties: {
-          name: { type: "string", minLength: 1 },
-          status: { type: "string", enum: ["draft", "published"] },
-        },
-      },
+      fields: [
+        { name: "name", field: { _tag: "TextField", label: "Name", required: true } },
+        { name: "status", field: { _tag: "TextField", label: "Status", required: true } },
+      ],
     });
 
     const reopened = await createBetterSqlite3Database({
@@ -181,7 +171,7 @@ test("better-sqlite3 database preserves schemas and active versions across reope
       },
     ]);
     assert.deepEqual(
-      reopened.schemas.listVersionRecords("products").map((schema) => ({
+      reopened.schemas.listVersions("products").map((schema) => ({
         version: schema.version,
         active: schema.active,
       })),
@@ -483,11 +473,11 @@ test("sql.execute() blocks direct writes to registered collection tables", async
       DatabaseDomainError,
     );
 
-    // Writes to non-collection system tables are still allowed.
+    // Writes to system tables are still allowed (they are not registered user collections).
     await assert.doesNotReject(() =>
       database.sql.execute({
         statement:
-          "INSERT OR IGNORE INTO collections (tenant_id, name, created_at, document_count) VALUES (?, ?, ?, ?)",
+          "INSERT OR IGNORE INTO zv_collections (tenant_id, name, created_at, document_count) VALUES (?, ?, ?, ?)",
         parameters: ["default", "canary", new Date().toISOString(), 0],
       }),
     );

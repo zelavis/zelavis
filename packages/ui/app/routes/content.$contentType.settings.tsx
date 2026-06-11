@@ -133,11 +133,7 @@ function ContentTypeSettingsRoute() {
           collection: created.name,
           version: 1,
           activate: true,
-          document: activeSchema.document,
-          metadata: {
-            ...(activeSchema.metadata ?? {}),
-            duplicatedFrom: contentType,
-          },
+          fields: activeSchema.fields ?? [],
         });
       }
 

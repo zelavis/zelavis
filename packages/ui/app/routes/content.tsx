@@ -206,11 +206,7 @@ function Content() {
           collection: created.name,
           version: 1,
           activate: true,
-          document: activeSchema.document,
-          metadata: {
-            ...(activeSchema.metadata ?? {}),
-            duplicatedFrom: sourceName,
-          },
+          fields: activeSchema.fields ?? [],
         });
       }
 

@@ -50,11 +50,11 @@ type DatabaseGridRow = {
 };
 
 type DatabaseSystemTableName =
-  | "_collections"
-  | "_events"
-  | "_schemas"
-  | "_time_series_checkpoints"
-  | "_time_series_points";
+  | "zv_collections"
+  | "zv_events"
+  | "zv_schemas"
+  | "zv_time_series_checkpoints"
+  | "zv_time_series_points";
 
 type DatabaseGridSorting = {
   id: string;
@@ -75,13 +75,13 @@ type SavedDatabaseView = {
 const DATABASE_GRID_VIEWS_STORAGE_KEY = "zelavis:database-grid-views";
 const ACTIONS_COLUMN = "__zelavis_actions";
 const DATABASE_SYSTEM_TABLES = [
-  "_collections",
-  "_events",
-  "_schemas",
-  "_time_series_checkpoints",
-  "_time_series_points",
+  "zv_collections",
+  "zv_events",
+  "zv_schemas",
+  "zv_time_series_checkpoints",
+  "zv_time_series_points",
 ] as const satisfies readonly DatabaseSystemTableName[];
-const DEFAULT_SYSTEM_TABLE: DatabaseSystemTableName = "_collections";
+const DEFAULT_SYSTEM_TABLE: DatabaseSystemTableName = "zv_collections";
 
 function readSystemTableName(value: unknown): DatabaseSystemTableName {
   return typeof value === "string" &&

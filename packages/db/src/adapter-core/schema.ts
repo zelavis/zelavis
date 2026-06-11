@@ -7,15 +7,16 @@
  */
 
 export const SCHEMA_STATEMENTS = [
-  `CREATE TABLE IF NOT EXISTS collections (
+  `CREATE TABLE IF NOT EXISTS zv_collections (
     tenant_id TEXT NOT NULL,
     name TEXT NOT NULL,
     created_at TEXT NOT NULL,
     document_count INTEGER NOT NULL DEFAULT 0,
+    surface TEXT,
     metadata_json TEXT,
     PRIMARY KEY (tenant_id, name)
   )`,
-  `CREATE TABLE IF NOT EXISTS events (
+  `CREATE TABLE IF NOT EXISTS zv_events (
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id TEXT NOT NULL UNIQUE,
     idempotency_key TEXT,
@@ -29,15 +30,14 @@ export const SCHEMA_STATEMENTS = [
     schema_version INTEGER NOT NULL DEFAULT 1,
     payload_json TEXT NOT NULL
   )`,
-  `CREATE TABLE IF NOT EXISTS schemas (
+  `CREATE TABLE IF NOT EXISTS zv_schemas (
     collection_name TEXT NOT NULL,
     version INTEGER NOT NULL,
-    document_json TEXT NOT NULL,
-    metadata_json TEXT,
+    fields_json TEXT NOT NULL,
     is_active INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (collection_name, version)
   )`,
-  `CREATE TABLE IF NOT EXISTS time_series_checkpoints (
+  `CREATE TABLE IF NOT EXISTS zv_time_series_checkpoints (
     tenant_id TEXT NOT NULL,
     series_name TEXT NOT NULL,
     definition_version TEXT NOT NULL,
@@ -45,7 +45,7 @@ export const SCHEMA_STATEMENTS = [
     updated_at TEXT NOT NULL,
     PRIMARY KEY (tenant_id, series_name)
   )`,
-  `CREATE TABLE IF NOT EXISTS time_series_points (
+  `CREATE TABLE IF NOT EXISTS zv_time_series_points (
     tenant_id TEXT NOT NULL,
     series_name TEXT NOT NULL,
     definition_version TEXT NOT NULL,
@@ -63,14 +63,14 @@ export const SCHEMA_STATEMENTS = [
       point_index
     )
   )`,
-  `CREATE INDEX IF NOT EXISTS events_tenant_sequence_idx
-    ON events (tenant_id, sequence)`,
-  `CREATE INDEX IF NOT EXISTS events_stream_idx
-    ON events (tenant_id, collection_name, document_id, sequence)`,
-  `CREATE INDEX IF NOT EXISTS schemas_collection_active_idx
-    ON schemas (collection_name, is_active, version)`,
-  `CREATE INDEX IF NOT EXISTS time_series_points_lookup_idx
-    ON time_series_points (
+  `CREATE INDEX IF NOT EXISTS zv_events_tenant_sequence_idx
+    ON zv_events (tenant_id, sequence)`,
+  `CREATE INDEX IF NOT EXISTS zv_events_stream_idx
+    ON zv_events (tenant_id, collection_name, document_id, sequence)`,
+  `CREATE INDEX IF NOT EXISTS zv_schemas_collection_active_idx
+    ON zv_schemas (collection_name, is_active, version)`,
+  `CREATE INDEX IF NOT EXISTS zv_time_series_points_lookup_idx
+    ON zv_time_series_points (
       tenant_id,
       series_name,
       definition_version,
@@ -78,7 +78,8 @@ export const SCHEMA_STATEMENTS = [
       source_sequence,
       point_index
     )`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS events_tenant_idempotency_idx
-    ON events (tenant_id, idempotency_key)
+  `CREATE UNIQUE INDEX IF NOT EXISTS zv_events_tenant_idempotency_idx
+    ON zv_events (tenant_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL`,
 ] as const;
+
