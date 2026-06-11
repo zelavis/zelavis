@@ -57,6 +57,23 @@ jobs:
       - name: Install Playwright Chromium
         run: pnpm --filter @zelavis/ui exec playwright install --with-deps chromium
 
+      - name: Build runtime packages for e2e
+        run: pnpm --filter @zelavis/server build && pnpm --filter @zelavis/db build && pnpm --filter @zelavis/db-node-sqlite build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/ui build:plugin && pnpm --filter zelavis build:runtime
+
+      - name: Start example runtime server
+        run: |
+          pnpm --filter @zelavis/example-nodejs dev > /tmp/zelavis-runtime.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null http://127.0.0.1:3000/zelavis; then
+              echo "Runtime server is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Runtime server failed to start"
+          cat /tmp/zelavis-runtime.log
+          exit 1
+
       - name: Run mounted desktop dashboard e2e
         run: pnpm ci:ui
 
