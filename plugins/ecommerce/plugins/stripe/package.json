@@ -36,7 +36,7 @@
   },
   "dependencies": {
     "@zelavis/ecommerce": "workspace:*",
-    "stripe": "^22.2.0"
+    "stripe": "^22.2.1"
   },
   "peerDependencies": {
     "zelavis": "*"
