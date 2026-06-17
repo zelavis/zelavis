@@ -264,6 +264,104 @@ test('content route restores the content types sidebar panel', async ({
   await expect(page.getByRole('heading', { name: 'Content Studio' })).toBeVisible()
 })
 
+test('content type sidebar parent opens entries view', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  const runtimeConfig = createMockRuntimeConfig()
+  const dashboardSettings = {
+    rootPath: '/zelavis',
+    apiBasePath: '/zelavis/api/v1',
+    theme: 'auto',
+    pageBuilderEnabled: true,
+    preferences: {
+      content: {
+        labels: {
+          'blog-posts': 'Blog Posts',
+        },
+      },
+    },
+    persistence: 'runtime',
+    editable: {
+      rootPath: true,
+      theme: true,
+      pageBuilder: true,
+    },
+    restartRequired: false,
+  }
+  const collections = [
+    {
+      name: 'blog-posts',
+      tenantId: 'default',
+      createdAt: '2026-06-17T00:00:00.000Z',
+      documentCount: 0,
+      surface: 'content-studio',
+      metadata: { kind: 'content-type' },
+    },
+  ]
+
+  await page.addInitScript((config) => {
+    ;(window as typeof window & { __ZELAVIS_RUNTIME_CONFIG__?: unknown }).__ZELAVIS_RUNTIME_CONFIG__ =
+      config
+  }, runtimeConfig)
+
+  await page.route('**/zelavis/api/v1/**', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    const pathname = url.pathname
+    const method = request.method()
+
+    if (pathname === '/zelavis/api/v1/runtime/settings' && method === 'GET') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(dashboardSettings) })
+      return
+    }
+
+    if (pathname === '/zelavis/api/v1/database/documents/collections' && method === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ collections }),
+      })
+      return
+    }
+
+    if (pathname === '/zelavis/api/v1/database/schemas/collections' && method === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          collections: [{ collection: 'blog-posts', activeVersion: 1, versions: [1] }],
+        }),
+      })
+      return
+    }
+
+    if (pathname === '/zelavis/api/v1/database/documents/blog-posts/query' && method === 'POST') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ documents: [] }),
+      })
+      return
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({}),
+    })
+  })
+
+  await gotoDashboard(page, '/content')
+
+  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  await sidebar.getByRole('button', { name: 'Blog Posts', exact: true }).click()
+
+  await expect(page).toHaveURL(/\/content\/blog-posts(?:\?sidebar=Content%2FBlog%2520Posts)?$/)
+  await expect(page.getByText('No entries yet')).toBeVisible()
+})
+
 test('database slide lists logical tables and system tables', async ({
   page,
 }, testInfo) => {
@@ -300,7 +398,7 @@ test('database direct system table routes restore the matching sidebar slide', a
   await expect(page).toHaveURL(/systemTable=zv_events/)
 })
 
-test('content studio creates a new type and inserts a starter document with title and slug', async ({
+test('content studio creates a new type and opens the field builder', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
@@ -323,7 +421,6 @@ test('content studio creates a new type and inserts a starter document with titl
 
   var createdCollectionName: string | undefined
   var createdSchemaFields: unknown[] | undefined
-  var insertPayload: Record<string, unknown> | undefined
 
   await page.addInitScript((config) => {
     ;(window as typeof window & { __ZELAVIS_RUNTIME_CONFIG__?: unknown }).__ZELAVIS_RUNTIME_CONFIG__ =
@@ -443,28 +540,6 @@ test('content studio creates a new type and inserts a starter document with titl
       return
     }
 
-    if (
-      pathname === `/zelavis/api/v1/database/documents/${encodeURIComponent(createdCollectionName ?? 'animals')}` &&
-      method === 'POST'
-    ) {
-      const body = await json()
-      insertPayload = body.data as Record<string, unknown>
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          id: String(body.id || 'doc_1'),
-          version: 1,
-          tenantId: 'default',
-          collection: createdCollectionName ?? 'animals',
-          data: insertPayload,
-          createdAt: '2026-05-26T00:00:00.000Z',
-          updatedAt: '2026-05-26T00:00:00.000Z',
-        }),
-      })
-      return
-    }
-
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -475,26 +550,10 @@ test('content studio creates a new type and inserts a starter document with titl
   await gotoDashboard(page, '/content/new')
 
   await page.getByLabel('Content type label').fill('Animals')
-  await page.getByRole('button', { name: 'Create and Open Editor' }).click()
+  await page.getByRole('button', { name: 'Create and Open Fields' }).click()
 
-  await expect(page).toHaveURL(/\/content\/animals\/edit$/)
-  await expect(page.getByText('Collection editor', { exact: true })).toBeVisible()
-
-  const sampleDocument = page.getByLabel('Sample document id').locator('..').locator('textarea')
-  await expect(sampleDocument).toContainText('"title": "Untitled draft"')
-  await expect(sampleDocument).toContainText('"slug": "draft-')
-  await expect(sampleDocument).not.toContainText('"name"')
-
-  await page.getByRole('button', { name: 'Insert sample document' }).click()
-
-  await expect(page.getByText('Done')).toBeVisible()
-  expect(insertPayload).toBeTruthy()
-  expect(insertPayload).toMatchObject({
-    title: 'Untitled draft',
-    status: 'draft',
-  })
-  expect(typeof insertPayload?.slug).toBe('string')
-  expect(insertPayload).not.toHaveProperty('name')
+  await expect(page).toHaveURL(/\/content\/animals\/fields$/)
+  await expect(page.getByText('Field builder', { exact: true })).toBeVisible()
 })
 
 test('database table creation revalidates sidebar tables', async ({

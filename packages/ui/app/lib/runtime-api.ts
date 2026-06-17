@@ -309,7 +309,7 @@ export interface DatabaseHealth {
   defaultTenantId: string;
 }
 
-export type DatabaseCollectionSurface = "content-studio";
+export type DatabaseCollectionSurface = "content-studio" | "database";
 
 export interface DatabaseCollection {
   name: string;
@@ -1140,7 +1140,9 @@ export async function listDatabaseCollections(config: RuntimeConfig) {
           ? (JSON.parse(row.metadata_json) as Record<string, unknown> | null)
           : undefined;
       const surface =
-        row.surface === "content-studio" ? ("content-studio" as const) : undefined;
+        row.surface === "content-studio" || row.surface === "database"
+          ? row.surface
+          : undefined;
 
       collectionsByKey.set(`${tenantId}:${row.name}`, {
         name: row.name,

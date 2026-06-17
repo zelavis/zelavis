@@ -425,10 +425,9 @@ export function NavMain({
     manualTrailOverrideRef.current = nextTrail;
     setTrail(nextTrail);
 
-    // When opening a top-level section from the root Platform slide, navigate
-    // to the section's canonical landing page so the URL stays coherent.
-    const isFromRoot = trail.length === 0;
-    if (isFromRoot && panel.landingUrl && !pathname.startsWith(panel.landingUrl)) {
+    // Navigate to the panel's canonical landing page so the visible content
+    // keeps pace with slide navigation.
+    if (panel.landingUrl && !pathname.startsWith(panel.landingUrl)) {
       navigate(
         {
           pathname: panel.landingUrl,

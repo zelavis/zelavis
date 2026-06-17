@@ -13,7 +13,6 @@ import {
   Paintbrush,
   PanelsTopLeft,
   Package,
-  Pencil,
   Plus,
   ReceiptText,
   Send,
@@ -36,7 +35,7 @@ import type {
   RuntimeServiceRegistryEntry,
 } from "#/lib/runtime-api";
 import type { ContentTypeRow } from "#/lib/content-studio";
-import { isContentTypeDatabaseCollection } from "#/lib/database-collections";
+import { isInternalDatabaseCollection } from "#/lib/database-collections";
 
 export type DashboardRoutePath =
   | "/"
@@ -52,9 +51,7 @@ export type DashboardRoutePath =
   | "/content"
   | "/content/new"
   | `/content/${string}`
-  | `/content/${string}/edit`
   | `/content/${string}/fields`
-  | `/content/${string}/settings`
   | "/database"
   | "/database/new"
   | "/media"
@@ -411,7 +408,7 @@ export function buildPlatformNavItems(
     (contentTypes ?? []).map((contentType) => [contentType.name, contentType]),
   );
   const databaseTableItems = [...(databaseCollections ?? [])]
-    .filter(isContentTypeDatabaseCollection)
+    .filter((collection) => !isInternalDatabaseCollection(collection.name))
     .sort((left, right) => left.name.localeCompare(right.name))
     .map((collection) => {
       const contentType = contentTypesByName.get(collection.name);
@@ -421,7 +418,7 @@ export function buildPlatformNavItems(
         search: { databaseTable: collection.name, systemTable: undefined },
         icon: Database,
         pageLabel: "Database",
-        sectionLabel: "Collections",
+        sectionLabel: "Tables",
       };
     });
   const serviceNavItems = (services ?? [])
@@ -515,6 +512,7 @@ export function buildPlatformNavItems(
       title: contentType.label,
       icon: FileText,
       panelLabel: "Views",
+      landingUrl: `/content/${contentType.name}` as DashboardRoutePath,
       sectionLabel: "Collections",
       items: [
         {
@@ -527,18 +525,6 @@ export function buildPlatformNavItems(
           title: "Fields",
           url: `/content/${contentType.name}/fields` as DashboardRoutePath,
           icon: Package,
-          pageLabel: "Content",
-        },
-        {
-          title: "Type Editor",
-          url: `/content/${contentType.name}/edit` as DashboardRoutePath,
-          icon: Pencil,
-          pageLabel: "Content",
-        },
-        {
-          title: "Type Settings",
-          url: `/content/${contentType.name}/settings` as DashboardRoutePath,
-          icon: Settings2,
           pageLabel: "Content",
         },
       ],

@@ -40,8 +40,8 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     const config = await getRuntimeConfig();
     const table = await createDatabaseCollection(config, {
       name: normalizedName,
+      surface: "database",
       metadata: {
-        surface: "database",
         kind: "table",
       },
     });

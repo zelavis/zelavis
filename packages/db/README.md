@@ -13,7 +13,13 @@ models can still replay ordered changes.
 
 The first time-series slice is now also present as a public contract. Series definitions can declare projection references, event-source filters, mapper functions, and optional definition versions. In-memory queries derive points from the event stream directly, while SQLite-backed drivers can persist mapped samples and query them incrementally.
 
-Collection schemas can also validate Zelavis-style file references natively through `type: "file"`, so documents can carry structured links to the storage service without treating those fields as untyped blobs.
+Collection schemas are Effect Schema v4-backed tagged field definitions. The
+current catalog covers short text, long text, rich text, number, integer,
+boolean, date-time, select, multi-select, file/image/audio/video/document
+references, collection references, JSON, slug, URL, and repeater fields.
+Zelavis-style file references are validated natively, so documents can carry
+structured links to the storage service without treating those fields as
+untyped blobs.
 
 ## Scope
 

@@ -153,6 +153,13 @@ describe("dashboard navigation ownership", () => {
       ],
       [
         {
+          name: "audit_log",
+          documentCount: 3,
+          tenantId: "default",
+          createdAt: "2026-06-02T00:00:00.000Z",
+          surface: "database" as const,
+        },
+        {
           name: "fruits",
           documentCount: 1,
           tenantId: "default",
@@ -165,6 +172,7 @@ describe("dashboard navigation ownership", () => {
     const database = findNavItem(nav, "Database");
     expect(database?.items?.map((item) => item.title)).toEqual([
       "Create Table",
+      "audit_log",
       "Fruits",
       "System Tables",
     ]);
@@ -184,6 +192,13 @@ describe("dashboard navigation ownership", () => {
     expect(findNavItem(database?.items ?? [], "Fruits")?.search).toEqual({
       databaseTable: "fruits",
       systemTable: undefined,
+    });
+    expect(findNavItem(database?.items ?? [], "audit_log")).toMatchObject({
+      sectionLabel: "Tables",
+      search: {
+        databaseTable: "audit_log",
+        systemTable: undefined,
+      },
     });
     expect(findNavItem(database?.items ?? [], "zv_collections")).toBeDefined();
   });

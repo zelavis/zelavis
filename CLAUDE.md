@@ -22,7 +22,10 @@ Every Content Studio collection gets its own SQLite table (e.g. a `Fruits` conte
 All document writes go through `events` first, then project into the per-collection table. The event log is the authoritative record and the future replication stream. Never write to a collection table directly — use the documents API.
 
 ### Collection identity — `surface`
-A collection is identified as a Content Studio collection by `surface: "content-studio"` — a first-class typed field on `DatabaseCollection` (not buried in freeform metadata). This is set at creation time by Content Studio routes and validated by the server. `isContentTypeDatabaseCollection(collection)` checks `collection.surface === "content-studio"`.
+Collections are tagged with a first-class `surface` field on `DatabaseCollection` (not buried in freeform metadata):
+
+- `surface: "content-studio"` — Content Studio content types. Set at creation time by Content Studio routes. `isContentTypeDatabaseCollection(collection)` checks `collection.surface === "content-studio"`.
+- `surface: "database"` — raw database tables created from Core > Database (e.g. `database.new.tsx`). These appear in the Database sidebar under **Tables**, not in Content Studio.
 
 ### Write protection
 `sql.execute()` on the driver checks the target table against the `collections` registry before running any DML/DDL. Direct SQL writes to registered collection tables throw `DatabaseDomainError` pointing to the documents API. `sql.query()` (reads) is unrestricted. All four adapters (better-sqlite3, Bun SQLite, libSQL, D1) inherit this via the shared `createSqliteCompatibleDriver`.
@@ -47,7 +50,7 @@ The event log is the replication stream. Replay events on replicas to rebuild co
 
 **Content sidebar section** — shows only collections with `surface === "content-studio"`. Section label: "Collections".
 
-**Core > Database sidebar section** — also shows only `surface === "content-studio"` collections (since every content type is a table). Section label: "Collections". System tables (`events`, `schemas`, `collections`, etc.) are nested under "System Tables".
+**Core > Database sidebar section** — shows **all** registered collections (both `surface: "content-studio"` and `surface: "database"`). Content types use their editor label when available; database tables use the collection name. Section label for table entries: "Tables". System tables (`events`, `schemas`, `collections`, etc.) are nested under "System Tables".
 
 The sidebar structure is built in `packages/ui/app/lib/dashboard-data.ts` → `buildPlatformNavItems`. Any change to nav items requires rebuilding `packages/ui/src/generated/dashboard-assets.ts` via `pnpm --filter @zelavis/ui build`.
 

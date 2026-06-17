@@ -363,10 +363,10 @@ function Content() {
                 Entries
               </Link>
               <Link
-                to={`/content/${encodeURIComponent(row.name)}/edit`}
+                to={`/content/${encodeURIComponent(row.name)}/fields`}
                 className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
               >
-                Edit
+                Fields
               </Link>
                               <Button
                                 type="button"

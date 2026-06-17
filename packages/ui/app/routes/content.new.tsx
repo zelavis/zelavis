@@ -75,7 +75,7 @@ function NewContentTypeRoute() {
       }
 
       setMessage(`Created ${normalizedLabel} (${collection.name}).`);
-      void navigate(`/content/${encodeURIComponent(collection.name)}/edit`);
+      void navigate(`/content/${encodeURIComponent(collection.name)}/fields`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -128,7 +128,7 @@ function NewContentTypeRoute() {
             <div className="flex flex-wrap gap-2">
               <Button type="submit" disabled={!name.trim() || saving}>
                 <Plus className="size-4" />
-                Create and Open Editor
+                Create and Open Fields
               </Button>
               <Button type="button" variant="outline" disabled={saving} onClick={() => void navigate("/content")}>
                 <Save className="size-4" />

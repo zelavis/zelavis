@@ -14,7 +14,7 @@ export interface DatabaseFileReference {
   checksum?: string;
 }
 
-export type DatabaseCollectionSurface = "content-studio";
+export type DatabaseCollectionSurface = "content-studio" | "database";
 
 export interface DatabaseCollection {
   name: string;

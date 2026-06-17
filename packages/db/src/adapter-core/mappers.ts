@@ -95,7 +95,10 @@ export function toEvent<
   };
 }
 
-const VALID_SURFACES = new Set<DatabaseCollectionSurface>(["content-studio"]);
+const VALID_SURFACES = new Set<DatabaseCollectionSurface>([
+  "content-studio",
+  "database",
+]);
 
 function parseSurface(value: string | null): DatabaseCollectionSurface | undefined {
   return typeof value === "string" && VALID_SURFACES.has(value as DatabaseCollectionSurface)

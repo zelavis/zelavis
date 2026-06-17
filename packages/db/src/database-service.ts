@@ -38,7 +38,10 @@ function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-const VALID_COLLECTION_SURFACES = new Set<DatabaseCollectionSurface>(["content-studio"]);
+const VALID_COLLECTION_SURFACES = new Set<DatabaseCollectionSurface>([
+  "content-studio",
+  "database",
+]);
 
 function readCollectionSurface(value: unknown): DatabaseCollectionSurface | undefined {
   return typeof value === "string" && VALID_COLLECTION_SURFACES.has(value as DatabaseCollectionSurface)

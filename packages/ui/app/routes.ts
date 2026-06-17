@@ -17,8 +17,6 @@ export default [
     route(":contentType", "routes/content.$contentType.tsx", [
       index("routes/content.$contentType.index.tsx"),
       route("fields", "routes/content.$contentType.fields.tsx"),
-      route("edit", "routes/content.$contentType.edit.tsx"),
-      route("settings", "routes/content.$contentType.settings.tsx"),
       route(":entryId", "routes/content.$contentType.$entryId.tsx"),
     ]),
   ]),
