@@ -38,7 +38,7 @@
     "@zelavis/db": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260615.1",
+    "@cloudflare/workers-types": "^4.20260621.1",
     "better-sqlite3": "^12.10.1",
     "typescript": "^5.9.0"
   },
