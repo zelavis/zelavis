@@ -9,7 +9,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "elysia": "^1.4.28",
+    "elysia": "^1.4.29",
     "zelavis": "workspace:*"
   },
   "devDependencies": {
