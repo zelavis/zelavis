@@ -20,7 +20,7 @@ test("bootstrapNextjs creates App Router catch-all route", async () => {
   try {
     const result = await bootstrapNextjs({
       cwd: directory,
-      adapter: "vercel",
+      adapter: "node",
       router: "app",
     });
 
@@ -34,7 +34,7 @@ test("bootstrapNextjs creates App Router catch-all route", async () => {
       join(directory, "lib/zelavis.server.ts"),
       "utf8",
     );
-    assert.match(runtime, /vercelAdapter\(\)/);
+    assert.match(runtime, /nodeAdapter\(\)/);
     assert.match(runtime, /export const zv = new Zelavis/);
 
     const route = await readFile(

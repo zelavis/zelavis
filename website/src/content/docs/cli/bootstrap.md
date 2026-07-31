@@ -4,7 +4,7 @@ title: Bootstrap
 
 `zelavis bootstrap` adds Zelavis endpoints to an existing framework app.
 
-The command is interactive by default and asks for deployment adapter settings.
+The command is interactive by default and asks for runtime adapter settings.
 Use `--yes` with explicit flags for CI, templates, or agent-driven setup.
 
 ## React Router
@@ -49,7 +49,7 @@ pnpm dlx @zelavis/cli bootstrap nextjs --router app
 Non-interactive example:
 
 ```bash
-zelavis bootstrap nextjs --router app --adapter vercel --yes
+zelavis bootstrap nextjs --router app --adapter node --yes
 ```
 
 Generated files:
@@ -110,15 +110,10 @@ Supported adapters:
 ```txt
 node
 bun
-cloudflare
-vercel
-netlify
 ```
 
-React Router supports all listed adapters. Next.js bootstrap currently supports
-`vercel`, `node`, `netlify`, and `bun`. Cloudflare is intentionally not generated
-for Next.js yet because request-time binding access depends on the specific
-Next.js deployment adapter.
+React Router and Next.js bootstrap support the self-hosted runtime adapters
+listed above.
 
 ## Options
 
@@ -130,7 +125,7 @@ zelavis bootstrap nextjs [--router app|pages] [--adapter <adapter>] [--yes] [--c
 Options:
 
 ```txt
---adapter <adapter>   Select node, bun, cloudflare, vercel, or netlify.
+--adapter <adapter>   Select node or bun.
 --router <router>     Select app or pages for Next.js.
 --yes, -y             Use defaults and skip prompts.
 --cwd <path>          Project directory. Defaults to the current directory.
@@ -141,7 +136,7 @@ Defaults in non-interactive mode:
 
 ```txt
 react-router       adapter: node
-nextjs app         adapter: vercel
+nextjs app         adapter: node
 nextjs pages       adapter: node
 ```
 

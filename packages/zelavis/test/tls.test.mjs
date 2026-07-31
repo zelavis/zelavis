@@ -2,18 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   chainTlsProviders,
-  createEdgeTlsProvider,
+  createExternalTlsProvider,
   createManualTlsProvider,
 } from "../dist/index.js";
 
 const FAKE_CERT = "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----";
 const FAKE_KEY = "-----BEGIN PRIVATE KEY-----\nFAKE\n-----END PRIVATE KEY-----";
 
-// ---------- Edge no-op ----------
+// ---------- External no-op ----------
 
-test("createEdgeTlsProvider returns undefined for every hostname", async () => {
-  const provider = createEdgeTlsProvider();
-  assert.equal(provider.name, "edge");
+test("createExternalTlsProvider returns undefined for every hostname", async () => {
+  const provider = createExternalTlsProvider();
+  assert.equal(provider.name, "external");
   assert.equal(await provider.getCertificate("example.com"), undefined);
   assert.equal(await provider.getCertificate("anything.else"), undefined);
   assert.deepEqual(await provider.listHostnames(), []);
@@ -215,21 +215,21 @@ test("chainTlsProviders listHostnames returns the deduped union of all providers
 
 test("chainTlsProviders name describes the composition", () => {
   const a = { name: "manual", getCertificate: () => undefined };
-  const b = { name: "edge", getCertificate: () => undefined };
+  const b = { name: "external", getCertificate: () => undefined };
   const chain = chainTlsProviders(a, b);
-  assert.match(chain.name, /chain.*manual.*edge/);
+  assert.match(chain.name, /chain.*manual.*external/);
 });
 
-test("chainTlsProviders falls through to edge no-op when nothing matches", async () => {
+test("chainTlsProviders falls through to external no-op when nothing matches", async () => {
   const manual = createManualTlsProvider({
     certificates: { "a.com": { cert: FAKE_CERT, key: FAKE_KEY } },
   });
-  const edge = createEdgeTlsProvider();
-  const chain = chainTlsProviders(manual, edge);
+  const external = createExternalTlsProvider();
+  const chain = chainTlsProviders(manual, external);
 
   // Manual handles its host
   assert.ok(await chain.getCertificate("a.com"));
-  // Falls through to edge (which returns undefined) for everything else —
-  // documents the "edge is terminating TLS" intent.
+  // Falls through to external (which returns undefined) for everything else —
+  // documents the "TLS is terminated outside this process" intent.
   assert.equal(await chain.getCertificate("anything.else"), undefined);
 });

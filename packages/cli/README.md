@@ -11,7 +11,7 @@ pnpm dlx @zelavis/cli bootstrap react-router
 
 The React Router bootstrap target supports React Router 7 Framework Mode apps.
 It creates a catch-all Zelavis resource route and a small server-side Zelavis
-runtime module for the selected deployment adapter.
+runtime module for the selected runtime adapter.
 
 Next.js bootstrap supports both App Router and Pages Router:
 
@@ -35,8 +35,8 @@ than asking application code to pass service toggles into `new Zelavis(...)`.
 
 Adapter-specific behavior should stay behind adapter boundaries. The CLI can
 ship first-party commands for supported adapters, but concrete host mechanics
-such as local file caches, Cloudflare worker dispatch, or serverless deployment
-hooks should live in adapter modules that the CLI orchestrates.
+such as local file caches or future Deno runtime setup should live in adapter
+modules that the CLI orchestrates.
 
 Today, `@zelavis/cli` ships bootstrap commands. Runtime service management is
 available through the `services` command group:

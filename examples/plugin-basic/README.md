@@ -52,4 +52,4 @@ field when you want to test path-based local imports directly.
 
 For production marketplace installs, the long-term contract is a package or URL
 specifier resolved by the host adapter. Node can cache packages locally, while
-serverless adapters should map installs to their own runtime activation boundary.
+local runtime adapters should map installs to their own service activation boundary.

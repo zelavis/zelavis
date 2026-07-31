@@ -597,10 +597,9 @@ export interface ZelavisPlatformResources {
   servicePackages?: ZelavisServicePackageInstaller;
   /**
    * TLS certificate provider. Adapters that terminate TLS in-process
-   * (Node/Bun self-host) wire a real provider here; adapters whose
-   * platform terminates TLS at the edge (Cloudflare/Vercel/Netlify)
-   * should wire `createEdgeTlsProvider()` so downstream code can
-   * distinguish "intentionally not my problem" from "not configured".
+   * (Node/Bun self-host) wire a real provider here; adapters behind a reverse
+   * proxy can wire `createExternalTlsProvider()` so downstream code can distinguish
+   * "intentionally handled elsewhere" from "not configured".
    */
   tls?: TlsProvider;
   /**
@@ -659,7 +658,7 @@ export interface ZelavisServiceActivationResult {
 }
 
 export interface ZelavisServiceActivationCapabilities {
-  strategy: "runtime-graph" | "worker-boundary" | "function-boundary" | "custom";
+  strategy: "runtime-graph" | "external";
   supportsRuntimeInstall: boolean;
   supportsUploadedSpecifiers: boolean;
   supportsPackageUploads: boolean;

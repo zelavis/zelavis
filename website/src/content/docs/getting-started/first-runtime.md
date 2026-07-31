@@ -69,7 +69,7 @@ Root path changes are stored as pending runtime settings and require a restart b
 
 ## Use the fetch-style runtime directly
 
-When the host already speaks the Web `Request` → `Response` model (Cloudflare Workers, Bun, Next.js App Router, etc.), no framework helper is needed — call `zv.fetch(request)` directly:
+When the self-hosted handler already speaks the Web `Request` -> `Response` model (Bun, Next.js App Router on Node, future Deno, etc.), no framework helper is needed — call `zv.fetch(request)` directly:
 
 ```ts
 import { Zelavis } from "zelavis";

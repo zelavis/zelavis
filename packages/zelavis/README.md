@@ -125,7 +125,7 @@ const response = await zv.fetch(
 );
 ```
 
-`new Zelavis(...)` is the guarded high-level entrypoint. It accepts app-facing options such as adapters, platforms, root path, service registry state, and error handling. Internal runtime knobs like direct `runtimeServices` and path overrides stay on the lower-level `zelavis(...)` function.
+`new Zelavis(...)` is the guarded high-level entrypoint. It accepts app-facing options such as adapters, root path, service registry state, and error handling. Internal runtime knobs like direct `runtimeServices` and path overrides stay on the lower-level `zelavis(...)` function.
 
 That split is intentional:
 
@@ -214,20 +214,20 @@ verified binding exists.
 
 The runtime supports two complementary integration patterns:
 
-- **environment adapters** (`zelavis/adapters/*`) — describe the environment Zelavis runs on, supply database/KV/file storage defaults
+- **runtime adapters** (`zelavis/adapters/*`) — describe the self-hosted JavaScript runtime Zelavis runs on, supply database/KV/file storage defaults
 - **framework utilities** (`zelavis/<framework>`) — small helper functions that wrap `zv.fetch` for a specific framework signature
 
-For fetch-native hosts (Cloudflare Workers, Bun, Next.js App Router), no framework utility is needed — call `zv.fetch(request)` directly.
+For fetch-native self-hosted handlers such as Bun or Next.js App Router running
+on Node, no framework utility is needed — call `zv.fetch(request)` directly.
 
-Available environment adapters:
+Available runtime adapters:
 
 ```txt
 zelavis/adapters/node
 zelavis/adapters/bun
-zelavis/adapters/cloudflare
-zelavis/adapters/netlify
-zelavis/adapters/vercel
 ```
+
+Deno is a planned runtime target.
 
 Available framework utilities:
 
@@ -241,37 +241,11 @@ zelavis/nextjs/pages  nextjsPagesRouterHandler(zv, options?)
 zelavis/node          createNodeServer(zv)
 ```
 
-Platform resources now also feed real core-service persistence in the high-level `Zelavis` class:
+Runtime resources now also feed real core-service persistence in the high-level `Zelavis` class:
 
-- dashboard settings can persist through platform KV or platform files
-- the storage core service can expose platform file storage through the Zelavis API
-- website pages can persist through platform files when no database core service is configured
-
-For Cloudflare Workers, pass the worker `env` object to the platform preset and let Zelavis pick up the standard bindings itself:
-
-```ts
-import { Zelavis } from "zelavis";
-import { cloudflareAdapter } from "zelavis/adapters/cloudflare";
-
-export default {
-  fetch(request: Request, env: { ZELAVIS_DB: unknown }, ctx: ExecutionContext) {
-    const zv = new Zelavis({
-      adapter: cloudflareAdapter({ env }),
-    });
-
-    return zv.fetch(request, {
-      platform: {
-        cloudflare: {
-          env,
-          executionContext: ctx,
-        },
-      },
-    });
-  },
-};
-```
-
-`cloudflareAdapter()` expects a D1 binding at `env.ZELAVIS_DB` and will also pick up `env.ZELAVIS_KV` and `env.ZELAVIS_FILES` automatically when they are present. Use `bindings` only when your Cloudflare binding names differ from the Zelavis defaults.
+- dashboard settings can persist through local KV or local files
+- the storage core service can expose local file storage through the Zelavis API
+- website pages can persist through local files when no database core service is configured
 
 The dashboard settings endpoint exposes runtime-editable dashboard preferences:
 
@@ -291,12 +265,11 @@ GET /zelavis/api/v1/runtime/service-pages/:service/:page
 
 When a service registry store is configured, these endpoints read and update
 real install state instead of a hardcoded list. Dashboard metadata updates
-immediately, while service activation is adapter-controlled: a long-running
-server can recompose its runtime graph, while serverless hosts can map the same
-activation request to a worker/function boundary or another live host
-capability. Runtime config exposes the current adapter's service activation
-capabilities so the dashboard can show whether uploaded specifiers, runtime
-installs, and isolated execution are actually supported by the active host.
+immediately, while service activation is runtime-controlled: a local runtime can
+recompose its service graph when supported, or require a process restart when
+live activation is unavailable. Runtime config exposes the current adapter's
+service activation capabilities so the dashboard can show whether uploaded
+specifiers, runtime installs, and isolated execution are actually supported.
 
 `POST /runtime/services` registers a non-marketplace ESM source with
 `{ name, specifier }`. The best portable input is a module specifier or hosted
@@ -330,7 +303,7 @@ Use it when you want the normal Zelavis storage contract, metadata, and file-ref
 
 Root path changes are saved as pending settings and report `restartRequired`
 because mounted routes cannot move safely while the runtime is already running.
-Platform resources such as KV or file storage are used as settings defaults when
+Runtime resources such as KV or file storage are used as settings defaults when
 they are available.
 
 For local dashboard work, use the `pnpm run ui:dev` workflow. It starts the

@@ -32,8 +32,8 @@ application code passing service toggles into `new Zelavis(...)`.
 
 Adapter-specific behavior should stay behind adapter boundaries. The CLI can
 ship first-party commands for supported adapters, but concrete host mechanics
-such as local file caches, Cloudflare worker dispatch, or serverless deployment
-hooks should live in adapter modules that the CLI orchestrates.
+such as local file caches or future Deno runtime setup should live in adapter
+modules that the CLI orchestrates.
 
 Runtime service management is available through the `services` command group:
 

@@ -66,7 +66,7 @@ export interface RuntimeServiceActivationResult {
 }
 
 export interface RuntimeServiceActivationCapabilities {
-  strategy: "runtime-graph" | "worker-boundary" | "function-boundary" | "custom";
+  strategy: "runtime-graph" | "external";
   supportsRuntimeInstall: boolean;
   supportsUploadedSpecifiers: boolean;
   supportsPackageUploads: boolean;

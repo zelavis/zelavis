@@ -1,6 +1,6 @@
 /**
  * SQLite-flavored DDL applied by every Zelavis SQLite-compatible adapter
- * (better-sqlite3, bun:sqlite, Cloudflare D1, libSQL).
+ * (better-sqlite3, bun:sqlite, libSQL).
  *
  * Restricted to features supported by all four dialects so each adapter
  * can apply the same statements without modification.
@@ -82,4 +82,3 @@ export const SCHEMA_STATEMENTS = [
     ON zv_events (tenant_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL`,
 ] as const;
-

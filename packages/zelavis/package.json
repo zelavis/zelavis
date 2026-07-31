@@ -29,18 +29,6 @@
       "types": "./dist/adapters/bun.d.ts",
       "import": "./dist/adapters/bun.js"
     },
-    "./adapters/cloudflare": {
-      "types": "./dist/adapters/cloudflare.d.ts",
-      "import": "./dist/adapters/cloudflare.js"
-    },
-    "./adapters/vercel": {
-      "types": "./dist/adapters/vercel.d.ts",
-      "import": "./dist/adapters/vercel.js"
-    },
-    "./adapters/netlify": {
-      "types": "./dist/adapters/netlify.d.ts",
-      "import": "./dist/adapters/netlify.js"
-    },
     "./express": {
       "types": "./dist/express/index.d.ts",
       "import": "./dist/express/index.js"
@@ -99,7 +87,6 @@
     "@zelavis/auth": "workspace:*",
     "@zelavis/db": "workspace:*",
     "@zelavis/db-bun-sqlite": "workspace:*",
-    "@zelavis/db-cloudflare-d1": "workspace:*",
     "@zelavis/db-node-sqlite": "workspace:*",
     "@zelavis/server": "workspace:*",
     "@zelavis/ui": "workspace:*"

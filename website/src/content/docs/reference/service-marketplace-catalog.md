@@ -108,4 +108,7 @@ Marketplace install/upload flows should:
 2. call the active host's service activation controller
 3. show whether the host reports `active` or `pending`
 
-On Node, uploaded ZIP packages resolve through the Node adapter package installer and uploaded ESM specifiers resolve through the Node adapter importer. On Cloudflare, activation should go through a Worker boundary such as `createCloudflareDispatchServiceActivation(...)`; a future Cloudflare package installer can map the same ZIP contract to Worker/package deployment instead of local disk.
+On Node, uploaded ZIP packages resolve through the Node adapter package
+installer and uploaded ESM specifiers resolve through the Node adapter importer.
+Bun follows the same local-runtime model. Future Deno support should preserve
+that local service cache and runtime-graph activation shape.

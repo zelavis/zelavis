@@ -26,19 +26,8 @@ interface ParsedArgs {
   help: boolean;
 }
 
-const ADAPTERS: readonly BootstrapAdapter[] = [
-  "node",
-  "bun",
-  "cloudflare",
-  "vercel",
-  "netlify",
-];
-const NEXTJS_ADAPTERS: readonly BootstrapAdapter[] = [
-  "vercel",
-  "node",
-  "netlify",
-  "bun",
-];
+const ADAPTERS: readonly BootstrapAdapter[] = ["node", "bun"];
+const NEXTJS_ADAPTERS: readonly BootstrapAdapter[] = ["node", "bun"];
 
 function isAdapter(value: string | undefined): value is BootstrapAdapter {
   return ADAPTERS.includes(value as BootstrapAdapter);
@@ -64,7 +53,7 @@ Commands:
   services register        Register an ESM service specifier.
 
 Options:
-  --adapter <adapter>      node, bun, cloudflare, vercel, or netlify.
+  --adapter <adapter>      node or bun.
   --router <router>        Next.js router target: app or pages.
   --url <url>              Zelavis root URL. Defaults to http://localhost:3000/zelavis.
   --specifier <specifier>  ESM specifier for services register.
@@ -278,21 +267,6 @@ async function promptAdapter(
       label: "Bun",
       hint: "Bun runtime with local SQLite defaults",
     },
-    {
-      value: "cloudflare",
-      label: "Cloudflare",
-      hint: "Workers with D1/KV/R2 bindings",
-    },
-    {
-      value: "vercel",
-      label: "Vercel",
-      hint: "Vercel functions and optional Blob storage",
-    },
-    {
-      value: "netlify",
-      label: "Netlify",
-      hint: "Netlify functions and optional Blobs",
-    },
   ] satisfies Array<{
     value: BootstrapAdapter;
     label: string;
@@ -380,7 +354,7 @@ export async function runCli(args: readonly string[] = process.argv.slice(2)) {
   const router = parsed.target === "nextjs"
     ? parsed.router ?? (parsed.yes ? "app" : await promptNextjsRouter("app"))
     : undefined;
-  const defaultAdapter = parsed.target === "nextjs" && router === "app" ? "vercel" : "node";
+  const defaultAdapter = "node";
   const supportedAdapters = parsed.target === "nextjs" ? NEXTJS_ADAPTERS : ADAPTERS;
   if (parsed.adapter && !supportedAdapters.includes(parsed.adapter)) {
     console.error(

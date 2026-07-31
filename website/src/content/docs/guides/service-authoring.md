@@ -220,12 +220,11 @@ The runtime registry stores service entries separately from Marketplace catalog 
 }
 ```
 
-`specifier` is an ESM module entry point. On Node, the adapter can resolve package names, local files, `data:` URLs, and remote ESM cached under `.zelavis/services`. On worker/serverless hosts, the active adapter decides how specifiers are resolved or dispatched.
+`specifier` is an ESM module entry point. On Node, the adapter can resolve package names, local files, `data:` URLs, and remote ESM cached under `.zelavis/services`. Bun follows the same local-runtime shape.
 
 Installing a service updates registry state. Activation is adapter-owned:
 
-- Node-style hosts can recompose the in-process runtime graph.
-- Cloudflare-style hosts can activate through a Worker dispatch boundary.
+- Local runtime adapters can recompose the in-process runtime graph when supported.
 - Hosts without activation support can still store registry metadata, but installs may remain pending.
 
 ## Rule 5: Keep orchestration helpers only when they add real value

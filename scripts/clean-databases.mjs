@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Wipes the SQLite files and Cloudflare miniflare state that the examples
- * and the dev UI create at the repo root. Safe to run any time — the
- * examples will recreate everything they need on the next start.
+ * Wipes local database and emulator state that the examples and the dev UI
+ * create at the repo root. Safe to run any time — the examples will recreate
+ * everything they need on the next start.
  *
  * Usage:
  *   pnpm run clean:db
@@ -32,7 +32,7 @@ const TARGETS = [
   // Local runtime state created by examples and local adapters
   "examples/*/.zelavis",
 
-  // Miniflare state (D1, KV, cache) under wrangler-backed examples
+  // Local emulator state from previous provider-backed examples
   "examples/*/.wrangler/state",
   "website/.wrangler/state",
 ];

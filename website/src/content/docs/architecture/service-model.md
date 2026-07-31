@@ -234,7 +234,7 @@ The runtime model should also stay explicit:
 - service **install state** lives in a registry store
 - service **activation order** is an explicit `order` number
 - service **setup** runs in registry order and can register additional services through the setup context
-- service **activation** is adapter-owned: Node-style adapters can recompose the local runtime graph, while serverless adapters can attach a worker/function boundary or another live host capability
+- service **activation** is adapter-owned: local runtime adapters can recompose the service graph when supported, or require a process restart when live activation is unavailable
 
 That means install state and activation are related, but not the same thing:
 
@@ -252,21 +252,26 @@ The current runtime direction now reflects that split with:
 - runtime service registry stores for memory, database, key/value, and file storage
 - parent-owned `childServices` allow-lists for child services
 - service setup context carrying only standard data such as root path, API paths, platform summary, and collected services
-- a service activation controller with declared host capabilities:
-  - `strategy`: `runtime-graph`, `worker-boundary`, `function-boundary`, or `custom`
+- a service activation controller with declared runtime capabilities:
+  - `strategy`: `runtime-graph` or `external`
   - `supportsRuntimeInstall`
   - `supportsUploadedSpecifiers`
   - `supportsIsolatedExecution`
 
-The dashboard exposes these capabilities so users can tell whether a host can truly apply uploaded or marketplace services at runtime. Core does not assume a filesystem, a deploy API, or a provider-specific worker model.
+The dashboard exposes these capabilities so users can tell whether the active
+runtime can truly apply uploaded or marketplace services at runtime. Core does
+not assume a specific filesystem layout, process manager, or provider deploy
+API.
 
 For Node or Bun adapters, the likely production shape is a local service cache such as `.zelavis/services/<service>/<version>/index.js`, plus a registry entry that points to that ESM entry point. Zelavis can then dynamic-import the specifier and recompose the runtime graph without restarting the process.
 
-For serverless adapters, the correct shape is provider-specific. A Cloudflare adapter cannot mutate the already-running Worker in place. The plausible runtime-install model is a worker boundary: upload service code as a user Worker, route through a dispatch namespace or service binding, and pass Zelavis context through standard request/binding contracts. That keeps Zelavis core portable while letting the Cloudflare adapter implement the Cloudflare-specific deployment and isolation mechanics.
+Provider deployment is a separate concern. A future deployment plugin may publish
+user websites or apps to an external provider, but that must not become a
+Zelavis runtime activation path.
 
 That platform summary should stay intentionally small:
 
-- `presets`: platform preset names such as `node` or `cloudflare`
+- `presets`: runtime target names such as `node`, `bun`, or future `deno`
 - `resources`: booleans for resource availability such as key/value or file storage
 - `metadata`: plain serializable platform hints
 

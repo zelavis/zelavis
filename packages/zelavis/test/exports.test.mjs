@@ -2,14 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { zelavisEcommerceService } from "../../../plugins/ecommerce/dist/index.js";
 
-test("zelavis package exports runtime APIs, env adapters, and framework utility subpaths", async () => {
+test("zelavis package exports runtime APIs, local adapters, and framework utility subpaths", async () => {
   const runtime = await import("zelavis");
   const adapters = await import("zelavis/adapters");
   const nodeAdapter = await import("zelavis/adapters/node");
   const bunAdapter = await import("zelavis/adapters/bun");
-  const cloudflareAdapter = await import("zelavis/adapters/cloudflare");
-  const netlifyAdapter = await import("zelavis/adapters/netlify");
-  const vercelAdapter = await import("zelavis/adapters/vercel");
   const expressUtil = await import("zelavis/express");
   const honoUtil = await import("zelavis/hono");
   const fastifyUtil = await import("zelavis/fastify");
@@ -35,30 +32,16 @@ test("zelavis package exports runtime APIs, env adapters, and framework utility 
   assert.equal(typeof runtime.resolveS3CacheControlPreset, "function");
   assert.equal("zelavisServer" in runtime, false);
 
-  // Env adapters via the barrel
+  // Local runtime adapters via the barrel
   assert.equal(typeof adapters.zelavisNode, "function");
   assert.equal(typeof adapters.zelavisBun, "function");
-  assert.equal(typeof adapters.zelavisCloudflare, "function");
   assert.equal(typeof adapters.createNodeServicePackageInstaller, "function");
-  assert.equal(
-    typeof adapters.createCloudflareDispatchServiceActivation,
-    "function",
-  );
-  assert.equal(typeof adapters.zelavisVercel, "function");
-  assert.equal(typeof adapters.zelavisNetlify, "function");
 
-  // Env adapters via deep paths (named exports)
+  // Local runtime adapters via deep paths (named exports)
   assert.equal(typeof nodeAdapter.nodeAdapter, "function");
   assert.equal(typeof nodeAdapter.createNodeServiceImporter, "function");
   assert.equal(typeof nodeAdapter.createNodeServicePackageInstaller, "function");
   assert.equal(typeof bunAdapter.bunAdapter, "function");
-  assert.equal(typeof cloudflareAdapter.cloudflareAdapter, "function");
-  assert.equal(
-    typeof cloudflareAdapter.createCloudflareDispatchServiceActivation,
-    "function",
-  );
-  assert.equal(typeof netlifyAdapter.netlifyAdapter, "function");
-  assert.equal(typeof vercelAdapter.vercelAdapter, "function");
 
   // Framework utility helpers
   assert.equal(typeof expressUtil.expressMiddleware, "function");
@@ -85,133 +68,6 @@ test("Zelavis accepts a node env adapter and exposes a Node HTTP server through 
 
   const server = await createNodeServer(zelavis);
   assert.equal(typeof server.listen, "function");
-});
-
-test("cloudflare adapter requires the standard D1 binding when env is provided", async () => {
-  const { cloudflareAdapter } = await import("zelavis/adapters/cloudflare");
-
-  await assert.rejects(
-    () => cloudflareAdapter({ env: {} }).resolve({}),
-    /Missing or invalid Cloudflare D1 binding `ZELAVIS_DB`/,
-  );
-});
-
-test("cloudflare adapter infers KV and file resources from standard env bindings", async () => {
-  const { cloudflareAdapter } = await import("zelavis/adapters/cloudflare");
-  const database = {
-    prepare() {
-      return {
-        bind() {
-          return this;
-        },
-        all: async () => ({ results: [], success: true }),
-        run: async () => ({ success: true }),
-      };
-    },
-    async batch() {
-      return [];
-    },
-  };
-
-  const kv = {
-    async get() {
-      return null;
-    },
-    async put() {},
-    async delete() {},
-    async list() {
-      return { keys: [], list_complete: true };
-    },
-  };
-  const bucket = {
-    async get() {
-      return null;
-    },
-    async put() {},
-    async delete() {},
-    async list() {
-      return { objects: [], truncated: false };
-    },
-  };
-
-  const resolved = await cloudflareAdapter({
-    env: {
-      ZELAVIS_DB: database,
-      ZELAVIS_KV: kv,
-      ZELAVIS_FILES: bucket,
-    },
-  }).resolve({});
-
-  assert.equal(typeof resolved.resources.kv.get, "function");
-  assert.equal(typeof resolved.resources.files.put, "function");
-});
-
-test("cloudflare dispatch service activation sends registry changes to a worker boundary", async () => {
-  const {
-    cloudflareAdapter,
-    createCloudflareDispatchServiceActivation,
-  } = await import("zelavis/adapters/cloudflare");
-  const database = {
-    prepare() {
-      return {
-        bind() {
-          return this;
-        },
-        all: async () => ({ results: [], success: true }),
-        run: async () => ({ success: true }),
-      };
-    },
-    async batch() {
-      return [];
-    },
-  };
-  const seen = [];
-  const dispatchNamespace = {
-    get(name, bindings, options) {
-      seen.push({ name, bindings, options });
-      return {
-        async fetch(request) {
-          seen.push({
-            url: request.url,
-            body: await request.json(),
-          });
-          return Response.json({
-            status: "active",
-            message: "activated through dispatch",
-          });
-        },
-      };
-    },
-  };
-  const activation = createCloudflareDispatchServiceActivation({
-    dispatchNamespace,
-    workerName: (request) => `service-${request.serviceName}`,
-    bindings: { ZELAVIS_CONTEXT: "runtime" },
-    dispatchOptions: { outbound: "allow" },
-  });
-  const resolved = await cloudflareAdapter({
-    env: {
-      ZELAVIS_DB: database,
-    },
-    services: {
-      activation,
-    },
-  }).resolve({});
-  const result = await resolved.resources.services.activate({
-    serviceName: "search",
-    action: "install",
-    specifier: "https://example.com/search.mjs",
-    registry: [],
-  });
-
-  assert.equal(result.status, "active");
-  assert.equal(result.message, "activated through dispatch");
-  assert.equal(seen[0].name, "service-search");
-  assert.deepEqual(seen[0].bindings, { ZELAVIS_CONTEXT: "runtime" });
-  assert.deepEqual(seen[0].options, { outbound: "allow" });
-  assert.equal(seen[1].url, "https://zelavis.internal/__zelavis/service/activate");
-  assert.equal(seen[1].body.serviceName, "search");
-  assert.equal(seen[1].body.action, "install");
 });
 
 test("Zelavis exposes default core APIs", async () => {

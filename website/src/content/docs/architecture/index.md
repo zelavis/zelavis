@@ -9,6 +9,5 @@ Architecture docs should describe real current behavior and stable design constr
 
 ## Pages
 
-- [Cloudflare Service Workers](./cloudflare-service-workers.md)
-- [Service Model](./service-service-model.md)
+- [Service Model](./service-model.md)
 - [Website Core Service](./website-core-service.md)

@@ -24,24 +24,6 @@ function getRuntimeImportPath(router: NextjsRouter): string {
 function getAppRouterRouteTemplate(adapter: BootstrapAdapter): string {
   const runtimeImportPath = getRuntimeImportPath("app");
 
-  if (adapter === "cloudflare") {
-    return `import { getZelavis } from "${runtimeImportPath}";
-
-export const runtime = "edge";
-export const dynamic = "force-dynamic";
-
-async function handle(request: Request): Promise<Response> {
-  return getZelavis().fetch(request);
-}
-
-export const GET = handle;
-export const POST = handle;
-export const PUT = handle;
-export const PATCH = handle;
-export const DELETE = handle;
-`;
-  }
-
   return `import { zv } from "${runtimeImportPath}";
 
 export const runtime = "nodejs";

@@ -6,7 +6,8 @@ It is a reference embedding example, not a standalone runnable server demo. To u
 
 ## What it is for
 
-Use this pattern for platforms that expect a Web-style handler, such as workers, edge runtimes, Bun, Deno, or custom fetch-based hosts.
+Use this pattern for self-hosted environments that expect a Web-style handler,
+such as Bun, future Deno support, or custom fetch-based hosts.
 
 It also pairs naturally with the storage + file-reference flow:
 

@@ -9,11 +9,13 @@ Zelavis is a unified, self-hostable App Platform. It replaces — and combines �
 | Firebase / Supabase | Backend-as-a-service: auth, database, real-time, self-hostable |
 | Vitess (for MySQL) | SQL-database-agnostic query routing, replication, and sharding — not tied to one engine |
 | WordPress | Content management: content types, entries, schemas, media |
-| cPanel / Plesk / Coolify / Dokploy / Vercel / Netlify | Server, app, hosting, and deploy management |
+| cPanel / Plesk / Coolify / Dokploy / deploy providers | Server, app, local website hosting, and optional external deploy management |
 | phpMyAdmin | Database administration UI (collections, tables, queries, events) |
 | Claude / Codex chat | AI chat area built into the dashboard for interacting with Zelavis and building via AI |
 
-The difference from Firebase/Supabase is depth and ownership: Zelavis is fully self-hostable, runtime-neutral, and built to scale beyond a single database engine. The database layer is the deepest differentiator — `@zelavis/db` extends SQL with a Document DB model (event-sourced, tenant-aware, per-collection tables) while keeping the storage engine swappable (SQLite, D1, libSQL, and future engines). Replication and sharding are on the roadmap; the event log is the natural replication stream and `tenant_id` is the natural shard key. That is the same role Vitess plays for MySQL, but Zelavis is not coupled to any single SQL engine.
+The difference from Firebase/Supabase is depth and ownership: Zelavis is fully self-hostable, runtime-neutral, and built to scale beyond a single database engine. The database layer is the deepest differentiator — `@zelavis/db` extends SQL with a Document DB model (event-sourced, tenant-aware, per-collection tables) while keeping the storage engine swappable (SQLite, libSQL, and future engines). Replication, sharding, and eventually distributed multi-master operation are roadmap goals; the event log is the natural replication stream and `tenant_id` is the natural shard key. That is the same role Vitess plays for MySQL, but Zelavis is not coupled to any single SQL engine.
+
+Zelavis should be able to host websites itself on user-controlled infrastructure. Managed deployment providers may be optional targets through plugins, but they are not the default hosting model and must not replace native Zelavis website hosting.
 
 Core platform work currently centers on:
 
@@ -41,6 +43,7 @@ The repo still contains domain packages such as `@zelavis/ecommerce`, but they a
 - Avoid app-specific assumptions in shared packages.
 - Favor composition and adapters over inheritance.
 - Do not introduce heavy dependencies without a clear reason.
+- Keep future distributed multi-master operation possible: prefer deterministic event application, explicit idempotency, stable node identity, tenant-aware boundaries, and adapter-neutral replication contracts over hidden single-node assumptions.
 
 ## Repo Structure
 
@@ -191,12 +194,18 @@ When acting as an agent in this repo:
 
 Zelavis core must only depend on the JavaScript language and standard platform APIs.
 
+Supported Zelavis runtime targets are self-hosted Node.js, Bun, and future Deno.
+Serverless function platforms are not Zelavis runtime targets. They may appear as
+optional plugins for deploying user websites, storage, email, images, DNS, CDN,
+or other provider integrations, but must not define the core runtime
+architecture.
+
 This repo must not be architected around:
 
 - Node.js APIs
 - Bun APIs
 - Deno APIs
-- Cloudflare-specific APIs
+- provider-specific APIs
 - framework-specific request/response models
 - hosting provider SDKs or platform lock-in
 

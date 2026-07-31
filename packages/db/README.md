@@ -37,11 +37,28 @@ untyped blobs.
 - No `unstorage` dependency.
 - No replication, offline sync, or distributed transactions.
 
+## Distributed roadmap
+
+Replication, sharding, and distributed multi-master operation are future goals,
+not current behavior. The current database core should still avoid choices that
+would make those goals harder later.
+
+Design constraints to preserve:
+
+- Treat the event log as the future replication stream.
+- Keep event writes idempotent through explicit idempotency keys.
+- Preserve stable node identity on events so writes can be traced to an origin.
+- Keep tenant-aware boundaries explicit; `tenant_id` is the natural shard key.
+- Keep projection rebuilds deterministic from ordered events.
+- Keep replication and conflict-resolution contracts adapter-neutral instead of
+  coupling them to SQLite, libSQL, Node.js, Bun, or any hosting provider.
+- Do not make collection tables the source of truth. They are projections of the
+  event stream.
+
 Platform adapters should provide durable database drivers later, for example:
 
 - `@zelavis/db-bun-sqlite` supplies a Bun SQLite driver using the built-in `bun:sqlite` module.
 - `@zelavis/db-node-sqlite` supplies a Node SQLite driver using `better-sqlite3`.
-- `@zelavis/db-cloudflare-d1` supplies a Cloudflare D1 driver.
 - future libSQL/Turso adapters can follow the same contract without changing the core database API.
 
 ## Usage

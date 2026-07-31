@@ -4,9 +4,6 @@
  *
  * Why this exists as an interface, not core code:
  *
- * - On edge platforms (Cloudflare/Vercel/Netlify) zelavis terminates no
- *   TLS; the edge handles certificates entirely. The right provider
- *   there is a no-op (`createEdgeTlsProvider`).
  * - On self-hosted Node/Bun, users want different strategies: drop a
  *   PEM into a file and point at it, get one from Let's Encrypt via
  *   ACME, share a cert with a sibling service via a KV store, generate
@@ -18,9 +15,9 @@
  * "uploaded override → ACME → self-signed dev fallback" without each
  * provider knowing about the others.
  *
- * This PR ships the interface + the two simplest implementations (edge
- * no-op + in-memory manual map). ACME / Let's Encrypt support arrives
- * in a follow-up PR with its own certificate caching + renewal logic.
+ * This PR ships the interface + the simplest implementation: an in-memory
+ * manual map. ACME / Let's Encrypt support arrives in a follow-up PR with its
+ * own certificate caching + renewal logic.
  *
  * **Integration with the listening socket** is also a follow-up
  * concern: PR-A defines the seam; the Node/Bun adapter wiring (passing
@@ -91,24 +88,20 @@ export interface TlsProvider {
 }
 
 /**
- * No-op provider for environments where TLS is terminated outside the
- * zelavis process — Cloudflare Workers, Vercel, Netlify, or behind a
- * reverse proxy (nginx/Caddy) that owns the cert.
+ * No-op provider for environments where TLS is terminated outside the zelavis
+ * process, such as behind a reverse proxy (nginx/Caddy) that owns the cert.
  *
  * Returns `undefined` for every hostname; chains pass through to the
  * next provider, and self-hosted code paths that need a cert get a
  * clear "nothing here" signal.
  *
- * The reason this trivial provider exists at all: it makes the
- * "zelavis on edge" story explicit. Adapters set `resources.tls =
- * createEdgeTlsProvider()` to communicate "TLS isn't my concern" to
- * downstream code, instead of leaving `tls` undefined (which is
- * ambiguous — could mean "not configured yet" or "intentionally
- * disabled").
+ * The reason this trivial provider exists at all: adapters can communicate
+ * "TLS is handled outside this process" to downstream code instead of leaving
+ * `tls` undefined, which is ambiguous.
  */
-export function createEdgeTlsProvider(): TlsProvider {
+export function createExternalTlsProvider(): TlsProvider {
   return {
-    name: "edge",
+    name: "external",
     getCertificate: () => undefined,
     listHostnames: () => [],
   };

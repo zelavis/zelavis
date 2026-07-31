@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
-export type BootstrapAdapter = "node" | "bun" | "cloudflare" | "vercel" | "netlify";
+export type BootstrapAdapter = "node" | "bun";
 
 export interface BootstrapAction {
   path: string;
@@ -29,43 +29,14 @@ export function toProjectPath(cwd: string, absolutePath: string): string {
 }
 
 export function getRuntimeTemplate(adapter: BootstrapAdapter): string {
-  if (adapter === "cloudflare") {
-    return `import { Zelavis } from "zelavis";
-import {
-  cloudflareAdapter,
-  type CloudflareAdapterEnv,
-} from "zelavis/adapters/cloudflare";
-
-const instances = new WeakMap<CloudflareAdapterEnv, Zelavis>();
-
-export function getZelavis(env: CloudflareAdapterEnv) {
-  const existing = instances.get(env);
-  if (existing) {
-    return existing;
-  }
-
-  const zv = new Zelavis({
-    adapter: cloudflareAdapter({ env }),
-  });
-
-  instances.set(env, zv);
-  return zv;
-}
-`;
-  }
-
   const adapterImport = {
     node: `import { nodeAdapter } from "zelavis/adapters/node";`,
     bun: `import { bunAdapter } from "zelavis/adapters/bun";`,
-    vercel: `import { vercelAdapter } from "zelavis/adapters/vercel";`,
-    netlify: `import { netlifyAdapter } from "zelavis/adapters/netlify";`,
   }[adapter];
 
   const adapterCall = {
     node: "nodeAdapter()",
     bun: "bunAdapter()",
-    vercel: "vercelAdapter()",
-    netlify: "netlifyAdapter()",
   }[adapter];
 
   return `import { Zelavis } from "zelavis";
@@ -78,63 +49,6 @@ export const zv = new Zelavis({
 }
 
 function getRouteTemplate(adapter: BootstrapAdapter): string {
-  if (adapter === "cloudflare") {
-    return `import { getZelavis } from "~/lib/zelavis.server";
-import type { CloudflareAdapterEnv } from "zelavis/adapters/cloudflare";
-
-interface CloudflareContext {
-  cloudflare?: {
-    env?: CloudflareAdapterEnv;
-    ctx?: unknown;
-  };
-}
-
-function readCloudflareEnv(context: CloudflareContext): CloudflareAdapterEnv {
-  const env = context.cloudflare?.env;
-  if (!env || typeof env !== "object") {
-    throw new Error("Zelavis Cloudflare bootstrap requires a React Router Cloudflare context with env bindings.");
-  }
-  return env;
-}
-
-export async function loader({
-  request,
-  context,
-}: {
-  request: Request;
-  context: CloudflareContext;
-}) {
-  const env = readCloudflareEnv(context);
-  return getZelavis(env).fetch(request, {
-    platform: {
-      cloudflare: {
-        env,
-        executionContext: context.cloudflare?.ctx,
-      },
-    },
-  });
-}
-
-export async function action({
-  request,
-  context,
-}: {
-  request: Request;
-  context: CloudflareContext;
-}) {
-  const env = readCloudflareEnv(context);
-  return getZelavis(env).fetch(request, {
-    platform: {
-      cloudflare: {
-        env,
-        executionContext: context.cloudflare?.ctx,
-      },
-    },
-  });
-}
-`;
-  }
-
   return `import { zv } from "~/lib/zelavis.server";
 
 export async function loader({ request }: { request: Request }) {

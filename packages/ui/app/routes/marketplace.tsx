@@ -6,7 +6,6 @@ import {
   useState,
 } from "react";
 import {
-  ServerCog,
   Sparkles,
   Upload,
 } from "lucide-react";
@@ -218,35 +217,13 @@ function formatActivationStrategy(
   switch (strategy) {
     case "runtime-graph":
       return "Runtime graph";
-    case "worker-boundary":
-      return "Worker boundary";
-    case "function-boundary":
-      return "Function boundary";
-    case "custom":
-      return "Custom host";
+    case "external":
+      return "External controller";
   }
 }
 
 function formatCapability(value: boolean) {
   return value ? "Supported" : "Not available";
-}
-
-function getWorkerBoundaryMessage(
-  capabilities: RuntimeServiceActivationCapabilities | undefined,
-) {
-  if (!capabilities || capabilities.strategy !== "worker-boundary") {
-    return undefined;
-  }
-
-  if (
-    capabilities.supportsRuntimeInstall &&
-    capabilities.supportsUploadedSpecifiers &&
-    capabilities.supportsIsolatedExecution
-  ) {
-    return "Worker dispatch is configured for this host. Service installs can be activated through an isolated worker boundary.";
-  }
-
-  return "This host reports a worker-boundary strategy, but dispatch activation is incomplete. Marketplace can update metadata, but runtime service uploads may stay pending until the adapter supplies dispatch, uploaded source, and isolation support.";
 }
 
 function MarketplaceServiceCard({
@@ -351,7 +328,6 @@ function Marketplace() {
     activationCapabilities?.supportsPackageUploads ?? false;
   const canRegisterServiceSpecifier =
     activationCapabilities?.supportsUploadedSpecifiers ?? false;
-  const workerBoundaryMessage = getWorkerBoundaryMessage(activationCapabilities);
   const marketplaceActivationRequired =
     activationRequired ||
     officialCatalog.some((item) =>
@@ -439,7 +415,7 @@ function Marketplace() {
           title="Host activation required"
           description={
             activationMessage ??
-            "Service install state has changed. Marketplace metadata updates now; mounted services activate when the current host applies its live service activation flow."
+            "Service install state has changed. Marketplace metadata updates now; mounted services activate when the local runtime applies its service graph."
           }
         />
       ) : (
@@ -447,7 +423,7 @@ function Marketplace() {
           title="Install flow model"
           description={
             activationMessage ??
-            "The marketplace edits real service registry state. Hosts decide how activation happens: recompose the local runtime, create a worker/function, or attach another live function boundary."
+            "The marketplace edits real service registry state. The local runtime decides whether service changes can activate immediately or need a process restart."
           }
         />
       )}
@@ -506,59 +482,6 @@ function Marketplace() {
         </Card>
       ) : null}
 
-      {workerBoundaryMessage ? (
-        <ResourceNotice
-          title={
-            activationCapabilities?.supportsRuntimeInstall &&
-            activationCapabilities.supportsUploadedSpecifiers &&
-            activationCapabilities.supportsIsolatedExecution
-              ? "Worker dispatch configured"
-              : "Worker dispatch incomplete"
-          }
-          description={workerBoundaryMessage}
-        />
-      ) : null}
-
-      {activationCapabilities?.strategy === "worker-boundary" ? (
-        <Card className="border-border/80">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <ServerCog className="size-4" />
-              Worker dispatch
-            </CardTitle>
-            <CardDescription>
-              Services activate outside the main runtime through an isolated worker endpoint.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-2 text-sm md:grid-cols-3">
-            <div className="rounded-md border bg-muted/35 px-3 py-3">
-              <p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
-                Endpoint
-              </p>
-              <p className="mt-1 font-mono text-xs text-foreground">
-                /__zelavis/service/activate
-              </p>
-            </div>
-            <div className="rounded-md border bg-muted/35 px-3 py-3">
-              <p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
-                Registry changes
-              </p>
-              <p className="mt-1 font-medium text-foreground">
-                Sent to service Worker
-              </p>
-            </div>
-            <div className="rounded-md border bg-muted/35 px-3 py-3">
-              <p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
-                Main runtime
-              </p>
-              <p className="mt-1 font-medium text-foreground">
-                No restart required
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      ) : null}
-
       {actionError ? (
         <ResourceNotice
           title="Service update failed"
@@ -573,7 +496,7 @@ function Marketplace() {
             Upload service
           </CardTitle>
           <CardDescription>
-            Upload a ZIP service package or register an ESM source that the current host can activate through its live service flow.
+            Upload a ZIP service package or register an ESM source that the local runtime can activate through its service graph.
           </CardDescription>
         </CardHeader>
         <CardContent>

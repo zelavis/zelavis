@@ -33,7 +33,7 @@ const stalePatterns = [
       "Mounted dashboard dev URLs should include /zelavis when documented directly.",
   },
   {
-    pattern: /@zelavis\/adapter-cloudflare|@zelavis\/adapter-turso/i,
+    pattern: /@zelavis\/adapter-[a-z-]+|@zelavis\/adapter-turso/i,
     message: "Docs reference old adapter package names.",
   },
   {

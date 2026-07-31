@@ -1,14 +1,16 @@
 ---
 title: Website Core Service
 ---
-The website core service is the current Zelavis bridge between the internal platform APIs and public website delivery.
+The website core service is the current Zelavis bridge between the internal
+platform APIs and native public website delivery.
 
 ## Current role
 
 Today, the website core service does two things:
 
 - exposes a versioned API for managing website pages
-- serves public pages from `/` while keeping the dashboard namespace reserved
+- serves public pages from the Zelavis runtime while keeping the dashboard
+  namespace reserved
 
 ## Current mounted behavior
 
@@ -25,11 +27,16 @@ The dashboard stays under `/zelavis`, while public website pages can occupy `/` 
 
 ## Why it is a core service
 
-The website layer is now part of the default runtime because it affects how Zelavis owns routes at the root of an app:
+The website layer is now part of the default runtime because Zelavis should be
+able to host websites itself on user-controlled infrastructure:
 
 - the dashboard and APIs need a protected namespace
 - public pages need a safe place to live outside that namespace
 - runtime settings such as page-builder availability depend on whether website support exists
+
+External deployment providers can be targets through plugins if the user chooses
+them. They should not be treated as the default website hosting model for
+Zelavis.
 
 ## Current API surface
 

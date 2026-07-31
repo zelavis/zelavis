@@ -9,7 +9,7 @@ A unified, self-hostable App Platform that replaces and combines:
 - **Firebase / Supabase** — backend-as-a-service: auth, database, self-hostable, runtime-neutral
 - **Database layer** — SQL-database-agnostic Document DB with event sourcing, tenant routing, and a roadmap for replication and sharding (think Vitess but not MySQL-only, and doing much more)
 - **Content management** — content types, entries, schemas, media (think WordPress)
-- **Server / app / hosting / deploy management** — runtime management, environment config, service lifecycle (think cPanel, Plesk, Vercel, Netlify, Coolify, Dokploy)
+- **Server / app / hosting / deploy management** — native website hosting, runtime management, environment config, service lifecycle, and optional external deployment targets (think cPanel, Plesk, Coolify, Dokploy, plus user-selected deploy providers)
 - **Database administration** — collections, tables, query browser, event log (think phpMyAdmin)
 - **AI chat** — a built-in chat area inside the dashboard for interacting with Zelavis and building via AI (think Claude / Codex)
 
@@ -28,7 +28,7 @@ Collections are tagged with a first-class `surface` field on `DatabaseCollection
 - `surface: "database"` — raw database tables created from Core > Database (e.g. `database.new.tsx`). These appear in the Database sidebar under **Tables**, not in Content Studio.
 
 ### Write protection
-`sql.execute()` on the driver checks the target table against the `collections` registry before running any DML/DDL. Direct SQL writes to registered collection tables throw `DatabaseDomainError` pointing to the documents API. `sql.query()` (reads) is unrestricted. All four adapters (better-sqlite3, Bun SQLite, libSQL, D1) inherit this via the shared `createSqliteCompatibleDriver`.
+`sql.execute()` on the driver checks the target table against the `collections` registry before running any DML/DDL. Direct SQL writes to registered collection tables throw `DatabaseDomainError` pointing to the documents API. `sql.query()` (reads) is unrestricted. SQLite-compatible adapters such as better-sqlite3, Bun SQLite, and libSQL inherit this via the shared `createSqliteCompatibleDriver`.
 
 ### Tenant routing
 Every collection table row has `tenant_id`. The driver already declares `tenantRouting: true` capability. `tenant_id` is the intended shard key when sharding is implemented.

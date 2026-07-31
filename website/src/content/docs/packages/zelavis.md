@@ -75,15 +75,14 @@ Use scoped packages directly when you need lower-level control over primitives, 
 - `@zelavis/db`
 - `@zelavis/auth`
 
-The lower-level `zelavis()` function still exists for internal runtime composition, but the main public application-facing entry point is the `Zelavis` class plus an environment adapter.
+The lower-level `zelavis()` function still exists for internal runtime composition, but the main public application-facing entry point is the `Zelavis` class plus a runtime adapter.
 
-Available environment adapters:
+Available runtime adapters:
 
 - `zelavis/adapters/node`
 - `zelavis/adapters/bun`
-- `zelavis/adapters/cloudflare`
-- `zelavis/adapters/netlify`
-- `zelavis/adapters/vercel`
+
+Deno is a planned runtime target.
 
 Framework utilities (small wrappers around `zv.fetch`) live at:
 

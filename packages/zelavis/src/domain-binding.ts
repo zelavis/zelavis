@@ -119,7 +119,7 @@ const RANDOM_TOKEN_BYTES = 32;
  * Generate a URL-safe random token suitable for `verificationToken`.
  *
  * Uses Web Crypto via `globalThis.crypto.getRandomValues`, available in
- * Node 19+, Bun, Deno, Workers, and modern browsers. Encodes as
+ * Node 19+, Bun, Deno, and modern browsers. Encodes as
  * URL-safe base64 (no padding, `+` and `/` swapped for `-` and `_`)
  * so the token can be dropped into DNS TXT records and URL paths
  * without escaping.
@@ -326,10 +326,10 @@ export interface CreateKeyValueDomainBindingStoreOptions {
 }
 
 /**
- * Store backed by a `ZelavisKeyValueStore`. Suitable for any backend
- * the host has wired up (KV in Cloudflare, Vercel/Netlify Blob KV
- * indices, Node's in-memory dev KV, a Redis adapter). Bindings are
- * JSON-encoded under `<prefix>/<host>`.
+ * Store backed by a `ZelavisKeyValueStore`. Suitable for any backend the host
+ * has wired up (Node's in-memory dev KV, a Redis adapter, or another
+ * list-capable key/value backend). Bindings are JSON-encoded under
+ * `<prefix>/<host>`.
  *
  * The optional `list` capability of `ZelavisKeyValueStore` is required
  * — without it, the store can't enumerate bindings and `list()` will

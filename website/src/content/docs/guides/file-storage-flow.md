@@ -112,7 +112,7 @@ The storage dashboard now also includes a quick action that creates a sample `st
 
 ## S3-compatible storage
 
-When you want object storage outside the built-in platform presets, Zelavis now exposes a first-party helper:
+When you want object storage outside the built-in local file storage, Zelavis now exposes a first-party helper:
 
 ```ts
 import { createS3CompatibleFileStorage } from "zelavis/storage/s3";
@@ -126,12 +126,13 @@ That helper stays inside the Zelavis storage contract instead of routing through
 - custom metadata headers
 - the same file-reference flow used by the dashboard and database
 
-Use it when the deployment target is generic S3-compatible object storage rather than a platform-specific preset like Cloudflare R2 or Vercel Blob.
+Use it when the operator wants generic S3-compatible object storage behind the
+normal Zelavis storage contract.
 
 It also ships a few CDN-friendly cache presets:
 
 - `immutableAsset`
 - `browserShort`
-- `edgeShort`
+- `cdnShort`
 - `privateDocument`
 - `noStore`

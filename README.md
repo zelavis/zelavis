@@ -2,7 +2,7 @@
 
 Zelavis is an early-stage, self-hostable App Platform for building and operating modern web applications from one composable TypeScript workspace.
 
-It brings together backend primitives, runtime composition, an admin dashboard, database tooling, authentication, plugins, and deployment-oriented control surfaces without tying the core to one JavaScript runtime, framework, or hosting provider.
+It brings together backend primitives, runtime composition, an admin dashboard, database tooling, authentication, plugins, native website hosting, and deployment-oriented control surfaces without tying the core to one JavaScript runtime, framework, or hosting provider.
 
 Zelavis is foundation-first today. The current repository already includes working packages for auth, database, server composition, runtime mounting, dashboard delivery, framework adapters, and optional domain plugins. The broader platform surface is still evolving.
 
@@ -16,9 +16,10 @@ The platform direction includes:
 - Authentication and identity primitives.
 - Tenant-aware database and data administration.
 - Admin/dashboard UI.
+- Native website hosting from the Zelavis runtime.
 - Plugin and package extensibility.
 - Framework and host adapters.
-- Deployment, environment, and operational tooling.
+- Deployment, environment, and operational tooling, including optional external deployment targets when the user chooses them.
 - Optional domain packages for larger product systems.
 
 The goal is not a loose collection of utilities. Zelavis is being shaped as a coherent App Platform: something you can embed inside an existing app, self-host as an admin surface, or extend into a larger product platform.
@@ -46,6 +47,7 @@ Zelavis currently focuses on these layers:
 - **Database**: tenant-aware document collections with development drivers and SQL-capable adapters.
 - **Dashboard**: an admin UI package mounted by the runtime at the platform root path.
 - **CLI**: workspace tooling for future platform and developer workflows.
+- **Website hosting**: built-in public page delivery from the Zelavis runtime, with dashboard and API routes kept under a reserved platform namespace.
 - **Plugins**: optional domain and provider packages that extend the core platform.
 
 ## Workspace
@@ -73,8 +75,6 @@ Database adapters:
   A Bun SQLite adapter package for `@zelavis/db`.
 - [packages/db/adapters/node-sqlite](packages/db/adapters/node-sqlite)
   A Node.js SQLite adapter package for `@zelavis/db`.
-- [packages/db/adapters/cloudflare-d1](packages/db/adapters/cloudflare-d1)
-  A Cloudflare D1 adapter package for `@zelavis/db`.
 - [packages/db/adapters/libsql](packages/db/adapters/libsql)
   A libSQL adapter package for `@zelavis/db`.
 
@@ -199,7 +199,7 @@ Current database architecture includes:
 - A document API for create, read, query, update, and delete operations.
 - An in-memory driver for development and tests.
 - Optional SQL capability contracts.
-- SQLite, D1, and libSQL adapter packages.
+- SQLite and libSQL adapter packages.
 - `defineDatabaseService(database)` for mounting database routes through `@zelavis/server`, with documents exposed as a nested service.
 
 The core implementation is intentionally portable and does not depend on native bindings or host-specific storage APIs. Durable database drivers live behind adapter packages.
@@ -208,7 +208,7 @@ The core implementation is intentionally portable and does not depend on native 
 
 Zelavis core packages are designed around JavaScript, TypeScript, and standard Web platform primitives such as `Request`, `Response`, `Headers`, `URL`, streams, and standard `crypto`.
 
-Runtime-specific behavior belongs in adapters. Provider-specific behavior belongs in plugins. The core platform should remain portable across runtimes, frameworks, and deployment targets.
+Runtime-specific behavior belongs in adapters. Provider-specific behavior belongs in plugins. The core platform should remain portable across Node, Bun, future Deno, and framework utilities without treating external deployment providers as runtime targets.
 
 ## Error Model
 
