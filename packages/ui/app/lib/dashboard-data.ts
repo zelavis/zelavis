@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   Bot,
   Boxes,
   CreditCard,
@@ -7,11 +8,11 @@ import {
   FileText,
   Fingerprint,
   Github,
+  Globe2,
   LayoutDashboard,
   LifeBuoy,
   MonitorCog,
   Paintbrush,
-  PanelsTopLeft,
   Package,
   Plus,
   ReceiptText,
@@ -36,13 +37,14 @@ import type {
 } from "#/lib/runtime-api";
 import type { ContentTypeRow } from "#/lib/content-studio";
 import { isInternalDatabaseCollection } from "#/lib/database-collections";
+import { toProjectPath } from "#/lib/routing";
 
 export type DashboardRoutePath =
   | "/"
+  | `/projects/${string}`
+  | `/projects/${string}/${string}`
   | "/agents"
   | "/auth"
-  | "/builder"
-  | "/builder/pages"
   | "/commerce"
   | "/commerce/customers"
   | "/commerce/coupons"
@@ -56,11 +58,13 @@ export type DashboardRoutePath =
   | "/database/new"
   | "/media"
   | "/marketplace"
+  | "/projects"
   | "/services"
   | "/settings"
   | "/settings/appearance"
   | "/storage"
   | "/users"
+  | "/website"
   | `/${string}`;
 
 export type DashboardNavSearch = {
@@ -71,6 +75,7 @@ export type DashboardNavSearch = {
     | "zv_time_series_checkpoints"
     | "zv_time_series_points";
   databaseTable?: string;
+  new?: string;
   sidebar?: string;
 };
 
@@ -127,27 +132,45 @@ export type DashboardSecondaryItem = {
   external?: boolean;
 };
 
-export type DashboardTeamItem = {
+export type DashboardProjectItem = {
+  id: string;
   name: string;
   logo: LucideIcon;
-  plan: string;
+  domain: string;
+  status: "active" | "draft";
+  updatedAt: string;
 };
 
-export const sidebarTeams: readonly DashboardTeamItem[] = [
+export const dashboardProjects: readonly DashboardProjectItem[] = [
   {
-    name: "Zelavis",
+    id: "default",
+    name: "Default project",
     logo: ZelavisMark,
-    plan: "Runtime",
+    domain: "localhost",
+    status: "draft",
+    updatedAt: "just now",
+  },
+] as const;
+
+export const projectManagementNavItems: readonly DashboardNavItem[] = [
+  {
+    title: "Back to project",
+    url: toProjectPath("/") as DashboardRoutePath,
+    icon: ArrowLeft,
+    pageLabel: "Overview",
   },
   {
-    name: "Local",
-    logo: MonitorCog,
-    plan: "Development",
+    title: "All Projects",
+    url: "/projects",
+    icon: LayoutDashboard,
+    pageLabel: "Projects",
   },
   {
-    name: "Core",
-    logo: Database,
-    plan: "Services",
+    title: "New Project",
+    url: "/projects",
+    search: { new: "1" },
+    icon: Plus,
+    pageLabel: "Projects",
   },
 ] as const;
 
@@ -157,6 +180,60 @@ function toDashboardRoutePath(path: string): DashboardRoutePath | undefined {
   }
 
   return path as DashboardRoutePath;
+}
+
+function toProjectRoutePath(path: string): DashboardRoutePath {
+  return toProjectPath(path) as DashboardRoutePath;
+}
+
+function isBuiltInProjectPath(path: string) {
+  if (path.startsWith("/content/")) {
+    return true;
+  }
+
+  return [
+    "/",
+    "/agents",
+    "/auth",
+    "/commerce",
+    "/commerce/customers",
+    "/commerce/coupons",
+    "/commerce/orders",
+    "/commerce/products",
+    "/content",
+    "/content/new",
+    "/database",
+    "/database/new",
+    "/media",
+    "/services",
+    "/settings",
+    "/settings/appearance",
+    "/storage",
+    "/users",
+    "/website",
+  ].includes(path);
+}
+
+function toProjectMenuItem(item: DashboardNavItem): DashboardNavItem {
+  return {
+    ...item,
+    url:
+      item.url && isBuiltInProjectPath(item.url)
+        ? toProjectRoutePath(item.url)
+        : item.url,
+    landingUrl:
+      item.landingUrl && isBuiltInProjectPath(item.landingUrl)
+        ? toProjectRoutePath(item.landingUrl)
+        : item.landingUrl,
+    items: item.items?.map(toProjectMenuItem),
+  };
+}
+
+function createProjectAwareDashboardServiceMenuItem(
+  menu: RuntimeServiceMenuDefinition,
+  serviceName?: string,
+): DashboardNavItem {
+  return toProjectMenuItem(createDashboardServiceMenuItem(menu, serviceName));
 }
 
 function slugifyServiceName(name: string) {
@@ -228,7 +305,7 @@ function getServiceMenuIcon(title: string, serviceName?: string): LucideIcon {
     case "@zelavis/storage":
       return Files;
     case "@zelavis/website":
-      return PanelsTopLeft;
+      return Globe2;
     default:
       return Server;
   }
@@ -391,8 +468,8 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
     apiPath: "/",
     menu: {
       title: "Website",
-      path: "/builder/pages",
-      pageLabel: "Builder",
+      path: "/website",
+      pageLabel: "Website",
     },
   },
 ] as const;
@@ -425,7 +502,7 @@ export function buildPlatformNavItems(
     .filter((service) => service.core && service.name !== "@zelavis/ui")
     .map((service) => {
       const baseMenu = service.menu
-        ? createDashboardServiceMenuItem(service.menu, service.name)
+        ? createProjectAwareDashboardServiceMenuItem(service.menu, service.name)
         : {
             title: service.name,
             icon: getServiceMenuIcon(service.name, service.name),
@@ -435,6 +512,7 @@ export function buildPlatformNavItems(
         return {
           item: baseMenu,
           surface: getServiceMenuSurface(service),
+          serviceName: service.name,
         };
       }
 
@@ -477,13 +555,14 @@ export function buildPlatformNavItems(
           ],
         },
         surface: getServiceMenuSurface(service),
+        serviceName: service.name,
       };
     });
   const rootServiceNavItems = serviceNavItems
     .filter((entry) => entry.surface === "root")
     .map((entry) => entry.item);
   const coreServiceNavItems = serviceNavItems
-    .filter((entry) => entry.surface === "core" && entry.item.title !== "Website")
+    .filter((entry) => entry.surface === "core" && entry.serviceName !== "@zelavis/website")
     .map((entry) => entry.item);
   const workspaceServiceNavItems = serviceNavItems
     .filter((entry) => entry.surface === "workspace")
@@ -491,6 +570,9 @@ export function buildPlatformNavItems(
   const settingsServiceNavItems = serviceNavItems
     .filter((entry) => entry.surface === "settings")
     .map((entry) => entry.item);
+  const hasWebsiteService = (services ?? defaultRuntimeServices).some(
+    (service) => service.name === "@zelavis/website",
+  );
   const contentItems: readonly DashboardNavItem[] = [
     {
       title: "All Content Types",
@@ -531,7 +613,7 @@ export function buildPlatformNavItems(
     })) as readonly DashboardNavItem[]),
   ];
 
-  return [
+  const rawItems: readonly DashboardNavItem[] = [
     {
       title: "Overview",
       url: "/",
@@ -550,11 +632,21 @@ export function buildPlatformNavItems(
       items: contentItems,
     },
     {
-      title: "Media Gallery",
+      title: "Media",
       url: "/media",
       icon: Files,
       pageLabel: "Media",
     },
+    ...(hasWebsiteService
+      ? [
+          {
+            title: "Website",
+            url: "/website" as const,
+            icon: Globe2,
+            pageLabel: "Website",
+          },
+        ]
+      : []),
     ...rootServiceNavItems,
     {
       title: "Marketplace",
@@ -574,18 +666,6 @@ export function buildPlatformNavItems(
           title: "Agents",
           url: "/agents",
           icon: Bot,
-        },
-        {
-          title: "Builder",
-          icon: PanelsTopLeft,
-          items: [
-            {
-              title: "Pages",
-              url: "/builder/pages",
-              icon: FileText,
-              pageLabel: "Builder",
-            },
-          ],
         },
         ...workspaceServiceNavItems,
         ...workspaceRegistryNavItems,
@@ -616,6 +696,8 @@ export function buildPlatformNavItems(
       ],
     },
   ] as const;
+
+  return rawItems.map(toProjectMenuItem);
 }
 
 export const platformNavItems = buildPlatformNavItems(

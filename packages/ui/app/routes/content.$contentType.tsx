@@ -4,7 +4,7 @@ import { PageHeader, ResourceNotice } from "#/components/DashboardPage";
 import { buttonVariants } from "#/components/ui/button";
 import { buildContentTypeRows } from "#/lib/content-studio";
 import { getResolvedDashboardPreferences } from "#/lib/runtime-api";
-import { toDashboardPath } from "#/lib/routing";
+import { toDashboardPath, toProjectPath } from "#/lib/routing";
 import { cn } from "#/lib/utils";
 import type { clientLoader as rootClientLoader } from '../root';
 
@@ -30,13 +30,13 @@ function ContentTypeLayout() {
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Link
-              to="/content"
+              to={toProjectPath("/content")}
               className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
             >
               Back to Content
             </Link>
             <Link
-              to={toDashboardPath("/database", { sidebar: "Core" })}
+              to={toDashboardPath(toProjectPath("/database"), { sidebar: "Core" })}
               className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
             >
               Open Core Database

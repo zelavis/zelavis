@@ -7,6 +7,7 @@ import { Button, buttonVariants } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import { createDatabaseCollection, getRuntimeConfig } from "#/lib/runtime-api";
+import { toProjectPath } from "#/lib/routing";
 import { cn } from "#/lib/utils";
 import type { Route } from "./+types/database.new";
 
@@ -46,7 +47,9 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
       },
     });
 
-    return redirect(`/database?databaseTable=${encodeURIComponent(table.name)}`);
+    return redirect(
+      `${toProjectPath("/database")}?databaseTable=${encodeURIComponent(table.name)}`,
+    );
   } catch (caught) {
     return {
       error: caught instanceof Error ? caught.message : String(caught),
@@ -70,7 +73,7 @@ function NewDatabaseTableRoute({ actionData }: Route.ComponentProps) {
         title="New Table"
         actions={
           <Link
-            to="/database"
+            to={toProjectPath("/database")}
             className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
           >
             Back to Database
@@ -99,7 +102,7 @@ function NewDatabaseTableRoute({ actionData }: Route.ComponentProps) {
                 Create and Open Table
               </Button>
               <Link
-                to="/database"
+                to={toProjectPath("/database")}
                 aria-disabled={saving}
                 className={cn(buttonVariants({ variant: "outline" }))}
               >

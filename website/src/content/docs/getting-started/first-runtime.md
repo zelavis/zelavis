@@ -39,7 +39,8 @@ Default root namespace:
 
 ```txt
 /zelavis
-/zelavis/settings
+/zelavis/projects/default
+/zelavis/projects/default/settings
 /zelavis/assets/*
 /zelavis/api/v1/runtime/config
 /zelavis/api/v1/runtime/settings
@@ -50,7 +51,7 @@ Default root namespace:
 /zelavis/api/v1/website/pages
 ```
 
-The website core service also mounts public website pages at `/`, while still reserving the dashboard namespace under `/zelavis`.
+The dashboard root at `/zelavis` opens the Projects overview. Project-local dashboard pages live under `/zelavis/projects/:projectId/*`; the starter project uses `/zelavis/projects/default`. The website core service also mounts public website pages at `/`, while still reserving the dashboard namespace under `/zelavis`.
 
 ## Dashboard settings
 

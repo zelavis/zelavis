@@ -14,6 +14,7 @@ import {
   getResolvedDashboardPreferences,
   updateDashboardSettings,
 } from "#/lib/runtime-api";
+import { toProjectPath } from "#/lib/routing";
 import { cn } from "#/lib/utils";
 import type { clientLoader as rootClientLoader } from '../root';
 
@@ -75,7 +76,7 @@ function NewContentTypeRoute() {
       }
 
       setMessage(`Created ${normalizedLabel} (${collection.name}).`);
-      void navigate(`/content/${encodeURIComponent(collection.name)}/fields`);
+      void navigate(toProjectPath(`/content/${encodeURIComponent(collection.name)}/fields`));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -90,7 +91,7 @@ function NewContentTypeRoute() {
         title="New Content Type"
         actions={
           <Link
-            to="/content"
+            to={toProjectPath("/content")}
             className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
           >
             Back to Content
@@ -130,7 +131,7 @@ function NewContentTypeRoute() {
                 <Plus className="size-4" />
                 Create and Open Fields
               </Button>
-              <Button type="button" variant="outline" disabled={saving} onClick={() => void navigate("/content")}>
+              <Button type="button" variant="outline" disabled={saving} onClick={() => void navigate(toProjectPath("/content"))}>
                 <Save className="size-4" />
                 Cancel
               </Button>

@@ -14,6 +14,7 @@ import {
   updateDatabaseDocument,
   type DatabaseDocument,
 } from "#/lib/runtime-api";
+import { toProjectPath } from "#/lib/routing";
 import { cn } from "#/lib/utils";
 import type { Route } from './+types/content.$contentType.index';
 
@@ -64,7 +65,9 @@ function ContentTypeEntriesRoute() {
       });
       revalidator.revalidate();
       setMessage(`Created draft entry ${created.id}.`);
-      await navigate(`/content/${contentTypePath}/${encodeURIComponent(created.id)}`);
+      await navigate(
+        toProjectPath(`/content/${contentTypePath}/${encodeURIComponent(created.id)}`),
+      );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {

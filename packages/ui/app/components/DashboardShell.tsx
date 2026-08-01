@@ -30,6 +30,7 @@ import type {
 import {
   DATABASE_COLLECTION_CREATED_EVENT,
 } from "#/lib/runtime-api";
+import { toProjectPath } from "#/lib/routing";
 
 export type DashboardShellData = {
   runtime: RuntimeConfig;
@@ -108,7 +109,7 @@ function RestartRequiredBanner({
           {settings.pendingRootPath}.
         </span>
         <Link
-          to="/settings"
+          to={toProjectPath("/settings")}
           className="text-sm font-medium text-foreground underline-offset-4 hover:underline"
         >
           Review settings

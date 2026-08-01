@@ -2843,8 +2843,8 @@ async function resolveWebsiteCoreService(
     basePath: "/",
     menu: {
       title: "Website",
-      path: "/builder/pages",
-      pageLabel: "Builder",
+      path: "/website",
+      pageLabel: "Website",
     },
     service: {
       pages: [],

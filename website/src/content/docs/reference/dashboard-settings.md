@@ -70,7 +70,7 @@ The endpoint returns the full normalized settings object after the update is wri
 - `pageBuilderEnabled` is only editable when the website core service is available.
 - `preferences.content.pinnedTypes` keeps editor-facing content types pinned and ordered at the top of the dashboard Content screen.
 - `preferences.content.labels` stores editor-facing labels while the lower-level database collection slug stays unchanged.
-- `preferences.media.orderedPaths` persists Media Gallery ordering through the runtime-backed dashboard settings store.
+- `preferences.media.orderedPaths` persists project Media ordering through the runtime-backed dashboard settings store.
 - Persistence depends on the configured settings store. In-memory fallback behavior is runtime-local.
 
 ## Related docs

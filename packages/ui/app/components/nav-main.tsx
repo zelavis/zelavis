@@ -23,6 +23,7 @@ import {
   mergeSearchParams,
   readSearchParams,
   toDashboardPath,
+  toProjectPath,
 } from "#/lib/routing";
 import { getDashboardSidebarTrailFromMatches } from "#/lib/dashboard-route-handles";
 
@@ -446,7 +447,7 @@ export function NavMain({
     if (nextTrail.length === 0) {
       navigate(
         {
-          pathname: "/",
+          pathname: toProjectPath("/"),
           search: "",
         },
         { replace: false },

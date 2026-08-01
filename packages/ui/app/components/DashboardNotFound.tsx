@@ -1,6 +1,7 @@
 import { Link } from 'react-router'
 
 import { PageHeader } from '#/components/DashboardPage'
+import { toProjectPath } from '#/lib/routing'
 
 export function DashboardNotFound() {
   return (
@@ -12,13 +13,13 @@ export function DashboardNotFound() {
         actions={
           <>
             <Link
-              to="/"
+              to={toProjectPath("/")}
               className="inline-flex h-8 items-center justify-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground no-underline shadow transition-colors hover:bg-primary/90"
             >
               Overview
             </Link>
             <Link
-              to="/settings"
+              to={toProjectPath("/settings")}
               className="inline-flex h-8 items-center justify-center rounded-md border border-input bg-background px-3 text-xs font-medium text-foreground no-underline shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
             >
               Settings

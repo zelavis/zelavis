@@ -31,7 +31,7 @@ import {
   listDatabaseSchemaVersions,
   updateDashboardSettings,
 } from "#/lib/runtime-api";
-import { toDashboardPath } from "#/lib/routing";
+import { matchesProjectPath, toDashboardPath, toProjectPath } from "#/lib/routing";
 import { cn } from "#/lib/utils";
 import type { clientLoader as rootClientLoader } from '../root';
 
@@ -67,7 +67,7 @@ function Content() {
   );
   const pinnedTypes = contentPreferences?.pinnedTypes ?? [];
 
-  if (pathname !== "/content") {
+  if (!matchesProjectPath(pathname, "/content")) {
     return <Outlet />;
   }
 
@@ -238,14 +238,14 @@ function Content() {
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Link
-              to="/content/new"
+              to={toProjectPath("/content/new")}
               className={cn(buttonVariants({ size: "sm" }))}
             >
               <Plus className="size-4" />
               Create new Content Type
             </Link>
             <Link
-              to={toDashboardPath("/database", { sidebar: "Core" })}
+              to={toDashboardPath(toProjectPath("/database"), { sidebar: "Core" })}
               className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
             >
               Open Core Database
@@ -357,13 +357,13 @@ function Content() {
                           <td className="px-4 py-3">
                             <div className="flex flex-wrap items-center gap-2">
               <Link
-                to={`/content/${encodeURIComponent(row.name)}`}
+                  to={toProjectPath(`/content/${encodeURIComponent(row.name)}`)}
                 className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
               >
                 Entries
               </Link>
               <Link
-                to={`/content/${encodeURIComponent(row.name)}/fields`}
+                  to={toProjectPath(`/content/${encodeURIComponent(row.name)}/fields`)}
                 className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
               >
                 Fields

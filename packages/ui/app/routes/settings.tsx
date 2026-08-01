@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '#/components/ui/card'
 import { Input } from '#/components/ui/input'
 import { createDashboardSettings } from '#/lib/dashboard-settings'
 import { updateDashboardSettings } from '#/lib/runtime-api'
+import { toProjectPath } from '#/lib/routing'
 import { useThemeMode } from '#/lib/theme'
 import type { clientLoader as rootClientLoader } from '../root'
 
@@ -170,7 +171,7 @@ function Settings() {
             detail="Configure dashboard light, dark, or system mode."
             meta={
               <Link
-                to="/settings/appearance"
+                to={toProjectPath("/settings/appearance")}
                 className="inline-flex h-8 items-center justify-center rounded-md border border-input bg-background px-3 text-xs font-medium text-foreground no-underline shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
               >
                 Open
@@ -193,7 +194,7 @@ function Settings() {
             detail="Inspect core services and service-provided runtime pieces registered in this runtime."
             meta={
               <Link
-                to="/services"
+                to={toProjectPath("/services")}
                 className="inline-flex h-8 items-center justify-center rounded-md border border-input bg-background px-3 text-xs font-medium text-foreground no-underline shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
               >
                 Open

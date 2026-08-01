@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPlatformNavItems,
+  projectManagementNavItems,
   buildWorkspaceServiceNavItems,
   findServiceMenuPageByPath,
   type DashboardNavItem,
@@ -112,6 +113,37 @@ describe("dashboard navigation ownership", () => {
     expect(settings?.items?.some((item) => item.title === "Jobs")).toBe(true);
   });
 
+  it("exposes project Website and project-wide Media without the old Builder area", () => {
+    const nav = buildPlatformNavItems();
+
+    expect(nav.some((item) => item.title === "Website")).toBe(true);
+    expect(findNavItem(nav, "Website")).toMatchObject({
+      url: "/projects/default/website",
+      pageLabel: "Website",
+    });
+    expect(findNavItem(nav, "Media")).toMatchObject({
+      url: "/projects/default/media",
+      pageLabel: "Media",
+    });
+    expect(findNavItem(nav, "Builder")).toBeUndefined();
+  });
+
+  it("uses a management nav for the all-projects view", () => {
+    expect(projectManagementNavItems.map((item) => item.title)).toEqual([
+      "Back to project",
+      "All Projects",
+      "New Project",
+    ]);
+    expect(findNavItem(projectManagementNavItems, "Users")).toBeUndefined();
+    expect(findNavItem(projectManagementNavItems, "Website")).toBeUndefined();
+    expect(findNavItem(projectManagementNavItems, "Back to project")).toMatchObject({
+      url: "/projects/default",
+    });
+    expect(findNavItem(projectManagementNavItems, "New Project")?.search).toEqual({
+      new: "1",
+    });
+  });
+
   it("lists database collections as tables in the database sidebar slide", () => {
     const services = [
       {
@@ -177,7 +209,7 @@ describe("dashboard navigation ownership", () => {
       "System Tables",
     ]);
     expect(findNavItem(database?.items ?? [], "Create Table")).toMatchObject({
-      url: "/database/new",
+      url: "/projects/default/database/new",
       fixed: true,
       fixedOrder: 1,
     });

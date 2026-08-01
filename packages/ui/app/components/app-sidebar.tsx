@@ -6,7 +6,7 @@ import { useLocation } from "react-router";
 import { NavMain } from "#/components/nav-main";
 import { NavSecondary } from "#/components/nav-secondary";
 import { NavUser } from "#/components/nav-user";
-import { TeamSwitcher } from "#/components/team-switcher";
+import { ProjectSwitcher } from "#/components/project-switcher";
 import {
   Sidebar,
   SidebarContent,
@@ -18,12 +18,13 @@ import {
 } from "#/lib/content-studio";
 import {
   buildPlatformNavItems,
+  dashboardProjects,
   platformNavItems,
+  projectManagementNavItems,
   secondaryNavItems,
-  sidebarTeams,
 } from "#/lib/dashboard-data";
 import { filterUserDatabaseCollections } from "#/lib/database-collections";
-import { readSearchParams } from "#/lib/routing";
+import { isProjectManagementPath, readSearchParams } from "#/lib/routing";
 import {
   type DashboardSettings,
   getResolvedDashboardPreferences,
@@ -53,6 +54,7 @@ export function AppSidebar({
   schemaCollections?: readonly DatabaseSchemaCollectionSummary[];
 }) {
   const location = useLocation();
+  const isProjectManagementRoute = isProjectManagementPath(location.pathname);
   const selectedDatabaseTable = React.useMemo(() => {
     const search = readSearchParams(location.search);
     return typeof search.databaseTable === "string" && search.databaseTable.length > 0
@@ -90,7 +92,9 @@ export function AppSidebar({
   );
   const items = React.useMemo(
     () =>
-      runtime
+      isProjectManagementRoute
+        ? projectManagementNavItems
+        : runtime
         ? buildPlatformNavItems(
             runtime.services,
             runtime.serviceRegistry,
@@ -101,6 +105,7 @@ export function AppSidebar({
     [
       contentTypes,
       effectiveDatabaseCollections,
+      isProjectManagementRoute,
       runtime?.serviceRegistry,
       runtime?.services,
     ],
@@ -109,7 +114,7 @@ export function AppSidebar({
   return (
     <Sidebar variant="inset" collapsible="icon" {...props}>
       <SidebarHeader>
-        <TeamSwitcher teams={sidebarTeams} />
+        <ProjectSwitcher projects={dashboardProjects} />
       </SidebarHeader>
       <SidebarContent className="overflow-hidden">
         <NavMain items={items} />

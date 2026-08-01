@@ -66,6 +66,7 @@ Each package should remain independently useful and focused.
 - The main public runtime entry point is `new Zelavis(...)`; `zelavis()` is an internal/low-level composition function.
 - Public docs and examples should name the local `Zelavis` instance `zv`.
 - The default dashboard root path is `/zelavis`.
+- Opening `/zelavis` shows the Projects overview. Project-local dashboard pages live under `/zelavis/projects/:projectId/*`; the built-in starter project currently uses `/zelavis/projects/default`.
 - The runtime now supports a dashboard dev-server mode via `coreServices.dashboard.devServerUrl` or `ZELAVIS_UI_DEV_SERVER`.
 - The main local dashboard workflow is `pnpm run ui:dev`.
 - That dev flow starts:

@@ -9,7 +9,8 @@ With the default runtime settings:
 
 ```txt
 /zelavis
-/zelavis/settings
+/zelavis/projects/default
+/zelavis/projects/default/settings
 /zelavis/assets/*
 /zelavis/api/v1/runtime/config
 /zelavis/api/v1/runtime/settings
@@ -23,6 +24,8 @@ With the default runtime settings:
 ## Root path behavior
 
 - `rootPath` defaults to `/zelavis`.
+- `/zelavis` opens the Projects overview.
+- Project-local dashboard pages live under `${rootPath}/projects/:projectId/*`.
 - The dashboard shell and dashboard client routes live under `rootPath`.
 - Static dashboard assets live under `${rootPath}/assets/*`.
 - Service APIs live under `${rootPath}${api.prefix}/${api.version}/...`.

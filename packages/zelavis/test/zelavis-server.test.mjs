@@ -138,7 +138,7 @@ test("zelavis includes core services by default", async () => {
   // SPA deep-link: an unmatched client route is caught by `/zelavis/*path`
   // and falls back through `shell.render` to the same shell HTML.
   const settingsResponse = await runtime.fetch(
-    new Request("http://localhost/zelavis/settings"),
+    new Request("http://localhost/zelavis/projects/default/settings"),
   );
   assert.equal(settingsResponse.status, 200);
   const settingsBody = await settingsResponse.text();
@@ -989,14 +989,14 @@ test("zelavis can redirect dashboard routes to a UI dev server", async () => {
   });
 
   const settingsResponse = await runtime.fetch(
-    new Request("http://localhost/zelavis/settings?tab=auth", {
+    new Request("http://localhost/zelavis/projects/default/settings?tab=auth", {
       redirect: "manual",
     }),
   );
   assert.equal(settingsResponse.status, 307);
   assert.equal(
     settingsResponse.headers.get("location"),
-    "http://127.0.0.1:3001/settings?tab=auth",
+    "http://127.0.0.1:3001/projects/default/settings?tab=auth",
   );
 
   const nestedResponse = await runtime.fetch(
@@ -1038,14 +1038,14 @@ test("zelavis preserves a mounted dev-server dashboard base path", async () => {
   );
 
   const settingsResponse = await runtime.fetch(
-    new Request("http://localhost/zelavis/settings?tab=auth", {
+    new Request("http://localhost/zelavis/projects/default/settings?tab=auth", {
       redirect: "manual",
     }),
   );
   assert.equal(settingsResponse.status, 307);
   assert.equal(
     settingsResponse.headers.get("location"),
-    "http://127.0.0.1:3001/zelavis/settings?tab=auth",
+    "http://127.0.0.1:3001/zelavis/projects/default/settings?tab=auth",
   );
 });
 

@@ -45,7 +45,7 @@ Zelavis currently focuses on these layers:
 - **Server**: shared endpoint contracts and adapter utilities for mounting services across host frameworks.
 - **Auth**: account, credential, session, and pluggable authentication method primitives.
 - **Database**: tenant-aware document collections with development drivers and SQL-capable adapters.
-- **Dashboard**: an admin UI package mounted by the runtime at the platform root path.
+- **Dashboard**: an admin UI package mounted by the runtime at the platform root path, opening to Projects and then into project-local control surfaces.
 - **CLI**: workspace tooling for future platform and developer workflows.
 - **Website hosting**: built-in public page delivery from the Zelavis runtime, with dashboard and API routes kept under a reserved platform namespace.
 - **Plugins**: optional domain and provider packages that extend the core platform.

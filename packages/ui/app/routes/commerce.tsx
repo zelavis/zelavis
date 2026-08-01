@@ -17,6 +17,7 @@ import {
   listCommerceProducts,
   listCommerceProviders,
 } from "#/lib/runtime-api";
+import { matchesProjectPath, toProjectPath } from "#/lib/routing";
 export const handle = {
   pageLabel: "Commerce",
   sidebarTrail: ["Workspace", "Ecommerce"],
@@ -39,7 +40,7 @@ function Commerce() {
   const pathname = useLocation().pathname;
   const { products, orders, customers, coupons, providers, paymentAttempts } = useLoaderData<typeof clientLoader>();
 
-  if (pathname !== "/commerce") {
+  if (!matchesProjectPath(pathname, "/commerce")) {
     return <Outlet />;
   }
 
@@ -57,22 +58,22 @@ function Commerce() {
             <DataRow
               label="Products"
               detail={`${products.length} items`}
-              meta={<Link to="/commerce/products" className="text-sm text-primary">Open</Link>}
+              meta={<Link to={toProjectPath("/commerce/products")} className="text-sm text-primary">Open</Link>}
             />
             <DataRow
               label="Orders"
               detail={`${orders.length} orders`}
-              meta={<Link to="/commerce/orders" className="text-sm text-primary">Open</Link>}
+              meta={<Link to={toProjectPath("/commerce/orders")} className="text-sm text-primary">Open</Link>}
             />
             <DataRow
               label="Customers"
               detail={`${customers.length} records`}
-              meta={<Link to="/commerce/customers" className="text-sm text-primary">Open</Link>}
+              meta={<Link to={toProjectPath("/commerce/customers")} className="text-sm text-primary">Open</Link>}
             />
             <DataRow
               label="Coupons"
               detail={`${coupons.length} codes`}
-              meta={<Link to="/commerce/coupons" className="text-sm text-primary">Open</Link>}
+              meta={<Link to={toProjectPath("/commerce/coupons")} className="text-sm text-primary">Open</Link>}
             />
           </CardContent>
         </Card>

@@ -33,6 +33,7 @@ import {
   updateDashboardSettings,
   uploadStorageFile,
 } from "#/lib/runtime-api";
+import { toProjectPath } from "#/lib/routing";
 import { parseAsString, useTypedSearchParams } from "#/lib/use-typed-search-params";
 import type { clientLoader as rootClientLoader } from '../root';
 import type { Route } from './+types/media';
@@ -419,11 +420,11 @@ function MediaRoute() {
     <section className="mx-auto grid w-full max-w-7xl gap-6">
       <PageHeader
         eyebrow="Media"
-        title="Media Gallery"
+        title="Media"
         description="Editor-facing asset management built on the same Zelavis storage core. Upload visuals, browse reusable files, and hand off structured references when the lower-level storage panel is needed."
         actions={
           <Link
-            to="/storage"
+            to={toProjectPath("/storage")}
             className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
           >
             Open Core Storage

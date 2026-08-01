@@ -69,7 +69,7 @@ import {
   listDatabaseSchemaVersions,
   updateDashboardSettings,
 } from "#/lib/runtime-api";
-import { toDashboardPath } from "#/lib/routing";
+import { toDashboardPath, toProjectPath } from "#/lib/routing";
 import { parseAsStringLiteral, useTypedSearchParams } from "#/lib/use-typed-search-params";
 import { cn } from "#/lib/utils";
 import type { clientLoader as rootClientLoader } from '../root';
@@ -414,7 +414,7 @@ function ContentTypeFieldsRoute() {
         <CardHeader className="flex flex-row items-center justify-between gap-3">
           <CardTitle>Fields</CardTitle>
           <Link
-            to={toDashboardPath("/database", { sidebar: "Core" })}
+            to={toDashboardPath(toProjectPath("/database"), { sidebar: "Core" })}
             className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
           >
             Open Core Database

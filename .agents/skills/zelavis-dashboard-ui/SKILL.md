@@ -86,6 +86,7 @@ Available parsers: `parseAsString`, `parseAsStringLiteral`. Add new parsers to `
 
 - Use `pnpm run ui:dev` for end-to-end dashboard work
 - The mounted dashboard path is `/zelavis`, including in dev mode
+- `/zelavis` opens the Projects overview. Project-scoped pages live under `/zelavis/projects/:projectId/*`; the current starter project is `/zelavis/projects/default`.
 - Keep dashboard and runtime behavior aligned; dev mode must not drift from production mounting rules
 - Preserve the existing design language unless the task explicitly asks for a redesign
 - Be careful with layout regressions in the sidebar and header

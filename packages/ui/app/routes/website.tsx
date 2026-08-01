@@ -1,8 +1,15 @@
 import type * as React from "react";
 import { useLoaderData, useRevalidator } from "react-router";
+import { FileText, Globe2, Route as RouteIcon, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 
-import { PageHeader, ResourceNotice } from "#/components/DashboardPage";
+import {
+  DataRow,
+  PageHeader,
+  ResourceNotice,
+  StatCard,
+  StatusBadge,
+} from "#/components/DashboardPage";
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
@@ -11,11 +18,11 @@ import {
   getRuntimeConfig,
   listWebsitePages,
 } from "#/lib/runtime-api";
-import type { Route } from './+types/builder.pages';
+import type { Route } from './+types/website';
 
 export const handle = {
-  pageLabel: "Builder",
-  sidebarTrail: ["Workspace", "Builder"],
+  pageLabel: "Website",
+  sidebarTrail: ["Website"],
 } as const;
 
 export async function clientLoader(_args: Route.ClientLoaderArgs) {
@@ -24,7 +31,7 @@ export async function clientLoader(_args: Route.ClientLoaderArgs) {
   return { pages };
 }
 
-function BuilderPages() {
+function WebsiteRoute() {
   const { pages } = useLoaderData<typeof clientLoader>();
   const revalidator = useRevalidator();
   const [title, setTitle] = useState("");
@@ -69,12 +76,86 @@ function BuilderPages() {
   }
 
   return (
-    <section className="mx-auto grid w-full max-w-3xl gap-6">
+    <section className="mx-auto grid w-full max-w-6xl gap-6">
       <PageHeader
-        eyebrow="Builder"
-        title="Pages"
-        description="Create public website pages. Creating the / page activates the public website, while /zelavis remains the admin dashboard."
+        eyebrow="Website"
+        title="Project website"
+        description="Local website pages, domains, and publishing state for this project."
       />
+
+      <section className="grid gap-4 md:grid-cols-3">
+        <StatCard
+          label="Website"
+          value="local"
+          detail={hasHomePage ? "public website active" : "waiting for home page"}
+          icon={Globe2}
+        />
+        <StatCard
+          label="Pages"
+          value={`${pages.length}`}
+          detail={hasHomePage ? "home page exists" : "home page missing"}
+          icon={FileText}
+        />
+        <StatCard
+          label="Domains"
+          value="0"
+          detail="local runtime"
+          icon={ShieldCheck}
+        />
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(340px,0.85fr)]">
+        <Card>
+          <CardHeader>
+            <CardTitle>Local site</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <DataRow
+              label={hasHomePage ? "Public website" : "Draft website"}
+              detail={hasHomePage ? "Serving pages from /" : "Create / to publish the local site"}
+              meta={<StatusBadge state={hasHomePage ? "ready" : "offline"} />}
+            />
+            <DataRow
+              label="Dashboard namespace"
+              detail="/zelavis"
+              meta={<StatusBadge state="ready" />}
+            />
+            <DataRow
+              label="Project media"
+              detail="Assets remain shared across this project"
+              meta={<StatusBadge state="ready" />}
+            />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <RouteIcon className="size-4" />
+              Pages
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {pages.length > 0 ? (
+              pages.map((page) => (
+                <DataRow
+                  key={page.path}
+                  label={page.title}
+                  detail={page.path}
+                  meta={<StatusBadge state="ready" />}
+                />
+              ))
+            ) : (
+              <div className="p-4">
+                <ResourceNotice
+                  title="No pages yet"
+                  description="Create the home page at / to activate the local website."
+                />
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </section>
 
       <Card>
         <CardHeader>
@@ -178,4 +259,4 @@ function BuilderPages() {
   );
 }
 
-export default BuilderPages;
+export default WebsiteRoute;
