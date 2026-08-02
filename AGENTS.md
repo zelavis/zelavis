@@ -17,6 +17,15 @@ The difference from Firebase/Supabase is depth and ownership: Zelavis is fully s
 
 Zelavis should be able to host websites itself on user-controlled infrastructure. Managed deployment providers may be optional targets through plugins, but they are not the default hosting model and must not replace native Zelavis website hosting.
 
+Dashboard/product structure:
+
+- `/zelavis` is the Projects overview, not a single project dashboard.
+- Zelavis-native project pages live under `/zelavis/projects/:projectId/*`.
+- Managed app projects such as WordPress/static/generic projects may use hosting-style controls instead of Zelavis-native Auth/Database/Content navigation.
+- `/zelavis/marketplace` is global for apps, starters, templates, and server provider plugins.
+- `/zelavis/projects/:projectId/marketplace` is project-local for Zelavis plugins and services.
+- `/zelavis/server/*` owns server-level concerns such as domains, backups, and logs.
+
 Core platform work currently centers on:
 
 - `zelavis`
@@ -68,6 +77,7 @@ Each package should remain independently useful and focused.
 - The default dashboard root path is `/zelavis`.
 - Opening `/zelavis` shows the Projects overview. Project-local dashboard pages live under `/zelavis/projects/:projectId/*`; the built-in starter project currently uses `/zelavis/projects/default`.
 - Global dashboard areas such as `/zelavis/marketplace` and `/zelavis/server/*` sit outside any project. Project-local marketplace/plugins live under `/zelavis/projects/:projectId/marketplace`.
+- Server-level dashboard routes include `/zelavis/server/domains`, `/zelavis/server/backups`, and `/zelavis/server/logs`.
 - Projects may represent Zelavis-native apps or managed apps such as WordPress/static/generic projects. Managed app projects should show hosting-style controls instead of Zelavis-native Auth/Database/Content plugin navigation.
 - The runtime now supports a dashboard dev-server mode via `coreServices.dashboard.devServerUrl` or `ZELAVIS_UI_DEV_SERVER`.
 - The main local dashboard workflow is `pnpm run ui:dev`.
@@ -176,7 +186,7 @@ Do not manually edit generated files unless the user explicitly asks for it and 
 ## Documentation Expectations
 
 - Each package should have a focused README with purpose, scope, and basic usage.
-- Public docs in `website/src/content/docs/` should describe Zelavis as an in-progress backend platform, not as a generic utilities repo.
+- Public docs in `website/src/content/docs/` should describe Zelavis as an in-progress self-hostable App Platform, not as a generic utilities repo.
 - Document extension points and adapter boundaries.
 - Be explicit about what is implemented today versus roadmap direction.
 - Avoid vague marketing language.
@@ -200,7 +210,7 @@ Zelavis core must only depend on the JavaScript language and standard platform A
 Supported Zelavis runtime targets are self-hosted Node.js, Bun, and future Deno.
 Serverless function platforms are not Zelavis runtime targets. They may appear as
 optional plugins for deploying user websites, storage, email, images, DNS, CDN,
-or other provider integrations, but must not define the core runtime
+or other provider adapters, but must not define the core runtime
 architecture.
 
 This repo must not be architected around:

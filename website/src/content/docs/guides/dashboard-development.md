@@ -17,6 +17,7 @@ Current behavior:
 - the UI dev server runs on port `3001`
 - dashboard requests under `/zelavis` redirect to the live UI dev server
 - the live UI dev server is mounted at `http://127.0.0.1:3001/zelavis/` for parity with production routing
+- `/zelavis` opens Projects, global Marketplace and Server live outside projects, and project-local pages live under `/zelavis/projects/:projectId/*`
 
 ## Important package boundary
 

@@ -27,7 +27,7 @@ That lower-level provider layer uses parent/child service metadata.
 
 Current example:
 
-- `zelavis-ecommerce` is the top-level marketplace/runtime service
+- `zelavis-ecommerce` is a top-level project Marketplace/runtime service
 - payment providers such as Stripe or PayPal are child services allowed by `zelavis-ecommerce.childServices`
 
 So the safe model is:
@@ -45,7 +45,8 @@ So the safe model is:
 
 The dashboard should reflect that split:
 
-- `Marketplace` is a top-level discovery/install area.
+- The global `Marketplace` is a top-level discovery area for apps, starters, templates, and server provider plugins.
+- The project `Marketplace` under `/zelavis/projects/:projectId/marketplace` is where Zelavis-native project plugins are installed.
 - Installed services do not get first-slide root items.
 - Each installed service gets exactly one root entry under `Workspace`.
 - Each service may own unlimited nested sidebar slides inside its own workspace area.
@@ -55,6 +56,11 @@ The dashboard should reflect that split:
 - Service menus must not declare a `surface`; Zelavis always mounts them under `Workspace`.
 
 This keeps the first slide stable and prevents dashboard sprawl.
+
+Managed app projects such as WordPress, static sites, or generic hosted apps do
+not automatically expose Zelavis-native service navigation. Their dashboard
+surface should look like hosting/project management unless the managed app is
+explicitly backed by Zelavis services.
 
 Service pages are served as full HTML documents and mounted by the dashboard inside the `zelavis-service-frame` iframe web component. That lets service authors use plain HTML, React, Vue, web components, or any other browser-side approach without coupling service settings or workspaces to the internal dashboard React tree. Zelavis serializes those page definitions to dashboard-safe URLs such as `/zelavis/api/v1/runtime/service-pages/:service/:page`.
 

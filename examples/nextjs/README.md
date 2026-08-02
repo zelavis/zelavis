@@ -11,7 +11,8 @@ pnpm run example:nextjs
 Then open [http://localhost:3000](http://localhost:3000) and try:
 
 - `/zelavis`
-- `/zelavis/settings`
+- `/zelavis/projects/default`
+- `/zelavis/projects/default/settings`
 - `/zelavis/api/v1/runtime/config`
 
 ## Key Files

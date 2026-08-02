@@ -1,7 +1,7 @@
 ---
 title: Node.js
 ---
-The Node.js integration has two pieces:
+The Node.js adapter has two pieces:
 
 - `nodeAdapter()` from `zelavis/adapters/node` — the environment adapter that provides SQLite, file storage, and dashboard settings persistence.
 - `createNodeServer(zv)` from `zelavis/node` — a utility that creates a standalone Node HTTP server bound to Zelavis.

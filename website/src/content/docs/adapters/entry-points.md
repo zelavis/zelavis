@@ -1,7 +1,7 @@
 ---
 title: Adapter Entry Points
 ---
-Zelavis has two integration layers:
+Zelavis has two adapter layers:
 
 1. **Runtime adapters** (`zelavis/adapters/*`) describe the local JavaScript
    runtime Zelavis runs on.

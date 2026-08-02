@@ -25,7 +25,7 @@ Zelavis around external deployment-provider constraints.
 Serverless function hosts and edge-function platforms are not Zelavis runtime
 targets.
 
-Zelavis can still integrate with managed providers through plugins. For example,
+Zelavis can still connect to managed providers through plugins. For example,
 a plugin may deploy a user website to an external static host, sync files to
 object storage, configure DNS, or use an email provider. Those providers are
 optional capabilities selected by the user, not the place where the Zelavis

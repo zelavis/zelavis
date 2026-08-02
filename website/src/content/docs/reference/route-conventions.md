@@ -15,6 +15,8 @@ With the default runtime settings:
 /zelavis/projects/default/settings
 /zelavis/server
 /zelavis/server/domains
+/zelavis/server/backups
+/zelavis/server/logs
 /zelavis/assets/*
 /zelavis/api/v1/runtime/config
 /zelavis/api/v1/runtime/settings
@@ -30,8 +32,9 @@ With the default runtime settings:
 - `rootPath` defaults to `/zelavis`.
 - `/zelavis` opens the Projects overview.
 - Project-local dashboard pages live under `${rootPath}/projects/:projectId/*`.
-- Global marketplace and server management live outside project URLs.
+- Global Marketplace and server management live outside project URLs.
 - Project marketplace lives under `${rootPath}/projects/:projectId/marketplace`.
+- Managed app projects may expose hosting-style project pages instead of Zelavis-native backend pages.
 - The dashboard shell and dashboard client routes live under `rootPath`.
 - Static dashboard assets live under `${rootPath}/assets/*`.
 - Service APIs live under `${rootPath}${api.prefix}/${api.version}/...`.
@@ -54,7 +57,14 @@ the mounted paths become:
 
 ```txt
 /admin
-/admin/settings
+/admin/marketplace
+/admin/projects/default
+/admin/projects/default/marketplace
+/admin/projects/default/settings
+/admin/server
+/admin/server/domains
+/admin/server/backups
+/admin/server/logs
 /admin/assets/*
 /admin/api/v2/runtime/config
 /admin/api/v2/runtime/settings
@@ -94,6 +104,7 @@ Concrete hostnames live in runtime domain bindings, not in service package metad
 ## Related docs
 
 - [Dashboard Settings](./dashboard-settings.md)
-- [Service Model](../architecture/service-service-model.md)
+- [Service Model](../architecture/service-model.md)
+- [Project Model](../architecture/project-model.md)
 - [First Runtime](../getting-started/first-runtime.md)
 - [@zelavis/server](../packages/server.md)

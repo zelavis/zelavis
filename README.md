@@ -1,8 +1,8 @@
 # Zelavis
 
-Zelavis is an early-stage, self-hostable App Platform for building and operating modern web applications from one composable TypeScript workspace.
+Zelavis is an early-stage, self-hostable App Platform for building, hosting, and operating modern web applications from one composable TypeScript workspace.
 
-It brings together backend primitives, runtime composition, an admin dashboard, database tooling, authentication, plugins, native website hosting, and deployment-oriented control surfaces without tying the core to one JavaScript runtime, framework, or hosting provider.
+It brings together backend primitives, runtime composition, an admin dashboard, database tooling, authentication, plugins, native website hosting, and server/project control surfaces without tying the core to one JavaScript runtime, framework, or hosting provider.
 
 Zelavis is foundation-first today. The current repository already includes working packages for auth, database, server composition, runtime mounting, dashboard delivery, framework adapters, and optional domain plugins. The broader platform surface is still evolving.
 
@@ -17,12 +17,25 @@ The platform direction includes:
 - Tenant-aware database and data administration.
 - Admin/dashboard UI.
 - Native website hosting from the Zelavis runtime.
+- Project management for Zelavis-native apps and managed apps such as WordPress, static sites, or generic hosted software.
+- Server management surfaces for domains, backups, logs, and local app hosting.
 - Plugin and package extensibility.
 - Framework and host adapters.
-- Deployment, environment, and operational tooling, including optional external deployment targets when the user chooses them.
+- Operational tooling, including optional external deployment/provider plugins when the user chooses them.
 - Optional domain packages for larger product systems.
 
 The goal is not a loose collection of utilities. Zelavis is being shaped as a coherent App Platform: something you can embed inside an existing app, self-host as an admin surface, or extend into a larger product platform.
+
+## Product Model
+
+Zelavis starts at a Projects overview. A project is the operational unit the dashboard manages:
+
+- A **Zelavis-native project** gets project-local backend surfaces such as Auth, Database, Content, Media, Settings, and a project Marketplace for plugins.
+- A **managed app project** can represent software Zelavis hosts or manages, such as WordPress, a static site, or a generic app. These projects should show hosting-style controls instead of Zelavis-native backend menus.
+- The **global Marketplace** is outside any project and is for apps, starters, templates, and server provider plugins. Project plugins belong inside a Zelavis-native project.
+- The **Server** area is outside projects and owns machine-level concerns such as domains, backups, and logs.
+
+Native website hosting is part of the core product story. External hosts, storage providers, DNS providers, CDNs, and deploy targets can be connected through plugins, but they are optional user choices rather than Zelavis runtime targets.
 
 ## Principles
 
@@ -48,6 +61,7 @@ Zelavis currently focuses on these layers:
 - **Dashboard**: an admin UI package mounted by the runtime at the platform root path, opening to Projects and then into project-local control surfaces.
 - **CLI**: workspace tooling for future platform and developer workflows.
 - **Website hosting**: built-in public page delivery from the Zelavis runtime, with dashboard and API routes kept under a reserved platform namespace.
+- **Server management**: dashboard surfaces for domains, backups, logs, and local hosting operations.
 - **Plugins**: optional domain and provider packages that extend the core platform.
 
 ## Workspace
@@ -127,6 +141,14 @@ By default, Zelavis owns one safe namespace:
 
 ```txt
 /zelavis
+/zelavis/marketplace
+/zelavis/projects/default
+/zelavis/projects/default/marketplace
+/zelavis/projects/default/settings
+/zelavis/server
+/zelavis/server/domains
+/zelavis/server/backups
+/zelavis/server/logs
 /zelavis/api/v1/auth
 /zelavis/api/v1/database
 ```
@@ -143,6 +165,14 @@ That moves the dashboard and APIs together:
 
 ```txt
 /admin
+/admin/marketplace
+/admin/projects/default
+/admin/projects/default/marketplace
+/admin/projects/default/settings
+/admin/server
+/admin/server/domains
+/admin/server/backups
+/admin/server/logs
 /admin/api/v1/auth
 /admin/api/v1/database
 ```
@@ -229,7 +259,7 @@ Current architecture includes:
 - Typed domain models for customers, products, coupons, orders, and payment attempts.
 - Repository contracts that isolate persistence from business logic.
 - In-memory repository implementations for development and tests.
-- A service-oriented payment layer for provider integrations.
+- A service-oriented payment layer for provider adapters.
 
 This package is meant to support use cases such as:
 

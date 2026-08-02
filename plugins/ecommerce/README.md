@@ -31,7 +31,7 @@ import { defineService } from "zelavis/service";
 ## Included layers
 
 - `zelavisEcommerceService`
-  - the official top-level Zelavis marketplace/runtime service
+  - the official Zelavis project Marketplace/runtime service
   - mounts `/zelavis/api/v1/commerce/*` routes
   - appears in the dashboard/service system
 - `createEcommerce(...)`

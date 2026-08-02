@@ -9,6 +9,9 @@ That root opens the Projects overview; project-local dashboard pages are routed
 under `/zelavis/projects/:projectId/*`.
 The global marketplace and server management routes live outside projects, while
 project-specific plugins install through `/zelavis/projects/:projectId/marketplace`.
+Managed app projects such as WordPress, static sites, or generic apps use
+hosting-style navigation instead of Zelavis-native Auth/Database/Content plugin
+navigation.
 
 ## Service
 
@@ -44,3 +47,10 @@ pnpm --filter ./packages/ui build
 The app uses React Router route config in `app/routes.ts`; route modules live in
 `app/routes/*`. Keep route wiring there rather than introducing generated router
 trees or framework-specific route shells.
+
+Key route scopes:
+
+- `/zelavis` for Projects
+- `/zelavis/marketplace` for global apps, starters, and server provider plugins
+- `/zelavis/projects/:projectId/*` for project-local pages
+- `/zelavis/server/*` for domains, backups, logs, and server operations

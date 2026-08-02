@@ -1,6 +1,6 @@
 ---
 name: zelavis-dashboard-ui
-description: Use when working on the Zelavis dashboard UI in packages/ui, including React Router v7 routes, the slide-based sidebar, mounted /zelavis dev behavior, and embedded-runtime dashboard integration.
+description: Use when working on the Zelavis dashboard UI in packages/ui, including React Router v7 routes, the slide-based sidebar, mounted /zelavis dev behavior, and embedded-runtime dashboard mounting.
 ---
 
 # Zelavis Dashboard UI
@@ -87,7 +87,8 @@ Available parsers: `parseAsString`, `parseAsStringLiteral`. Add new parsers to `
 - Use `pnpm run ui:dev` for end-to-end dashboard work
 - The mounted dashboard path is `/zelavis`, including in dev mode
 - `/zelavis` opens the Projects overview. Project-scoped pages live under `/zelavis/projects/:projectId/*`; the current starter project is `/zelavis/projects/default`.
-- `/zelavis/marketplace` is the global marketplace for apps, starters, and server integrations. `/zelavis/projects/:projectId/marketplace` is the project marketplace for Zelavis plugins.
+- `/zelavis/marketplace` is the global marketplace for apps, starters, and server provider plugins. `/zelavis/projects/:projectId/marketplace` is the project marketplace for Zelavis plugins.
+- `/zelavis/server/domains`, `/zelavis/server/backups`, and `/zelavis/server/logs` are global server-level routes outside any project.
 - Managed app projects such as WordPress/static/generic projects use hosting-style project navigation, not the Zelavis-native project navigation.
 - Keep dashboard and runtime behavior aligned; dev mode must not drift from production mounting rules
 - Preserve the existing design language unless the task explicitly asks for a redesign

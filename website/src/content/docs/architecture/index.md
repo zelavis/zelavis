@@ -9,5 +9,6 @@ Architecture docs should describe real current behavior and stable design constr
 
 ## Pages
 
+- [Project Model](./project-model.md)
 - [Service Model](./service-model.md)
 - [Website Core Service](./website-core-service.md)

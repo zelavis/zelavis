@@ -1,10 +1,15 @@
 # zelavis
 
-`zelavis` is the high-level runtime package for the Zelavis backend platform.
+`zelavis` is the high-level runtime package for the Zelavis App Platform.
 
 Use this package when building an application or service with Zelavis and you want the default platform building blocks wired together for you. Lower-level packages such as `@zelavis/server`, `@zelavis/db`, and `@zelavis/auth` remain available when you need direct access to the primitives.
 
-Today, that mostly means auth, database, website delivery, server mounting, and dashboard delivery under one runtime entry point.
+Today, that mostly means auth, database, website delivery, server mounting, service activation, and dashboard delivery under one runtime entry point.
+
+The dashboard opens to Projects. Project-local Zelavis surfaces live under
+`/zelavis/projects/:projectId/*`, global app/server discovery lives under
+`/zelavis/marketplace`, and server-level operations live under
+`/zelavis/server/*`.
 
 ## Entry point preference
 
@@ -154,7 +159,14 @@ By default, Zelavis owns one safe namespace:
 
 ```txt
 /zelavis
-/zelavis/settings
+/zelavis/marketplace
+/zelavis/projects/default
+/zelavis/projects/default/marketplace
+/zelavis/projects/default/settings
+/zelavis/server
+/zelavis/server/domains
+/zelavis/server/backups
+/zelavis/server/logs
 /zelavis/api/v1/runtime/config
 /zelavis/api/v1/runtime/settings
 /zelavis/api/v1/auth
@@ -175,7 +187,14 @@ That moves the dashboard and APIs together:
 
 ```txt
 /admin
-/admin/settings
+/admin/marketplace
+/admin/projects/default
+/admin/projects/default/marketplace
+/admin/projects/default/settings
+/admin/server
+/admin/server/domains
+/admin/server/backups
+/admin/server/logs
 /admin/api/v1/runtime/config
 /admin/api/v1/runtime/settings
 /admin/api/v1/auth
@@ -212,7 +231,12 @@ Verified domain bindings live in runtime state. Workspace apps with
 domain exists; apps with `domainPolicy: "required"` are not served until a
 verified binding exists.
 
-The runtime supports two complementary integration patterns:
+This is also the boundary for optional external deployment providers. Zelavis
+can host websites itself from the local runtime; provider adapters such as
+external static hosts, DNS, CDN, object storage, image storage, or email belong
+in plugins and should not redefine where the Zelavis runtime itself lives.
+
+The runtime supports two complementary adapter patterns:
 
 - **runtime adapters** (`zelavis/adapters/*`) — describe the self-hosted JavaScript runtime Zelavis runs on, supply database/KV/file storage defaults
 - **framework utilities** (`zelavis/<framework>`) — small helper functions that wrap `zv.fetch` for a specific framework signature

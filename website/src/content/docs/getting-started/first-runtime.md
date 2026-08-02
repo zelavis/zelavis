@@ -39,8 +39,14 @@ Default root namespace:
 
 ```txt
 /zelavis
+/zelavis/marketplace
 /zelavis/projects/default
+/zelavis/projects/default/marketplace
 /zelavis/projects/default/settings
+/zelavis/server
+/zelavis/server/domains
+/zelavis/server/backups
+/zelavis/server/logs
 /zelavis/assets/*
 /zelavis/api/v1/runtime/config
 /zelavis/api/v1/runtime/settings
@@ -51,7 +57,11 @@ Default root namespace:
 /zelavis/api/v1/website/pages
 ```
 
-The dashboard root at `/zelavis` opens the Projects overview. Project-local dashboard pages live under `/zelavis/projects/:projectId/*`; the starter project uses `/zelavis/projects/default`. The website core service also mounts public website pages at `/`, while still reserving the dashboard namespace under `/zelavis`.
+The dashboard root at `/zelavis` opens the Projects overview. Project-local dashboard pages live under `/zelavis/projects/:projectId/*`; the starter project uses `/zelavis/projects/default`.
+
+The global Marketplace at `/zelavis/marketplace` is for apps, starters, templates, and server provider plugins. Project plugins live inside Zelavis-native projects at `/zelavis/projects/:projectId/marketplace`. Server-level areas such as domains, backups, and logs live under `/zelavis/server/*`.
+
+The website core service also mounts public website pages at `/`, while still reserving the dashboard namespace under `/zelavis`.
 
 ## Dashboard settings
 

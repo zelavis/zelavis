@@ -1,7 +1,7 @@
 ---
 title: zelavis
 ---
-`zelavis` is the high-level runtime package for the Zelavis backend platform.
+`zelavis` is the high-level runtime package for the Zelavis App Platform.
 
 Use it when you want the default platform building blocks wired together through one runtime entry point.
 
@@ -14,6 +14,8 @@ Today, that mostly means:
 - database service
 - storage service when an adapter file store exists
 - website service
+- service activation
+- project and server dashboard surfaces
 - runtime composition
 
 ## Main entry point
@@ -51,6 +53,22 @@ By default, Zelavis owns one safe namespace under `/zelavis` and includes dashbo
 
 The dashboard stays mounted under the configured root path, while API services stay grouped under `/api/<version>/...`.
 
+The dashboard root opens Projects. Global surfaces such as Marketplace and Server live outside project URLs, while Zelavis-native project pages live under `/zelavis/projects/:projectId/*`.
+
+Default dashboard paths include:
+
+```txt
+/zelavis
+/zelavis/marketplace
+/zelavis/projects/default
+/zelavis/projects/default/marketplace
+/zelavis/projects/default/settings
+/zelavis/server
+/zelavis/server/domains
+/zelavis/server/backups
+/zelavis/server/logs
+```
+
 Application code can access core service APIs through the runtime instance:
 
 ```ts
@@ -83,6 +101,10 @@ Available runtime adapters:
 - `zelavis/adapters/bun`
 
 Deno is a planned runtime target.
+
+Serverless function platforms are not Zelavis runtime targets. Managed providers
+may appear through optional plugins for user websites, storage, DNS, CDN, email,
+or other provider adapters.
 
 Framework utilities (small wrappers around `zv.fetch`) live at:
 

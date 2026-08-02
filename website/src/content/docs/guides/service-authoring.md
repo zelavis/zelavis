@@ -204,7 +204,7 @@ Important details:
 - `setup(context)` may register runtime services through `context.addService(...)`, `context.addServices(...)`, or by returning `{ runtimeServices }`.
 - Child services use `extends` and are passed to their parent service; they do not get their own Workspace menu area.
 
-The repo includes `examples/plugin-basic` as a minimal uploadable service. Build its upload package with `pnpm --filter @zelavis/example-plugin-basic package`, then select `examples/plugin-basic/dist/example-basic.zip` in the Node example Marketplace flow. The service module defines its own `name`, `version`, menu, pages, and services, so the dashboard does not ask for a separate service name. The ZIP includes `zelavis.service.json`, whose `entry` field points at the ESM module the host adapter should import.
+The repo includes `examples/plugin-basic` as a minimal uploadable service. Build its upload package with `pnpm --filter @zelavis/example-plugin-basic package`, then select `examples/plugin-basic/dist/example-basic.zip` in the Node example project Marketplace flow at `/zelavis/projects/default/marketplace`. The service module defines its own `name`, `version`, menu, pages, and services, so the dashboard does not ask for a separate service name. The ZIP includes `zelavis.service.json`, whose `entry` field points at the ESM module the host adapter should import.
 
 ## Registry and activation
 
@@ -280,7 +280,7 @@ src/
   storage/
 ```
 
-Use this when the package's main integration surface is a service contract rather than a mounted runtime service.
+Use this when the package's main adapter surface is a service contract rather than a mounted runtime service.
 
 ### Nested service package
 
@@ -319,6 +319,6 @@ Avoid names that make the entrypoint harder to spot:
 
 ## Related docs
 
-- [Service Model](../architecture/service-service-model.md)
+- [Service Model](../architecture/service-model.md)
 - [Advanced Runtime Composition](./advanced-runtime-composition.md)
 - [@zelavis/server](../packages/server.md)
