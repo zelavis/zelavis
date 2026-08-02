@@ -130,15 +130,11 @@ describe("dashboard navigation ownership", () => {
 
   it("uses a management nav for the all-projects view", () => {
     expect(projectManagementNavItems.map((item) => item.title)).toEqual([
-      "Back to project",
       "All Projects",
       "New Project",
     ]);
     expect(findNavItem(projectManagementNavItems, "Users")).toBeUndefined();
     expect(findNavItem(projectManagementNavItems, "Website")).toBeUndefined();
-    expect(findNavItem(projectManagementNavItems, "Back to project")).toMatchObject({
-      url: "/projects/default",
-    });
     expect(findNavItem(projectManagementNavItems, "New Project")?.search).toEqual({
       new: "1",
     });

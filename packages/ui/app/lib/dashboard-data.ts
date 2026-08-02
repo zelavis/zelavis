@@ -1,5 +1,4 @@
 import {
-  ArrowLeft,
   Bot,
   Boxes,
   CreditCard,
@@ -153,12 +152,6 @@ export const dashboardProjects: readonly DashboardProjectItem[] = [
 ] as const;
 
 export const projectManagementNavItems: readonly DashboardNavItem[] = [
-  {
-    title: "Back to project",
-    url: toProjectPath("/") as DashboardRoutePath,
-    icon: ArrowLeft,
-    pageLabel: "Overview",
-  },
   {
     title: "All Projects",
     url: "/projects",
