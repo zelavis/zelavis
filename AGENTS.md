@@ -67,6 +67,8 @@ Each package should remain independently useful and focused.
 - Public docs and examples should name the local `Zelavis` instance `zv`.
 - The default dashboard root path is `/zelavis`.
 - Opening `/zelavis` shows the Projects overview. Project-local dashboard pages live under `/zelavis/projects/:projectId/*`; the built-in starter project currently uses `/zelavis/projects/default`.
+- Global dashboard areas such as `/zelavis/marketplace` and `/zelavis/server/*` sit outside any project. Project-local marketplace/plugins live under `/zelavis/projects/:projectId/marketplace`.
+- Projects may represent Zelavis-native apps or managed apps such as WordPress/static/generic projects. Managed app projects should show hosting-style controls instead of Zelavis-native Auth/Database/Content plugin navigation.
 - The runtime now supports a dashboard dev-server mode via `coreServices.dashboard.devServerUrl` or `ZELAVIS_UI_DEV_SERVER`.
 - The main local dashboard workflow is `pnpm run ui:dev`.
 - That dev flow starts:

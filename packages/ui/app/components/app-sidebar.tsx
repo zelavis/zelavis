@@ -17,6 +17,7 @@ import {
   buildContentTypeRows,
 } from "#/lib/content-studio";
 import {
+  buildManagedProjectNavItems,
   buildPlatformNavItems,
   dashboardProjects,
   platformNavItems,
@@ -24,7 +25,12 @@ import {
   secondaryNavItems,
 } from "#/lib/dashboard-data";
 import { filterUserDatabaseCollections } from "#/lib/database-collections";
-import { isProjectManagementPath, readSearchParams } from "#/lib/routing";
+import {
+  getManagedProjectKindFromId,
+  getProjectIdFromPathname,
+  isProjectManagementPath,
+  readSearchParams,
+} from "#/lib/routing";
 import {
   type DashboardSettings,
   getResolvedDashboardPreferences,
@@ -55,6 +61,8 @@ export function AppSidebar({
 }) {
   const location = useLocation();
   const isProjectManagementRoute = isProjectManagementPath(location.pathname);
+  const projectId = getProjectIdFromPathname(location.pathname);
+  const managedProjectKind = getManagedProjectKindFromId(projectId);
   const selectedDatabaseTable = React.useMemo(() => {
     const search = readSearchParams(location.search);
     return typeof search.databaseTable === "string" && search.databaseTable.length > 0
@@ -94,6 +102,8 @@ export function AppSidebar({
     () =>
       isProjectManagementRoute
         ? projectManagementNavItems
+        : projectId && managedProjectKind
+        ? buildManagedProjectNavItems(projectId, managedProjectKind)
         : runtime
         ? buildPlatformNavItems(
             runtime.services,
@@ -106,6 +116,8 @@ export function AppSidebar({
       contentTypes,
       effectiveDatabaseCollections,
       isProjectManagementRoute,
+      managedProjectKind,
+      projectId,
       runtime?.serviceRegistry,
       runtime?.services,
     ],

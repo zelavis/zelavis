@@ -9,8 +9,12 @@ With the default runtime settings:
 
 ```txt
 /zelavis
+/zelavis/marketplace
 /zelavis/projects/default
+/zelavis/projects/default/marketplace
 /zelavis/projects/default/settings
+/zelavis/server
+/zelavis/server/domains
 /zelavis/assets/*
 /zelavis/api/v1/runtime/config
 /zelavis/api/v1/runtime/settings
@@ -26,6 +30,8 @@ With the default runtime settings:
 - `rootPath` defaults to `/zelavis`.
 - `/zelavis` opens the Projects overview.
 - Project-local dashboard pages live under `${rootPath}/projects/:projectId/*`.
+- Global marketplace and server management live outside project URLs.
+- Project marketplace lives under `${rootPath}/projects/:projectId/marketplace`.
 - The dashboard shell and dashboard client routes live under `rootPath`.
 - Static dashboard assets live under `${rootPath}/assets/*`.
 - Service APIs live under `${rootPath}${api.prefix}/${api.version}/...`.

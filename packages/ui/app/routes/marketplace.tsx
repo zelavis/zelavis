@@ -1,4 +1,4 @@
-import { useLoaderData, useRevalidator, useRouteLoaderData } from "react-router";
+import { Link, useLoaderData, useParams, useRevalidator, useRouteLoaderData } from "react-router";
 import {
   type ChangeEvent,
   type FormEvent,
@@ -14,7 +14,7 @@ import {
   PageHeader,
   ResourceNotice,
 } from "#/components/DashboardPage";
-import { Button } from "#/components/ui/button";
+import { Button, buttonVariants } from "#/components/ui/button";
 import {
   Card,
   CardContent,
@@ -46,6 +46,7 @@ import {
   type RuntimeServiceRegistryEntry,
   updateDashboardService,
 } from "#/lib/runtime-api";
+import { cn } from "#/lib/utils";
 import type { clientLoader as rootClientLoader } from '../root';
 
 export const handle = {
@@ -73,6 +74,96 @@ type MarketplaceCatalogItem = {
   runtimeServiceName?: string;
   pageLabel?: string;
 };
+
+type MarketplaceAppItem = {
+  id: string;
+  title: string;
+  category: string;
+  summary: string;
+  description: string;
+  details: readonly string[];
+  tags: readonly string[];
+  projectType: string;
+  actionLabel: string;
+};
+
+const globalAppCatalog: readonly MarketplaceAppItem[] = [
+  {
+    id: "zelavis-app",
+    title: "Zelavis App",
+    category: "Native",
+    summary: "A full Zelavis-native app with auth, database, content, media, and website hosting.",
+    description:
+      "Creates a project that uses Zelavis as the application platform instead of only as a host control panel.",
+    details: [
+      "Project dashboard uses Zelavis-native sections",
+      "Best fit for apps that want integrated auth, database, and content",
+      "Starter creation is wired through the project creation flow",
+    ],
+    tags: ["zelavis", "app", "starter"],
+    projectType: "zelavis",
+    actionLabel: "Create Zelavis project",
+  },
+  {
+    id: "wordpress",
+    title: "WordPress",
+    category: "One-click app",
+    summary: "A managed WordPress project with hosting-style controls instead of Zelavis-native app sections.",
+    description:
+      "Models the Softaculous-style path: Zelavis can operate the project even when the app itself is not built on Zelavis primitives.",
+    details: [
+      "Project dashboard should expose hosting controls",
+      "WordPress admin stays the application admin",
+      "Future installer can provision files, database, domains, and backups",
+    ],
+    tags: ["wordpress", "cms", "hosting"],
+    projectType: "wordpress",
+    actionLabel: "Create WordPress project",
+  },
+  {
+    id: "static-site",
+    title: "Static Website",
+    category: "Website",
+    summary: "A simple static-site project with domains, files, deploys, and logs.",
+    description:
+      "Useful for templates, portfolios, docs, and landing pages that do not need Zelavis auth or database services.",
+    details: [
+      "Project dashboard focuses on website operations",
+      "Can later connect to local or plugin-backed deployment targets",
+      "Keeps static sites separate from full Zelavis apps",
+    ],
+    tags: ["static", "website", "template"],
+    projectType: "static",
+    actionLabel: "Create static project",
+  },
+] as const;
+
+const globalIntegrationCatalog: readonly MarketplaceAppItem[] = [
+  {
+    id: "dns-provider",
+    title: "DNS Provider",
+    category: "Server integration",
+    summary: "Connect DNS automation for server-level domain management.",
+    description:
+      "Provider integrations belong globally because many projects can share the same DNS account and verification workflow.",
+    details: ["Server-level plugin boundary", "Future domain automation", "Not tied to one project"],
+    tags: ["dns", "domains", "server"],
+    projectType: "server",
+    actionLabel: "Planned",
+  },
+  {
+    id: "backup-storage",
+    title: "Backup Storage",
+    category: "Server integration",
+    summary: "Connect an object store or remote backup destination.",
+    description:
+      "Backups are a host responsibility first; projects can opt into policies once the provider is configured globally.",
+    details: ["Server-level plugin boundary", "Future restore workflows", "Policy-driven backups"],
+    tags: ["backups", "storage", "restore"],
+    projectType: "server",
+    actionLabel: "Planned",
+  },
+] as const;
 
 const communityCatalog: readonly MarketplaceCatalogItem[] = [
   {
@@ -290,7 +381,147 @@ function MarketplaceServiceCard({
   );
 }
 
-function Marketplace() {
+function GlobalAppCard({ item }: { item: MarketplaceAppItem }) {
+  const canCreateProject = item.projectType !== "server";
+
+  return (
+    <Card className="flex h-full min-h-[18rem] flex-col border-border/80">
+      <CardHeader className="gap-4">
+        <div className="flex items-start gap-3 border-b pb-4">
+          <span className="inline-flex size-11 shrink-0 items-center justify-center rounded-md border bg-muted text-muted-foreground">
+            <Sparkles className="size-4" />
+          </span>
+          <div className="space-y-1">
+            <p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+              {item.category}
+            </p>
+            <CardTitle className="text-xl">{item.title}</CardTitle>
+            <CardDescription className="text-sm leading-6">
+              {item.summary}
+            </CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="flex-1 space-y-4">
+        <p className="text-sm leading-6 text-muted-foreground">
+          {item.description}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {item.tags.map((tag) => (
+            <span
+              key={tag}
+              className="rounded-md border bg-muted/35 px-2.5 py-1 text-xs text-muted-foreground"
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
+      </CardContent>
+      <CardFooter className="mt-auto flex min-h-14 items-center gap-2">
+        {canCreateProject ? (
+          <Link
+            to={`/projects?new=1&type=${encodeURIComponent(item.projectType)}`}
+            className={cn(buttonVariants({ size: "sm" }))}
+          >
+            {item.actionLabel}
+          </Link>
+        ) : (
+          <Button size="sm" disabled>
+            {item.actionLabel}
+          </Button>
+        )}
+      </CardFooter>
+    </Card>
+  );
+}
+
+function GlobalPluginCard({ item }: { item: MarketplaceCatalogItem }) {
+  return (
+    <Card className="flex h-full min-h-[16rem] flex-col border-border/80 opacity-75">
+      <CardHeader>
+        <CardTitle className="text-lg">{item.title}</CardTitle>
+        <CardDescription className="leading-6">{item.summary}</CardDescription>
+      </CardHeader>
+      <CardContent className="flex-1">
+        <p className="text-sm leading-6 text-muted-foreground">
+          {item.description}
+        </p>
+      </CardContent>
+      <CardFooter className="mt-auto flex items-center gap-2">
+        <Button size="sm" disabled>
+          Project-only
+        </Button>
+        <span className="text-xs text-muted-foreground">
+          Open inside a Zelavis project
+        </span>
+      </CardFooter>
+    </Card>
+  );
+}
+
+function GlobalMarketplace() {
+  const { serviceEntries } = useLoaderData<typeof clientLoader>();
+  const officialCatalog = useMemo(
+    () => createOfficialCatalog(serviceEntries ?? []),
+    [serviceEntries],
+  );
+
+  return (
+    <section className="mx-auto grid w-full max-w-7xl gap-8">
+      <PageHeader
+        eyebrow="Marketplace"
+        title="Marketplace"
+        description="Install new projects, one-click apps, templates, and server-level integrations. Project plugins are visible here for discovery, but installed inside a Zelavis project."
+      />
+
+      <ResourceNotice
+        title="Global marketplace scope"
+        description="Apps here create or affect projects. Plugins extend an existing Zelavis project, so they are disabled in the global marketplace and active in the project marketplace."
+      />
+
+      <section className="grid gap-4">
+        <div>
+          <p className="kicker">Apps</p>
+          <h2 className="text-xl font-semibold tracking-tight">Create projects from apps and starters</h2>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {globalAppCatalog.map((item) => (
+            <GlobalAppCard key={item.id} item={item} />
+          ))}
+        </div>
+      </section>
+
+      <section className="grid gap-4">
+        <div>
+          <p className="kicker">Server</p>
+          <h2 className="text-xl font-semibold tracking-tight">Server integrations</h2>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {globalIntegrationCatalog.map((item) => (
+            <GlobalAppCard key={item.id} item={item} />
+          ))}
+        </div>
+      </section>
+
+      <section className="grid gap-4">
+        <div>
+          <p className="kicker">Project plugins</p>
+          <h2 className="text-xl font-semibold tracking-tight">Install inside Zelavis projects</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            These extend a Zelavis-native project and stay unavailable from the global layer.
+          </p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {[...officialCatalog, ...communityCatalog].map((item) => (
+            <GlobalPluginCard key={item.name} item={item} />
+          ))}
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function ProjectMarketplace() {
   const { serviceEntries: initialServiceEntries } = useLoaderData<typeof clientLoader>();
   const { runtime: runtimeConfig } = useRouteLoaderData<typeof rootClientLoader>('root')!;
   const revalidator = useRevalidator();
@@ -405,9 +636,9 @@ function Marketplace() {
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-8">
       <PageHeader
-        eyebrow="Community"
+        eyebrow="Project Marketplace"
         title="Marketplace"
-        description="Official Zelavis services live up top, community services below, and service install state stays separate from runtime activation."
+        description="Install plugins and service packages into this Zelavis project. Apps and one-click installers live in the global marketplace."
       />
 
       {marketplaceActivationRequired ? (
@@ -717,4 +948,10 @@ function Marketplace() {
   );
 }
 
-export default Marketplace;
+function MarketplaceRoute() {
+  const params = useParams();
+
+  return params.projectId ? <ProjectMarketplace /> : <GlobalMarketplace />;
+}
+
+export default MarketplaceRoute;

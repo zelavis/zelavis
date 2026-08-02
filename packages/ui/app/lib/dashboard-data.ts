@@ -3,6 +3,7 @@ import {
   Boxes,
   CreditCard,
   Database,
+  Archive,
   Files,
   FileText,
   Fingerprint,
@@ -136,6 +137,7 @@ export type DashboardProjectItem = {
   name: string;
   logo: LucideIcon;
   domain: string;
+  kind: "zelavis" | "wordpress" | "static" | "generic";
   status: "active" | "draft";
   updatedAt: string;
 };
@@ -146,6 +148,7 @@ export const dashboardProjects: readonly DashboardProjectItem[] = [
     name: "Default project",
     logo: ZelavisMark,
     domain: "localhost",
+    kind: "zelavis",
     status: "draft",
     updatedAt: "just now",
   },
@@ -165,7 +168,103 @@ export const projectManagementNavItems: readonly DashboardNavItem[] = [
     icon: Plus,
     pageLabel: "Projects",
   },
+  {
+    title: "Marketplace",
+    url: "/marketplace",
+    icon: Boxes,
+    pageLabel: "Marketplace",
+  },
+  {
+    title: "Server",
+    icon: Server,
+    landingUrl: "/server",
+    pageLabel: "Server",
+    items: [
+      {
+        title: "Overview",
+        url: "/server",
+        icon: Server,
+        pageLabel: "Server",
+      },
+      {
+        title: "Domains",
+        url: "/server/domains",
+        icon: Globe2,
+        pageLabel: "Domains",
+      },
+      {
+        title: "Backups",
+        url: "/server/backups",
+        icon: Archive,
+        pageLabel: "Backups",
+      },
+      {
+        title: "Logs",
+        url: "/server/logs",
+        icon: ReceiptText,
+        pageLabel: "Logs",
+      },
+    ],
+  },
 ] as const;
+
+export function buildManagedProjectNavItems(
+  projectId: string,
+  kind: "wordpress" | "static" | "generic",
+): readonly DashboardNavItem[] {
+  const appAdminTitle = kind === "wordpress" ? "WordPress Admin" : "App Admin";
+
+  return [
+    {
+      title: "Overview",
+      url: toProjectPath("/", projectId) as DashboardRoutePath,
+      icon: LayoutDashboard,
+      pageLabel: "Overview",
+    },
+    {
+      title: "Domains",
+      url: toProjectPath("/domains", projectId) as DashboardRoutePath,
+      icon: Globe2,
+      pageLabel: "Domains",
+    },
+    {
+      title: "Files",
+      url: toProjectPath("/files", projectId) as DashboardRoutePath,
+      icon: Files,
+      pageLabel: "Files",
+    },
+    {
+      title: "Database",
+      url: toProjectPath("/database", projectId) as DashboardRoutePath,
+      icon: Database,
+      pageLabel: "Database",
+    },
+    {
+      title: "Backups",
+      url: toProjectPath("/backups", projectId) as DashboardRoutePath,
+      icon: Archive,
+      pageLabel: "Backups",
+    },
+    {
+      title: "Logs",
+      url: toProjectPath("/logs", projectId) as DashboardRoutePath,
+      icon: ReceiptText,
+      pageLabel: "Logs",
+    },
+    {
+      title: "Updates",
+      url: toProjectPath("/updates", projectId) as DashboardRoutePath,
+      icon: Package,
+      pageLabel: "Updates",
+    },
+    {
+      title: appAdminTitle,
+      url: toProjectPath("/admin", projectId) as DashboardRoutePath,
+      icon: MonitorCog,
+      pageLabel: appAdminTitle,
+    },
+  ] as const;
+}
 
 function toDashboardRoutePath(path: string): DashboardRoutePath | undefined {
   if (!path.startsWith("/") || path.startsWith("//")) {
@@ -198,6 +297,7 @@ function isBuiltInProjectPath(path: string) {
     "/database",
     "/database/new",
     "/media",
+    "/marketplace",
     "/services",
     "/settings",
     "/settings/appearance",
@@ -645,6 +745,7 @@ export function buildPlatformNavItems(
       title: "Marketplace",
       url: "/marketplace",
       icon: Boxes,
+      pageLabel: "Marketplace",
     },
     {
       title: "Core",

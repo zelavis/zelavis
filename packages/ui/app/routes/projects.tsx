@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   Plus,
   Search,
+  SquareStack,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -23,7 +24,11 @@ import {
   type DashboardProjectItem,
 } from "#/lib/dashboard-data";
 import { toDashboardPath, toProjectPath } from "#/lib/routing";
-import { parseAsString, useTypedSearchParams } from "#/lib/use-typed-search-params";
+import {
+  parseAsString,
+  parseAsStringLiteral,
+  useTypedSearchParams,
+} from "#/lib/use-typed-search-params";
 import { cn } from "#/lib/utils";
 
 export const handle = {
@@ -33,7 +38,35 @@ export const handle = {
 const projectSearchSchema = {
   q: parseAsString.withDefault(""),
   new: parseAsString.withDefault(""),
+  type: parseAsStringLiteral(["zelavis", "wordpress", "static", "generic"] as const).withDefault("zelavis"),
 } as const;
+
+const projectKindOptions = [
+  {
+    value: "zelavis",
+    label: "Zelavis app",
+    domainFallback: "localhost",
+  },
+  {
+    value: "wordpress",
+    label: "WordPress",
+    domainFallback: "wordpress.localhost",
+  },
+  {
+    value: "static",
+    label: "Static website",
+    domainFallback: "static.localhost",
+  },
+  {
+    value: "generic",
+    label: "Generic app",
+    domainFallback: "app.localhost",
+  },
+] as const;
+
+function getProjectKindLabel(kind: DashboardProjectItem["kind"]) {
+  return projectKindOptions.find((option) => option.value === kind)?.label ?? "Project";
+}
 
 function slugifyProjectName(value: string) {
   return value
@@ -44,7 +77,7 @@ function slugifyProjectName(value: string) {
 }
 
 function ProjectsRoute() {
-  const [{ q, new: createMode }, setParams] =
+  const [{ q, new: createMode, type }, setParams] =
     useTypedSearchParams(projectSearchSchema);
   const [projects, setProjects] = useState<DashboardProjectItem[]>([
     ...dashboardProjects,
@@ -81,21 +114,25 @@ function ProjectsRoute() {
     }
 
     const id = slugifyProjectName(trimmedName);
+    const projectKind = type;
+    const projectId = projectKind === "zelavis" ? id : `${projectKind}-${id}`;
     if (!id) {
       setError("Project name must contain letters or numbers.");
       return;
     }
 
-    if (projects.some((project) => project.id === id)) {
+    if (projects.some((project) => project.id === projectId)) {
       setError("A project with that name already exists.");
       return;
     }
 
+    const kindOption = projectKindOptions.find((option) => option.value === projectKind);
     const nextProject: DashboardProjectItem = {
-      id,
+      id: projectId,
       name: trimmedName,
-      logo: Globe2,
-      domain: domain.trim() || "localhost",
+      logo: projectKind === "zelavis" ? Globe2 : SquareStack,
+      domain: domain.trim() || kindOption?.domainFallback || "localhost",
+      kind: projectKind,
       status: "draft",
       updatedAt: "just now",
     };
@@ -103,7 +140,7 @@ function ProjectsRoute() {
     setProjects((current) => [nextProject, ...current]);
     setName("");
     setDomain("");
-    setParams({ new: null });
+    setParams({ new: null, type: null });
     setMessage(`Created ${nextProject.name}.`);
   }
 
@@ -112,7 +149,7 @@ function ProjectsRoute() {
       <PageHeader
         eyebrow="Projects"
         title="Projects"
-        description="Each project owns one dashboard and one local website."
+        description="Projects can be Zelavis-native apps, website templates, or managed apps such as WordPress."
         actions={
           <Button type="button" onClick={() => setParams({ new: "1" })}>
             <Plus className="size-4" />
@@ -127,7 +164,7 @@ function ProjectsRoute() {
             <CardTitle>Create project</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4 p-4">
-            <form className="grid gap-4 md:grid-cols-[1fr_1fr_auto]" onSubmit={handleCreateProject}>
+            <form className="grid gap-4 md:grid-cols-[1fr_1fr_1fr_auto]" onSubmit={handleCreateProject}>
               <div className="grid gap-2">
                 <label className="text-sm font-medium" htmlFor="project-name">
                   Name
@@ -138,6 +175,27 @@ function ProjectsRoute() {
                   onChange={(event) => setName(event.target.value)}
                   placeholder="Marketing site"
                 />
+              </div>
+              <div className="grid gap-2">
+                <label className="text-sm font-medium" htmlFor="project-type">
+                  Type
+                </label>
+                <select
+                  id="project-type"
+                  value={type}
+                  onChange={(event) =>
+                    setParams({
+                      type: event.target.value as DashboardProjectItem["kind"],
+                    })
+                  }
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                >
+                  {projectKindOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="grid gap-2">
                 <label className="text-sm font-medium" htmlFor="project-domain">
@@ -155,7 +213,7 @@ function ProjectsRoute() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setParams({ new: null })}
+                  onClick={() => setParams({ new: null, type: null })}
                 >
                   Cancel
                 </Button>
@@ -210,7 +268,12 @@ function ProjectsRoute() {
             </CardHeader>
             <CardContent className="p-0">
               <DataRow
-                label="Website"
+                label="Type"
+                detail={getProjectKindLabel(project.kind)}
+                meta={<SquareStack className="size-4 text-muted-foreground" />}
+              />
+              <DataRow
+                label="Domain"
                 detail={project.domain}
                 meta={<Globe2 className="size-4 text-muted-foreground" />}
               />
@@ -221,18 +284,18 @@ function ProjectsRoute() {
               />
               <div className="flex items-center justify-between gap-2 px-4 py-3">
                 <Link
-                  to={toDashboardPath(toProjectPath("/"))}
+                  to={toDashboardPath(toProjectPath("/", project.id))}
                   className={cn(buttonVariants({ size: "sm" }))}
                 >
                   <LayoutDashboard className="size-4" />
                   Open
                 </Link>
                 <Link
-                  to={toDashboardPath(toProjectPath("/website"))}
+                  to={toDashboardPath(toProjectPath(project.kind === "zelavis" ? "/website" : "/", project.id))}
                   className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
                 >
                   <Globe2 className="size-4" />
-                  Website
+                  {project.kind === "zelavis" ? "Website" : "Manage"}
                 </Link>
               </div>
             </CardContent>

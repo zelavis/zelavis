@@ -7,6 +7,8 @@ The app is designed to be served either as a standalone dev server or mounted by
 the Zelavis runtime under the dashboard root path, which defaults to `/zelavis`.
 That root opens the Projects overview; project-local dashboard pages are routed
 under `/zelavis/projects/:projectId/*`.
+The global marketplace and server management routes live outside projects, while
+project-specific plugins install through `/zelavis/projects/:projectId/marketplace`.
 
 ## Service
 

@@ -398,6 +398,10 @@ const fallbackConfig: RuntimeConfig = {
     clientRoutes: [
       "/marketplace",
       "/projects",
+      "/server",
+      "/server/backups",
+      "/server/domains",
+      "/server/logs",
       "/projects/default",
       "/projects/default/agents",
       "/projects/default/auth",
@@ -411,6 +415,7 @@ const fallbackConfig: RuntimeConfig = {
       "/projects/default/database",
       "/projects/default/database/new",
       "/projects/default/media",
+      "/projects/default/marketplace",
       "/projects/default/services",
       "/projects/default/settings",
       "/projects/default/settings/appearance",

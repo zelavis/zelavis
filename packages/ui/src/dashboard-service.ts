@@ -53,6 +53,10 @@ export interface ZelavisDashboardServiceOptions {
 export const defaultZelavisDashboardClientRoutes = Object.freeze([
   "/marketplace",
   "/projects",
+  "/server",
+  "/server/backups",
+  "/server/domains",
+  "/server/logs",
   "/projects/default",
   "/projects/default/agents",
   "/projects/default/auth",
@@ -66,6 +70,7 @@ export const defaultZelavisDashboardClientRoutes = Object.freeze([
   "/projects/default/database",
   "/projects/default/database/new",
   "/projects/default/media",
+  "/projects/default/marketplace",
   "/projects/default/services",
   "/projects/default/settings",
   "/projects/default/settings/appearance",

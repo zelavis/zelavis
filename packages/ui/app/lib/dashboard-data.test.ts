@@ -125,6 +125,10 @@ describe("dashboard navigation ownership", () => {
       url: "/projects/default/media",
       pageLabel: "Media",
     });
+    expect(findNavItem(nav, "Marketplace")).toMatchObject({
+      url: "/projects/default/marketplace",
+      pageLabel: "Marketplace",
+    });
     expect(findNavItem(nav, "Builder")).toBeUndefined();
   });
 
@@ -132,9 +136,19 @@ describe("dashboard navigation ownership", () => {
     expect(projectManagementNavItems.map((item) => item.title)).toEqual([
       "Projects",
       "New Project",
+      "Marketplace",
+      "Server",
     ]);
     expect(findNavItem(projectManagementNavItems, "Users")).toBeUndefined();
     expect(findNavItem(projectManagementNavItems, "Website")).toBeUndefined();
+    expect(findNavItem(projectManagementNavItems, "Marketplace")).toMatchObject({
+      url: "/marketplace",
+      pageLabel: "Marketplace",
+    });
+    expect(findNavItem(projectManagementNavItems, "Domains")).toMatchObject({
+      url: "/server/domains",
+      pageLabel: "Domains",
+    });
     expect(findNavItem(projectManagementNavItems, "New Project")?.search).toEqual({
       new: "1",
     });

@@ -6,6 +6,26 @@ export function getProjectBasePath(projectId = DEFAULT_PROJECT_ID) {
   return `/projects/${encodeURIComponent(projectId)}`;
 }
 
+export function getProjectIdFromPathname(pathname: string) {
+  return pathname.match(/^\/projects\/([^/]+)/)?.[1];
+}
+
+export function getManagedProjectKindFromId(projectId: string | undefined) {
+  if (projectId?.startsWith("wordpress-")) {
+    return "wordpress";
+  }
+
+  if (projectId?.startsWith("static-")) {
+    return "static";
+  }
+
+  if (projectId?.startsWith("generic-")) {
+    return "generic";
+  }
+
+  return undefined;
+}
+
 export function toProjectPath(path = "/", projectId = DEFAULT_PROJECT_ID) {
   const base = getProjectBasePath(projectId);
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
@@ -14,7 +34,13 @@ export function toProjectPath(path = "/", projectId = DEFAULT_PROJECT_ID) {
 }
 
 export function isProjectManagementPath(pathname: string) {
-  return pathname === "/" || pathname === "/projects";
+  return (
+    pathname === "/" ||
+    pathname === "/projects" ||
+    pathname === "/marketplace" ||
+    pathname === "/server" ||
+    pathname.startsWith("/server/")
+  );
 }
 
 export function matchesProjectPath(pathname: string, projectPath: string) {
