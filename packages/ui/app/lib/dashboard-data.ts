@@ -153,7 +153,7 @@ export const dashboardProjects: readonly DashboardProjectItem[] = [
 
 export const projectManagementNavItems: readonly DashboardNavItem[] = [
   {
-    title: "All Projects",
+    title: "Projects",
     url: "/projects",
     icon: LayoutDashboard,
     pageLabel: "Projects",
