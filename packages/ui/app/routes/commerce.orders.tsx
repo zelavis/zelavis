@@ -200,7 +200,6 @@ function CommerceOrders() {
                 {error ? <p className="text-sm text-destructive">{error}</p> : null}
                 <Button
                   type="submit"
-                  size="sm"
                   disabled={saving || !customerId || !productId || !Number.isFinite(computedSubtotal)}
                 >
                   Create order

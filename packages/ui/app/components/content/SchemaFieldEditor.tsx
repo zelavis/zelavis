@@ -485,7 +485,6 @@ function RepeaterFieldInput(props: {
         <p className="text-sm font-medium text-foreground">Repeater items</p>
         <Button
           type="button"
-          size="sm"
           variant="outline"
           disabled={props.disabled}
           onClick={() => props.onChange?.([...(props.value ?? []), {}])}
@@ -512,7 +511,6 @@ function RepeaterFieldInput(props: {
                 <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
-                    size="sm"
                     variant="outline"
                     disabled={props.disabled}
                     onClick={() => moveItem(index, -1)}
@@ -521,7 +519,6 @@ function RepeaterFieldInput(props: {
                   </Button>
                   <Button
                     type="button"
-                    size="sm"
                     variant="outline"
                     disabled={props.disabled}
                     onClick={() => moveItem(index, 1)}
@@ -530,7 +527,6 @@ function RepeaterFieldInput(props: {
                   </Button>
                   <Button
                     type="button"
-                    size="sm"
                     variant="outline"
                     disabled={props.disabled}
                     onClick={() =>

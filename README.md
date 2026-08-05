@@ -44,6 +44,7 @@ Native website hosting is part of the core product story. External hosts, storag
 - Runtime-neutral core.
 - Standard Web APIs over provider lock-in.
 - Strong service contracts over hidden magic.
+- Endpoint-backed capabilities over dashboard-only behavior.
 - Small, composable package surfaces.
 - Clear provider, adapter, plugin, and service boundaries.
 - Honest documentation about what exists today and what is still in progress.
@@ -63,6 +64,18 @@ Zelavis currently focuses on these layers:
 - **Website hosting**: built-in public page delivery from the Zelavis runtime, with dashboard and API routes kept under a reserved platform namespace.
 - **Server management**: dashboard surfaces for domains, backups, logs, and local hosting operations.
 - **Plugins**: optional domain and provider packages that extend the core platform.
+
+## Endpoint-Backed Capabilities
+
+The dashboard is a client of Zelavis, not the authority layer. Everything Zelavis can do should be available through a stable server capability and a versioned endpoint, so the same operation can be used by the dashboard, CLI, AI agents, scripts, plugins, and external admin tools.
+
+That means platform features start in the service/runtime layer and then become HTTP API surface. UI buttons, charts, forms, and setup flows should call those capabilities instead of owning privileged behavior themselves.
+
+Examples:
+
+- a Linux security checklist should have a server capability and endpoint, not only a dashboard button
+- resource charts should read resource telemetry endpoints, not dashboard-local logic once collectors exist
+- domain, backup, service-install, and project actions should be scriptable through the API
 
 ## Workspace
 

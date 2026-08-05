@@ -90,7 +90,7 @@ function ServerRoute() {
               meta={
                 <Link
                   to={section.path}
-                  className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+                  className={cn(buttonVariants({ variant: "outline" }))}
                 >
                   Open
                 </Link>

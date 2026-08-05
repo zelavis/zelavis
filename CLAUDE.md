@@ -54,6 +54,12 @@ The event log is the replication stream. Replay events on replicas to rebuild co
 
 The sidebar structure is built in `packages/ui/app/lib/dashboard-data.ts` → `buildPlatformNavItems`. Any change to nav items requires rebuilding `packages/ui/src/generated/dashboard-assets.ts` via `pnpm --filter @zelavis/ui build`.
 
+Nested sidebar slide headers use a larger standard gap before the next menu content. Sidebar panels with pinned/fixed action rows should use `SidebarFixedActionMenu`; when those actions sit directly below the centered slide back/title header, pass `afterHeader` so the spacing stays consistent across Content, Database, and future nested panels.
+
+Shared UI primitives should stay aligned with the current shadcn CLI output unless there is a deliberate design-system decision. Use shadcn presets and CSS variables for theme changes; do not hand-edit generated primitives or route code for visual preferences that should come from `shadcn apply`.
+
+Dashboard routes should use shared control defaults. Do not pass `size="sm"` / `size="lg"` or `buttonVariants({ size: ... })` for ordinary text buttons; reserve explicit size variants for icon-only controls or a clearly distinct component primitive.
+
 ## Collection Name Rules
 
 - Pattern: `/^[A-Za-z_][A-Za-z0-9_-]*$/`
@@ -82,6 +88,14 @@ await createDatabaseCollection(runtime, {
 - `@zelavis/ui` — dashboard SPA (React Router v7, SPA mode). See `AGENTS.md` UI section.
 - `zelavis` — high-level runtime that composes the above. Public API entry point.
 
+## Endpoint-Backed Capability Rule
+
+Everything Zelavis can do must be reachable through a stable server capability and an endpoint.
+
+The dashboard is only one client. If a dashboard page can run a Linux security checklist, read host resource metrics, add a domain, create a backup, install a service, mutate database state, or change project settings, the same operation must be available through the server API so the CLI, AI agents, scripts, plugins, and external admin tools can do it too.
+
+Do not implement authoritative platform behavior only in React route modules, component callbacks, local state, framework server actions, or dashboard-only helpers. Start from the domain capability, mount it through `@zelavis/server`, then let the dashboard consume that endpoint.
+
 ## Testing
 
 - `@zelavis/db`: Node test runner, `.mjs` files in `test/` and `adapters/*/test/`. Run with `pnpm --filter @zelavis/db test`.
@@ -103,3 +117,4 @@ await createDatabaseCollection(runtime, {
 - Do not expose `sql.execute()` via an HTTP endpoint without collection-table protection.
 - Do not add a shared `documents` table — the per-collection-table design is intentional.
 - Do not add backward-compat shims — this project is pre-release with no public users. Remove stale shapes cleanly.
+- Do not ship a dashboard feature that cannot also be performed through a stable endpoint.

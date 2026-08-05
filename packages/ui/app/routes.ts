@@ -4,10 +4,16 @@ export default [
   index("routes/projects.index.tsx"),
   route("marketplace", "routes/marketplace.tsx"),
   route("projects", "routes/projects.tsx"),
+  route("resources", "routes/resources.tsx"),
+  route("security", "routes/security.tsx"),
+  route("services", "routes/services.tsx"),
   route("server", "routes/server.tsx", [
     route("domains", "routes/server.domains.tsx"),
     route("backups", "routes/server.backups.tsx"),
     route("logs", "routes/server.logs.tsx"),
+  ]),
+  route("settings", "routes/settings.tsx", [
+    route("appearance", "routes/settings.appearance.tsx"),
   ]),
   route("projects/:projectId", "routes/index.tsx"),
   route("projects/:projectId/agents", "routes/agents.tsx"),
@@ -30,10 +36,7 @@ export default [
   route("projects/:projectId/database/new", "routes/database.new.tsx"),
   route("projects/:projectId/media", "routes/media.tsx"),
   route("projects/:projectId/marketplace", "routes/project.marketplace.tsx"),
-  route("projects/:projectId/services", "routes/services.tsx"),
-  route("projects/:projectId/settings", "routes/settings.tsx", [
-    route("appearance", "routes/settings.appearance.tsx"),
-  ]),
+  route("projects/:projectId/settings", "routes/project.settings.tsx"),
   route("projects/:projectId/storage", "routes/storage.tsx"),
   route("projects/:projectId/users", "routes/users.tsx"),
   route("projects/:projectId/website", "routes/website.tsx"),

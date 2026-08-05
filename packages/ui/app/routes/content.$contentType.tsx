@@ -31,13 +31,13 @@ function ContentTypeLayout() {
           <div className="flex flex-wrap items-center gap-2">
             <Link
               to={toProjectPath("/content")}
-              className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+              className={cn(buttonVariants({ variant: "outline" }))}
             >
               Back to Content
             </Link>
             <Link
               to={toDashboardPath(toProjectPath("/database"), { sidebar: "Core" })}
-              className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+              className={cn(buttonVariants({ variant: "outline" }))}
             >
               Open Core Database
             </Link>

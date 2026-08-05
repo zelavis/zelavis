@@ -45,6 +45,7 @@ So the safe model is:
 
 The dashboard should reflect that split:
 
+- Dashboard pages are clients of service capabilities and endpoints; they must not be the only implementation of a platform action.
 - The global `Marketplace` is a top-level discovery area for apps, starters, templates, and server provider plugins.
 - The project `Marketplace` under `/zelavis/projects/:projectId/marketplace` is where Zelavis-native project plugins are installed.
 - Installed services do not get first-slide root items.
@@ -56,6 +57,8 @@ The dashboard should reflect that split:
 - Service menus must not declare a `surface`; Zelavis always mounts them under `Workspace`.
 
 This keeps the first slide stable and prevents dashboard sprawl.
+
+The same rule applies to service-owned pages: a page can render UI, but the action should live behind a service capability and endpoint so non-dashboard clients can call it too.
 
 Managed app projects such as WordPress, static sites, or generic hosted apps do
 not automatically expose Zelavis-native service navigation. Their dashboard

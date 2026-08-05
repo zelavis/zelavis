@@ -12,11 +12,10 @@ import { useMemo, useState } from "react";
 
 import {
   DataRow,
-  PageHeader,
   ResourceNotice,
   StatusBadge,
 } from "#/components/DashboardPage";
-import { Button, buttonVariants } from "#/components/ui/button";
+import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import {
@@ -29,7 +28,6 @@ import {
   parseAsStringLiteral,
   useTypedSearchParams,
 } from "#/lib/use-typed-search-params";
-import { cn } from "#/lib/utils";
 
 export const handle = {
   pageLabel: "Projects",
@@ -146,18 +144,6 @@ function ProjectsRoute() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Projects"
-        title="Projects"
-        description="Projects can be Zelavis-native apps, website templates, or managed apps such as WordPress."
-        actions={
-          <Button type="button" onClick={() => setParams({ new: "1" })}>
-            <Plus className="size-4" />
-            New project
-          </Button>
-        }
-      />
-
       {showCreate ? (
         <Card>
           <CardHeader>
@@ -240,9 +226,15 @@ function ProjectsRoute() {
             className="pl-9"
           />
         </div>
-        <p className="text-sm text-muted-foreground">
-          {filteredProjects.length} of {projects.length} projects
-        </p>
+        <div className="flex items-center justify-between gap-3 sm:justify-end">
+          <p className="text-sm text-muted-foreground">
+            {filteredProjects.length} of {projects.length} projects
+          </p>
+          <Button type="button" onClick={() => setParams({ new: "1" })}>
+            <Plus className="size-4" />
+            New project
+          </Button>
+        </div>
       </div>
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -283,20 +275,34 @@ function ProjectsRoute() {
                 meta={<Clock3 className="size-4 text-muted-foreground" />}
               />
               <div className="flex items-center justify-between gap-2 px-4 py-3">
-                <Link
-                  to={toDashboardPath(toProjectPath("/", project.id))}
-                  className={cn(buttonVariants({ size: "sm" }))}
+                <Button
+                  render={
+                    <Link
+                      to={toDashboardPath(toProjectPath("/", project.id))}
+                      viewTransition
+                    />
+                  }
                 >
                   <LayoutDashboard className="size-4" />
                   Open
-                </Link>
-                <Link
-                  to={toDashboardPath(toProjectPath(project.kind === "zelavis" ? "/website" : "/", project.id))}
-                  className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+                </Button>
+                <Button
+                  variant="outline"
+                  render={
+                    <Link
+                      to={toDashboardPath(
+                        toProjectPath(
+                          project.kind === "zelavis" ? "/website" : "/",
+                          project.id,
+                        ),
+                      )}
+                      viewTransition
+                    />
+                  }
                 >
                   <Globe2 className="size-4" />
                   {project.kind === "zelavis" ? "Website" : "Manage"}
-                </Link>
+                </Button>
               </div>
             </CardContent>
           </Card>

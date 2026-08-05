@@ -173,11 +173,11 @@ function ContentEntryEditorRoute() {
           <div className="flex flex-wrap items-center gap-2">
             <Link
               to={`/content/${contentTypePath}`}
-              className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+              className={cn(buttonVariants({ variant: "outline" }))}
             >
               Back to Entries
             </Link>
-            <Button type="button" size="sm" onClick={() => void handleSaveEntry()} disabled={saving}>
+            <Button type="button" onClick={() => void handleSaveEntry()} disabled={saving}>
               <Save className="size-4" />
               Save Entry
             </Button>

@@ -74,7 +74,7 @@ function NewDatabaseTableRoute({ actionData }: Route.ComponentProps) {
         actions={
           <Link
             to={toProjectPath("/database")}
-            className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+            className={cn(buttonVariants({ variant: "outline" }))}
           >
             Back to Database
           </Link>

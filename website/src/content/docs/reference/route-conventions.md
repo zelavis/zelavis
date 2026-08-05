@@ -77,6 +77,14 @@ the mounted paths become:
 
 The storage routes are present when Zelavis has a file storage resource to expose through the storage core service. `?format=metadata` returns structured file information and the ready-to-use Zelavis file reference for that path.
 
+## Endpoint-backed capabilities
+
+Dashboard routes are client routes. Platform actions should live under the API namespace as service endpoints.
+
+If a dashboard surface can run a check, mutate settings, create a domain, install a service, manage backups, change project state, or read operational telemetry, the same capability should be reachable through `${rootPath}${api.prefix}/${api.version}/...`.
+
+This keeps the dashboard, CLI, AI agents, plugins, scripts, and external admin tools on the same platform contract.
+
 ## Website core service
 
 When the built-in website core service is enabled, public website pages are mounted at `/`.
@@ -104,6 +112,7 @@ Concrete hostnames live in runtime domain bindings, not in service package metad
 ## Related docs
 
 - [Dashboard Settings](./dashboard-settings.md)
+- [Endpoint-Backed Capabilities](../architecture/endpoint-backed-capabilities.md)
 - [Service Model](../architecture/service-model.md)
 - [Project Model](../architecture/project-model.md)
 - [First Runtime](../getting-started/first-runtime.md)

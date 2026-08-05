@@ -13,6 +13,12 @@ It is intended to be the common adapter layer for platform packages such as `@ze
 - Route prefixes and per-endpoint path overrides are applied before dispatch.
 - `zelavisServer(...)` returns `{ services, routes, fetch, plain, dispatch }`.
 
+## Endpoint-backed capabilities
+
+`@zelavis/server` is the place where Zelavis capabilities become transportable API surface. Any behavior the dashboard can perform should be mounted through a stable service endpoint as well, so CLI commands, AI agents, scripts, plugins, and external admin tools can perform the same operation.
+
+Do not treat dashboard routes or framework-specific server actions as the authoritative implementation of platform behavior. Define the capability in the service/runtime layer, expose it through this server contract, then let the dashboard call it as a client.
+
 ## Runtime surfaces
 
 - `fetch(request)` for Web and fetch-compatible runtimes

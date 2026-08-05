@@ -206,8 +206,12 @@ export function DashboardShell({
         />
         <SidebarInset className="min-h-0 overflow-hidden">
           <UtilityHeader runtime={activeDashboardData?.runtime} />
-          <div className="flex min-h-0 flex-1 flex-col overflow-auto">
-            <div className="flex min-h-full flex-1 flex-col gap-4 p-4 pt-0">
+          <div
+            className="flex min-h-0 flex-1 flex-col overflow-auto"
+          >
+            <div
+              className="dashboard-view-transition flex min-h-full flex-1 flex-col gap-4 p-4"
+            >
               <RestartRequiredBanner settings={activeDashboardData?.settings} />
               {children}
               <Footer />

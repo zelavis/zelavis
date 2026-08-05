@@ -13,6 +13,17 @@ Managed app projects such as WordPress, static sites, or generic apps use
 hosting-style navigation instead of Zelavis-native Auth/Database/Content plugin
 navigation.
 
+## Dashboard Boundary
+
+The dashboard is a client of Zelavis endpoints. It should never be the only
+place where a platform action exists.
+
+When adding dashboard features, put authoritative behavior behind a server
+capability and endpoint first, then have the UI call that capability. Security
+checks, resource metrics, domains, backups, service installs, project settings,
+database mutations, and hosting actions must stay scriptable outside the
+dashboard through the API.
+
 ## Service
 
 `@zelavis/ui/service` exports the dashboard service definition helpers used by the

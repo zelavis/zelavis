@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildManagedProjectNavItems,
   buildPlatformNavItems,
   projectManagementNavItems,
   buildWorkspaceServiceNavItems,
@@ -116,6 +117,17 @@ describe("dashboard navigation ownership", () => {
   it("exposes project Website and project-wide Media without the old Builder area", () => {
     const nav = buildPlatformNavItems();
 
+    expect(nav.map((item) => [item.title, item.sectionLabel])).toEqual([
+      ["Overview", "Overview"],
+      ["Users", "Build"],
+      ["Content", "Build"],
+      ["Media", "Build"],
+      ["Website", "Build"],
+      ["Marketplace", "Extend"],
+      ["Workspace", "Extend"],
+      ["Core", "Core"],
+      ["Settings", "Settings"],
+    ]);
     expect(nav.some((item) => item.title === "Website")).toBe(true);
     expect(findNavItem(nav, "Website")).toMatchObject({
       url: "/projects/default/website",
@@ -129,15 +141,47 @@ describe("dashboard navigation ownership", () => {
       url: "/projects/default/marketplace",
       pageLabel: "Marketplace",
     });
+    const settings = nav.find((item) => item.title === "Settings");
+    expect(settings).toMatchObject({
+      landingUrl: "/projects/default/settings",
+    });
+    expect(settings?.items?.map((item) => item.title)).toEqual([
+      "Project Settings",
+    ]);
     expect(findNavItem(nav, "Builder")).toBeUndefined();
+  });
+
+  it("groups managed app project navigation like hosting controls", () => {
+    const nav = buildManagedProjectNavItems("wp", "wordpress");
+
+    expect(nav.map((item) => [item.title, item.sectionLabel])).toEqual([
+      ["Overview", "Overview"],
+      ["Domains", "Hosting"],
+      ["Files", "Hosting"],
+      ["Database", "Hosting"],
+      ["Backups", "Operations"],
+      ["Logs", "Operations"],
+      ["Updates", "Operations"],
+      ["WordPress Admin", "Settings"],
+    ]);
   });
 
   it("uses a management nav for the all-projects view", () => {
     expect(projectManagementNavItems.map((item) => item.title)).toEqual([
       "Projects",
-      "New Project",
       "Marketplace",
+      "Domains",
+      "Resources",
       "Server",
+      "Security",
+    ]);
+    expect(projectManagementNavItems.map((item) => item.sectionLabel)).toEqual([
+      "Projects",
+      "Explore",
+      "Manage",
+      "Manage",
+      "Manage",
+      "Manage",
     ]);
     expect(findNavItem(projectManagementNavItems, "Users")).toBeUndefined();
     expect(findNavItem(projectManagementNavItems, "Website")).toBeUndefined();
@@ -145,13 +189,51 @@ describe("dashboard navigation ownership", () => {
       url: "/marketplace",
       pageLabel: "Marketplace",
     });
-    expect(findNavItem(projectManagementNavItems, "Domains")).toMatchObject({
-      url: "/server/domains",
+    const domains = projectManagementNavItems.find((item) => item.title === "Domains");
+    expect(domains).toMatchObject({
+      landingUrl: "/server/domains",
       pageLabel: "Domains",
     });
-    expect(findNavItem(projectManagementNavItems, "New Project")?.search).toEqual({
-      new: "1",
+    expect(domains?.items?.map((item) => item.title)).toEqual([
+      "Overview",
+      "Add Domain",
+      "Buy",
+      "Transfer",
+    ]);
+    expect(findNavItem(projectManagementNavItems, "Add Domain")).toMatchObject({
+      url: "/server/domains",
+      search: { domainAction: "add" },
+      pageLabel: "Add Domain",
     });
+    expect(
+      projectManagementNavItems
+        .find((item) => item.title === "Server")
+        ?.items?.some((item) => item.title === "Domains"),
+    ).toBe(false);
+    const resources = projectManagementNavItems.find((item) => item.title === "Resources");
+    expect(resources).toMatchObject({
+      landingUrl: "/resources",
+      pageLabel: "Resources",
+    });
+    expect(resources?.items?.map((item) => item.title)).toEqual([
+      "Overview",
+      "Processes",
+      "Storage",
+      "Limits",
+    ]);
+    expect(findNavItem(projectManagementNavItems, "Processes")).toMatchObject({
+      url: "/resources",
+      search: { resourceView: "processes" },
+      pageLabel: "Processes",
+    });
+    const security = projectManagementNavItems.find((item) => item.title === "Security");
+    expect(security).toMatchObject({
+      landingUrl: "/security",
+      pageLabel: "Security",
+    });
+    expect(security?.items?.map((item) => item.title)).toEqual(["Checklist"]);
+    expect(findNavItem(projectManagementNavItems, "Settings")).toBeUndefined();
+    expect(findNavItem(projectManagementNavItems, "New Project")).toBeUndefined();
   });
 
   it("lists database collections as tables in the database sidebar slide", () => {

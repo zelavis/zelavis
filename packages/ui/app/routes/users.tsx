@@ -71,7 +71,6 @@ function UsersRoute() {
                 <Button
                   key={filter}
                   type="button"
-                  size="sm"
                   variant={activeFilter === filter ? "secondary" : "ghost"}
                   onClick={() => setActiveFilter(filter)}
                 >

@@ -55,6 +55,8 @@ The dashboard stays mounted under the configured root path, while API services s
 
 The dashboard root opens Projects. Global surfaces such as Marketplace and Server live outside project URLs, while Zelavis-native project pages live under `/zelavis/projects/:projectId/*`.
 
+The dashboard is a client of the runtime. Operations shown in the dashboard should also be available through stable runtime capabilities and versioned endpoints so CLI tools, AI agents, scripts, plugins, and external admin clients can perform the same work.
+
 Default dashboard paths include:
 
 ```txt
@@ -116,5 +118,6 @@ Framework utilities (small wrappers around `zv.fetch`) live at:
 
 - [First Runtime](../getting-started/first-runtime.md)
 - [@zelavis/server](./server.md)
+- [Endpoint-Backed Capabilities](../architecture/endpoint-backed-capabilities.md)
 - [@zelavis/db](./database.md)
 - [@zelavis/auth](./auth.md)

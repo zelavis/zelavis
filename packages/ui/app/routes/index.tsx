@@ -65,7 +65,7 @@ function ManagedProjectOverview({ kind }: { kind: string }) {
         actions={
           <Link
             to="/server/domains"
-            className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+            className={cn(buttonVariants({ variant: "outline" }))}
           >
             <Globe2 className="size-4" />
             Domains

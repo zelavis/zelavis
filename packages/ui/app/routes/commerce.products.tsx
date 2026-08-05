@@ -154,7 +154,7 @@ function CommerceProducts() {
               </div>
               {message ? <p className="text-sm text-emerald-700 dark:text-emerald-300">{message}</p> : null}
               {error ? <p className="text-sm text-destructive">{error}</p> : null}
-              <Button type="submit" size="sm" disabled={saving || !title.trim()}>
+              <Button type="submit" disabled={saving || !title.trim()}>
                 Create product
               </Button>
             </form>

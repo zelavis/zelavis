@@ -38,7 +38,12 @@ export function isProjectManagementPath(pathname: string) {
     pathname === "/" ||
     pathname === "/projects" ||
     pathname === "/marketplace" ||
+    pathname === "/resources" ||
+    pathname === "/security" ||
+    pathname === "/services" ||
     pathname === "/server" ||
+    pathname === "/settings" ||
+    pathname === "/settings/appearance" ||
     pathname.startsWith("/server/")
   );
 }

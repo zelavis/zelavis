@@ -513,7 +513,6 @@ function StorageRoute() {
                       <Button
                         type="button"
                         variant="outline"
-                        size="sm"
                         onClick={() => setSelectedPath(file.path)}
                       >
                         Inspect
@@ -521,7 +520,6 @@ function StorageRoute() {
                       <Button
                         type="button"
                         variant="outline"
-                        size="sm"
                         onClick={() => handleDelete(file.path)}
                       >
                         <Trash2 className="size-4" />
@@ -589,13 +587,12 @@ function StorageRoute() {
                         <Button
                           type="button"
                           variant="outline"
-                          size="sm"
                           onClick={handleInsertSampleDocument}
                         >
                           Insert sample document
                         </Button>
                       ) : null}
-                      <Button type="button" variant="outline" size="sm" onClick={handleCopyReference}>
+                      <Button type="button" variant="outline" onClick={handleCopyReference}>
                         Copy JSON
                       </Button>
                     </div>

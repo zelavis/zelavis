@@ -359,7 +359,6 @@ function ContentTypeFieldsRoute() {
         <CardContent className="flex flex-wrap items-center gap-2 p-3">
           <Button
             type="button"
-            size="sm"
             variant={viewParams.view === "fields" ? "default" : "outline"}
             onClick={() => setViewParams({ view: "fields" })}
           >
@@ -368,7 +367,6 @@ function ContentTypeFieldsRoute() {
           </Button>
           <Button
             type="button"
-            size="sm"
             variant={viewParams.view === "editor" ? "default" : "outline"}
             onClick={() => setViewParams({ view: "editor" })}
           >
@@ -377,7 +375,6 @@ function ContentTypeFieldsRoute() {
           </Button>
           <Button
             type="button"
-            size="sm"
             variant={viewParams.view === "settings" ? "default" : "outline"}
             onClick={() => setViewParams({ view: "settings" })}
           >
@@ -415,7 +412,7 @@ function ContentTypeFieldsRoute() {
           <CardTitle>Fields</CardTitle>
           <Link
             to={toDashboardPath(toProjectPath("/database"), { sidebar: "Core" })}
-            className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+            className={cn(buttonVariants({ variant: "outline" }))}
           >
             Open Core Database
           </Link>
@@ -431,7 +428,7 @@ function ContentTypeFieldsRoute() {
             />
           ) : (
             <>
-              <Button type="button" size="sm" onClick={() => startCreate()}>
+              <Button type="button" onClick={() => startCreate()}>
                 <Plus className="size-4" />
                 New Field
               </Button>
@@ -481,7 +478,6 @@ function ContentTypeFieldsRoute() {
           <CardTitle>{builderMode === "edit" ? "Edit field" : "Field builder"}</CardTitle>
           <Button
             type="button"
-            size="sm"
             onClick={() => void handleSaveSchema()}
             disabled={!schemaDraft || !activeSchema || saving}
           >
@@ -591,7 +587,6 @@ function ContentTypeFieldsRoute() {
                       <div className="flex flex-wrap gap-2">
                         <Button
                           type="button"
-                          size="sm"
                           variant="outline"
                           onClick={() => setPendingRemoval(undefined)}
                         >
@@ -599,7 +594,6 @@ function ContentTypeFieldsRoute() {
                         </Button>
                         <Button
                           type="button"
-                          size="sm"
                           variant="destructive"
                           onClick={() => confirmRemoveField(selectedField.name)}
                         >
@@ -610,7 +604,6 @@ function ContentTypeFieldsRoute() {
                     ) : (
                       <Button
                         type="button"
-                        size="sm"
                         variant="outline"
                         onClick={() => handleRemoveField(selectedField.name)}
                       >
@@ -622,7 +615,6 @@ function ContentTypeFieldsRoute() {
                   <div className="mt-4 flex flex-wrap items-center gap-2">
                     <Button
                       type="button"
-                      size="sm"
                       variant="outline"
                       onClick={() => handleMoveField(selectedField.name, -1)}
                     >
@@ -631,7 +623,6 @@ function ContentTypeFieldsRoute() {
                     </Button>
                     <Button
                       type="button"
-                      size="sm"
                       variant="outline"
                       onClick={() => handleMoveField(selectedField.name, 1)}
                     >
@@ -640,7 +631,6 @@ function ContentTypeFieldsRoute() {
                     </Button>
                     <Button
                       type="button"
-                      size="sm"
                       variant="outline"
                       onClick={() => startEdit(selectedEntry)}
                     >
@@ -719,7 +709,6 @@ function TypeEditorPanel(props: {
           <CardTitle>Type Editor</CardTitle>
           <Button
             type="button"
-            size="sm"
             onClick={props.onSaveJsonSchema}
             disabled={props.saving || !props.activeSchemaVersion}
           >
@@ -771,7 +760,6 @@ function TypeEditorPanel(props: {
                   </div>
                   <Button
                     type="button"
-                    size="sm"
                     variant="outline"
                     disabled={props.saving || schema.active}
                     onClick={() => props.onActivateSchemaVersion(schema.version)}
@@ -958,7 +946,6 @@ function TypeSettingsPanel(props: {
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 type="button"
-                size="sm"
                 onClick={() => void handleSaveLabel()}
                 disabled={saving}
               >
@@ -967,7 +954,6 @@ function TypeSettingsPanel(props: {
               </Button>
               <Button
                 type="button"
-                size="sm"
                 variant="outline"
                 onClick={() => void handleTogglePin()}
                 disabled={saving}
@@ -1005,7 +991,6 @@ function TypeSettingsPanel(props: {
           <div>
             <Button
               type="button"
-              size="sm"
               onClick={() => void handleDuplicateType()}
               disabled={!duplicateName.trim() || saving}
             >
@@ -1258,12 +1243,12 @@ function FieldConfigForm(props: {
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" size="sm" onClick={props.onSave}>
+        <Button type="button" onClick={props.onSave}>
           <Save className="size-4" />
           {props.mode === "edit" ? "Update Field" : "Add Field"}
         </Button>
         {props.mode === "edit" ? (
-          <Button type="button" size="sm" variant="outline" onClick={props.onCancel}>
+          <Button type="button" variant="outline" onClick={props.onCancel}>
             Cancel
           </Button>
         ) : null}
@@ -1329,7 +1314,6 @@ function NestedFieldsEditor(props: {
               </div>
               <Button
                 type="button"
-                size="sm"
                 variant="outline"
                 onClick={() =>
                   props.onChange(props.fields.filter((entry) => entry.name !== field.name))
@@ -1369,7 +1353,6 @@ function NestedFieldsEditor(props: {
       </div>
       <Button
         type="button"
-        size="sm"
         variant="outline"
         onClick={handleAddNestedField}
         disabled={!nestedName.trim() && !nestedLabel.trim()}

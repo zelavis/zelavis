@@ -127,7 +127,7 @@ function CommerceCustomers() {
               <Input value={accountId} onChange={(event) => setAccountId(event.target.value)} placeholder="Account ID (optional)" />
               {message ? <p className="text-sm text-emerald-700 dark:text-emerald-300">{message}</p> : null}
               {error ? <p className="text-sm text-destructive">{error}</p> : null}
-              <Button type="submit" size="sm" disabled={saving || !email.trim()}>
+              <Button type="submit" disabled={saving || !email.trim()}>
                 Create customer
               </Button>
             </form>

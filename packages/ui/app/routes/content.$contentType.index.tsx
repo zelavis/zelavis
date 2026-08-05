@@ -150,7 +150,7 @@ function ContentTypeEntriesRoute() {
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-3">
         <CardTitle>Entries</CardTitle>
-        <Button type="button" size="sm" onClick={() => void handleCreateDraftEntry()} disabled={saving}>
+        <Button type="button" onClick={() => void handleCreateDraftEntry()} disabled={saving}>
           <Plus className="size-4" />
           New Entry
         </Button>
@@ -227,7 +227,6 @@ function ContentTypeEntriesRoute() {
                             <>
                               <Button
                                 type="button"
-                                size="sm"
                                 onClick={() => void handleSaveEntry(entry)}
                                 disabled={saving}
                               >
@@ -235,7 +234,6 @@ function ContentTypeEntriesRoute() {
                               </Button>
                               <Button
                                 type="button"
-                                size="sm"
                                 variant="outline"
                                 onClick={() => {
                                   setEditingEntryId(undefined);
@@ -250,13 +248,12 @@ function ContentTypeEntriesRoute() {
                             <>
                               <Link
                                 to={`/content/${contentTypePath}/${encodeURIComponent(entry.id)}`}
-                                className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+                                className={cn(buttonVariants({ variant: "outline" }))}
                               >
                                 <SquarePen className="size-4" />
                               </Link>
                               <Button
                                 type="button"
-                                size="sm"
                                 variant="outline"
                                 onClick={() => beginEditingEntry(entry)}
                               >
@@ -264,7 +261,6 @@ function ContentTypeEntriesRoute() {
                               </Button>
                               <Button
                                 type="button"
-                                size="sm"
                                 variant="outline"
                                 onClick={() => void handleDuplicateEntry(entry)}
                               >

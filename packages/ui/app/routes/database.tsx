@@ -559,12 +559,11 @@ function DatabaseDataGrid(props: {
             placeholder="Save current as..."
             aria-label="Database view name"
           />
-          <Button type="button" size="sm" variant="outline" onClick={saveCurrentView}>
+          <Button type="button" variant="outline" onClick={saveCurrentView}>
             Save View
           </Button>
           <Button
             type="button"
-            size="sm"
             variant="outline"
             disabled={!props.activeSavedViewName}
             onClick={() => deleteSavedView(props.activeSavedViewName ?? "")}

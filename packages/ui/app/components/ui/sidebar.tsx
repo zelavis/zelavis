@@ -1,3 +1,5 @@
+"use client"
+
 import * as React from "react"
 import { mergeProps } from "@base-ui/react/merge-props"
 import { useRender } from "@base-ui/react/use-render"
@@ -464,6 +466,23 @@ function SidebarMenu({ className, ...props }: React.ComponentProps<"ul">) {
   )
 }
 
+function SidebarFixedActionMenu({
+  afterHeader = false,
+  className,
+  ...props
+}: React.ComponentProps<"ul"> & {
+  afterHeader?: boolean
+}) {
+  return (
+    <SidebarMenu
+      data-slot="sidebar-fixed-action-menu"
+      data-sidebar="fixed-action-menu"
+      className={cn(afterHeader && "mt-2", className)}
+      {...props}
+    />
+  )
+}
+
 function SidebarMenuItem({ className, ...props }: React.ComponentProps<"li">) {
   return (
     <li
@@ -700,6 +719,7 @@ export {
   Sidebar,
   SidebarContent,
   SidebarFooter,
+  SidebarFixedActionMenu,
   SidebarGroup,
   SidebarGroupAction,
   SidebarGroupContent,

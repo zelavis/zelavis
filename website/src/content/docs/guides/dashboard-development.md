@@ -25,6 +25,11 @@ The dashboard source lives in the `@zelavis/ui` workspace package, but applicati
 
 The UI package is internal workspace infrastructure, not the public application-facing runtime entry point.
 
+The dashboard is also not the authority layer for platform behavior. When adding
+a dashboard feature, implement the domain capability and endpoint first, then
+have the dashboard call it. A feature that can only be performed from React
+route code is not a finished Zelavis platform feature.
+
 ## Embedded dashboard behavior
 
 The `@zelavis/ui` package embeds built dashboard assets into its dashboard

@@ -355,7 +355,6 @@ function MarketplaceServiceCard({
       <CardFooter className="mt-auto flex min-h-14 items-center gap-2">
         {item.runtimeServiceName ? (
           <Button
-            size="sm"
             variant={isInstalled ? "outline" : "default"}
             disabled={!onInstallToggle || pending}
             onClick={onInstallToggle}
@@ -369,11 +368,11 @@ function MarketplaceServiceCard({
                 : "Install"}
           </Button>
         ) : (
-          <Button size="sm" disabled>
+          <Button disabled>
             Install
           </Button>
         )}
-        <Button size="sm" variant="outline" onClick={onInfo}>
+        <Button variant="outline" onClick={onInfo}>
           Info
         </Button>
       </CardFooter>
@@ -421,12 +420,12 @@ function GlobalAppCard({ item }: { item: MarketplaceAppItem }) {
         {canCreateProject ? (
           <Link
             to={`/projects?new=1&type=${encodeURIComponent(item.projectType)}`}
-            className={cn(buttonVariants({ size: "sm" }))}
+            className={cn(buttonVariants())}
           >
             {item.actionLabel}
           </Link>
         ) : (
-          <Button size="sm" disabled>
+          <Button disabled>
             {item.actionLabel}
           </Button>
         )}
@@ -448,7 +447,7 @@ function GlobalPluginCard({ item }: { item: MarketplaceCatalogItem }) {
         </p>
       </CardContent>
       <CardFooter className="mt-auto flex items-center gap-2">
-        <Button size="sm" disabled>
+        <Button disabled>
           Project-only
         </Button>
         <span className="text-xs text-muted-foreground">
@@ -878,7 +877,6 @@ function ProjectMarketplace() {
                 <Button
                   type="button"
                   variant="outline"
-                  size="sm"
                   disabled={pendingServiceName === service.name}
                   onClick={() =>
                     toggleService(

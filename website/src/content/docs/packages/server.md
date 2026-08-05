@@ -27,8 +27,11 @@ Current runtime surfaces include:
 
 This package is the transport boundary that keeps domain packages mountable without baking framework logic into each package.
 
+It is also the boundary that keeps dashboard behavior automatable. If the dashboard can perform a platform action, the same action should be exposed through a service endpoint so the CLI, AI agents, scripts, plugins, and external admin tools can call it too.
+
 ## Related docs
 
 - [zelavis](./zelavis.md)
+- [Endpoint-Backed Capabilities](../architecture/endpoint-backed-capabilities.md)
 - [Node adapter](../adapters/node.md)
 - [Service Authoring](../guides/service-authoring.md)

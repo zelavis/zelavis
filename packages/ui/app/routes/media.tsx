@@ -425,7 +425,7 @@ function MediaRoute() {
         actions={
           <Link
             to={toProjectPath("/storage")}
-            className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+            className={cn(buttonVariants({ variant: "outline" }))}
           >
             Open Core Storage
           </Link>
@@ -619,7 +619,6 @@ function MediaRoute() {
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   type="button"
-                  size="sm"
                   variant="outline"
                   onClick={() => setSelectedPaths(orderedFiles.map((file) => file.path))}
                   disabled={orderedFiles.length === 0}
@@ -629,7 +628,6 @@ function MediaRoute() {
                 </Button>
                 <Button
                   type="button"
-                  size="sm"
                   variant="outline"
                   onClick={() => setSelectedPaths([])}
                   disabled={selectedPaths.length === 0}
@@ -638,7 +636,6 @@ function MediaRoute() {
                 </Button>
                 <Button
                   type="button"
-                  size="sm"
                   variant="outline"
                   onClick={handleCopySelectedUrls}
                   disabled={selectedPaths.length === 0}
@@ -648,7 +645,6 @@ function MediaRoute() {
                 </Button>
                 <Button
                   type="button"
-                  size="sm"
                   variant="outline"
                   onClick={handleCopySelectedReferences}
                   disabled={selectedPaths.length === 0}
@@ -658,7 +654,6 @@ function MediaRoute() {
                 </Button>
                 <Button
                   type="button"
-                  size="sm"
                   variant="outline"
                   onClick={handleDeleteSelected}
                   disabled={selectedPaths.length === 0 || busy}
@@ -772,11 +767,11 @@ function MediaRoute() {
                   <p>Purpose: {selectedAsset.metadata?.purpose ?? "Not set"}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Button type="button" variant="outline" size="sm" onClick={handleCopyUrl}>
+                  <Button type="button" variant="outline" onClick={handleCopyUrl}>
                     <Copy className="size-4" />
                     Copy URL
                   </Button>
-                  <Button type="button" variant="outline" size="sm" onClick={handleCopyReference}>
+                  <Button type="button" variant="outline" onClick={handleCopyReference}>
                     <Copy className="size-4" />
                     Copy Reference
                   </Button>
@@ -785,7 +780,7 @@ function MediaRoute() {
                       href={getStorageFileUrl(config, selectedAsset.path)}
                       target="_blank"
                       rel="noreferrer"
-                      className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+                      className={cn(buttonVariants({ variant: "outline" }))}
                     >
                       <ExternalLink className="size-4" />
                       Open File

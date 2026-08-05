@@ -80,11 +80,16 @@ Available parsers: `parseAsString`, `parseAsStringLiteral`. Add new parsers to `
 - Top-level sections that have a natural entry page declare `landingUrl` in `dashboard-data.ts`; this navigates the main content area when the section is opened from the Platform root
 - Add `landingUrl` to any new top-level section that has a clear entry page
 - Do not hand-edit the sidebar slide structure unless the task explicitly changes navigation
+- Nested slide headers use a larger standard gap before the next menu content. Use `SidebarFixedActionMenu` for pinned/fixed action rows inside sidebar panels, and pass `afterHeader` when the action rows sit directly below a slide back/title header.
+- Keep shared UI primitives aligned with the current shadcn CLI output unless there is a deliberate design-system decision. Use shadcn presets and CSS variables for theme changes; do not hand-edit generated primitives or route code for visual preferences that should come from `shadcn apply`.
+- Use shared control defaults in dashboard routes. Do not pass `size="sm"`/`size="lg"` or `buttonVariants({ size: ... })` for ordinary text buttons; reserve explicit size variants for icon-only controls or a clearly distinct component primitive.
 - `Community` is content inside the first sidebar slide
 
 ## Working rules
 
 - Use `pnpm run ui:dev` for end-to-end dashboard work
+- Treat the dashboard as a client of Zelavis endpoints. If a dashboard page can perform a platform action, the same action must exist as a server capability and endpoint.
+- Do not make route modules, component callbacks, local React state, or framework-specific server actions the only implementation of privileged platform behavior.
 - The mounted dashboard path is `/zelavis`, including in dev mode
 - `/zelavis` opens the Projects overview. Project-scoped pages live under `/zelavis/projects/:projectId/*`; the current starter project is `/zelavis/projects/default`.
 - `/zelavis/marketplace` is the global marketplace for apps, starters, and server provider plugins. `/zelavis/projects/:projectId/marketplace` is the project marketplace for Zelavis plugins.

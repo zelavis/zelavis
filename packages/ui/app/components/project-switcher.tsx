@@ -1,8 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { Check, ChevronsUpDown, LayoutDashboard, Plus } from "lucide-react"
-import { useNavigate } from "react-router"
+import { Check, ChevronsUpDown, House, LayoutDashboard, Plus } from "lucide-react"
+import { Link, useNavigate } from "react-router"
 
 import {
   DropdownMenu,
@@ -18,17 +18,19 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  useSidebar,
 } from "#/components/ui/sidebar"
 import type { DashboardProjectItem } from "#/lib/dashboard-data"
 import { toProjectPath } from "#/lib/routing"
 
 export function ProjectSwitcher({
+  homeIconLinksToProjects = false,
+  onOpenChange,
   projects,
 }: {
+  homeIconLinksToProjects?: boolean
+  onOpenChange?: (open: boolean) => void
   projects: readonly DashboardProjectItem[]
 }) {
-  const { isMobile } = useSidebar()
   const navigate = useNavigate()
   const [activeProject, setActiveProject] = React.useState(projects[0])
 
@@ -38,16 +40,28 @@ export function ProjectSwitcher({
 
   return (
     <SidebarMenu>
-      <SidebarMenuItem>
-        <DropdownMenu>
+      <SidebarMenuItem className="flex min-w-0 gap-1">
+        <SidebarMenuButton
+          render={<Link to="/projects" viewTransition />}
+          size="lg"
+          tooltip="Projects"
+          className="w-12 shrink-0 justify-center px-0 group-data-[collapsible=icon]:w-full"
+        >
+          <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+            {homeIconLinksToProjects ? (
+              <House className="size-4" />
+            ) : (
+              <activeProject.logo className="size-4" />
+            )}
+          </div>
+          <span className="sr-only">Projects</span>
+        </SidebarMenuButton>
+        <DropdownMenu onOpenChange={onOpenChange}>
           <SidebarMenuButton
             render={<DropdownMenuTrigger />}
             size="lg"
-            className="data-popup-open:bg-sidebar-accent data-popup-open:text-sidebar-accent-foreground"
+            className="min-w-0 flex-1 data-popup-open:bg-sidebar-accent data-popup-open:text-sidebar-accent-foreground group-data-[collapsible=icon]:hidden"
           >
-            <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-              <activeProject.logo className="size-4" />
-            </div>
             <div className="grid flex-1 text-left text-sm leading-tight">
               <span className="truncate font-semibold">{activeProject.name}</span>
               <span className="truncate text-xs">{activeProject.domain}</span>
@@ -55,9 +69,10 @@ export function ProjectSwitcher({
             <ChevronsUpDown className="ms-auto" />
           </SidebarMenuButton>
           <DropdownMenuContent
-            className="min-w-56 rounded-lg"
+            className="w-[calc(var(--anchor-width)+3.25rem)] min-w-0 rounded-lg"
             align="start"
-            side={isMobile ? "bottom" : "right"}
+            alignOffset={-52}
+            side="bottom"
             sideOffset={4}
           >
             <DropdownMenuGroup>
@@ -72,7 +87,9 @@ export function ProjectSwitcher({
                     key={project.id}
                     onClick={() => {
                       setActiveProject(project)
-                      navigate(toProjectPath("/", project.id))
+                      navigate(toProjectPath("/", project.id), {
+                        viewTransition: true,
+                      })
                     }}
                     className="gap-2 p-2"
                   >
@@ -93,7 +110,7 @@ export function ProjectSwitcher({
             <DropdownMenuSeparator />
             <DropdownMenuItem
               className="gap-2 p-2"
-              onClick={() => navigate("/projects")}
+              onClick={() => navigate("/projects", { viewTransition: true })}
             >
               <div className="flex size-6 items-center justify-center rounded-md border bg-background">
                 <LayoutDashboard className="size-4" />
@@ -103,7 +120,9 @@ export function ProjectSwitcher({
             </DropdownMenuItem>
             <DropdownMenuItem
               className="gap-2 p-2"
-              onClick={() => navigate("/projects?new=1")}
+              onClick={() =>
+                navigate("/projects?new=1", { viewTransition: true })
+              }
             >
               <div className="flex size-6 items-center justify-center rounded-md border bg-background">
                 <Plus className="size-4" />

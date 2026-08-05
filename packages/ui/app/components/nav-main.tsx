@@ -9,17 +9,20 @@ import "swiper/css";
 
 import { useDirection } from "#/components/ui/direction";
 import {
+  SidebarFixedActionMenu,
   SidebarGroup,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarSeparator,
 } from "#/components/ui/sidebar";
 import type {
   DashboardNavSearch,
   DashboardNavItem,
 } from "#/lib/dashboard-data";
 import {
+  getProjectIdFromPathname,
+  isProjectManagementPath,
   mergeSearchParams,
   readSearchParams,
   toDashboardPath,
@@ -434,7 +437,7 @@ export function NavMain({
           pathname: panel.landingUrl,
           search: mergeSearchParams("", { sidebar: panelSearchValue(nextTrail) }),
         },
-        { replace: false },
+        { replace: false, viewTransition: true },
       );
     } else {
       syncSidebarSearch(nextTrail, false);
@@ -445,12 +448,15 @@ export function NavMain({
     setTrail(nextTrail);
 
     if (nextTrail.length === 0) {
+      const projectId = getProjectIdFromPathname(pathname);
       navigate(
         {
-          pathname: toProjectPath("/"),
+          pathname: isProjectManagementPath(pathname)
+            ? "/projects"
+            : toProjectPath("/", projectId),
           search: "",
         },
-        { replace: false },
+        { replace: false, viewTransition: true },
       );
       return;
     }
@@ -496,9 +502,9 @@ export function NavMain({
   }
 
   return (
-    <SidebarGroup className="flex min-h-0 flex-1 flex-col">
+    <SidebarGroup className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <Swiper
-        className="min-h-0 w-full flex-1 overflow-hidden"
+        className="min-h-0 min-w-0 w-full flex-1 overflow-hidden [&_.swiper-slide]:min-w-0 [&_.swiper-wrapper]:min-w-0"
         dir={direction}
         initialSlide={currentIndex}
         allowTouchMove={false}
@@ -514,6 +520,9 @@ export function NavMain({
           );
           const scrollItems = panel.items.filter((item) => !item.fixed);
           const scrollGroups = groupItemsBySection(scrollItems);
+          const hasBackButton = panelIndex > 0 && Boolean(previousPanel);
+          const hasHeaderSpacingBeforeScroll =
+            hasBackButton && fixedItems.length === 0;
 
           const renderItem = (item: NavChildItem) => {
             const hasChildren = Boolean(item.items?.length);
@@ -545,6 +554,7 @@ export function NavMain({
                       <Link
                         to={toDashboardPath(item.url, item.search)}
                         aria-current={isActive ? "page" : undefined}
+                        viewTransition
                       />
                     }
                     isActive={isActive}
@@ -561,29 +571,31 @@ export function NavMain({
           return (
             <SwiperSlide
               key={`${panel.title}-${panelIndex}`}
-              className="h-full min-w-0"
+              className="h-full min-w-0 overflow-hidden"
               aria-hidden={panelIndex !== currentIndex}
             >
-              <div className="flex h-full min-h-0 flex-col gap-1 pr-1">
+              <div className="flex h-full min-h-0 min-w-0 flex-col gap-1 overflow-hidden pr-1">
                 <div className="shrink-0">
-                  <SidebarMenu>
-                    {panelIndex > 0 && previousPanel ? (
+                  {hasBackButton && previousPanel ? (
+                    <SidebarMenu>
                       <SidebarMenuItem>
                         <SidebarMenuButton
+                          className="relative justify-center font-semibold"
                           onClick={goBack}
                           tooltip={`Back to ${previousPanel.panelLabel ?? previousPanel.title}`}
                         >
-                          <ChevronLeft className="rtl:rotate-180" />
-                          <span>{previousPanel.panelLabel ?? previousPanel.title}</span>
+                          <ChevronLeft className="absolute left-3 rtl:left-auto rtl:right-3 rtl:rotate-180 group-data-[collapsible=icon]:left-1/2 group-data-[collapsible=icon]:right-auto group-data-[collapsible=icon]:-translate-x-1/2" />
+                          <span className="px-8 text-center group-data-[collapsible=icon]:hidden">
+                            {panel.panelLabel ?? panel.title}
+                          </span>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
-                    ) : null}
-                  </SidebarMenu>
-                  <SidebarGroupLabel>
-                    {panel.panelLabel ?? panel.title}
-                  </SidebarGroupLabel>
+                    </SidebarMenu>
+                  ) : null}
                   {fixedItems.length > 0 ? (
-                    <SidebarMenu>{fixedItems.map(renderItem)}</SidebarMenu>
+                    <SidebarFixedActionMenu afterHeader={hasBackButton}>
+                      {fixedItems.map(renderItem)}
+                    </SidebarFixedActionMenu>
                   ) : null}
                 </div>
 
@@ -592,26 +604,30 @@ export function NavMain({
                     panelContentRefs.current[panelIndex] = node;
                   }}
                   className={[
-                    "min-h-0 flex-1 overflow-y-auto overscroll-contain",
+                    "min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-x-contain overscroll-y-contain",
+                    hasHeaderSpacingBeforeScroll ? "pt-1" : "",
                     hideScrollbars
                       ? "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                       : "",
                   ].join(" ")}
                 >
-                  <div className="flex min-h-0 w-full shrink-0 flex-col gap-1">
-                    {scrollGroups.map((group, groupIndex) => (
-                      <div
-                        key={`${group.label ?? "ungrouped"}-${groupIndex}`}
-                        className="grid gap-1"
-                      >
-                        {group.label ? (
-                          <SidebarGroupLabel className="h-6">
-                            {group.label}
-                          </SidebarGroupLabel>
-                        ) : null}
-                        <SidebarMenu>{group.items.map(renderItem)}</SidebarMenu>
-                      </div>
-                    ))}
+                  <div className="flex min-h-0 min-w-0 w-full max-w-full shrink-0 flex-col gap-1">
+                    {scrollGroups.map((group, groupIndex) => {
+                      const hasPreviousContent =
+                        fixedItems.length > 0 || groupIndex > 0;
+
+                      return (
+                        <div
+                          key={`${group.label ?? "ungrouped"}-${groupIndex}`}
+                          className="grid gap-1"
+                        >
+                          {hasPreviousContent ? (
+                            <SidebarSeparator className="my-1" />
+                          ) : null}
+                          <SidebarMenu>{group.items.map(renderItem)}</SidebarMenu>
+                        </div>
+                      );
+                    })}
                     {panel.title === "Workspace" &&
                     !panel.items.some((item) => itemContainsServiceOwnedEntry(item)) ? (
                       <div className="rounded-md border border-dashed bg-muted/35 px-3 py-3 text-sm text-muted-foreground">

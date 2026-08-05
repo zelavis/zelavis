@@ -4,7 +4,6 @@ import * as React from "react";
 import { useLocation } from "react-router";
 
 import { NavMain } from "#/components/nav-main";
-import { NavSecondary } from "#/components/nav-secondary";
 import { NavUser } from "#/components/nav-user";
 import { ProjectSwitcher } from "#/components/project-switcher";
 import {
@@ -22,7 +21,6 @@ import {
   dashboardProjects,
   platformNavItems,
   projectManagementNavItems,
-  secondaryNavItems,
 } from "#/lib/dashboard-data";
 import { filterUserDatabaseCollections } from "#/lib/database-collections";
 import {
@@ -31,6 +29,7 @@ import {
   isProjectManagementPath,
   readSearchParams,
 } from "#/lib/routing";
+import { cn } from "#/lib/utils";
 import {
   type DashboardSettings,
   getResolvedDashboardPreferences,
@@ -60,8 +59,32 @@ export function AppSidebar({
   schemaCollections?: readonly DatabaseSchemaCollectionSummary[];
 }) {
   const location = useLocation();
+  const [openSidebarPopover, setOpenSidebarPopover] = React.useState<
+    "project" | "user" | null
+  >(null);
+  const setSidebarPopoverOpen = React.useCallback(
+    (popover: "project" | "user", open: boolean) => {
+      setOpenSidebarPopover((current) => {
+        if (open) {
+          return popover;
+        }
+
+        return current === popover ? null : current;
+      });
+    },
+    [],
+  );
+  const isSidebarPopoverOpen = openSidebarPopover !== null;
+  const sidebarChromeClassName = cn(
+    "transition-[filter,opacity] duration-200 ease-out motion-reduce:transition-none",
+    isSidebarPopoverOpen && "pointer-events-none blur-[2px] opacity-70",
+  );
+  const sidebarChromeInertProps = isSidebarPopoverOpen
+    ? { inert: true }
+    : undefined;
   const isProjectManagementRoute = isProjectManagementPath(location.pathname);
   const projectId = getProjectIdFromPathname(location.pathname);
+  const isProjectDashboardRoute = Boolean(projectId) && !isProjectManagementRoute;
   const managedProjectKind = getManagedProjectKindFromId(projectId);
   const selectedDatabaseTable = React.useMemo(() => {
     const search = readSearchParams(location.search);
@@ -125,19 +148,34 @@ export function AppSidebar({
 
   return (
     <Sidebar variant="inset" collapsible="icon" {...props}>
-      <SidebarHeader>
-        <ProjectSwitcher projects={dashboardProjects} />
+      <SidebarHeader
+        className={sidebarChromeClassName}
+        {...sidebarChromeInertProps}
+      >
+        <div className="flex min-w-0 items-center gap-1">
+          <div className="min-w-0 flex-1">
+            <ProjectSwitcher
+              projects={dashboardProjects}
+              homeIconLinksToProjects={isProjectDashboardRoute}
+              onOpenChange={(open) => setSidebarPopoverOpen("project", open)}
+            />
+          </div>
+        </div>
       </SidebarHeader>
-      <SidebarContent className="overflow-hidden">
+      <SidebarContent
+        className={cn("overflow-hidden", sidebarChromeClassName)}
+        {...sidebarChromeInertProps}
+      >
         <NavMain items={items} />
-        <NavSecondary
-          title="Help"
-          items={secondaryNavItems}
-          className="mt-auto"
-        />
       </SidebarContent>
-      <SidebarFooter>
-        <NavUser user={data.user} />
+      <SidebarFooter
+        className={sidebarChromeClassName}
+        {...sidebarChromeInertProps}
+      >
+        <NavUser
+          user={data.user}
+          onOpenChange={(open) => setSidebarPopoverOpen("user", open)}
+        />
       </SidebarFooter>
     </Sidebar>
   );

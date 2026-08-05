@@ -92,7 +92,7 @@ function NewContentTypeRoute() {
         actions={
           <Link
             to={toProjectPath("/content")}
-            className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+            className={cn(buttonVariants({ variant: "outline" }))}
           >
             Back to Content
           </Link>

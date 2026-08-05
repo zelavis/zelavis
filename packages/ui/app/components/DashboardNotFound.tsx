@@ -1,6 +1,7 @@
 import { Link } from 'react-router'
 
 import { PageHeader } from '#/components/DashboardPage'
+import { Button } from '#/components/ui/button'
 import { toProjectPath } from '#/lib/routing'
 
 export function DashboardNotFound() {
@@ -12,18 +13,19 @@ export function DashboardNotFound() {
         description="The requested dashboard path is not registered in this runtime."
         actions={
           <>
-            <Link
-              to={toProjectPath("/")}
-              className="inline-flex h-8 items-center justify-center rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground no-underline shadow transition-colors hover:bg-primary/90"
+            <Button
+              nativeButton={false}
+              render={<Link to={toProjectPath("/")} />}
             >
               Overview
-            </Link>
-            <Link
-              to={toProjectPath("/settings")}
-              className="inline-flex h-8 items-center justify-center rounded-md border border-input bg-background px-3 text-xs font-medium text-foreground no-underline shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+            </Button>
+            <Button
+              variant="outline"
+              nativeButton={false}
+              render={<Link to={toProjectPath("/settings")} />}
             >
               Settings
-            </Link>
+            </Button>
           </>
         }
       />

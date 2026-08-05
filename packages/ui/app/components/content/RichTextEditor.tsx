@@ -267,7 +267,7 @@ function ToolbarPlugin(props: {
           placeholder="https://…"
           aria-label="Link URL"
         />
-        <Button type="button" size="sm" variant="outline" onClick={applyLink}>
+        <Button type="button" variant="outline" onClick={applyLink}>
           Apply link
         </Button>
       </div>
@@ -287,7 +287,6 @@ function ToolbarPlugin(props: {
         />
         <Button
           type="button"
-          size="sm"
           variant="outline"
           onClick={() => {
             insertImage(imageUrl, imageAlt);
@@ -386,7 +385,7 @@ function ToolbarIconButton(props: {
   onClick: () => void;
 }) {
   return (
-    <Button type="button" size="sm" variant="outline" onClick={props.onClick}>
+    <Button type="button" variant="outline" onClick={props.onClick}>
       {props.icon}
       {props.label}
     </Button>

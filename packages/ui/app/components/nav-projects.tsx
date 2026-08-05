@@ -4,10 +4,10 @@ import { Link, useLocation } from "react-router";
 
 import {
   SidebarGroup,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarSeparator,
 } from "#/components/ui/sidebar";
 import type { DashboardPackageItem } from "#/lib/dashboard-data";
 
@@ -22,7 +22,7 @@ export function NavProjects({
 
   const content = (
     <>
-      <SidebarGroupLabel>Community</SidebarGroupLabel>
+      <SidebarSeparator className="my-1" />
       <SidebarMenu>
         {projects.map((item) => {
           if (!item.url) {

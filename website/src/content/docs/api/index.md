@@ -4,6 +4,8 @@ title: Zelavis
 
 The `Zelavis` class is the main entry point. It holds configuration, lazily initializes the runtime on the first request, and exposes the request-handling methods used by framework adapters.
 
+Zelavis API routes are the stable transport surface for platform capabilities. The dashboard should call the same capability endpoints that CLI commands, AI agents, scripts, plugins, and external admin tools can call.
+
 ```ts
 import { Zelavis } from 'zelavis';
 

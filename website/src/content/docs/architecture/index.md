@@ -9,6 +9,7 @@ Architecture docs should describe real current behavior and stable design constr
 
 ## Pages
 
+- [Endpoint-Backed Capabilities](./endpoint-backed-capabilities.md)
 - [Project Model](./project-model.md)
 - [Service Model](./service-model.md)
 - [Website Core Service](./website-core-service.md)

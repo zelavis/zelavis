@@ -239,14 +239,14 @@ function Content() {
           <div className="flex flex-wrap items-center gap-2">
             <Link
               to={toProjectPath("/content/new")}
-              className={cn(buttonVariants({ size: "sm" }))}
+              className={cn(buttonVariants())}
             >
               <Plus className="size-4" />
               Create new Content Type
             </Link>
             <Link
               to={toDashboardPath(toProjectPath("/database"), { sidebar: "Core" })}
-              className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+              className={cn(buttonVariants({ variant: "outline" }))}
             >
               Open Core Database
             </Link>
@@ -358,19 +358,18 @@ function Content() {
                             <div className="flex flex-wrap items-center gap-2">
               <Link
                   to={toProjectPath(`/content/${encodeURIComponent(row.name)}`)}
-                className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+                className={cn(buttonVariants({ variant: "outline" }))}
               >
                 Entries
               </Link>
               <Link
                   to={toProjectPath(`/content/${encodeURIComponent(row.name)}/fields`)}
-                className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+                className={cn(buttonVariants({ variant: "outline" }))}
               >
                 Fields
               </Link>
                               <Button
                                 type="button"
-                                size="sm"
                                 variant="outline"
                                 onClick={() => {
                                   setEditingLabelFor(row.name);
@@ -382,7 +381,6 @@ function Content() {
                               </Button>
                               <Button
                                 type="button"
-                                size="sm"
                                 variant="outline"
                                 onClick={() => {
                                   setDuplicatingType(row.name);
@@ -395,7 +393,6 @@ function Content() {
                               </Button>
                               <Button
                                 type="button"
-                                size="sm"
                                 variant="outline"
                                 onClick={() => void handlePinToggle(row.name)}
                               >
@@ -420,7 +417,6 @@ function Content() {
                                 />
                                 <Button
                                   type="button"
-                                  size="sm"
                                   onClick={() => void handleSaveLabel(row.name)}
                                   disabled={!labelDraft.trim() || saving}
                                 >
@@ -429,7 +425,6 @@ function Content() {
                                 </Button>
                                 <Button
                                   type="button"
-                                  size="sm"
                                   variant="outline"
                                   onClick={() => {
                                     setEditingLabelFor(undefined);
@@ -461,7 +456,6 @@ function Content() {
                                 />
                                 <Button
                                   type="button"
-                                  size="sm"
                                   onClick={() => void handleDuplicateType(row.name)}
                                   disabled={!duplicateName.trim() || saving}
                                 >
@@ -470,7 +464,6 @@ function Content() {
                                 </Button>
                                 <Button
                                   type="button"
-                                  size="sm"
                                   variant="outline"
                                   onClick={() => {
                                     setDuplicatingType(undefined);

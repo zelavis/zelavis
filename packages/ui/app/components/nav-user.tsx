@@ -1,11 +1,10 @@
 import {
-  BadgeCheck,
-  Bell,
   ChevronsUpDown,
-  CreditCard,
-  LogOut,
-  Sparkles,
+  Boxes,
+  Paintbrush,
+  Settings2,
 } from "lucide-react"
+import { useNavigate } from "react-router"
 
 import {
   Avatar,
@@ -25,24 +24,25 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  useSidebar,
 } from "#/components/ui/sidebar"
 
 export function NavUser({
+  onOpenChange,
   user,
 }: {
+  onOpenChange?: (open: boolean) => void
   user: {
     name: string
     email: string
     avatar: string
   }
 }) {
-  const { isMobile } = useSidebar()
+  const navigate = useNavigate()
 
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <DropdownMenu>
+        <DropdownMenu onOpenChange={onOpenChange}>
           <SidebarMenuButton
             render={<DropdownMenuTrigger />}
             size="lg"
@@ -59,9 +59,9 @@ export function NavUser({
             <ChevronsUpDown className="ms-auto size-4" />
           </SidebarMenuButton>
           <DropdownMenuContent
-            className="min-w-56 rounded-lg"
-            side={isMobile ? "bottom" : "right"}
-            align="end"
+            className="w-(--anchor-width) min-w-0 rounded-lg"
+            side="bottom"
+            align="start"
             sideOffset={4}
           >
             <DropdownMenuGroup>
@@ -80,31 +80,27 @@ export function NavUser({
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuItem>
-                <Sparkles />
-                Upgrade to Pro
+              <DropdownMenuItem
+                onClick={() => navigate("/settings", { viewTransition: true })}
+              >
+                <Settings2 />
+                Global settings
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() =>
+                  navigate("/settings/appearance", { viewTransition: true })
+                }
+              >
+                <Paintbrush />
+                Appearance
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => navigate("/services", { viewTransition: true })}
+              >
+                <Boxes />
+                Runtime services
               </DropdownMenuItem>
             </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuItem>
-                <BadgeCheck />
-                Account
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <CreditCard />
-                Billing
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <Bell />
-                Notifications
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem>
-              <LogOut />
-              Log out
-            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>

@@ -141,6 +141,24 @@ export const zelavisEcommerceService = defineService({
 
 Child services declare `extends` metadata. They are installed through the same registry, but the parent service decides how to consume them and must allow them through `childServices`. Zelavis does not run child services as independent top-level workspace services.
 
+## Rule 5: Make capabilities endpoint-backed
+
+Anything a service lets users do from the dashboard should also be exposed as a service capability and API endpoint.
+
+Service dashboard pages can present forms, charts, setup flows, and actions, but the authoritative behavior belongs in the service/runtime layer. This lets CLI commands, AI agents, scripts, plugins, and external admin clients use the same operation without depending on the dashboard.
+
+Good shape:
+
+- `setup(context)` registers the capability and endpoint
+- `menu.page` renders UI that calls the endpoint
+- the operation can be tested without rendering the dashboard
+
+Avoid:
+
+- dashboard-only mutations
+- framework-specific server actions as the only execution path
+- hiding service behavior inside page rendering code
+
 ## Runtime service shape
 
 A top-level service is a normal ESM module. Export the service definition as `default`, `service`, or directly from the module so Zelavis can resolve it through dynamic `import()`.

@@ -54,6 +54,28 @@ The repo still contains domain packages such as `@zelavis/ecommerce`, but they a
 - Do not introduce heavy dependencies without a clear reason.
 - Keep future distributed multi-master operation possible: prefer deterministic event application, explicit idempotency, stable node identity, tenant-aware boundaries, and adapter-neutral replication contracts over hidden single-node assumptions.
 
+## Endpoint-Backed Capability Rule
+
+Everything Zelavis can do must be reachable through a stable server capability and an endpoint.
+
+The dashboard is a client of Zelavis, not the source of truth for platform behavior. Any feature exposed in the dashboard must also be available to non-dashboard callers such as the CLI, AI agents, scripts, plugins, external admin tools, and future automation flows.
+
+Required shape for platform features:
+
+- define the domain capability first, behind a service/runtime contract
+- expose that capability through a versioned endpoint under the configured API namespace
+- let the dashboard call the same endpoint or typed client surface that other tools can call
+- keep dashboard routes, React state, and UI-only handlers out of the authority path
+- never implement privileged behavior only as a React route action, component callback, or framework-specific server action
+
+Examples:
+
+- Security checklist: capability `security.runChecklist(...)`, endpoint `POST /zelavis/api/v1/security/checklists/:id/run`, dashboard button calls that endpoint.
+- Resource telemetry: capability `resources.getHostMetrics(...)`, endpoint `GET /zelavis/api/v1/resources/host`, dashboard charts render that endpoint data.
+- Domain management: capability `domains.addDomain(...)`, endpoint `POST /zelavis/api/v1/domains`, dashboard form calls that endpoint.
+
+This rule keeps Zelavis automatable, scriptable, plugin-friendly, AI-agent-friendly, and independent from any single dashboard framework.
+
 ## Repo Structure
 
 - `packages/*` contains core platform workspace packages.
@@ -146,6 +168,9 @@ When creating a new core package, service package, or plugin package:
 - Generated route types live in `.react-router/types/`. Do not hand-edit them.
 - Route source files are under `packages/ui/app/routes/`. Edit these; typegen runs automatically.
 - The dashboard sidebar uses a slide-based navigation model. Treat each slide as a distinct sidebar panel.
+- Nested sidebar slide headers use a larger standard gap before the next menu content. Sidebar panels with pinned/fixed action rows use `SidebarFixedActionMenu`; pass `afterHeader` when fixed actions sit directly under the slide back/title header.
+- Shared UI primitives must stay aligned with the current shadcn CLI output unless there is a deliberate design-system decision. Use shadcn presets and CSS variables for theme changes; do not hand-edit generated primitives or route code for visual preferences that should come from `shadcn apply`.
+- Dashboard routes should use shared control defaults. Do not pass `size="sm"`/`size="lg"` or `buttonVariants({ size: ... })` for ordinary text buttons; reserve explicit size variants for icon-only controls or a clearly distinct component primitive.
 - The "Community" section is intentionally rendered inside the first navigation slide.
 - Dummy community entries may exist as markup-only placeholders and do not imply real routes.
 
@@ -155,6 +180,7 @@ When creating a new core package, service package, or plugin package:
 
 When working on UI behavior:
 
+- Treat the dashboard as one client of Zelavis endpoints. Do not put platform-only behavior in route components, local React state, or dashboard-only actions.
 - Prefer `pnpm run ui:dev` for end-to-end dashboard iteration.
 - Use `pnpm --filter @zelavis/ui typecheck` and `pnpm --filter @zelavis/ui build` to validate UI-only changes.
 - Preserve the existing design language unless the task explicitly asks for redesign.

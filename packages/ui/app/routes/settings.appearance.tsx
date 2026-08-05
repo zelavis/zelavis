@@ -17,7 +17,6 @@ import type { clientLoader as rootClientLoader } from '../root'
 
 export const handle = {
   pageLabel: "Settings",
-  sidebarTrail: ["Settings"],
 } as const;
 
 function AppearanceSettings() {

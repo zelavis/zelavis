@@ -1,18 +1,17 @@
 import {
+  Activity,
   Bot,
   Boxes,
   CreditCard,
+  Cpu,
   Database,
   Archive,
   Files,
   FileText,
   Fingerprint,
-  Github,
   Globe2,
   LayoutDashboard,
-  LifeBuoy,
   MonitorCog,
-  Paintbrush,
   Package,
   Plus,
   ReceiptText,
@@ -59,6 +58,8 @@ export type DashboardRoutePath =
   | "/media"
   | "/marketplace"
   | "/projects"
+  | "/resources"
+  | "/security"
   | "/services"
   | "/settings"
   | "/settings/appearance"
@@ -68,6 +69,8 @@ export type DashboardRoutePath =
   | `/${string}`;
 
 export type DashboardNavSearch = {
+  domainAction?: "add" | "buy" | "transfer";
+  resourceView?: "processes" | "storage" | "limits";
   systemTable?:
     | "zv_collections"
     | "zv_events"
@@ -125,13 +128,6 @@ export type DashboardWorkspaceServiceItem = {
   source?: "official" | "community";
 };
 
-export type DashboardSecondaryItem = {
-  title: string;
-  url: string;
-  icon: LucideIcon;
-  external?: boolean;
-};
-
 export type DashboardProjectItem = {
   id: string;
   name: string;
@@ -160,37 +156,99 @@ export const projectManagementNavItems: readonly DashboardNavItem[] = [
     url: "/projects",
     icon: LayoutDashboard,
     pageLabel: "Projects",
-  },
-  {
-    title: "New Project",
-    url: "/projects",
-    search: { new: "1" },
-    icon: Plus,
-    pageLabel: "Projects",
+    sectionLabel: "Projects",
   },
   {
     title: "Marketplace",
     url: "/marketplace",
     icon: Boxes,
     pageLabel: "Marketplace",
+    sectionLabel: "Explore",
+  },
+  {
+    title: "Domains",
+    landingUrl: "/server/domains",
+    icon: Globe2,
+    pageLabel: "Domains",
+    sectionLabel: "Manage",
+    items: [
+      {
+        title: "Overview",
+        url: "/server/domains",
+        icon: Globe2,
+        pageLabel: "Domains",
+      },
+      {
+        title: "Add Domain",
+        url: "/server/domains",
+        search: { domainAction: "add" },
+        icon: Plus,
+        pageLabel: "Add Domain",
+      },
+      {
+        title: "Buy",
+        url: "/server/domains",
+        search: { domainAction: "buy" },
+        icon: CreditCard,
+        pageLabel: "Buy Domain",
+      },
+      {
+        title: "Transfer",
+        url: "/server/domains",
+        search: { domainAction: "transfer" },
+        icon: Send,
+        pageLabel: "Transfer Domain",
+      },
+    ],
+  },
+  {
+    title: "Resources",
+    icon: Activity,
+    landingUrl: "/resources",
+    pageLabel: "Resources",
+    sectionLabel: "Manage",
+    items: [
+      {
+        title: "Overview",
+        url: "/resources",
+        icon: Activity,
+        pageLabel: "Resources",
+      },
+      {
+        title: "Processes",
+        url: "/resources",
+        search: { resourceView: "processes" },
+        icon: Cpu,
+        pageLabel: "Processes",
+      },
+      {
+        title: "Storage",
+        url: "/resources",
+        search: { resourceView: "storage" },
+        icon: Database,
+        pageLabel: "Storage",
+      },
+      {
+        title: "Limits",
+        url: "/resources",
+        search: { resourceView: "limits" },
+        icon: MonitorCog,
+        pageLabel: "Limits",
+      },
+    ],
   },
   {
     title: "Server",
     icon: Server,
     landingUrl: "/server",
     pageLabel: "Server",
+    sectionLabel: "Manage",
     items: [
       {
         title: "Overview",
         url: "/server",
         icon: Server,
         pageLabel: "Server",
-      },
-      {
-        title: "Domains",
-        url: "/server/domains",
-        icon: Globe2,
-        pageLabel: "Domains",
       },
       {
         title: "Backups",
@@ -203,6 +261,21 @@ export const projectManagementNavItems: readonly DashboardNavItem[] = [
         url: "/server/logs",
         icon: ReceiptText,
         pageLabel: "Logs",
+      },
+    ],
+  },
+  {
+    title: "Security",
+    icon: ShieldCheck,
+    landingUrl: "/security",
+    pageLabel: "Security",
+    sectionLabel: "Manage",
+    items: [
+      {
+        title: "Checklist",
+        url: "/security",
+        icon: ShieldCheck,
+        pageLabel: "Security",
       },
     ],
   },
@@ -220,48 +293,56 @@ export function buildManagedProjectNavItems(
       url: toProjectPath("/", projectId) as DashboardRoutePath,
       icon: LayoutDashboard,
       pageLabel: "Overview",
+      sectionLabel: "Overview",
     },
     {
       title: "Domains",
       url: toProjectPath("/domains", projectId) as DashboardRoutePath,
       icon: Globe2,
       pageLabel: "Domains",
+      sectionLabel: "Hosting",
     },
     {
       title: "Files",
       url: toProjectPath("/files", projectId) as DashboardRoutePath,
       icon: Files,
       pageLabel: "Files",
+      sectionLabel: "Hosting",
     },
     {
       title: "Database",
       url: toProjectPath("/database", projectId) as DashboardRoutePath,
       icon: Database,
       pageLabel: "Database",
+      sectionLabel: "Hosting",
     },
     {
       title: "Backups",
       url: toProjectPath("/backups", projectId) as DashboardRoutePath,
       icon: Archive,
       pageLabel: "Backups",
+      sectionLabel: "Operations",
     },
     {
       title: "Logs",
       url: toProjectPath("/logs", projectId) as DashboardRoutePath,
       icon: ReceiptText,
       pageLabel: "Logs",
+      sectionLabel: "Operations",
     },
     {
       title: "Updates",
       url: toProjectPath("/updates", projectId) as DashboardRoutePath,
       icon: Package,
       pageLabel: "Updates",
+      sectionLabel: "Operations",
     },
     {
       title: appAdminTitle,
       url: toProjectPath("/admin", projectId) as DashboardRoutePath,
       icon: MonitorCog,
       pageLabel: appAdminTitle,
+      sectionLabel: "Settings",
     },
   ] as const;
 }
@@ -298,9 +379,7 @@ function isBuiltInProjectPath(path: string) {
     "/database/new",
     "/media",
     "/marketplace",
-    "/services",
     "/settings",
-    "/settings/appearance",
     "/storage",
     "/users",
     "/website",
@@ -711,17 +790,20 @@ export function buildPlatformNavItems(
       title: "Overview",
       url: "/",
       icon: LayoutDashboard,
+      sectionLabel: "Overview",
     },
     {
       title: "Users",
       url: "/users",
       icon: Users,
+      sectionLabel: "Build",
     },
     {
       title: "Content",
       icon: FileText,
       landingUrl: "/content",
       panelLabel: "Content Types",
+      sectionLabel: "Build",
       items: contentItems,
     },
     {
@@ -729,6 +811,7 @@ export function buildPlatformNavItems(
       url: "/media",
       icon: Files,
       pageLabel: "Media",
+      sectionLabel: "Build",
     },
     ...(hasWebsiteService
       ? [
@@ -737,6 +820,7 @@ export function buildPlatformNavItems(
             url: "/website" as const,
             icon: Globe2,
             pageLabel: "Website",
+            sectionLabel: "Build",
           },
         ]
       : []),
@@ -746,15 +830,12 @@ export function buildPlatformNavItems(
       url: "/marketplace",
       icon: Boxes,
       pageLabel: "Marketplace",
-    },
-    {
-      title: "Core",
-      icon: Server,
-      items: coreServiceNavItems,
+      sectionLabel: "Extend",
     },
     {
       title: "Workspace",
       icon: Bot,
+      sectionLabel: "Extend",
       items: [
         {
           title: "Agents",
@@ -766,25 +847,22 @@ export function buildPlatformNavItems(
       ],
     },
     {
+      title: "Core",
+      icon: Server,
+      sectionLabel: "Core",
+      items: coreServiceNavItems,
+    },
+    {
       title: "Settings",
       icon: Settings2,
       landingUrl: "/settings",
+      sectionLabel: "Settings",
       items: [
         {
-          title: "Runtime",
+          title: "Project Settings",
           url: "/settings",
-          icon: MonitorCog,
+          icon: Settings2,
           pageLabel: "Settings",
-        },
-        {
-          title: "Services",
-          url: "/services",
-          icon: Server,
-        },
-        {
-          title: "Appearance",
-          url: "/settings/appearance",
-          icon: Paintbrush,
         },
         ...settingsServiceNavItems,
       ],
@@ -823,27 +901,6 @@ export function buildMarketplacePackageItems(
 export const marketplacePackageItems = buildMarketplacePackageItems(
   defaultRuntimeServiceRegistry,
 );
-
-export const secondaryNavItems: readonly DashboardSecondaryItem[] = [
-  {
-    title: "GitHub",
-    url: "https://github.com/zelavis/zelavis",
-    icon: Github,
-    external: true,
-  },
-  {
-    title: "Support",
-    url: "https://github.com/zelavis/zelavis/discussions",
-    icon: LifeBuoy,
-    external: true,
-  },
-  {
-    title: "Feedback",
-    url: "https://github.com/zelavis/zelavis/issues/new",
-    icon: Send,
-    external: true,
-  },
-] as const;
 
 function flattenPlatformItems(
   items: readonly DashboardNavItem[],

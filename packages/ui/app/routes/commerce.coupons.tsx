@@ -152,7 +152,7 @@ function CommerceCoupons() {
               </label>
               {message ? <p className="text-sm text-emerald-700 dark:text-emerald-300">{message}</p> : null}
               {error ? <p className="text-sm text-destructive">{error}</p> : null}
-              <Button type="submit" size="sm" disabled={saving || !code.trim()}>
+              <Button type="submit" disabled={saving || !code.trim()}>
                 Create coupon
               </Button>
             </form>

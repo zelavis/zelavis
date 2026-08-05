@@ -11,6 +11,11 @@ The dashboard opens to Projects. Project-local Zelavis surfaces live under
 `/zelavis/marketplace`, and server-level operations live under
 `/zelavis/server/*`.
 
+The dashboard is a client of the runtime, not the source of truth. Any operation
+available in the dashboard should also be exposed through a stable runtime
+capability and versioned endpoint so CLI tools, AI agents, scripts, plugins, and
+external admin clients can perform the same work.
+
 ## Entry point preference
 
 Use the package in this order:
