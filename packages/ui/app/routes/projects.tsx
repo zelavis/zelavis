@@ -300,6 +300,7 @@ function ProjectsRoute() {
               />
               <div className="flex items-center justify-between gap-2 px-4 py-3">
                 <Button
+                  nativeButton={false}
                   render={
                     <Link
                       to={toDashboardPath(toProjectPath("/", project.id))}
@@ -312,6 +313,7 @@ function ProjectsRoute() {
                 </Button>
                 <Button
                   variant="outline"
+                  nativeButton={false}
                   render={
                     <Link
                       to={toDashboardPath(

@@ -96,10 +96,18 @@ export default function AccessRoute() {
             Demo access modes
           </CardTitle>
           <div className="flex items-center gap-2">
-            <Button variant="outline" render={<Link to="/access?as=owner" />}>
+            <Button
+              variant="outline"
+              nativeButton={false}
+              render={<Link to="/access?as=owner" />}
+            >
               Owner
             </Button>
-            <Button variant="outline" render={<Link to="/access?as=customer" />}>
+            <Button
+              variant="outline"
+              nativeButton={false}
+              render={<Link to="/access?as=customer" />}
+            >
               Customer
             </Button>
           </div>
