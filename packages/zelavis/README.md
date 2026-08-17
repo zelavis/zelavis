@@ -4,12 +4,12 @@
 
 Use this package when building an application or service with Zelavis and you want the default platform building blocks wired together for you. Lower-level packages such as `@zelavis/server`, `@zelavis/db`, and `@zelavis/auth` remain available when you need direct access to the primitives.
 
-Today, that mostly means auth, database, website delivery, server mounting, service activation, and dashboard delivery under one runtime entry point.
+Today, that mostly means auth, database, website delivery, workloads, server mounting, service activation, and dashboard delivery under one runtime entry point.
 
 The dashboard opens to Projects. Project-local Zelavis surfaces live under
 `/zelavis/projects/:projectId/*`, global app/server discovery lives under
-`/zelavis/marketplace`, and server-level operations live under
-`/zelavis/server/*`.
+`/zelavis/marketplace`, global management routes live outside projects, and
+server-owned operation routes live under `/zelavis/server/*`.
 
 The dashboard is a client of the runtime, not the source of truth. Any operation
 available in the dashboard should also be exposed through a stable runtime
@@ -172,12 +172,14 @@ By default, Zelavis owns one safe namespace:
 /zelavis/server/domains
 /zelavis/server/backups
 /zelavis/server/logs
+/zelavis/projects/default/workloads
 /zelavis/api/v1/runtime/config
 /zelavis/api/v1/runtime/settings
 /zelavis/api/v1/auth
 /zelavis/api/v1/database
 /zelavis/api/v1/storage/files/*
 /zelavis/api/v1/website/pages
+/zelavis/api/v1/workloads/*
 ```
 
 Customize that namespace with `rootPath`:
@@ -200,12 +202,14 @@ That moves the dashboard and APIs together:
 /admin/server/domains
 /admin/server/backups
 /admin/server/logs
+/admin/projects/default/workloads
 /admin/api/v1/runtime/config
 /admin/api/v1/runtime/settings
 /admin/api/v1/auth
 /admin/api/v1/database
 /admin/api/v1/storage/files/*
 /admin/api/v1/website/pages
+/admin/api/v1/workloads/*
 ```
 
 The dashboard itself is supplied by the `@zelavis/ui` service. The `zelavis`
@@ -339,6 +343,6 @@ For local dashboard work, use the `pnpm run ui:dev` workflow. It starts the
 runtime and UI dev server together and wires dashboard requests to the live UI
 build.
 
-The dashboard, auth, database, and website core services are included by
-default. The storage core service is enabled when Zelavis has a file storage
+The dashboard, auth, database, website, and workloads core services are included
+by default. The storage core service is enabled when Zelavis has a file storage
 resource to expose.

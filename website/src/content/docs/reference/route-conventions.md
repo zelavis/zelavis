@@ -25,6 +25,8 @@ With the default runtime settings:
 /zelavis/api/v1/storage/files/*
 /zelavis/api/v1/storage/files/*?format=metadata
 /zelavis/api/v1/website/pages
+/zelavis/api/v1/workloads/*
+/zelavis/api/v1/workloads/http/:projectId/*path
 ```
 
 ## Root path behavior
@@ -32,7 +34,7 @@ With the default runtime settings:
 - `rootPath` defaults to `/zelavis`.
 - `/zelavis` opens the Projects overview.
 - Project-local dashboard pages live under `${rootPath}/projects/:projectId/*`.
-- Global Marketplace and server management live outside project URLs.
+- Global Marketplace and management areas live outside project URLs.
 - Project marketplace lives under `${rootPath}/projects/:projectId/marketplace`.
 - Managed app projects may expose hosting-style project pages instead of Zelavis-native backend pages.
 - The dashboard shell and dashboard client routes live under `rootPath`.
@@ -73,9 +75,16 @@ the mounted paths become:
 /admin/api/v2/storage/files/*
 /admin/api/v2/storage/files/*?format=metadata
 /admin/api/v2/website/pages
+/admin/api/v2/workloads/*
+/admin/api/v2/workloads/http/:projectId/*path
 ```
 
 The storage routes are present when Zelavis has a file storage resource to expose through the storage core service. `?format=metadata` returns structured file information and the ready-to-use Zelavis file reference for that path.
+
+Workload HTTP routes under `/workloads/http/:projectId/*path` are the current
+trusted-development test binding for project functions. Public website-style
+route binding such as `/api/hello` is a later layer and should not be treated
+as production isolation.
 
 ## Endpoint-backed capabilities
 

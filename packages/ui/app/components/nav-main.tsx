@@ -54,7 +54,9 @@ type NavChildItem = {
   slot?: DashboardSlotId;
   fixed?: boolean;
   fixedOrder?: number;
+  fixedActionScope?: "local" | "inherit" | "replace" | "clear";
   sectionLabel?: string;
+  disabled?: boolean;
   serviceOwned?: boolean;
   items?: readonly NavChildItem[];
 };
@@ -63,6 +65,7 @@ type NavPanel = {
   title: string;
   panelLabel?: string;
   landingUrl?: string;
+  fixedActionScope?: "local" | "inherit" | "replace" | "clear";
   items: readonly NavChildItem[];
 };
 
@@ -149,6 +152,7 @@ function findActiveTrail(
         title: item.title,
         panelLabel: item.panelLabel,
         landingUrl: item.landingUrl,
+        fixedActionScope: item.fixedActionScope,
         items: item.items,
       },
     ];
@@ -168,6 +172,7 @@ function findActiveTrail(
       panels.push({
         title: current.title,
         panelLabel: current.panelLabel,
+        fixedActionScope: current.fixedActionScope,
         items: current.items,
       });
       current = current.items.find(
@@ -203,6 +208,7 @@ function findTrailByTitles(
       title: match.title,
       panelLabel: match.panelLabel,
       landingUrl: 'landingUrl' in match ? match.landingUrl as string | undefined : undefined,
+      fixedActionScope: match.fixedActionScope,
       items: match.items,
     });
     currentItems = match.items;
@@ -262,6 +268,61 @@ function sortFixedItems(items: readonly NavChildItem[]) {
         (right.fixedOrder ?? Number.MAX_SAFE_INTEGER) ||
       left.title.localeCompare(right.title),
   );
+}
+
+function fixedItemKey(item: NavChildItem) {
+  return JSON.stringify({
+    title: item.title,
+    url: item.url,
+    search: item.search,
+  });
+}
+
+function dedupeFixedItems(items: readonly NavChildItem[]) {
+  const seen = new Set<string>();
+  const result: NavChildItem[] = [];
+
+  for (const item of items) {
+    const key = fixedItemKey(item);
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push(item);
+  }
+
+  return result;
+}
+
+function resolvePanelFixedItems(
+  panel: NavPanel,
+  inheritedItems: readonly NavChildItem[],
+) {
+  const localItems = sortFixedItems(panel.items.filter((item) => item.fixed));
+
+  switch (panel.fixedActionScope ?? "local") {
+    case "inherit":
+      return dedupeFixedItems([...inheritedItems, ...localItems]);
+    case "clear":
+      return [];
+    case "replace":
+    case "local":
+      return localItems;
+  }
+}
+
+function resolvePanelFixedItemsByIndex(panels: readonly NavPanel[]) {
+  const result = new Map<number, readonly NavChildItem[]>();
+  let inheritedItems: readonly NavChildItem[] = [];
+
+  panels.forEach((panel, index) => {
+    const fixedItems = resolvePanelFixedItems(panel, inheritedItems);
+    result.set(index, fixedItems);
+    inheritedItems = fixedItems;
+  });
+
+  return result;
 }
 
 function groupItemsBySection(items: readonly NavChildItem[]) {
@@ -371,6 +432,10 @@ export function NavMain({
   const panels = React.useMemo<NavPanel[]>(
     () => [{ title: "Platform", items }, ...trail],
     [items, trail],
+  );
+  const panelFixedItemsByIndex = React.useMemo(
+    () => resolvePanelFixedItemsByIndex(panels),
+    [panels],
   );
   const navPanelIndex = trail.length;
   const hasMobileRouteContent = isMobile && Boolean(mobileSlotContent);
@@ -667,9 +732,7 @@ export function NavMain({
       >
         {panels.map((panel, panelIndex) => {
           const previousPanel = panels[panelIndex - 1];
-          const fixedItems = sortFixedItems(
-            panel.items.filter((item) => item.fixed),
-          );
+          const fixedItems = panelFixedItemsByIndex.get(panelIndex) ?? [];
           const scrollItems = panel.items.filter((item) => !item.fixed);
           const scrollGroups = groupItemsBySection(scrollItems);
           const panelSearchKeys = getSiblingSearchKeys(panel.items);
@@ -719,6 +782,11 @@ export function NavMain({
                     isActive={isActive}
                     tooltip={item.title}
                   >
+                    {Icon ? <Icon /> : null}
+                    <span>{item.title}</span>
+                  </SidebarMenuButton>
+                ) : item.disabled ? (
+                  <SidebarMenuButton disabled tooltip={item.title}>
                     {Icon ? <Icon /> : null}
                     <span>{item.title}</span>
                   </SidebarMenuButton>

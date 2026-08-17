@@ -2,6 +2,9 @@ import { type RouteConfig, index, route } from "@react-router/dev/routes";
 
 export default [
   index("routes/projects.index.tsx"),
+  route("access", "routes/access.tsx"),
+  route("access/users", "routes/access.users.tsx"),
+  route("access/permissions", "routes/access.permissions.tsx"),
   route("assistant", "routes/assistant.tsx"),
   route("marketplace", "routes/marketplace.tsx"),
   route("projects", "routes/projects.tsx"),
@@ -41,6 +44,11 @@ export default [
   route("projects/:projectId/storage", "routes/storage.tsx"),
   route("projects/:projectId/users", "routes/users.tsx"),
   route("projects/:projectId/website", "routes/website.tsx"),
+  route("projects/:projectId/workloads", "routes/workloads.tsx"),
+  route("projects/:projectId/workloads/new", "routes/workloads.new.tsx"),
+  route("projects/:projectId/workloads/logs", "routes/workloads.logs.tsx"),
+  route("projects/:projectId/workloads/settings", "routes/workloads.settings.tsx"),
+  route("projects/:projectId/workloads/:workloadKind/:workloadId", "routes/workloads.$workloadId.tsx"),
   route("projects/:projectId/:managedSection", "routes/project.managed.$managedSection.tsx"),
   route("_api/assistant", "routes/api.assistant.tsx"),
   route("_api/relations/:collection", "routes/api.relations.$collection.tsx"),

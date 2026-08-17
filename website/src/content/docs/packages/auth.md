@@ -21,6 +21,15 @@ The core auth package should not assume one fixed authentication method.
 
 Provider-style auth methods stay optional through services.
 
+Authorization requirements are not owned only by `@zelavis/auth`. The base
+principal, grant, and route-access vocabulary lives in `@zelavis/server` so
+every service endpoint can declare access requirements regardless of whether
+the principal came from a dashboard session, API key, service token, SSO,
+Hosting Provider customer login, or another auth method.
+
+`@zelavis/auth` should resolve and manage identities and sessions. The server
+contract should enforce route requirements once a principal exists.
+
 ## Current examples
 
 Official method services currently include:
@@ -32,4 +41,5 @@ Official method services currently include:
 
 - [zelavis](./zelavis.md)
 - [@zelavis/server](./server.md)
+- [Access Control](../architecture/access-control.md)
 - [Service Authoring](../guides/service-authoring.md)

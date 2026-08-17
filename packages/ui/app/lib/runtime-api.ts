@@ -5,8 +5,15 @@ export interface RuntimeServiceMenuDefinition {
   panelLabel?: string;
   fixed?: boolean;
   fixedOrder?: number;
+  fixedActionScope?: "local" | "inherit" | "replace" | "clear";
   sectionLabel?: string;
-  surface?: "root" | "core" | "extensions" | "settings";
+  disabled?: boolean;
+  access?: RuntimeAccessRequirement | readonly RuntimeAccessRequirement[];
+  surface?: "platform" | "root" | "core" | "extensions" | "settings";
+  dynamicItems?: {
+    path: string;
+    emptyTitle?: string;
+  };
   items?: readonly RuntimeServiceMenuDefinition[];
 }
 
@@ -30,7 +37,14 @@ export interface RuntimeServiceRegistryMenuDefinition {
   panelLabel?: string;
   fixed?: boolean;
   fixedOrder?: number;
+  fixedActionScope?: "local" | "inherit" | "replace" | "clear";
   sectionLabel?: string;
+  disabled?: boolean;
+  access?: RuntimeAccessRequirement | readonly RuntimeAccessRequirement[];
+  dynamicItems?: {
+    path: string;
+    emptyTitle?: string;
+  };
   page?: RuntimeServicePageDefinition;
   items?: readonly RuntimeServiceRegistryMenuDefinition[];
 }
@@ -79,6 +93,60 @@ export interface RuntimeServiceActivation {
   capabilities: RuntimeServiceActivationCapabilities;
 }
 
+export type RuntimePrincipalType =
+  | "anonymous"
+  | "user"
+  | "service"
+  | "system";
+
+export type RuntimeAccessScope =
+  | {
+      type: "system";
+    }
+  | {
+      type: "project";
+      projectId?: string;
+      projectIdParam?: string;
+    }
+  | {
+      type: "service";
+      serviceName?: string;
+      serviceNameParam?: string;
+    };
+
+export interface RuntimePrincipalGrant {
+  permission: string;
+  scope?: RuntimeAccessScope;
+}
+
+export interface RuntimePrincipal {
+  id: string;
+  type: RuntimePrincipalType;
+  roles?: readonly string[];
+  permissions?: readonly string[];
+  grants?: readonly RuntimePrincipalGrant[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface RuntimeAccessRequirement {
+  authenticated?: boolean;
+  roles?: readonly string[];
+  permissions?: readonly string[];
+  scope?: RuntimeAccessScope;
+}
+
+export interface RuntimeDashboardProjectAccess {
+  id: string;
+  permissions: readonly string[];
+}
+
+export interface RuntimeDashboardAccess {
+  mode: "owner" | "customer" | "operator" | "reseller";
+  label: string;
+  principal: RuntimePrincipal;
+  projects?: readonly RuntimeDashboardProjectAccess[];
+}
+
 export interface RuntimeServiceRegistryMutationResult {
   serviceRegistry: RuntimeServiceRegistryEntry[];
   activation?: RuntimeServiceActivationResult;
@@ -101,6 +169,7 @@ export interface RuntimeConfig {
   services: RuntimeService[];
   serviceRegistry: RuntimeServiceRegistryEntry[];
   serviceActivation?: RuntimeServiceActivation;
+  access?: RuntimeDashboardAccess;
 }
 
 export const DATABASE_COLLECTION_CREATED_EVENT =
@@ -296,6 +365,41 @@ export interface StorageFileReference {
   checksum?: string;
 }
 
+export type WorkloadType = "function" | "job" | "schedule" | "webhook";
+
+export interface WorkloadDefinition {
+  id: string;
+  projectId: string;
+  type: WorkloadType;
+  name: string;
+  code: string;
+  route?: string;
+  schedule?: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkloadRunLog {
+  id: string;
+  workloadId: string;
+  projectId: string;
+  status: "completed" | "failed";
+  responseStatus?: number;
+  output: string;
+  createdAt: string;
+}
+
+export interface WorkloadSaveInput {
+  projectId?: string;
+  type: WorkloadType;
+  name: string;
+  code: string;
+  route?: string;
+  schedule?: string;
+  enabled?: boolean;
+}
+
 declare global {
   interface Window {
     __ZELAVIS_RUNTIME_CONFIG__?: RuntimeConfig;
@@ -396,6 +500,9 @@ const fallbackConfig: RuntimeConfig = {
   dashboard: {
     title: "zelavis",
     clientRoutes: [
+      "/access",
+      "/access/permissions",
+      "/access/users",
       "/assistant",
       "/marketplace",
       "/projects",
@@ -426,10 +533,52 @@ const fallbackConfig: RuntimeConfig = {
       "/projects/default/storage",
       "/projects/default/users",
       "/projects/default/website",
+      "/projects/default/workloads",
+      "/projects/default/workloads/functions/fn_hello_world",
+      "/projects/default/workloads/jobs/job_placeholder",
+      "/projects/default/workloads/logs",
+      "/projects/default/workloads/new",
+      "/projects/default/workloads/schedules/schedule_placeholder",
+      "/projects/default/workloads/settings",
+      "/projects/default/workloads/webhooks/webhook_placeholder",
     ],
     assetRoot: "/assets",
   },
   services: [
+    {
+      name: "@zelavis/server",
+      core: true,
+      apiPath: "/api/v1/runtime",
+      menu: {
+        title: "Access",
+        path: "/access",
+        pageLabel: "Access",
+        panelLabel: "Access",
+        sectionLabel: "Projects",
+        surface: "platform",
+        access: {
+          permissions: ["access.manage"],
+          scope: { type: "system" },
+        },
+        items: [
+          {
+            title: "Overview",
+            path: "/access",
+            pageLabel: "Access",
+          },
+          {
+            title: "Users",
+            path: "/access/users",
+            pageLabel: "Users",
+          },
+          {
+            title: "Permissions",
+            path: "/access/permissions",
+            pageLabel: "Permissions",
+          },
+        ],
+      },
+    },
     {
       name: "@zelavis/ui",
       core: true,
@@ -491,6 +640,65 @@ const fallbackConfig: RuntimeConfig = {
         title: "Website",
         path: "/website",
         pageLabel: "Website",
+      },
+    },
+    {
+      name: "@zelavis/workloads",
+      core: true,
+      apiPath: "/api/v1/workloads",
+      menu: {
+        title: "Workloads",
+        surface: "core",
+        panelLabel: "Workloads",
+        items: [
+          {
+            title: "Functions",
+            panelLabel: "Functions",
+            items: [
+              {
+                title: "Add Function",
+                path: "/workloads/new",
+                pageLabel: "Workloads",
+                fixed: true,
+                fixedOrder: 1,
+              },
+            ],
+            dynamicItems: {
+              path: "/workloads/menu/functions",
+              emptyTitle: "No functions yet",
+            },
+          },
+          {
+            title: "Jobs",
+            panelLabel: "Jobs",
+            dynamicItems: {
+              path: "/workloads/menu/jobs",
+              emptyTitle: "No jobs yet",
+            },
+          },
+          {
+            title: "Schedules",
+            panelLabel: "Schedules",
+            dynamicItems: {
+              path: "/workloads/menu/schedules",
+              emptyTitle: "No schedules yet",
+            },
+          },
+          {
+            title: "Webhooks",
+            panelLabel: "Webhooks",
+            dynamicItems: {
+              path: "/workloads/menu/webhooks",
+              emptyTitle: "No webhooks yet",
+            },
+          },
+          { title: "Logs", path: "/workloads/logs", pageLabel: "Workloads" },
+          {
+            title: "Settings",
+            path: "/workloads/settings",
+            pageLabel: "Workloads",
+          },
+        ],
       },
     },
   ],
@@ -660,6 +868,129 @@ async function readJson<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+function joinApiPath(basePath: string, path: string) {
+  const normalizedBase = basePath.replace(/\/+$/, "");
+  const normalizedPath = path.replace(/^\/+/, "");
+
+  return `${normalizedBase}/${normalizedPath}`;
+}
+
+function hasDynamicItems(menu: RuntimeServiceMenuDefinition | undefined): boolean {
+  if (!menu) {
+    return false;
+  }
+
+  if (menu.dynamicItems) {
+    return true;
+  }
+
+  return Boolean(menu.items?.some(hasDynamicItems));
+}
+
+async function resolveDynamicMenuItems(
+  config: RuntimeConfig,
+  menu: RuntimeServiceMenuDefinition,
+  options: { projectId?: string },
+): Promise<RuntimeServiceMenuDefinition> {
+  const [staticItems, dynamicItems] = await Promise.all([
+    Promise.all(
+      (menu.items ?? []).map((item) =>
+        resolveDynamicMenuItems(config, item, options),
+      ),
+    ),
+    menu.dynamicItems
+      ? readJson<{ items?: RuntimeServiceMenuDefinition[] }>(
+          `${joinApiPath(config.api.basePath, menu.dynamicItems.path)}${
+            options.projectId
+              ? `?projectId=${encodeURIComponent(options.projectId)}`
+              : ""
+          }`,
+        )
+          .then((result) => result.items ?? [])
+          .catch(() => [] as RuntimeServiceMenuDefinition[])
+      : Promise.resolve([] as RuntimeServiceMenuDefinition[]),
+  ]);
+
+  return {
+    ...menu,
+    items: [
+      ...staticItems,
+      ...(dynamicItems.length > 0
+        ? dynamicItems
+        : menu.dynamicItems?.emptyTitle
+          ? [
+              {
+                title: menu.dynamicItems.emptyTitle,
+                disabled: true,
+              },
+            ]
+          : []),
+    ],
+  };
+}
+
+async function resolveRuntimeServiceDynamicMenu(
+  config: RuntimeConfig,
+  service: RuntimeService,
+  options: { projectId?: string },
+): Promise<RuntimeService> {
+  if (!hasDynamicItems(service.menu)) {
+    return service;
+  }
+
+  return {
+    ...service,
+    menu: service.menu
+      ? await resolveDynamicMenuItems(config, service.menu, options)
+      : service.menu,
+  };
+}
+
+async function resolveRuntimeRegistryDynamicMenu(
+  config: RuntimeConfig,
+  service: RuntimeServiceRegistryEntry,
+  options: { projectId?: string },
+): Promise<RuntimeServiceRegistryEntry> {
+  if (!hasDynamicItems(service.menu)) {
+    return service;
+  }
+
+  return {
+    ...service,
+    menu: service.menu
+      ? (await resolveDynamicMenuItems(
+          config,
+          service.menu,
+          options,
+        )) as RuntimeServiceRegistryMenuDefinition
+      : service.menu,
+  };
+}
+
+export async function resolveRuntimeDynamicMenus(
+  config: RuntimeConfig,
+  options: { projectId?: string } = {},
+): Promise<RuntimeConfig> {
+  const [services, serviceRegistry] = await Promise.all([
+    Promise.all(
+      config.services.map((service) =>
+        resolveRuntimeServiceDynamicMenu(config, service, options),
+      ),
+    ),
+    Promise.all(
+      config.serviceRegistry.map((service) =>
+        resolveRuntimeRegistryDynamicMenu(config, service, options),
+      ),
+    ),
+  ]);
+
+  return {
+    ...config,
+    services,
+    serviceRegistry,
+  };
+}
+
 let _runtimeConfigCache: Promise<RuntimeConfig> | undefined;
 
 async function _fetchRuntimeConfig(): Promise<RuntimeConfig> {
@@ -710,6 +1041,16 @@ async function _fetchRuntimeConfig(): Promise<RuntimeConfig> {
 export function getRuntimeConfig(): Promise<RuntimeConfig> {
   _runtimeConfigCache ??= _fetchRuntimeConfig();
   return _runtimeConfigCache;
+}
+
+export async function getDashboardAccess(
+  config: RuntimeConfig,
+  mode?: string,
+): Promise<RuntimeDashboardAccess> {
+  const suffix = mode ? `?as=${encodeURIComponent(mode)}` : "";
+  return readJson<RuntimeDashboardAccess>(
+    `${config.api.basePath}/runtime/access${suffix}`,
+  );
 }
 
 export async function getDashboardSettings(
@@ -833,6 +1174,92 @@ export async function createWebsitePage(
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+export async function listWorkloads(
+  config: RuntimeConfig,
+  options: {
+    projectId?: string;
+    type?: WorkloadType;
+  } = {},
+) {
+  const search = new URLSearchParams();
+  if (options.projectId) {
+    search.set("projectId", options.projectId);
+  }
+  if (options.type) {
+    search.set("type", options.type);
+  }
+
+  const query = search.size > 0 ? `?${search.toString()}` : "";
+  const result = await readJson<{ workloads: WorkloadDefinition[] }>(
+    `${config.api.basePath}/workloads${query}`,
+  );
+
+  return result.workloads;
+}
+
+export async function createWorkload(
+  config: RuntimeConfig,
+  input: WorkloadSaveInput,
+) {
+  return readJson<WorkloadDefinition>(`${config.api.basePath}/workloads`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function getWorkload(config: RuntimeConfig, id: string) {
+  return readJson<WorkloadDefinition>(
+    `${config.api.basePath}/workloads/${encodeURIComponent(id)}`,
+  );
+}
+
+export async function updateWorkload(
+  config: RuntimeConfig,
+  id: string,
+  input: WorkloadSaveInput,
+) {
+  return readJson<WorkloadDefinition>(
+    `${config.api.basePath}/workloads/${encodeURIComponent(id)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function runWorkload(config: RuntimeConfig, id: string) {
+  return readJson<WorkloadRunLog>(
+    `${config.api.basePath}/workloads/${encodeURIComponent(id)}/run`,
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
+}
+
+export async function listWorkloadLogs(
+  config: RuntimeConfig,
+  options: {
+    projectId?: string;
+    workloadId?: string;
+  } = {},
+) {
+  const search = new URLSearchParams();
+  if (options.projectId) {
+    search.set("projectId", options.projectId);
+  }
+  if (options.workloadId) {
+    search.set("workloadId", options.workloadId);
+  }
+
+  const query = search.size > 0 ? `?${search.toString()}` : "";
+  const result = await readJson<{ logs: WorkloadRunLog[] }>(
+    `${config.api.basePath}/workloads/logs${query}`,
+  );
+
+  return result.logs;
 }
 
 export async function listStorageFiles(

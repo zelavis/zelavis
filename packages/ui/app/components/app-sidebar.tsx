@@ -20,11 +20,13 @@ import {
   buildContentTypeRows,
 } from "#/lib/content-studio";
 import {
+  buildProjectManagementNavItems,
   buildManagedProjectNavItems,
   buildPlatformNavItems,
   dashboardProjects,
+  filterDashboardNavItemsForAccess,
+  getDashboardProjectsForAccess,
   platformNavItems,
-  projectManagementNavItems,
 } from "#/lib/dashboard-data";
 import { filterUserDatabaseCollections } from "#/lib/database-collections";
 import {
@@ -42,14 +44,6 @@ import {
   type DatabaseSchemaCollectionSummary,
   type RuntimeConfig,
 } from "#/lib/runtime-api";
-
-const data = {
-  user: {
-    name: "Runtime dashboard",
-    email: "local project",
-    avatar: "",
-  },
-};
 
 export function AppSidebar({
   runtime,
@@ -93,6 +87,20 @@ export function AppSidebar({
   const projectId = getProjectIdFromPathname(location.pathname);
   const isProjectDashboardRoute = Boolean(projectId) && !isProjectManagementRoute;
   const managedProjectKind = getManagedProjectKindFromId(projectId);
+  const accessibleProjects = React.useMemo(
+    () => getDashboardProjectsForAccess(dashboardProjects, runtime?.access),
+    [runtime?.access],
+  );
+  const dashboardUser = React.useMemo(
+    () => ({
+      name: runtime?.access?.label
+        ? `${runtime.access.label} dashboard`
+        : "Runtime dashboard",
+      email: runtime?.access?.principal.id ?? "local project",
+      avatar: "",
+    }),
+    [runtime?.access],
+  );
   const selectedDatabaseTable = React.useMemo(() => {
     const search = readSearchParams(location.search);
     return typeof search.databaseTable === "string" && search.databaseTable.length > 0
@@ -131,15 +139,22 @@ export function AppSidebar({
   const items = React.useMemo(
     () =>
       isProjectManagementRoute
-        ? projectManagementNavItems
+        ? filterDashboardNavItemsForAccess(
+            buildProjectManagementNavItems(runtime?.services),
+            runtime?.access,
+          )
         : projectId && managedProjectKind
         ? buildManagedProjectNavItems(projectId, managedProjectKind)
         : runtime
-        ? buildPlatformNavItems(
-            runtime.services,
-            runtime.serviceRegistry,
-            contentTypes,
-            filterUserDatabaseCollections(effectiveDatabaseCollections),
+        ? filterDashboardNavItemsForAccess(
+            buildPlatformNavItems(
+              runtime.services,
+              runtime.serviceRegistry,
+              contentTypes,
+              filterUserDatabaseCollections(effectiveDatabaseCollections),
+              projectId ?? "default",
+            ),
+            runtime.access,
           )
         : platformNavItems,
     [
@@ -148,6 +163,7 @@ export function AppSidebar({
       isProjectManagementRoute,
       managedProjectKind,
       projectId,
+      runtime?.access,
       runtime?.serviceRegistry,
       runtime?.services,
     ],
@@ -162,7 +178,7 @@ export function AppSidebar({
         <div className="flex min-w-0 items-center gap-1">
           <div className="min-w-0 flex-1">
             <ProjectSwitcher
-              projects={dashboardProjects}
+              projects={accessibleProjects}
               homeIconLinksToProjects={isProjectDashboardRoute}
               onOpenChange={setIsProjectSwitcherOpen}
             />
@@ -189,7 +205,7 @@ export function AppSidebar({
           <NavUserScreen
             screen={activeUtilityScreen}
             openedFromNested={utilityScreenOpenedFromNested}
-            user={data.user}
+            user={dashboardUser}
             onClose={() => setActiveUtilityScreen(null)}
           />
         ) : null}
@@ -203,7 +219,7 @@ export function AppSidebar({
       >
         <NavUser
           activeScreen={activeUtilityScreen}
-          user={data.user}
+          user={dashboardUser}
           onHome={() => {
             setActiveUtilityScreen(null);
             setUtilityScreenOpenedFromNested(false);

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildManagedProjectNavItems,
   buildPlatformNavItems,
+  buildProjectManagementNavItems,
   projectManagementNavItems,
   buildExtensionServiceNavItems,
   findServiceMenuPageByPath,
@@ -114,6 +115,54 @@ describe("dashboard navigation ownership", () => {
     expect(settings?.items?.some((item) => item.title === "Jobs")).toBe(true);
   });
 
+  it("allows core services to declare platform management navigation", () => {
+    const nav = buildProjectManagementNavItems([
+      {
+        name: "@zelavis/server",
+        core: true,
+        apiPath: "/api/v1/runtime",
+        menu: {
+          title: "Access",
+          path: "/access",
+          pageLabel: "Access",
+          panelLabel: "Access",
+          surface: "platform",
+          access: {
+            permissions: ["access.manage"],
+            scope: { type: "system" },
+          },
+          items: [
+            {
+              title: "Users",
+              path: "/access/users",
+              pageLabel: "Users",
+            },
+            {
+              title: "Permissions",
+              path: "/access/permissions",
+              pageLabel: "Permissions",
+            },
+          ],
+        },
+      },
+    ]);
+
+    expect(nav.map((item) => item.title)).toContain("Access");
+    expect(findNavItem(nav, "Access")).toMatchObject({
+      url: "/access",
+      landingUrl: "/access",
+      pageLabel: "Access",
+      access: {
+        permissions: ["access.manage"],
+        scope: { type: "system" },
+      },
+    });
+    expect(findNavItem(nav, "Users")).toMatchObject({
+      url: "/access/users",
+      pageLabel: "Users",
+    });
+  });
+
   it("exposes project Website and project-wide Media without the old Builder area", () => {
     const nav = buildPlatformNavItems();
 
@@ -169,6 +218,7 @@ describe("dashboard navigation ownership", () => {
   it("uses a management nav for the all-projects view", () => {
     expect(projectManagementNavItems.map((item) => item.title)).toEqual([
       "Projects",
+      "Access",
       "Marketplace",
       "Domains",
       "Resources",
@@ -177,13 +227,17 @@ describe("dashboard navigation ownership", () => {
     ]);
     expect(projectManagementNavItems.map((item) => item.sectionLabel)).toEqual([
       "Projects",
+      "Projects",
       "Explore",
       "Manage",
       "Manage",
       "Manage",
       "Manage",
     ]);
-    expect(findNavItem(projectManagementNavItems, "Users")).toBeUndefined();
+    expect(findNavItem(projectManagementNavItems, "Users")).toMatchObject({
+      url: "/access/users",
+      pageLabel: "Users",
+    });
     expect(findNavItem(projectManagementNavItems, "Website")).toBeUndefined();
     expect(findNavItem(projectManagementNavItems, "Marketplace")).toMatchObject({
       url: "/marketplace",

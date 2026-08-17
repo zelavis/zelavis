@@ -30,6 +30,7 @@ Today, a default `new Zelavis(...)` runtime includes these core services by defa
 - auth
 - database
 - website
+- workloads
 
 When the selected adapter provides file storage, Zelavis can also expose:
 
@@ -55,11 +56,13 @@ Default root namespace:
 /zelavis/api/v1/storage/files/*
 /zelavis/api/v1/storage/files/*?format=metadata
 /zelavis/api/v1/website/pages
+/zelavis/api/v1/workloads
+/zelavis/api/v1/workloads/http/:projectId/*path
 ```
 
 The dashboard root at `/zelavis` opens the Projects overview. Project-local dashboard pages live under `/zelavis/projects/:projectId/*`; the starter project uses `/zelavis/projects/default`.
 
-The global Marketplace at `/zelavis/marketplace` is for apps, starters, templates, and server provider plugins. Project plugins live inside Zelavis-native projects at `/zelavis/projects/:projectId/marketplace`. Server-level areas such as domains, backups, and logs live under `/zelavis/server/*`.
+The global Marketplace at `/zelavis/marketplace` is for apps, starters, templates, and server provider plugins. Project plugins live inside Zelavis-native projects at `/zelavis/projects/:projectId/marketplace`. Global management areas such as Domains, Resources, Server, and Security sit outside project URLs; server-owned backing routes currently live under `/zelavis/server/*`.
 
 The website core service also mounts public website pages at `/`, while still reserving the dashboard namespace under `/zelavis`.
 

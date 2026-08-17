@@ -37,6 +37,10 @@ import {
   defaultZelavisDashboardClientRoutes,
 } from "@zelavis/ui/service";
 import {
+  workloadsService,
+  type WorkloadsServiceOptions,
+} from "@zelavis/workloads";
+import {
   activateServiceRegistry,
   applyServiceRegistryState,
   createServiceRegistry,
@@ -140,6 +144,10 @@ export interface ZelavisStorageCoreServiceOptions {
 export type ZelavisStorageCoreServiceInput =
   | boolean
   | ZelavisStorageCoreServiceOptions;
+
+export type ZelavisWorkloadsCoreServiceInput =
+  | boolean
+  | WorkloadsServiceOptions;
 
 class ZelavisDomainError extends Error {
   constructor(message: string) {
@@ -409,6 +417,7 @@ export interface ZelavisCoreServicesOptions {
   database?: ZelavisDatabaseCoreServiceOptions;
   storage?: ZelavisStorageCoreServiceInput;
   website?: ZelavisWebsiteCoreServiceInput;
+  workloads?: ZelavisWorkloadsCoreServiceInput;
 }
 
 export interface ZelavisApiOptions {
@@ -709,6 +718,7 @@ const RESERVED_CORE_SERVICE_NAMES = new Set([
   "@zelavis/db",
   "@zelavis/storage",
   "@zelavis/website",
+  "@zelavis/workloads",
   "zelavis-domain-challenge",
 ]);
 
@@ -2216,6 +2226,59 @@ type DashboardSerializedServiceMenuDefinition = Omit<
   items?: readonly DashboardSerializedServiceMenuDefinition[];
 };
 
+function createDashboardAccess(mode: string | null | undefined) {
+  if (mode === "customer") {
+    return {
+      mode: "customer",
+      label: "Customer",
+      principal: {
+        id: "customer_demo",
+        type: "user",
+        roles: ["customer"],
+        grants: [
+          {
+            permission: "projects.list",
+            scope: { type: "system" },
+          },
+          {
+            permission: "project.view",
+            scope: { type: "project", projectId: "default" },
+          },
+          {
+            permission: "project.content.read",
+            scope: { type: "project", projectId: "default" },
+          },
+          {
+            permission: "project.website.manage",
+            scope: { type: "project", projectId: "default" },
+          },
+        ],
+      },
+      projects: [
+        {
+          id: "default",
+          permissions: [
+            "project.view",
+            "project.content.read",
+            "project.website.manage",
+          ],
+        },
+      ],
+    };
+  }
+
+  return {
+    mode: "owner",
+    label: "Owner",
+    principal: {
+      id: "owner_demo",
+      type: "user",
+      roles: ["owner"],
+      permissions: ["*"],
+    },
+  };
+}
+
 async function resolveDashboardCoreService(
   option: ZelavisDashboardCoreServiceInput | undefined,
   context: {
@@ -2411,10 +2474,12 @@ async function resolveDashboardCoreService(
         name: service.name,
         core:
           service.name === "@zelavis/ui" ||
+          service.name === "@zelavis/server" ||
           service.name === "@zelavis/auth" ||
           service.name === "@zelavis/db" ||
           service.name === "@zelavis/storage" ||
-          service.name === "@zelavis/website",
+          service.name === "@zelavis/website" ||
+          service.name === "@zelavis/workloads",
         apiPath:
           service.name === "@zelavis/website"
             ? "/"
@@ -2448,7 +2513,7 @@ async function resolveDashboardCoreService(
               description:
                 "No service activation controller is configured for this runtime.",
             },
-          },
+      },
     };
   };
   const serializeServiceRegistryForDashboard = async () =>
@@ -3231,6 +3296,68 @@ async function resolveStorageCoreService(
   };
 }
 
+async function resolveWorkloadsCoreService(
+  option: ZelavisWorkloadsCoreServiceInput | undefined,
+): Promise<ZelavisRuntimeService<any> | undefined> {
+  const workloadsOption = option ?? true;
+
+  if (workloadsOption === false) {
+    return undefined;
+  }
+
+  return workloadsService(workloadsOption === true ? {} : workloadsOption);
+}
+
+async function resolveServerCoreService(): Promise<ZelavisRuntimeService<any>> {
+  return {
+    name: "@zelavis/server",
+    basePath: "/runtime",
+    menu: {
+      title: "Access",
+      path: "/access",
+      pageLabel: "Access",
+      panelLabel: "Access",
+      sectionLabel: "Projects",
+      surface: "platform",
+      access: {
+        permissions: ["access.manage"],
+        scope: { type: "system" },
+      },
+      items: [
+        {
+          title: "Overview",
+          path: "/access",
+          pageLabel: "Access",
+        },
+        {
+          title: "Users",
+          path: "/access/users",
+          pageLabel: "Users",
+        },
+        {
+          title: "Permissions",
+          path: "/access/permissions",
+          pageLabel: "Permissions",
+        },
+      ],
+    },
+    service: {},
+    api: {
+      v1: [
+        {
+          id: "runtime.access",
+          method: "GET",
+          path: "/access",
+          handler: ({ query }: { query: URLSearchParams }) => ({
+            status: 200,
+            body: createDashboardAccess(query.get("as")),
+          }),
+        },
+      ],
+    },
+  };
+}
+
 async function synthesizeDashboardAppService(
   dashboardService: ZelavisRuntimeService<any>,
   rootPath: string,
@@ -3332,11 +3459,17 @@ export async function zelavis(
   const hasDashboardService = runtimeServices.some(
     (service) => service.name === "@zelavis/ui",
   );
+  const hasServerService = runtimeServices.some(
+    (service) => service.name === "@zelavis/server",
+  );
   const hasWebsiteService = runtimeServices.some(
     (service) => service.name === "@zelavis/website",
   );
   const hasStorageService = runtimeServices.some(
     (service) => service.name === "@zelavis/storage",
+  );
+  const hasWorkloadsService = runtimeServices.some(
+    (service) => service.name === "@zelavis/workloads",
   );
   const hasDatabaseService = runtimeServices.some(
     (service) => service.name === "@zelavis/db",
@@ -3431,11 +3564,19 @@ export async function zelavis(
         apiPrefix,
         apiVersion,
       });
+  const workloadsCoreService = hasWorkloadsService
+    ? undefined
+    : await resolveWorkloadsCoreService(options.coreServices?.workloads);
+  const serverCoreService = hasServerService
+    ? undefined
+    : await resolveServerCoreService();
   const coreServices = [
+    serverCoreService,
     databaseService,
     authService,
     websiteService,
     storageService,
+    workloadsCoreService,
     ...serviceRuntimeServices,
   ].filter(
     (service): service is ZelavisRuntimeService<any> => Boolean(service),
@@ -3596,6 +3737,7 @@ function mergeCoreServicesOptions(
     database: mergeMaybeRecord(base.database, override.database),
     storage: mergeMaybeRecord(base.storage, override.storage),
     website: mergeMaybeRecord(base.website, override.website),
+    workloads: mergeMaybeRecord(base.workloads, override.workloads),
   };
 }
 

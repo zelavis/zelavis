@@ -19,6 +19,56 @@ It is intended to be the common adapter layer for platform packages such as `@ze
 
 Do not treat dashboard routes or framework-specific server actions as the authoritative implementation of platform behavior. Define the capability in the service/runtime layer, expose it through this server contract, then let the dashboard call it as a client.
 
+Service menus may declare a dashboard `surface`. `platform` is the global
+`/zelavis` management shell, while `root`, `core`, `extensions`, and `settings`
+belong to Zelavis-native project dashboards. Runtime-installed marketplace
+services are constrained to Extensions; privileged surfaces are for bundled or
+statically trusted system services.
+
+## Access model
+
+`@zelavis/server` also defines the first core access-control boundary. Runtime
+hosts can resolve one `ZelavisPrincipal` per request and services can declare
+route-level `access` requirements.
+
+The model is intentionally shared by core packages, the dashboard, CLI flows,
+AI agents, scripts, and future official modules such as a Hosting Provider
+module. A customer dashboard should not have a separate permission system:
+customers, resellers, operators, and owners are all principals with roles,
+permissions, and scoped grants.
+
+Example:
+
+```ts
+{
+  id: "projects.content.update",
+  method: "PATCH",
+  path: "/:projectId/content/:entryId",
+  access: {
+    permissions: ["project.content.write"],
+    scope: { type: "project", projectIdParam: "projectId" },
+  },
+  handler({ principal, params }) {
+    return {
+      body: {
+        principalId: principal?.id,
+        projectId: params.projectId,
+      },
+    };
+  },
+}
+```
+
+That lets the same `/zelavis` dashboard shell act as:
+
+- an owner/superadmin console when the principal has system grants
+- an operator/support console when the principal has delegated grants
+- a reseller console when grants are scoped to reseller-owned projects
+- a customer console when grants are scoped only to that customer's projects
+
+Hiding a dashboard menu item is only presentation. The endpoint must enforce
+the same requirement because it is the authority layer.
+
 ## Runtime surfaces
 
 - `fetch(request)` for Web and fetch-compatible runtimes

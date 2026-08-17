@@ -34,6 +34,9 @@ import type {
   RuntimeServicePageDefinition,
   RuntimeServiceRegistryMenuDefinition,
   RuntimeServiceRegistryEntry,
+  RuntimeAccessRequirement,
+  RuntimeDashboardAccess,
+  RuntimePrincipal,
 } from "#/lib/runtime-api";
 import type { ContentTypeRow } from "#/lib/content-studio";
 import { isInternalDatabaseCollection } from "#/lib/database-collections";
@@ -41,6 +44,7 @@ import { toProjectPath } from "#/lib/routing";
 
 export type DashboardRoutePath =
   | "/"
+  | "/access"
   | `/projects/${string}`
   | `/projects/${string}/${string}`
   | "/agents"
@@ -95,7 +99,10 @@ export type DashboardNavItem = {
   slot?: DashboardSlotId;
   fixed?: boolean;
   fixedOrder?: number;
+  fixedActionScope?: "local" | "inherit" | "replace" | "clear";
   sectionLabel?: string;
+  disabled?: boolean;
+  access?: RuntimeAccessRequirement | readonly RuntimeAccessRequirement[];
   serviceOwned?: boolean;
   items?: readonly DashboardNavItem[];
 };
@@ -116,7 +123,9 @@ export type DashboardServiceRegistryMenuItem = {
   pageLabel?: string;
   fixed?: boolean;
   fixedOrder?: number;
+  fixedActionScope?: "local" | "inherit" | "replace" | "clear";
   sectionLabel?: string;
+  disabled?: boolean;
   page?: RuntimeServicePageDefinition;
   serviceOwned?: boolean;
   items?: readonly DashboardServiceRegistryMenuItem[];
@@ -152,20 +161,180 @@ export const dashboardProjects: readonly DashboardProjectItem[] = [
   },
 ] as const;
 
-export const projectManagementNavItems: readonly DashboardNavItem[] = [
+function matchScopeValue(
+  required: string | undefined,
+  granted: string | undefined,
+) {
+  return required === undefined || granted === undefined || required === granted;
+}
+
+function scopesMatch(
+  requirement: RuntimeAccessRequirement,
+  grant: NonNullable<RuntimePrincipal["grants"]>[number],
+) {
+  const requiredScope = requirement.scope;
+  const grantScope = grant.scope;
+
+  if (!requiredScope) {
+    return true;
+  }
+
+  if (!grantScope) {
+    return requiredScope.type === "system";
+  }
+
+  if (requiredScope.type !== grantScope.type) {
+    return false;
+  }
+
+  if (requiredScope.type === "project" && grantScope.type === "project") {
+    return matchScopeValue(requiredScope.projectId, grantScope.projectId);
+  }
+
+  if (requiredScope.type === "service" && grantScope.type === "service") {
+    return matchScopeValue(requiredScope.serviceName, grantScope.serviceName);
+  }
+
+  return true;
+}
+
+function principalHasPermission(
+  principal: RuntimePrincipal,
+  permission: string,
+  requirement: RuntimeAccessRequirement,
+) {
+  if (
+    principal.permissions?.includes("*") ||
+    principal.permissions?.includes(permission)
+  ) {
+    return true;
+  }
+
+  return (
+    principal.grants?.some(
+      (grant) =>
+        (grant.permission === "*" || grant.permission === permission) &&
+        scopesMatch(requirement, grant),
+    ) ?? false
+  );
+}
+
+function canAccessRequirement(
+  access: RuntimeDashboardAccess | undefined,
+  requirement: RuntimeAccessRequirement,
+) {
+  if (!access) {
+    return true;
+  }
+
+  const principal = access.principal;
+  const requiresAuthentication =
+    requirement.authenticated === true ||
+    Boolean(requirement.roles?.length) ||
+    Boolean(requirement.permissions?.length);
+
+  if (requiresAuthentication && principal.type === "anonymous") {
+    return false;
+  }
+
+  if (
+    requirement.roles?.length &&
+    !requirement.roles.some((role) => principal.roles?.includes(role))
+  ) {
+    return false;
+  }
+
+  return (
+    requirement.permissions?.every((permission) =>
+      principalHasPermission(principal, permission, requirement),
+    ) ?? true
+  );
+}
+
+export function canAccessDashboardItem(
+  access: RuntimeDashboardAccess | undefined,
+  item: Pick<DashboardNavItem, "access">,
+) {
+  if (!item.access) {
+    return true;
+  }
+
+  const requirements = Array.isArray(item.access) ? item.access : [item.access];
+  return requirements.some((requirement) =>
+    canAccessRequirement(access, requirement),
+  );
+}
+
+export function filterDashboardNavItemsForAccess(
+  items: readonly DashboardNavItem[],
+  access?: RuntimeDashboardAccess,
+): readonly DashboardNavItem[] {
+  return items
+    .filter((item) => canAccessDashboardItem(access, item))
+    .map((item) => ({
+      ...item,
+      items: item.items
+        ? filterDashboardNavItemsForAccess(item.items, access)
+        : undefined,
+    }));
+}
+
+export function getDashboardProjectsForAccess(
+  projects: readonly DashboardProjectItem[],
+  access?: RuntimeDashboardAccess,
+): readonly DashboardProjectItem[] {
+  if (!access?.projects?.length || access.principal.permissions?.includes("*")) {
+    return projects;
+  }
+
+  const allowedProjectIds = new Set(access.projects.map((project) => project.id));
+  return projects.filter((project) => allowedProjectIds.has(project.id));
+}
+
+function projectAccess(
+  permission: string,
+  projectId: string,
+): RuntimeAccessRequirement {
+  return {
+    permissions: [permission],
+    scope: { type: "project", projectId },
+  };
+}
+
+export function buildProjectManagementNavItems(
+  services?: readonly RuntimeService[],
+): readonly DashboardNavItem[] {
+  const platformServiceNavItems = (services ?? [])
+    .filter((service) => service.core && getServiceMenuSurface(service) === "platform")
+    .flatMap((service) =>
+      service.menu
+        ? [createDashboardServiceMenuItem(service.menu, service.name)]
+        : [],
+    );
+
+  return [
   {
     title: "Projects",
     url: "/projects",
     icon: LayoutDashboard,
     pageLabel: "Projects",
     sectionLabel: "Projects",
+    access: {
+      permissions: ["projects.list"],
+      scope: { type: "system" },
+    },
   },
+  ...platformServiceNavItems,
   {
     title: "Marketplace",
     url: "/marketplace",
     icon: Boxes,
     pageLabel: "Marketplace",
     sectionLabel: "Explore",
+    access: {
+      permissions: ["marketplace.view"],
+      scope: { type: "system" },
+    },
   },
   {
     title: "Domains",
@@ -173,6 +342,10 @@ export const projectManagementNavItems: readonly DashboardNavItem[] = [
     icon: Globe2,
     pageLabel: "Domains",
     sectionLabel: "Manage",
+    access: {
+      permissions: ["server.domains.view"],
+      scope: { type: "system" },
+    },
     items: [
       {
         title: "Overview",
@@ -213,6 +386,10 @@ export const projectManagementNavItems: readonly DashboardNavItem[] = [
     landingUrl: "/resources",
     pageLabel: "Resources",
     sectionLabel: "Manage",
+    access: {
+      permissions: ["server.resources.view"],
+      scope: { type: "system" },
+    },
     items: [
       {
         title: "Overview",
@@ -249,6 +426,10 @@ export const projectManagementNavItems: readonly DashboardNavItem[] = [
     landingUrl: "/server",
     pageLabel: "Server",
     sectionLabel: "Manage",
+    access: {
+      permissions: ["server.manage"],
+      scope: { type: "system" },
+    },
     items: [
       {
         title: "Overview",
@@ -274,6 +455,10 @@ export const projectManagementNavItems: readonly DashboardNavItem[] = [
     title: "Security",
     icon: ShieldCheck,
     landingUrl: "/security",
+    access: {
+      permissions: ["server.security.view"],
+      scope: { type: "system" },
+    },
     pageLabel: "Security",
     sectionLabel: "Manage",
     items: [
@@ -286,7 +471,8 @@ export const projectManagementNavItems: readonly DashboardNavItem[] = [
       },
     ],
   },
-] as const;
+  ] as const;
+}
 
 export function buildManagedProjectNavItems(
   projectId: string,
@@ -371,6 +557,10 @@ function isBuiltInProjectPath(path: string) {
     return true;
   }
 
+  if (path.startsWith("/workloads/")) {
+    return true;
+  }
+
   return [
     "/",
     "/agents",
@@ -390,6 +580,7 @@ function isBuiltInProjectPath(path: string) {
     "/storage",
     "/users",
     "/website",
+    "/workloads",
   ].includes(path);
 }
 
@@ -468,7 +659,9 @@ function createDashboardServiceRegistryMenuItem(
     panelLabel: menu.panelLabel,
     fixed: menu.fixed,
     fixedOrder: menu.fixedOrder,
+    fixedActionScope: menu.fixedActionScope,
     sectionLabel: menu.sectionLabel,
+    disabled: menu.disabled,
     page: menu.page,
     serviceOwned: true,
     items: menu.items?.map(createDashboardServiceRegistryMenuItem),
@@ -477,6 +670,8 @@ function createDashboardServiceRegistryMenuItem(
 
 function getServiceMenuIcon(title: string, serviceName?: string): LucideIcon {
   switch (serviceName ?? title.toLowerCase()) {
+    case "@zelavis/server":
+      return Fingerprint;
     case "@zelavis/auth":
       return Fingerprint;
     case "@zelavis/db":
@@ -485,6 +680,8 @@ function getServiceMenuIcon(title: string, serviceName?: string): LucideIcon {
       return Files;
     case "@zelavis/website":
       return Globe2;
+    case "@zelavis/workloads":
+      return Cpu;
     default:
       return Server;
   }
@@ -497,12 +694,19 @@ function createDashboardServiceMenuItem(
   return {
     title: menu.title,
     url: menu.path ? toDashboardRoutePath(menu.path) : undefined,
+    landingUrl:
+      menu.path && menu.items?.length
+        ? toDashboardRoutePath(menu.path)
+        : undefined,
     icon: getServiceMenuIcon(menu.title, serviceName),
     pageLabel: menu.pageLabel,
     panelLabel: menu.panelLabel,
     fixed: menu.fixed,
     fixedOrder: menu.fixedOrder,
+    fixedActionScope: menu.fixedActionScope,
     sectionLabel: menu.sectionLabel,
+    disabled: menu.disabled,
+    access: menu.access,
     items: menu.items?.map((item) => createDashboardServiceMenuItem(item, serviceName)),
   };
 }
@@ -593,6 +797,40 @@ export const extensionServiceNavItems =
 
 const defaultRuntimeServices: readonly RuntimeService[] = [
   {
+    name: "@zelavis/server",
+    core: true,
+    apiPath: "/api/v1/runtime",
+    menu: {
+      title: "Access",
+      path: "/access",
+      pageLabel: "Access",
+      panelLabel: "Access",
+      sectionLabel: "Projects",
+      surface: "platform",
+      access: {
+        permissions: ["access.manage"],
+        scope: { type: "system" },
+      },
+      items: [
+        {
+          title: "Overview",
+          path: "/access",
+          pageLabel: "Access",
+        },
+        {
+          title: "Users",
+          path: "/access/users",
+          pageLabel: "Users",
+        },
+        {
+          title: "Permissions",
+          path: "/access/permissions",
+          pageLabel: "Permissions",
+        },
+      ],
+    },
+  },
+  {
     name: "@zelavis/ui",
     core: true,
     apiPath: "/",
@@ -653,11 +891,15 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
   },
 ] as const;
 
+export const projectManagementNavItems: readonly DashboardNavItem[] =
+  buildProjectManagementNavItems(defaultRuntimeServices);
+
 export function buildPlatformNavItems(
   services?: readonly RuntimeService[],
   serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
   contentTypes?: readonly ContentTypeRow[],
   databaseCollections?: readonly DatabaseCollection[],
+  projectId = "default",
 ): readonly DashboardNavItem[] {
   const extensionRegistryNavItems = buildExtensionServiceNavItems(serviceRegistry);
   const contentTypesByName = new Map(
@@ -798,12 +1040,14 @@ export function buildPlatformNavItems(
       url: "/",
       icon: LayoutDashboard,
       sectionLabel: "Overview",
+      access: projectAccess("project.view", projectId),
     },
     {
       title: "Users",
       url: "/users",
       icon: Users,
       sectionLabel: "Build",
+      access: projectAccess("project.users.manage", projectId),
     },
     {
       title: "Content",
@@ -811,6 +1055,7 @@ export function buildPlatformNavItems(
       landingUrl: "/content",
       panelLabel: "Content Types",
       sectionLabel: "Build",
+      access: projectAccess("project.content.read", projectId),
       items: contentItems,
     },
     {
@@ -819,6 +1064,7 @@ export function buildPlatformNavItems(
       icon: Files,
       pageLabel: "Media",
       sectionLabel: "Build",
+      access: projectAccess("project.media.manage", projectId),
     },
     ...(hasWebsiteService
       ? [
@@ -828,6 +1074,7 @@ export function buildPlatformNavItems(
             icon: Globe2,
             pageLabel: "Website",
             sectionLabel: "Build",
+            access: projectAccess("project.website.manage", projectId),
           },
         ]
       : []),
@@ -838,11 +1085,13 @@ export function buildPlatformNavItems(
       icon: Boxes,
       pageLabel: "Marketplace",
       sectionLabel: "Extend",
+      access: projectAccess("project.marketplace.manage", projectId),
     },
     {
       title: "Extensions",
       icon: Bot,
       sectionLabel: "Extend",
+      access: projectAccess("project.extensions.manage", projectId),
       items: [
         {
           title: "Agents",
@@ -857,6 +1106,7 @@ export function buildPlatformNavItems(
       title: "Backend",
       icon: Server,
       sectionLabel: "Backend",
+      access: projectAccess("project.backend.manage", projectId),
       items: coreServiceNavItems,
     },
     {
@@ -864,6 +1114,7 @@ export function buildPlatformNavItems(
       icon: Settings2,
       landingUrl: "/settings",
       sectionLabel: "Settings",
+      access: projectAccess("project.settings.manage", projectId),
       items: [
         {
           title: "Project Settings",

@@ -14,11 +14,14 @@ import { DashboardShell } from "#/components/DashboardShell";
 import { DirectionProvider } from "#/components/ui/direction";
 import {
   getDashboardSettings,
+  getDashboardAccess,
   getRuntimeConfig,
   listDatabaseCollections,
   listDatabaseSchemaCollections,
+  resolveRuntimeDynamicMenus,
 } from "#/lib/runtime-api";
 import type { Route } from "./+types/root";
+import type { RuntimeDashboardAccess } from "#/lib/runtime-api";
 import "@glideapps/glide-data-grid/dist/index.css";
 import "./styles.css";
 
@@ -29,8 +32,76 @@ export function meta() {
   return [{ title: "Zelavis Dashboard" }];
 }
 
-export async function clientLoader() {
-  const runtime = await getRuntimeConfig();
+function inferProjectIdFromRequestUrl(requestUrl: string) {
+  const pathname = new URL(requestUrl).pathname;
+  const match = pathname.match(/(?:^|\/)projects\/([^/]+)/);
+  return match?.[1] ? decodeURIComponent(match[1]) : undefined;
+}
+
+function resolveDemoDashboardAccess(requestUrl: string): RuntimeDashboardAccess {
+  const mode = new URL(requestUrl).searchParams.get("as");
+
+  if (mode === "customer") {
+    return {
+      mode: "customer",
+      label: "Customer",
+      principal: {
+        id: "customer_demo",
+        type: "user",
+        roles: ["customer"],
+        grants: [
+          {
+            permission: "projects.list",
+            scope: { type: "system" },
+          },
+          {
+            permission: "project.view",
+            scope: { type: "project", projectId: "default" },
+          },
+          {
+            permission: "project.content.read",
+            scope: { type: "project", projectId: "default" },
+          },
+          {
+            permission: "project.website.manage",
+            scope: { type: "project", projectId: "default" },
+          },
+        ],
+      },
+      projects: [
+        {
+          id: "default",
+          permissions: [
+            "project.view",
+            "project.content.read",
+            "project.website.manage",
+          ],
+        },
+      ],
+    };
+  }
+
+  return {
+    mode: "owner",
+    label: "Owner",
+    principal: {
+      id: "owner_demo",
+      type: "user",
+      roles: ["owner"],
+      permissions: ["*"],
+    },
+  };
+}
+
+export async function clientLoader({ request }: Route.ClientLoaderArgs) {
+  const runtimeConfig = await getRuntimeConfig();
+  const accessMode = new URL(request.url).searchParams.get("as") ?? undefined;
+  const access = await getDashboardAccess(runtimeConfig, accessMode).catch(() =>
+    resolveDemoDashboardAccess(request.url),
+  );
+  const runtime = await resolveRuntimeDynamicMenus(runtimeConfig, {
+    projectId: inferProjectIdFromRequestUrl(request.url),
+  });
   const [settings, databaseCollections, schemaCollections] = await Promise.all([
     getDashboardSettings(runtime),
     listDatabaseCollections(runtime),
@@ -38,7 +109,10 @@ export async function clientLoader() {
   ]);
 
   return {
-    runtime,
+    runtime: {
+      ...runtime,
+      access,
+    },
     settings,
     databaseCollections,
     schemaCollections,

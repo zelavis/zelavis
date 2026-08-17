@@ -51,6 +51,9 @@ export interface ZelavisDashboardServiceOptions {
 }
 
 export const defaultZelavisDashboardClientRoutes = Object.freeze([
+  "/access",
+  "/access/permissions",
+  "/access/users",
   "/marketplace",
   "/projects",
   "/server",
@@ -77,6 +80,14 @@ export const defaultZelavisDashboardClientRoutes = Object.freeze([
   "/projects/default/storage",
   "/projects/default/users",
   "/projects/default/website",
+  "/projects/default/workloads",
+  "/projects/default/workloads/functions/:workloadId",
+  "/projects/default/workloads/jobs/:workloadId",
+  "/projects/default/workloads/logs",
+  "/projects/default/workloads/new",
+  "/projects/default/workloads/schedules/:workloadId",
+  "/projects/default/workloads/settings",
+  "/projects/default/workloads/webhooks/:workloadId",
 ] as const);
 
 interface DashboardAsset {

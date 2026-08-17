@@ -1,16 +1,17 @@
 ---
 title: Service Model
 ---
-Zelavis currently benefits from using two names for two different layers:
+Zelavis currently benefits from separating two layers that both use the word
+service in code:
 
-- `service` for the internal runtime-mounting unit
-- `service` for the public extension concept developers and operators interact with
+- **runtime service** for the internal endpoint-mounting unit
+- **service** for the public extension concept developers and operators interact with
 
 ## Current recommendation
 
 Use this language split consistently:
 
-- **Services** are the internal transport/runtime primitive.
+- **Runtime services** are the internal transport/runtime primitive.
 - **Services** are the external product concept.
 
 That means the dashboard, docs, and developer-facing product language can talk about services without forcing the runtime internals to stop using the service contract that already exists.
@@ -21,7 +22,8 @@ Sometimes yes, but not always in the same way.
 
 - Auth provider services extend the auth API surface through service registration.
 - Ecommerce provider services extend the ecommerce API surface through service registration.
-- Installable dashboard/runtime features may eventually expose one runtime-mounted service as part of how the service is activated.
+- Installable dashboard/runtime features may expose one or more runtime-mounted
+  services as part of activation.
 
 That lower-level provider layer uses parent/child service metadata.
 
@@ -53,12 +55,52 @@ The dashboard should reflect that split:
 - Each service may own unlimited nested sidebar slides inside its own Extensions area.
 - Service-owned dashboard navigation should be declared through a plain menu object such as `menu: { ... }`, not by reaching into sidebar internals directly.
 - A service menu item may declare `page: { id, title, render }` when that menu item owns dashboard content.
-- Core services may declare a service-only menu `surface` such as `root`, `core`, `extensions`, or `settings`.
+- A service menu item may declare `fixed: true` to render as a pinned action at
+  the top of its current sidebar slide. Use `fixedOrder` to sort multiple fixed
+  actions in the same slide. A nested slide may set `fixedActionScope` to
+  control how parent fixed actions flow into that slide:
+  - `local` shows only fixed actions declared by the opened slide. This is the
+    default.
+  - `inherit` combines the parent slide's visible fixed actions with fixed
+    actions declared by the opened slide.
+  - `replace` uses only the opened slide's fixed actions as an explicit
+    boundary.
+  - `clear` hides inherited and local fixed actions for the opened slide. A
+    deeper slide can reintroduce actions with its own local or replacement
+    actions.
+  This makes it possible for a service to keep one action visible across a few
+  nested slides, clear it at a boundary, and then introduce another fixed action
+  deeper in the workflow.
+- Core services may declare a service-only menu `surface` such as `platform`, `root`, `core`, `extensions`, or `settings`.
+- `platform` is the global `/zelavis` management shell for owner/operator areas such as Access.
 - Service menus must not declare a `surface`; Zelavis always mounts them under `Extensions`.
 
 This keeps the first slide stable and prevents dashboard sprawl.
 
 The same rule applies to service-owned pages: a page can render UI, but the action should live behind a service capability and endpoint so non-dashboard clients can call it too.
+
+## Shared Access Model
+
+Services and official modules must use the core Zelavis access model instead
+of inventing package-local dashboard permissions.
+
+The server contract supports one request principal plus route and menu access
+requirements. A principal can represent an owner, operator, support user,
+reseller, customer, service account, or system actor. Permissions can be
+system-wide or scoped to projects and services.
+
+That is the intended foundation for a future official Hosting Provider module:
+
+- owners and superadmins get system-level grants
+- operators get delegated support or operations grants
+- resellers get grants scoped to projects and customers they own
+- customers get grants scoped only to their own projects
+
+The same `/zelavis` dashboard shell can therefore render different menus and
+project lists for each principal, while every privileged action still goes
+through endpoint-level authorization. A customer dashboard is not a separate
+product surface with a separate auth model; it is an authorized view of the
+same Zelavis control plane.
 
 Managed app projects such as WordPress, static sites, or generic hosted apps do
 not automatically expose Zelavis-native service navigation. Their dashboard
@@ -292,7 +334,7 @@ Some services need more power than normal Extensions services. The dashboard its
 
 The clean distinction is trust and capability, not "service vs. non-service":
 
-- **system services** are bundled or statically registered by the operator. They may use privileged dashboard surfaces such as `root`, `core`, or `settings`.
+- **system services** are bundled or statically registered by the operator. They may use privileged dashboard surfaces such as `platform`, `root`, `core`, or `settings`.
 - **extension services** are uploaded, marketplace-installed, or tenant-managed. They are constrained to the Extensions surface and can own nested slides under their own entry.
 - future hosts can make this more explicit with capability grants such as allowed menu surfaces, app hosting policy, isolated execution support, and runtime install strategy.
 
@@ -306,7 +348,7 @@ For product language:
 
 For runtime internals:
 
-- keep **Service**
+- use **runtime service** when explaining the lower-level endpoint contract
 
 For possible alternatives:
 

@@ -11,6 +11,7 @@ Zelavis is a unified, self-hostable App Platform. It replaces — and combines �
 | WordPress | Content management: content types, entries, schemas, media |
 | cPanel / Plesk / Coolify / Dokploy / deploy providers | Server, app, local website hosting, and optional external deploy management |
 | phpMyAdmin | Database administration UI (collections, tables, queries, events) |
+| Workers / Functions platforms | Project-scoped workloads: functions, jobs, schedules, and webhooks hosted by the long-running Zelavis runtime |
 | Claude / Codex chat | AI chat area built into the dashboard for interacting with Zelavis and building via AI |
 
 The difference from Firebase/Supabase is depth and ownership: Zelavis is fully self-hostable, runtime-neutral, and built to scale beyond a single database engine. The database layer is the deepest differentiator — `@zelavis/db` extends SQL with a Document DB model (event-sourced, tenant-aware, per-collection tables) while keeping the storage engine swappable (SQLite, libSQL, and future engines). Replication, sharding, and eventually distributed multi-master operation are roadmap goals; the event log is the natural replication stream and `tenant_id` is the natural shard key. That is the same role Vitess plays for MySQL, but Zelavis is not coupled to any single SQL engine.
@@ -33,6 +34,7 @@ Core platform work currently centers on:
 - `@zelavis/db`
 - `@zelavis/auth`
 - `@zelavis/ui`
+- `@zelavis/workloads`
 
 The repo still contains domain packages such as `@zelavis/ecommerce`, but they are optional layers on top of the platform primitives, not the main product definition.
 
@@ -60,6 +62,12 @@ Everything Zelavis can do must be reachable through a stable server capability a
 
 The dashboard is a client of Zelavis, not the source of truth for platform behavior. Any feature exposed in the dashboard must also be available to non-dashboard callers such as the CLI, AI agents, scripts, plugins, external admin tools, and future automation flows.
 
+Endpoint-backed does not mean serverless-first. Zelavis should expose stateless,
+HTTP-compatible capability endpoints wherever practical, because that makes the
+platform scriptable, MCP-friendly, AI-agent-friendly, and easy to integrate.
+Those endpoints are the access layer into Zelavis; they are not a reason to move
+the core Zelavis runtime onto serverless function platforms.
+
 Required shape for platform features:
 
 - define the domain capability first, behind a service/runtime contract
@@ -75,6 +83,49 @@ Examples:
 - Domain management: capability `domains.addDomain(...)`, endpoint `POST /zelavis/api/v1/domains`, dashboard form calls that endpoint.
 
 This rule keeps Zelavis automatable, scriptable, plugin-friendly, AI-agent-friendly, and independent from any single dashboard framework.
+
+Dashboard menu metadata may include dynamic sections through `dynamicItems`.
+Dynamic menu sections must point at service-owned endpoints and return the same
+menu item shape as static sections. Use this for runtime-owned lists such as
+Workloads functions, jobs, schedules, and webhooks; do not hardcode those lists
+inside the dashboard.
+
+Dashboard menu metadata may declare a `surface`. `platform` is the global
+`/zelavis` owner/operator shell, `root` is the first slide of a project
+dashboard, `core` is the project Backend slide, `extensions` is the project
+Extensions slide, and `settings` is the project Settings slide. Runtime-installed
+marketplace services are still constrained to Extensions; privileged surfaces
+are for bundled or statically trusted system services. The Access area is a core
+`@zelavis/server` menu contribution, not a hardcoded sidebar exception.
+
+Dashboard menu items may include `fixed: true` and `fixedOrder` for pinned
+actions such as "Add Function". A nested slide may control inherited fixed
+actions with `fixedActionScope`: `local` shows only actions declared in the
+opened slide, `inherit` combines parent fixed actions with local actions,
+`replace` uses local actions as an explicit boundary, and `clear` hides fixed
+actions until a deeper slide reintroduces them with its own local or replacement
+actions.
+
+## Core Access-Control Rule
+
+Zelavis uses one core principal, permission, and scoped-grant model across the
+owner console, project dashboards, future customer/reseller/operator views,
+service accounts, CLI calls, scripts, plugins, and AI agents.
+
+The base authorization contract belongs in `@zelavis/server`, because every
+runtime service route needs to declare and enforce access requirements
+independently of the authentication method that produced the caller.
+
+`@zelavis/auth` owns authentication primitives: accounts, credentials, sessions,
+and pluggable auth methods such as email/password, passkeys, OAuth, SSO, API
+keys, and service-token providers. It resolves identities into principals; the
+server contract enforces route access.
+
+Future official modules such as Hosting Provider must not create a separate
+customer permission system. Customers, resellers, operators, and owners are
+Zelavis principals with system, project, or service-scoped grants. The same
+`/zelavis` shell should render different menus, project lists, and actions from
+those grants, while endpoints remain the authority layer.
 
 ## Repo Structure
 
@@ -123,6 +174,13 @@ Use these boundaries consistently:
 
 - `adapters` for framework bindings and external runtime adapters such as Express, Hono, or Node-specific mounting
 - `plugins` for optional domain/provider capabilities such as auth methods or payment providers
+
+First-party core plugins such as `@zelavis/workloads` may be enabled by default
+by the high-level runtime while staying package-separated. Workloads are
+project-scoped capabilities owned by the long-running Zelavis server. Provider
+plugins may later sync or deploy workloads to Cloudflare, Vercel, Netlify, or
+other external platforms when users choose that, but those providers must not
+become the core workload execution architecture.
 
 ### New package checklist
 
@@ -242,6 +300,14 @@ Serverless function platforms are not Zelavis runtime targets. They may appear a
 optional plugins for deploying user websites, storage, email, images, DNS, CDN,
 or other provider adapters, but must not define the core runtime
 architecture.
+
+Stateless protocols and connector standards such as MCP are welcome at the
+edges of the platform. A Zelavis MCP server, deploy-provider connector, storage
+connector, or AI integration may be stateless and may run on serverless or edge
+infrastructure when that makes sense. The distinction is strict: connectors and
+plugins may be serverless; the Zelavis platform runtime, database, auth,
+dashboard, local website hosting, server management, and future replication
+model must not be architected around serverless hosting constraints.
 
 This repo must not be architected around:
 

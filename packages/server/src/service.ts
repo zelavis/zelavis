@@ -1,5 +1,6 @@
 import {
   type ZelavisAnyRuntimeServiceInput,
+  type ZelavisMenuFixedActionScope,
   type ZelavisServerRoute,
   type ZelavisRuntimeService,
   type ZelavisRuntimeServiceMenuDefinition,
@@ -8,6 +9,12 @@ import {
 export const ZELAVIS_SERVICE_V1 = "ZELAVIS_SERVICE_V1" as const;
 export type ZelavisServiceContractVersion = typeof ZELAVIS_SERVICE_V1;
 const scopedServiceNamePattern = /^@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/;
+const menuFixedActionScopes = [
+  "local",
+  "inherit",
+  "replace",
+  "clear",
+] as const satisfies readonly ZelavisMenuFixedActionScope[];
 
 export interface ZelavisServiceMenuPageRenderContext {
   service: string;
@@ -74,7 +81,7 @@ export interface ZelavisServiceMarketplaceMetadata {
  * Controls which capabilities are available to this service.
  *
  * - `"system"` — first-party or statically registered services. Can mount on
- *   any dashboard surface (root, core, extensions, settings). Set automatically
+ *   any dashboard surface (platform, root, core, extensions, settings). Set automatically
  *   when the service is passed directly to `zelavis({ services: [...] })`.
  *
  * - `"extension"` — runtime-installed services (uploaded ZIP, marketplace).
@@ -389,6 +396,12 @@ function validateServiceMenu(
   // `surface` is allowed in the definition — the activation layer enforces
   // extension-only scoping for runtime-installed services at registration time,
   // not here. System services registered statically may use any surface.
+  validateOptionalBoolean(menu.fixed, `Service menu fixed flag for "${path}"`);
+  validateOptionalNumber(menu.fixedOrder, `Service menu fixedOrder for "${path}"`);
+  validateOptionalMenuFixedActionScope(
+    menu.fixedActionScope,
+    `Service menu fixedActionScope for "${path}"`,
+  );
 
   if ("page" in menu && menu.page !== undefined) {
     if (!menu.page || typeof menu.page !== "object") {
@@ -424,6 +437,33 @@ function validateServiceMenu(
     }
   }
 
+  if ("dynamicItems" in menu && menu.dynamicItems !== undefined) {
+    if (!menu.dynamicItems || typeof menu.dynamicItems !== "object") {
+      throw new TypeError(
+        `Service menu dynamicItems metadata for "${path}" must be an object.`,
+      );
+    }
+
+    if (
+      !menu.dynamicItems.path ||
+      typeof menu.dynamicItems.path !== "string"
+    ) {
+      throw new TypeError(
+        `Service menu dynamicItems metadata for "${path}" must include a string path.`,
+      );
+    }
+
+    if (
+      "emptyTitle" in menu.dynamicItems &&
+      menu.dynamicItems.emptyTitle !== undefined &&
+      typeof menu.dynamicItems.emptyTitle !== "string"
+    ) {
+      throw new TypeError(
+        `Service menu dynamicItems metadata for "${path}" emptyTitle must be a string when provided.`,
+      );
+    }
+  }
+
   menu.items?.forEach((item) => validateServiceMenu(item, `${path} > ${item.title}`));
 }
 
@@ -455,6 +495,38 @@ function validateOptionalString(
 ): asserts value is string | undefined {
   if (value !== undefined && typeof value !== "string") {
     throw new TypeError(`${fieldName} must be a string when provided.`);
+  }
+}
+
+function validateOptionalBoolean(
+  value: unknown,
+  fieldName: string,
+): asserts value is boolean | undefined {
+  if (value !== undefined && typeof value !== "boolean") {
+    throw new TypeError(`${fieldName} must be a boolean when provided.`);
+  }
+}
+
+function validateOptionalNumber(
+  value: unknown,
+  fieldName: string,
+): asserts value is number | undefined {
+  if (value !== undefined && typeof value !== "number") {
+    throw new TypeError(`${fieldName} must be a number when provided.`);
+  }
+}
+
+function validateOptionalMenuFixedActionScope(
+  value: unknown,
+  fieldName: string,
+): asserts value is ZelavisMenuFixedActionScope | undefined {
+  if (
+    value !== undefined &&
+    !menuFixedActionScopes.includes(value as ZelavisMenuFixedActionScope)
+  ) {
+    throw new TypeError(
+      `${fieldName} must be "local", "inherit", "replace", or "clear" when provided.`,
+    );
   }
 }
 

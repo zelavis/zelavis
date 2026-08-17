@@ -219,8 +219,91 @@ Important details:
 - `menu` is plain metadata. Services never reach into dashboard sidebar internals.
 - `menu.page.render(...)` returns a full HTML document string or `{ html, status, headers, contentType }`.
 - Service pages are mounted in the dashboard through the `zelavis-service-frame` iframe web component.
+- Menu items can use `fixed: true` for slide-local pinned actions such as
+  "Add Function". Use `fixedOrder` when a slide has multiple fixed actions.
+- Nested slides can set `fixedActionScope` to control whether parent fixed
+  actions carry forward: `local` uses only the opened slide's fixed actions,
+  `inherit` combines parent and local actions, `replace` uses local actions as
+  an explicit boundary, and `clear` hides fixed actions until a deeper slide
+  reintroduces them.
+- Menu items can use `dynamicItems` when a slide section is backed by runtime
+  state. The dynamic endpoint should return ordinary menu item metadata.
+- Statically trusted system services can declare a dashboard `surface`.
+  `platform` renders in the global `/zelavis` management shell; `root`, `core`,
+  `extensions`, and `settings` render in project dashboards. Runtime-installed
+  services are forced under Extensions.
 - `setup(context)` may register runtime services through `context.addService(...)`, `context.addServices(...)`, or by returning `{ runtimeServices }`.
 - Child services use `extends` and are passed to their parent service; they do not get their own Extensions menu area.
+
+Example fixed action plus dynamic section:
+
+```ts
+menu: {
+  title: "Workloads",
+  items: [
+    {
+      title: "Functions",
+      fixedActionScope: "inherit",
+      items: [
+        {
+          title: "Add Function",
+          path: "/workloads/new",
+          fixed: true,
+          fixedOrder: 1,
+        },
+      ],
+      dynamicItems: {
+        path: "/workloads/menu/functions",
+        emptyTitle: "No functions yet",
+      },
+    },
+  ],
+}
+```
+
+Example clearing a parent action and reintroducing a different action deeper
+down:
+
+```ts
+menu: {
+  title: "Tools",
+  items: [
+    {
+      title: "Create Tool",
+      path: "/tools/new",
+      fixed: true,
+      fixedOrder: 1,
+    },
+    {
+      title: "Advanced",
+      fixedActionScope: "inherit",
+      items: [
+        {
+          title: "Danger Zone",
+          fixedActionScope: "clear",
+          items: [
+            {
+              title: "Recovery",
+              fixedActionScope: "replace",
+              items: [
+                {
+                  title: "Create Recovery Point",
+                  path: "/tools/recovery/new",
+                  fixed: true,
+                  fixedOrder: 1,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+}
+```
+
+In that example, `Advanced` keeps `Create Tool`, `Danger Zone` shows no fixed
+actions, and `Recovery` reintroduces `Create Recovery Point`.
 
 The repo includes `examples/plugin-basic` as a minimal uploadable service. Build its upload package with `pnpm --filter @zelavis/example-plugin-basic package`, then select `examples/plugin-basic/dist/example-basic.zip` in the Node example project Marketplace flow at `/zelavis/projects/default/marketplace`. The service module defines its own `name`, `version`, menu, pages, and services, so the dashboard does not ask for a separate service name. The ZIP includes `zelavis.service.json`, whose `entry` field points at the ESM module the host adapter should import.
 

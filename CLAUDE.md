@@ -11,6 +11,7 @@ A unified, self-hostable App Platform that replaces and combines:
 - **Content management** — content types, entries, schemas, media (think WordPress)
 - **Server / app / hosting / deploy management** — native website hosting, runtime management, environment config, service lifecycle, and optional external deployment targets (think cPanel, Plesk, Coolify, Dokploy, plus user-selected deploy providers)
 - **Database administration** — collections, tables, query browser, event log (think phpMyAdmin)
+- **Project workloads** — first-party functions, jobs, schedules, and webhooks served by the long-running Zelavis runtime
 - **AI chat** — a built-in chat area inside the dashboard for interacting with Zelavis and building via AI (think Claude / Codex)
 
 ## Database Architecture — Key Facts
@@ -86,6 +87,7 @@ await createDatabaseCollection(runtime, {
 - `@zelavis/server` — shared service/endpoint contracts. No storage or auth specifics.
 - `@zelavis/auth` — auth core and method plugins only.
 - `@zelavis/ui` — dashboard SPA (React Router v7, SPA mode). See `AGENTS.md` UI section.
+- `@zelavis/workloads` — first-party core plugin for project-scoped functions, jobs, schedules, and webhooks. It is default-enabled by `zelavis`, endpoint-backed, and package-separated so runner/provider adapters can evolve independently.
 - `zelavis` — high-level runtime that composes the above. Public API entry point.
 
 ## Endpoint-Backed Capability Rule
@@ -95,6 +97,65 @@ Everything Zelavis can do must be reachable through a stable server capability a
 The dashboard is only one client. If a dashboard page can run a Linux security checklist, read host resource metrics, add a domain, create a backup, install a service, mutate database state, or change project settings, the same operation must be available through the server API so the CLI, AI agents, scripts, plugins, and external admin tools can do it too.
 
 Do not implement authoritative platform behavior only in React route modules, component callbacks, local state, framework server actions, or dashboard-only helpers. Start from the domain capability, mount it through `@zelavis/server`, then let the dashboard consume that endpoint.
+
+This rule is compatible with stateless connector protocols such as MCP. Zelavis
+capabilities should be easy to call over HTTP and easy for AI agents to use, but
+the core runtime is still a self-hosted platform runtime, not a serverless
+function app.
+
+Service dashboard menus can declare dynamic sections with `dynamicItems`. Those
+sections must be backed by service-owned endpoints and return ordinary menu
+items. Workloads uses this for project functions, jobs, schedules, and webhooks.
+
+Service dashboard menus can declare a `surface`. `platform` is the global
+`/zelavis` owner/operator shell, `root` is the first slide of a project
+dashboard, `core` is the project Backend slide, `extensions` is the project
+Extensions slide, and `settings` is the project Settings slide. Runtime-installed
+marketplace services are still constrained to Extensions; privileged surfaces
+are for bundled or statically trusted system services. The Access area is a core
+`@zelavis/server` menu contribution, not a hardcoded sidebar exception.
+
+Service dashboard menus can declare slide-local fixed actions with
+`fixed: true` and optional `fixedOrder`. Fixed actions are official menu
+metadata for pinned actions such as "Add Function". Nested slides can control
+fixed-action inheritance with `fixedActionScope`: `local` shows only actions
+declared in the opened slide, `inherit` combines parent fixed actions with
+local actions, `replace` uses local actions as an explicit boundary, and `clear`
+hides fixed actions until a deeper slide reintroduces them with its own local
+or replacement actions.
+
+## Core Access-Control Rule
+
+Zelavis uses one core principal, permission, and scoped-grant model across the
+owner console, project dashboards, future customer/reseller/operator views,
+service accounts, CLI calls, scripts, plugins, and AI agents.
+
+The base authorization contract belongs in `@zelavis/server`, because every
+runtime service route needs to declare and enforce access requirements
+independently of the authentication method that produced the caller.
+
+`@zelavis/auth` owns authentication primitives: accounts, credentials, sessions,
+and pluggable auth methods such as email/password, passkeys, OAuth, SSO, API
+keys, and service-token providers. It resolves identities into principals; the
+server contract enforces route access.
+
+Future official modules such as Hosting Provider must not create a separate
+customer permission system. Customers, resellers, operators, and owners are
+Zelavis principals with system, project, or service-scoped grants. The same
+`/zelavis` shell should render different menus, project lists, and actions from
+those grants, while endpoints remain the authority layer.
+
+## Runtime and Connector Boundary
+
+Zelavis core targets self-hosted Node.js, Bun, and future Deno. Keep core
+packages based on standard JavaScript and Web platform APIs, with
+runtime-specific behavior in adapters and provider-specific behavior in plugins.
+
+Serverless and edge platforms may appear as optional plugin or connector targets
+for user website deployment, DNS, CDN, storage, images, email, MCP servers, AI
+integrations, or similar edge-facing work. They must not define the architecture
+of the Zelavis runtime, database, auth, dashboard, native website hosting,
+server management, or future replication/multi-master model.
 
 ## Testing
 
@@ -118,3 +179,4 @@ Do not implement authoritative platform behavior only in React route modules, co
 - Do not add a shared `documents` table — the per-collection-table design is intentional.
 - Do not add backward-compat shims — this project is pre-release with no public users. Remove stale shapes cleanly.
 - Do not ship a dashboard feature that cannot also be performed through a stable endpoint.
+- Do not treat serverless deployability of connectors as permission to make serverless the Zelavis core runtime target.

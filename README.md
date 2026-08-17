@@ -4,7 +4,7 @@ Zelavis is an early-stage, self-hostable App Platform for building, hosting, and
 
 It brings together backend primitives, runtime composition, an admin dashboard, database tooling, authentication, plugins, native website hosting, and server/project control surfaces without tying the core to one JavaScript runtime, framework, or hosting provider.
 
-Zelavis is foundation-first today. The current repository already includes working packages for auth, database, server composition, runtime mounting, dashboard delivery, framework adapters, and optional domain plugins. The broader platform surface is still evolving.
+Zelavis is foundation-first today. The current repository already includes working packages for auth, database, server composition, runtime mounting, dashboard delivery, framework adapters, first-party workloads, and optional domain plugins. The broader platform surface is still evolving.
 
 ## What Zelavis Is
 
@@ -17,6 +17,7 @@ The platform direction includes:
 - Tenant-aware database and data administration.
 - Admin/dashboard UI.
 - Native website hosting from the Zelavis runtime.
+- Project workloads for functions, jobs, schedules, and webhooks owned by the long-running Zelavis runtime.
 - Project management for Zelavis-native apps and managed apps such as WordPress, static sites, or generic hosted software.
 - Server management surfaces for domains, backups, logs, and local app hosting.
 - Plugin and package extensibility.
@@ -37,6 +38,14 @@ Zelavis starts at a Projects overview. A project is the operational unit the das
 
 Native website hosting is part of the core product story. External hosts, storage providers, DNS providers, CDNs, and deploy targets can be connected through plugins, but they are optional user choices rather than Zelavis runtime targets.
 
+Zelavis should still be easy to integrate with modern stateless protocols and AI
+agent tooling. A Zelavis MCP server, deploy provider connector, or storage/email
+connector can be stateless and can run on serverless or edge infrastructure if
+that is the right plugin shape. That does not make serverless a core Zelavis
+runtime target: the platform runtime, database, auth, dashboard, native website
+hosting, server management, and future replication model stay self-hosted and
+runtime-neutral.
+
 ## Principles
 
 - App Platform first.
@@ -45,6 +54,9 @@ Native website hosting is part of the core product story. External hosts, storag
 - Standard Web APIs over provider lock-in.
 - Strong service contracts over hidden magic.
 - Endpoint-backed capabilities over dashboard-only behavior.
+- One core access-control model for owner, operator, reseller, customer,
+  service-account, CLI, script, and AI-agent callers.
+- Stateless connector-friendly endpoints without making serverless the core runtime.
 - Mobile-slot-ready dashboard components over separate desktop/mobile implementations.
 - Small, composable package surfaces.
 - Clear provider, adapter, plugin, and service boundaries.
@@ -63,6 +75,7 @@ Zelavis currently focuses on these layers:
 - **Dashboard**: an admin UI package mounted by the runtime at the platform root path, opening to Projects and then into project-local control surfaces.
 - **CLI**: workspace tooling for future platform and developer workflows.
 - **Website hosting**: built-in public page delivery from the Zelavis runtime, with dashboard and API routes kept under a reserved platform namespace.
+- **Workloads**: first-party project functions, jobs, schedules, and webhooks exposed through `@zelavis/workloads` and managed from the project dashboard.
 - **Server management**: dashboard surfaces for domains, backups, logs, and local hosting operations.
 - **Plugins**: optional domain and provider packages that extend the core platform.
 
@@ -83,6 +96,24 @@ Examples:
 - resource charts should read resource telemetry endpoints, not dashboard-local logic once collectors exist
 - domain, backup, service-install, and project actions should be scriptable through the API
 
+## Access Control
+
+Zelavis uses one core principal, permission, and scoped-grant model for the
+control plane and project dashboards. The owner console, customer dashboard,
+future reseller/operator dashboards, API keys, service accounts, scripts, CLI,
+and AI agents should all pass through that same model.
+
+The base authorization contract lives in `@zelavis/server`, because route
+access requirements must be enforceable for every service no matter which auth
+method produced the principal. `@zelavis/auth` owns accounts, credentials,
+sessions, and pluggable authentication methods.
+
+That split is important for the future official Hosting Provider module:
+customers and resellers should not get a separate permission system. They
+should be regular Zelavis principals with project-scoped grants. The same
+`/zelavis` shell can then render an owner view, operator view, reseller view,
+or customer view based on the current principal.
+
 ## Workspace
 
 Packages live in [packages/](packages) and official plugins live in [plugins/](plugins).
@@ -90,7 +121,7 @@ Packages live in [packages/](packages) and official plugins live in [plugins/](p
 Core packages:
 
 - [packages/zelavis](packages/zelavis)
-  The high-level runtime package. It composes core services such as auth, database, and dashboard delivery, and re-exports server adapters.
+  The high-level runtime package. It composes core services such as auth, database, website, workloads, and dashboard delivery, and re-exports server adapters.
 - [packages/server](packages/server)
   Shared service, endpoint, and framework adapter contracts for mounting Zelavis packages.
 - [packages/auth](packages/auth)
@@ -99,6 +130,8 @@ Core packages:
   A document-first, tenant-aware database core with an in-memory driver, optional SQL capability, and a mountable server service.
 - [packages/ui](packages/ui)
   The admin/dashboard frontend used by the high-level runtime.
+- [packages/workloads](packages/workloads)
+  A first-party core plugin for project-scoped functions, jobs, schedules, and webhooks.
 - [packages/cli](packages/cli)
   Command-line tooling for Zelavis workflows.
 
@@ -150,7 +183,7 @@ import { Zelavis } from "zelavis";
 const zv = new Zelavis({});
 
 const response = await zv.fetch(
-  new Request("http://localhost/zelavis/api/v1/dashboard/config"),
+  new Request("http://localhost/zelavis/api/v1/runtime/config"),
 );
 ```
 
@@ -168,8 +201,10 @@ By default, Zelavis owns one safe namespace:
 /zelavis/server/domains
 /zelavis/server/backups
 /zelavis/server/logs
+/zelavis/projects/default/workloads
 /zelavis/api/v1/auth
 /zelavis/api/v1/database
+/zelavis/api/v1/workloads
 ```
 
 Customize that namespace with `rootPath`:
@@ -192,15 +227,17 @@ That moves the dashboard and APIs together:
 /admin/server/domains
 /admin/server/backups
 /admin/server/logs
+/admin/projects/default/workloads
 /admin/api/v1/auth
 /admin/api/v1/database
+/admin/api/v1/workloads
 ```
 
 Use scoped packages such as `@zelavis/server`, `@zelavis/db`, and `@zelavis/auth` when building lower-level primitives, adapters, plugins, or tests that need direct package APIs.
 
 ## Core Services
 
-Core services use the same service contract as extension services. The high-level `Zelavis` runtime currently includes dashboard delivery, auth, and database by default.
+Core services use the same service contract as extension services. The high-level `Zelavis` runtime currently includes dashboard delivery, auth, database, website, and workloads by default.
 
 The dashboard and admin experience are still evolving. The runtime already serves the current UI package, but the overall product surface should be treated as early and subject to change.
 
@@ -212,6 +249,8 @@ const zv = new Zelavis({
     auth: false,
     dashboard: false,
     database: false,
+    website: false,
+    workloads: false,
   },
 });
 ```

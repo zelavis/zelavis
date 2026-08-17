@@ -22,7 +22,9 @@ Some dashboard surfaces are intentionally outside any project:
 
 - `/zelavis` opens the Projects overview.
 - `/zelavis/marketplace` is the global Marketplace for apps, starters, templates, and server provider plugins.
-- `/zelavis/server/*` contains server-level areas such as domains, backups, and logs.
+- Global management pages cover Domains, Resources, Server, and Security.
+  Server-owned backing routes currently live under `/zelavis/server/*` for
+  areas such as domains, backups, and logs.
 
 The global Marketplace can install or create new projects from apps and starters. Project plugins only make sense inside a Zelavis-native project, so they belong under:
 
@@ -43,8 +45,9 @@ The project model should leave room for:
 - multiple projects per Zelavis installation
 - project grouping
 - Zelavis-native and managed app project types
-- server-level domains, backups, and logs
+- global domains, resources, security checks, server backups, and logs
 - ready-to-install apps and starters
+- first-party project workloads for functions, jobs, schedules, and webhooks
 - future distributed and multi-master operation without baking in single-node assumptions
 
 Current UI and runtime behavior should document what exists today while keeping those boundaries explicit.

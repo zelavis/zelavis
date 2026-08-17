@@ -1,4 +1,8 @@
 import type {
+  ZelavisAccessDecision,
+  ZelavisAccessRequirement,
+  ZelavisAccessScope,
+  ZelavisPrincipal,
   ZelavisPlainRequest,
   ZelavisPlainResponse,
   ZelavisResolvedRoute,
@@ -164,6 +168,24 @@ function notFoundResponse(): ZelavisRouteResponse {
     status: 404,
     body: {
       error: "Not found",
+    },
+  };
+}
+
+function unauthorizedResponse(): ZelavisRouteResponse {
+  return {
+    status: 401,
+    body: {
+      error: "Unauthorized",
+    },
+  };
+}
+
+function forbiddenResponse(reason?: string): ZelavisRouteResponse {
+  return {
+    status: 403,
+    body: {
+      error: reason ?? "Forbidden",
     },
   };
 }
@@ -392,14 +414,244 @@ async function parseResponseBody(response: Response): Promise<unknown> {
   return body.byteLength > 0 ? new Uint8Array(body) : undefined;
 }
 
+function isAuthenticated(principal: ZelavisPrincipal | undefined): boolean {
+  return principal !== undefined && principal.type !== "anonymous";
+}
+
+function hasRole(
+  principal: ZelavisPrincipal | undefined,
+  role: string,
+): boolean {
+  return principal?.roles?.includes(role) ?? false;
+}
+
+function matchScopeValue(
+  required: string | undefined,
+  granted: string | undefined,
+): boolean {
+  return required === undefined || granted === undefined || required === granted;
+}
+
+function resolveAccessScope(
+  scope: ZelavisAccessScope | undefined,
+  params: Record<string, string>,
+): ZelavisAccessScope | undefined {
+  if (!scope) {
+    return undefined;
+  }
+
+  if (scope.type === "project") {
+    return {
+      type: "project",
+      projectId: scope.projectId ?? params[scope.projectIdParam ?? ""],
+      projectIdParam: scope.projectIdParam,
+    };
+  }
+
+  if (scope.type === "service") {
+    return {
+      type: "service",
+      serviceName: scope.serviceName ?? params[scope.serviceNameParam ?? ""],
+      serviceNameParam: scope.serviceNameParam,
+    };
+  }
+
+  return scope;
+}
+
+function scopesMatch(
+  required: ZelavisAccessScope | undefined,
+  granted: ZelavisAccessScope | undefined,
+): boolean {
+  if (!required) {
+    return true;
+  }
+
+  if (!granted) {
+    return required.type === "system";
+  }
+
+  if (required.type !== granted.type) {
+    return false;
+  }
+
+  if (required.type === "project" && granted.type === "project") {
+    return matchScopeValue(required.projectId, granted.projectId);
+  }
+
+  if (required.type === "service" && granted.type === "service") {
+    return matchScopeValue(required.serviceName, granted.serviceName);
+  }
+
+  return true;
+}
+
+function hasPermission(
+  principal: ZelavisPrincipal | undefined,
+  permission: string,
+  scope: ZelavisAccessScope | undefined,
+): boolean {
+  if (!principal) {
+    return false;
+  }
+
+  if (
+    principal.permissions?.includes(permission) ||
+    principal.permissions?.includes("*")
+  ) {
+    return true;
+  }
+
+  return (
+    principal.grants?.some(
+      (grant) =>
+        (grant.permission === permission || grant.permission === "*") &&
+        scopesMatch(scope, grant.scope),
+    ) ?? false
+  );
+}
+
+function defaultAccessDecision(
+  principal: ZelavisPrincipal | undefined,
+  requirement: ZelavisAccessRequirement,
+  params: Record<string, string>,
+): ZelavisAccessDecision {
+  const requiresAuthentication =
+    requirement.authenticated === true ||
+    Boolean(requirement.roles?.length) ||
+    Boolean(requirement.permissions?.length);
+
+  if (requiresAuthentication && !isAuthenticated(principal)) {
+    return {
+      allowed: false,
+      status: 401,
+      reason: "Authentication required",
+    };
+  }
+
+  if (
+    requirement.roles?.length &&
+    !requirement.roles.some((role) => hasRole(principal, role))
+  ) {
+    return {
+      allowed: false,
+      status: 403,
+      reason: "Missing required role",
+    };
+  }
+
+  const scope = resolveAccessScope(requirement.scope, params);
+  if (
+    requirement.permissions?.length &&
+    !requirement.permissions.every((permission) =>
+      hasPermission(principal, permission, scope),
+    )
+  ) {
+    return {
+      allowed: false,
+      status: 403,
+      reason: "Missing required permission",
+    };
+  }
+
+  return {
+    allowed: true,
+  };
+}
+
+async function checkRouteAccess<TService = unknown>(
+  resolvedRoute: ZelavisResolvedRoute<TService>,
+  request: Request,
+  params: Record<string, string>,
+  options: Pick<
+    ZelavisServerMountOptions<TService>,
+    "authorize" | "resolvePrincipal"
+  >,
+  context?: ZelavisServerExecutionContext,
+): Promise<
+  | {
+      allowed: true;
+      principal?: ZelavisPrincipal;
+    }
+  | {
+      allowed: false;
+      response: Response;
+    }
+> {
+  const requirements = resolvedRoute.route.access
+    ? Array.isArray(resolvedRoute.route.access)
+      ? resolvedRoute.route.access
+      : [resolvedRoute.route.access]
+    : [];
+
+  const principal =
+    context?.principal ??
+    (await options.resolvePrincipal?.({
+      request,
+      platform: context?.platform,
+      resolvedRoute,
+      params,
+    }));
+
+  for (const requirement of requirements) {
+    const rawDecision =
+      (await options.authorize?.({
+        request,
+        platform: context?.platform,
+        resolvedRoute,
+        params,
+        principal,
+        requirement,
+      })) ?? defaultAccessDecision(principal, requirement, params);
+    const decision =
+      typeof rawDecision === "boolean"
+        ? ({ allowed: rawDecision } satisfies ZelavisAccessDecision)
+        : rawDecision;
+
+    if (!decision.allowed) {
+      return {
+        allowed: false,
+        response: toResponse(
+          decision.status === 401
+            ? unauthorizedResponse()
+            : forbiddenResponse(decision.reason),
+        ),
+      };
+    }
+  }
+
+  return {
+    allowed: true,
+    principal,
+  };
+}
+
 async function executeResolvedRoute<TService = unknown>(
   resolvedRoute: ZelavisResolvedRoute<TService>,
   request: Request,
   params: Record<string, string>,
-  options: Pick<ZelavisServerMountOptions<TService>, "onError">,
+  options: Pick<
+    ZelavisServerMountOptions<TService>,
+    "authorize" | "onError" | "resolvePrincipal"
+  >,
   context?: ZelavisServerExecutionContext,
 ): Promise<ZelavisServerDispatchResult<TService>> {
   try {
+    const access = await checkRouteAccess(
+      resolvedRoute,
+      request,
+      params,
+      options,
+      context,
+    );
+    if (!access.allowed) {
+      return {
+        matched: true,
+        response: access.response,
+        resolvedRoute,
+      };
+    }
+
     const result = await resolvedRoute.route.handler({
       service: resolvedRoute.service.service,
       params,
@@ -408,6 +660,7 @@ async function executeResolvedRoute<TService = unknown>(
       headers: toHeaderMap(request.headers),
       requestHeaders: request.headers,
       request,
+      principal: access.principal,
       platform: context?.platform,
     });
 
@@ -433,7 +686,10 @@ async function executeResolvedRoute<TService = unknown>(
 
 export function createZelavisDispatcher<TService = unknown>(
   routes: readonly ZelavisResolvedRoute<TService>[],
-  options: Pick<ZelavisServerMountOptions<TService>, "onError"> = {},
+  options: Pick<
+    ZelavisServerMountOptions<TService>,
+    "authorize" | "onError" | "resolvePrincipal"
+  > = {},
 ): ZelavisServerDispatchHandler<TService> {
   return async (request, context) => {
     const url = new URL(request.url);
@@ -540,6 +796,7 @@ export function createZelavisPlainHandler<TService = unknown>(
   return async (input) => {
     const request = createRequestFromPlainInput(input);
     const result = await dispatch(request, {
+      principal: input.principal,
       platform: input.platform,
     });
 

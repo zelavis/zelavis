@@ -49,7 +49,7 @@ Examples use `zv` as the short local name for a `Zelavis` runtime instance.
 
 ## Default behavior
 
-By default, Zelavis owns one safe namespace under `/zelavis` and includes dashboard, auth, database, and website core services.
+By default, Zelavis owns one safe namespace under `/zelavis` and includes dashboard, auth, database, website, and workloads core services.
 
 The dashboard stays mounted under the configured root path, while API services stay grouped under `/api/<version>/...`.
 
@@ -69,6 +69,7 @@ Default dashboard paths include:
 /zelavis/server/domains
 /zelavis/server/backups
 /zelavis/server/logs
+/zelavis/projects/default/workloads
 ```
 
 Application code can access core service APIs through the runtime instance:
@@ -121,3 +122,5 @@ Framework utilities (small wrappers around `zv.fetch`) live at:
 - [Endpoint-Backed Capabilities](../architecture/endpoint-backed-capabilities.md)
 - [@zelavis/db](./database.md)
 - [@zelavis/auth](./auth.md)
+- [@zelavis/ui](./ui.md)
+- [@zelavis/workloads](./workloads.md)

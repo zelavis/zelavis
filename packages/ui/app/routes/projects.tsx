@@ -1,5 +1,5 @@
 import type * as React from "react";
-import { Link } from "react-router";
+import { Link, useRouteLoaderData } from "react-router";
 import {
   Clock3,
   Globe2,
@@ -20,8 +20,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import {
   dashboardProjects,
+  getDashboardProjectsForAccess,
   type DashboardProjectItem,
 } from "#/lib/dashboard-data";
+import type { clientLoader as rootClientLoader } from "../root";
 import { toDashboardPath, toProjectPath } from "#/lib/routing";
 import {
   parseAsString,
@@ -77,6 +79,7 @@ function slugifyProjectName(value: string) {
 }
 
 function ProjectsRoute() {
+  const rootData = useRouteLoaderData<typeof rootClientLoader>("root");
   const [{ q, new: createMode, name: requestedName, domain: requestedDomain, type }, setParams] =
     useTypedSearchParams(projectSearchSchema);
   const [projects, setProjects] = useState<DashboardProjectItem[]>([
@@ -87,6 +90,13 @@ function ProjectsRoute() {
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
   const showCreate = createMode === "1";
+  const accessibleProjects = useMemo(
+    () => getDashboardProjectsForAccess(projects, rootData?.runtime.access),
+    [projects, rootData?.runtime.access],
+  );
+  const canCreateProjects =
+    rootData?.runtime.access?.principal.permissions?.includes("*") ??
+    true;
 
   useEffect(() => {
     if (requestedName) {
@@ -102,15 +112,15 @@ function ProjectsRoute() {
     const query = q.trim().toLowerCase();
 
     if (!query) {
-      return projects;
+      return accessibleProjects;
     }
 
-    return projects.filter((project) =>
+    return accessibleProjects.filter((project) =>
       [project.name, project.domain].some((value) =>
         value.toLowerCase().includes(query),
       ),
     );
-  }, [projects, q]);
+  }, [accessibleProjects, q]);
 
   function handleCreateProject(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -156,7 +166,7 @@ function ProjectsRoute() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      {showCreate ? (
+      {showCreate && canCreateProjects ? (
         <Card>
           <CardHeader>
             <CardTitle>Create project</CardTitle>
@@ -240,12 +250,14 @@ function ProjectsRoute() {
         </div>
         <div className="flex items-center justify-between gap-3 sm:justify-end">
           <p className="text-sm text-muted-foreground">
-            {filteredProjects.length} of {projects.length} projects
+            {filteredProjects.length} of {accessibleProjects.length} projects
           </p>
-          <Button type="button" onClick={() => setParams({ new: "1" })}>
-            <Plus className="size-4" />
-            New project
-          </Button>
+          {canCreateProjects ? (
+            <Button type="button" onClick={() => setParams({ new: "1" })}>
+              <Plus className="size-4" />
+              New project
+            </Button>
+          ) : null}
         </div>
       </div>
 

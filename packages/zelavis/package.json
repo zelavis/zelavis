@@ -89,7 +89,8 @@
     "@zelavis/db-bun-sqlite": "workspace:*",
     "@zelavis/db-node-sqlite": "workspace:*",
     "@zelavis/server": "workspace:*",
-    "@zelavis/ui": "workspace:*"
+    "@zelavis/ui": "workspace:*",
+    "@zelavis/workloads": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",

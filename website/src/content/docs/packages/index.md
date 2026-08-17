@@ -3,13 +3,14 @@ title: Packages
 ---
 Use this section for package-level overviews that connect the package READMEs into a coherent platform story.
 
-Likely pages:
+Current package pages:
 
 - `zelavis`
 - `@zelavis/server`
 - `@zelavis/db`
 - `@zelavis/auth`
 - `@zelavis/ui`
+- `@zelavis/workloads`
 
 Guideline:
 
@@ -21,3 +22,5 @@ Keep package-specific installation and quick usage in each package README, and u
 - [@zelavis/server](./server.md)
 - [@zelavis/db](./database.md)
 - [@zelavis/auth](./auth.md)
+- [@zelavis/ui](./ui.md)
+- [@zelavis/workloads](./workloads.md)
