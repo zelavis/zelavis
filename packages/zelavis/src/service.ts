@@ -248,15 +248,15 @@ export interface ActivateServiceRegistryOptions {
    */
   bundleStore?: BundleStore;
   /**
-   * Workspace ownership context for synthesized app services. The
+   * Project ownership context for synthesized app services. The
    * `BundleStore` uses this to key into per-tenant asset namespaces. For
    * system-host activation (no multi-tenancy), leave undefined.
    */
-  workspaceId?: string;
+  projectId?: string;
   /**
-   * Domain-binding store. When set, workspace-scoped service apps get
+   * Domain-binding store. When set, extension-scoped service apps get
    * host-bound routing only for verified bindings owned by their
-   * workspace or service. System services are unaffected.
+   * project or service. System services are unaffected.
    */
   domainBindings?: DomainBindingStore;
 }
@@ -315,15 +315,15 @@ export async function activateServiceRegistry<
     // Synthesize an asset-serving service for services that declare an
     // `app`. The synthesizer decides the effective mount internally
     // based on (scope, verified hosts): system services keep their
-    // declared mount; workspace services with verified host bindings
-    // serve their declared mount restricted to those hosts; workspace
+    // declared mount; extension services with verified host bindings
+    // serve their declared mount restricted to those hosts; extension
     // services without verified hosts get the path-namespaced
     // `/apps/<service-name>` mount on the shared host.
     if (entry.service.app && options.bundleStore) {
       const appService = await synthesizeServiceAppService({
         service: entry.service as Readonly<ZelavisServiceDefinition<unknown>>,
         bundleStore: options.bundleStore,
-        workspaceId: options.workspaceId,
+        projectId: options.projectId,
         domainBindings: options.domainBindings,
       });
       if (appService) {

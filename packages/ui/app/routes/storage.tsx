@@ -4,7 +4,6 @@ import { useMemo, useRef, useState } from "react";
 
 import {
   DataRow,
-  PageHeader,
   ResourceNotice,
   StatCard,
   StatusBadge,
@@ -27,7 +26,7 @@ import type { Route } from './+types/storage';
 
 export const handle = {
   pageLabel: "Storage",
-  sidebarTrail: ["Core"],
+  sidebarTrail: ["Backend"],
 } as const;
 
 export async function clientLoader({ request }: Route.ClientLoaderArgs) {
@@ -270,12 +269,6 @@ function StorageRoute() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Core"
-        title="Storage"
-        description="Platform-backed file storage exposed through Zelavis. Upload files, inspect checksums, and keep references ready for later database document linking."
-      />
-
       {!storageEnabled ? (
         <ResourceNotice
           title="Storage service is not mounted"

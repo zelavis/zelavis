@@ -49,12 +49,12 @@ The dashboard should reflect that split:
 - The global `Marketplace` is a top-level discovery area for apps, starters, templates, and server provider plugins.
 - The project `Marketplace` under `/zelavis/projects/:projectId/marketplace` is where Zelavis-native project plugins are installed.
 - Installed services do not get first-slide root items.
-- Each installed service gets exactly one root entry under `Workspace`.
-- Each service may own unlimited nested sidebar slides inside its own workspace area.
+- Each installed service gets exactly one root entry under `Extensions`.
+- Each service may own unlimited nested sidebar slides inside its own Extensions area.
 - Service-owned dashboard navigation should be declared through a plain menu object such as `menu: { ... }`, not by reaching into sidebar internals directly.
 - A service menu item may declare `page: { id, title, render }` when that menu item owns dashboard content.
-- Core services may declare a service-only menu `surface` such as `root`, `core`, `workspace`, or `settings`.
-- Service menus must not declare a `surface`; Zelavis always mounts them under `Workspace`.
+- Core services may declare a service-only menu `surface` such as `root`, `core`, `extensions`, or `settings`.
+- Service menus must not declare a `surface`; Zelavis always mounts them under `Extensions`.
 
 This keeps the first slide stable and prevents dashboard sprawl.
 
@@ -150,7 +150,7 @@ defineService<EcommerceApi>({
 });
 ```
 
-Installed child services are collected for their parent. They do not activate as independent top-level workspace services.
+Installed child services are collected for their parent. They do not activate as independent top-level Extensions services.
 
 Parent services own their child allow-list through `childServices`. For ecommerce payments, Stripe and PayPal are allowed by the official ecommerce package. A future `XYZ Payments` child service would need the parent service to add it to that list before activation. If a child service has `marketplace.categories`, those categories apply to the parent service's child marketplace.
 
@@ -182,14 +182,14 @@ export default defineService({
 The important design rule is that services do **not** declare concrete hostnames.
 Concrete domains are runtime activation state:
 
-- the operator or workspace adds a domain binding such as `shop.acme.com`
+- the operator or project adds a domain binding such as `shop.acme.com`
 - Zelavis verifies ownership through manual, DNS-TXT, or HTTP-01 verification
-- activation exposes the app on verified bindings owned by that workspace or service
+- activation exposes the app on verified bindings owned by that project or service
 
 `app.domainPolicy` controls what happens when no verified domain exists:
 
-- `optional` is the default. Workspace apps can be served on verified domains, but also fall back to `/apps/<service-name>` on the shared Zelavis host.
-- `required` means the workspace app is not synthesized until it has a verified domain binding. Use this for website/webapp services that should not appear on the shared host.
+- `optional` is the default. Extension apps can be served on verified domains, but also fall back to `/apps/<service-name>` on the shared Zelavis host.
+- `required` means the extension app is not synthesized until it has a verified domain binding. Use this for website/webapp services that should not appear on the shared host.
 
 This keeps service packages portable. A marketplace app can say "I am an SPA that wants root when hosted" without baking in `acme.com`, `localhost`, staging hostnames, certificate choices, or future deployment-provider details.
 
@@ -288,12 +288,12 @@ That gives services useful context without leaking host-specific APIs into the s
 
 ## Trust, capabilities, and stronger dashboard access
 
-Some services need more power than normal workspace services. The dashboard itself can render first-slide entries, settings surfaces, and core-owned pages. A random marketplace service should not be able to do that just by declaring a clever menu object.
+Some services need more power than normal Extensions services. The dashboard itself can render first-slide entries, settings surfaces, and core-owned pages. A random marketplace service should not be able to do that just by declaring a clever menu object.
 
 The clean distinction is trust and capability, not "service vs. non-service":
 
 - **system services** are bundled or statically registered by the operator. They may use privileged dashboard surfaces such as `root`, `core`, or `settings`.
-- **workspace services** are uploaded, marketplace-installed, or tenant-managed. They are constrained to the Workspace surface and can own nested slides under their own entry.
+- **extension services** are uploaded, marketplace-installed, or tenant-managed. They are constrained to the Extensions surface and can own nested slides under their own entry.
 - future hosts can make this more explicit with capability grants such as allowed menu surfaces, app hosting policy, isolated execution support, and runtime install strategy.
 
 Bundling a service into `zelavis` is acceptable today as a trust signal for first-party/system code, but it should not become the only long-term authorization model. The issue to avoid is hidden privilege: if "more power" comes only from where the code was imported, the system grows special cases and users cannot reason about why one service can render into Settings while another cannot. The better future shape is that static registration sets or implies `scope: "system"` and, over time, explicit capability grants describe exactly what the service is allowed to do.

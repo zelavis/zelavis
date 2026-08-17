@@ -1,4 +1,4 @@
-import { useLoaderData, useRouteLoaderData } from "react-router";
+import { useLoaderData, useRevalidator, useRouteLoaderData } from "react-router";
 import {
   DataEditor,
   type DataEditorProps,
@@ -6,16 +6,17 @@ import {
   type GridColumn,
   type Item,
 } from "@glideapps/glide-data-grid";
-import { Pin, Search } from "lucide-react";
+import { Pin, Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { CodeEditor } from "#/components/code/CodeEditor";
-import { PageHeader, ResourceNotice } from "#/components/DashboardPage";
+import { ResourceNotice } from "#/components/DashboardPage";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "#/components/ui/sheet";
 import {
   getRuntimeConfig,
+  insertDatabaseDocument,
   queryDatabaseDocuments,
   queryDatabaseSystemTable,
 } from "#/lib/runtime-api";
@@ -25,7 +26,7 @@ import { cn } from "#/lib/utils";
 
 export const handle = {
   pageLabel: "Database",
-  sidebarTrail: ["Core", "Database"],
+  sidebarTrail: ["Backend", "Database"],
 } as const;
 
 export async function clientLoader({ request }: import("./+types/database").Route.ClientLoaderArgs) {
@@ -208,10 +209,17 @@ function DatabaseDataGrid(props: {
   rows: DatabaseGridRow[];
   columns: string[];
   target: string;
-  selectedDocumentId?: string;
+  selectedRowId?: string;
   activeSavedViewName?: string;
-  onSelectDocument: (id: string) => void;
-  onClearSelectedDocument: () => void;
+  createEnabled?: boolean;
+  createError?: string;
+  createPending?: boolean;
+  onSelectRow: (id: string) => void;
+  onClearSelectedRow: () => void;
+  onCreateRow?: (input: {
+    id?: string;
+    data: Record<string, unknown>;
+  }) => Promise<void>;
   onSavedViewNameChange?: (name?: string) => void;
   onActivateSavedViewTarget?: (target: string, viewName?: string) => void;
 }) {
@@ -224,6 +232,10 @@ function DatabaseDataGrid(props: {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [detailDraft, setDetailDraft] = useState("");
   const [detailError, setDetailError] = useState<string>();
+  const [createDrawerOpen, setCreateDrawerOpen] = useState(false);
+  const [createIdDraft, setCreateIdDraft] = useState("");
+  const [createDataDraft, setCreateDataDraft] = useState("{}");
+  const [createDraftError, setCreateDraftError] = useState<string>();
   const [savedViews, setSavedViews] = useState<SavedDatabaseView[]>([]);
   const [viewNameDraft, setViewNameDraft] = useState("");
   const storageKey = `zelavis:database-grid:${props.collection}`;
@@ -317,20 +329,20 @@ function DatabaseDataGrid(props: {
     [columnSizing, filteredRows, sorting, visibleColumnKeys],
   );
 
-  const selectedDocument = props.rows.find(
-    (document) => document.id === props.selectedDocumentId,
+  const selectedRow = props.rows.find(
+    (row) => row.id === props.selectedRowId,
   );
 
   useEffect(() => {
-    if (!selectedDocument) {
+    if (!selectedRow) {
       setDetailDraft("");
       setDetailError(undefined);
       return;
     }
 
-    setDetailDraft(JSON.stringify(selectedDocument.data, null, 2));
+    setDetailDraft(JSON.stringify(selectedRow.data, null, 2));
     setDetailError(undefined);
-  }, [selectedDocument]);
+  }, [selectedRow]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -477,8 +489,8 @@ function DatabaseDataGrid(props: {
 
   function getCellContent([col, row]: Item): GridCell {
     const column = visibleColumnKeys[col];
-    const document = filteredRows[row];
-    if (!column || !document) {
+    const rowData = filteredRows[row];
+    if (!column || !rowData) {
       return createTextCell(undefined, true);
     }
 
@@ -491,11 +503,11 @@ function DatabaseDataGrid(props: {
         kind: "row-id",
         allowOverlay: false,
         readonly: true,
-        data: document.id,
+        data: rowData.id,
       } as GridCell;
     }
 
-    const value = readRowValue(document, column);
+    const value = readRowValue(rowData, column);
     return createCell(value, true);
   }
 
@@ -514,6 +526,40 @@ function DatabaseDataGrid(props: {
       }
       return [];
     });
+  }
+
+  async function submitNewRow() {
+    if (!props.onCreateRow || props.createPending) {
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(createDataDraft);
+    } catch (error) {
+      setCreateDraftError(
+        error instanceof Error ? error.message : "Row JSON is invalid.",
+      );
+      return;
+    }
+
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      setCreateDraftError("Row data must be a JSON object.");
+      return;
+    }
+
+    setCreateDraftError(undefined);
+    try {
+      await props.onCreateRow({
+        id: createIdDraft.trim() || undefined,
+        data: parsed as Record<string, unknown>,
+      });
+      setCreateIdDraft("");
+      setCreateDataDraft("{}");
+      setCreateDrawerOpen(false);
+    } catch {
+      // The parent owns the runtime error message so the drawer can stay open.
+    }
   }
 
   return (
@@ -536,6 +582,16 @@ function DatabaseDataGrid(props: {
             <span className="rounded-md border bg-background px-2 py-1 text-xs">
               {visibleColumnKeys.length}/{allColumnKeys.length} columns
             </span>
+            {props.createEnabled ? (
+              <Button
+                type="button"
+                onClick={() => setCreateDrawerOpen(true)}
+                disabled={props.createPending}
+              >
+                <Plus className="size-4" />
+                New Row
+              </Button>
+            ) : null}
           </div>
         </div>
         <div className="grid gap-3 md:grid-cols-[minmax(0,12rem)_minmax(0,14rem)_auto_auto]">
@@ -573,7 +629,7 @@ function DatabaseDataGrid(props: {
         </div>
         <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
           <span className="rounded-md border bg-background px-2 py-1">
-            Read-only system table
+            {props.createEnabled ? "Collection table" : "Read-only system table"}
           </span>
           <span className="rounded-md border bg-background px-2 py-1">
             View target: {props.target}
@@ -648,21 +704,21 @@ function DatabaseDataGrid(props: {
             }}
             onCellClicked={([col, row]) => {
               const column = visibleColumnKeys[col];
-              const document = filteredRows[row];
-              if (!document) {
+              const rowData = filteredRows[row];
+              if (!rowData) {
                 return;
               }
 
-              props.onSelectDocument(document.id);
+              props.onSelectRow(rowData.id);
               if (column === ACTIONS_COLUMN) {
                 setDrawerOpen(true);
               }
             }}
             onCellActivated={([col, row]) => {
               const column = visibleColumnKeys[col];
-              const document = filteredRows[row];
-              if (document) {
-                props.onSelectDocument(document.id);
+              const rowData = filteredRows[row];
+              if (rowData) {
+                props.onSelectRow(rowData.id);
                 if (column === ACTIONS_COLUMN || column === "id") {
                   setDrawerOpen(true);
                 }
@@ -702,7 +758,7 @@ function DatabaseDataGrid(props: {
         onOpenChange={(open) => {
           setDrawerOpen(open);
           if (!open) {
-            props.onClearSelectedDocument();
+            props.onClearSelectedRow();
           }
         }}
       >
@@ -711,14 +767,14 @@ function DatabaseDataGrid(props: {
             <SheetTitle>Row details</SheetTitle>
           </SheetHeader>
           <div className="grid gap-3 overflow-auto px-4 pb-4">
-            {selectedDocument ? (
+            {selectedRow ? (
               <>
-                <p className="text-sm font-medium text-foreground">{selectedDocument.id}</p>
+                <p className="text-sm font-medium text-foreground">{selectedRow.id}</p>
                 <CodeEditor
                   value={detailDraft}
                   language="json"
                   minHeight={360}
-                  ariaLabel={`JSON editor for ${selectedDocument.id}`}
+                  ariaLabel={`JSON editor for ${selectedRow.id}`}
                   readOnly
                 />
                 {detailError ? (
@@ -728,9 +784,62 @@ function DatabaseDataGrid(props: {
             ) : (
               <ResourceNotice
                 title="Select a row"
-                description="Pick a row to inspect its JSON."
+                description="Pick a row to inspect its raw values."
               />
             )}
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={createDrawerOpen} onOpenChange={setCreateDrawerOpen}>
+        <SheetContent side="right" className="w-full sm:max-w-xl">
+          <SheetHeader>
+            <SheetTitle>New row</SheetTitle>
+          </SheetHeader>
+          <div className="grid gap-4 overflow-auto px-4 pb-4">
+            {props.createError ? (
+              <ResourceNotice title="Could not create row" description={props.createError} />
+            ) : null}
+            {createDraftError ? (
+              <ResourceNotice title="Invalid row JSON" description={createDraftError} />
+            ) : null}
+            <label className="grid gap-2 text-sm font-medium text-foreground">
+              ID
+              <Input
+                value={createIdDraft}
+                onChange={(event) => setCreateIdDraft(event.target.value)}
+                placeholder="Auto-generated"
+                autoComplete="off"
+              />
+            </label>
+            <label className="grid gap-2 text-sm font-medium text-foreground">
+              Data
+              <CodeEditor
+                value={createDataDraft}
+                onChange={setCreateDataDraft}
+                language="json"
+                minHeight={360}
+                ariaLabel={`Raw values editor for a new ${props.collection} row`}
+              />
+            </label>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setCreateDrawerOpen(false)}
+                disabled={props.createPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={() => void submitNewRow()}
+                disabled={props.createPending || !props.onCreateRow}
+              >
+                <Plus className="size-4" />
+                Create Row
+              </Button>
+            </div>
           </div>
         </SheetContent>
       </Sheet>
@@ -748,17 +857,20 @@ const databaseSchema = {
 
 function DatabaseRoute() {
   const [search, setParams] = useTypedSearchParams(databaseSchema);
+  const revalidator = useRevalidator();
   const { systemRows: systemRowsData, tableRows: tableRowsData } = useLoaderData<typeof clientLoader>();
   const { runtime: config } = useRouteLoaderData<typeof rootClientLoader>('root')!;
-  const selectedDocumentId = search.inspectedId;
-  const setSelectedDocumentId = (id: string | undefined) => setParams({ inspectedId: id ?? null });
+  const [createError, setCreateError] = useState<string>();
+  const [createPending, setCreatePending] = useState(false);
+  const selectedRowId = search.inspectedId;
+  const setSelectedRowId = (id: string | undefined) => setParams({ inspectedId: id ?? null });
   const selectedDatabaseTable = search.databaseTable || undefined;
   const selectedSystemTable = selectedDatabaseTable ? undefined : search.systemTable;
   const selectedTarget = selectedDatabaseTable ?? selectedSystemTable ?? DEFAULT_SYSTEM_TABLE;
   const activeViewName = search.view;
   const desiredSidebar = selectedDatabaseTable
-    ? "Core/Database"
-    : "Core/Database/System Tables";
+    ? "Backend/Database"
+    : "Backend/Database/System Tables";
   const systemRowsResource = { data: systemRowsData, loading: false, error: undefined as Error | undefined };
   const tableRowsResource = { data: tableRowsData, loading: false, error: undefined as Error | undefined };
 
@@ -779,19 +891,11 @@ function DatabaseRoute() {
   );
   const tableRows = useMemo(
     () =>
-      (tableRowsResource.data ?? []).map((document) => ({
-        id: document.id,
-        version: document.version,
-        updatedAt: document.updatedAt,
-        data: {
-          tenant_id: document.tenantId,
-          id: document.id,
-          data_json: document.data,
-          created_at: document.createdAt,
-          updated_at: document.updatedAt,
-          version: document.version,
-          schema_version: document.schemaVersion,
-        },
+      (tableRowsResource.data ?? []).map((record) => ({
+        id: record.id,
+        version: record.version,
+        updatedAt: record.updatedAt,
+        data: record.data,
       })),
     [tableRowsResource.data],
   );
@@ -799,18 +903,44 @@ function DatabaseRoute() {
   const activeResource = selectedDatabaseTable ? tableRowsResource : systemRowsResource;
   const activeKind = selectedDatabaseTable ? "Collection table" : "System table";
   const emptyDescription = selectedDatabaseTable
-    ? `The collection table ${selectedDatabaseTable} has no documents yet.`
+    ? `The collection table ${selectedDatabaseTable} has no rows yet.`
     : `The system table ${selectedSystemTable} is empty or unavailable.`;
-  const documentColumns = useMemo(() => {
+  const rowColumns = useMemo(() => {
     const keys = new Set<string>();
-    for (const document of activeRows) {
-      for (const key of Object.keys(document.data)) {
+    for (const row of activeRows) {
+      for (const key of Object.keys(row.data)) {
         keys.add(key);
       }
     }
 
     return Array.from(keys).sort((left, right) => left.localeCompare(right));
   }, [activeRows]);
+
+  async function createRow(input: {
+    id?: string;
+    data: Record<string, unknown>;
+  }) {
+    if (!selectedDatabaseTable || createPending) {
+      return;
+    }
+
+    setCreatePending(true);
+    setCreateError(undefined);
+    try {
+      const createdRow = await insertDatabaseDocument(config, {
+        collection: selectedDatabaseTable,
+        id: input.id,
+        data: input.data,
+      });
+      await revalidator.revalidate();
+      setSelectedRowId(createdRow.id);
+    } catch (caught) {
+      setCreateError(caught instanceof Error ? caught.message : String(caught));
+      throw caught;
+    } finally {
+      setCreatePending(false);
+    }
+  }
 
   useEffect(() => {
     if (selectedDatabaseTable) {
@@ -832,16 +962,14 @@ function DatabaseRoute() {
     setParams({ sidebar: desiredSidebar });
   }, [desiredSidebar, search.sidebar]);
 
-  // Clear inspectedId from URL if the selected document no longer exists in the active table
-  const selectedDocumentExists = !selectedDocumentId || activeRows.some((document) => document.id === selectedDocumentId);
-  if (!selectedDocumentExists) {
+  // Clear inspectedId from URL if the selected row no longer exists in the active table.
+  const selectedRowExists = !selectedRowId || activeRows.some((row) => row.id === selectedRowId);
+  if (!selectedRowExists) {
     setParams({ inspectedId: null });
   }
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader eyebrow="Database" title="Core Database" />
-
       <div className="grid gap-4">
         <div className="grid gap-2">
           <h2 className="text-lg font-semibold">
@@ -855,7 +983,7 @@ function DatabaseRoute() {
               {activeRows.length} rows loaded
             </span>
             <span className="rounded-md border bg-muted/20 px-2 py-1">
-              {selectedDatabaseTable ? "Document projection" : "SQL read-only"}
+              {selectedDatabaseTable ? "Raw rows" : "SQL read-only"}
             </span>
           </div>
         </div>
@@ -873,7 +1001,7 @@ function DatabaseRoute() {
                 : String(activeResource.error)
             }
           />
-        ) : activeRows.length === 0 ? (
+        ) : activeRows.length === 0 && !selectedDatabaseTable ? (
           <ResourceNotice
             title={
               selectedDatabaseTable
@@ -887,11 +1015,15 @@ function DatabaseRoute() {
             collection={selectedTarget}
             target={selectedTarget}
             rows={activeRows}
-            columns={documentColumns}
-            selectedDocumentId={selectedDocumentId}
+            columns={rowColumns}
+            selectedRowId={selectedRowId}
             activeSavedViewName={activeViewName}
-            onSelectDocument={setSelectedDocumentId}
-            onClearSelectedDocument={() => setSelectedDocumentId(undefined)}
+            createEnabled={Boolean(selectedDatabaseTable)}
+            createError={createError}
+            createPending={createPending}
+            onCreateRow={selectedDatabaseTable ? createRow : undefined}
+            onSelectRow={setSelectedRowId}
+            onClearSelectedRow={() => setSelectedRowId(undefined)}
             onSavedViewNameChange={(view) => {
               setParams({ view: view ?? null });
             }}

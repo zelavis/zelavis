@@ -74,18 +74,18 @@ export interface ZelavisServiceMarketplaceMetadata {
  * Controls which capabilities are available to this service.
  *
  * - `"system"` — first-party or statically registered services. Can mount on
- *   any dashboard surface (root, core, workspace, settings). Set automatically
+ *   any dashboard surface (root, core, extensions, settings). Set automatically
  *   when the service is passed directly to `zelavis({ services: [...] })`.
  *
- * - `"workspace"` — runtime-installed services (uploaded ZIP, marketplace).
- *   Always mount under the Workspace surface regardless of what `menu.surface`
+ * - `"extension"` — runtime-installed services (uploaded ZIP, marketplace).
+ *   Always mount under the Extensions surface regardless of what `menu.surface`
  *   declares. Enforced by the activation layer, not the definition.
  *
- * Defaults to `"workspace"`. The activation layer upgrades this to `"system"`
- * for statically registered entries and forces it back to `"workspace"` for
+ * Defaults to `"extension"`. The activation layer upgrades this to `"system"`
+ * for statically registered entries and forces it back to `"extension"` for
  * any service loaded from the registry store.
  */
-export type ZelavisServiceScope = "system" | "workspace";
+export type ZelavisServiceScope = "system" | "extension";
 
 /**
  * Static-asset serving mode for a service app.
@@ -103,10 +103,10 @@ export type ZelavisServiceAppMode = "spa" | "mpa";
  *
  * - `"optional"` — the app can be served from verified domain bindings when
  *   the runtime has them, and otherwise falls back to the shared
- *   `/apps/<service-name>` path for workspace services.
- * - `"required"` — workspace service activation only synthesizes the app route
+ *   `/apps/<service-name>` path for extension services.
+ * - `"required"` — extension service activation only synthesizes the app route
  *   when at least one verified domain binding exists for that service or its
- *   workspace. This is for website/webapp services that should not be exposed on
+ *   project. This is for website/webapp services that should not be exposed on
  *   the shared Zelavis host.
  *
  * Concrete hostnames are runtime activation state, not service metadata.
@@ -164,7 +164,7 @@ export interface ZelavisServiceAppShellDefinition {
 export interface ZelavisServiceAppDefinition {
   /**
    * Path prefix this app is mounted under. Defaults to `"/"` (root).
-   * Workspace-scoped services have their mount rewritten to
+   * Extension-scoped services have their mount rewritten to
    * `/apps/<service-name>` at activation regardless of what they declare.
    */
   mount?: string;
@@ -387,7 +387,7 @@ function validateServiceMenu(
   path = menu.title,
 ): void {
   // `surface` is allowed in the definition — the activation layer enforces
-  // workspace-only scoping for runtime-installed services at registration time,
+  // extension-only scoping for runtime-installed services at registration time,
   // not here. System services registered statically may use any surface.
 
   if ("page" in menu && menu.page !== undefined) {
@@ -932,9 +932,9 @@ export function defineService<TContext = unknown, TService = unknown>(
   return Object.freeze({
     ...normalized,
     contractVersion: ZELAVIS_SERVICE_V1,
-    // Default to "workspace". The registration path (static vs. uploaded)
+    // Default to "extension". The registration path (static vs. uploaded)
     // overrides this — see loadStoredServiceRegistryModules in index.ts.
-    scope: definition.scope ?? "workspace",
+    scope: definition.scope ?? "extension",
     kind: definition.kind,
     capabilities: definition.capabilities
       ? Object.freeze([...definition.capabilities])

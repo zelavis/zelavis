@@ -19,6 +19,7 @@ import {
   SidebarTrigger,
 } from "#/components/ui/sidebar";
 import { TooltipProvider } from "#/components/ui/tooltip";
+import { useIsMobile } from "#/hooks/use-mobile";
 import { getDashboardPageLabelFromMatches } from "#/lib/dashboard-route-handles";
 import { getDashboardPageLabel } from "#/lib/dashboard-data";
 import type {
@@ -127,6 +128,7 @@ export function DashboardShell({
   dashboardData?: DashboardShellData;
 }) {
   const direction = useDirection();
+  const isMobile = useIsMobile();
   const [activeDashboardData, setActiveDashboardData] = React.useState(dashboardData);
 
   React.useEffect(() => {
@@ -200,24 +202,28 @@ export function DashboardShell({
           settings={activeDashboardData?.settings}
           databaseCollections={activeDashboardData?.databaseCollections}
           schemaCollections={activeDashboardData?.schemaCollections}
+          mobileSlotContent={isMobile ? children : undefined}
           side={direction === "rtl" ? "right" : "left"}
           aria-label="Dashboard navigation"
-          role="complementary"
+          role="navigation"
         />
-        <SidebarInset className="min-h-0 overflow-hidden">
-          <UtilityHeader runtime={activeDashboardData?.runtime} />
-          <div
-            className="flex min-h-0 flex-1 flex-col overflow-auto"
-          >
+        {!isMobile ? (
+          <SidebarInset className="hidden min-h-0 min-w-0 overflow-hidden lg:flex">
+            <UtilityHeader runtime={activeDashboardData?.runtime} />
             <div
-              className="dashboard-view-transition flex min-h-full flex-1 flex-col gap-4 p-4"
+              data-dashboard-scroll="content"
+              className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
             >
-              <RestartRequiredBanner settings={activeDashboardData?.settings} />
-              {children}
-              <Footer />
+              <div
+                className="dashboard-view-transition flex min-h-full min-w-0 flex-col gap-4 p-4"
+              >
+                <RestartRequiredBanner settings={activeDashboardData?.settings} />
+                {children}
+                <Footer />
+              </div>
             </div>
-          </div>
-        </SidebarInset>
+          </SidebarInset>
+        ) : null}
       </SidebarProvider>
     </TooltipProvider>
   );

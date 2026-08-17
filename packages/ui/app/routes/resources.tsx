@@ -25,7 +25,6 @@ import {
 
 import {
   DataRow,
-  PageHeader,
   ResourceNotice,
   StatCard,
   StatusBadge,
@@ -54,21 +53,6 @@ export const handle = {
 
 const resourceSearchSchema = {
   resourceView: parseAsStringLiteral(["processes", "storage", "limits"] as const),
-} as const;
-
-const resourceViewContent = {
-  processes: {
-    title: "Processes",
-    description: "Running services, ports, process health, and restart candidates.",
-  },
-  storage: {
-    title: "Storage",
-    description: "Disk usage across projects, media, databases, backups, and logs.",
-  },
-  limits: {
-    title: "Limits",
-    description: "Soft quotas, warning thresholds, and per-project resource guardrails.",
-  },
 } as const;
 
 const pressureChartConfig = {
@@ -246,19 +230,9 @@ const limitRows = [
 
 export default function ResourcesRoute() {
   const [{ resourceView }] = useTypedSearchParams(resourceSearchSchema);
-  const view = resourceView ? resourceViewContent[resourceView] : undefined;
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Resources"
-        title={view?.title ?? "Resources"}
-        description={
-          view?.description ??
-          "Server capacity, project pressure, and local hosting signals for a self-hosted Zelavis installation."
-        }
-      />
-
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <StatCard
           label="CPU"

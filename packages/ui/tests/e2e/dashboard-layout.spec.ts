@@ -761,7 +761,7 @@ test('marketplace shows promoted official services with install actions', async 
   await expect(page.getByText('Runtime restart required')).toHaveCount(0)
 })
 
-test('marketplace does not expose ecommerce in workspace before install', async ({
+test('marketplace does not expose ecommerce in extensions before install', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
@@ -769,7 +769,7 @@ test('marketplace does not expose ecommerce in workspace before install', async 
   await gotoDashboard(page, '/')
 
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
-  await expect(sidebar.getByRole('button', { name: 'Workspace', exact: true })).toBeVisible()
+  await expect(sidebar.getByRole('button', { name: 'Extensions', exact: true })).toBeVisible()
   await expect(sidebar.getByRole('button', { name: 'Ecommerce', exact: true })).toHaveCount(0)
 })
 
@@ -783,7 +783,7 @@ test('marketplace info opens a plugin details panel', async ({
   await page.getByRole('button', { name: 'Info' }).first().click()
   const sheet = page.getByRole('dialog', { name: 'Zelavis Ecommerce' })
   await expect(sheet.getByRole('heading', { name: 'Zelavis Ecommerce' })).toBeVisible()
-  await expect(sheet.getByText('Workspace area with nested slides')).toBeVisible()
+  await expect(sheet.getByText('Extensions area with nested slides')).toBeVisible()
 })
 
 test('sidebar category rows drill down into sliding panels', async ({
@@ -792,7 +792,7 @@ test('sidebar category rows drill down into sliding panels', async ({
   test.skip(testInfo.project.name !== 'desktop')
 
   await gotoDashboard(page, '/')
-  await page.getByRole('button', { name: 'Core' }).click()
+  await page.getByRole('button', { name: 'Backend' }).click()
 
   await expect(page.getByRole('button', { name: 'Database', exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Auth', exact: true })).toBeVisible()
@@ -806,7 +806,7 @@ test('sidebar category rows drill down into sliding panels', async ({
   await expect(
     page
       .getByRole('complementary', { name: 'Dashboard navigation' })
-      .getByRole('button', { name: 'Core', exact: true }),
+      .getByRole('button', { name: 'Backend', exact: true }),
   ).toBeVisible()
 })
 
@@ -855,7 +855,7 @@ test('sidebar panels animate between slides', async ({ page }, testInfo) => {
   const track = sidebar.locator('.swiper-wrapper')
   const viewportWidth = await viewport.evaluate((element) => element.clientWidth)
 
-  await sidebar.getByRole('button', { name: 'Core', exact: true }).click()
+  await sidebar.getByRole('button', { name: 'Backend', exact: true }).click()
   await page.waitForTimeout(60)
 
   const translateX = await getTranslateX(track)
@@ -865,7 +865,7 @@ test('sidebar panels animate between slides', async ({ page }, testInfo) => {
 
   await expect.poll(() => getTranslateX(track)).toBeLessThanOrEqual(-viewportWidth + 10)
 
-  await sidebar.getByRole('button', { name: 'Core', exact: true }).click()
+  await sidebar.getByRole('button', { name: 'Backend', exact: true }).click()
   await page.waitForTimeout(60)
 
   const backTranslateX = await getTranslateX(track)
@@ -886,14 +886,14 @@ test('sidebar back to platform returns the page to overview', async ({
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
   let activeSlide = sidebar.locator('.swiper-slide-active').first()
 
-  await activeSlide.getByRole('button', { name: 'Core', exact: true }).click()
+  await activeSlide.getByRole('button', { name: 'Backend', exact: true }).click()
   activeSlide = sidebar.locator('.swiper-slide-active').first()
   await activeSlide.getByRole('button', { name: 'Database', exact: true }).click()
   activeSlide = sidebar.locator('.swiper-slide-active').first()
   await activeSlide.getByRole('link', { name: 'Create Table', exact: true }).click()
 
   await expect(page.getByRole('heading', { name: 'New Table' })).toBeVisible()
-  await activeSlide.getByRole('button', { name: 'Core', exact: true }).click()
+  await activeSlide.getByRole('button', { name: 'Backend', exact: true }).click()
   activeSlide = sidebar.locator('.swiper-slide-active').first()
 
   await expect(activeSlide.getByRole('button', { name: 'Platform', exact: true })).toBeVisible()
@@ -914,15 +914,15 @@ test('sidebar panel state survives refresh through the router', async ({
   await gotoDashboard(page, '/')
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
 
-  await sidebar.getByRole('button', { name: 'Workspace', exact: true }).click()
+  await sidebar.getByRole('button', { name: 'Extensions', exact: true }).click()
 
-  await expect(page).toHaveURL(/sidebar=Workspace/)
+  await expect(page).toHaveURL(/sidebar=Extensions/)
   await expect(page.getByRole('link', { name: 'Agents', exact: true })).toBeVisible()
 
   await page.reload()
   await waitForDashboardHydration(page)
 
-  await expect(sidebar.getByRole('button', { name: 'Workspace', exact: true })).toBeVisible()
+  await expect(sidebar.getByRole('button', { name: 'Extensions', exact: true })).toBeVisible()
   await expect(sidebar.getByRole('button', { name: 'Builder', exact: true })).toBeVisible()
 })
 

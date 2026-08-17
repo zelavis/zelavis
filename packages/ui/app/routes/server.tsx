@@ -3,7 +3,6 @@ import { Link, Outlet, useLocation } from "react-router";
 
 import {
   DataRow,
-  PageHeader,
   ResourceNotice,
   StatCard,
   StatusBadge,
@@ -47,12 +46,6 @@ function ServerRoute() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Server"
-        title="Server"
-        description="Global host controls for things that sit above individual projects."
-      />
-
       <section className="grid gap-4 md:grid-cols-3">
         <StatCard
           label="Domains"

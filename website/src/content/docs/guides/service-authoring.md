@@ -139,7 +139,7 @@ export const zelavisEcommerceService = defineService({
 });
 ```
 
-Child services declare `extends` metadata. They are installed through the same registry, but the parent service decides how to consume them and must allow them through `childServices`. Zelavis does not run child services as independent top-level workspace services.
+Child services declare `extends` metadata. They are installed through the same registry, but the parent service decides how to consume them and must allow them through `childServices`. Zelavis does not run child services as independent top-level Extensions services.
 
 ## Rule 5: Make capabilities endpoint-backed
 
@@ -220,7 +220,7 @@ Important details:
 - `menu.page.render(...)` returns a full HTML document string or `{ html, status, headers, contentType }`.
 - Service pages are mounted in the dashboard through the `zelavis-service-frame` iframe web component.
 - `setup(context)` may register runtime services through `context.addService(...)`, `context.addServices(...)`, or by returning `{ runtimeServices }`.
-- Child services use `extends` and are passed to their parent service; they do not get their own Workspace menu area.
+- Child services use `extends` and are passed to their parent service; they do not get their own Extensions menu area.
 
 The repo includes `examples/plugin-basic` as a minimal uploadable service. Build its upload package with `pnpm --filter @zelavis/example-plugin-basic package`, then select `examples/plugin-basic/dist/example-basic.zip` in the Node example project Marketplace flow at `/zelavis/projects/default/marketplace`. The service module defines its own `name`, `version`, menu, pages, and services, so the dashboard does not ask for a separate service name. The ZIP includes `zelavis.service.json`, whose `entry` field points at the ESM module the host adapter should import.
 

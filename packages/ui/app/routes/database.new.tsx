@@ -2,7 +2,7 @@ import { Form, Link, redirect, useNavigation } from "react-router";
 import { Database, Plus } from "lucide-react";
 import { useState } from "react";
 
-import { PageHeader, ResourceNotice } from "#/components/DashboardPage";
+import { ResourceNotice } from "#/components/DashboardPage";
 import { Button, buttonVariants } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
@@ -13,7 +13,7 @@ import type { Route } from "./+types/database.new";
 
 export const handle = {
   pageLabel: "Database",
-  sidebarTrail: ["Core", "Database"],
+  sidebarTrail: ["Backend", "Database"],
 } as const;
 
 function slugifyTableName(value: string) {
@@ -68,18 +68,14 @@ function NewDatabaseTableRoute({ actionData }: Route.ComponentProps) {
 
   return (
     <section className="mx-auto grid w-full max-w-4xl gap-6">
-      <PageHeader
-        eyebrow="Database"
-        title="New Table"
-        actions={
-          <Link
-            to={toProjectPath("/database")}
-            className={cn(buttonVariants({ variant: "outline" }))}
-          >
-            Back to Database
-          </Link>
-        }
-      />
+      <div className="flex justify-end">
+        <Link
+          to={toProjectPath("/database")}
+          className={cn(buttonVariants({ variant: "outline" }))}
+        >
+          Back to Database
+        </Link>
+      </div>
 
       <Card>
         <CardHeader>

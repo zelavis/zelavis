@@ -5,14 +5,12 @@ import {
   Pencil,
   Pin,
   PinOff,
-  Plus,
   Save,
   X,
 } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
 
 import {
-  PageHeader,
   ResourceNotice,
   StatusBadge,
 } from "#/components/DashboardPage";
@@ -232,27 +230,14 @@ function Content() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Content"
-        title="Content Studio"
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
-            <Link
-              to={toProjectPath("/content/new")}
-              className={cn(buttonVariants())}
-            >
-              <Plus className="size-4" />
-              Create new Content Type
-            </Link>
-            <Link
-              to={toDashboardPath(toProjectPath("/database"), { sidebar: "Core" })}
-              className={cn(buttonVariants({ variant: "outline" }))}
-            >
-              Open Core Database
-            </Link>
-          </div>
-        }
-      />
+      <div className="flex justify-end">
+        <Link
+          to={toDashboardPath(toProjectPath("/database"), { sidebar: "Backend" })}
+          className={cn(buttonVariants({ variant: "outline" }))}
+        >
+          Open Backend Database
+        </Link>
+      </div>
 
       {message ? <ResourceNotice title="Done" description={message} /> : null}
       {error ? <ResourceNotice title="Action failed" description={error} /> : null}

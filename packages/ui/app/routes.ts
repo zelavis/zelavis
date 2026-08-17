@@ -2,6 +2,7 @@ import { type RouteConfig, index, route } from "@react-router/dev/routes";
 
 export default [
   index("routes/projects.index.tsx"),
+  route("assistant", "routes/assistant.tsx"),
   route("marketplace", "routes/marketplace.tsx"),
   route("projects", "routes/projects.tsx"),
   route("resources", "routes/resources.tsx"),
@@ -41,6 +42,7 @@ export default [
   route("projects/:projectId/users", "routes/users.tsx"),
   route("projects/:projectId/website", "routes/website.tsx"),
   route("projects/:projectId/:managedSection", "routes/project.managed.$managedSection.tsx"),
+  route("_api/assistant", "routes/api.assistant.tsx"),
   route("_api/relations/:collection", "routes/api.relations.$collection.tsx"),
   route("*", "routes/$.tsx"),
 ] satisfies RouteConfig;

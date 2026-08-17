@@ -24,6 +24,34 @@ checks, resource metrics, domains, backups, service installs, project settings,
 database mutations, and hosting actions must stay scriptable outside the
 dashboard through the API.
 
+## Mobile-Ready Slots
+
+Dashboard feature surfaces should be built as reusable workspace or panel
+components, then composed by routes. The desktop content area and future
+mobile/sidebar slide slots should share those same components instead of
+forking behavior.
+
+Below the dashboard desktop breakpoint (`lg`), the sidebar becomes the app shell
+and the desktop content inset is hidden. Phone and smaller tablet experiences
+should therefore come from slide navigation and route slots, not from squeezing
+the desktop workspace into a narrow viewport.
+
+Use `DashboardSlotLayout` and `DashboardSlot` from
+`app/components/DashboardSlots.tsx` when a route naturally breaks into
+mobile-ready areas such as:
+
+- `overview`
+- `main`
+- `create`
+- `edit`
+- `inspect`
+- `settings`
+
+Routes may declare `handle.slots` metadata so the responsive sidebar/mobile app
+shell can later discover which pieces can be mounted into slide slots. Keep
+data loading in route `clientLoader`s or resource routes, not inside duplicated
+mobile-only components.
+
 ## Service
 
 `@zelavis/ui/service` exports the dashboard service definition helpers used by the

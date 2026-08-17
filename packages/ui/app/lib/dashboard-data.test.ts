@@ -3,7 +3,7 @@ import {
   buildManagedProjectNavItems,
   buildPlatformNavItems,
   projectManagementNavItems,
-  buildWorkspaceServiceNavItems,
+  buildExtensionServiceNavItems,
   findServiceMenuPageByPath,
   type DashboardNavItem,
 } from "./dashboard-data";
@@ -28,7 +28,7 @@ function findNavItem(
 }
 
 describe("dashboard navigation ownership", () => {
-  it("keeps installed services to one root workspace item with nested slides underneath", () => {
+  it("keeps installed services to one Extensions item with nested slides underneath", () => {
     const services = [
       {
         name: "@zelavis/ecommerce",
@@ -47,14 +47,14 @@ describe("dashboard navigation ownership", () => {
       },
     ] satisfies readonly RuntimeServiceRegistryEntry[];
 
-    const workspaceItems = buildWorkspaceServiceNavItems(services);
-    expect(workspaceItems).toHaveLength(1);
-    expect(workspaceItems[0]?.title).toBe("Ecommerce");
-    expect(workspaceItems[0]?.items?.map((item) => item.title)).toEqual(["Orders"]);
+    const extensionItems = buildExtensionServiceNavItems(services);
+    expect(extensionItems).toHaveLength(1);
+    expect(extensionItems[0]?.title).toBe("Ecommerce");
+    expect(extensionItems[0]?.items?.map((item) => item.title)).toEqual(["Orders"]);
 
     const nav = buildPlatformNavItems([], services);
-    const workspace = nav.find((item) => item.title === "Workspace");
-    expect(workspace?.items?.some((item) => item.title === "Ecommerce")).toBe(true);
+    const extensions = nav.find((item) => item.title === "Extensions");
+    expect(extensions?.items?.some((item) => item.title === "Ecommerce")).toBe(true);
     expect(nav.some((item) => item.title === "Ecommerce")).toBe(false);
   });
 
@@ -75,7 +75,7 @@ describe("dashboard navigation ownership", () => {
       },
     ] satisfies readonly RuntimeServiceRegistryEntry[];
 
-    const [item] = buildWorkspaceServiceNavItems(services);
+    const [item] = buildExtensionServiceNavItems(services);
 
     expect(item?.url).toBe("/example-basic");
     expect(findServiceMenuPageByPath("/example-basic", services)?.id).toBe("dashboard");
@@ -124,8 +124,8 @@ describe("dashboard navigation ownership", () => {
       ["Media", "Build"],
       ["Website", "Build"],
       ["Marketplace", "Extend"],
-      ["Workspace", "Extend"],
-      ["Core", "Core"],
+      ["Extensions", "Extend"],
+      ["Backend", "Backend"],
       ["Settings", "Settings"],
     ]);
     expect(nav.some((item) => item.title === "Website")).toBe(true);
@@ -312,6 +312,10 @@ describe("dashboard navigation ownership", () => {
     expect(findNavItem(nav, "Add Content Type")).toMatchObject({
       fixed: true,
       fixedOrder: 2,
+    });
+    expect(findNavItem(nav, "Fruits")).toMatchObject({
+      panelLabel: "Fruits",
+      landingUrl: "/projects/default/content/fruits",
     });
     expect(findNavItem(database?.items ?? [], "Fruits")?.search).toEqual({
       databaseTable: "fruits",

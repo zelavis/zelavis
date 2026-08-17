@@ -6,7 +6,7 @@ export interface RuntimeServiceMenuDefinition {
   fixed?: boolean;
   fixedOrder?: number;
   sectionLabel?: string;
-  surface?: "root" | "core" | "workspace" | "settings";
+  surface?: "root" | "core" | "extensions" | "settings";
   items?: readonly RuntimeServiceMenuDefinition[];
 }
 
@@ -396,6 +396,7 @@ const fallbackConfig: RuntimeConfig = {
   dashboard: {
     title: "zelavis",
     clientRoutes: [
+      "/assistant",
       "/marketplace",
       "/projects",
       "/resources",

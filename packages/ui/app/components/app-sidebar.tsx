@@ -1,10 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { useLocation } from "react-router";
+import { useLocation, useMatches, useNavigate } from "react-router";
 
 import { NavMain } from "#/components/nav-main";
-import { NavUser } from "#/components/nav-user";
+import {
+  NavUser,
+  NavUserScreen,
+  type SidebarUtilityScreen,
+} from "#/components/nav-user";
 import { ProjectSwitcher } from "#/components/project-switcher";
 import {
   Sidebar,
@@ -29,6 +33,7 @@ import {
   isProjectManagementPath,
   readSearchParams,
 } from "#/lib/routing";
+import { getDashboardSidebarTrailFromMatches } from "#/lib/dashboard-route-handles";
 import { cn } from "#/lib/utils";
 import {
   type DashboardSettings,
@@ -41,7 +46,7 @@ import {
 const data = {
   user: {
     name: "Runtime dashboard",
-    email: "local workspace",
+    email: "local project",
     avatar: "",
   },
 };
@@ -51,30 +56,26 @@ export function AppSidebar({
   settings,
   databaseCollections,
   schemaCollections,
+  mobileSlotContent,
   ...props
 }: React.ComponentProps<typeof Sidebar> & {
   runtime?: RuntimeConfig;
   settings?: DashboardSettings;
   databaseCollections?: readonly DatabaseCollection[];
   schemaCollections?: readonly DatabaseSchemaCollectionSummary[];
+  mobileSlotContent?: React.ReactNode;
 }) {
   const location = useLocation();
-  const [openSidebarPopover, setOpenSidebarPopover] = React.useState<
-    "project" | "user" | null
-  >(null);
-  const setSidebarPopoverOpen = React.useCallback(
-    (popover: "project" | "user", open: boolean) => {
-      setOpenSidebarPopover((current) => {
-        if (open) {
-          return popover;
-        }
-
-        return current === popover ? null : current;
-      });
-    },
-    [],
-  );
-  const isSidebarPopoverOpen = openSidebarPopover !== null;
+  const matches = useMatches();
+  const navigate = useNavigate();
+  const [isProjectSwitcherOpen, setIsProjectSwitcherOpen] =
+    React.useState(false);
+  const [activeUtilityScreen, setActiveUtilityScreen] =
+    React.useState<SidebarUtilityScreen | null>(null);
+  const [utilityScreenOpenedFromNested, setUtilityScreenOpenedFromNested] =
+    React.useState(false);
+  const [homeResetKey, setHomeResetKey] = React.useState(0);
+  const isSidebarPopoverOpen = isProjectSwitcherOpen;
   const sidebarChromeClassName = cn(
     "transition-[filter,opacity] duration-200 ease-out motion-reduce:transition-none",
     isSidebarPopoverOpen && "pointer-events-none blur-[2px] opacity-70",
@@ -83,6 +84,12 @@ export function AppSidebar({
     ? { inert: true }
     : undefined;
   const isProjectManagementRoute = isProjectManagementPath(location.pathname);
+  const routeSidebarTrail = getDashboardSidebarTrailFromMatches(matches) ?? [];
+  const currentSidebarSearch = readSearchParams(location.search).sidebar;
+  const hasNestedSidebarContext =
+    (typeof currentSidebarSearch === "string" &&
+      currentSidebarSearch.length > 0) ||
+    routeSidebarTrail.length > 0;
   const projectId = getProjectIdFromPathname(location.pathname);
   const isProjectDashboardRoute = Boolean(projectId) && !isProjectManagementRoute;
   const managedProjectKind = getManagedProjectKindFromId(projectId);
@@ -157,7 +164,7 @@ export function AppSidebar({
             <ProjectSwitcher
               projects={dashboardProjects}
               homeIconLinksToProjects={isProjectDashboardRoute}
-              onOpenChange={(open) => setSidebarPopoverOpen("project", open)}
+              onOpenChange={setIsProjectSwitcherOpen}
             />
           </div>
         </div>
@@ -166,15 +173,53 @@ export function AppSidebar({
         className={cn("overflow-hidden", sidebarChromeClassName)}
         {...sidebarChromeInertProps}
       >
-        <NavMain items={items} />
+        <div
+          className={cn(
+            "flex min-h-0 min-w-0 flex-1 flex-col",
+            activeUtilityScreen && "hidden",
+          )}
+        >
+          <NavMain
+            homeResetKey={homeResetKey}
+            items={items}
+            mobileSlotContent={mobileSlotContent}
+          />
+        </div>
+        {activeUtilityScreen ? (
+          <NavUserScreen
+            screen={activeUtilityScreen}
+            openedFromNested={utilityScreenOpenedFromNested}
+            user={data.user}
+            onClose={() => setActiveUtilityScreen(null)}
+          />
+        ) : null}
       </SidebarContent>
       <SidebarFooter
-        className={sidebarChromeClassName}
+        className={cn(
+          "transition-[filter,opacity] duration-200 ease-out motion-reduce:transition-none",
+          isSidebarPopoverOpen && "pointer-events-none blur-[2px] opacity-70",
+        )}
         {...sidebarChromeInertProps}
       >
         <NavUser
+          activeScreen={activeUtilityScreen}
           user={data.user}
-          onOpenChange={(open) => setSidebarPopoverOpen("user", open)}
+          onHome={() => {
+            setActiveUtilityScreen(null);
+            setUtilityScreenOpenedFromNested(false);
+            setHomeResetKey((key) => key + 1);
+          }}
+          onScreenChange={(screen) => {
+            if (!activeUtilityScreen) {
+              setUtilityScreenOpenedFromNested(hasNestedSidebarContext);
+            }
+
+            if (screen === "assistant" && location.pathname !== "/assistant") {
+              navigate("/assistant", { viewTransition: true });
+            }
+
+            setActiveUtilityScreen(screen);
+          }}
         />
       </SidebarFooter>
     </Sidebar>

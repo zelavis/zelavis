@@ -496,13 +496,13 @@ export interface ZelavisServerOptions {
    */
   bundleStore?: BundleStore;
   /**
-   * Domain bindings store. Workspace service apps only get host-bound
-   * routing for hosts with verified bindings owned by their workspace or
+   * Domain bindings store. Extension service apps only get host-bound
+   * routing for hosts with verified bindings owned by their project or
    * service. Service packages declare `app.domainPolicy`; concrete hostnames
    * live in runtime activation state.
    *
    * When omitted, the runtime falls through to
-   * `platform.resources.domainBindings`; if neither is set, workspace
+   * `platform.resources.domainBindings`; if neither is set, extension
    * services get no host-bound routing.
    */
   domainBindings?: DomainBindingStore;
@@ -604,12 +604,12 @@ export interface ZelavisPlatformResources {
   tls?: TlsProvider;
   /**
    * Domain-binding store. The synthesizer consults this for
-   * workspace-scoped service apps — only hosts with verified bindings
-   * owned by the service's workspace or service are allowed through.
+   * extension-scoped service apps — only hosts with verified bindings
+   * owned by the service's project or service are allowed through.
    * System-scope services skip this check (operator deployed them,
    * they're trusted).
    *
-   * When undefined, workspace services get no host-bound routing
+   * When undefined, extension services get no host-bound routing
    * (their path-based `/apps/<name>` mount still works).
    */
   domainBindings?: DomainBindingStore;
@@ -1883,7 +1883,7 @@ async function loadStoredServiceRegistryModules(
         { importer },
       );
 
-      // Runtime-installed services are always workspace-scoped regardless of
+      // Runtime-installed services are always extension-scoped regardless of
       // what `scope` or `menu.surface` their definition declares. Trust is
       // granted by the registration path (static), not the definition itself.
       const scoped = loaded.map((registryEntry) => {
@@ -1893,7 +1893,7 @@ async function loadStoredServiceRegistryModules(
 
         const service = registryEntry.service;
         const needsPatch =
-          service.scope !== "workspace" ||
+          service.scope !== "extension" ||
           (service.menu && "surface" in service.menu && service.menu.surface !== undefined);
 
         if (!needsPatch) {
@@ -1904,7 +1904,7 @@ async function loadStoredServiceRegistryModules(
           ...registryEntry,
           service: Object.freeze({
             ...service,
-            scope: "workspace" as const,
+            scope: "extension" as const,
             menu: service.menu
               ? Object.freeze({ ...service.menu, surface: undefined })
               : service.menu,
@@ -2268,7 +2268,7 @@ async function resolveDashboardCoreService(
 
     // Static services (passed directly to zelavis()) are system-scoped — they
     // can use any dashboard surface. Runtime-installed services are already
-    // forced to workspace scope inside loadStoredServiceRegistryModules.
+    // forced to extension scope inside loadStoredServiceRegistryModules.
     const systemServiceRegistry = context.serviceRegistry.map((entry) =>
       entry.service.scope === "system"
         ? entry
@@ -3952,7 +3952,7 @@ export class Zelavis {
           : undefined);
       // Domain bindings: explicit option wins, then fall through to
       // the adapter-supplied resource. No on-the-fly default — leaving
-      // both unset means workspace services get no host-bound routing,
+      // both unset means extension services get no host-bound routing,
       // which is the safe default.
       const domainBindings =
         serverOptions.domainBindings ?? platformResources.domainBindings;

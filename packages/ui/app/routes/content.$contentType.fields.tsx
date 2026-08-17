@@ -406,18 +406,18 @@ function ContentTypeFieldsRoute() {
           revalidate={() => revalidator.revalidate()}
         />
       ) : (
-    <div className="grid gap-6 xl:grid-cols-[minmax(260px,0.82fr)_minmax(0,1.35fr)_minmax(320px,0.9fr)]">
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between gap-3">
-          <CardTitle>Fields</CardTitle>
-          <Link
-            to={toDashboardPath(toProjectPath("/database"), { sidebar: "Core" })}
-            className={cn(buttonVariants({ variant: "outline" }))}
-          >
-            Open Core Database
-          </Link>
-        </CardHeader>
-        <CardContent className="grid gap-4 p-4">
+        <div className="grid gap-6 xl:grid-cols-[minmax(260px,0.82fr)_minmax(0,1.35fr)_minmax(320px,0.9fr)]">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-3">
+              <CardTitle>Fields</CardTitle>
+            <Link
+                to={toDashboardPath(toProjectPath("/database"), { sidebar: "Backend" })}
+                className={cn(buttonVariants({ variant: "outline" }))}
+              >
+                Open Backend Database
+              </Link>
+            </CardHeader>
+            <CardContent className="grid gap-4 p-4">
           {message ? <ResourceNotice title="Done" description={message} /> : null}
           {error ? <ResourceNotice title="Action failed" description={error} /> : null}
 

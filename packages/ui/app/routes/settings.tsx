@@ -3,7 +3,7 @@ import type * as React from 'react'
 import { useEffect, useState } from 'react'
 import { Boxes, Paintbrush, Save } from 'lucide-react'
 
-import { DataRow, PageHeader, ResourceNotice } from '#/components/DashboardPage'
+import { DataRow, ResourceNotice } from '#/components/DashboardPage'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '#/components/ui/card'
 import { Input } from '#/components/ui/input'
@@ -68,21 +68,16 @@ function Settings() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Settings"
-        title="Runtime Settings"
-        description="Root path, API version, and enabled core services."
-        actions={
-          <Button
-            type="submit"
-            form="dashboard-root-path-form"
-            disabled={!canEditRootPath || !rootPathChanged || saving}
-          >
-            <Save className="size-4" />
-            Save
-          </Button>
-        }
-      />
+      <div className="flex justify-end">
+        <Button
+          type="submit"
+          form="dashboard-root-path-form"
+          disabled={!canEditRootPath || !rootPathChanged || saving}
+        >
+          <Save className="size-4" />
+          Save
+        </Button>
+      </div>
 
       <Card>
         <CardHeader>

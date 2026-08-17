@@ -3,7 +3,6 @@ import { KeyRound, ShieldCheck, UserRoundCog } from 'lucide-react'
 
 import {
   DataRow,
-  PageHeader,
   ResourceNotice,
   StatCard,
 } from '#/components/DashboardPage'
@@ -13,7 +12,7 @@ import type { clientLoader as rootClientLoader } from '../root'
 
 export const handle = {
   pageLabel: "Auth",
-  sidebarTrail: ["Core"],
+  sidebarTrail: ["Backend"],
 } as const;
 
 export async function clientLoader() {
@@ -28,12 +27,6 @@ function Auth() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Auth"
-        title="Authentication"
-        description="Core auth service with provider services mounted through the runtime."
-      />
-
       <section className="grid gap-4 md:grid-cols-3">
         <StatCard
           label="Service"

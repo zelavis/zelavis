@@ -3,7 +3,6 @@ import { Boxes } from 'lucide-react'
 
 import {
   DataRow,
-  PageHeader,
   ResourceNotice,
   StatusBadge,
 } from '#/components/DashboardPage'
@@ -20,11 +19,6 @@ function Services() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Services"
-        title="Runtime services"
-      />
-
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">

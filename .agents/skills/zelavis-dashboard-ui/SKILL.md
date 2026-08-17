@@ -81,8 +81,12 @@ Available parsers: `parseAsString`, `parseAsStringLiteral`. Add new parsers to `
 - Add `landingUrl` to any new top-level section that has a clear entry page
 - Do not hand-edit the sidebar slide structure unless the task explicitly changes navigation
 - Nested slide headers use a larger standard gap before the next menu content. Use `SidebarFixedActionMenu` for pinned/fixed action rows inside sidebar panels, and pass `afterHeader` when the action rows sit directly below a slide back/title header.
+- Build feature surfaces as mobile-slot-ready modules. Desktop routes should compose reusable workspace/panel components, and mobile sidebar slots should be able to mount the same components later.
+- Use `DashboardSlotLayout`, `DashboardSlot`, and optional route `handle.slots` metadata for route areas that naturally map to mobile slides. Prefer slot ids such as `overview`, `main`, `create`, `edit`, `inspect`, and `settings`.
+- Below `lg`, the sidebar is the mobile/tablet app shell and the desktop content inset is hidden. Do not rely on the desktop content area for mobile; build reusable route panels that can be mounted into sidebar slide slots instead.
 - Keep shared UI primitives aligned with the current shadcn CLI output unless there is a deliberate design-system decision. Use shadcn presets and CSS variables for theme changes; do not hand-edit generated primitives or route code for visual preferences that should come from `shadcn apply`.
 - Use shared control defaults in dashboard routes. Do not pass `size="sm"`/`size="lg"` or `buttonVariants({ size: ... })` for ordinary text buttons; reserve explicit size variants for icon-only controls or a clearly distinct component primitive.
+- Avoid route title blocks that repeat the breadcrumb, sidebar slide title, or active navigation item. Zelavis is a dense dashboard, not a blog/document page; content areas should usually begin with the real workspace, table, form, chart, or contextual actions.
 - `Community` is content inside the first sidebar slide
 
 ## Working rules

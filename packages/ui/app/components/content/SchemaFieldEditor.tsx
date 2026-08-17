@@ -73,7 +73,7 @@ export function SchemaFieldEditor(props: {
       />
       {props.definition.type === "file" ? (
         <span className="text-xs font-normal text-muted-foreground">
-          Paste a Zelavis file reference JSON from Media or Core &gt; Storage.
+          Paste a Zelavis file reference JSON from Media or Backend &gt; Storage.
         </span>
       ) : null}
     </label>

@@ -2,7 +2,7 @@ import { useLoaderData, useRevalidator } from "react-router";
 import { useState } from "react";
 import type { FormEvent } from "react";
 
-import { PageHeader, ResourceNotice } from "#/components/DashboardPage";
+import { ResourceNotice } from "#/components/DashboardPage";
 import { ServicePageMount } from "#/components/ServicePageMount";
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
@@ -15,7 +15,7 @@ import {
 
 export const handle = {
   pageLabel: "Commerce",
-  sidebarTrail: ["Workspace", "Ecommerce", "More"],
+  sidebarTrail: ["Extensions", "Ecommerce", "More"],
 } as const;
 
 export async function clientLoader() {
@@ -68,8 +68,6 @@ function CommerceCustomers() {
   return (
     <ServicePageMount fallback={
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader eyebrow="Commerce" title="Customers" />
-
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(340px,0.85fr)]">
         <Card>
           <CardHeader>

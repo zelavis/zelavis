@@ -8,9 +8,9 @@
  * Two implementations ship by default:
  *
  * - `SharedBundleStore` (this file) — single underlying `ZelavisFileStorage`,
- *   workspace and service identity encoded into the key prefix. The simpler
+ *   project and service identity encoded into the key prefix. The simpler
  *   default; fine for multi-tenant deployments at the small-and-mid scale.
- * - (future) `IsolatedBundleStore` — one storage backend per workspace.
+ * - (future) `IsolatedBundleStore` — one storage backend per project.
  *   Opt-in for tenants with physical-isolation or compliance requirements.
  *
  * Callers should accept the interface, not a concrete implementation, so
@@ -23,17 +23,17 @@ import type {
 } from "./index.js";
 
 /**
- * Identity of a bundle within the system. `workspaceId` is left optional so
+ * Identity of a bundle within the system. `projectId` is left optional so
  * the same shape works for both shared and isolated stores — shared stores
- * fold `workspaceId` into the key prefix; isolated stores use it to pick a
+ * fold `projectId` into the key prefix; isolated stores use it to pick a
  * physical backend.
  *
- * For `scope: "system"` services, `workspaceId` is left undefined; the shared
+ * For `scope: "system"` services, `projectId` is left undefined; the shared
  * store maps that to a `system/` prefix.
  */
 export interface BundleScope {
-  /** Workspace owner of this bundle. Undefined for system-scope services. */
-  workspaceId?: string;
+  /** Project owner of this bundle. Undefined for system-scope services. */
+  projectId?: string;
   /** Service name as declared in `defineService({ name })`. */
   serviceName: string;
   /** Bundle identifier as declared in `app.bundle`. Defaults to `"dist"`. */
@@ -84,9 +84,9 @@ export interface CreateSharedBundleStoreOptions {
    */
   prefix?: string;
   /**
-   * Key for system-scope bundles (where `BundleScope.workspaceId` is
-   * undefined). Default `"system"`. Set to a workspace-id sentinel if you
-   * want system bundles to share the workspace key-space.
+   * Key for system-scope bundles (where `BundleScope.projectId` is
+   * undefined). Default `"system"`. Set to a project-id sentinel if you
+   * want system bundles to share the project key-space.
    */
   systemKey?: string;
 }
@@ -94,7 +94,7 @@ export interface CreateSharedBundleStoreOptions {
 /**
  * Encode a bundle scope + asset path into a storage key.
  *
- * Layout: `<prefix>/<workspaceId | systemKey>/<serviceName>/<bundle>/<path>`
+ * Layout: `<prefix>/<projectId | systemKey>/<serviceName>/<bundle>/<path>`
  *
  * Exposed (not just internal) so tooling can read/write the same layout
  * outside the runtime — e.g. an installer that pushes a built bundle into
@@ -107,14 +107,14 @@ export function buildBundleStorageKey(
 ): string {
   const prefix = options.prefix ?? "apps";
   const systemKey = options.systemKey ?? "system";
-  const owner = scope.workspaceId ?? systemKey;
+  const owner = scope.projectId ?? systemKey;
   const normalizedAsset = assetPath.replace(/^\/+/, "");
   return `${prefix}/${owner}/${scope.serviceName}/${scope.bundle}/${normalizedAsset}`;
 }
 
 /**
  * Create a `BundleStore` backed by a single `ZelavisFileStorage`. All bundles
- * across all workspaces share the same underlying storage; identity is
+ * across all projects share the same underlying storage; identity is
  * encoded into the key prefix.
  */
 export function createSharedBundleStore(
@@ -172,7 +172,7 @@ export function createInMemoryBundleStore(
   assets: ReadonlyMap<string, Uint8Array | { body: Uint8Array; contentType?: string; cacheControl?: string }>,
 ): BundleStore {
   const keyFor = (scope: BundleScope, path: string) =>
-    `${scope.workspaceId ?? "system"}/${scope.serviceName}/${scope.bundle}/${path.replace(/^\/+/, "")}`;
+    `${scope.projectId ?? "system"}/${scope.serviceName}/${scope.bundle}/${path.replace(/^\/+/, "")}`;
 
   return {
     async read(scope, path) {
@@ -193,7 +193,7 @@ export function createInMemoryBundleStore(
     },
     async list(scope, prefix) {
       const base = keyFor(scope, prefix ?? "");
-      const baseNoPrefix = `${scope.workspaceId ?? "system"}/${scope.serviceName}/${scope.bundle}/`;
+      const baseNoPrefix = `${scope.projectId ?? "system"}/${scope.serviceName}/${scope.bundle}/`;
       const out: string[] = [];
       for (const key of assets.keys()) {
         if (key.startsWith(base)) {

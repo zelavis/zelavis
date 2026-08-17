@@ -454,7 +454,7 @@ export const zelavisEcommerceService = defineService<ZelavisServiceSetupContext>
           title: "Ecommerce",
           eyebrow: "Commerce",
           description:
-            "Service-owned workspace area rendered through a full-document iframe, independent from the host dashboard framework.",
+            "Service-owned Extensions area rendered through a full-document iframe, independent from the host dashboard framework.",
           sections: [
             {
               title: "Catalog",
@@ -515,7 +515,7 @@ export const zelavisEcommerceService = defineService<ZelavisServiceSetupContext>
               title: "Orders",
               eyebrow: "Commerce",
               description:
-                "Order workflows can stay completely service-owned while still living inside the Zelavis workspace shell.",
+                "Order workflows can stay completely service-owned while still living inside the Zelavis Extensions shell.",
               sections: [
                 {
                   title: "Drafts",

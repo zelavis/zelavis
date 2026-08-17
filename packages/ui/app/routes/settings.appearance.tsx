@@ -1,7 +1,6 @@
 import { useRevalidator, useRouteLoaderData } from 'react-router'
 import { Moon, Paintbrush, Sun } from 'lucide-react'
 
-import { PageHeader } from '#/components/DashboardPage'
 import { ThemeSelect } from '#/components/ThemeSelect'
 import {
   Card,
@@ -31,7 +30,7 @@ function AppearanceSettings() {
       : settings.theme
   const themeDescription =
     settings.persistence === 'runtime'
-      ? 'The workspace default comes from the runtime. This browser can still override it locally.'
+      ? 'The project default comes from the runtime. This browser can still override it locally.'
       : 'The setting is stored locally and can follow your system preference.'
 
   async function handleThemeChange(nextTheme: typeof theme) {
@@ -49,12 +48,6 @@ function AppearanceSettings() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Settings"
-        title="Appearance"
-        description="Dashboard theme preferences for this browser."
-      />
-
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -62,7 +55,7 @@ function AppearanceSettings() {
             Theme
           </CardTitle>
           <CardDescription>
-            Choose how the Zelavis dashboard should render for this workspace.
+            Choose how the Zelavis dashboard should render for this project.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3">

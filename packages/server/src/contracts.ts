@@ -51,7 +51,7 @@ export interface ZelavisRuntimeServiceMenuDefinition {
   fixed?: boolean;
   fixedOrder?: number;
   sectionLabel?: string;
-  surface?: "root" | "core" | "workspace" | "settings";
+  surface?: "root" | "core" | "extensions" | "settings";
   items?: readonly ZelavisRuntimeServiceMenuDefinition[];
 }
 

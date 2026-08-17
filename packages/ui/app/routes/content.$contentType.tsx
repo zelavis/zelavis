@@ -1,6 +1,6 @@
 import { Link, Outlet, useParams, useRouteLoaderData } from "react-router";
 
-import { PageHeader, ResourceNotice } from "#/components/DashboardPage";
+import { ResourceNotice } from "#/components/DashboardPage";
 import { buttonVariants } from "#/components/ui/button";
 import { buildContentTypeRows } from "#/lib/content-studio";
 import { getResolvedDashboardPreferences } from "#/lib/runtime-api";
@@ -24,26 +24,20 @@ function ContentTypeLayout() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Content"
-        title={contentType?.label ?? contentTypeName}
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
-            <Link
-              to={toProjectPath("/content")}
-              className={cn(buttonVariants({ variant: "outline" }))}
-            >
-              Back to Content
-            </Link>
-            <Link
-              to={toDashboardPath(toProjectPath("/database"), { sidebar: "Core" })}
-              className={cn(buttonVariants({ variant: "outline" }))}
-            >
-              Open Core Database
-            </Link>
-          </div>
-        }
-      />
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Link
+          to={toProjectPath("/content")}
+          className={cn(buttonVariants({ variant: "outline" }))}
+        >
+          Back to Content
+        </Link>
+        <Link
+          to={toDashboardPath(toProjectPath("/database"), { sidebar: "Backend" })}
+          className={cn(buttonVariants({ variant: "outline" }))}
+        >
+          Open Backend Database
+        </Link>
+      </div>
 
       {!contentType ? (
         <ResourceNotice

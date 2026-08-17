@@ -3,7 +3,6 @@ import { Database, Globe2, Settings2 } from "lucide-react";
 
 import {
   DataRow,
-  PageHeader,
   ResourceNotice,
   StatusBadge,
 } from "#/components/DashboardPage";
@@ -19,12 +18,6 @@ export default function ProjectSettingsRoute() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Project"
-        title="Project Settings"
-        description="Project-owned settings for this Zelavis app. Runtime and dashboard-wide preferences live in global settings."
-      />
-
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">

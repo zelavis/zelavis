@@ -80,7 +80,7 @@ That means `@zelavis/ecommerce` is both:
 - the official Zelavis ecommerce service package
 - the home for its child provider service system
 
-The provider layer extends the ecommerce domain API. It is installed through the same service registry, but it activates through its parent service rather than as an independent top-level workspace service.
+The provider layer extends the ecommerce domain API. It is installed through the same service registry, but it activates through its parent service rather than as an independent top-level Extensions service.
 
 The official ecommerce package accepts Stripe and PayPal through `childServices`. Other payment providers should be added to that allow-list by the parent service package before they activate.
 

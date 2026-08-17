@@ -5,7 +5,6 @@ import { useState } from "react";
 
 import {
   DataRow,
-  PageHeader,
   ResourceNotice,
   StatCard,
   StatusBadge,
@@ -77,12 +76,6 @@ function WebsiteRoute() {
 
   return (
     <section className="mx-auto grid w-full max-w-6xl gap-6">
-      <PageHeader
-        eyebrow="Website"
-        title="Project website"
-        description="Local website pages, domains, and publishing state for this project."
-      />
-
       <section className="grid gap-4 md:grid-cols-3">
         <StatCard
           label="Website"

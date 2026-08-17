@@ -8,7 +8,7 @@ import {
   Search,
   SquareStack,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   DataRow,
@@ -36,6 +36,8 @@ export const handle = {
 const projectSearchSchema = {
   q: parseAsString.withDefault(""),
   new: parseAsString.withDefault(""),
+  name: parseAsString.withDefault(""),
+  domain: parseAsString.withDefault(""),
   type: parseAsStringLiteral(["zelavis", "wordpress", "static", "generic"] as const).withDefault("zelavis"),
 } as const;
 
@@ -75,7 +77,7 @@ function slugifyProjectName(value: string) {
 }
 
 function ProjectsRoute() {
-  const [{ q, new: createMode, type }, setParams] =
+  const [{ q, new: createMode, name: requestedName, domain: requestedDomain, type }, setParams] =
     useTypedSearchParams(projectSearchSchema);
   const [projects, setProjects] = useState<DashboardProjectItem[]>([
     ...dashboardProjects,
@@ -85,6 +87,16 @@ function ProjectsRoute() {
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
   const showCreate = createMode === "1";
+
+  useEffect(() => {
+    if (requestedName) {
+      setName(requestedName);
+    }
+
+    if (requestedDomain) {
+      setDomain(requestedDomain);
+    }
+  }, [requestedDomain, requestedName]);
 
   const filteredProjects = useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -138,7 +150,7 @@ function ProjectsRoute() {
     setProjects((current) => [nextProject, ...current]);
     setName("");
     setDomain("");
-    setParams({ new: null, type: null });
+    setParams({ domain: null, name: null, new: null, type: null });
     setMessage(`Created ${nextProject.name}.`);
   }
 

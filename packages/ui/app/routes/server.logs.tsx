@@ -1,6 +1,6 @@
 import { ReceiptText } from "lucide-react";
 
-import { DataRow, PageHeader, ResourceNotice, StatusBadge } from "#/components/DashboardPage";
+import { DataRow, ResourceNotice, StatusBadge } from "#/components/DashboardPage";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 
 export const handle = {
@@ -11,12 +11,6 @@ export const handle = {
 export default function ServerLogsRoute() {
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Server"
-        title="Logs"
-        description="Future host-level log streams for runtime events, web access, app processes, and project diagnostics."
-      />
-
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">

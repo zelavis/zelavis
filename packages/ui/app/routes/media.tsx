@@ -12,7 +12,6 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
-  PageHeader,
   ResourceNotice,
   StatCard,
   StatusBadge,
@@ -418,19 +417,14 @@ function MediaRoute() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Media"
-        title="Media"
-        description="Editor-facing asset management built on the same Zelavis storage core. Upload visuals, browse reusable files, and hand off structured references when the lower-level storage panel is needed."
-        actions={
-          <Link
-            to={toProjectPath("/storage")}
-            className={cn(buttonVariants({ variant: "outline" }))}
-          >
-            Open Core Storage
-          </Link>
-        }
-      />
+      <div className="flex justify-end">
+        <Link
+          to={toProjectPath("/storage")}
+          className={cn(buttonVariants({ variant: "outline" }))}
+        >
+          Open Backend Storage
+        </Link>
+      </div>
 
       {!storageEnabled ? (
         <ResourceNotice

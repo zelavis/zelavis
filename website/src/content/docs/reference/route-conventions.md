@@ -101,10 +101,10 @@ Services that declare an `app` field are synthesized into normal Zelavis service
 
 System services keep the mount chosen by the operator. The built-in `@zelavis/ui` dashboard is a system app service, so the runtime mounts it under the configured dashboard root path.
 
-Workspace services are safer by default:
+Extension services are safer by default:
 
-- with `app.domainPolicy: "optional"`, a workspace app falls back to `/apps/<service-name>` when no verified domain binding exists
-- with `app.domainPolicy: "required"`, a workspace app is not served until the runtime has a verified domain binding for that workspace or service
+- with `app.domainPolicy: "optional"`, an extension app falls back to `/apps/<service-name>` when no verified domain binding exists
+- with `app.domainPolicy: "required"`, an extension app is not served until the runtime has a verified domain binding for that project or service
 - when a verified binding exists, the app can serve its declared mount on that host, for example `/` on `shop.acme.com`
 
 Concrete hostnames live in runtime domain bindings, not in service package metadata.

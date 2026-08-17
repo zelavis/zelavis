@@ -19,6 +19,7 @@ import {
   listStorageFiles,
   updateDatabaseDocument,
 } from "#/lib/runtime-api";
+import { toProjectPath } from "#/lib/routing";
 import { cn } from "#/lib/utils";
 import type { Route } from './+types/content.$contentType.$entryId';
 import type { clientLoader as rootClientLoader } from '../root';
@@ -172,7 +173,7 @@ function ContentEntryEditorRoute() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Link
-              to={`/content/${contentTypePath}`}
+              to={toProjectPath(`/content/${contentTypePath}`)}
               className={cn(buttonVariants({ variant: "outline" }))}
             >
               Back to Entries

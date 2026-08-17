@@ -1,9 +1,9 @@
 /**
  * Domain bindings — the seam between "an operator verified `acme.com`
- * for a workspace/service" and "the dispatcher actually routes requests
+ * for a project/service" and "the dispatcher actually routes requests
  * for `acme.com` to that service".
  *
- * The risk this addresses: a workspace service (uploaded ZIP, marketplace
+ * The risk this addresses: an extension service (uploaded ZIP, marketplace
  * install) must not be able to claim arbitrary hostnames from its own
  * service definition. Without a verified runtime binding, a tenant could
  * squat google.com or a sister tenant's hostname and the dispatcher
@@ -12,7 +12,7 @@
  * The model is intentionally boring: bindings are stored objects with
  * a `verifiedAt` timestamp. Verification flips the field. The
  * synthesized route matcher only honors hosts that have a verified
- * binding pointing to this workspace+service. Unverified bindings are
+ * binding pointing to this project+service. Unverified bindings are
  * still stored (so admin UIs can show the pending state and reuse the
  * generated verification token) but don't influence routing.
  *
@@ -23,8 +23,8 @@
  * PR alongside the ACME provider, which has the same shape.
  *
  * **Ownership uniqueness:** a host can have at most one binding
- * across all workspaces. Adding a second binding for the same host
- * throws. This prevents two workspaces from independently "verifying"
+ * across all projects. Adding a second binding for the same host
+ * throws. This prevents two projects from independently "verifying"
  * the same hostname.
  */
 
@@ -49,13 +49,13 @@ export interface DomainBinding {
   /** Lowercase hostname. Unique across the store. */
   host: string;
   /**
-   * Owning workspace. Omitted (undefined) for system-level bindings
+   * Owning project. Omitted (undefined) for system-level bindings
    * the operator installs directly.
    */
-  workspaceId?: string;
+  projectId?: string;
   /**
    * Service this binding is dedicated to. Omitted means the binding is
-   * workspace-level — any service in that workspace can use the host
+   * project-level — any service in that project can use the host
    * when its app policy allows host-bound routing.
    */
   serviceName?: string;
@@ -109,7 +109,7 @@ export interface DomainBindingStore {
    * are deterministic.
    */
   list(
-    filter?: { workspaceId?: string; serviceName?: string; verifiedOnly?: boolean },
+    filter?: { projectId?: string; serviceName?: string; verifiedOnly?: boolean },
   ): Promise<readonly DomainBinding[]>;
 }
 
@@ -186,7 +186,7 @@ export async function addDomainBinding(
   store: DomainBindingStore,
   options: {
     host: string;
-    workspaceId?: string;
+    projectId?: string;
     serviceName?: string;
     metadata?: Record<string, string>;
   },
@@ -195,7 +195,7 @@ export async function addDomainBinding(
   const now = nowIso();
   const binding: DomainBinding = {
     host,
-    workspaceId: options.workspaceId,
+    projectId: options.projectId,
     serviceName: options.serviceName,
     verificationToken: generateVerificationToken(),
     createdAt: now,
@@ -293,8 +293,8 @@ export function createInMemoryDomainBindingStore(
       const out: DomainBinding[] = [];
       for (const binding of bindings.values()) {
         if (
-          filter.workspaceId !== undefined &&
-          binding.workspaceId !== filter.workspaceId
+          filter.projectId !== undefined &&
+          binding.projectId !== filter.projectId
         ) {
           continue;
         }
@@ -407,8 +407,8 @@ export function createKeyValueDomainBindingStore(
         // value inside the binding object.
         binding.host = hostFromKey(key);
         if (
-          filter.workspaceId !== undefined &&
-          binding.workspaceId !== filter.workspaceId
+          filter.projectId !== undefined &&
+          binding.projectId !== filter.projectId
         ) {
           continue;
         }
@@ -434,10 +434,10 @@ export function createKeyValueDomainBindingStore(
  * binding store.
  *
  * System-scope services are host-agnostic here: the operator decides how
- * they are mounted. Workspace-scope services only get hosts where:
+ * they are mounted. Extension-scope services only get hosts where:
  *   - a verified binding exists
- *   - the binding's workspace matches this service's workspace
- *   - the binding is either workspace-wide or dedicated to this service
+ *   - the binding's project matches this service's project
+ *   - the binding is either project-wide or dedicated to this service
  *
  * Used by `synthesizeServiceAppService` so service app definitions stay
  * portable: concrete hostnames live in runtime activation state instead
@@ -445,8 +445,8 @@ export function createKeyValueDomainBindingStore(
  */
 export async function listAuthorizedHostsForService(
   options: {
-    scope: "system" | "workspace";
-    workspaceId?: string;
+    scope: "system" | "extension";
+    projectId?: string;
     serviceName: string;
     domainBindings?: DomainBindingStore;
   },
@@ -454,16 +454,16 @@ export async function listAuthorizedHostsForService(
   if (options.scope === "system") {
     return [];
   }
-  if (!options.domainBindings || !options.workspaceId) {
+  if (!options.domainBindings || !options.projectId) {
     // No store configured → no way to verify → no host-bound routing.
-    // No workspace ownership → no safe binding lookup.
+    // No project ownership → no safe binding lookup.
     // Returning [] here means the synthesizer won't emit host matchers;
     // the service still works at its path-based `/apps/<name>` mount.
     return [];
   }
 
   const bindings = await options.domainBindings.list({
-    workspaceId: options.workspaceId,
+    projectId: options.projectId,
     verifiedOnly: true,
   });
   const allowed: string[] = [];

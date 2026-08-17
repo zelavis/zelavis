@@ -1,28 +1,56 @@
-import { CheckCircle2, KeyRound, LockKeyhole, ShieldCheck, Terminal } from "lucide-react";
+import {
+  CheckCircle2,
+  KeyRound,
+  LockKeyhole,
+  ShieldCheck,
+  Terminal,
+} from "lucide-react";
 
 import {
   DataRow,
-  PageHeader,
   ResourceNotice,
   StatCard,
   StatusBadge,
 } from "#/components/DashboardPage";
+import {
+  DashboardSlot,
+  DashboardSlotLayout,
+} from "#/components/DashboardSlots";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 
 export const handle = {
   pageLabel: "Security",
   sidebarTrail: ["Security"],
+  slots: [
+    {
+      id: "overview",
+      label: "Security overview",
+      description: "Security posture, checklist scope, and guidance model.",
+    },
+    {
+      id: "main",
+      label: "Linux security checklist",
+      description: "Runnable host-hardening checks.",
+    },
+    {
+      id: "detail",
+      label: "Future check groups",
+      description: "Additional security surfaces planned for the runner.",
+    },
+  ],
 } as const;
 
 const checklistItems = [
   {
     label: "SSH password login",
-    detail: "Detect whether password authentication is disabled for the server SSH daemon.",
+    detail:
+      "Detect whether password authentication is disabled for the server SSH daemon.",
     status: "planned",
   },
   {
     label: "Firewall baseline",
-    detail: "Check that only expected public ports are open, starting with HTTP, HTTPS, and SSH.",
+    detail:
+      "Check that only expected public ports are open, starting with HTTP, HTTPS, and SSH.",
     status: "planned",
   },
   {
@@ -39,13 +67,17 @@ const checklistItems = [
 
 export default function SecurityRoute() {
   return (
-    <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Security"
-        title="Checklist"
-        description="Guided host and project hardening checks for builders who want a secure VPS without needing to already be Linux experts."
-      />
+    <DashboardSlotLayout>
+      <SecurityOverviewSlot />
+      <LinuxSecurityChecklistSlot />
+      <SecurityRoadmapSlot />
+    </DashboardSlotLayout>
+  );
+}
 
+export function SecurityOverviewSlot() {
+  return (
+    <DashboardSlot id="overview" label="Security overview">
       <section className="grid gap-4 md:grid-cols-3">
         <StatCard
           label="Checklist"
@@ -66,7 +98,13 @@ export default function SecurityRoute() {
           icon={ShieldCheck}
         />
       </section>
+    </DashboardSlot>
+  );
+}
 
+export function LinuxSecurityChecklistSlot() {
+  return (
+    <DashboardSlot id="main" label="Linux security checklist">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -90,7 +128,13 @@ export default function SecurityRoute() {
         title="Designed for guided hardening"
         description="The future runner should gather facts locally, avoid making changes without confirmation, and turn each check into a simple recommendation."
       />
+    </DashboardSlot>
+  );
+}
 
+export function SecurityRoadmapSlot() {
+  return (
+    <DashboardSlot id="detail" label="Future check groups">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -111,6 +155,6 @@ export default function SecurityRoute() {
           />
         </CardContent>
       </Card>
-    </section>
+    </DashboardSlot>
   );
 }

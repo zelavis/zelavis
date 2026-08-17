@@ -3,7 +3,6 @@ import { Activity, Boxes, Database, Globe2, ReceiptText, RotateCcw, ShieldCheck 
 
 import {
   DataRow,
-  PageHeader,
   ResourceNotice,
   StatCard,
   StatusBadge,
@@ -58,20 +57,15 @@ function getManagedProjectKind(projectId: string | undefined) {
 function ManagedProjectOverview({ kind }: { kind: string }) {
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Managed Project"
-        title={kind}
-        description="This project is operated by Zelavis, but it does not use the Zelavis-native app dashboard."
-        actions={
-          <Link
-            to="/server/domains"
-            className={cn(buttonVariants({ variant: "outline" }))}
-          >
-            <Globe2 className="size-4" />
-            Domains
-          </Link>
-        }
-      />
+      <div className="flex justify-end">
+        <Link
+          to="/server/domains"
+          className={cn(buttonVariants({ variant: "outline" }))}
+        >
+          <Globe2 className="size-4" />
+          Domains
+        </Link>
+      </div>
 
       <section className="grid gap-4 md:grid-cols-3">
         <StatCard
@@ -142,12 +136,6 @@ function Overview() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Overview"
-        title="Zelavis runtime"
-        description="Core services, active paths, and package boundaries in one place."
-      />
-
       <section className="grid gap-4 md:grid-cols-3">
         <StatCard
           label="Mounted core"

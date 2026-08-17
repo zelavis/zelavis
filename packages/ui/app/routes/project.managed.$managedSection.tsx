@@ -2,7 +2,7 @@ import { Archive, Database, Files, Globe2, MonitorCog, Package, ReceiptText } fr
 import { useParams } from "react-router";
 
 import { DashboardNotFound } from "#/components/DashboardNotFound";
-import { DataRow, PageHeader, ResourceNotice, StatusBadge } from "#/components/DashboardPage";
+import { DataRow, ResourceNotice, StatusBadge } from "#/components/DashboardPage";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { getManagedProjectKindFromId } from "#/lib/routing";
 
@@ -63,12 +63,6 @@ export default function ManagedProjectSectionRoute() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Managed Project"
-        title={section.title}
-        description={section.detail}
-      />
-
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">

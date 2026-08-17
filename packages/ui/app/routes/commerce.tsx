@@ -2,7 +2,6 @@ import { Link, Outlet, useLoaderData, useLocation } from "react-router";
 
 import {
   DataRow,
-  PageHeader,
   ResourceNotice,
   StatusBadge,
 } from "#/components/DashboardPage";
@@ -20,7 +19,7 @@ import {
 import { matchesProjectPath, toProjectPath } from "#/lib/routing";
 export const handle = {
   pageLabel: "Commerce",
-  sidebarTrail: ["Workspace", "Ecommerce"],
+  sidebarTrail: ["Extensions", "Ecommerce"],
 } as const;
 
 export async function clientLoader() {
@@ -47,8 +46,6 @@ function Commerce() {
   return (
     <ServicePageMount fallback={
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader eyebrow="Commerce" title="Ecommerce" />
-
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
         <Card>
           <CardHeader>

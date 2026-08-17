@@ -352,7 +352,7 @@ function ToolbarPlugin(props: {
           <div className="grid gap-3 overflow-auto px-4 pb-4">
             {props.fileItems.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No stored files available yet. Upload one in Media or Core &gt; Storage first.
+                No stored files available yet. Upload one in Media or Backend &gt; Storage first.
               </p>
             ) : (
               <div className="grid gap-2">

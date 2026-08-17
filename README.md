@@ -45,6 +45,7 @@ Native website hosting is part of the core product story. External hosts, storag
 - Standard Web APIs over provider lock-in.
 - Strong service contracts over hidden magic.
 - Endpoint-backed capabilities over dashboard-only behavior.
+- Mobile-slot-ready dashboard components over separate desktop/mobile implementations.
 - Small, composable package surfaces.
 - Clear provider, adapter, plugin, and service boundaries.
 - Honest documentation about what exists today and what is still in progress.
@@ -64,6 +65,11 @@ Zelavis currently focuses on these layers:
 - **Website hosting**: built-in public page delivery from the Zelavis runtime, with dashboard and API routes kept under a reserved platform namespace.
 - **Server management**: dashboard surfaces for domains, backups, logs, and local hosting operations.
 - **Plugins**: optional domain and provider packages that extend the core platform.
+
+Dashboard feature work should be mobile-slot-ready by default. Desktop routes
+compose reusable workspace and panel components into the main content area, and
+future mobile browser or Capacitor shells can mount those same components into
+slide-based navigation slots instead of rebuilding separate mobile screens.
 
 ## Endpoint-Backed Capabilities
 

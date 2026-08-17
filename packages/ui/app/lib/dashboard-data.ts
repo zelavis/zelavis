@@ -26,6 +26,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { ZelavisMark } from "#/components/zelavis-mark";
+import type { DashboardSlotId } from "#/components/DashboardSlots";
 import type {
   DatabaseCollection,
   RuntimeService,
@@ -91,6 +92,7 @@ export type DashboardNavItem = {
   icon: LucideIcon;
   panelLabel?: string;
   pageLabel?: string;
+  slot?: DashboardSlotId;
   fixed?: boolean;
   fixedOrder?: number;
   sectionLabel?: string;
@@ -120,7 +122,7 @@ export type DashboardServiceRegistryMenuItem = {
   items?: readonly DashboardServiceRegistryMenuItem[];
 };
 
-export type DashboardWorkspaceServiceItem = {
+export type DashboardExtensionServiceItem = {
   id: string;
   name: string;
   menu: DashboardServiceRegistryMenuItem;
@@ -177,6 +179,7 @@ export const projectManagementNavItems: readonly DashboardNavItem[] = [
         url: "/server/domains",
         icon: Globe2,
         pageLabel: "Domains",
+        slot: "overview",
       },
       {
         title: "Add Domain",
@@ -184,6 +187,7 @@ export const projectManagementNavItems: readonly DashboardNavItem[] = [
         search: { domainAction: "add" },
         icon: Plus,
         pageLabel: "Add Domain",
+        slot: "create",
       },
       {
         title: "Buy",
@@ -191,6 +195,7 @@ export const projectManagementNavItems: readonly DashboardNavItem[] = [
         search: { domainAction: "buy" },
         icon: CreditCard,
         pageLabel: "Buy Domain",
+        slot: "create",
       },
       {
         title: "Transfer",
@@ -198,6 +203,7 @@ export const projectManagementNavItems: readonly DashboardNavItem[] = [
         search: { domainAction: "transfer" },
         icon: Send,
         pageLabel: "Transfer Domain",
+        slot: "create",
       },
     ],
   },
@@ -276,6 +282,7 @@ export const projectManagementNavItems: readonly DashboardNavItem[] = [
         url: "/security",
         icon: ShieldCheck,
         pageLabel: "Security",
+        slot: "main",
       },
     ],
   },
@@ -508,7 +515,7 @@ function getServiceMenuSurface(service: RuntimeService): DashboardServiceSurface
 
 export function buildDashboardServiceRegistryEntries(
   serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
-): readonly DashboardWorkspaceServiceItem[] {
+): readonly DashboardExtensionServiceItem[] {
   return [...(serviceRegistry ?? [])]
     .sort((left, right) => {
       const leftOrder = left.order ?? Number.MAX_SAFE_INTEGER
@@ -570,10 +577,10 @@ const defaultRuntimeServiceRegistry = [
 export const dashboardServiceRegistryEntries =
   buildDashboardServiceRegistryEntries(defaultRuntimeServiceRegistry);
 
-export function buildWorkspaceServiceNavItems(
+export function buildExtensionServiceNavItems(
   serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
 ): readonly DashboardServiceRegistryMenuItem[] {
-  // Installable services intentionally get exactly one root workspace area.
+  // Installable services intentionally get exactly one root Extensions area.
   // Any nested navigation must live under that one root item so first-slide
   // ownership stays reserved for built-in product surfaces and core services.
   return buildDashboardServiceRegistryEntries(serviceRegistry)
@@ -581,8 +588,8 @@ export function buildWorkspaceServiceNavItems(
     .map((service) => service.menu);
 }
 
-export const workspaceServiceNavItems =
-  buildWorkspaceServiceNavItems(defaultRuntimeServiceRegistry);
+export const extensionServiceNavItems =
+  buildExtensionServiceNavItems(defaultRuntimeServiceRegistry);
 
 const defaultRuntimeServices: readonly RuntimeService[] = [
   {
@@ -652,7 +659,7 @@ export function buildPlatformNavItems(
   contentTypes?: readonly ContentTypeRow[],
   databaseCollections?: readonly DatabaseCollection[],
 ): readonly DashboardNavItem[] {
-  const workspaceRegistryNavItems = buildWorkspaceServiceNavItems(serviceRegistry);
+  const extensionRegistryNavItems = buildExtensionServiceNavItems(serviceRegistry);
   const contentTypesByName = new Map(
     (contentTypes ?? []).map((contentType) => [contentType.name, contentType]),
   );
@@ -736,8 +743,8 @@ export function buildPlatformNavItems(
   const coreServiceNavItems = serviceNavItems
     .filter((entry) => entry.surface === "core" && entry.serviceName !== "@zelavis/website")
     .map((entry) => entry.item);
-  const workspaceServiceNavItems = serviceNavItems
-    .filter((entry) => entry.surface === "workspace")
+  const extensionSurfaceServiceNavItems = serviceNavItems
+    .filter((entry) => entry.surface === "extensions")
     .map((entry) => entry.item);
   const settingsServiceNavItems = serviceNavItems
     .filter((entry) => entry.surface === "settings")
@@ -765,7 +772,7 @@ export function buildPlatformNavItems(
     ...((contentTypes ?? []).map((contentType) => ({
       title: contentType.label,
       icon: FileText,
-      panelLabel: "Views",
+      panelLabel: contentType.label,
       landingUrl: `/content/${contentType.name}` as DashboardRoutePath,
       sectionLabel: "Collections",
       items: [
@@ -833,7 +840,7 @@ export function buildPlatformNavItems(
       sectionLabel: "Extend",
     },
     {
-      title: "Workspace",
+      title: "Extensions",
       icon: Bot,
       sectionLabel: "Extend",
       items: [
@@ -842,14 +849,14 @@ export function buildPlatformNavItems(
           url: "/agents",
           icon: Bot,
         },
-        ...workspaceServiceNavItems,
-        ...workspaceRegistryNavItems,
+        ...extensionSurfaceServiceNavItems,
+        ...extensionRegistryNavItems,
       ],
     },
     {
-      title: "Core",
+      title: "Backend",
       icon: Server,
-      sectionLabel: "Core",
+      sectionLabel: "Backend",
       items: coreServiceNavItems,
     },
     {
@@ -958,7 +965,7 @@ export function findServiceMenuPageByPath(
     return undefined;
   };
 
-  return search(buildWorkspaceServiceNavItems(serviceRegistry));
+  return search(buildExtensionServiceNavItems(serviceRegistry));
 }
 
 export function getDashboardPageLabel(

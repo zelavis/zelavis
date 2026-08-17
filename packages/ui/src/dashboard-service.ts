@@ -22,7 +22,7 @@ export interface ZelavisDashboardBundleAsset {
 
 export interface ZelavisDashboardBundleStore {
   read: (
-    scope: { workspaceId?: string; serviceName: string; bundle: string },
+    scope: { projectId?: string; serviceName: string; bundle: string },
     path: string,
   ) =>
     | Promise<ZelavisDashboardBundleAsset | undefined>

@@ -193,7 +193,9 @@ function ContentTypeEntriesRoute() {
                         ) : (
                           <div className="grid gap-1">
                             <Link
-                              to={`/content/${contentTypePath}/${encodeURIComponent(entry.id)}`}
+                              to={toProjectPath(
+                                `/content/${contentTypePath}/${encodeURIComponent(entry.id)}`,
+                              )}
                               className="font-medium text-foreground underline-offset-4 hover:underline"
                             >
                               {typeof data.title === "string" ? data.title : entry.id}
@@ -247,7 +249,9 @@ function ContentTypeEntriesRoute() {
                           ) : (
                             <>
                               <Link
-                                to={`/content/${contentTypePath}/${encodeURIComponent(entry.id)}`}
+                                to={toProjectPath(
+                                  `/content/${contentTypePath}/${encodeURIComponent(entry.id)}`,
+                                )}
                                 className={cn(buttonVariants({ variant: "outline" }))}
                               >
                                 <SquarePen className="size-4" />

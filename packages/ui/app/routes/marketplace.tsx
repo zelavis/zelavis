@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 
 import {
-  PageHeader,
   ResourceNotice,
 } from "#/components/DashboardPage";
 import { Button, buttonVariants } from "#/components/ui/button";
@@ -210,7 +209,7 @@ const communityCatalog: readonly MarketplaceCatalogItem[] = [
       "Placeholder listing for community services that add higher-level collaboration or engagement surfaces.",
     details: [
       "Planned catalog entry",
-      "Would likely ship as a service with nested workspace panels",
+      "Would likely ship as a service with nested Extensions panels",
       "Runtime contracts still exploratory",
     ],
     tags: ["comments", "moderation", "community"],
@@ -232,10 +231,10 @@ function createOfficialCatalog(
       category: "Commerce",
       summary: "Products, orders, customers, coupons, and future storefront workflows.",
       description:
-        "Official Zelavis commerce service. This is the best current proving ground for service-owned workspace areas with nested panels.",
+        "Official Zelavis commerce service. This is the best current proving ground for service-owned Extensions areas with nested panels.",
       details: [
       "Promoted official service",
-      "Workspace area with nested slides",
+      "Extensions area with nested slides",
       "Install state is real; host activation applies the live service graph",
       ],
       tags: ["products", "orders", "customers"],
@@ -467,12 +466,6 @@ function GlobalMarketplace() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-8">
-      <PageHeader
-        eyebrow="Marketplace"
-        title="Marketplace"
-        description="Install new projects, one-click apps, templates, and server-level integrations. Project plugins are visible here for discovery, but installed inside a Zelavis project."
-      />
-
       <ResourceNotice
         title="Global marketplace scope"
         description="Apps here create or affect projects. Plugins extend an existing Zelavis project, so they are disabled in the global marketplace and active in the project marketplace."
@@ -634,12 +627,6 @@ function ProjectMarketplace() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-8">
-      <PageHeader
-        eyebrow="Project Marketplace"
-        title="Marketplace"
-        description="Install plugins and service packages into this Zelavis project. Apps and one-click installers live in the global marketplace."
-      />
-
       {marketplaceActivationRequired ? (
         <ResourceNotice
           title="Host activation required"
