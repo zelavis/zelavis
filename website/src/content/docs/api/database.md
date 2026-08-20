@@ -2,11 +2,13 @@
 title: Database
 ---
 
-Zelavis includes a database core service with documents, events, schemas, projections, and time-series. Application code should usually access it through the `Zelavis` runtime as `zv.db`.
+Zelavis App includes a project database service with documents, events,
+schemas, projections, and time-series. It is not the Platform OS System Store.
+Application code in the current development runtime can access it as `zv.db`.
 
 ## Setup
 
-The database core service is enabled by default:
+The database service is mounted by the default Zelavis App development project:
 
 ```ts
 import { Zelavis } from 'zelavis';
@@ -45,7 +47,9 @@ await zv.db.documents.update({
 await zv.db.documents.delete({ collection: 'posts', id: doc.id });
 ```
 
-`zv.db` resolves to the same database API instance mounted by the Zelavis runtime, so dashboard routes, services, and application code share one database service.
+`zv.db` currently resolves to the same Zelavis App project database API mounted by the
+development runtime. Platform records live separately in
+`.zelavis/system/zelavis.sqlite` and are never reachable through this API.
 
 ## API surface
 

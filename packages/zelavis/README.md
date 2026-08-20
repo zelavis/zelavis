@@ -1,10 +1,44 @@
 # zelavis
 
-`zelavis` is the high-level runtime package for the Zelavis App Platform.
+`zelavis` is the Platform OS package for the Zelavis App Platform.
 
-Use this package when building an application or service with Zelavis and you want the default platform building blocks wired together for you. Lower-level packages such as `@zelavis/server`, `@zelavis/db`, and `@zelavis/auth` remain available when you need direct access to the primitives.
+It owns the long-running control plane, dashboard composition, System Store,
+Blueprint registry, service lifecycle, and server/project orchestration.
+Lower-level packages such as `@zelavis/server`, `@zelavis/db`, and
+`@zelavis/auth` remain independently useful primitives.
 
-Today, that mostly means auth, database, website delivery, workloads, server mounting, service activation, and dashboard delivery under one runtime entry point.
+The Platform OS creates version-locked Zelavis App projects from the shipped
+Blueprint catalog. With the Node adapter, every project receives its own data
+directory and long-running Node process. The driver provides operational
+isolation for trusted projects and can later be replaced by an OCI or stronger
+isolation driver without changing the project API.
+
+Platform records use a separate System Store. Node and Bun local adapters
+default to `.zelavis/system/zelavis.sqlite`; project data remains in the project
+database and is never exposed through that store.
+
+Project lifecycle endpoints are available under
+`/zelavis/api/v1/runtime/projects`. The dashboard uses these same endpoints to
+create, list, start, and stop projects, and project dashboard API traffic is
+proxied to the selected project's runtime.
+
+The Platform OS also owns Assistant threads. `createAssistantManager(...)`
+stores project-scoped conversations in the System Store and delegates replies
+to a `ZelavisAssistantResponder`. The default `zelavis-local-router` provides a
+small deterministic development responder. It is not an LLM and does not run
+tools. Applications can replace it through
+`new Zelavis({ assistant: responder })`, while clients use stable endpoints under
+`/zelavis/api/v1/runtime/assistant`.
+
+Only the Platform OS mounts `@zelavis/ui`. A Zelavis App project process is headless:
+it serves its application APIs plus `@zelavis/server` runtime metadata, but no
+dashboard shell or dashboard assets. The Platform dashboard uses the project
+proxy to read that metadata and render the Zelavis App services' own menu declarations.
+
+Blueprints and services have separate jobs. A Blueprint is the versioned
+installation recipe and service lock. It has no menu API of its own. The
+services selected by the Blueprint declare fixed and dynamic dashboard menus
+through the shared service contract.
 
 The dashboard opens to Projects. Project-local Zelavis surfaces live under
 `/zelavis/projects/:projectId/*`, global app/server discovery lives under
@@ -15,6 +49,29 @@ The dashboard is a client of the runtime, not the source of truth. Any operation
 available in the dashboard should also be exposed through a stable runtime
 capability and versioned endpoint so CLI tools, AI agents, scripts, plugins, and
 external admin clients can perform the same work.
+
+## Install and run
+
+Developers who already manage Node 24 can install the public package directly:
+
+```bash
+npm install --global zelavis
+zelavis serve
+```
+
+Production archives and operating-system packages carry a private pinned Node
+runtime, so they do not require or modify the server's global Node installation.
+The public command is the same in every delivery format. By default it listens
+on `127.0.0.1:3000`, stores Platform state in `.zelavis`, and serves the
+dashboard at `/zelavis`.
+
+```bash
+zelavis serve --host 0.0.0.0 --port 3000 --data-dir /var/lib/zelavis
+zelavis services list
+```
+
+See the public installation guide for APT, direct `.deb`, archive, and quick
+installer workflows.
 
 ## Entry point preference
 
@@ -175,6 +232,8 @@ By default, Zelavis owns one safe namespace:
 /zelavis/projects/default/workloads
 /zelavis/api/v1/runtime/config
 /zelavis/api/v1/runtime/settings
+/zelavis/api/v1/runtime/assistant/threads
+/zelavis/api/v1/runtime/assistant/threads/:threadId/messages
 /zelavis/api/v1/auth
 /zelavis/api/v1/database
 /zelavis/api/v1/storage/files/*
@@ -260,7 +319,9 @@ zelavis/adapters/node
 zelavis/adapters/bun
 ```
 
-Deno is a planned runtime target.
+Node.js is the current supported production host. Bun remains an adapter target
+while its full platform and project-runtime suite is completed; Deno is a
+planned adapter target.
 
 Available framework utilities:
 
@@ -339,10 +400,15 @@ because mounted routes cannot move safely while the runtime is already running.
 Runtime resources such as KV or file storage are used as settings defaults when
 they are available.
 
-For local dashboard work, use the `pnpm run ui:dev` workflow. It starts the
+For local Zelavis development, use the `pnpm dev` workflow. It starts the
 runtime and UI dev server together and wires dashboard requests to the live UI
 build.
 
-The dashboard, auth, database, website, and workloads core services are included
-by default. The storage core service is enabled when Zelavis has a file storage
-resource to expose.
+`pnpm dev` explicitly loads the source catalog from
+`packages/zelavis/blueprints`. Installed packages discover the bundled catalog,
+and downloaded versions are overlaid from `.zelavis/blueprints`.
+
+The dashboard, Zelavis App database, application auth, website, and workloads services
+remain mounted together in the current development runtime while Blueprint
+project installation and isolation are implemented. Platform settings and
+service registry state already persist through the separate System Store.

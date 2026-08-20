@@ -1,31 +1,26 @@
 # Zelavis
 
-Zelavis is an early-stage, self-hostable App Platform for building, hosting, and operating modern web applications from one composable TypeScript workspace.
-
-It brings together backend primitives, runtime composition, an admin dashboard, database tooling, authentication, plugins, native website hosting, and server/project control surfaces without tying the core to one JavaScript runtime, framework, or hosting provider.
-
-Zelavis is foundation-first today. The current repository already includes working packages for auth, database, server composition, runtime mounting, dashboard delivery, framework adapters, first-party workloads, and optional domain plugins. The broader platform surface is still evolving.
+Build apps and websites. Manage data and content. Own your platform.
 
 ## What Zelavis Is
 
-Zelavis is designed to become the application control plane for teams that want to own their infrastructure and product surface.
+Zelavis is a platform for building and managing apps, websites, data, and content. Run it on your own infrastructure or use managed Zelavis on zelavis.com. Use Zelavis as your backend, host your projects, deploy existing applications, or install software like WordPress.
 
-The platform direction includes:
+## Install
 
-- Application runtime composition.
-- Authentication and identity primitives.
-- Tenant-aware database and data administration.
-- Admin/dashboard UI.
-- Native website hosting from the Zelavis runtime.
-- Project workloads for functions, jobs, schedules, and webhooks owned by the long-running Zelavis runtime.
-- Project management for Zelavis-native apps and managed apps such as WordPress, static sites, or generic hosted software.
-- Server management surfaces for domains, backups, logs, and local app hosting.
-- Plugin and package extensibility.
-- Framework and host adapters.
-- Operational tooling, including optional external deployment/provider plugins when the user chooses them.
-- Optional domain packages for larger product systems.
+Production packages bundle a private pinned Node runtime, while developers who
+already manage Node 24 can install from npm:
 
-The goal is not a loose collection of utilities. Zelavis is being shaped as a coherent App Platform: something you can embed inside an existing app, self-host as an admin surface, or extend into a larger product platform.
+```bash
+curl -fsSL https://zelavis.com/install.sh | sudo sh
+# or
+npm install --global zelavis
+zelavis serve
+```
+
+APT, direct `.deb`, and manual `.tar.gz`/`.zip` releases use the same staged
+Platform payload. See the [installation guide](website/src/content/docs/getting-started/installation.md)
+and [distribution documentation](distribution/README.md).
 
 ## Product Model
 
@@ -35,6 +30,23 @@ Zelavis starts at a Projects overview. A project is the operational unit the das
 - A **managed app project** can represent software Zelavis hosts or manages, such as WordPress, a static site, or a generic app. These projects should show hosting-style controls instead of Zelavis-native backend menus.
 - The **global Marketplace** is outside any project and is for apps, starters, templates, and server provider plugins. Project plugins belong inside a Zelavis-native project.
 - The **Server** area is outside projects and owns machine-level concerns such as domains, backups, and logs.
+
+The current Node host can create multiple Zelavis App projects from the
+shipped Blueprint. Each project locks its exact Blueprint version and runs with
+its own process and data directory. This default is operational isolation for
+trusted code; stronger OCI and microVM drivers remain future implementations of
+the same project-runtime contract.
+
+Zelavis serves one dashboard application from the Platform OS. Project
+runtimes do not contain hidden dashboard copies. When a user opens a project,
+the Platform UI reads that runtime's service metadata and proxies its APIs, so
+Database, Auth, Workloads, and installed plugin menus still come from the
+project that owns them.
+
+A Blueprint is a project recipe, not a service. It chooses and locks the
+services that make up a project. Those services use the normal service menu API
+for fixed items, dynamic sections, pages, and nested slides; the Blueprint does
+not invent a second navigation contract.
 
 Native website hosting is part of the core product story. External hosts, storage providers, DNS providers, CDNs, and deploy targets can be connected through plugins, but they are optional user choices rather than Zelavis runtime targets.
 
@@ -78,6 +90,10 @@ Zelavis currently focuses on these layers:
 - **Workloads**: first-party project functions, jobs, schedules, and webhooks exposed through `@zelavis/workloads` and managed from the project dashboard.
 - **Server management**: dashboard surfaces for domains, backups, logs, and local hosting operations.
 - **Plugins**: optional domain and provider packages that extend the core platform.
+- **Assistant**: System Store-backed project conversations exposed through the
+  runtime API and rendered with assistant-ui in the desktop workspace and
+  mobile slide slots. The current local responder routes supported requests;
+  model providers, streaming, and tool execution are still in progress.
 
 Dashboard feature work should be mobile-slot-ready by default. Desktop routes
 compose reusable workspace and panel components into the main content area, and
@@ -294,7 +310,9 @@ The core implementation is intentionally portable and does not depend on native 
 
 ## Runtime Independence
 
-Zelavis core packages are designed around JavaScript, TypeScript, and standard Web platform primitives such as `Request`, `Response`, `Headers`, `URL`, streams, and standard `crypto`.
+Node.js is the current supported production host. Zelavis core packages remain
+designed around JavaScript, TypeScript, and standard Web platform primitives
+such as `Request`, `Response`, `Headers`, `URL`, streams, and standard `crypto`.
 
 Runtime-specific behavior belongs in adapters. Provider-specific behavior belongs in plugins. The core platform should remain portable across Node, Bun, future Deno, and framework utilities without treating external deployment providers as runtime targets.
 
@@ -350,7 +368,7 @@ pnpm --filter @zelavis/ecommerce build
 The main local dashboard workflow is:
 
 ```bash
-pnpm run ui:dev
+pnpm dev
 ```
 
 That starts the Zelavis runtime on `http://127.0.0.1:3000`, the UI dev server on `http://127.0.0.1:3001`, and redirects dashboard requests under `/zelavis` to the live UI dev server.

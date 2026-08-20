@@ -68,7 +68,7 @@ test("defineService rejects an invalid app domain policy", () => {
 
 test("buildBundleStorageKey encodes scope identity into a deterministic path", () => {
   const key = buildBundleStorageKey(
-    { workspaceId: "ws_1", serviceName: "@example/kanban", bundle: "dist" },
+    { projectId: "ws_1", serviceName: "@example/kanban", bundle: "dist" },
     "assets/index.js",
   );
   assert.equal(key, "apps/ws_1/@example/kanban/dist/assets/index.js");
@@ -165,7 +165,7 @@ test("activateServiceRegistry synthesizes an app service for system services", a
 test("workspace-scoped services are remounted under /apps/<name> regardless of declared mount", async () => {
   const service = defineService({
     name: "@example/tenant-app",
-    scope: "workspace",
+    scope: "extension",
     app: { mount: "/zelavis", bundle: "dist" },
   });
 

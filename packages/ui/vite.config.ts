@@ -23,6 +23,9 @@ export default defineConfig({
   plugins: [tailwindcss(), reactRouter()],
   optimizeDeps: {
     include: [
+      "@assistant-ui/core",
+      "@assistant-ui/react",
+      "@assistant-ui/store",
       "@base-ui/react/avatar",
       "@base-ui/react/button",
       "@base-ui/react/dialog",
@@ -40,7 +43,14 @@ export default defineConfig({
     ],
   },
   resolve: {
-    dedupe: ["react", "react-dom", "react/jsx-runtime"],
+    dedupe: [
+      "@assistant-ui/core",
+      "@assistant-ui/react",
+      "@assistant-ui/store",
+      "react",
+      "react-dom",
+      "react/jsx-runtime",
+    ],
     alias: {
       "#": fileURLToPath(new URL("./app", import.meta.url)),
     },

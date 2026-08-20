@@ -37,9 +37,9 @@ import type {
   RuntimeAccessRequirement,
   RuntimeDashboardAccess,
   RuntimePrincipal,
+  RuntimeProject,
 } from "#/lib/runtime-api";
 import type { ContentTypeRow } from "#/lib/content-studio";
-import { isInternalDatabaseCollection } from "#/lib/database-collections";
 import { toProjectPath } from "#/lib/routing";
 
 export type DashboardRoutePath =
@@ -74,6 +74,7 @@ export type DashboardRoutePath =
   | `/${string}`;
 
 export type DashboardNavSearch = {
+  [key: string]: string | undefined;
   domainAction?: "add" | "buy" | "transfer";
   resourceView?: "processes" | "storage" | "limits";
   systemTable?:
@@ -149,17 +150,26 @@ export type DashboardProjectItem = {
   updatedAt: string;
 };
 
-export const dashboardProjects: readonly DashboardProjectItem[] = [
-  {
-    id: "default",
-    name: "Default project",
+export function toDashboardProjectItem(project: RuntimeProject): DashboardProjectItem {
+  let domain = "Local runtime";
+  if (project.runtime.url) {
+    try {
+      domain = new URL(project.runtime.url).host;
+    } catch {
+      domain = project.runtime.url;
+    }
+  }
+
+  return {
+    id: project.id,
+    name: project.name,
     logo: ZelavisMark,
-    domain: "localhost",
+    domain,
     kind: "zelavis",
-    status: "draft",
-    updatedAt: "just now",
-  },
-] as const;
+    status: project.runtime.status === "running" ? "active" : "draft",
+    updatedAt: project.updatedAt,
+  };
+}
 
 function matchScopeValue(
   required: string | undefined,
@@ -548,8 +558,8 @@ function toDashboardRoutePath(path: string): DashboardRoutePath | undefined {
   return path as DashboardRoutePath;
 }
 
-function toProjectRoutePath(path: string): DashboardRoutePath {
-  return toProjectPath(path) as DashboardRoutePath;
+function toProjectRoutePath(path: string, projectId: string): DashboardRoutePath {
+  return toProjectPath(path, projectId) as DashboardRoutePath;
 }
 
 function isBuiltInProjectPath(path: string) {
@@ -584,26 +594,95 @@ function isBuiltInProjectPath(path: string) {
   ].includes(path);
 }
 
-function toProjectMenuItem(item: DashboardNavItem): DashboardNavItem {
+function toProjectMenuItem(
+  item: DashboardNavItem,
+  projectId: string,
+): DashboardNavItem {
   return {
     ...item,
     url:
       item.url && isBuiltInProjectPath(item.url)
-        ? toProjectRoutePath(item.url)
+        ? toProjectRoutePath(item.url, projectId)
         : item.url,
     landingUrl:
       item.landingUrl && isBuiltInProjectPath(item.landingUrl)
-        ? toProjectRoutePath(item.landingUrl)
+        ? toProjectRoutePath(item.landingUrl, projectId)
         : item.landingUrl,
-    items: item.items?.map(toProjectMenuItem),
+    items: item.items?.map((child) => toProjectMenuItem(child, projectId)),
+  };
+}
+
+function materializeProjectAccessRequirement(
+  requirement: RuntimeAccessRequirement,
+  projectId: string,
+): RuntimeAccessRequirement {
+  if (
+    requirement.scope?.type === "project" &&
+    "projectIdParam" in requirement.scope
+  ) {
+    return {
+      ...requirement,
+      scope: {
+        type: "project",
+        projectId,
+      },
+    };
+  }
+
+  return requirement;
+}
+
+function isAccessRequirementArray(
+  access: RuntimeAccessRequirement | readonly RuntimeAccessRequirement[],
+): access is readonly RuntimeAccessRequirement[] {
+  return Array.isArray(access);
+}
+
+function materializeProjectAccess(
+  access: RuntimeAccessRequirement | readonly RuntimeAccessRequirement[] | undefined,
+  projectId: string,
+) {
+  if (!access) {
+    return undefined;
+  }
+
+  return isAccessRequirementArray(access)
+    ? access.map((requirement) =>
+        materializeProjectAccessRequirement(requirement, projectId),
+      )
+    : materializeProjectAccessRequirement(access, projectId);
+}
+
+function materializeProjectMenuItemAccess(
+  item: DashboardNavItem,
+  menu: RuntimeServiceMenuDefinition,
+  projectId: string,
+): DashboardNavItem {
+  return {
+    ...item,
+    access: materializeProjectAccess(menu.access, projectId),
+    items: item.items?.map((child, index) => {
+      const childMenu = menu.items?.[index];
+      return childMenu
+        ? materializeProjectMenuItemAccess(child, childMenu, projectId)
+        : child;
+    }),
   };
 }
 
 function createProjectAwareDashboardServiceMenuItem(
   menu: RuntimeServiceMenuDefinition,
   serviceName?: string,
+  projectId = "default",
 ): DashboardNavItem {
-  return toProjectMenuItem(createDashboardServiceMenuItem(menu, serviceName));
+  return toProjectMenuItem(
+    materializeProjectMenuItemAccess(
+      createDashboardServiceMenuItem(menu, serviceName),
+      menu,
+      projectId,
+    ),
+    projectId,
+  );
 }
 
 function slugifyServiceName(name: string) {
@@ -654,6 +733,7 @@ function createDashboardServiceRegistryMenuItem(
   return {
     title: menu.title,
     url: menu.path ? toDashboardRoutePath(menu.path) : undefined,
+    search: menu.search,
     icon: getServiceRegistryMenuIcon(menu.title, menu.path),
     pageLabel: menu.pageLabel,
     panelLabel: menu.panelLabel,
@@ -694,6 +774,7 @@ function createDashboardServiceMenuItem(
   return {
     title: menu.title,
     url: menu.path ? toDashboardRoutePath(menu.path) : undefined,
+    search: menu.search,
     landingUrl:
       menu.path && menu.items?.length
         ? toDashboardRoutePath(menu.path)
@@ -854,17 +935,54 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
     apiPath: "/api/v1/database",
     menu: {
       title: "Database",
+      surface: "core",
       panelLabel: "Database",
+      dynamicItems: {
+        path: "/database/menu/tables",
+        emptyTitle: "No tables yet",
+      },
       items: [
+        {
+          title: "Create Table",
+          path: "/database/new",
+          pageLabel: "Database",
+          fixed: true,
+          fixedOrder: 1,
+        },
         {
           title: "System Tables",
           panelLabel: "System Tables",
           items: [
-            { title: "zv_collections", path: "/database" },
-            { title: "zv_events", path: "/database" },
-            { title: "zv_schemas", path: "/database" },
-            { title: "zv_time_series_checkpoints", path: "/database" },
-            { title: "zv_time_series_points", path: "/database" },
+            {
+              title: "zv_collections",
+              path: "/database",
+              pageLabel: "Database",
+              search: { systemTable: "zv_collections" },
+            },
+            {
+              title: "zv_events",
+              path: "/database",
+              pageLabel: "Database",
+              search: { systemTable: "zv_events" },
+            },
+            {
+              title: "zv_schemas",
+              path: "/database",
+              pageLabel: "Database",
+              search: { systemTable: "zv_schemas" },
+            },
+            {
+              title: "zv_time_series_checkpoints",
+              path: "/database",
+              pageLabel: "Database",
+              search: { systemTable: "zv_time_series_checkpoints" },
+            },
+            {
+              title: "zv_time_series_points",
+              path: "/database",
+              pageLabel: "Database",
+              search: { systemTable: "zv_time_series_points" },
+            },
           ],
         },
       ],
@@ -887,6 +1005,12 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
       title: "Website",
       path: "/website",
       pageLabel: "Website",
+      sectionLabel: "Build",
+      surface: "root",
+      access: {
+        permissions: ["project.website.manage"],
+        scope: { type: "project", projectIdParam: "projectId" },
+      },
     },
   },
 ] as const;
@@ -902,79 +1026,23 @@ export function buildPlatformNavItems(
   projectId = "default",
 ): readonly DashboardNavItem[] {
   const extensionRegistryNavItems = buildExtensionServiceNavItems(serviceRegistry);
-  const contentTypesByName = new Map(
-    (contentTypes ?? []).map((contentType) => [contentType.name, contentType]),
-  );
-  const databaseTableItems = [...(databaseCollections ?? [])]
-    .filter((collection) => !isInternalDatabaseCollection(collection.name))
-    .sort((left, right) => left.name.localeCompare(right.name))
-    .map((collection) => {
-      const contentType = contentTypesByName.get(collection.name);
-      return {
-        title: contentType?.label ?? collection.name,
-        url: "/database" as const,
-        search: { databaseTable: collection.name, systemTable: undefined },
-        icon: Database,
-        pageLabel: "Database",
-        sectionLabel: "Tables",
-      };
-    });
+  void databaseCollections;
   const serviceNavItems = (services ?? [])
     .filter((service) => service.core && service.name !== "@zelavis/ui")
     .map((service) => {
       const baseMenu = service.menu
-        ? createProjectAwareDashboardServiceMenuItem(service.menu, service.name)
+        ? createProjectAwareDashboardServiceMenuItem(
+            service.menu,
+            service.name,
+            projectId,
+          )
         : {
             title: service.name,
             icon: getServiceMenuIcon(service.name, service.name),
           };
 
-      if (service.name !== "@zelavis/db") {
-        return {
-          item: baseMenu,
-          surface: getServiceMenuSurface(service),
-          serviceName: service.name,
-        };
-      }
-
-      const systemTableItems =
-        baseMenu.items?.find((item) => item.title === "System Tables")?.items ?? [];
-
       return {
-        item: {
-          ...baseMenu,
-          panelLabel: "Database",
-          items: [
-            {
-              title: "Create Table",
-              url: "/database/new" as const,
-              icon: Plus,
-              pageLabel: "Database",
-              fixed: true,
-              fixedOrder: 1,
-            },
-            ...databaseTableItems,
-            ...(systemTableItems.length > 0
-              ? [
-                  {
-                    title: "System Tables",
-                    icon: Server,
-                    panelLabel: "System Tables",
-                    items: systemTableItems.map((item) => ({
-                      ...item,
-                      url: "/database" as const,
-                      search: {
-                        systemTable: item.title as DashboardNavSearch["systemTable"],
-                        databaseTable: undefined,
-                      },
-                      icon: Database,
-                      pageLabel: "Database",
-                    })),
-                  },
-                ]
-              : []),
-          ],
-        },
+        item: baseMenu,
         surface: getServiceMenuSurface(service),
         serviceName: service.name,
       };
@@ -983,7 +1051,7 @@ export function buildPlatformNavItems(
     .filter((entry) => entry.surface === "root")
     .map((entry) => entry.item);
   const coreServiceNavItems = serviceNavItems
-    .filter((entry) => entry.surface === "core" && entry.serviceName !== "@zelavis/website")
+    .filter((entry) => entry.surface === "core")
     .map((entry) => entry.item);
   const extensionSurfaceServiceNavItems = serviceNavItems
     .filter((entry) => entry.surface === "extensions")
@@ -991,9 +1059,6 @@ export function buildPlatformNavItems(
   const settingsServiceNavItems = serviceNavItems
     .filter((entry) => entry.surface === "settings")
     .map((entry) => entry.item);
-  const hasWebsiteService = (services ?? defaultRuntimeServices).some(
-    (service) => service.name === "@zelavis/website",
-  );
   const contentItems: readonly DashboardNavItem[] = [
     {
       title: "All Content Types",
@@ -1066,18 +1131,6 @@ export function buildPlatformNavItems(
       sectionLabel: "Build",
       access: projectAccess("project.media.manage", projectId),
     },
-    ...(hasWebsiteService
-      ? [
-          {
-            title: "Website",
-            url: "/website" as const,
-            icon: Globe2,
-            pageLabel: "Website",
-            sectionLabel: "Build",
-            access: projectAccess("project.website.manage", projectId),
-          },
-        ]
-      : []),
     ...rootServiceNavItems,
     {
       title: "Marketplace",
@@ -1127,7 +1180,7 @@ export function buildPlatformNavItems(
     },
   ] as const;
 
-  return rawItems.map(toProjectMenuItem);
+  return rawItems.map((item) => toProjectMenuItem(item, projectId));
 }
 
 export const platformNavItems = buildPlatformNavItems(

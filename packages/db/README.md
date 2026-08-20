@@ -30,6 +30,8 @@ untyped blobs.
 - In-memory driver for local development and tests.
 - Optional SQL capability contract for SQLite-compatible adapters.
 - Server service routes through the existing `@zelavis/server` service contract, with documents exposed as a nested service.
+- Service-owned dashboard menu metadata for Database, including the fixed
+  "Create Table" action, system tables, and a dynamic table menu endpoint.
 
 ## Non-goals for the first slice
 

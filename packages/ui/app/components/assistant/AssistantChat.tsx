@@ -1,183 +1,149 @@
 import * as React from "react"
-import { useFetcher, useNavigate } from "react-router"
+import {
+  AssistantRuntimeProvider,
+  useAuiState,
+  useLocalRuntime,
+  type ChatModelAdapter,
+  type ThreadMessageLike,
+} from "@assistant-ui/react"
+import { Link } from "react-router"
 
+import {
+  AssistantMessage as AssistantUiMessage,
+  Thread,
+  type ThreadComponents,
+} from "#/components/assistant-ui/thread"
 import { Button } from "#/components/ui/button"
-import { Input } from "#/components/ui/input"
+import {
+  createAssistantThread,
+  sendAssistantMessage,
+  type RuntimeAssistantAction,
+  type RuntimeAssistantThread,
+  type RuntimeConfig,
+} from "#/lib/runtime-api"
+import { cn } from "#/lib/utils"
 
-type AssistantAction = {
-  label: string
-  to: string
+function toInitialMessages(
+  thread: RuntimeAssistantThread | undefined,
+): readonly ThreadMessageLike[] {
+  return (thread?.messages ?? []).map((message) => ({
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    createdAt: new Date(message.createdAt),
+    metadata: {
+      custom: {
+        ...(message.actions ? { actions: message.actions } : {}),
+      },
+    },
+  }))
 }
 
-type AssistantEndpointResponse = {
-  actions?: AssistantAction[]
-  message: string
+function readLatestUserPrompt(
+  messages: Parameters<ChatModelAdapter["run"]>[0]["messages"],
+): string {
+  const userMessage = [...messages].reverse().find((message) => message.role === "user")
+  if (!userMessage) return ""
+  return userMessage.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n")
+    .trim()
 }
 
-type AssistantMessage = {
-  actions?: AssistantAction[]
-  content: string
-  id: string
-  role: "assistant" | "user"
+function AssistantActions() {
+  const actions = useAuiState(
+    (state) => state.message.metadata.custom.actions,
+  ) as readonly RuntimeAssistantAction[] | undefined
+
+  if (!actions?.length) return null
+
+  return (
+    <div className="mt-1 flex flex-wrap gap-2 px-2">
+      {actions.map((action) => (
+        <Button
+          key={`${action.label}-${action.to}`}
+          nativeButton={false}
+          variant="outline"
+          render={<Link to={action.to} viewTransition />}
+        >
+          {action.label}
+        </Button>
+      ))}
+    </div>
+  )
 }
+
+function ZelavisAssistantMessage() {
+  return (
+    <>
+      <AssistantUiMessage />
+      <AssistantActions />
+    </>
+  )
+}
+
+const THREAD_COMPONENTS = {
+  AssistantMessage: ZelavisAssistantMessage,
+} satisfies ThreadComponents
 
 export function AssistantChat({
   className,
   compact = false,
-  onNavigate,
+  config,
+  projectId,
+  thread,
+  onThreadCreated,
 }: {
   className?: string
   compact?: boolean
-  onNavigate?: () => void
+  config: RuntimeConfig
+  projectId?: string
+  thread?: RuntimeAssistantThread
+  onThreadCreated?: (thread: RuntimeAssistantThread) => void
 }) {
-  const navigate = useNavigate()
-  const fetcher = useFetcher<AssistantEndpointResponse>()
-  const [draft, setDraft] = React.useState("")
-  const [pendingPrompt, setPendingPrompt] = React.useState<string>()
-  const [messages, setMessages] = React.useState<AssistantMessage[]>([
-    {
-      id: "welcome",
-      role: "assistant",
-      content:
-        "Tell me what you want to do in Zelavis. I can already help route you into project creation, security, resources, logs, domains, marketplace, database, and content.",
-    },
-  ])
-  const messagesRef = React.useRef<HTMLDivElement>(null)
-  const isSubmitting = fetcher.state !== "idle"
-
-  React.useEffect(() => {
-    if (!pendingPrompt || fetcher.state !== "idle" || !fetcher.data) {
-      return
-    }
-
-    const response = fetcher.data
-
-    setMessages((current) => [
-      ...current,
-      {
-        id: `assistant-${Date.now()}`,
-        role: "assistant",
-        content: response.message,
-        actions: response.actions,
+  const threadIdRef = React.useRef(thread?.id)
+  const adapter = React.useMemo<ChatModelAdapter>(
+    () => ({
+      async run({ messages }) {
+        const prompt = readLatestUserPrompt(messages)
+        let threadId = threadIdRef.current
+        if (!threadId) {
+          const created = await createAssistantThread(config, { projectId })
+          threadId = created.id
+          threadIdRef.current = created.id
+          onThreadCreated?.(created)
+        }
+        const result = await sendAssistantMessage(config, threadId, prompt)
+        return {
+          content: [{ type: "text", text: result.assistantMessage.content }],
+          metadata: {
+            custom: {
+              ...(result.assistantMessage.actions
+                ? { actions: result.assistantMessage.actions }
+                : {}),
+            },
+          },
+        }
       },
-    ])
-    setPendingPrompt(undefined)
-  }, [fetcher.data, fetcher.state, pendingPrompt])
-
-  React.useEffect(() => {
-    messagesRef.current?.scrollTo({
-      top: messagesRef.current.scrollHeight,
-      behavior: "smooth",
-    })
-  }, [messages, isSubmitting])
-
-  function submitPrompt(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-
-    const prompt = draft.trim()
-    if (!prompt || isSubmitting) {
-      return
-    }
-
-    const formData = new FormData()
-    formData.set("prompt", prompt)
-
-    setMessages((current) => [
-      ...current,
-      {
-        id: `user-${Date.now()}`,
-        role: "user",
-        content: prompt,
-      },
-    ])
-    setDraft("")
-    setPendingPrompt(prompt)
-    fetcher.submit(formData, {
-      action: "/_api/assistant",
-      method: "post",
-    })
-  }
-
-  function openAction(action: AssistantAction) {
-    navigate(action.to, { viewTransition: true })
-    onNavigate?.()
-  }
+    }),
+    [config, onThreadCreated, projectId],
+  )
+  const runtime = useLocalRuntime(adapter, {
+    initialMessages: toInitialMessages(thread),
+  })
 
   return (
-    <div
-      className={[
-        "flex min-h-0 flex-col overflow-hidden rounded-md border bg-background",
-        compact ? "min-h-[24rem]" : "h-full",
-        className ?? "",
-      ].join(" ")}
-    >
+    <AssistantRuntimeProvider runtime={runtime}>
       <div
-        ref={messagesRef}
-        className={[
-          "grid min-h-0 flex-1 content-start gap-3 overflow-y-auto p-3",
-          compact ? "max-h-[28rem]" : "",
-        ].join(" ")}
+        className={cn(
+          "flex min-h-0 flex-col overflow-hidden bg-background",
+          compact ? "h-[28rem]" : "h-full min-h-0",
+          className,
+        )}
       >
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={[
-              "grid gap-2 rounded-md px-3 py-2 text-sm",
-              message.role === "user"
-                ? "justify-self-end bg-primary text-primary-foreground"
-                : "justify-self-start bg-muted text-foreground",
-            ].join(" ")}
-          >
-            <p
-              className={[
-                "whitespace-pre-wrap leading-5",
-                compact ? "max-w-[13rem]" : "max-w-2xl",
-              ].join(" ")}
-            >
-              {message.content}
-            </p>
-            {message.actions?.length ? (
-              <div className="flex flex-wrap gap-2">
-                {message.actions.map((action) => (
-                  <Button
-                    key={`${message.id}-${action.to}`}
-                    type="button"
-                    variant={message.role === "user" ? "secondary" : "outline"}
-                    onClick={() => openAction(action)}
-                  >
-                    {action.label}
-                  </Button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        ))}
-        {isSubmitting ? (
-          <div className="justify-self-start rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
-            Thinking...
-          </div>
-        ) : null}
+        <Thread components={THREAD_COMPONENTS} />
       </div>
-      <form
-        className={[
-          "grid gap-2 border-t p-2",
-          compact ? "" : "sm:grid-cols-[1fr_auto]",
-        ].join(" ")}
-        onSubmit={submitPrompt}
-      >
-        <Input
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          placeholder="Ask Zelavis"
-          autoCapitalize="none"
-          autoComplete="off"
-          autoCorrect="off"
-          disabled={isSubmitting}
-        />
-        <Button type="submit" disabled={!draft.trim() || isSubmitting}>
-          Send
-        </Button>
-      </form>
-    </div>
+    </AssistantRuntimeProvider>
   )
 }

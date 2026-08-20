@@ -3,6 +3,7 @@ export interface RuntimeServiceMenuDefinition {
   path?: string;
   pageLabel?: string;
   panelLabel?: string;
+  search?: Record<string, string | undefined>;
   fixed?: boolean;
   fixedOrder?: number;
   fixedActionScope?: "local" | "inherit" | "replace" | "clear";
@@ -35,6 +36,7 @@ export interface RuntimeServiceRegistryMenuDefinition {
   path?: string;
   pageLabel?: string;
   panelLabel?: string;
+  search?: Record<string, string | undefined>;
   fixed?: boolean;
   fixedOrder?: number;
   fixedActionScope?: "local" | "inherit" | "replace" | "clear";
@@ -145,6 +147,67 @@ export interface RuntimeDashboardAccess {
   label: string;
   principal: RuntimePrincipal;
   projects?: readonly RuntimeDashboardProjectAccess[];
+}
+
+export type RuntimeProjectStatus =
+  | "provisioning"
+  | "starting"
+  | "running"
+  | "stopping"
+  | "stopped"
+  | "failed";
+
+export interface RuntimeProject {
+  id: string;
+  name: string;
+  kind: "zelavis";
+  blueprint: {
+    id: string;
+    version: string;
+  };
+  desiredState: "running" | "stopped";
+  runtime: {
+    driver: string;
+    status: RuntimeProjectStatus;
+    url?: string;
+    startedAt?: string;
+    stoppedAt?: string;
+    error?: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RuntimeProjectDriverInfo {
+  driver: string;
+  capabilities: {
+    secureIsolation: boolean;
+    resourceLimits: boolean;
+    persistentFilesystem: boolean;
+    description: string;
+  };
+}
+
+export interface RuntimeAssistantAction {
+  label: string;
+  to: string;
+}
+
+export interface RuntimeAssistantMessage {
+  id: string;
+  role: "assistant" | "user";
+  content: string;
+  actions?: readonly RuntimeAssistantAction[];
+  createdAt: string;
+}
+
+export interface RuntimeAssistantThread {
+  id: string;
+  title: string;
+  projectId?: string;
+  messages: readonly RuntimeAssistantMessage[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface RuntimeServiceRegistryMutationResult {
@@ -607,16 +670,52 @@ const fallbackConfig: RuntimeConfig = {
         title: "Database",
         surface: "core",
         panelLabel: "Database",
+        dynamicItems: {
+          path: "/database/menu/tables",
+          emptyTitle: "No tables yet",
+        },
         items: [
+          {
+            title: "Create Table",
+            path: "/database/new",
+            pageLabel: "Database",
+            fixed: true,
+            fixedOrder: 1,
+          },
           {
             title: "System Tables",
             panelLabel: "System Tables",
             items: [
-              { title: "zv_collections", path: "/database" },
-              { title: "zv_events", path: "/database" },
-              { title: "zv_schemas", path: "/database" },
-              { title: "zv_time_series_checkpoints", path: "/database" },
-              { title: "zv_time_series_points", path: "/database" },
+              {
+                title: "zv_collections",
+                path: "/database",
+                pageLabel: "Database",
+                search: { systemTable: "zv_collections" },
+              },
+              {
+                title: "zv_events",
+                path: "/database",
+                pageLabel: "Database",
+                search: { systemTable: "zv_events" },
+              },
+              {
+                title: "zv_schemas",
+                path: "/database",
+                pageLabel: "Database",
+                search: { systemTable: "zv_schemas" },
+              },
+              {
+                title: "zv_time_series_checkpoints",
+                path: "/database",
+                pageLabel: "Database",
+                search: { systemTable: "zv_time_series_checkpoints" },
+              },
+              {
+                title: "zv_time_series_points",
+                path: "/database",
+                pageLabel: "Database",
+                search: { systemTable: "zv_time_series_points" },
+              },
             ],
           },
         ],
@@ -640,6 +739,12 @@ const fallbackConfig: RuntimeConfig = {
         title: "Website",
         path: "/website",
         pageLabel: "Website",
+        sectionLabel: "Build",
+        surface: "root",
+        access: {
+          permissions: ["project.website.manage"],
+          scope: { type: "project", projectIdParam: "projectId" },
+        },
       },
     },
     {
@@ -1051,6 +1156,127 @@ export async function getDashboardAccess(
   return readJson<RuntimeDashboardAccess>(
     `${config.api.basePath}/runtime/access${suffix}`,
   );
+}
+
+export async function listProjects(
+  config: RuntimeConfig,
+): Promise<{ runtime: RuntimeProjectDriverInfo; projects: RuntimeProject[] }> {
+  return readJson<{ runtime: RuntimeProjectDriverInfo; projects: RuntimeProject[] }>(
+    `${config.api.basePath}/runtime/projects`,
+  );
+}
+
+export async function listAssistantThreads(
+  config: RuntimeConfig,
+  projectId?: string,
+): Promise<{ responder: string; threads: RuntimeAssistantThread[] }> {
+  const search = projectId
+    ? `?projectId=${encodeURIComponent(projectId)}`
+    : "";
+  return readJson<{ responder: string; threads: RuntimeAssistantThread[] }>(
+    `${config.api.basePath}/runtime/assistant/threads${search}`,
+  );
+}
+
+export async function getAssistantThread(
+  config: RuntimeConfig,
+  threadId: string,
+): Promise<RuntimeAssistantThread> {
+  const result = await readJson<{ thread: RuntimeAssistantThread }>(
+    `${config.api.basePath}/runtime/assistant/threads/${encodeURIComponent(threadId)}`,
+  );
+  return result.thread;
+}
+
+export async function createAssistantThread(
+  config: RuntimeConfig,
+  input: { title?: string; projectId?: string } = {},
+): Promise<RuntimeAssistantThread> {
+  const result = await readJson<{ thread: RuntimeAssistantThread }>(
+    `${config.api.basePath}/runtime/assistant/threads`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+  return result.thread;
+}
+
+export async function sendAssistantMessage(
+  config: RuntimeConfig,
+  threadId: string,
+  content: string,
+): Promise<{
+  thread: RuntimeAssistantThread;
+  userMessage: RuntimeAssistantMessage;
+  assistantMessage: RuntimeAssistantMessage;
+}> {
+  return readJson(
+    `${config.api.basePath}/runtime/assistant/threads/${encodeURIComponent(threadId)}/messages`,
+    { method: "POST", body: JSON.stringify({ content }) },
+  );
+}
+
+export async function getProjectRuntimeConfig(
+  controlConfig: RuntimeConfig,
+  projectId: string,
+): Promise<RuntimeConfig> {
+  const proxyRoot = `${controlConfig.api.basePath}/runtime/projects/${encodeURIComponent(projectId)}/proxy`;
+  const projectConfig = await readJson<RuntimeConfig>(
+    `${proxyRoot}/zelavis/api/v1/runtime/config`,
+  );
+  const projectApiBasePath = `${proxyRoot}${projectConfig.api.basePath}`;
+
+  return {
+    ...projectConfig,
+    rootPath: controlConfig.rootPath,
+    configSource: "endpoint",
+    api: {
+      ...projectConfig.api,
+      basePath: projectApiBasePath,
+    },
+    dashboard: controlConfig.dashboard,
+    services: normalizeRuntimeServices(
+      (projectConfig.services ?? [])
+        .filter(
+          (service) =>
+            service.name !== "@zelavis/ui" &&
+            service.name !== "@zelavis/ui:app",
+        )
+        .map((service) => ({
+          ...service,
+          apiPath: service.apiPath.startsWith(projectConfig.rootPath)
+            ? `${proxyRoot}${service.apiPath}`
+            : service.apiPath,
+        })),
+    ),
+  };
+}
+
+export async function createProject(
+  config: RuntimeConfig,
+  input: {
+    name: string;
+    id?: string;
+    blueprintId?: string;
+    blueprintVersion?: string;
+    start?: boolean;
+  },
+): Promise<RuntimeProject> {
+  const result = await readJson<{ project: RuntimeProject }>(
+    `${config.api.basePath}/runtime/projects`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+  return result.project;
+}
+
+export async function setProjectRunning(
+  config: RuntimeConfig,
+  projectId: string,
+  running: boolean,
+): Promise<RuntimeProject> {
+  const result = await readJson<{ project: RuntimeProject }>(
+    `${config.api.basePath}/runtime/projects/${encodeURIComponent(projectId)}/${running ? "start" : "stop"}`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+  return result.project;
 }
 
 export async function getDashboardSettings(

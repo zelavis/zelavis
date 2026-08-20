@@ -2,12 +2,12 @@
   "name": "@zelavis/cli",
   "version": "1.0.1-alpha.2",
   "private": false,
-  "description": "Command-line tools for bootstrapping, developing, and operating Zelavis apps.",
+  "description": "Command-line operations for the Zelavis Platform OS.",
   "license": "MIT",
   "author": "Ivan Jeremic",
   "type": "module",
   "bin": {
-    "zelavis": "./dist/index.js"
+    "zelavis": "./dist/bin.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -37,9 +37,6 @@
   "bugs": {
     "url": "https://github.com/zelavis/zelavis/issues"
   },
-  "dependencies": {
-    "@clack/prompts": "^1.5.1"
-  },
   "devDependencies": {
     "@types/node": "^25.9.1",
     "typescript": "^5.9.0"
@@ -47,8 +44,10 @@
   "keywords": [
     "zelavis",
     "cli",
-    "bootstrap",
-    "react-router",
-    "nextjs"
-  ]
+    "platform",
+    "operations"
+  ],
+  "engines": {
+    "node": ">=24"
+  }
 }

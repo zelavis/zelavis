@@ -43,13 +43,24 @@ The lower-level `zelavis()` function still exists, but it now intentionally owns
 - direct `services`
 - path and mount overrides
 
-The `Zelavis` class is the product-facing entrypoint. Built-in services are part of the runtime by default; lower-level route mounting knobs stay on `zelavis()`.
+The `Zelavis` class is the product-facing Platform OS entrypoint. With the Node
+adapter it discovers the shipped Zelavis App Blueprint, persists project records in the
+System Store, and runs created projects through the default process runtime
+driver. Lower-level route mounting knobs stay on `zelavis()`.
 
 Examples use `zv` as the short local name for a `Zelavis` runtime instance.
 
 ## Default behavior
 
-By default, Zelavis owns one safe namespace under `/zelavis` and includes dashboard, auth, database, website, and workloads core services.
+By default, Zelavis owns one safe namespace under `/zelavis`. The Projects view
+creates version-locked Zelavis App runtimes under `.zelavis/projects/<id>` and the
+project dashboard proxies API operations to the selected runtime.
+
+The Platform process is the only process that mounts `@zelavis/ui`. Zelavis App
+project processes remain headless and expose service metadata through
+`@zelavis/server`. A Blueprint selects those services but is not itself a
+service; Database, Auth, Workloads, and plugins each contribute their own menu
+metadata through the shared service API.
 
 The dashboard stays mounted under the configured root path, while API services stay grouped under `/api/<version>/...`.
 
@@ -62,17 +73,22 @@ Default dashboard paths include:
 ```txt
 /zelavis
 /zelavis/marketplace
-/zelavis/projects/default
-/zelavis/projects/default/marketplace
-/zelavis/projects/default/settings
+/zelavis/projects/:projectId
+/zelavis/projects/:projectId/marketplace
+/zelavis/projects/:projectId/settings
 /zelavis/server
 /zelavis/server/domains
 /zelavis/server/backups
 /zelavis/server/logs
-/zelavis/projects/default/workloads
+/zelavis/projects/:projectId/workloads
 ```
 
-Application code can access core service APIs through the runtime instance:
+The Node process driver is the simplest default isolation boundary. It provides
+separate processes, databases, files, logs, and failure domains for trusted
+projects. It does not claim secure multi-tenant sandboxing. Future OCI and
+microVM drivers implement the same project-runtime contract.
+
+Development application code can access the mounted Zelavis App service APIs through the runtime instance:
 
 ```ts
 await zv.db.documents.createCollection({ name: "posts" });

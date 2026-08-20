@@ -6,7 +6,7 @@ functions, jobs, schedules, webhooks, logs, and workload settings.
 
 It is enabled by the high-level `zelavis` runtime by default, but remains a
 separate package so runner and provider adapters can evolve independently from
-the base runtime.
+the Zelavis App runtime.
 
 ## Implemented Today
 

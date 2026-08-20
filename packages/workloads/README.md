@@ -4,7 +4,7 @@ First-party Zelavis Workloads service for project-scoped functions, jobs,
 schedules, and webhooks.
 
 This package is a core plugin: officially maintained and designed to feel native
-inside Zelavis, but still separate from the base runtime so execution adapters
+inside Zelavis, but still separate from the Zelavis App runtime so execution adapters
 can evolve independently.
 
 The first implementation provides:

@@ -218,16 +218,52 @@ export function defineDatabaseService(
       title: "Database",
       surface: "core",
       panelLabel: "Database",
+      dynamicItems: {
+        path: "/database/menu/tables",
+        emptyTitle: "No tables yet",
+      },
       items: [
+        {
+          title: "Create Table",
+          path: "/database/new",
+          pageLabel: "Database",
+          fixed: true,
+          fixedOrder: 1,
+        },
         {
           title: "System Tables",
           panelLabel: "System Tables",
           items: [
-            { title: "zv_collections", path: "/database" },
-            { title: "zv_events", path: "/database" },
-            { title: "zv_schemas", path: "/database" },
-            { title: "zv_time_series_checkpoints", path: "/database" },
-            { title: "zv_time_series_points", path: "/database" },
+            {
+              title: "zv_collections",
+              path: "/database",
+              pageLabel: "Database",
+              search: { systemTable: "zv_collections" },
+            },
+            {
+              title: "zv_events",
+              path: "/database",
+              pageLabel: "Database",
+              search: { systemTable: "zv_events" },
+            },
+            {
+              title: "zv_schemas",
+              path: "/database",
+              pageLabel: "Database",
+              search: { systemTable: "zv_schemas" },
+            },
+            {
+              title: "zv_time_series_checkpoints",
+              path: "/database",
+              pageLabel: "Database",
+              search: { systemTable: "zv_time_series_checkpoints" },
+            },
+            {
+              title: "zv_time_series_points",
+              path: "/database",
+              pageLabel: "Database",
+              search: { systemTable: "zv_time_series_points" },
+            },
           ],
         },
       ],
@@ -235,6 +271,32 @@ export function defineDatabaseService(
     service: database,
     api: {
       v1: [
+        {
+          id: "database.menu.tables",
+          method: "GET",
+          path: "/menu/tables",
+          handler: async ({ service, query }) => {
+            const tenantId =
+              query.get("tenantId") ?? query.get("projectId") ?? undefined;
+            const collections = await service.documents.listCollections({
+              tenantId,
+            });
+
+            return {
+              body: {
+                items: collections
+                  .filter((collection) => !(collection.name in systemTableMap))
+                  .sort((left, right) => left.name.localeCompare(right.name))
+                  .map((collection) => ({
+                    title: collection.name,
+                    path: "/database",
+                    pageLabel: "Database",
+                    search: { databaseTable: collection.name },
+                  })),
+              },
+            };
+          },
+        },
         {
           id: "database.health",
           method: "GET",

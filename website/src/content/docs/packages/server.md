@@ -23,6 +23,12 @@ Current runtime surfaces include:
 - `plain({ ... })`
 - `dispatch(request)`
 
+The high-level runtime also uses `@zelavis/server` for runtime introspection,
+service-registry operations, service menu discovery, and service-owned page
+documents. This metadata remains available in headless project runtimes, so the
+single Platform `@zelavis/ui` dashboard can render a selected project's menus
+without that project serving another dashboard application.
+
 ## Access Model
 
 `@zelavis/server` defines the shared access-control vocabulary for Zelavis

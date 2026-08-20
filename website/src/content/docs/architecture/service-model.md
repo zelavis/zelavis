@@ -55,6 +55,9 @@ The dashboard should reflect that split:
 - Each service may own unlimited nested sidebar slides inside its own Extensions area.
 - Service-owned dashboard navigation should be declared through a plain menu object such as `menu: { ... }`, not by reaching into sidebar internals directly.
 - A service menu item may declare `page: { id, title, render }` when that menu item owns dashboard content.
+- A service menu item may declare `search` metadata for route state such as
+  `{ databaseTable: "products" }`. Dynamic menu endpoints should return the
+  same menu item shape when runtime-owned lists need active search state.
 - A service menu item may declare `fixed: true` to render as a pinned action at
   the top of its current sidebar slide. Use `fixedOrder` to sort multiple fixed
   actions in the same slide. A nested slide may set `fixedActionScope` to

@@ -52,6 +52,19 @@ shell can later discover which pieces can be mounted into slide slots. Keep
 data loading in route `clientLoader`s or resource routes, not inside duplicated
 mobile-only components.
 
+## Assistant UI
+
+The Assistant workspace uses the official assistant-ui Thread component with a
+custom Zelavis runtime adapter. It does not use the Vercel AI SDK or Assistant
+Cloud. Threads and messages come from the Platform OS runtime API, and the same
+chat workspace is mounted in the desktop content area and compact mobile
+sidebar slots. The utility navigation follows Projects -> project -> Chats so
+mobile does not need a separate chat navigation model.
+
+Keep assistant-ui on the presentation side of the boundary. Provider calls,
+thread persistence, tools, approvals, and privileged operations belong behind
+Zelavis capabilities and endpoints.
+
 ## Service
 
 `@zelavis/ui/service` exports the dashboard service definition helpers used by the

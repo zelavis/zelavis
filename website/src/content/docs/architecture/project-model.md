@@ -10,6 +10,11 @@ A project is the operational unit shown in the dashboard. Different project type
 - **Zelavis-native projects** use Zelavis backend primitives such as Auth, Database, Content, Media, Settings, and project plugins.
 - **Managed app projects** represent software Zelavis hosts or manages, such as WordPress, static sites, or generic apps. These projects should expose hosting-style controls instead of pretending they use Zelavis Auth or Database.
 
+Projects do not host private copies of the Zelavis dashboard. The Platform OS
+mounts one `@zelavis/ui` application. For a Zelavis-native project, that shell
+loads the selected runtime's service metadata through the project proxy and
+builds its sidebar from the services' menu declarations.
+
 The default starter project currently lives at:
 
 ```txt

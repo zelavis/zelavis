@@ -7,6 +7,11 @@ It uses React Router v7 in SPA mode and is served under the configured
 dashboard root path, `/zelavis` by default. The dashboard opens to the Projects
 overview; project-local pages live under `/zelavis/projects/:projectId/*`.
 
+This is the only Zelavis dashboard application in an installation. Isolated
+Zelavis App runtimes do not mount `@zelavis/ui`. The Platform shell keeps its own route
+and asset bundle while reading each selected project's APIs and service menu
+metadata through the control-plane proxy.
+
 ## Current Role
 
 - dashboard shell and slide-based sidebar navigation
@@ -16,6 +21,7 @@ overview; project-local pages live under `/zelavis/projects/:projectId/*`.
 - mobile-slot-ready route surfaces for future mobile browser and Capacitor
   shells
 - service-owned dashboard navigation rendered from runtime menu metadata
+- one shared Platform shell for global and project-local views
 
 The dashboard is a client of Zelavis endpoints. Privileged behavior should live
 behind runtime capabilities and versioned endpoints, not only inside React route
@@ -26,7 +32,7 @@ modules or component callbacks.
 Use the mounted development flow from the repository root:
 
 ```bash
-pnpm run ui:dev
+pnpm dev
 ```
 
 That starts the runtime and UI dev server together so `/zelavis` behaves like

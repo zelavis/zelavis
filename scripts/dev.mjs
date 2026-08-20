@@ -1,4 +1,5 @@
 import { execSync, spawn } from "node:child_process";
+import { resolve } from "node:path";
 import getPort, { portNumbers } from "get-port";
 
 const shell = process.platform === "win32";
@@ -206,6 +207,7 @@ async function main() {
     ),
     startProcess("node-runtime-example", "pnpm", ["--filter", "@zelavis/example-nodejs", "dev"], {
       PORT: String(backendPort),
+      ZELAVIS_BLUEPRINTS_DIR: resolve("packages/zelavis/blueprints"),
       ZELAVIS_UI_DEV_SERVER: uiDashboardRedirectOrigin,
     }),
   ];
@@ -232,11 +234,11 @@ async function main() {
         const name = child.__zelavisName ?? "child-process";
         if (code !== 0 || signal) {
           console.error(
-            `${name} exited before ui:dev could keep running${code !== null ? ` (code ${code})` : ""}${signal ? ` (signal ${signal})` : ""}.`,
+            `${name} exited before pnpm dev could keep running${code !== null ? ` (code ${code})` : ""}${signal ? ` (signal ${signal})` : ""}.`,
           );
         } else {
           console.error(
-            `${name} exited early with code 0. ui:dev expects both the runtime and UI dev server to stay alive.`,
+            `${name} exited early with code 0. pnpm dev expects both the runtime and UI dev server to stay alive.`,
           );
         }
         shutdown();

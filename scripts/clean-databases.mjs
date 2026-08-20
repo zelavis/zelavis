@@ -23,7 +23,7 @@ const DRY_RUN = process.argv.includes("--dry-run");
  * ends with `*`, the segment is treated as a glob across the parent dir.
  */
 const TARGETS = [
-  // ui:dev creates `.zelavis/` inside the zelavis package because that's the cwd
+  // pnpm dev creates `.zelavis/` inside the zelavis package because that's the cwd
   "packages/zelavis/.zelavis",
 
   // Legacy example state from before local adapters standardized on `.zelavis`

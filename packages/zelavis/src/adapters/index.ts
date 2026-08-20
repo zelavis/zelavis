@@ -7,6 +7,7 @@ export {
 export type {
   NodeAdapterOptions,
   NodeAdapterDatabaseOptions,
+  NodeAdapterProjectOptions,
   NodeAdapterServiceOptions,
 } from "./node.js";
 

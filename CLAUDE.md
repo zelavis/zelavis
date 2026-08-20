@@ -82,13 +82,37 @@ await createDatabaseCollection(runtime, {
 
 ## Package Boundaries to Respect
 
-- `@zelavis/db` — core DB contracts, driver, event sourcing, SQL protection. No Node/Bun/CF specifics.
+- `zelavis` — Platform OS control plane, System Store, Blueprint registry,
+  dashboard composition, and project lifecycle orchestration. Its local System
+  Store defaults to `.zelavis/system/zelavis.sqlite`.
+- The Node adapter's default `node-process` project runtime prepares Zelavis App
+  projects under `.zelavis/projects/<id>` and runs each in a separate process.
+  It isolates data, event loops, and crashes, but is not a security sandbox.
+  Keep lifecycle code behind `ZelavisProjectRuntimeDriver`; OCI and microVM
+  implementations must not require dashboard or project-model changes.
+- `@zelavis/db` — application/project DB contracts, driver, event sourcing, and
+  SQL protection. It must not own Platform OS settings, users, project registry,
+  Blueprint cache state, or service installation state.
 - `@zelavis/db/adapters/*` — runtime-specific storage adapters. Each wraps `createSqliteCompatibleDriver`.
-- `@zelavis/server` — shared service/endpoint contracts. No storage or auth specifics.
-- `@zelavis/auth` — auth core and method plugins only.
-- `@zelavis/ui` — dashboard SPA (React Router v7, SPA mode). See `AGENTS.md` UI section.
-- `@zelavis/workloads` — first-party core plugin for project-scoped functions, jobs, schedules, and webhooks. It is default-enabled by `zelavis`, endpoint-backed, and package-separated so runner/provider adapters can evolve independently.
-- `zelavis` — high-level runtime that composes the above. Public API entry point.
+- `@zelavis/server` — reusable service/endpoint and access contracts for both
+  Platform and isolated project runtimes. It also owns runtime introspection,
+  service-menu discovery, and service-registry endpoints. It is not the
+  Platform OS product.
+- `@zelavis/auth` — application auth and method plugins. Platform identities and
+  Zelavis App project identities are separate realms unless explicitly bridged.
+- `@zelavis/ui` — the single Platform dashboard SPA (React Router v7, SPA
+  mode). Project runtimes never mount a second dashboard; the Platform UI reads
+  their service menus and APIs through the project proxy. See `AGENTS.md` UI
+  section.
+- `@zelavis/workloads` — first-party Zelavis App project service for functions, jobs,
+  schedules, and webhooks. It is not Platform OS persistence.
+
+The published `zelavis` package ships official manifests from
+`packages/zelavis/blueprints`; downloaded versions belong in
+`.zelavis/blueprints`. `pnpm dev` loads the source catalog explicitly while
+running the runtime and React Router UI together. Blueprints are provisioning
+recipes, not services: they select versioned services, while each installed
+service owns its menu metadata and menu endpoints.
 
 ## Endpoint-Backed Capability Rule
 
@@ -103,9 +127,22 @@ capabilities should be easy to call over HTTP and easy for AI agents to use, but
 the core runtime is still a self-hosted platform runtime, not a serverless
 function app.
 
+Assistant conversations are a Platform OS capability. `zelavis` owns the
+`ZelavisAssistantManager`, System Store records, responder contract, and
+`/zelavis/api/v1/runtime/assistant/*` endpoints. `@zelavis/ui` uses
+`@assistant-ui/react` only for composable chat state and primitives. Do not put
+model calls, provider secrets, thread persistence, tool authorization, or
+privileged actions in React Router actions or components. The current
+`zelavis-local-router` is deterministic and intentionally limited; real model,
+streaming, tool-call, approval, and agent-run adapters remain provider/runtime
+work behind the same Zelavis capability boundary.
+
 Service dashboard menus can declare dynamic sections with `dynamicItems`. Those
 sections must be backed by service-owned endpoints and return ordinary menu
-items. Workloads uses this for project functions, jobs, schedules, and webhooks.
+items. Database uses this for tables; Workloads uses it for project functions,
+jobs, schedules, and webhooks. Menu items may include `search` metadata for
+route state such as the selected table, so services do not need dashboard-only
+sidebar exceptions.
 
 Service dashboard menus can declare a `surface`. `platform` is the global
 `/zelavis` owner/operator shell, `root` is the first slide of a project
@@ -147,15 +184,25 @@ those grants, while endpoints remain the authority layer.
 
 ## Runtime and Connector Boundary
 
-Zelavis core targets self-hosted Node.js, Bun, and future Deno. Keep core
-packages based on standard JavaScript and Web platform APIs, with
-runtime-specific behavior in adapters and provider-specific behavior in plugins.
+Node.js is the current production host runtime. Keep core packages based on
+standard JavaScript and Web platform APIs, with runtime-specific behavior in
+adapters and provider-specific behavior in plugins, so Bun and future Deno can
+be added without a core rewrite.
 
 Serverless and edge platforms may appear as optional plugin or connector targets
 for user website deployment, DNS, CDN, storage, images, email, MCP servers, AI
 integrations, or similar edge-facing work. They must not define the architecture
 of the Zelavis runtime, database, auth, dashboard, native website hosting,
 server management, or future replication/multi-master model.
+
+## Distribution Boundary
+
+`distribution/` owns release staging, self-contained archives, Debian packages,
+signed APT repository metadata, installers, and operating-system service files.
+Every format must wrap the same staged deployment produced from the public
+`zelavis` package. Packages may carry a pinned private Node runtime, but must not
+replace the host's global Node installation or create another Platform runtime
+implementation.
 
 ## Testing
 

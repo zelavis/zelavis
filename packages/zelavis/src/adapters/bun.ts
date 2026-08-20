@@ -1,10 +1,11 @@
 import { join, resolve } from "node:path";
 import {
-  createFileStorageServiceRegistryStore,
   defineAdapter,
   type ZelavisOptions,
   type ZelavisResolvedPlatformOptions,
 } from "../index.js";
+import { loadLocalBlueprintRegistry } from "./_local-blueprints.js";
+import { createBunSqliteSystemStore } from "./_bun-sqlite-system-store.js";
 import { createLocalFileStorage, createMemoryKeyValueStore } from "./_shared.js";
 import {
   normalizeDataDirectory,
@@ -29,10 +30,20 @@ export interface BunAdapterKeyValueOptions {
 }
 
 export type BunAdapterServiceOptions = LocalRuntimeServiceOptions;
+export interface BunAdapterBlueprintOptions {
+  directory?: string;
+  cacheDirectory?: string;
+}
+
+export interface BunAdapterSystemStoreOptions {
+  filename?: string;
+}
 
 export interface BunAdapterOptions {
   dataDirectory?: string;
   database?: false | BunAdapterDatabaseOptions;
+  blueprints?: false | BunAdapterBlueprintOptions;
+  systemStore?: false | BunAdapterSystemStoreOptions;
   files?: false | BunAdapterFileStorageOptions;
   kv?: false | BunAdapterKeyValueOptions;
   services?: false | BunAdapterServiceOptions;
@@ -67,6 +78,26 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
 
       const serviceOptions = options.services === false ? undefined : options.services;
       const serviceDirectory = join(dataDirectory, "services");
+      const systemStoreOptions =
+        options.systemStore === false ? undefined : options.systemStore;
+      const systemStoreFilename = systemStoreOptions?.filename
+        ? resolve(systemStoreOptions.filename)
+        : join(dataDirectory, "system", "zelavis.sqlite");
+      const systemStore =
+        options.systemStore === false
+          ? undefined
+          : await createBunSqliteSystemStore({ filename: systemStoreFilename });
+      const blueprints =
+        options.blueprints === false
+          ? undefined
+          : await loadLocalBlueprintRegistry({
+              ...(options.blueprints?.directory
+                ? { directory: resolve(options.blueprints.directory) }
+                : {}),
+              cacheDirectory: options.blueprints?.cacheDirectory
+                ? resolve(options.blueprints.cacheDirectory)
+                : join(dataDirectory, "blueprints"),
+            });
       const fileStorage =
         options.files === false
           ? undefined
@@ -86,11 +117,10 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
                   directory: serviceDirectory,
                   ...(serviceOptions ?? {}),
                 }),
-                ...(fileStorage
-                  ? { store: createFileStorageServiceRegistryStore(fileStorage) }
-                  : {}),
               },
         resources: {
+          systemStore,
+          blueprints,
           kv: options.kv === false ? undefined : createMemoryKeyValueStore(),
           files: fileStorage,
           servicePackages:
@@ -103,6 +133,9 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
         },
         metadata: {
           runtime: "bun",
+          ...(systemStore
+            ? { systemStore: systemStoreFilename }
+            : {}),
         },
       };
     },

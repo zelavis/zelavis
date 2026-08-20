@@ -228,6 +228,10 @@ Important details:
   reintroduces them.
 - Menu items can use `dynamicItems` when a slide section is backed by runtime
   state. The dynamic endpoint should return ordinary menu item metadata.
+- Menu items can include `search` when navigation depends on URL state, for
+  example `{ databaseTable: "products" }`. Prefer returning that from the
+  service-owned menu endpoint over hardcoding service-specific lists in the
+  dashboard.
 - Statically trusted system services can declare a dashboard `surface`.
   `platform` renders in the global `/zelavis` management shell; `root`, `core`,
   `extensions`, and `settings` render in project dashboards. Runtime-installed

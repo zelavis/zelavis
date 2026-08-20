@@ -8,7 +8,7 @@ This guide documents the current recommended workflow for dashboard work.
 Use:
 
 ```bash
-pnpm run ui:dev
+pnpm dev
 ```
 
 Current behavior:

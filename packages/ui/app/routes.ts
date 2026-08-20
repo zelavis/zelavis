@@ -50,7 +50,6 @@ export default [
   route("projects/:projectId/workloads/settings", "routes/workloads.settings.tsx"),
   route("projects/:projectId/workloads/:workloadKind/:workloadId", "routes/workloads.$workloadId.tsx"),
   route("projects/:projectId/:managedSection", "routes/project.managed.$managedSection.tsx"),
-  route("_api/assistant", "routes/api.assistant.tsx"),
   route("_api/relations/:collection", "routes/api.relations.$collection.tsx"),
   route("*", "routes/$.tsx"),
 ] satisfies RouteConfig;

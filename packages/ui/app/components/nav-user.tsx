@@ -19,7 +19,12 @@ import { useNavigate } from "react-router"
 import type { Swiper as SwiperInstance } from "swiper"
 import { Swiper, SwiperSlide } from "swiper/react"
 
-import { AssistantChat } from "#/components/assistant/AssistantChat"
+import type { DashboardProjectItem } from "#/lib/dashboard-data"
+import type {
+  RuntimeAssistantThread,
+  RuntimeConfig,
+} from "#/lib/runtime-api"
+import { AssistantButton } from "#/components/assistant/AssistantButton"
 import { Input } from "#/components/ui/input"
 import {
   SidebarGroup,
@@ -28,6 +33,22 @@ import {
   SidebarMenuItem,
 } from "#/components/ui/sidebar"
 import { cn } from "#/lib/utils"
+
+const AssistantChat = React.lazy(() =>
+  import("#/components/assistant/AssistantChat").then((module) => ({
+    default: module.AssistantChat,
+  })),
+)
+
+function AssistantChatSlot(
+  props: React.ComponentProps<typeof AssistantChat>,
+) {
+  return (
+    <React.Suspense fallback={<div className="h-[28rem]" />}>
+      <AssistantChat {...props} />
+    </React.Suspense>
+  )
+}
 
 export type SidebarUtilityScreen =
   | "assistant"
@@ -63,7 +84,7 @@ const screenLabels: Record<SidebarUtilityScreen, string> = {
 }
 
 const bottomIconButtonClassName =
-  "min-w-0 basis-0 flex-1 justify-center px-0! has-[>svg:first-child]:pl-0! has-[>svg:last-child]:pr-0! [&>svg]:mx-auto"
+  "h-auto! min-w-0 basis-0 flex-1 aspect-square justify-center px-0! has-[>svg:first-child]:pl-0! has-[>svg:last-child]:pr-0! [&>svg]:mx-auto"
 
 export function NavUser({
   activeScreen,
@@ -82,7 +103,7 @@ export function NavUser({
 }) {
   return (
     <SidebarMenu>
-      <SidebarMenuItem className="flex min-w-0 gap-1">
+      <SidebarMenuItem className="flex min-w-0 items-start gap-1 group-data-[collapsible=icon]:justify-center">
         <SidebarMenuButton
           size="lg"
           tooltip="Home"
@@ -96,18 +117,23 @@ export function NavUser({
           <span className="sr-only">Home</span>
         </SidebarMenuButton>
         <UtilityButton
-          active={activeScreen === "assistant"}
-          className="group-data-[collapsible=icon]:hidden"
-          icon={Sparkles}
-          label="Assistant"
-          onClick={() => onScreenChange("assistant")}
-        />
-        <UtilityButton
           active={activeScreen === "notifications"}
           className="group-data-[collapsible=icon]:hidden"
           icon={Bell}
           label="Notifications"
           onClick={() => onScreenChange("notifications")}
+        />
+        <AssistantButton
+          data-active={activeScreen === "assistant" ? "" : undefined}
+          className={cn(
+            bottomIconButtonClassName,
+            "group-data-[collapsible=icon]:hidden",
+          )}
+          label="Assistant"
+          surface="sidebar"
+          tooltipSide="top"
+          variant="ghost"
+          onClick={() => onScreenChange("assistant")}
         />
         <UtilityButton
           active={activeScreen === "search"}
@@ -121,7 +147,7 @@ export function NavUser({
           icon={UserRound}
           label={`Account for ${user.name}, ${user.email}`}
           onClick={() => onScreenChange("account")}
-          className="group-data-[collapsible=icon]:w-full"
+          className="group-data-[collapsible=icon]:w-8! group-data-[collapsible=icon]:flex-none! group-data-[collapsible=icon]:basis-auto!"
         />
       </SidebarMenuItem>
     </SidebarMenu>
@@ -156,13 +182,19 @@ function UtilityButton({
 }
 
 export function NavUserScreen({
+  assistantConfig,
+  assistantThreads,
   onClose,
   openedFromNested,
+  projects,
   screen,
   user,
 }: {
   onClose: () => void
+  assistantConfig?: RuntimeConfig
+  assistantThreads: readonly RuntimeAssistantThread[]
   openedFromNested: boolean
+  projects: readonly DashboardProjectItem[]
   screen: SidebarUtilityScreen
   user: {
     name: string
@@ -177,12 +209,15 @@ export function NavUserScreen({
     () =>
       buildUtilityPanel({
         activeLanguage,
+        assistantConfig,
+        assistantThreads,
         onNavigate: onClose,
+        projects,
         screen,
         setActiveLanguage,
         user,
       }),
-    [activeLanguage, screen, user],
+    [activeLanguage, assistantConfig, assistantThreads, projects, screen, user],
   )
   const direction = "ltr"
   const [swiper, setSwiper] = React.useState<SwiperInstance>()
@@ -353,13 +388,19 @@ function UtilityScreenItem({
 
 function buildUtilityPanel({
   activeLanguage,
+  assistantConfig,
+  assistantThreads,
   onNavigate,
+  projects,
   screen,
   setActiveLanguage,
   user,
 }: {
   activeLanguage: (typeof languages)[number]
+  assistantConfig?: RuntimeConfig
+  assistantThreads: readonly RuntimeAssistantThread[]
   onNavigate: () => void
+  projects: readonly DashboardProjectItem[]
   screen: SidebarUtilityScreen
   setActiveLanguage: (language: (typeof languages)[number]) => void
   user: {
@@ -376,34 +417,39 @@ function buildUtilityPanel({
           {
             title: "Projects",
             icon: Home,
-            items: [
-              {
-                title: "Default project",
-                icon: Sparkles,
-                items: [
-                  {
-                    title: "Ask Zelavis",
-                    icon: Sparkles,
-                    content: <AssistantChat compact onNavigate={onNavigate} />,
-                  },
-                  {
-                    title: "Open project",
-                    icon: Home,
-                    url: "/projects/default",
-                  },
-                  {
-                    title: "Content builder",
-                    icon: Boxes,
-                    url: "/projects/default/content",
-                  },
-                  {
-                    title: "Database",
-                    icon: Settings2,
-                    url: "/projects/default/database",
-                  },
-                ],
-              },
-            ],
+            items: projects.map((project) => ({
+              title: project.name,
+              icon: Sparkles,
+              items: assistantConfig
+                ? [
+                    {
+                      title: "New chat",
+                      icon: Sparkles,
+                      content: (
+                        <AssistantChatSlot
+                          compact
+                          config={assistantConfig}
+                          projectId={project.id}
+                        />
+                      ),
+                    },
+                    ...assistantThreads
+                      .filter((thread) => thread.projectId === project.id)
+                      .map((thread) => ({
+                        title: thread.title,
+                        icon: Sparkles,
+                        content: (
+                          <AssistantChatSlot
+                            compact
+                            config={assistantConfig}
+                            projectId={project.id}
+                            thread={thread}
+                          />
+                        ),
+                      })),
+                  ]
+                : [],
+            })),
           },
           { title: "Open chat", icon: Sparkles, url: "/assistant" },
           { title: "Build a project", icon: Sparkles, url: "/projects?new=1" },

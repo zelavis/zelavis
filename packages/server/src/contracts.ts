@@ -130,6 +130,7 @@ export interface ZelavisRuntimeServiceMenuDefinition {
   path?: string;
   pageLabel?: string;
   panelLabel?: string;
+  search?: Record<string, string | undefined>;
   /**
    * Render this item in the panel's fixed action area instead of the normal
    * scrollable menu list. Use for primary actions such as "Add Function".

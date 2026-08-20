@@ -23,10 +23,10 @@ import {
   buildProjectManagementNavItems,
   buildManagedProjectNavItems,
   buildPlatformNavItems,
-  dashboardProjects,
   filterDashboardNavItemsForAccess,
   getDashboardProjectsForAccess,
   platformNavItems,
+  toDashboardProjectItem,
 } from "#/lib/dashboard-data";
 import { filterUserDatabaseCollections } from "#/lib/database-collections";
 import {
@@ -43,20 +43,28 @@ import {
   type DatabaseCollection,
   type DatabaseSchemaCollectionSummary,
   type RuntimeConfig,
+  type RuntimeAssistantThread,
+  type RuntimeProject,
 } from "#/lib/runtime-api";
 
 export function AppSidebar({
   runtime,
+  assistantConfig,
   settings,
   databaseCollections,
   schemaCollections,
+  projects,
+  assistantThreads,
   mobileSlotContent,
   ...props
 }: React.ComponentProps<typeof Sidebar> & {
   runtime?: RuntimeConfig;
+  assistantConfig?: RuntimeConfig;
   settings?: DashboardSettings;
   databaseCollections?: readonly DatabaseCollection[];
   schemaCollections?: readonly DatabaseSchemaCollectionSummary[];
+  projects?: readonly RuntimeProject[];
+  assistantThreads?: readonly RuntimeAssistantThread[];
   mobileSlotContent?: React.ReactNode;
 }) {
   const location = useLocation();
@@ -88,8 +96,12 @@ export function AppSidebar({
   const isProjectDashboardRoute = Boolean(projectId) && !isProjectManagementRoute;
   const managedProjectKind = getManagedProjectKindFromId(projectId);
   const accessibleProjects = React.useMemo(
-    () => getDashboardProjectsForAccess(dashboardProjects, runtime?.access),
-    [runtime?.access],
+    () =>
+      getDashboardProjectsForAccess(
+        (projects ?? []).map(toDashboardProjectItem),
+        runtime?.access,
+      ),
+    [projects, runtime?.access],
   );
   const dashboardUser = React.useMemo(
     () => ({
@@ -206,6 +218,9 @@ export function AppSidebar({
             screen={activeUtilityScreen}
             openedFromNested={utilityScreenOpenedFromNested}
             user={dashboardUser}
+            projects={accessibleProjects}
+            assistantThreads={assistantThreads ?? []}
+            assistantConfig={assistantConfig ?? runtime}
             onClose={() => setActiveUtilityScreen(null)}
           />
         ) : null}
@@ -231,7 +246,13 @@ export function AppSidebar({
             }
 
             if (screen === "assistant" && location.pathname !== "/assistant") {
-              navigate("/assistant", { viewTransition: true });
+              const assistantProjectId = projectId ?? accessibleProjects[0]?.id;
+              navigate(
+                assistantProjectId
+                  ? `/assistant?project=${encodeURIComponent(assistantProjectId)}`
+                  : "/assistant",
+                { viewTransition: true },
+              );
             }
 
             setActiveUtilityScreen(screen);

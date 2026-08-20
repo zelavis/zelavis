@@ -15,9 +15,12 @@ import { DirectionProvider } from "#/components/ui/direction";
 import {
   getDashboardSettings,
   getDashboardAccess,
+  getProjectRuntimeConfig,
   getRuntimeConfig,
   listDatabaseCollections,
   listDatabaseSchemaCollections,
+  listAssistantThreads,
+  listProjects,
   resolveRuntimeDynamicMenus,
 } from "#/lib/runtime-api";
 import type { Route } from "./+types/root";
@@ -94,14 +97,29 @@ function resolveDemoDashboardAccess(requestUrl: string): RuntimeDashboardAccess 
 }
 
 export async function clientLoader({ request }: Route.ClientLoaderArgs) {
-  const runtimeConfig = await getRuntimeConfig();
+  const controlRuntime = await getRuntimeConfig();
   const accessMode = new URL(request.url).searchParams.get("as") ?? undefined;
-  const access = await getDashboardAccess(runtimeConfig, accessMode).catch(() =>
-    resolveDemoDashboardAccess(request.url),
-  );
-  const runtime = await resolveRuntimeDynamicMenus(runtimeConfig, {
-    projectId: inferProjectIdFromRequestUrl(request.url),
-  });
+  const projectId = inferProjectIdFromRequestUrl(request.url);
+  const [access, projectResult, assistantResult] = await Promise.all([
+    getDashboardAccess(controlRuntime, accessMode).catch(() =>
+      resolveDemoDashboardAccess(request.url),
+    ),
+    listProjects(controlRuntime).catch(() => ({ runtime: undefined, projects: [] })),
+    listAssistantThreads(controlRuntime).catch(() => ({
+      responder: "unavailable",
+      threads: [],
+    })),
+  ]);
+  const selectedProject = projectId
+    ? projectResult.projects.find((project) => project.id === projectId)
+    : undefined;
+  const runtimeConfig =
+    selectedProject?.runtime.status === "running"
+      ? await getProjectRuntimeConfig(controlRuntime, selectedProject.id).catch(
+          () => controlRuntime,
+        )
+      : controlRuntime;
+  const runtime = await resolveRuntimeDynamicMenus(runtimeConfig, { projectId });
   const [settings, databaseCollections, schemaCollections] = await Promise.all([
     getDashboardSettings(runtime),
     listDatabaseCollections(runtime),
@@ -109,6 +127,7 @@ export async function clientLoader({ request }: Route.ClientLoaderArgs) {
   ]);
 
   return {
+    controlRuntime,
     runtime: {
       ...runtime,
       access,
@@ -116,6 +135,10 @@ export async function clientLoader({ request }: Route.ClientLoaderArgs) {
     settings,
     databaseCollections,
     schemaCollections,
+    projects: projectResult.projects,
+    projectRuntime: projectResult.runtime,
+    assistantThreads: assistantResult.threads,
+    assistantResponder: assistantResult.responder,
   };
 }
 

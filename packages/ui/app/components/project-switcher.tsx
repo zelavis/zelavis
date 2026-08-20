@@ -1,8 +1,7 @@
 "use client"
 
-import * as React from "react"
 import { Check, ChevronsUpDown, House, LayoutDashboard, Plus } from "lucide-react"
-import { Link, useNavigate } from "react-router"
+import { Link, useLocation, useNavigate } from "react-router"
 
 import {
   DropdownMenu,
@@ -20,7 +19,7 @@ import {
   SidebarMenuItem,
 } from "#/components/ui/sidebar"
 import type { DashboardProjectItem } from "#/lib/dashboard-data"
-import { toProjectPath } from "#/lib/routing"
+import { getProjectIdFromPathname, toProjectPath } from "#/lib/routing"
 
 export function ProjectSwitcher({
   homeIconLinksToProjects = false,
@@ -32,7 +31,10 @@ export function ProjectSwitcher({
   projects: readonly DashboardProjectItem[]
 }) {
   const navigate = useNavigate()
-  const [activeProject, setActiveProject] = React.useState(projects[0])
+  const location = useLocation()
+  const currentProjectId = getProjectIdFromPathname(location.pathname)
+  const activeProject =
+    projects.find((project) => project.id === currentProjectId) ?? projects[0]
 
   if (!activeProject) {
     return null
@@ -86,7 +88,6 @@ export function ProjectSwitcher({
                   <DropdownMenuItem
                     key={project.id}
                     onClick={() => {
-                      setActiveProject(project)
                       navigate(toProjectPath("/", project.id), {
                         viewTransition: true,
                       })

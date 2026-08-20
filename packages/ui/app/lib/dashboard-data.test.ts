@@ -29,6 +29,20 @@ function findNavItem(
 }
 
 describe("dashboard navigation ownership", () => {
+  it("materializes built-in and nested links for the selected project", () => {
+    const nav = buildPlatformNavItems([], [], [], [], "browser-test");
+
+    expect(findNavItem(nav, "Overview")?.url).toBe(
+      "/projects/browser-test",
+    );
+    expect(findNavItem(nav, "All Content Types")?.url).toBe(
+      "/projects/browser-test/content",
+    );
+    expect(findNavItem(nav, "Project Settings")?.url).toBe(
+      "/projects/browser-test/settings",
+    );
+  });
+
   it("keeps installed services to one Extensions item with nested slides underneath", () => {
     const services = [
       {
@@ -92,6 +106,11 @@ describe("dashboard navigation ownership", () => {
           title: "Insights",
           path: "/users",
           surface: "root",
+          sectionLabel: "Build",
+          access: {
+            permissions: ["project.insights.read"],
+            scope: { type: "project", projectIdParam: "projectId" },
+          },
         },
       },
       {
@@ -109,6 +128,14 @@ describe("dashboard navigation ownership", () => {
     const nav = buildPlatformNavItems(services, []);
 
     expect(nav.some((item) => item.title === "Insights")).toBe(true);
+    expect(findNavItem(nav, "Insights")).toMatchObject({
+      url: "/projects/default/users",
+      sectionLabel: "Build",
+      access: {
+        permissions: ["project.insights.read"],
+        scope: { type: "project", projectId: "default" },
+      },
+    });
     expect(findNavItem(nav, "Jobs")).toBeDefined();
 
     const settings = nav.find((item) => item.title === "Settings");
@@ -164,7 +191,25 @@ describe("dashboard navigation ownership", () => {
   });
 
   it("exposes project Website and project-wide Media without the old Builder area", () => {
-    const nav = buildPlatformNavItems();
+    const services = [
+      {
+        name: "@zelavis/website",
+        core: true,
+        apiPath: "/",
+        menu: {
+          title: "Website",
+          path: "/website",
+          pageLabel: "Website",
+          sectionLabel: "Build",
+          surface: "root",
+          access: {
+            permissions: ["project.website.manage"],
+            scope: { type: "project", projectIdParam: "projectId" },
+          },
+        },
+      },
+    ] satisfies readonly RuntimeService[];
+    const nav = buildPlatformNavItems(services);
 
     expect(nav.map((item) => [item.title, item.sectionLabel])).toEqual([
       ["Overview", "Overview"],
@@ -181,6 +226,10 @@ describe("dashboard navigation ownership", () => {
     expect(findNavItem(nav, "Website")).toMatchObject({
       url: "/projects/default/website",
       pageLabel: "Website",
+      access: {
+        permissions: ["project.website.manage"],
+        scope: { type: "project", projectId: "default" },
+      },
     });
     expect(findNavItem(nav, "Media")).toMatchObject({
       url: "/projects/default/media",
@@ -290,7 +339,7 @@ describe("dashboard navigation ownership", () => {
     expect(findNavItem(projectManagementNavItems, "New Project")).toBeUndefined();
   });
 
-  it("lists database collections as tables in the database sidebar slide", () => {
+  it("renders database menu items supplied by the database service", () => {
     const services = [
       {
         name: "@zelavis/db",
@@ -302,11 +351,40 @@ describe("dashboard navigation ownership", () => {
           panelLabel: "Database",
           items: [
             {
+              title: "Create Table",
+              path: "/database/new",
+              pageLabel: "Database",
+              fixed: true,
+              fixedOrder: 1,
+            },
+            {
+              title: "audit_log",
+              path: "/database",
+              pageLabel: "Database",
+              search: { databaseTable: "audit_log" },
+            },
+            {
+              title: "fruits",
+              path: "/database",
+              pageLabel: "Database",
+              search: { databaseTable: "fruits" },
+            },
+            {
               title: "System Tables",
               panelLabel: "System Tables",
               items: [
-                { title: "zv_collections", path: "/database" },
-                { title: "zv_events", path: "/database" },
+                {
+                  title: "zv_collections",
+                  path: "/database",
+                  pageLabel: "Database",
+                  search: { systemTable: "zv_collections" },
+                },
+                {
+                  title: "zv_events",
+                  path: "/database",
+                  pageLabel: "Database",
+                  search: { systemTable: "zv_events" },
+                },
               ],
             },
           ],
@@ -351,7 +429,7 @@ describe("dashboard navigation ownership", () => {
     expect(database?.items?.map((item) => item.title)).toEqual([
       "Create Table",
       "audit_log",
-      "Fruits",
+      "fruits",
       "System Tables",
     ]);
     expect(findNavItem(database?.items ?? [], "Create Table")).toMatchObject({
@@ -371,15 +449,12 @@ describe("dashboard navigation ownership", () => {
       panelLabel: "Fruits",
       landingUrl: "/projects/default/content/fruits",
     });
-    expect(findNavItem(database?.items ?? [], "Fruits")?.search).toEqual({
+    expect(findNavItem(database?.items ?? [], "fruits")?.search).toEqual({
       databaseTable: "fruits",
-      systemTable: undefined,
     });
     expect(findNavItem(database?.items ?? [], "audit_log")).toMatchObject({
-      sectionLabel: "Tables",
       search: {
         databaseTable: "audit_log",
-        systemTable: undefined,
       },
     });
     expect(findNavItem(database?.items ?? [], "zv_collections")).toBeDefined();

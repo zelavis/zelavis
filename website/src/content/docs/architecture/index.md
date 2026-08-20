@@ -10,6 +10,7 @@ Architecture docs should describe real current behavior and stable design constr
 ## Pages
 
 - [Endpoint-Backed Capabilities](./endpoint-backed-capabilities.md)
+- [Assistant Runtime](./assistant-runtime.md)
 - [Mobile-Slot-Ready Dashboard](./mobile-slot-ready-dashboard.md)
 - [Project Model](./project-model.md)
 - [Service Model](./service-model.md)

@@ -70,7 +70,14 @@ test("zelavis exposes fetch handlers without requiring a mount adapter", async (
   assert.equal(payload.api.basePath, "/zelavis/api/v1");
   assert.deepEqual(
     payload.services.map((service) => service.name),
-    ["@zelavis/ui", "@zelavis/db", "@zelavis/auth", "@zelavis/website"],
+    [
+      "@zelavis/ui",
+      "@zelavis/server",
+      "@zelavis/db",
+      "@zelavis/auth",
+      "@zelavis/website",
+      "@zelavis/workloads",
+    ],
   );
   assert.equal(payload.serviceRegistry[0].name, "@zelavis/ecommerce");
   assert.equal(payload.serviceRegistry[0].status, "available");
@@ -201,7 +208,14 @@ test("zelavis includes core services by default", async () => {
   assert.equal(configResponse.body.api.basePath, "/zelavis/api/v1");
   assert.deepEqual(
     configResponse.body.services.map((service) => service.name),
-    ["@zelavis/ui", "@zelavis/db", "@zelavis/auth", "@zelavis/website"],
+    [
+      "@zelavis/ui",
+      "@zelavis/server",
+      "@zelavis/db",
+      "@zelavis/auth",
+      "@zelavis/website",
+      "@zelavis/workloads",
+    ],
   );
   assert.equal(configResponse.body.serviceRegistry.length, 1);
   assert.equal(configResponse.body.serviceRegistry[0].name, "@zelavis/ecommerce");
@@ -883,6 +897,18 @@ test("zelavis can disable the dashboard core service", async () => {
   assert.ok(
     runtime.routes.every((route) => !route.route.id.startsWith("dashboard.")),
   );
+
+  const configResponse = await runtime.fetch(
+    new Request("http://localhost/zelavis/api/v1/runtime/config"),
+  );
+  assert.equal(configResponse.status, 200);
+  const config = await configResponse.json();
+  assert.ok(!config.services.some((service) => service.name === "@zelavis/ui"));
+  assert.equal(
+    config.services.find((service) => service.name === "@zelavis/db")?.menu
+      ?.title,
+    "Database",
+  );
 });
 
 test("zelavis uses a configurable root path for dashboard and APIs", async () => {
@@ -1049,18 +1075,48 @@ test("zelavis preserves a mounted dev-server dashboard base path", async () => {
   );
 });
 
-test("zelavis can disable all core services", async () => {
+test("zelavis keeps the Platform server when optional mounted services are disabled", async () => {
   const runtime = await zelavis({
     coreServices: {
       auth: false,
       dashboard: false,
       database: false,
       website: false,
+      workloads: false,
     },
   });
 
-  assert.deepEqual(runtime.services, {});
-  assert.equal(runtime.routes.length, 0);
+  assert.deepEqual(Object.keys(runtime.services), ["@zelavis/server"]);
+  assert.deepEqual(
+    runtime.routes.map((route) => route.route.id),
+    [
+      "runtime.config",
+      "runtime.services.read",
+      "runtime.services.create",
+      "runtime.service-page.read",
+      "runtime.services.update",
+      "runtime.settings.read",
+      "runtime.settings.update",
+      "runtime.access",
+      "runtime.blueprints.list",
+      "runtime.assistant.threads.list",
+      "runtime.assistant.threads.create",
+      "runtime.assistant.threads.get",
+      "runtime.assistant.messages.create",
+      "runtime.projects.list",
+      "runtime.projects.create",
+      "runtime.projects.get",
+      "runtime.projects.start",
+      "runtime.projects.stop",
+      "runtime.projects.logs",
+      "runtime.projects.proxy.get",
+      "runtime.projects.proxy.post",
+      "runtime.projects.proxy.put",
+      "runtime.projects.proxy.patch",
+      "runtime.projects.proxy.delete",
+      "runtime.projects.remove",
+    ],
+  );
 });
 
 test("zelavis does not duplicate an explicitly provided database service", async () => {
@@ -1083,13 +1139,16 @@ test("zelavis does not duplicate an explicitly provided database service", async
       auth: false,
       dashboard: false,
       website: false,
+      workloads: false,
     },
     runtimeServices: [databaseService],
   });
 
   assert.equal(runtime.services["@zelavis/db"].service.custom, true);
-  assert.equal(runtime.routes.length, 1);
-  assert.equal(runtime.routes[0].route.id, "custom.database");
+  assert.equal(
+    runtime.routes.filter((route) => route.route.id === "custom.database").length,
+    1,
+  );
 });
 
 test("zelavis does not duplicate an explicitly provided auth service", async () => {
@@ -1112,13 +1171,16 @@ test("zelavis does not duplicate an explicitly provided auth service", async () 
       dashboard: false,
       database: false,
       website: false,
+      workloads: false,
     },
     runtimeServices: [authService],
   });
 
   assert.equal(runtime.services["@zelavis/auth"].service.custom, true);
-  assert.equal(runtime.routes.length, 1);
-  assert.equal(runtime.routes[0].route.id, "custom.auth");
+  assert.equal(
+    runtime.routes.filter((route) => route.route.id === "custom.auth").length,
+    1,
+  );
 });
 
 test("zelavis can provide public website pages as a core service", async () => {

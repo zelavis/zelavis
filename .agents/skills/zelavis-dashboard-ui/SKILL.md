@@ -91,7 +91,7 @@ Available parsers: `parseAsString`, `parseAsStringLiteral`. Add new parsers to `
 
 ## Working rules
 
-- Use `pnpm run ui:dev` for end-to-end dashboard work
+- Use `pnpm dev` for end-to-end Zelavis runtime and dashboard work
 - Treat the dashboard as a client of Zelavis endpoints. If a dashboard page can perform a platform action, the same action must exist as a server capability and endpoint.
 - Do not make route modules, component callbacks, local React state, or framework-specific server actions the only implementation of privileged platform behavior.
 - The mounted dashboard path is `/zelavis`, including in dev mode
@@ -107,7 +107,7 @@ Available parsers: `parseAsString`, `parseAsStringLiteral`. Add new parsers to `
 ## Validation
 
 ```bash
-pnpm run ui:dev
+pnpm dev
 pnpm --filter @zelavis/ui typecheck
 pnpm --filter @zelavis/ui build
 pnpm --filter @zelavis/ui test:e2e

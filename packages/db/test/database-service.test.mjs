@@ -15,10 +15,11 @@ test("databaseService exposes database routes through the existing service contr
   assert.equal(runtime.services["@zelavis/db"].services[0].name, "documents");
   assert.equal(runtime.services["@zelavis/db"].services[1].name, "schemas");
   assert.equal(runtime.services["@zelavis/db"].services[2].name, "timeseries");
-  assert.equal(runtime.routes.length, 18);
+  assert.equal(runtime.routes.length, 19);
   assert.deepEqual(
     runtime.routes.map((route) => route.fullPath),
     [
+      "/api/database/menu/tables",
       "/api/database/health",
       "/api/database/documents/collections",
       "/api/database/documents/collections",
@@ -39,6 +40,37 @@ test("databaseService exposes database routes through the existing service contr
       "/api/database/sql/system/:table",
     ],
   );
+});
+
+test("databaseService exposes database table rows through the service menu endpoint", async () => {
+  const database = await createDatabase();
+  const service = defineDatabaseService(database);
+  const menuTables = service.api.v1.find(
+    (route) => route.id === "database.menu.tables",
+  );
+
+  assert.ok(menuTables);
+  await database.documents.createCollection({ name: "products" });
+
+  const response = await menuTables.handler({
+    service: database,
+    params: {},
+    query: new URLSearchParams("projectId=default"),
+    body: undefined,
+    headers: {},
+    request: undefined,
+  });
+
+  assert.deepEqual(response.body, {
+    items: [
+      {
+        title: "products",
+        path: "/database",
+        pageLabel: "Database",
+        search: { databaseTable: "products" },
+      },
+    ],
+  });
 });
 
 test("databaseService returns API errors for duplicate collections", async () => {

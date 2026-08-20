@@ -1,35 +1,35 @@
 import type * as React from "react";
-import { Link, useRouteLoaderData } from "react-router";
 import {
-  Clock3,
-  Globe2,
   LayoutDashboard,
+  Pause,
+  Play,
   Plus,
   Search,
   SquareStack,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { Link, useRevalidator, useRouteLoaderData } from "react-router";
 
-import {
-  DataRow,
-  ResourceNotice,
-  StatusBadge,
-} from "#/components/DashboardPage";
+import { ResourceNotice, StatusBadge } from "#/components/DashboardPage";
+import { AssistantButton } from "#/components/assistant/AssistantButton";
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import {
-  dashboardProjects,
   getDashboardProjectsForAccess,
-  type DashboardProjectItem,
+  toDashboardProjectItem,
 } from "#/lib/dashboard-data";
-import type { clientLoader as rootClientLoader } from "../root";
+import {
+  createProject,
+  setProjectRunning,
+  type RuntimeProject,
+} from "#/lib/runtime-api";
 import { toDashboardPath, toProjectPath } from "#/lib/routing";
 import {
   parseAsString,
-  parseAsStringLiteral,
   useTypedSearchParams,
 } from "#/lib/use-typed-search-params";
+import type { clientLoader as rootClientLoader } from "../root";
 
 export const handle = {
   pageLabel: "Projects",
@@ -39,129 +39,89 @@ const projectSearchSchema = {
   q: parseAsString.withDefault(""),
   new: parseAsString.withDefault(""),
   name: parseAsString.withDefault(""),
-  domain: parseAsString.withDefault(""),
-  type: parseAsStringLiteral(["zelavis", "wordpress", "static", "generic"] as const).withDefault("zelavis"),
 } as const;
 
-const projectKindOptions = [
-  {
-    value: "zelavis",
-    label: "Zelavis app",
-    domainFallback: "localhost",
-  },
-  {
-    value: "wordpress",
-    label: "WordPress",
-    domainFallback: "wordpress.localhost",
-  },
-  {
-    value: "static",
-    label: "Static website",
-    domainFallback: "static.localhost",
-  },
-  {
-    value: "generic",
-    label: "Generic app",
-    domainFallback: "app.localhost",
-  },
-] as const;
-
-function getProjectKindLabel(kind: DashboardProjectItem["kind"]) {
-  return projectKindOptions.find((option) => option.value === kind)?.label ?? "Project";
-}
-
-function slugifyProjectName(value: string) {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+function formatUpdatedAt(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
 function ProjectsRoute() {
   const rootData = useRouteLoaderData<typeof rootClientLoader>("root");
-  const [{ q, new: createMode, name: requestedName, domain: requestedDomain, type }, setParams] =
+  const revalidator = useRevalidator();
+  const [{ q, new: createMode, name: requestedName }, setParams] =
     useTypedSearchParams(projectSearchSchema);
-  const [projects, setProjects] = useState<DashboardProjectItem[]>([
-    ...dashboardProjects,
-  ]);
-  const [name, setName] = useState("");
-  const [domain, setDomain] = useState("");
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
+  const [pendingProjectId, setPendingProjectId] = useState<string>();
+  const [creating, setCreating] = useState(false);
+  const projects = rootData?.projects ?? [];
   const showCreate = createMode === "1";
-  const accessibleProjects = useMemo(
-    () => getDashboardProjectsForAccess(projects, rootData?.runtime.access),
+  const canCreateProjects =
+    rootData?.runtime.access?.principal.permissions?.includes("*") ?? true;
+  const allowedProjectIds = useMemo(
+    () =>
+      new Set(
+        getDashboardProjectsForAccess(
+          projects.map(toDashboardProjectItem),
+          rootData?.runtime.access,
+        ).map((project) => project.id),
+      ),
     [projects, rootData?.runtime.access],
   );
-  const canCreateProjects =
-    rootData?.runtime.access?.principal.permissions?.includes("*") ??
-    true;
-
-  useEffect(() => {
-    if (requestedName) {
-      setName(requestedName);
-    }
-
-    if (requestedDomain) {
-      setDomain(requestedDomain);
-    }
-  }, [requestedDomain, requestedName]);
-
   const filteredProjects = useMemo(() => {
     const query = q.trim().toLowerCase();
-
-    if (!query) {
-      return accessibleProjects;
-    }
-
-    return accessibleProjects.filter((project) =>
-      [project.name, project.domain].some((value) =>
-        value.toLowerCase().includes(query),
-      ),
+    return projects.filter(
+      (project) =>
+        allowedProjectIds.has(project.id) &&
+        (!query ||
+          [project.name, project.id, project.runtime.url ?? ""].some((value) =>
+            value.toLowerCase().includes(query),
+          )),
     );
-  }, [accessibleProjects, q]);
+  }, [allowedProjectIds, projects, q]);
 
-  function handleCreateProject(event: React.FormEvent<HTMLFormElement>) {
+  async function handleCreateProject(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!rootData) {
+      return;
+    }
     setMessage(undefined);
     setError(undefined);
+    setCreating(true);
 
-    const trimmedName = name.trim();
-    if (!trimmedName) {
-      setError("Project name is required.");
+    try {
+      const project = await createProject(rootData.runtime, {
+        name: requestedName,
+        blueprintId: "zelavis/app",
+        start: true,
+      });
+      setParams({ name: null, new: null });
+      setMessage(`${project.name} is running in its own Node.js process.`);
+      revalidator.revalidate();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function changeProjectState(project: RuntimeProject, running: boolean) {
+    if (!rootData) {
       return;
     }
-
-    const id = slugifyProjectName(trimmedName);
-    const projectKind = type;
-    const projectId = projectKind === "zelavis" ? id : `${projectKind}-${id}`;
-    if (!id) {
-      setError("Project name must contain letters or numbers.");
-      return;
+    setMessage(undefined);
+    setError(undefined);
+    setPendingProjectId(project.id);
+    try {
+      await setProjectRunning(rootData.runtime, project.id, running);
+      setMessage(`${project.name} ${running ? "started" : "stopped"}.`);
+      revalidator.revalidate();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setPendingProjectId(undefined);
     }
-
-    if (projects.some((project) => project.id === projectId)) {
-      setError("A project with that name already exists.");
-      return;
-    }
-
-    const kindOption = projectKindOptions.find((option) => option.value === projectKind);
-    const nextProject: DashboardProjectItem = {
-      id: projectId,
-      name: trimmedName,
-      logo: projectKind === "zelavis" ? Globe2 : SquareStack,
-      domain: domain.trim() || kindOption?.domainFallback || "localhost",
-      kind: projectKind,
-      status: "draft",
-      updatedAt: "just now",
-    };
-
-    setProjects((current) => [nextProject, ...current]);
-    setName("");
-    setDomain("");
-    setParams({ domain: null, name: null, new: null, type: null });
-    setMessage(`Created ${nextProject.name}.`);
   }
 
   return (
@@ -171,75 +131,64 @@ function ProjectsRoute() {
           <CardHeader>
             <CardTitle>Create project</CardTitle>
           </CardHeader>
-          <CardContent className="grid gap-4 p-4">
-            <form className="grid gap-4 md:grid-cols-[1fr_1fr_1fr_auto]" onSubmit={handleCreateProject}>
+          <CardContent>
+            <form
+              className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(220px,0.65fr)_auto]"
+              onSubmit={handleCreateProject}
+            >
               <div className="grid gap-2">
                 <label className="text-sm font-medium" htmlFor="project-name">
                   Name
                 </label>
                 <Input
                   id="project-name"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder="Marketing site"
-                />
-              </div>
-              <div className="grid gap-2">
-                <label className="text-sm font-medium" htmlFor="project-type">
-                  Type
-                </label>
-                <select
-                  id="project-type"
-                  value={type}
+                  value={requestedName}
                   onChange={(event) =>
-                    setParams({
-                      type: event.target.value as DashboardProjectItem["kind"],
-                    })
+                    setParams({ name: event.target.value || null })
                   }
-                  className="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                >
-                  {projectKindOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                  placeholder="My application"
+                  autoFocus
+                />
               </div>
               <div className="grid gap-2">
-                <label className="text-sm font-medium" htmlFor="project-domain">
-                  Domain
-                </label>
-                <Input
-                  id="project-domain"
-                  value={domain}
-                  onChange={(event) => setDomain(event.target.value)}
-                  placeholder="example.test"
-                />
+                <span className="text-sm font-medium">Blueprint</span>
+                <div className="flex h-9 items-center gap-2 rounded-md border bg-muted/35 px-3 text-sm">
+                  <SquareStack className="size-4 text-muted-foreground" />
+                  Zelavis App
+                </div>
               </div>
               <div className="flex items-end gap-2">
-                <Button type="submit">Create</Button>
+                <Button type="submit" disabled={creating}>
+                  {creating ? "Creating..." : "Create"}
+                </Button>
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setParams({ new: null, type: null })}
+                  onClick={() => setParams({ new: null })}
+                  disabled={creating}
                 >
                   Cancel
                 </Button>
               </div>
             </form>
             {error ? (
-              <ResourceNotice title="Action failed" description={error} />
+              <div className="mt-4">
+                <ResourceNotice title="Action failed" description={error} />
+              </div>
             ) : null}
           </CardContent>
         </Card>
       ) : null}
 
       {message ? (
-        <ResourceNotice title="Project created" description={message} />
+        <ResourceNotice title="Project updated" description={message} />
+      ) : null}
+      {!showCreate && error ? (
+        <ResourceNotice title="Action failed" description={error} />
       ) : null}
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative w-full sm:max-w-sm">
+        <div className="relative w-full lg:hidden sm:max-w-sm">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={q}
@@ -248,12 +197,17 @@ function ProjectsRoute() {
             className="pl-9"
           />
         </div>
-        <div className="flex items-center justify-between gap-3 sm:justify-end">
+        <div className="flex items-center justify-between gap-3 sm:justify-end lg:ms-auto">
           <p className="text-sm text-muted-foreground">
-            {filteredProjects.length} of {accessibleProjects.length} projects
+            {filteredProjects.length}{" "}
+            {filteredProjects.length === 1 ? "project" : "projects"}
           </p>
           {canCreateProjects ? (
-            <Button type="button" onClick={() => setParams({ new: "1" })}>
+            <Button
+              type="button"
+              className="lg:hidden"
+              onClick={() => setParams({ new: "1" })}
+            >
               <Plus className="size-4" />
               New project
             </Button>
@@ -261,79 +215,101 @@ function ProjectsRoute() {
         </div>
       </div>
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {filteredProjects.map((project) => (
-          <Card key={project.id} className="overflow-hidden">
-            <CardHeader className="gap-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-3">
-                  <span className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted text-muted-foreground">
-                    <project.logo className="size-4" />
-                  </span>
-                  <div className="min-w-0">
-                    <CardTitle className="truncate text-base">
-                      {project.name}
-                    </CardTitle>
-                    <p className="mt-1 truncate text-sm text-muted-foreground">
-                      {project.domain}
-                    </p>
+      {filteredProjects.length > 0 ? (
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {filteredProjects.map((project) => {
+            const isRunning = project.runtime.status === "running";
+            const isPending = pendingProjectId === project.id;
+            return (
+              <Card key={project.id} className="overflow-hidden">
+                <CardHeader className="gap-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted text-muted-foreground">
+                        <SquareStack className="size-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <CardTitle className="truncate text-base">
+                          {project.name}
+                        </CardTitle>
+                        <p className="mt-1 truncate text-sm text-muted-foreground">
+                          {project.id}
+                        </p>
+                      </div>
+                    </div>
+                    <StatusBadge state={project.runtime.status} />
                   </div>
-                </div>
-                <StatusBadge state={project.status === "active" ? "ready" : "draft"} />
-              </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              <DataRow
-                label="Type"
-                detail={getProjectKindLabel(project.kind)}
-                meta={<SquareStack className="size-4 text-muted-foreground" />}
-              />
-              <DataRow
-                label="Domain"
-                detail={project.domain}
-                meta={<Globe2 className="size-4 text-muted-foreground" />}
-              />
-              <DataRow
-                label="Updated"
-                detail={project.updatedAt}
-                meta={<Clock3 className="size-4 text-muted-foreground" />}
-              />
-              <div className="flex items-center justify-between gap-2 px-4 py-3">
-                <Button
-                  nativeButton={false}
-                  render={
-                    <Link
-                      to={toDashboardPath(toProjectPath("/", project.id))}
-                      viewTransition
-                    />
-                  }
-                >
-                  <LayoutDashboard className="size-4" />
-                  Open
-                </Button>
-                <Button
-                  variant="outline"
-                  nativeButton={false}
-                  render={
-                    <Link
-                      to={toDashboardPath(
-                        toProjectPath(
-                          project.kind === "zelavis" ? "/website" : "/",
-                          project.id,
-                        ),
+                </CardHeader>
+                <CardContent className="grid gap-3 border-t pt-4">
+                  <dl className="grid gap-2 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="text-muted-foreground">Blueprint</dt>
+                      <dd className="truncate font-medium">
+                        App {project.blueprint.version}
+                      </dd>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="text-muted-foreground">Runtime</dt>
+                      <dd className="truncate font-medium">
+                        {project.runtime.url ?? project.runtime.driver}
+                      </dd>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="text-muted-foreground">Updated</dt>
+                      <dd className="truncate font-medium">
+                        {formatUpdatedAt(project.updatedAt)}
+                      </dd>
+                    </div>
+                  </dl>
+                  {project.runtime.error ? (
+                    <p className="text-sm text-destructive">{project.runtime.error}</p>
+                  ) : null}
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <Button
+                      nativeButton={false}
+                      render={
+                        <Link
+                          to={toDashboardPath(toProjectPath("/", project.id))}
+                          viewTransition
+                        />
+                      }
+                    >
+                      <LayoutDashboard className="size-4" />
+                      Open
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={isPending}
+                      onClick={() => changeProjectState(project, !isRunning)}
+                    >
+                      {isRunning ? (
+                        <Pause className="size-4" />
+                      ) : (
+                        <Play className="size-4" />
                       )}
-                      viewTransition
+                      {isRunning ? "Stop" : "Start"}
+                    </Button>
+                    <AssistantButton
+                      label={`Ask Assistant about ${project.name}`}
+                      to={`/assistant?project=${encodeURIComponent(project.id)}`}
                     />
-                  }
-                >
-                  <Globe2 className="size-4" />
-                  {project.kind === "zelavis" ? "Website" : "Manage"}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </section>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </section>
+      ) : (
+        <ResourceNotice
+          title={projects.length > 0 ? "No matching projects" : "No projects yet"}
+          description={
+            projects.length > 0
+              ? "Try a different project search."
+              : "Create a Zelavis App project to start its independent local runtime."
+          }
+        />
+      )}
     </section>
   );
 }

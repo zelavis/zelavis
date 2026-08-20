@@ -1,17 +1,17 @@
 import * as React from "react";
-import { Link, useLocation, useMatches } from "react-router";
+import { Plus, Search } from "lucide-react";
+import { Link, useLocation } from "react-router";
 
 import { AppSidebar } from "#/components/app-sidebar";
 import Footer from "#/components/Footer";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "#/components/ui/breadcrumb";
+import { Button } from "#/components/ui/button";
 import { useDirection } from "#/components/ui/direction";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "#/components/ui/input-group";
+import { Kbd } from "#/components/ui/kbd";
 import { Separator } from "#/components/ui/separator";
 import {
   SidebarInset,
@@ -20,24 +20,34 @@ import {
 } from "#/components/ui/sidebar";
 import { TooltipProvider } from "#/components/ui/tooltip";
 import { useIsMobile } from "#/hooks/use-mobile";
-import { getDashboardPageLabelFromMatches } from "#/lib/dashboard-route-handles";
-import { getDashboardPageLabel } from "#/lib/dashboard-data";
 import type {
   DashboardSettings,
   DatabaseCollection,
   DatabaseSchemaCollectionSummary,
   RuntimeConfig,
+  RuntimeAssistantThread,
+  RuntimeProject,
+  RuntimeProjectDriverInfo,
 } from "#/lib/runtime-api";
 import {
   DATABASE_COLLECTION_CREATED_EVENT,
 } from "#/lib/runtime-api";
 import { toProjectPath } from "#/lib/routing";
+import {
+  parseAsString,
+  useTypedSearchParams,
+} from "#/lib/use-typed-search-params";
 
 export type DashboardShellData = {
+  controlRuntime: RuntimeConfig;
   runtime: RuntimeConfig;
   settings: DashboardSettings;
   databaseCollections: readonly DatabaseCollection[];
   schemaCollections: readonly DatabaseSchemaCollectionSummary[];
+  projects: readonly RuntimeProject[];
+  projectRuntime?: RuntimeProjectDriverInfo;
+  assistantThreads: readonly RuntimeAssistantThread[];
+  assistantResponder: string;
 };
 
 function mergeDatabaseCollections(
@@ -57,12 +67,53 @@ function mergeDatabaseCollections(
   );
 }
 
+const projectHeaderSearchSchema = {
+  q: parseAsString.withDefault(""),
+  new: parseAsString.withDefault(""),
+} as const;
+
 function UtilityHeader({ runtime }: { runtime?: RuntimeConfig }) {
   const { pathname } = useLocation();
-  const matches = useMatches();
-  const pageLabel =
-    getDashboardPageLabelFromMatches(matches) ??
-    getDashboardPageLabel(pathname, runtime?.services, runtime?.serviceRegistry);
+  const [{ q }, setParams] = useTypedSearchParams(projectHeaderSearchSchema);
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+  const isProjectsOverview = pathname === "/" || pathname === "/projects";
+  const canCreateProjects =
+    runtime?.access?.principal.permissions?.includes("*") ?? true;
+
+  React.useEffect(() => {
+    if (!isProjectsOverview) return;
+
+    function focusProjectSearch(event: KeyboardEvent) {
+      if (
+        event.defaultPrevented ||
+        event.repeat ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        event.key.toLowerCase() !== "f"
+      ) {
+        return;
+      }
+
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          target.closest(
+            "input, textarea, select, [contenteditable='true'], [role='textbox']",
+          ))
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      searchInputRef.current?.focus();
+    }
+
+    window.addEventListener("keydown", focusProjectSearch);
+    return () => window.removeEventListener("keydown", focusProjectSearch);
+  }, [isProjectsOverview]);
 
   return (
     <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
@@ -72,19 +123,46 @@ function UtilityHeader({ runtime }: { runtime?: RuntimeConfig }) {
           orientation="vertical"
           className="me-2 data-[orientation=vertical]:h-4"
         />
-        <Breadcrumb>
-          <BreadcrumbList>
-            <BreadcrumbItem className="hidden md:block">
-              <BreadcrumbLink render={<Link to="/" />}>
-                Zelavis
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator className="hidden md:block" />
-            <BreadcrumbItem>
-              <BreadcrumbPage>{pageLabel}</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
+        {isProjectsOverview ? (
+          <>
+            <InputGroup className="flex-1">
+              <InputGroupAddon>
+                <Search />
+              </InputGroupAddon>
+              <InputGroupInput
+                ref={searchInputRef}
+                type="search"
+                value={q}
+                onChange={(event) =>
+                  setParams({ q: event.target.value || null })
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.currentTarget.blur();
+                  }
+                }}
+                placeholder="Search projects"
+                aria-label="Search projects"
+                autoComplete="off"
+              />
+              <InputGroupAddon align="inline-end">
+                <Kbd className="group-focus-within/input-group:hidden">F</Kbd>
+                <Kbd className="hidden group-focus-within/input-group:inline-flex">
+                  Esc
+                </Kbd>
+              </InputGroupAddon>
+            </InputGroup>
+            {canCreateProjects ? (
+              <Button
+                type="button"
+                onClick={() => setParams({ new: "1" }, { replace: false })}
+              >
+                <Plus data-icon="inline-start" />
+                New project
+              </Button>
+            ) : null}
+          </>
+        ) : null}
       </div>
     </header>
   );
@@ -199,9 +277,12 @@ export function DashboardShell({
       <SidebarProvider className="h-svh overflow-hidden">
         <AppSidebar
           runtime={activeDashboardData?.runtime}
+          assistantConfig={activeDashboardData?.controlRuntime}
           settings={activeDashboardData?.settings}
           databaseCollections={activeDashboardData?.databaseCollections}
           schemaCollections={activeDashboardData?.schemaCollections}
+          projects={activeDashboardData?.projects}
+          assistantThreads={activeDashboardData?.assistantThreads}
           mobileSlotContent={isMobile ? children : undefined}
           side={direction === "rtl" ? "right" : "left"}
           aria-label="Dashboard navigation"

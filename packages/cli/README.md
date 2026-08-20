@@ -1,30 +1,8 @@
 # @zelavis/cli
 
-`@zelavis/cli` provides command-line tools for bootstrapping, developing, and
-operating Zelavis apps.
-
-Use it directly through a package runner:
-
-```bash
-pnpm dlx @zelavis/cli bootstrap react-router
-```
-
-The React Router bootstrap target supports React Router 7 Framework Mode apps.
-It creates a catch-all Zelavis resource route and a small server-side Zelavis
-runtime module for the selected runtime adapter.
-
-Next.js bootstrap supports both App Router and Pages Router:
-
-```bash
-pnpm dlx @zelavis/cli bootstrap nextjs
-pnpm dlx @zelavis/cli bootstrap nextjs --router pages --adapter node --yes
-```
-
-For non-interactive usage:
-
-```bash
-zelavis bootstrap react-router --adapter node --yes
-```
+`@zelavis/cli` is the endpoint-backed operator CLI for Zelavis. The public
+`zelavis` package injects the Platform runtime and owns the `zelavis serve`
+command; this lower-level package owns reusable parsing and API clients.
 
 ## Runtime operations
 
@@ -38,8 +16,7 @@ ship first-party commands for supported adapters, but concrete host mechanics
 such as local file caches or future Deno runtime setup should live in adapter
 modules that the CLI orchestrates.
 
-Today, `@zelavis/cli` ships bootstrap commands. Runtime service management is
-available through the `services` command group:
+Runtime service management is available through the `services` command group:
 
 ```bash
 zelavis services list
@@ -55,3 +32,7 @@ when the runtime is mounted elsewhere:
 ```bash
 zelavis services list --url http://localhost:8787/zelavis
 ```
+
+The old framework bootstrap commands were removed with the embedded/serverless
+runtime architecture. Zelavis runs as a long-lived Platform OS; framework and
+deployment integrations belong in adapters or plugins.

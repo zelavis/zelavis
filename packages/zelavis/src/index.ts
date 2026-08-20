@@ -28,6 +28,7 @@ import {
   type ZelavisServerExecutionContext,
   type ZelavisServerFetchHandler,
   type ZelavisServerPlainHandler,
+  type ZelavisServerRoute,
   type ZelavisServerRuntime,
   type ZelavisRuntimeService,
 } from "@zelavis/server";
@@ -57,6 +58,10 @@ import {
   type ZelavisServiceSetupContext,
 } from "./service.js";
 export * from "./service.js";
+export * from "./blueprint.js";
+export * from "./system-store.js";
+export * from "./project.js";
+export * from "./assistant.js";
 export * from "./bundle-store.js";
 export * from "./tls.js";
 export * from "./domain-binding.js";
@@ -64,6 +69,25 @@ export * from "./domain-verifier.js";
 import { createSharedBundleStore, type BundleStore } from "./bundle-store.js";
 import type { TlsProvider } from "./tls.js";
 import type { DomainBindingStore } from "./domain-binding.js";
+import type { ZelavisBlueprintRegistry } from "./blueprint.js";
+import {
+  createProjectManager,
+  ZelavisProjectConflictError,
+  ZelavisProjectNotFoundError,
+  ZelavisProjectValidationError,
+  type ZelavisProjectRuntimeDriver,
+} from "./project.js";
+import {
+  createAssistantManager,
+  ZelavisAssistantNotFoundError,
+  ZelavisAssistantValidationError,
+  type ZelavisAssistantResponder,
+} from "./assistant.js";
+import {
+  createMemorySystemStore,
+  type ZelavisSystemStore,
+  type ZelavisSystemStoreValue,
+} from "./system-store.js";
 import { createDomainChallengeService } from "./domain-verifier.js";
 import { synthesizeServiceAppService } from "./service-app.js";
 import type {
@@ -300,36 +324,6 @@ function parseStoredDashboardPreferences(
   return preferences;
 }
 
-function serializeDashboardPreferences(
-  preferences: ZelavisDashboardPreferences | undefined,
-): DatabaseJsonObject | undefined {
-  if (!preferences) {
-    return undefined;
-  }
-
-  const content =
-    preferences.content &&
-    (preferences.content.pinnedTypes || preferences.content.labels)
-      ? {
-          ...(preferences.content.pinnedTypes
-            ? { pinnedTypes: [...preferences.content.pinnedTypes] }
-            : {}),
-          ...(preferences.content.labels
-            ? { labels: { ...preferences.content.labels } }
-            : {}),
-        }
-      : undefined;
-  const media =
-    preferences.media?.orderedPaths
-      ? { orderedPaths: [...preferences.media.orderedPaths] }
-      : undefined;
-
-  return {
-    ...(content ? { content } : {}),
-    ...(media ? { media } : {}),
-  } satisfies DatabaseJsonObject;
-}
-
 function parseStoredServiceRegistryStateEntry(
   value: unknown,
 ): ZelavisServiceRegistryStateEntry {
@@ -515,6 +509,10 @@ export interface ZelavisServerOptions {
    * services get no host-bound routing.
    */
   domainBindings?: DomainBindingStore;
+  systemStore?: ZelavisSystemStore;
+  blueprints?: ZelavisBlueprintRegistry;
+  projectRuntime?: ZelavisProjectRuntimeDriver;
+  assistant?: false | ZelavisAssistantResponder;
 }
 
 export interface ZelavisKeyValueStore {
@@ -600,6 +598,9 @@ export interface ZelavisServicePackageInstaller {
 }
 
 export interface ZelavisPlatformResources {
+  systemStore?: ZelavisSystemStore;
+  blueprints?: ZelavisBlueprintRegistry;
+  projectRuntime?: ZelavisProjectRuntimeDriver;
   kv?: ZelavisKeyValueStore;
   files?: ZelavisFileStorage;
   services?: ZelavisServiceActivationController;
@@ -687,11 +688,12 @@ export interface ZelavisOptions {
   rootPath?: string;
   api?: ZelavisApiOptions;
   services?: ZelavisServiceRegistryOptions;
+  assistant?: false | ZelavisAssistantResponder;
   onError?: ZelavisServerErrorHandler;
   adapter?: ZelavisAdapter;
 }
 
-export interface ZelavisDatabaseDocumentStoreOptions {
+export interface ZelavisWebsiteDatabaseStoreOptions {
   collection?: string;
   documentId?: string;
 }
@@ -702,14 +704,16 @@ export function defineAdapter(
   return definition;
 }
 
-const DEFAULT_ZELAVIS_STATE_COLLECTION = "zelavis_system";
-const DEFAULT_DASHBOARD_SETTINGS_DOCUMENT_ID = "dashboard.settings";
+const DEFAULT_WEBSITE_STATE_COLLECTION = "zelavis_system";
 const DEFAULT_WEBSITE_PAGES_DOCUMENT_ID = "website.pages";
-const DEFAULT_SERVICE_REGISTRY_DOCUMENT_ID = "services.registry";
 const DEFAULT_PLATFORM_DASHBOARD_SETTINGS_KEY =
   "zelavis/dashboard-settings.json";
 const DEFAULT_PLATFORM_WEBSITE_PAGES_PATH = "zelavis/website-pages.json";
 const DEFAULT_PLATFORM_SERVICE_REGISTRY_KEY = "zelavis/services.json";
+const SYSTEM_STORE_DASHBOARD_NAMESPACE = "dashboard";
+const SYSTEM_STORE_DASHBOARD_SETTINGS_KEY = "settings";
+const SYSTEM_STORE_SERVICES_NAMESPACE = "services";
+const SYSTEM_STORE_SERVICE_REGISTRY_KEY = "registry";
 const STORAGE_CHECKSUM_METADATA_KEY = "checksum-sha256";
 const RESERVED_CORE_SERVICE_NAMES = new Set([
   "@zelavis/auth",
@@ -835,6 +839,10 @@ function readBodyObject(body: unknown): Record<string, unknown> {
   return body && typeof body === "object" && !Array.isArray(body)
     ? (body as Record<string, unknown>)
     : {};
+}
+
+function toSystemStoreValue(value: unknown): ZelavisSystemStoreValue {
+  return JSON.parse(JSON.stringify(value)) as ZelavisSystemStoreValue;
 }
 
 function toBase64(bytes: Uint8Array): string {
@@ -1227,7 +1235,7 @@ function serializeWebsitePage(page: ZelavisWebsitePage): DatabaseJsonObject {
 
 async function readDatabaseDocument(
   database: DatabaseApi,
-  options: Required<ZelavisDatabaseDocumentStoreOptions>,
+  options: Required<ZelavisWebsiteDatabaseStoreOptions>,
 ) {
   await ensureDatabaseCollection(database, options.collection);
   return database.documents.findById({
@@ -1238,7 +1246,7 @@ async function readDatabaseDocument(
 
 async function readValidatedDatabaseDocumentData<T>(
   database: DatabaseApi,
-  options: Required<ZelavisDatabaseDocumentStoreOptions>,
+  options: Required<ZelavisWebsiteDatabaseStoreOptions>,
   parse: (value: unknown) => T,
 ): Promise<T> {
   const document = await readDatabaseDocument(database, options);
@@ -1247,7 +1255,7 @@ async function readValidatedDatabaseDocumentData<T>(
 
 async function writeDatabaseDocument(
   database: DatabaseApi,
-  options: Required<ZelavisDatabaseDocumentStoreOptions>,
+  options: Required<ZelavisWebsiteDatabaseStoreOptions>,
   data: DatabaseJsonObject,
 ): Promise<void> {
   await ensureDatabaseCollection(database, options.collection);
@@ -1273,52 +1281,12 @@ async function writeDatabaseDocument(
   });
 }
 
-export function createDatabaseDashboardSettingsStore(
-  database: DatabaseApi,
-  options: ZelavisDatabaseDocumentStoreOptions = {},
-): ZelavisDashboardSettingsStore {
-  const documentOptions = {
-    collection: options.collection ?? DEFAULT_ZELAVIS_STATE_COLLECTION,
-    documentId: options.documentId ?? DEFAULT_DASHBOARD_SETTINGS_DOCUMENT_ID,
-  };
-
-  return {
-    async read() {
-      return readValidatedDatabaseDocumentData(
-        database,
-        documentOptions,
-        (value) => parseStoredDashboardSettingsUpdate(readBodyObject(value)),
-      );
-    },
-    async write(update) {
-      const next = mergeDashboardSettingsUpdate(
-        (await this.read()) ?? {},
-        update,
-      );
-
-      await writeDatabaseDocument(database, documentOptions, {
-        kind: "dashboard-settings",
-        ...(next.rootPath !== undefined ? { rootPath: next.rootPath } : {}),
-        ...(next.theme !== undefined ? { theme: next.theme } : {}),
-        ...(next.pageBuilderEnabled !== undefined
-          ? { pageBuilderEnabled: next.pageBuilderEnabled }
-          : {}),
-        ...(next.preferences
-          ? { preferences: serializeDashboardPreferences(next.preferences) }
-          : {}),
-      });
-
-      return next;
-    },
-  };
-}
-
 export function createDatabaseWebsitePagesStore(
   database: DatabaseApi,
-  options: ZelavisDatabaseDocumentStoreOptions = {},
+  options: ZelavisWebsiteDatabaseStoreOptions = {},
 ): ZelavisWebsitePagesStore {
   const documentOptions = {
-    collection: options.collection ?? DEFAULT_ZELAVIS_STATE_COLLECTION,
+    collection: options.collection ?? DEFAULT_WEBSITE_STATE_COLLECTION,
     documentId: options.documentId ?? DEFAULT_WEBSITE_PAGES_DOCUMENT_ID,
   };
 
@@ -1339,44 +1307,6 @@ export function createDatabaseWebsitePagesStore(
       });
 
       return normalizedPages;
-    },
-  };
-}
-
-export function createDatabaseServiceRegistryStore(
-  database: DatabaseApi,
-  options: ZelavisDatabaseDocumentStoreOptions = {},
-): ZelavisServiceRegistryStore {
-  const documentOptions = {
-    collection: options.collection ?? DEFAULT_ZELAVIS_STATE_COLLECTION,
-    documentId: options.documentId ?? DEFAULT_SERVICE_REGISTRY_DOCUMENT_ID,
-  };
-
-  return {
-    async read() {
-      return readValidatedDatabaseDocumentData(
-        database,
-        documentOptions,
-        parseStoredServiceRegistryState,
-      );
-    },
-    async write(entries) {
-      const normalizedEntries = entries.map((entry) =>
-        parseStoredServiceRegistryStateEntry(entry),
-      );
-
-      await writeDatabaseDocument(database, documentOptions, {
-        kind: "service-registry",
-        services: normalizedEntries.map((entry) => ({
-          name: entry.name,
-          ...(entry.specifier ? { specifier: entry.specifier } : {}),
-          ...(entry.status ? { status: entry.status } : {}),
-          ...(entry.source ? { source: entry.source } : {}),
-          ...(entry.order !== undefined ? { order: entry.order } : {}),
-        })),
-      });
-
-      return normalizedEntries;
     },
   };
 }
@@ -1402,6 +1332,34 @@ export function createKeyValueDashboardSettingsStore(
         parseStoredDashboardSettingsUpdate(readBodyObject(update)),
       );
       await store.set(key, JSON.stringify(normalized));
+      return normalized;
+    },
+  };
+}
+
+export function createSystemStoreDashboardSettingsStore(
+  store: ZelavisSystemStore,
+): ZelavisDashboardSettingsStore {
+  return {
+    async read() {
+      const record = await store.get(
+        SYSTEM_STORE_DASHBOARD_NAMESPACE,
+        SYSTEM_STORE_DASHBOARD_SETTINGS_KEY,
+      );
+      return record
+        ? parseStoredDashboardSettingsUpdate(readBodyObject(record.value))
+        : undefined;
+    },
+    async write(update) {
+      const normalized = mergeDashboardSettingsUpdate(
+        (await this.read()) ?? {},
+        parseStoredDashboardSettingsUpdate(readBodyObject(update)),
+      );
+      await store.set(
+        SYSTEM_STORE_DASHBOARD_NAMESPACE,
+        SYSTEM_STORE_DASHBOARD_SETTINGS_KEY,
+        toSystemStoreValue(normalized),
+      );
       return normalized;
     },
   };
@@ -1514,6 +1472,31 @@ export function createKeyValueServiceRegistryStore(
   };
 }
 
+export function createSystemStoreServiceRegistryStore(
+  store: ZelavisSystemStore,
+): ZelavisServiceRegistryStore {
+  return {
+    async read() {
+      const record = await store.get(
+        SYSTEM_STORE_SERVICES_NAMESPACE,
+        SYSTEM_STORE_SERVICE_REGISTRY_KEY,
+      );
+      return record ? parseStoredServiceRegistryState(record.value) : [];
+    },
+    async write(entries) {
+      const normalized = entries.map((entry) =>
+        parseStoredServiceRegistryStateEntry(entry),
+      );
+      await store.set(
+        SYSTEM_STORE_SERVICES_NAMESPACE,
+        SYSTEM_STORE_SERVICE_REGISTRY_KEY,
+        toSystemStoreValue({ services: normalized }),
+      );
+      return normalized;
+    },
+  };
+}
+
 export function createFileStorageServiceRegistryStore(
   storage: ZelavisFileStorage,
   path = DEFAULT_PLATFORM_SERVICE_REGISTRY_KEY,
@@ -1554,17 +1537,13 @@ export function createFileStorageServiceRegistryStore(
   };
 }
 
-function resolveDashboardSettingsStore(
+function resolveRuntimeSettingsStore(
   option: ZelavisDashboardCoreServiceInput | undefined,
   fallbackStore?: ZelavisDashboardSettingsStore,
 ): ZelavisDashboardSettingsStore | undefined {
   const dashboardOption = option ?? true;
 
-  if (dashboardOption === false) {
-    return undefined;
-  }
-
-  if (dashboardOption === true) {
+  if (dashboardOption === true || dashboardOption === false) {
     return fallbackStore ?? createMemoryDashboardSettingsStore();
   }
 
@@ -2279,7 +2258,12 @@ function createDashboardAccess(mode: string | null | undefined) {
   };
 }
 
-async function resolveDashboardCoreService(
+interface ZelavisRuntimeManagementCore {
+  createRuntimeConfig: () => Promise<unknown>;
+  routes: readonly ZelavisServerRoute<any>[];
+}
+
+async function resolveRuntimeManagementCore(
   option: ZelavisDashboardCoreServiceInput | undefined,
   context: {
     apiPrefix: string;
@@ -2292,29 +2276,20 @@ async function resolveDashboardCoreService(
     servicePackageInstaller?: ZelavisServicePackageInstaller;
     serviceActivation?: ZelavisServiceActivationController;
     rootPath: string;
-    services: readonly ZelavisRuntimeService<any>[];
+    getServices: () => readonly ZelavisRuntimeService<any>[];
     settingsStore?: ZelavisDashboardSettingsStore;
     websiteEnabled: boolean;
   },
-): Promise<ZelavisRuntimeService<any> | undefined> {
+): Promise<ZelavisRuntimeManagementCore> {
   const dashboardOption = option ?? true;
-
-  if (dashboardOption === false) {
-    return undefined;
-  }
-
-  const options = dashboardOption === true ? {} : dashboardOption;
+  const options =
+    dashboardOption === true || dashboardOption === false ? {} : dashboardOption;
   const title = options.title ?? "zelavis";
-  const subtitle = options.subtitle ?? "Backend, dashboard, and core services.";
   const rootPath = context.rootPath;
   const settingsStore =
     context.settingsStore ??
     options.settingsStore ??
     createMemoryDashboardSettingsStore();
-  const devServerUrl = normalizeExternalUrl(
-    options.devServerUrl ?? readOptionalProcessEnv("ZELAVIS_UI_DEV_SERVER"),
-  );
-  const finalServicesForDashboard = context.services;
   const clientRoutes = [
     ...new Set(
       (options.clientRoutes ?? defaultZelavisDashboardClientRoutes)
@@ -2470,7 +2445,7 @@ async function resolveDashboardCoreService(
         clientRoutes,
         assetRoot: joinPathParts(rootPath, "assets"),
       },
-      services: finalServicesForDashboard.map((service) => ({
+      services: context.getServices().map((service) => ({
         name: service.name,
         core:
           service.name === "@zelavis/ui" ||
@@ -2596,7 +2571,7 @@ async function resolveDashboardCoreService(
       restartRequired: Boolean(pendingRootPath),
     };
   };
-  const routes = [
+  const routes: ZelavisServerRoute<any>[] = [
         {
           id: "runtime.config",
           method: "GET",
@@ -2850,17 +2825,47 @@ async function resolveDashboardCoreService(
             }
           },
         },
-        // Per-asset routes and the SPA fallback are synthesized from
-        // the service `app` field during runtime mounting.
       ];
 
-  return createZelavisDashboardService({
-    title,
-    subtitle,
-    rootPath,
-    devServerUrl,
+  const routePrefix = joinPathParts(
+    context.apiPrefix,
+    context.apiVersion,
+    "runtime",
+  );
+
+  return {
     createRuntimeConfig: createDashboardRuntimeConfig,
-    routes,
+    routes: routes.map((route) => ({
+      ...route,
+      path:
+        route.path === routePrefix
+          ? "/"
+          : route.path.slice(routePrefix.length) || "/",
+    })),
+  };
+}
+
+async function resolveDashboardCoreService(
+  option: ZelavisDashboardCoreServiceInput | undefined,
+  context: {
+    rootPath: string;
+    createRuntimeConfig: () => Promise<unknown>;
+  },
+): Promise<ZelavisRuntimeService<any> | undefined> {
+  const dashboardOption = option ?? true;
+  if (dashboardOption === false) {
+    return undefined;
+  }
+
+  const options = dashboardOption === true ? {} : dashboardOption;
+  return createZelavisDashboardService({
+    title: options.title,
+    subtitle: options.subtitle,
+    rootPath: context.rootPath,
+    devServerUrl: normalizeExternalUrl(
+      options.devServerUrl ?? readOptionalProcessEnv("ZELAVIS_UI_DEV_SERVER"),
+    ),
+    createRuntimeConfig: context.createRuntimeConfig,
   }) as unknown as ZelavisRuntimeService<any>;
 }
 
@@ -2910,6 +2915,12 @@ async function resolveWebsiteCoreService(
       title: "Website",
       path: "/website",
       pageLabel: "Website",
+      sectionLabel: "Build",
+      surface: "root",
+      access: {
+        permissions: ["project.website.manage"],
+        scope: { type: "project", projectIdParam: "projectId" },
+      },
     },
     service: {
       pages: [],
@@ -3308,7 +3319,67 @@ async function resolveWorkloadsCoreService(
   return workloadsService(workloadsOption === true ? {} : workloadsOption);
 }
 
-async function resolveServerCoreService(): Promise<ZelavisRuntimeService<any>> {
+async function resolveServerCoreService(
+  blueprints?: ZelavisBlueprintRegistry,
+  systemStore?: ZelavisSystemStore,
+  projectRuntime?: ZelavisProjectRuntimeDriver,
+  runtimeManagementRoutes: readonly ZelavisServerRoute<any>[] = [],
+  assistantOption?: false | ZelavisAssistantResponder,
+): Promise<ZelavisRuntimeService<any>> {
+  const projects =
+    blueprints && systemStore && projectRuntime
+      ? await createProjectManager({
+          blueprints,
+          store: systemStore,
+          runtime: projectRuntime,
+        })
+      : undefined;
+  const assistant =
+    systemStore && assistantOption !== false
+      ? createAssistantManager({
+          store: systemStore,
+          ...(assistantOption ? { responder: assistantOption } : {}),
+        })
+      : undefined;
+
+  function unavailableProjectsResponse() {
+    return {
+      status: 503,
+      body: {
+        error:
+          "Project management requires a System Store, Blueprint registry, and project runtime driver.",
+      },
+    };
+  }
+
+  function projectErrorResponse(error: unknown) {
+    const status =
+      error instanceof ZelavisProjectNotFoundError
+        ? 404
+        : error instanceof ZelavisProjectConflictError
+          ? 409
+          : error instanceof ZelavisProjectValidationError
+            ? 400
+            : 500;
+    return {
+      status,
+      body: { error: error instanceof Error ? error.message : String(error) },
+    };
+  }
+
+  function assistantErrorResponse(error: unknown) {
+    const status =
+      error instanceof ZelavisAssistantNotFoundError
+        ? 404
+        : error instanceof ZelavisAssistantValidationError
+          ? 400
+          : 500;
+    return {
+      status,
+      body: { error: error instanceof Error ? error.message : String(error) },
+    };
+  }
+
   return {
     name: "@zelavis/server",
     basePath: "/runtime",
@@ -3344,6 +3415,7 @@ async function resolveServerCoreService(): Promise<ZelavisRuntimeService<any>> {
     service: {},
     api: {
       v1: [
+        ...runtimeManagementRoutes,
         {
           id: "runtime.access",
           method: "GET",
@@ -3352,6 +3424,314 @@ async function resolveServerCoreService(): Promise<ZelavisRuntimeService<any>> {
             status: 200,
             body: createDashboardAccess(query.get("as")),
           }),
+        },
+        {
+          id: "runtime.blueprints.list",
+          method: "GET",
+          path: "/blueprints",
+          handler: () => ({
+            status: 200,
+            body: {
+              blueprints: (blueprints?.list() ?? []).map((entry) => ({
+                ...entry.manifest,
+                origin: entry.origin,
+              })),
+            },
+          }),
+        },
+        {
+          id: "runtime.assistant.threads.list",
+          method: "GET",
+          path: "/assistant/threads",
+          handler: async ({ query }: { query: URLSearchParams }) =>
+            assistant
+              ? {
+                  status: 200,
+                  body: {
+                    responder: assistant.responder,
+                    threads: await assistant.list(query.get("projectId") ?? undefined),
+                  },
+                }
+              : {
+                  status: 503,
+                  body: { error: "Assistant requires the Platform System Store." },
+                },
+        },
+        {
+          id: "runtime.assistant.threads.create",
+          method: "POST",
+          path: "/assistant/threads",
+          handler: async ({ body }: { body: unknown }) => {
+            if (!assistant) {
+              return { status: 503, body: { error: "Assistant requires the Platform System Store." } };
+            }
+            try {
+              const input = readBodyObject(body);
+              return {
+                status: 201,
+                body: {
+                  thread: await assistant.create({
+                    ...(typeof input.title === "string" ? { title: input.title } : {}),
+                    ...(typeof input.projectId === "string"
+                      ? { projectId: input.projectId }
+                      : {}),
+                  }),
+                },
+              };
+            } catch (error) {
+              return assistantErrorResponse(error);
+            }
+          },
+        },
+        {
+          id: "runtime.assistant.threads.get",
+          method: "GET",
+          path: "/assistant/threads/:threadId",
+          handler: async ({ params }: { params: Record<string, string> }) => {
+            if (!assistant) {
+              return { status: 503, body: { error: "Assistant requires the Platform System Store." } };
+            }
+            try {
+              const thread = await assistant.get(params.threadId ?? "");
+              if (!thread) {
+                throw new ZelavisAssistantNotFoundError(
+                  `Assistant thread "${params.threadId ?? ""}" was not found.`,
+                );
+              }
+              return { status: 200, body: { thread } };
+            } catch (error) {
+              return assistantErrorResponse(error);
+            }
+          },
+        },
+        {
+          id: "runtime.assistant.messages.create",
+          method: "POST",
+          path: "/assistant/threads/:threadId/messages",
+          handler: async ({
+            body,
+            params,
+          }: {
+            body: unknown;
+            params: Record<string, string>;
+          }) => {
+            if (!assistant) {
+              return { status: 503, body: { error: "Assistant requires the Platform System Store." } };
+            }
+            try {
+              const input = readBodyObject(body);
+              return {
+                status: 201,
+                body: await assistant.appendMessage(
+                  params.threadId ?? "",
+                  typeof input.content === "string" ? input.content : "",
+                ),
+              };
+            } catch (error) {
+              return assistantErrorResponse(error);
+            }
+          },
+        },
+        {
+          id: "runtime.projects.list",
+          method: "GET",
+          path: "/projects",
+          handler: async () =>
+            projects
+              ? {
+                  status: 200,
+                  body: {
+                    runtime: projects.runtime,
+                    projects: await projects.list(),
+                  },
+                }
+              : unavailableProjectsResponse(),
+        },
+        {
+          id: "runtime.projects.create",
+          method: "POST",
+          path: "/projects",
+          handler: async ({ body }: { body: unknown }) => {
+            if (!projects) {
+              return unavailableProjectsResponse();
+            }
+            try {
+              const input = readBodyObject(body);
+              const project = await projects.create({
+                name: typeof input.name === "string" ? input.name : "",
+                ...(typeof input.id === "string" ? { id: input.id } : {}),
+                ...(typeof input.blueprintId === "string"
+                  ? { blueprintId: input.blueprintId }
+                  : {}),
+                ...(typeof input.blueprintVersion === "string"
+                  ? { blueprintVersion: input.blueprintVersion }
+                  : {}),
+                ...(typeof input.start === "boolean" ? { start: input.start } : {}),
+              });
+              return { status: 201, body: { project } };
+            } catch (error) {
+              return projectErrorResponse(error);
+            }
+          },
+        },
+        {
+          id: "runtime.projects.get",
+          method: "GET",
+          path: "/projects/:projectId",
+          handler: async ({ params }: { params: Record<string, string> }) => {
+            if (!projects) {
+              return unavailableProjectsResponse();
+            }
+            try {
+              const project = await projects.get(params.projectId ?? "");
+              if (!project) {
+                throw new ZelavisProjectNotFoundError(
+                  `Project "${params.projectId ?? ""}" was not found.`,
+                );
+              }
+              return { status: 200, body: { project } };
+            } catch (error) {
+              return projectErrorResponse(error);
+            }
+          },
+        },
+        {
+          id: "runtime.projects.start",
+          method: "POST",
+          path: "/projects/:projectId/start",
+          handler: async ({ params }: { params: Record<string, string> }) => {
+            if (!projects) {
+              return unavailableProjectsResponse();
+            }
+            try {
+              return {
+                status: 200,
+                body: { project: await projects.start(params.projectId ?? "") },
+              };
+            } catch (error) {
+              return projectErrorResponse(error);
+            }
+          },
+        },
+        {
+          id: "runtime.projects.stop",
+          method: "POST",
+          path: "/projects/:projectId/stop",
+          handler: async ({ params }: { params: Record<string, string> }) => {
+            if (!projects) {
+              return unavailableProjectsResponse();
+            }
+            try {
+              return {
+                status: 200,
+                body: { project: await projects.stop(params.projectId ?? "") },
+              };
+            } catch (error) {
+              return projectErrorResponse(error);
+            }
+          },
+        },
+        {
+          id: "runtime.projects.logs",
+          method: "GET",
+          path: "/projects/:projectId/logs",
+          handler: async ({ params }: { params: Record<string, string> }) => {
+            if (!projects) {
+              return unavailableProjectsResponse();
+            }
+            try {
+              return {
+                status: 200,
+                body: { logs: await projects.logs(params.projectId ?? "") },
+              };
+            } catch (error) {
+              return projectErrorResponse(error);
+            }
+          },
+        },
+        ...(["GET", "POST", "PUT", "PATCH", "DELETE"] as const).map(
+          (method) => ({
+            id: `runtime.projects.proxy.${method.toLowerCase()}`,
+            method,
+            path: "/projects/:projectId/proxy/*path",
+            handler: async ({
+              params,
+              query,
+              request,
+            }: {
+              params: Record<string, string>;
+              query: URLSearchParams;
+              request: Request;
+            }) => {
+              if (!projects) {
+                return unavailableProjectsResponse();
+              }
+              try {
+                const project = await projects.get(params.projectId ?? "");
+                if (!project) {
+                  throw new ZelavisProjectNotFoundError(
+                    `Project "${params.projectId ?? ""}" was not found.`,
+                  );
+                }
+                if (project.runtime.status !== "running" || !project.runtime.url) {
+                  return {
+                    status: 409,
+                    body: { error: `Project "${project.id}" is not running.` },
+                  };
+                }
+
+                const target = new URL(
+                  (params.path ?? "").replace(/^\/+/, ""),
+                  `${project.runtime.url.replace(/\/+$/, "")}/`,
+                );
+                target.search = query.toString();
+                const headers = new Headers(request.headers);
+                headers.delete("host");
+                headers.delete("content-length");
+                const body =
+                  request.method === "GET" || request.method === "HEAD"
+                    ? undefined
+                    : await request.clone().arrayBuffer();
+                const response = await fetch(target, {
+                  method: request.method,
+                  headers,
+                  redirect: "manual",
+                  ...(body && body.byteLength > 0 ? { body } : {}),
+                });
+                const responseHeaders = new Headers(response.headers);
+                responseHeaders.delete("content-length");
+                responseHeaders.delete("transfer-encoding");
+                return {
+                  status: response.status,
+                  headers: responseHeaders,
+                  body: new Uint8Array(await response.arrayBuffer()),
+                };
+              } catch (error) {
+                return projectErrorResponse(error);
+              }
+            },
+          }),
+        ),
+        {
+          id: "runtime.projects.remove",
+          method: "DELETE",
+          path: "/projects/:projectId",
+          handler: async ({ params }: { params: Record<string, string> }) => {
+            if (!projects) {
+              return unavailableProjectsResponse();
+            }
+            try {
+              const deleted = await projects.remove(params.projectId ?? "");
+              if (!deleted) {
+                throw new ZelavisProjectNotFoundError(
+                  `Project "${params.projectId ?? ""}" was not found.`,
+                );
+              }
+              return { status: 200, body: { deleted: true } };
+            } catch (error) {
+              return projectErrorResponse(error);
+            }
+          },
         },
       ],
     },
@@ -3486,13 +3866,10 @@ export async function zelavis(
   const resolvedDatabaseApi =
     (providedDatabaseService?.service as DatabaseApi | undefined) ??
     databaseApi;
+  const systemStore = options.systemStore ?? createMemorySystemStore();
   const serviceRegistryStore = resolveServiceRegistryStore(
     options.services,
-    resolvedDatabaseApi
-      ? createDatabaseServiceRegistryStore(resolvedDatabaseApi)
-      : createMemoryServiceRegistryStore(
-          serializeServiceRegistryState(baseServiceRegistry),
-        ),
+    createSystemStoreServiceRegistryStore(systemStore),
   );
   const initialServiceRegistryState =
     await readInitialServiceRegistryState(serviceRegistryStore);
@@ -3540,11 +3917,9 @@ export async function zelavis(
   );
   const serviceRuntimeServices = await Promise.all(activatedServices.services);
   assertNoReservedServiceRuntimeServiceNames(serviceRuntimeServices);
-  const dashboardSettingsStore = resolveDashboardSettingsStore(
+  const dashboardSettingsStore = resolveRuntimeSettingsStore(
     options.coreServices?.dashboard,
-    resolvedDatabaseApi
-      ? createDatabaseDashboardSettingsStore(resolvedDatabaseApi)
-      : undefined,
+    createSystemStoreDashboardSettingsStore(systemStore),
   );
   const websiteCoreOptions = options.coreServices?.website;
   const websiteService = hasWebsiteService
@@ -3567,9 +3942,47 @@ export async function zelavis(
   const workloadsCoreService = hasWorkloadsService
     ? undefined
     : await resolveWorkloadsCoreService(options.coreServices?.workloads);
+  const websiteEnabled = hasWebsiteService || Boolean(websiteService);
+  let runtimeConfigServices: readonly ZelavisRuntimeService<any>[] = [];
+  const runtimeManagement = await resolveRuntimeManagementCore(
+    options.coreServices?.dashboard,
+    {
+      apiPrefix,
+      apiVersion,
+      serviceRegistry,
+      serviceRegistryStore,
+      serviceImporter: options.services?.importer,
+      servicePackageInstaller: options.servicePackageInstaller,
+      serviceActivation: options.serviceActivation,
+      rootPath,
+      getServices: () => runtimeConfigServices,
+      settingsStore: dashboardSettingsStore,
+      websiteEnabled,
+    },
+  );
+  const effectiveRuntimeServices = runtimeServices.map((service) =>
+    service.name === "@zelavis/server"
+      ? {
+          ...service,
+          api: {
+            ...service.api,
+            v1: [
+              ...(service.api.v1 ?? []),
+              ...runtimeManagement.routes,
+            ],
+          },
+        }
+      : service,
+  );
   const serverCoreService = hasServerService
     ? undefined
-    : await resolveServerCoreService();
+    : await resolveServerCoreService(
+        options.blueprints,
+        systemStore,
+        options.projectRuntime,
+        runtimeManagement.routes,
+        options.assistant,
+      );
   const coreServices = [
     serverCoreService,
     databaseService,
@@ -3581,35 +3994,11 @@ export async function zelavis(
   ].filter(
     (service): service is ZelavisRuntimeService<any> => Boolean(service),
   );
-  const websiteEnabled = hasWebsiteService || Boolean(websiteService);
-  const runtimeServicesForDashboard = [
-    ...(hasDashboardService || options.coreServices?.dashboard === false
-      ? []
-      : [
-          {
-            name: "@zelavis/ui",
-            basePath: "/",
-            service: {},
-            api: { v1: [] },
-          },
-        ]),
-    ...coreServices,
-    ...runtimeServices,
-  ];
   const dashboardService = hasDashboardService
     ? undefined
     : await resolveDashboardCoreService(options.coreServices?.dashboard, {
-        apiPrefix,
-        apiVersion,
-        serviceRegistry,
-        serviceRegistryStore,
-        serviceImporter: options.services?.importer,
-        servicePackageInstaller: options.servicePackageInstaller,
-        serviceActivation: options.serviceActivation,
         rootPath,
-        services: runtimeServicesForDashboard,
-        settingsStore: dashboardSettingsStore,
-        websiteEnabled,
+        createRuntimeConfig: runtimeManagement.createRuntimeConfig,
       });
   // Synthesize the sibling app service through the same primitive user
   // services use, then hide the service-only `app` field from the externally
@@ -3628,12 +4017,19 @@ export async function zelavis(
   const domainChallengeService = options.domainBindings
     ? createDomainChallengeService(options.domainBindings)
     : undefined;
+  runtimeConfigServices = [
+    sanitizedDashboardService,
+    ...coreServices,
+    ...effectiveRuntimeServices,
+  ].filter(
+    (service): service is ZelavisRuntimeService<any> => Boolean(service),
+  );
   const finalServices = [
     sanitizedDashboardService,
     dashboardAppService,
     domainChallengeService,
     ...coreServices,
-    ...runtimeServices,
+    ...effectiveRuntimeServices,
   ].filter(
     (service): service is ZelavisRuntimeService<any> => Boolean(service),
   );
@@ -3852,6 +4248,9 @@ function mergeZelavisServerOptions(
     servicePackageInstaller:
       override.servicePackageInstaller ?? base.servicePackageInstaller,
     serviceActivation: override.serviceActivation ?? base.serviceActivation,
+    systemStore: override.systemStore ?? base.systemStore,
+    blueprints: override.blueprints ?? base.blueprints,
+    projectRuntime: override.projectRuntime ?? base.projectRuntime,
     services:
       serviceEntries.length > 0 || serviceStore || serviceImporter
         ? {
@@ -3947,8 +4346,10 @@ function applyPlatformResourceDefaults(
         : nextCoreServices.dashboard;
 
     if (!currentDashboard.settingsStore) {
-      const settingsStore = resources.kv
-        ? createKeyValueDashboardSettingsStore(resources.kv)
+      const settingsStore = resources.systemStore
+        ? createSystemStoreDashboardSettingsStore(resources.systemStore)
+        : resources.kv
+          ? createKeyValueDashboardSettingsStore(resources.kv)
         : resources.files
           ? createFileStorageDashboardSettingsStore(resources.files)
           : undefined;
@@ -3991,8 +4392,10 @@ function applyPlatformResourceDefaults(
   }
 
   if (!nextServices.store) {
-    nextServices.store = resources.kv
-      ? createKeyValueServiceRegistryStore(resources.kv)
+    nextServices.store = resources.systemStore
+      ? createSystemStoreServiceRegistryStore(resources.systemStore)
+      : resources.kv
+        ? createKeyValueServiceRegistryStore(resources.kv)
       : resources.files
         ? createFileStorageServiceRegistryStore(resources.files)
         : undefined;
@@ -4002,6 +4405,9 @@ function applyPlatformResourceDefaults(
     ...options,
     services: nextServices,
     coreServices: nextCoreServices,
+    systemStore: options.systemStore ?? resources.systemStore,
+    blueprints: options.blueprints ?? resources.blueprints,
+    projectRuntime: options.projectRuntime ?? resources.projectRuntime,
   };
 }
 

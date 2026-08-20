@@ -24,7 +24,8 @@ When you need direct access to the initialized runtime object, jump to [Advanced
 
 ## What you get by default
 
-Today, a default `new Zelavis(...)` runtime includes these core services by default:
+During the Platform/App migration, a default development runtime mounts the
+current Zelavis App service set in-process:
 
 - dashboard
 - auth
@@ -64,7 +65,15 @@ The dashboard root at `/zelavis` opens the Projects overview. Project-local dash
 
 The global Marketplace at `/zelavis/marketplace` is for apps, starters, templates, and server provider plugins. Project plugins live inside Zelavis-native projects at `/zelavis/projects/:projectId/marketplace`. Global management areas such as Domains, Resources, Server, and Security sit outside project URLs; server-owned backing routes currently live under `/zelavis/server/*`.
 
-The website core service also mounts public website pages at `/`, while still reserving the dashboard namespace under `/zelavis`.
+The website service also mounts public website pages at `/`, while still reserving the dashboard namespace under `/zelavis`.
+
+Platform settings and service installation state are stored separately in the
+Platform System Store. Local adapters use `.zelavis/system/zelavis.sqlite`;
+the database exposed under the project Database screen remains project data.
+
+The runtime also lists the shipped project recipes at
+`GET /zelavis/api/v1/runtime/blueprints`. See [Platform OS, App, and
+Blueprints](../architecture/platform-app-blueprints.md).
 
 ## Dashboard settings
 

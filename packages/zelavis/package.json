@@ -2,10 +2,13 @@
   "name": "zelavis",
   "version": "1.0.1-alpha.2",
   "private": false,
-  "description": "Composable Zelavis runtime with core services included by default.",
+  "description": "Self-hostable Zelavis Platform OS runtime and control plane.",
   "license": "MIT",
   "author": "Ivan Jeremic",
   "type": "module",
+  "bin": {
+    "zelavis": "./dist/cli.js"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -63,13 +66,15 @@
     }
   },
   "scripts": {
-    "build": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/db build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/ui build && tsc -p tsconfig.json",
-    "build:runtime": "pnpm --filter @zelavis/ui build:plugin && tsc -p tsconfig.json",
-    "typecheck": "pnpm --filter @zelavis/ui build:plugin && tsc -p tsconfig.json --noEmit",
+    "clean": "node scripts/clean-dist.mjs",
+    "build": "pnpm run clean && pnpm --filter @zelavis/server build && pnpm --filter @zelavis/db build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/ui build && pnpm --filter @zelavis/cli build && tsc -p tsconfig.json",
+    "build:runtime": "pnpm run clean && pnpm --filter @zelavis/ui build:plugin && pnpm --filter @zelavis/cli build && tsc -p tsconfig.json",
+    "typecheck": "pnpm --filter @zelavis/ui build:plugin && pnpm --filter @zelavis/cli build && tsc -p tsconfig.json --noEmit",
     "test": "pnpm run build && pnpm --filter @zelavis/ecommerce build && node --test test/*.test.mjs"
   },
   "files": [
-    "dist"
+    "dist",
+    "blueprints"
   ],
   "publishConfig": {
     "access": "public"
@@ -85,14 +90,17 @@
   },
   "dependencies": {
     "@zelavis/auth": "workspace:*",
+    "@zelavis/cli": "workspace:*",
     "@zelavis/db": "workspace:*",
     "@zelavis/db-bun-sqlite": "workspace:*",
     "@zelavis/db-node-sqlite": "workspace:*",
     "@zelavis/server": "workspace:*",
     "@zelavis/ui": "workspace:*",
-    "@zelavis/workloads": "workspace:*"
+    "@zelavis/workloads": "workspace:*",
+    "better-sqlite3": "^12.10.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.9.1",
     "elysia": "^1.4.28",
     "fastify": "^5.6.1",
@@ -106,5 +114,8 @@
     "runtime",
     "services",
     "database"
-  ]
+  ],
+  "engines": {
+    "node": ">=24"
+  }
 }
