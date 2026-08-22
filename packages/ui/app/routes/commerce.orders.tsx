@@ -1,4 +1,4 @@
-import { useLoaderData, useRevalidator } from "react-router";
+import { useLoaderData, useRevalidator, useRouteLoaderData } from "react-router";
 import { useMemo, useState } from "react";
 import type { FormEvent } from "react";
 
@@ -9,18 +9,21 @@ import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import {
   createCommerceOrder,
-  getRuntimeConfig,
+  getActiveRuntimeConfig,
   listCommerceCustomers,
   listCommerceOrders,
   listCommerceProducts,
 } from "#/lib/runtime-api";
+import type { clientLoader as rootClientLoader } from "../root";
+import type { Route } from "./+types/commerce.orders";
+
 export const handle = {
   pageLabel: "Commerce",
   sidebarTrail: ["Extensions", "Ecommerce"],
 } as const;
 
-export async function clientLoader() {
-  const runtime = await getRuntimeConfig();
+export async function clientLoader({ request }: Route.ClientLoaderArgs) {
+  const runtime = await getActiveRuntimeConfig(request);
   const [orders, customers, products] = await Promise.all([
     listCommerceOrders(runtime).catch(() => [] as Awaited<ReturnType<typeof listCommerceOrders>>),
     listCommerceCustomers(runtime).catch(() => [] as Awaited<ReturnType<typeof listCommerceCustomers>>),
@@ -38,6 +41,7 @@ function formatMoney(amount: number, currency: string) {
 
 function CommerceOrders() {
   const { orders, customers, products } = useLoaderData<typeof clientLoader>();
+  const { runtime } = useRouteLoaderData<typeof rootClientLoader>("root")!;
   const revalidator = useRevalidator();
   const [customerId, setCustomerId] = useState("");
   const [productId, setProductId] = useState("");
@@ -61,7 +65,6 @@ function CommerceOrders() {
       return;
     }
 
-    const runtime = await getRuntimeConfig();
     setSaving(true);
     setMessage(undefined);
     setError(undefined);

@@ -5,7 +5,8 @@ import {
   type ZelavisServiceDefinition,
   type ZelavisRuntimeService,
 } from "@zelavis/server";
-import type { AuthApi } from "./core/types.js";
+import type { AuthApi, AuthProviderService } from "./core/types.js";
+import { createAuth, type CreateAuthOptions } from "./core/create-auth.js";
 import {
   AuthDomainError,
   AuthNotFoundError,
@@ -141,5 +142,30 @@ export function defineAuthService(
         },
       ],
     },
+  });
+}
+
+export interface AuthServiceOptions {
+  auth?: AuthApi;
+  authOptions?: CreateAuthOptions;
+  childServices?: readonly string[];
+  services?: readonly AuthProviderService[];
+}
+
+export async function authService(
+  options: AuthServiceOptions = {},
+): Promise<AuthServiceDefinition> {
+  const auth =
+    options.auth ??
+    (await createAuth({
+      ...(options.authOptions ?? {}),
+      services: [
+        ...(options.authOptions?.services ?? []),
+        ...(options.services ?? []),
+      ],
+    }));
+
+  return defineAuthService(auth, {
+    childServices: options.childServices,
   });
 }

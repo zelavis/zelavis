@@ -13,6 +13,8 @@ import { DashboardNotFound } from "#/components/DashboardNotFound";
 import { DashboardShell } from "#/components/DashboardShell";
 import { DirectionProvider } from "#/components/ui/direction";
 import {
+  beginNavigationRuntimeResolve,
+  commitNavigationRuntime,
   getDashboardSettings,
   getDashboardAccess,
   getProjectRuntimeConfig,
@@ -21,6 +23,7 @@ import {
   listDatabaseSchemaCollections,
   listAssistantThreads,
   listProjects,
+  rejectNavigationRuntime,
   resolveRuntimeDynamicMenus,
 } from "#/lib/runtime-api";
 import type { Route } from "./+types/root";
@@ -43,6 +46,7 @@ function inferProjectIdFromRequestUrl(requestUrl: string) {
 
 function resolveDemoDashboardAccess(requestUrl: string): RuntimeDashboardAccess {
   const mode = new URL(requestUrl).searchParams.get("as");
+  const projectId = inferProjectIdFromRequestUrl(requestUrl);
 
   if (mode === "customer") {
     return {
@@ -57,30 +61,36 @@ function resolveDemoDashboardAccess(requestUrl: string): RuntimeDashboardAccess 
             permission: "projects.list",
             scope: { type: "system" },
           },
-          {
-            permission: "project.view",
-            scope: { type: "project", projectId: "default" },
-          },
-          {
-            permission: "project.content.read",
-            scope: { type: "project", projectId: "default" },
-          },
-          {
-            permission: "project.website.manage",
-            scope: { type: "project", projectId: "default" },
-          },
+          ...(projectId
+            ? ([
+                {
+                  permission: "project.view",
+                  scope: { type: "project", projectId },
+                },
+                {
+                  permission: "project.content.read",
+                  scope: { type: "project", projectId },
+                },
+                {
+                  permission: "project.website.manage",
+                  scope: { type: "project", projectId },
+                },
+              ] as const)
+            : []),
         ],
       },
-      projects: [
-        {
-          id: "default",
-          permissions: [
-            "project.view",
-            "project.content.read",
-            "project.website.manage",
-          ],
-        },
-      ],
+      projects: projectId
+        ? [
+            {
+              id: projectId,
+              permissions: [
+                "project.view",
+                "project.content.read",
+                "project.website.manage",
+              ],
+            },
+          ]
+        : [],
     };
   }
 
@@ -97,9 +107,14 @@ function resolveDemoDashboardAccess(requestUrl: string): RuntimeDashboardAccess 
 }
 
 export async function clientLoader({ request }: Route.ClientLoaderArgs) {
+  const projectId = inferProjectIdFromRequestUrl(request.url);
+
+  // Set up the deferred promise SYNCHRONOUSLY (before any await) so that
+  // child loaders running in parallel can find and await it.
+  beginNavigationRuntimeResolve(projectId);
+
   const controlRuntime = await getRuntimeConfig();
   const accessMode = new URL(request.url).searchParams.get("as") ?? undefined;
-  const projectId = inferProjectIdFromRequestUrl(request.url);
   const [access, projectResult, assistantResult] = await Promise.all([
     getDashboardAccess(controlRuntime, accessMode).catch(() =>
       resolveDemoDashboardAccess(request.url),
@@ -113,13 +128,33 @@ export async function clientLoader({ request }: Route.ClientLoaderArgs) {
   const selectedProject = projectId
     ? projectResult.projects.find((project) => project.id === projectId)
     : undefined;
-  const runtimeConfig =
-    selectedProject?.runtime.status === "running"
-      ? await getProjectRuntimeConfig(controlRuntime, selectedProject.id).catch(
-          () => controlRuntime,
-        )
-      : controlRuntime;
-  const runtime = await resolveRuntimeDynamicMenus(runtimeConfig, { projectId });
+  if (projectId && !selectedProject) {
+    const error = new Response(`Project "${projectId}" was not found.`, { status: 404 });
+    rejectNavigationRuntime(error);
+    throw error;
+  }
+  if (selectedProject && selectedProject.runtime.status !== "running") {
+    const error = new Response(`Project "${selectedProject.id}" is not running.`, {
+      status: 409,
+    });
+    rejectNavigationRuntime(error);
+    throw error;
+  }
+  let runtimeConfig = controlRuntime;
+  if (selectedProject) {
+    try {
+      runtimeConfig = await getProjectRuntimeConfig(controlRuntime, selectedProject.id);
+    } catch (error) {
+      rejectNavigationRuntime(error);
+      throw error;
+    }
+  }
+
+  // Resolve the deferred so child loaders waiting on getActiveRuntimeConfig
+  // proceed with the correctly-scoped config.
+  commitNavigationRuntime(runtimeConfig);
+
+  const runtime = await resolveRuntimeDynamicMenus(runtimeConfig);
   const [settings, databaseCollections, schemaCollections] = await Promise.all([
     getDashboardSettings(runtime),
     listDatabaseCollections(runtime),

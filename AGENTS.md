@@ -57,6 +57,14 @@ The repo still contains domain packages such as `@zelavis/ecommerce`, but they a
 - **System Store** is Platform OS persistence. Local adapters default to
   `.zelavis/system/zelavis.sqlite`. It must stay separate from `@zelavis/db`
   project databases and must never appear in a project's Database UI.
+- The Platform process does not mount an app-facing `@zelavis/db` service by
+  default. Each Zelavis App project owns its database at
+  `.zelavis/projects/<projectId>/.zelavis/zelavis.sqlite` and its private
+  runtime metadata at
+  `.zelavis/projects/<projectId>/.zelavis/runtime/zelavis.sqlite`.
+- Project routes and grants always require a real project ID. Never introduce
+  an implicit `default` project or fall back from a project API request to the
+  Platform runtime.
 - `@zelavis/server` is a reusable endpoint/runtime kernel shared by control
   plane and project runtimes. The Platform OS server composition belongs in
   `zelavis`; isolated Zelavis App projects may reuse `@zelavis/server` without
@@ -214,6 +222,9 @@ Each package should remain independently useful and focused.
 - Projects may represent Zelavis-native apps or managed apps such as WordPress/static/generic projects. Managed app projects should show hosting-style controls instead of Zelavis-native Auth/Database/Content plugin navigation.
 - The runtime supports dashboard dev-server mode through `ZELAVIS_UI_DEV_SERVER`; the lower-level `coreServices.dashboard.devServerUrl` option remains transitional composition internals during the Platform/App split.
 - The main local platform workflow is `pnpm dev`.
+- In repository development, runtime state lives below
+  `examples/nodejs/.zelavis`: the Platform System Store is under `system/` and
+  isolated project directories are under `projects/<projectId>/`.
 - `pnpm dev` explicitly loads `packages/zelavis/blueprints` and starts both the
   long-running runtime and React Router dashboard dev server.
 - That dev flow starts:

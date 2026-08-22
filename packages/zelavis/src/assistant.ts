@@ -198,7 +198,7 @@ export function createLocalAssistantResponder(): ZelavisAssistantResponder {
     name: "zelavis-local-router",
     respond({ prompt, thread }) {
       const lower = prompt.toLowerCase();
-      const projectId = thread.projectId ?? "default";
+      const projectId = thread.projectId;
 
       if (
         lower.includes("create project") ||
@@ -214,14 +214,23 @@ export function createLocalAssistantResponder(): ZelavisAssistantResponder {
         };
       }
 
-      const destinations: readonly [readonly string[], string, string, string][] = [
+      const destinations: readonly (readonly [
+        readonly string[],
+        string,
+        string,
+        string,
+      ])[] = [
         [["security", "checklist"], "Security", "/security", "Security checks are available in the global Security area."],
         [["resource", "usage", "metrics"], "Resources", "/resources", "Host usage and resource charts are available in Resources."],
         [["log"], "Logs", "/server/logs", "Server logs are available from the global Server area."],
         [["domain"], "Domains", "/server/domains", "Domain management is a global server-level area."],
         [["marketplace", "plugin"], "Marketplace", "/marketplace", "Apps, starters, templates, and provider plugins are in Marketplace."],
-        [["database", "table"], "Database", `/projects/${projectId}/database`, "You can inspect tables and rows in the project Database."],
-        [["content", "schema"], "Content", `/projects/${projectId}/content`, "Content types, schemas, and entries are in Content."],
+        ...(projectId
+          ? ([
+              [["database", "table"], "Database", `/projects/${encodeURIComponent(projectId)}/database`, "You can inspect tables and rows in the project Database."],
+              [["content", "schema"], "Content", `/projects/${encodeURIComponent(projectId)}/content`, "Content types, schemas, and entries are in Content."],
+            ] as const)
+          : []),
       ];
       const destination = destinations.find(([terms]) =>
         terms.some((term) => lower.includes(term)),

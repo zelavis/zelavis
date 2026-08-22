@@ -26,12 +26,12 @@ pnpm --filter @zelavis/example-nodejs dev
 
 Open:
 
-- `http://localhost:3000/zelavis/projects/default/storage`
-- `http://localhost:3000/zelavis/projects/default/database`
+- `http://localhost:3000/zelavis/projects/:projectId/storage`
+- `http://localhost:3000/zelavis/projects/:projectId/database`
 
 ## 2. Upload a file
 
-From `/zelavis/projects/default/storage`:
+From `/zelavis/projects/:projectId/storage`:
 
 - choose or drag a file
 - optionally add metadata such as `label`, `alt`, or `purpose`

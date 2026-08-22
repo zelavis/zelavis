@@ -145,7 +145,7 @@ function DomainBindingsSlot() {
         <CardContent className="p-0">
           <DataRow
             label="localhost"
-            detail="Development host reserved for the default project."
+            detail="Development host reserved for a local project."
             meta={<StatusBadge state="draft" />}
           />
         </CardContent>

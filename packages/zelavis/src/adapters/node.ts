@@ -50,6 +50,7 @@ export interface NodeAdapterProjectOptions {
 }
 
 export interface NodeAdapterOptions {
+  role?: "platform" | "project";
   dataDirectory?: string;
   database?: false | NodeAdapterDatabaseOptions;
   blueprints?: false | NodeAdapterBlueprintOptions;
@@ -76,10 +77,19 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
       _constructorOptions: ZelavisOptions,
     ): Promise<ZelavisResolvedPlatformOptions> {
       const dataDirectory = normalizeDataDirectory(options.dataDirectory);
-      const nextCoreServices: Record<string, unknown> = {};
+      const isProjectRuntime = options.role === "project";
+      const databaseOptions =
+        options.database ?? (isProjectRuntime ? {} : false);
+      const nextCoreServices: Record<string, unknown> = isProjectRuntime
+        ? { dashboard: false }
+        : {
+            database: false,
+            website: false,
+            storage: false,
+            workloads: false,
+          };
 
-      if (options.database !== false) {
-        const databaseOptions = options.database ?? {};
+      if (databaseOptions !== false) {
         nextCoreServices.database = {
           defaultTenantId: databaseOptions.defaultTenantId,
           driver: createBetterSqlite3DatabaseDriver({
@@ -100,24 +110,38 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         options.systemStore === false ? undefined : options.systemStore;
       const systemStoreFilename = systemStoreOptions?.filename
         ? resolve(systemStoreOptions.filename)
-        : join(dataDirectory, "system", "zelavis.sqlite");
+        : join(
+            dataDirectory,
+            isProjectRuntime ? "runtime" : "system",
+            "zelavis.sqlite",
+          );
       const systemStore =
         options.systemStore === false
           ? undefined
           : createLocalSqliteSystemStore({ filename: systemStoreFilename });
+      const blueprintOptions =
+        options.blueprints === false ? undefined : options.blueprints;
+      const blueprintsEnabled =
+        options.blueprints !== false &&
+        (!isProjectRuntime || blueprintOptions !== undefined);
       const blueprints =
-        options.blueprints === false
+        !blueprintsEnabled
           ? undefined
           : await loadLocalBlueprintRegistry({
-              ...(options.blueprints?.directory
-                ? { directory: resolve(options.blueprints.directory) }
+              ...(blueprintOptions?.directory
+                ? { directory: resolve(blueprintOptions.directory) }
                 : {}),
-              cacheDirectory: options.blueprints?.cacheDirectory
-                ? resolve(options.blueprints.cacheDirectory)
+              cacheDirectory: blueprintOptions?.cacheDirectory
+                ? resolve(blueprintOptions.cacheDirectory)
                 : join(dataDirectory, "blueprints"),
             });
-      const projectOptions = options.projects === false ? undefined : options.projects;
-      if (options.projects !== false && !projectRuntime) {
+      const normalizedProjectOptions =
+        options.projects === false ? undefined : options.projects;
+      const projectsEnabled =
+        options.projects !== false &&
+        (!isProjectRuntime || normalizedProjectOptions !== undefined);
+      const projectOptions = projectsEnabled ? normalizedProjectOptions : undefined;
+      if (projectsEnabled && !projectRuntime) {
         const runtimeOptions: NodeProcessProjectRuntimeOptions = {
           directory: projectOptions?.directory
             ? resolve(projectOptions.directory)
@@ -154,7 +178,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         resources: {
           systemStore,
           blueprints,
-          projectRuntime: options.projects === false ? undefined : projectRuntime,
+          projectRuntime: projectsEnabled ? projectRuntime : undefined,
           kv: options.kv === false ? undefined : createMemoryKeyValueStore(),
           files: fileStorage,
           servicePackages:
@@ -167,6 +191,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         },
         metadata: {
           runtime: "node",
+          role: isProjectRuntime ? "project" : "platform",
           ...(systemStore
             ? { systemStore: systemStoreFilename }
             : {}),

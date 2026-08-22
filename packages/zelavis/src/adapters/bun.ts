@@ -40,6 +40,7 @@ export interface BunAdapterSystemStoreOptions {
 }
 
 export interface BunAdapterOptions {
+  role?: "platform" | "project";
   dataDirectory?: string;
   database?: false | BunAdapterDatabaseOptions;
   blueprints?: false | BunAdapterBlueprintOptions;
@@ -56,13 +57,22 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
       _constructorOptions: ZelavisOptions,
     ): Promise<ZelavisResolvedPlatformOptions> {
       const dataDirectory = normalizeDataDirectory(options.dataDirectory);
-      const nextCoreServices: Record<string, unknown> = {};
+      const isProjectRuntime = options.role === "project";
+      const databaseOptions =
+        options.database ?? (isProjectRuntime ? {} : false);
+      const nextCoreServices: Record<string, unknown> = isProjectRuntime
+        ? { dashboard: false }
+        : {
+            database: false,
+            website: false,
+            storage: false,
+            workloads: false,
+          };
 
-      if (options.database !== false) {
+      if (databaseOptions !== false) {
         const { createBunSqliteDatabaseDriver } = await import(
           "@zelavis/db-bun-sqlite"
         );
-        const databaseOptions = options.database ?? {};
         nextCoreServices.database = {
           defaultTenantId: databaseOptions.defaultTenantId,
           driver: createBunSqliteDatabaseDriver({
@@ -82,20 +92,29 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
         options.systemStore === false ? undefined : options.systemStore;
       const systemStoreFilename = systemStoreOptions?.filename
         ? resolve(systemStoreOptions.filename)
-        : join(dataDirectory, "system", "zelavis.sqlite");
+        : join(
+            dataDirectory,
+            isProjectRuntime ? "runtime" : "system",
+            "zelavis.sqlite",
+          );
       const systemStore =
         options.systemStore === false
           ? undefined
           : await createBunSqliteSystemStore({ filename: systemStoreFilename });
+      const blueprintOptions =
+        options.blueprints === false ? undefined : options.blueprints;
+      const blueprintsEnabled =
+        options.blueprints !== false &&
+        (!isProjectRuntime || blueprintOptions !== undefined);
       const blueprints =
-        options.blueprints === false
+        !blueprintsEnabled
           ? undefined
           : await loadLocalBlueprintRegistry({
-              ...(options.blueprints?.directory
-                ? { directory: resolve(options.blueprints.directory) }
+              ...(blueprintOptions?.directory
+                ? { directory: resolve(blueprintOptions.directory) }
                 : {}),
-              cacheDirectory: options.blueprints?.cacheDirectory
-                ? resolve(options.blueprints.cacheDirectory)
+              cacheDirectory: blueprintOptions?.cacheDirectory
+                ? resolve(blueprintOptions.cacheDirectory)
                 : join(dataDirectory, "blueprints"),
             });
       const fileStorage =
@@ -133,6 +152,7 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
         },
         metadata: {
           runtime: "bun",
+          role: isProjectRuntime ? "project" : "platform",
           ...(systemStore
             ? { systemStore: systemStoreFilename }
             : {}),

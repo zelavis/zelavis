@@ -1,5 +1,5 @@
 import type * as React from "react";
-import { useLoaderData, useRevalidator } from "react-router";
+import { useLoaderData, useRevalidator, useRouteLoaderData } from "react-router";
 import { FileText, Globe2, Route as RouteIcon, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 
@@ -14,9 +14,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import {
   createWebsitePage,
-  getRuntimeConfig,
+  getActiveRuntimeConfig,
   listWebsitePages,
 } from "#/lib/runtime-api";
+import type { clientLoader as rootClientLoader } from '../root';
 import type { Route } from './+types/website';
 
 export const handle = {
@@ -24,14 +25,15 @@ export const handle = {
   sidebarTrail: ["Website"],
 } as const;
 
-export async function clientLoader(_args: Route.ClientLoaderArgs) {
-  const runtime = await getRuntimeConfig();
+export async function clientLoader({ request }: Route.ClientLoaderArgs) {
+  const runtime = await getActiveRuntimeConfig(request);
   const pages = await listWebsitePages(runtime).catch(() => [] as Awaited<ReturnType<typeof listWebsitePages>>);
   return { pages };
 }
 
 function WebsiteRoute() {
   const { pages } = useLoaderData<typeof clientLoader>();
+  const { runtime } = useRouteLoaderData<typeof rootClientLoader>('root')!;
   const revalidator = useRevalidator();
   const [title, setTitle] = useState("");
   const [path, setPath] = useState("");
@@ -49,7 +51,6 @@ function WebsiteRoute() {
       return;
     }
 
-    const runtime = await getRuntimeConfig();
     setSaving(true);
     setMessage(undefined);
     setError(undefined);

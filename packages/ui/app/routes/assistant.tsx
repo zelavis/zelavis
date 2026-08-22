@@ -4,7 +4,7 @@ import { useLoaderData, useNavigate, useRevalidator } from "react-router"
 import { AssistantChat } from "#/components/assistant/AssistantChat"
 import {
   getAssistantThread,
-  getRuntimeConfig,
+  getActiveRuntimeConfig,
   listAssistantThreads,
   listProjects,
 } from "#/lib/runtime-api"
@@ -16,7 +16,7 @@ export const handle = {
 } as const
 
 export async function clientLoader({ request }: Route.ClientLoaderArgs) {
-  const config = await getRuntimeConfig()
+  const config = await getActiveRuntimeConfig(request)
   const url = new URL(request.url)
   const requestedThreadId = url.searchParams.get("thread") ?? undefined
   const requestedProjectId = url.searchParams.get("project") ?? undefined

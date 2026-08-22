@@ -2,7 +2,7 @@ import { Form, redirect, useLoaderData, useNavigation } from "react-router";
 
 import { WorkloadForm } from "#/components/workloads/WorkloadForm";
 import {
-  getRuntimeConfig,
+  getActiveRuntimeConfig,
   getWorkload,
   runWorkload,
   type WorkloadType,
@@ -20,8 +20,8 @@ function readFormString(formData: FormData, key: string) {
   return String(formData.get(key) ?? "").trim();
 }
 
-export async function clientLoader({ params }: Route.ClientLoaderArgs) {
-  const runtime = await getRuntimeConfig();
+export async function clientLoader({ params, request }: Route.ClientLoaderArgs) {
+  const runtime = await getActiveRuntimeConfig(request);
   const workload = await getWorkload(runtime, params.workloadId);
 
   return { workload };
@@ -29,7 +29,7 @@ export async function clientLoader({ params }: Route.ClientLoaderArgs) {
 
 export async function clientAction({ request, params }: Route.ClientActionArgs) {
   const formData = await request.formData();
-  const runtime = await getRuntimeConfig();
+  const runtime = await getActiveRuntimeConfig(request);
   const intent = String(formData.get("intent") ?? "save");
 
   try {

@@ -39,7 +39,7 @@ import {
 } from "#/components/ui/sheet";
 import {
   createDashboardService,
-  getRuntimeConfig,
+  getActiveRuntimeConfig,
   listDashboardServices,
   type RuntimeServiceActivationCapabilities,
   type RuntimeServiceRegistryEntry,
@@ -47,13 +47,14 @@ import {
 } from "#/lib/runtime-api";
 import { cn } from "#/lib/utils";
 import type { clientLoader as rootClientLoader } from '../root';
+import type { Route } from './+types/marketplace';
 
 export const handle = {
   pageLabel: "Marketplace",
 } as const;
 
-export async function clientLoader() {
-  const runtime = await getRuntimeConfig();
+export async function clientLoader({ request }: Route.ClientLoaderArgs) {
+  const runtime = await getActiveRuntimeConfig(request);
   const serviceEntries = await listDashboardServices(runtime).catch(() => undefined);
   return { serviceEntries };
 }

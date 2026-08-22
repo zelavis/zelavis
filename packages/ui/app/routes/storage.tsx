@@ -14,7 +14,7 @@ import { Input } from "#/components/ui/input";
 import {
   createDatabaseCollection,
   deleteStorageFile,
-  getRuntimeConfig,
+  getActiveRuntimeConfig,
   getStorageFileMetadata,
   insertDatabaseDocument,
   listStorageFiles,
@@ -30,7 +30,7 @@ export const handle = {
 } as const;
 
 export async function clientLoader({ request }: Route.ClientLoaderArgs) {
-  const runtime = await getRuntimeConfig();
+  const runtime = await getActiveRuntimeConfig(request);
   const storageEnabled = runtime.services.some((s) => s.name === "@zelavis/storage");
   const url = new URL(request.url);
   const prefix = url.searchParams.get('prefix') || undefined;

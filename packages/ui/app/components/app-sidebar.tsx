@@ -25,7 +25,6 @@ import {
   buildPlatformNavItems,
   filterDashboardNavItemsForAccess,
   getDashboardProjectsForAccess,
-  platformNavItems,
   toDashboardProjectItem,
 } from "#/lib/dashboard-data";
 import { filterUserDatabaseCollections } from "#/lib/database-collections";
@@ -157,18 +156,18 @@ export function AppSidebar({
           )
         : projectId && managedProjectKind
         ? buildManagedProjectNavItems(projectId, managedProjectKind)
-        : runtime
+        : runtime && projectId
         ? filterDashboardNavItemsForAccess(
             buildPlatformNavItems(
               runtime.services,
               runtime.serviceRegistry,
               contentTypes,
               filterUserDatabaseCollections(effectiveDatabaseCollections),
-              projectId ?? "default",
+              projectId,
             ),
             runtime.access,
           )
-        : platformNavItems,
+        : [],
     [
       contentTypes,
       effectiveDatabaseCollections,

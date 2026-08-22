@@ -8,7 +8,7 @@ import {
 import { ServicePageMount } from "#/components/ServicePageMount";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import {
-  getRuntimeConfig,
+  getActiveRuntimeConfig,
   listCommerceCoupons,
   listCommerceCustomers,
   listCommerceOrders,
@@ -17,13 +17,15 @@ import {
   listCommerceProviders,
 } from "#/lib/runtime-api";
 import { matchesProjectPath, toProjectPath } from "#/lib/routing";
+import type { Route } from "./+types/commerce";
+
 export const handle = {
   pageLabel: "Commerce",
   sidebarTrail: ["Extensions", "Ecommerce"],
 } as const;
 
-export async function clientLoader() {
-  const runtime = await getRuntimeConfig();
+export async function clientLoader({ request }: Route.ClientLoaderArgs) {
+  const runtime = await getActiveRuntimeConfig(request);
   const [products, orders, customers, coupons, providers, paymentAttempts] = await Promise.all([
     listCommerceProducts(runtime).catch(() => [] as Awaited<ReturnType<typeof listCommerceProducts>>),
     listCommerceOrders(runtime).catch(() => [] as Awaited<ReturnType<typeof listCommerceOrders>>),

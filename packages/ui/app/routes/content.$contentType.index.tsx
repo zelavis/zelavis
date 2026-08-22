@@ -1,4 +1,4 @@
-import { Link, useLoaderData, useNavigate, useRevalidator } from "react-router";
+import { Link, useLoaderData, useNavigate, useRevalidator, useRouteLoaderData } from "react-router";
 import { Copy, Pencil, Plus, Save, SquarePen, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import { createStarterContentEntry } from "#/lib/content-schema";
 import {
-  getRuntimeConfig,
+  getActiveRuntimeConfig,
   insertDatabaseDocument,
   queryDatabaseDocuments,
   updateDatabaseDocument,
@@ -17,14 +17,15 @@ import {
 import { toProjectPath } from "#/lib/routing";
 import { cn } from "#/lib/utils";
 import type { Route } from './+types/content.$contentType.index';
+import type { clientLoader as rootClientLoader } from '../root';
 
 export const handle = {
   pageLabel: "Content",
   sidebarTrail: ["Content"],
 } as const;
 
-export async function clientLoader({ params }: Route.ClientLoaderArgs) {
-  const runtime = await getRuntimeConfig();
+export async function clientLoader({ params, request }: Route.ClientLoaderArgs) {
+  const runtime = await getActiveRuntimeConfig(request);
   const contentType = params.contentType;
   const entries = await queryDatabaseDocuments(runtime, contentType);
   return { entries, contentType };
@@ -34,6 +35,7 @@ function ContentTypeEntriesRoute() {
   const { entries, contentType } = useLoaderData<typeof clientLoader>();
   const revalidator = useRevalidator();
   const navigate = useNavigate();
+  const { runtime } = useRouteLoaderData<typeof rootClientLoader>('root')!;
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
@@ -52,8 +54,6 @@ function ContentTypeEntriesRoute() {
     if (saving) {
       return;
     }
-
-    const runtime = await getRuntimeConfig();
 
     setSaving(true);
     setMessage(undefined);
@@ -87,8 +87,6 @@ function ContentTypeEntriesRoute() {
       return;
     }
 
-    const runtime = await getRuntimeConfig();
-
     setSaving(true);
     setMessage(undefined);
     setError(undefined);
@@ -119,7 +117,6 @@ function ContentTypeEntriesRoute() {
       return;
     }
 
-    const runtime = await getRuntimeConfig();
     const data = entry.data as Record<string, unknown>;
     const title = typeof data.title === "string" ? data.title : entry.id;
     const slug = typeof data.slug === "string" ? data.slug : entry.id;

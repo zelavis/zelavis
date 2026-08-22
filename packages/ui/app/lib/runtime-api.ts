@@ -578,32 +578,32 @@ const fallbackConfig: RuntimeConfig = {
       "/server/logs",
       "/settings",
       "/settings/appearance",
-      "/projects/default",
-      "/projects/default/agents",
-      "/projects/default/auth",
-      "/projects/default/commerce",
-      "/projects/default/commerce/customers",
-      "/projects/default/commerce/coupons",
-      "/projects/default/commerce/orders",
-      "/projects/default/commerce/products",
-      "/projects/default/content",
-      "/projects/default/content/new",
-      "/projects/default/database",
-      "/projects/default/database/new",
-      "/projects/default/media",
-      "/projects/default/marketplace",
-      "/projects/default/settings",
-      "/projects/default/storage",
-      "/projects/default/users",
-      "/projects/default/website",
-      "/projects/default/workloads",
-      "/projects/default/workloads/functions/fn_hello_world",
-      "/projects/default/workloads/jobs/job_placeholder",
-      "/projects/default/workloads/logs",
-      "/projects/default/workloads/new",
-      "/projects/default/workloads/schedules/schedule_placeholder",
-      "/projects/default/workloads/settings",
-      "/projects/default/workloads/webhooks/webhook_placeholder",
+      "/projects/:projectId",
+      "/projects/:projectId/agents",
+      "/projects/:projectId/auth",
+      "/projects/:projectId/commerce",
+      "/projects/:projectId/commerce/customers",
+      "/projects/:projectId/commerce/coupons",
+      "/projects/:projectId/commerce/orders",
+      "/projects/:projectId/commerce/products",
+      "/projects/:projectId/content",
+      "/projects/:projectId/content/new",
+      "/projects/:projectId/database",
+      "/projects/:projectId/database/new",
+      "/projects/:projectId/media",
+      "/projects/:projectId/marketplace",
+      "/projects/:projectId/settings",
+      "/projects/:projectId/storage",
+      "/projects/:projectId/users",
+      "/projects/:projectId/website",
+      "/projects/:projectId/workloads",
+      "/projects/:projectId/workloads/functions/:workloadId",
+      "/projects/:projectId/workloads/jobs/:workloadId",
+      "/projects/:projectId/workloads/logs",
+      "/projects/:projectId/workloads/new",
+      "/projects/:projectId/workloads/schedules/:workloadId",
+      "/projects/:projectId/workloads/settings",
+      "/projects/:projectId/workloads/webhooks/:workloadId",
     ],
     assetRoot: "/assets",
   },
@@ -995,21 +995,16 @@ function hasDynamicItems(menu: RuntimeServiceMenuDefinition | undefined): boolea
 async function resolveDynamicMenuItems(
   config: RuntimeConfig,
   menu: RuntimeServiceMenuDefinition,
-  options: { projectId?: string },
 ): Promise<RuntimeServiceMenuDefinition> {
   const [staticItems, dynamicItems] = await Promise.all([
     Promise.all(
       (menu.items ?? []).map((item) =>
-        resolveDynamicMenuItems(config, item, options),
+        resolveDynamicMenuItems(config, item),
       ),
     ),
     menu.dynamicItems
       ? readJson<{ items?: RuntimeServiceMenuDefinition[] }>(
-          `${joinApiPath(config.api.basePath, menu.dynamicItems.path)}${
-            options.projectId
-              ? `?projectId=${encodeURIComponent(options.projectId)}`
-              : ""
-          }`,
+          joinApiPath(config.api.basePath, menu.dynamicItems.path),
         )
           .then((result) => result.items ?? [])
           .catch(() => [] as RuntimeServiceMenuDefinition[])
@@ -1037,7 +1032,6 @@ async function resolveDynamicMenuItems(
 async function resolveRuntimeServiceDynamicMenu(
   config: RuntimeConfig,
   service: RuntimeService,
-  options: { projectId?: string },
 ): Promise<RuntimeService> {
   if (!hasDynamicItems(service.menu)) {
     return service;
@@ -1046,7 +1040,7 @@ async function resolveRuntimeServiceDynamicMenu(
   return {
     ...service,
     menu: service.menu
-      ? await resolveDynamicMenuItems(config, service.menu, options)
+      ? await resolveDynamicMenuItems(config, service.menu)
       : service.menu,
   };
 }
@@ -1054,7 +1048,6 @@ async function resolveRuntimeServiceDynamicMenu(
 async function resolveRuntimeRegistryDynamicMenu(
   config: RuntimeConfig,
   service: RuntimeServiceRegistryEntry,
-  options: { projectId?: string },
 ): Promise<RuntimeServiceRegistryEntry> {
   if (!hasDynamicItems(service.menu)) {
     return service;
@@ -1066,7 +1059,6 @@ async function resolveRuntimeRegistryDynamicMenu(
       ? (await resolveDynamicMenuItems(
           config,
           service.menu,
-          options,
         )) as RuntimeServiceRegistryMenuDefinition
       : service.menu,
   };
@@ -1074,17 +1066,16 @@ async function resolveRuntimeRegistryDynamicMenu(
 
 export async function resolveRuntimeDynamicMenus(
   config: RuntimeConfig,
-  options: { projectId?: string } = {},
 ): Promise<RuntimeConfig> {
   const [services, serviceRegistry] = await Promise.all([
     Promise.all(
       config.services.map((service) =>
-        resolveRuntimeServiceDynamicMenu(config, service, options),
+        resolveRuntimeServiceDynamicMenu(config, service),
       ),
     ),
     Promise.all(
       config.serviceRegistry.map((service) =>
-        resolveRuntimeRegistryDynamicMenu(config, service, options),
+        resolveRuntimeRegistryDynamicMenu(config, service),
       ),
     ),
   ]);
@@ -1146,6 +1137,91 @@ async function _fetchRuntimeConfig(): Promise<RuntimeConfig> {
 export function getRuntimeConfig(): Promise<RuntimeConfig> {
   _runtimeConfigCache ??= _fetchRuntimeConfig();
   return _runtimeConfigCache;
+}
+
+/**
+ * Deferred rendezvous for the current navigation's resolved runtime config.
+ *
+ * The root loader calls `beginNavigationRuntimeResolve` **synchronously**
+ * at the very start of its function body (before any `await`).  This creates
+ * a deferred promise keyed by the current project ID.
+ *
+ * Child route `clientLoader` / `clientAction` functions call
+ * `getActiveRuntimeConfig(request)`, which finds and awaits that deferred.
+ *
+ * After the root loader determines the correct runtime config (checking
+ * project existence, running status, proxy resolution), it calls
+ * `commitNavigationRuntime(config)` to resolve the deferred.
+ *
+ * Because React Router calls matched `clientLoader` functions synchronously
+ * in route-match order (root first), the deferred is always created before
+ * child loaders execute their synchronous body.
+ */
+let _navigationDeferred: {
+  projectId: string;
+  promise: Promise<RuntimeConfig>;
+  resolve: (config: RuntimeConfig) => void;
+  reject: (error: unknown) => void;
+} | undefined;
+
+/**
+ * Create the deferred promise for the current navigation.
+ * Must be called **synchronously** (before any `await`) in the root loader.
+ */
+export function beginNavigationRuntimeResolve(
+  projectId: string | undefined,
+): void {
+  if (!projectId) {
+    _navigationDeferred = undefined;
+    return;
+  }
+  let resolve!: (config: RuntimeConfig) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<RuntimeConfig>((r, fail) => {
+    resolve = r;
+    reject = fail;
+  });
+  void promise.catch(() => undefined);
+  _navigationDeferred = { projectId, promise, resolve, reject };
+}
+
+/**
+ * Resolve the navigation deferred with the final runtime config.
+ * Called by the root loader after it determines the correct config.
+ */
+export function commitNavigationRuntime(config: RuntimeConfig): void {
+  _navigationDeferred?.resolve(config);
+}
+
+export function rejectNavigationRuntime(error: unknown): void {
+  _navigationDeferred?.reject(error);
+}
+
+/**
+ * Returns the runtime config scoped to the current context.
+ *
+ * When inside a project URL (`/projects/:projectId/`), this awaits the
+ * deferred promise that the root loader set up, ensuring child loaders
+ * use the same correctly-resolved config as the root.
+ * Outside a project context this returns `getRuntimeConfig()`.
+ */
+export async function getActiveRuntimeConfig(
+  request: Request,
+): Promise<RuntimeConfig> {
+  const pathname = new URL(request.url).pathname;
+  const match = pathname.match(/(?:^|\/)projects\/([^/]+)/);
+  const projectId = match?.[1] ? decodeURIComponent(match[1]) : undefined;
+
+  if (!projectId) {
+    return getRuntimeConfig();
+  }
+
+  if (_navigationDeferred?.projectId === projectId) {
+    return _navigationDeferred.promise;
+  }
+
+  const controlConfig = await getRuntimeConfig();
+  return getProjectRuntimeConfig(controlConfig, projectId);
 }
 
 export async function getDashboardAccess(

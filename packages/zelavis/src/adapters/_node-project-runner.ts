@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { defineAdapter, Zelavis } from "../index.js";
+import { Zelavis } from "../index.js";
 import { createNodeServer } from "../node/index.js";
 import { nodeAdapter } from "./node.js";
 
@@ -15,24 +15,13 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) {
 }
 
 const projectNodeAdapter = nodeAdapter({
+  role: "project",
   dataDirectory: resolve(dataDirectory),
   blueprints: false,
   projects: false,
 });
 const zv = new Zelavis({
-  adapter: defineAdapter({
-    name: "node-project",
-    async resolve(options) {
-      const resolved = await projectNodeAdapter.resolve!(options);
-      return {
-        ...resolved,
-        coreServices: {
-          ...resolved.coreServices,
-          dashboard: false,
-        },
-      };
-    },
-  }),
+  adapter: projectNodeAdapter,
   onError: ({ error }) => ({
     status: 400,
     body: { error: error instanceof Error ? error.message : "Unknown error" },

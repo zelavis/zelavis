@@ -17,6 +17,12 @@ Platform records use a separate System Store. Node and Bun local adapters
 default to `.zelavis/system/zelavis.sqlite`; project data remains in the project
 database and is never exposed through that store.
 
+The Platform does not mount `@zelavis/db` as a global application database by
+default. Node process projects live under `.zelavis/projects/<projectId>`; each
+has an app database at `.zelavis/zelavis.sqlite` and private runtime metadata at
+`.zelavis/runtime/zelavis.sqlite` relative to its project directory. There is
+no implicit `default` project.
+
 Project lifecycle endpoints are available under
 `/zelavis/api/v1/runtime/projects`. The dashboard uses these same endpoints to
 create, list, start, and stop projects, and project dashboard API traffic is
@@ -222,14 +228,14 @@ By default, Zelavis owns one safe namespace:
 ```txt
 /zelavis
 /zelavis/marketplace
-/zelavis/projects/default
-/zelavis/projects/default/marketplace
-/zelavis/projects/default/settings
+/zelavis/projects/:projectId
+/zelavis/projects/:projectId/marketplace
+/zelavis/projects/:projectId/settings
 /zelavis/server
 /zelavis/server/domains
 /zelavis/server/backups
 /zelavis/server/logs
-/zelavis/projects/default/workloads
+/zelavis/projects/:projectId/workloads
 /zelavis/api/v1/runtime/config
 /zelavis/api/v1/runtime/settings
 /zelavis/api/v1/runtime/assistant/threads
@@ -254,14 +260,14 @@ That moves the dashboard and APIs together:
 ```txt
 /admin
 /admin/marketplace
-/admin/projects/default
-/admin/projects/default/marketplace
-/admin/projects/default/settings
+/admin/projects/:projectId
+/admin/projects/:projectId/marketplace
+/admin/projects/:projectId/settings
 /admin/server
 /admin/server/domains
 /admin/server/backups
 /admin/server/logs
-/admin/projects/default/workloads
+/admin/projects/:projectId/workloads
 /admin/api/v1/runtime/config
 /admin/api/v1/runtime/settings
 /admin/api/v1/auth

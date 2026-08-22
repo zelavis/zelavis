@@ -7,16 +7,17 @@ import {
   StatCard,
 } from '#/components/DashboardPage'
 import { Card, CardContent, CardHeader, CardTitle } from '#/components/ui/card'
-import { getRuntimeConfig, listAuthProviders } from '#/lib/runtime-api'
+import { getActiveRuntimeConfig, listAuthProviders } from '#/lib/runtime-api'
 import type { clientLoader as rootClientLoader } from '../root'
+import type { Route } from './+types/auth'
 
 export const handle = {
   pageLabel: "Auth",
   sidebarTrail: ["Backend"],
 } as const;
 
-export async function clientLoader() {
-  const runtime = await getRuntimeConfig()
+export async function clientLoader({ request }: Route.ClientLoaderArgs) {
+  const runtime = await getActiveRuntimeConfig(request)
   const providers = await listAuthProviders(runtime)
   return { providers }
 }

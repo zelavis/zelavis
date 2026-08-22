@@ -24,9 +24,10 @@ Use this skill for changes in:
 Every route that fetches data must use a `clientLoader`. Never fetch data in `useEffect` for page-level data.
 
 ```ts
-// Correct
+// Correct — getActiveRuntimeConfig resolves through the project proxy when
+// the URL is inside /projects/:projectId/, so API calls target the right runtime.
 export async function clientLoader({ params, request }: Route.ClientLoaderArgs) {
-  const runtime = await getRuntimeConfig(); // cached after first call — always fast
+  const runtime = await getActiveRuntimeConfig(request);
   const data = await fetchSomething(runtime, params.id);
   return { data };
 }
@@ -35,6 +36,8 @@ function MyRoute() {
   const { data } = useLoaderData<typeof clientLoader>();
 }
 ```
+
+> **Important:** `getRuntimeConfig()` always returns the Platform OS control runtime config. Route `clientLoader` and `clientAction` functions must use `getActiveRuntimeConfig(request)` instead so that data loads and mutations target the correct project when inside a project context. Inline component event handlers that need the runtime config should read it from root loader data via `useRouteLoaderData<typeof rootClientLoader>('root')!`.
 
 Root loader data (`runtime`, `settings`, `databaseCollections`, `schemaCollections`) is already fetched once and available in every child route:
 

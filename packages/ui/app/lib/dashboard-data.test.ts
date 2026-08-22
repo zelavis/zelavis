@@ -67,7 +67,13 @@ describe("dashboard navigation ownership", () => {
     expect(extensionItems[0]?.title).toBe("Ecommerce");
     expect(extensionItems[0]?.items?.map((item) => item.title)).toEqual(["Orders"]);
 
-    const nav = buildPlatformNavItems([], services);
+    const nav = buildPlatformNavItems(
+      [],
+      services,
+      undefined,
+      undefined,
+      "project-a",
+    );
     const extensions = nav.find((item) => item.title === "Extensions");
     expect(extensions?.items?.some((item) => item.title === "Ecommerce")).toBe(true);
     expect(nav.some((item) => item.title === "Ecommerce")).toBe(false);
@@ -125,15 +131,21 @@ describe("dashboard navigation ownership", () => {
       },
     ] satisfies readonly RuntimeService[];
 
-    const nav = buildPlatformNavItems(services, []);
+    const nav = buildPlatformNavItems(
+      services,
+      [],
+      undefined,
+      undefined,
+      "project-a",
+    );
 
     expect(nav.some((item) => item.title === "Insights")).toBe(true);
     expect(findNavItem(nav, "Insights")).toMatchObject({
-      url: "/projects/default/users",
+      url: "/projects/project-a/users",
       sectionLabel: "Build",
       access: {
         permissions: ["project.insights.read"],
-        scope: { type: "project", projectId: "default" },
+        scope: { type: "project", projectId: "project-a" },
       },
     });
     expect(findNavItem(nav, "Jobs")).toBeDefined();
@@ -209,7 +221,13 @@ describe("dashboard navigation ownership", () => {
         },
       },
     ] satisfies readonly RuntimeService[];
-    const nav = buildPlatformNavItems(services);
+    const nav = buildPlatformNavItems(
+      services,
+      undefined,
+      undefined,
+      undefined,
+      "project-a",
+    );
 
     expect(nav.map((item) => [item.title, item.sectionLabel])).toEqual([
       ["Overview", "Overview"],
@@ -224,24 +242,24 @@ describe("dashboard navigation ownership", () => {
     ]);
     expect(nav.some((item) => item.title === "Website")).toBe(true);
     expect(findNavItem(nav, "Website")).toMatchObject({
-      url: "/projects/default/website",
+      url: "/projects/project-a/website",
       pageLabel: "Website",
       access: {
         permissions: ["project.website.manage"],
-        scope: { type: "project", projectId: "default" },
+        scope: { type: "project", projectId: "project-a" },
       },
     });
     expect(findNavItem(nav, "Media")).toMatchObject({
-      url: "/projects/default/media",
+      url: "/projects/project-a/media",
       pageLabel: "Media",
     });
     expect(findNavItem(nav, "Marketplace")).toMatchObject({
-      url: "/projects/default/marketplace",
+      url: "/projects/project-a/marketplace",
       pageLabel: "Marketplace",
     });
     const settings = nav.find((item) => item.title === "Settings");
     expect(settings).toMatchObject({
-      landingUrl: "/projects/default/settings",
+      landingUrl: "/projects/project-a/settings",
     });
     expect(settings?.items?.map((item) => item.title)).toEqual([
       "Project Settings",
@@ -423,6 +441,7 @@ describe("dashboard navigation ownership", () => {
           surface: "content-studio" as const,
         },
       ],
+      "project-a",
     );
 
     const database = findNavItem(nav, "Database");
@@ -433,7 +452,7 @@ describe("dashboard navigation ownership", () => {
       "System Tables",
     ]);
     expect(findNavItem(database?.items ?? [], "Create Table")).toMatchObject({
-      url: "/projects/default/database/new",
+      url: "/projects/project-a/database/new",
       fixed: true,
       fixedOrder: 1,
     });
@@ -447,7 +466,7 @@ describe("dashboard navigation ownership", () => {
     });
     expect(findNavItem(nav, "Fruits")).toMatchObject({
       panelLabel: "Fruits",
-      landingUrl: "/projects/default/content/fruits",
+      landingUrl: "/projects/project-a/content/fruits",
     });
     expect(findNavItem(database?.items ?? [], "fruits")?.search).toEqual({
       databaseTable: "fruits",

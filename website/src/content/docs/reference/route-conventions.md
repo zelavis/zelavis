@@ -10,9 +10,9 @@ With the default runtime settings:
 ```txt
 /zelavis
 /zelavis/marketplace
-/zelavis/projects/default
-/zelavis/projects/default/marketplace
-/zelavis/projects/default/settings
+/zelavis/projects/:projectId
+/zelavis/projects/:projectId/marketplace
+/zelavis/projects/:projectId/settings
 /zelavis/server
 /zelavis/server/domains
 /zelavis/server/backups
@@ -60,9 +60,9 @@ the mounted paths become:
 ```txt
 /admin
 /admin/marketplace
-/admin/projects/default
-/admin/projects/default/marketplace
-/admin/projects/default/settings
+/admin/projects/:projectId
+/admin/projects/:projectId/marketplace
+/admin/projects/:projectId/settings
 /admin/server
 /admin/server/domains
 /admin/server/backups

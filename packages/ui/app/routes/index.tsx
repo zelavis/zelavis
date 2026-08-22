@@ -12,7 +12,7 @@ import {
 } from '#/lib/dashboard-data'
 import {
   getDatabaseHealth,
-  getRuntimeConfig,
+  getActiveRuntimeConfig,
   listAuthProviders,
 } from '#/lib/runtime-api'
 import {
@@ -24,13 +24,14 @@ import {
 import { buttonVariants } from '#/components/ui/button'
 import { cn } from '#/lib/utils'
 import type { clientLoader as rootClientLoader } from '../root'
+import type { Route } from './+types/index'
 
 export const handle = {
   pageLabel: "Overview",
 } as const;
 
-export async function clientLoader() {
-  const runtime = await getRuntimeConfig()
+export async function clientLoader({ request }: Route.ClientLoaderArgs) {
+  const runtime = await getActiveRuntimeConfig(request)
   const [databaseHealth, providers] = await Promise.all([
     getDatabaseHealth(runtime).catch(() => undefined),
     listAuthProviders(runtime).catch(() => [] as string[]),

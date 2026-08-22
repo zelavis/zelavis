@@ -1,13 +1,11 @@
 export type DashboardSearch = Record<string, string | undefined>;
 
-export const DEFAULT_PROJECT_ID = "default";
-
-export function getProjectBasePath(projectId = DEFAULT_PROJECT_ID) {
+export function getProjectBasePath(projectId: string) {
   return `/projects/${encodeURIComponent(projectId)}`;
 }
 
 export function getProjectIdFromPathname(pathname: string) {
-  return pathname.match(/^\/projects\/([^/]+)/)?.[1];
+  return pathname.match(/(?:^|\/)projects\/([^/]+)/)?.[1];
 }
 
 export function getManagedProjectKindFromId(projectId: string | undefined) {
@@ -26,11 +24,36 @@ export function getManagedProjectKindFromId(projectId: string | undefined) {
   return undefined;
 }
 
-export function toProjectPath(path = "/", projectId = DEFAULT_PROJECT_ID) {
-  const base = getProjectBasePath(projectId);
+export function toProjectPath(path = "/", projectId?: string) {
+  const resolvedId =
+    projectId ??
+    (typeof window === "undefined"
+      ? undefined
+      : getProjectIdFromPathname(window.location.pathname));
+
+  if (!resolvedId) {
+    throw new Error("A project ID is required to build a project route.");
+  }
+
+  const base = getProjectBasePath(resolvedId);
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
 
   return normalizedPath === "/" ? base : `${base}${normalizedPath}`;
+}
+
+/**
+ * Build a project-scoped path using the project ID extracted from a request
+ * URL.  Use this in `clientAction` / `clientLoader` redirects where
+ * `window.location` may not reflect the target project yet.
+ */
+export function toProjectPathFromUrl(path: string, requestUrl: string) {
+  const projectId = getProjectIdFromPathname(new URL(requestUrl).pathname);
+
+  if (!projectId) {
+    throw new Error(`The request URL does not identify a project: ${requestUrl}`);
+  }
+
+  return toProjectPath(path, projectId);
 }
 
 export function isProjectManagementPath(pathname: string) {

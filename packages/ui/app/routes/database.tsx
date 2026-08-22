@@ -15,7 +15,7 @@ import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "#/components/ui/sheet";
 import {
-  getRuntimeConfig,
+  getActiveRuntimeConfig,
   insertDatabaseDocument,
   queryDatabaseDocuments,
   queryDatabaseSystemTable,
@@ -30,7 +30,7 @@ export const handle = {
 } as const;
 
 export async function clientLoader({ request }: import("./+types/database").Route.ClientLoaderArgs) {
-  const runtime = await getRuntimeConfig();
+  const runtime = await getActiveRuntimeConfig(request);
   const url = new URL(request.url);
   const databaseTable = url.searchParams.get('databaseTable') || undefined;
   const systemTable = url.searchParams.get('systemTable') || undefined;

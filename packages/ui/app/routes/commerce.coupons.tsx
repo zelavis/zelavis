@@ -1,4 +1,4 @@
-import { useLoaderData, useRevalidator } from "react-router";
+import { useLoaderData, useRevalidator, useRouteLoaderData } from "react-router";
 import { useState } from "react";
 import type { FormEvent } from "react";
 
@@ -9,23 +9,26 @@ import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import {
   createCommerceCoupon,
-  getRuntimeConfig,
+  getActiveRuntimeConfig,
   listCommerceCoupons,
 } from "#/lib/runtime-api";
+import type { clientLoader as rootClientLoader } from "../root";
+import type { Route } from "./+types/commerce.coupons";
 
 export const handle = {
   pageLabel: "Commerce",
   sidebarTrail: ["Extensions", "Ecommerce", "More"],
 } as const;
 
-export async function clientLoader() {
-  const runtime = await getRuntimeConfig();
+export async function clientLoader({ request }: Route.ClientLoaderArgs) {
+  const runtime = await getActiveRuntimeConfig(request);
   const coupons = await listCommerceCoupons(runtime).catch(() => [] as Awaited<ReturnType<typeof listCommerceCoupons>>);
   return { coupons };
 }
 
 function CommerceCoupons() {
   const { coupons } = useLoaderData<typeof clientLoader>();
+  const { runtime } = useRouteLoaderData<typeof rootClientLoader>("root")!;
   const revalidator = useRevalidator();
   const [code, setCode] = useState("");
   const [description, setDescription] = useState("");
@@ -42,7 +45,6 @@ function CommerceCoupons() {
       return;
     }
 
-    const runtime = await getRuntimeConfig();
     setSaving(true);
     setMessage(undefined);
     setError(undefined);

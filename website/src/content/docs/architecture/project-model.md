@@ -15,11 +15,14 @@ mounts one `@zelavis/ui` application. For a Zelavis-native project, that shell
 loads the selected runtime's service metadata through the project proxy and
 builds its sidebar from the services' menu declarations.
 
-The default starter project currently lives at:
+Every project has an explicit ID and lives at:
 
 ```txt
-/zelavis/projects/default
+/zelavis/projects/:projectId
 ```
+
+There is no implicit default project. A missing or stopped project runtime is
+reported as an error instead of falling back to Platform data.
 
 ## Global areas
 

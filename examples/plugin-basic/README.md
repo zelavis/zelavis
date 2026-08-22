@@ -30,7 +30,7 @@ Start the Node.js example:
 pnpm --filter @zelavis/example-nodejs dev
 ```
 
-Open `http://localhost:3000/zelavis/projects/default/marketplace`, then use **Upload service**:
+Open `http://localhost:3000/zelavis/projects/:projectId/marketplace`, then use **Upload service**:
 
 - Service package: select `dist/example-basic.zip`
 

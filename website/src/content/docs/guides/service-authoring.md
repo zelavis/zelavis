@@ -309,7 +309,7 @@ menu: {
 In that example, `Advanced` keeps `Create Tool`, `Danger Zone` shows no fixed
 actions, and `Recovery` reintroduces `Create Recovery Point`.
 
-The repo includes `examples/plugin-basic` as a minimal uploadable service. Build its upload package with `pnpm --filter @zelavis/example-plugin-basic package`, then select `examples/plugin-basic/dist/example-basic.zip` in the Node example project Marketplace flow at `/zelavis/projects/default/marketplace`. The service module defines its own `name`, `version`, menu, pages, and services, so the dashboard does not ask for a separate service name. The ZIP includes `zelavis.service.json`, whose `entry` field points at the ESM module the host adapter should import.
+The repo includes `examples/plugin-basic` as a minimal uploadable service. Build its upload package with `pnpm --filter @zelavis/example-plugin-basic package`, then select `examples/plugin-basic/dist/example-basic.zip` in a project Marketplace flow at `/zelavis/projects/:projectId/marketplace`. The service module defines its own `name`, `version`, menu, pages, and services, so the dashboard does not ask for a separate service name. The ZIP includes `zelavis.service.json`, whose `entry` field points at the ESM module the host adapter should import.
 
 ## Registry and activation
 

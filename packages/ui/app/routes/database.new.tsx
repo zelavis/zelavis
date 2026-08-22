@@ -6,8 +6,8 @@ import { ResourceNotice } from "#/components/DashboardPage";
 import { Button, buttonVariants } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
-import { createDatabaseCollection, getRuntimeConfig } from "#/lib/runtime-api";
-import { toProjectPath } from "#/lib/routing";
+import { createDatabaseCollection, getActiveRuntimeConfig } from "#/lib/runtime-api";
+import { toProjectPath, toProjectPathFromUrl } from "#/lib/routing";
 import { cn } from "#/lib/utils";
 import type { Route } from "./+types/database.new";
 
@@ -38,7 +38,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
   }
 
   try {
-    const config = await getRuntimeConfig();
+    const config = await getActiveRuntimeConfig(request);
     const table = await createDatabaseCollection(config, {
       name: normalizedName,
       surface: "database",
@@ -48,7 +48,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
     });
 
     return redirect(
-      `${toProjectPath("/database")}?databaseTable=${encodeURIComponent(table.name)}`,
+      `${toProjectPathFromUrl("/database", request.url)}?databaseTable=${encodeURIComponent(table.name)}`,
     );
   } catch (caught) {
     return {

@@ -188,7 +188,7 @@ function RestartRequiredBanner({
           {settings.pendingRootPath}.
         </span>
         <Link
-          to={toProjectPath("/settings")}
+          to="/settings"
           className="text-sm font-medium text-foreground underline-offset-4 hover:underline"
         >
           Review settings
@@ -218,23 +218,7 @@ export function DashboardShell({
   }, []);
 
   React.useEffect(() => {
-    setActiveDashboardData((current) => {
-      if (!dashboardData) {
-        return dashboardData;
-      }
-
-      if (!current) {
-        return dashboardData;
-      }
-
-      return {
-        ...dashboardData,
-        databaseCollections: mergeDatabaseCollections(
-          dashboardData.databaseCollections,
-          current.databaseCollections,
-        ),
-      };
-    });
+    setActiveDashboardData(dashboardData);
   }, [dashboardData]);
 
   React.useEffect(() => {
@@ -249,12 +233,51 @@ export function DashboardShell({
           return current;
         }
 
+        const nextDatabaseCollections = mergeDatabaseCollections(
+          current.databaseCollections,
+          [collection],
+        );
+
+        const nextServices = current.runtime?.services?.map((service) => {
+          if (service.name !== "@zelavis/db" || !service.menu) {
+            return service;
+          }
+
+          const existingItems = service.menu.items ?? [];
+          const hasTable = existingItems.some(
+            (item) => item.title === collection.name || item.search?.databaseTable === collection.name,
+          );
+
+          if (hasTable) {
+            return service;
+          }
+
+          const newTableItem = {
+            title: collection.name,
+            path: "/database",
+            pageLabel: "Database",
+            search: { databaseTable: collection.name },
+          };
+
+          const nonDisabledItems = existingItems.filter(
+            (item) => item.title !== service.menu?.dynamicItems?.emptyTitle && !item.disabled,
+          );
+
+          return {
+            ...service,
+            menu: {
+              ...service.menu,
+              items: [...nonDisabledItems, newTableItem],
+            },
+          };
+        });
+
         return {
           ...current,
-          databaseCollections: mergeDatabaseCollections(
-            current.databaseCollections,
-            [collection],
-          ),
+          runtime: nextServices
+            ? { ...current.runtime, services: nextServices }
+            : current.runtime,
+          databaseCollections: nextDatabaseCollections,
         };
       });
     }

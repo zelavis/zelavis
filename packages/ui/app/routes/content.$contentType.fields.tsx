@@ -65,7 +65,7 @@ import {
   createDatabaseCollection,
   createDatabaseSchema,
   getResolvedDashboardPreferences,
-  getRuntimeConfig,
+  getActiveRuntimeConfig,
   listDatabaseSchemaVersions,
   updateDashboardSettings,
 } from "#/lib/runtime-api";
@@ -84,8 +84,8 @@ const builderViewSearchSchema = {
   view: parseAsStringLiteral(["fields", "editor", "settings"] as const).withDefault("fields"),
 } as const;
 
-export async function clientLoader({ params }: Route.ClientLoaderArgs) {
-  const runtime = await getRuntimeConfig();
+export async function clientLoader({ params, request }: Route.ClientLoaderArgs) {
+  const runtime = await getActiveRuntimeConfig(request);
   const schemas = await listDatabaseSchemaVersions(runtime, params.contentType);
   return { schemas, contentType: params.contentType };
 }
@@ -286,7 +286,6 @@ function ContentTypeFieldsRoute() {
       return;
     }
 
-    const runtime = await getRuntimeConfig();
     setSaving(true);
     setMessage(undefined);
     setError(undefined);

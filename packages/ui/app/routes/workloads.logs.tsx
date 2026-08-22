@@ -1,7 +1,7 @@
 import { useLoaderData } from "react-router";
 
 import { DataRow, EmptyPanel } from "#/components/DashboardPage";
-import { getRuntimeConfig, listWorkloadLogs } from "#/lib/runtime-api";
+import { getActiveRuntimeConfig, listWorkloadLogs } from "#/lib/runtime-api";
 import type { Route } from "./+types/workloads.logs";
 
 export const handle = {
@@ -10,8 +10,8 @@ export const handle = {
   slots: [{ id: "logs", label: "Logs" }],
 } as const;
 
-export async function clientLoader({ params }: Route.ClientLoaderArgs) {
-  const runtime = await getRuntimeConfig();
+export async function clientLoader({ params, request }: Route.ClientLoaderArgs) {
+  const runtime = await getActiveRuntimeConfig(request);
   const logs = await listWorkloadLogs(runtime, {
     projectId: params.projectId,
   });

@@ -2,7 +2,6 @@ import { Link } from 'react-router'
 
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '#/components/ui/card'
-import { toProjectPath } from '#/lib/routing'
 
 export function DashboardNotFound() {
   return (
@@ -18,14 +17,14 @@ export function DashboardNotFound() {
           <div className="flex flex-wrap gap-2">
             <Button
               nativeButton={false}
-              render={<Link to={toProjectPath("/")} />}
+              render={<Link to="/" />}
             >
               Overview
             </Button>
             <Button
               variant="outline"
               nativeButton={false}
-              render={<Link to={toProjectPath("/settings")} />}
+              render={<Link to="/settings" />}
             >
               Settings
             </Button>

@@ -42,9 +42,9 @@ Default root namespace:
 ```txt
 /zelavis
 /zelavis/marketplace
-/zelavis/projects/default
-/zelavis/projects/default/marketplace
-/zelavis/projects/default/settings
+/zelavis/projects/:projectId
+/zelavis/projects/:projectId/marketplace
+/zelavis/projects/:projectId/settings
 /zelavis/server
 /zelavis/server/domains
 /zelavis/server/backups
@@ -61,15 +61,18 @@ Default root namespace:
 /zelavis/api/v1/workloads/http/:projectId/*path
 ```
 
-The dashboard root at `/zelavis` opens the Projects overview. Project-local dashboard pages live under `/zelavis/projects/:projectId/*`; the starter project uses `/zelavis/projects/default`.
+The dashboard root at `/zelavis` opens the Projects overview. Create a project there, then open its project-local pages under `/zelavis/projects/:projectId/*`.
 
 The global Marketplace at `/zelavis/marketplace` is for apps, starters, templates, and server provider plugins. Project plugins live inside Zelavis-native projects at `/zelavis/projects/:projectId/marketplace`. Global management areas such as Domains, Resources, Server, and Security sit outside project URLs; server-owned backing routes currently live under `/zelavis/server/*`.
 
 The website service also mounts public website pages at `/`, while still reserving the dashboard namespace under `/zelavis`.
 
-Platform settings and service installation state are stored separately in the
-Platform System Store. Local adapters use `.zelavis/system/zelavis.sqlite`;
-the database exposed under the project Database screen remains project data.
+Platform settings, project registry data, and service installation state are
+stored in the Platform System Store. Local adapters use
+`.zelavis/system/zelavis.sqlite`. The Platform does not expose that store in a
+project Database screen. Each Zelavis App project has an app database at
+`.zelavis/projects/<projectId>/.zelavis/zelavis.sqlite` and private runtime
+metadata at `.zelavis/projects/<projectId>/.zelavis/runtime/zelavis.sqlite`.
 
 The runtime also lists the shipped project recipes at
 `GET /zelavis/api/v1/runtime/blueprints`. See [Platform OS, App, and

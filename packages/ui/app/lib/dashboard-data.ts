@@ -40,7 +40,7 @@ import type {
   RuntimeProject,
 } from "#/lib/runtime-api";
 import type { ContentTypeRow } from "#/lib/content-studio";
-import { toProjectPath } from "#/lib/routing";
+import { getProjectIdFromPathname, toProjectPath } from "#/lib/routing";
 
 export type DashboardRoutePath =
   | "/"
@@ -672,8 +672,8 @@ function materializeProjectMenuItemAccess(
 
 function createProjectAwareDashboardServiceMenuItem(
   menu: RuntimeServiceMenuDefinition,
-  serviceName?: string,
-  projectId = "default",
+  serviceName: string | undefined,
+  projectId: string,
 ): DashboardNavItem {
   return toProjectMenuItem(
     materializeProjectMenuItemAccess(
@@ -1019,11 +1019,11 @@ export const projectManagementNavItems: readonly DashboardNavItem[] =
   buildProjectManagementNavItems(defaultRuntimeServices);
 
 export function buildPlatformNavItems(
-  services?: readonly RuntimeService[],
-  serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
-  contentTypes?: readonly ContentTypeRow[],
-  databaseCollections?: readonly DatabaseCollection[],
-  projectId = "default",
+  services: readonly RuntimeService[] | undefined,
+  serviceRegistry: readonly RuntimeServiceRegistryEntry[] | undefined,
+  contentTypes: readonly ContentTypeRow[] | undefined,
+  databaseCollections: readonly DatabaseCollection[] | undefined,
+  projectId: string,
 ): readonly DashboardNavItem[] {
   const extensionRegistryNavItems = buildExtensionServiceNavItems(serviceRegistry);
   void databaseCollections;
@@ -1180,13 +1180,19 @@ export function buildPlatformNavItems(
     },
   ] as const;
 
-  return rawItems.map((item) => toProjectMenuItem(item, projectId));
+  return rawItems.map((item) => {
+    if (item.title === "Backend") {
+      return {
+        ...item,
+        url: item.url ? toProjectRoutePath(item.url, projectId) : undefined,
+        landingUrl: item.landingUrl
+          ? toProjectRoutePath(item.landingUrl, projectId)
+          : undefined,
+      };
+    }
+    return toProjectMenuItem(item, projectId);
+  });
 }
-
-export const platformNavItems = buildPlatformNavItems(
-  defaultRuntimeServices,
-  defaultRuntimeServiceRegistry,
-);
 
 export function buildMarketplacePackageItems(
   serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
@@ -1227,9 +1233,20 @@ function flattenPlatformItems(
 export function buildDashboardNavItems(
   services?: readonly RuntimeService[],
   serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
+  projectId?: string,
 ) {
   return [
-    ...flattenPlatformItems(buildPlatformNavItems(services, serviceRegistry)),
+    ...(projectId
+      ? flattenPlatformItems(
+          buildPlatformNavItems(
+            services,
+            serviceRegistry,
+            undefined,
+            undefined,
+            projectId,
+          ),
+        )
+      : []),
     ...buildMarketplacePackageItems(serviceRegistry)
       .filter(
         (item): item is DashboardPackageItem & { url: DashboardRoutePath } =>
@@ -1242,11 +1259,6 @@ export function buildDashboardNavItems(
       })),
   ] as const;
 }
-
-export const dashboardNavItems = buildDashboardNavItems(
-  defaultRuntimeServices,
-  defaultRuntimeServiceRegistry,
-);
 
 export function findServiceMenuPageByPath(
   pathname: string,
@@ -1282,7 +1294,11 @@ export function getDashboardPageLabel(
   }
 
   return (
-    buildDashboardNavItems(services, serviceRegistry).find((item) => item.to === pathname)
+    buildDashboardNavItems(
+      services,
+      serviceRegistry,
+      getProjectIdFromPathname(pathname),
+    ).find((item) => item.to === pathname)
       ?.label ?? "Not Found"
   );
 }

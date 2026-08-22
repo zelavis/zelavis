@@ -23,6 +23,10 @@ The System Store is not a user project database. It must never appear as a
 table in a project's Database screen or be exposed through `@zelavis/db`
 document APIs.
 
+The Platform process does not mount an app-facing database service by default.
+In repository development, its System Store lives at
+`examples/nodejs/.zelavis/system/zelavis.sqlite`.
+
 ## Zelavis App
 
 Zelavis App is the official first-party application backend: the combination
@@ -33,6 +37,11 @@ Zelavis App is a project stack, not the Platform OS. The current Node host runs 
 Zelavis App project in an independent process and data directory. A future production
 driver can replace this boundary with a rootless OCI container or stronger
 isolation.
+
+For the Node process driver, each project lives below
+`.zelavis/projects/<project-id>`. Its application database is
+`.zelavis/zelavis.sqlite`; private runtime metadata is stored separately in
+`.zelavis/runtime/zelavis.sqlite` inside that project directory.
 Application identities inside a Zelavis App project are separate from Platform OS
 operator/customer identities unless an explicit bridge or SSO mapping connects
 them.
@@ -113,10 +122,8 @@ Implemented now:
 - one Platform dashboard with headless project runtimes
 - project navigation composed from the selected runtime's service menu metadata
 
-Still being migrated:
+Current limitations:
 
-- the Platform migration runtime still mounts Zelavis App services in-process
-  for global development surfaces while that transitional composition is removed
 - the process driver is operational isolation for trusted code, not a security
   sandbox and not the final hosting-provider boundary
 - resource limits and rootless OCI/container orchestration are not implemented

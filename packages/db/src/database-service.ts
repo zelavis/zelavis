@@ -276,8 +276,7 @@ export function defineDatabaseService(
           method: "GET",
           path: "/menu/tables",
           handler: async ({ service, query }) => {
-            const tenantId =
-              query.get("tenantId") ?? query.get("projectId") ?? undefined;
+            const tenantId = query.get("tenantId") ?? undefined;
             const collections = await service.documents.listCollections({
               tenantId,
             });

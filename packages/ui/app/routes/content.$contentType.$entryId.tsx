@@ -13,7 +13,7 @@ import {
 } from "#/lib/content-schema";
 import {
   getDatabaseDocument,
-  getRuntimeConfig,
+  getActiveRuntimeConfig,
   getStorageFileUrl,
   listDatabaseSchemaVersions,
   listStorageFiles,
@@ -29,8 +29,8 @@ export const handle = {
   sidebarTrail: ["Content"],
 } as const;
 
-export async function clientLoader({ params }: Route.ClientLoaderArgs) {
-  const runtime = await getRuntimeConfig();
+export async function clientLoader({ params, request }: Route.ClientLoaderArgs) {
+  const runtime = await getActiveRuntimeConfig(request);
   const [schemas, entry, media] = await Promise.all([
     listDatabaseSchemaVersions(runtime, params.contentType),
     getDatabaseDocument(runtime, { collection: params.contentType, id: params.entryId }),

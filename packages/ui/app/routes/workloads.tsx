@@ -3,7 +3,7 @@ import { Activity, Clock, Globe2, Workflow } from "lucide-react";
 
 import { DataRow, EmptyPanel, StatCard } from "#/components/DashboardPage";
 import {
-  getRuntimeConfig,
+  getActiveRuntimeConfig,
   listWorkloads,
   type WorkloadDefinition,
 } from "#/lib/runtime-api";
@@ -15,8 +15,8 @@ export const handle = {
   slots: [{ id: "overview", label: "Overview" }],
 } as const;
 
-export async function clientLoader({ params }: Route.ClientLoaderArgs) {
-  const runtime = await getRuntimeConfig();
+export async function clientLoader({ params, request }: Route.ClientLoaderArgs) {
+  const runtime = await getActiveRuntimeConfig(request);
   const workloads = await listWorkloads(runtime, {
     projectId: params.projectId,
   });

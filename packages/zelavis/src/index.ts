@@ -2219,30 +2219,9 @@ function createDashboardAccess(mode: string | null | undefined) {
             permission: "projects.list",
             scope: { type: "system" },
           },
-          {
-            permission: "project.view",
-            scope: { type: "project", projectId: "default" },
-          },
-          {
-            permission: "project.content.read",
-            scope: { type: "project", projectId: "default" },
-          },
-          {
-            permission: "project.website.manage",
-            scope: { type: "project", projectId: "default" },
-          },
         ],
       },
-      projects: [
-        {
-          id: "default",
-          permissions: [
-            "project.view",
-            "project.content.read",
-            "project.website.manage",
-          ],
-        },
-      ],
+      projects: [],
     };
   }
 

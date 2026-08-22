@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -50,15 +50,15 @@ test("System Store keeps platform records outside project database APIs", async 
 test("Assistant manager persists project-scoped threads and responder actions", async () => {
   const store = createMemorySystemStore();
   const assistant = createAssistantManager({ store });
-  const created = await assistant.create({ projectId: "default" });
+  const created = await assistant.create({ projectId: "project-a" });
   const result = await assistant.appendMessage(created.id, "Open the database");
 
   assert.equal(result.thread.title, "Open the database");
   assert.equal(result.thread.messages.length, 2);
   assert.deepEqual(result.assistantMessage.actions, [
-    { label: "Open Database", to: "/projects/default/database" },
+    { label: "Open Database", to: "/projects/project-a/database" },
   ]);
-  assert.equal((await assistant.list("default"))[0].id, created.id);
+  assert.equal((await assistant.list("project-a"))[0].id, created.id);
   assert.equal((await assistant.get(created.id)).messages.length, 2);
 });
 
@@ -68,7 +68,7 @@ test("Assistant capability is available through versioned runtime endpoints", as
     new Request("http://localhost/zelavis/api/v1/runtime/assistant/threads", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ projectId: "default" }),
+      body: JSON.stringify({ projectId: "project-a" }),
     }),
   );
   const created = await createResponse.json();
@@ -90,7 +90,7 @@ test("Assistant capability is available through versioned runtime endpoints", as
 
   const listResponse = await zv.fetch(
     new Request(
-      "http://localhost/zelavis/api/v1/runtime/assistant/threads?projectId=default",
+      "http://localhost/zelavis/api/v1/runtime/assistant/threads?projectId=project-a",
     ),
   );
   const listed = await listResponse.json();
@@ -160,6 +160,11 @@ test("Node adapter loads shipped blueprints and persists Platform Store SQLite",
     const blueprints = first.resources?.blueprints;
 
     assert.ok(systemStore);
+    assert.equal(first.coreServices.database, false);
+    assert.equal(first.coreServices.website, false);
+    assert.equal(first.coreServices.storage, false);
+    assert.equal(first.coreServices.workloads, false);
+    assert.equal(first.metadata.role, "platform");
     assert.equal(blueprints?.get("zelavis/app")?.origin, "shipped");
     await systemStore.set("platform", "marker", { ready: true });
 
@@ -295,6 +300,35 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
       !betaCollections.collections.some(
         (collection) => collection.name === "alpha_only",
       ),
+    );
+    await assert.rejects(access(join(directory, "zelavis.sqlite")), {
+      code: "ENOENT",
+    });
+    await access(
+      join(directory, "projects", "alpha", ".zelavis", "zelavis.sqlite"),
+    );
+    await access(
+      join(
+        directory,
+        "projects",
+        "alpha",
+        ".zelavis",
+        "runtime",
+        "zelavis.sqlite",
+      ),
+    );
+    await assert.rejects(
+      access(
+        join(
+          directory,
+          "projects",
+          "alpha",
+          ".zelavis",
+          "system",
+          "zelavis.sqlite",
+        ),
+      ),
+      { code: "ENOENT" },
     );
 
     const listResponse = await runtimeRequest("/projects");

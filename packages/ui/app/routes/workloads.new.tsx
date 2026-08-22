@@ -3,7 +3,7 @@ import { Form, redirect, useNavigation } from "react-router";
 import { WorkloadForm } from "#/components/workloads/WorkloadForm";
 import {
   createWorkload,
-  getRuntimeConfig,
+  getActiveRuntimeConfig,
   type WorkloadType,
 } from "#/lib/runtime-api";
 import type { Route } from "./+types/workloads.new";
@@ -20,7 +20,7 @@ function readFormString(formData: FormData, key: string) {
 
 export async function clientAction({ request, params }: Route.ClientActionArgs) {
   const formData = await request.formData();
-  const runtime = await getRuntimeConfig();
+  const runtime = await getActiveRuntimeConfig(request);
 
   try {
     const workload = await createWorkload(runtime, {

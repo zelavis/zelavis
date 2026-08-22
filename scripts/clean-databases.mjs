@@ -32,6 +32,9 @@ const TARGETS = [
   // Local runtime state created by examples and local adapters
   "examples/*/.zelavis",
 
+  // Packaged-runtime smoke tests may leave an isolated runtime fixture here
+  "distribution/.tmp/runtime-smoke",
+
   // Local emulator state from previous provider-backed examples
   "examples/*/.wrangler/state",
   "website/.wrangler/state",
