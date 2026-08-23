@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Wipes the SQLite files and Cloudflare miniflare state that the examples
- * and the dev UI create at the repo root. Safe to run any time — the
- * examples will recreate everything they need on the next start.
+ * Wipes local database and emulator state that the examples and the dev UI
+ * create at the repo root. Safe to run any time — the examples will recreate
+ * everything they need on the next start.
  *
  * Usage:
  *   pnpm run clean:db
@@ -23,7 +23,7 @@ const DRY_RUN = process.argv.includes("--dry-run");
  * ends with `*`, the segment is treated as a glob across the parent dir.
  */
 const TARGETS = [
-  // ui:dev creates `.zelavis/` inside the zelavis package because that's the cwd
+  // pnpm dev creates `.zelavis/` inside the zelavis package because that's the cwd
   "packages/zelavis/.zelavis",
 
   // Legacy example state from before local adapters standardized on `.zelavis`
@@ -32,7 +32,10 @@ const TARGETS = [
   // Local runtime state created by examples and local adapters
   "examples/*/.zelavis",
 
-  // Miniflare state (D1, KV, cache) under wrangler-backed examples
+  // Packaged-runtime smoke tests may leave an isolated runtime fixture here
+  "distribution/.tmp/runtime-smoke",
+
+  // Local emulator state from previous provider-backed examples
   "examples/*/.wrangler/state",
   "website/.wrangler/state",
 ];

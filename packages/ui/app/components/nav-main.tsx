@@ -2,29 +2,46 @@
 
 import * as React from "react";
 import { Link, useLocation, useMatches, useNavigate } from "react-router";
-import { ChevronLeft, ChevronRight, type LucideIcon } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  type LucideIcon,
+} from "lucide-react";
 import type { Swiper as SwiperInstance } from "swiper";
 import { Swiper, SwiperSlide } from "swiper/react";
 import "swiper/css";
 
 import { useDirection } from "#/components/ui/direction";
 import {
+  SidebarFixedActionMenu,
   SidebarGroup,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarSeparator,
 } from "#/components/ui/sidebar";
+import type {
+  DashboardSlotDefinition,
+  DashboardSlotId,
+} from "#/components/DashboardSlots";
+import { useIsMobile } from "#/hooks/use-mobile";
 import type {
   DashboardNavSearch,
   DashboardNavItem,
 } from "#/lib/dashboard-data";
 import {
+  getProjectIdFromPathname,
+  isProjectManagementPath,
   mergeSearchParams,
   readSearchParams,
   toDashboardPath,
+  toProjectPath,
 } from "#/lib/routing";
-import { getDashboardSidebarTrailFromMatches } from "#/lib/dashboard-route-handles";
+import {
+  getDashboardPageLabelFromMatches,
+  getDashboardSidebarTrailFromMatches,
+  getDashboardSlotsFromMatches,
+} from "#/lib/dashboard-route-handles";
 
 type NavChildItem = {
   title: string;
@@ -33,9 +50,13 @@ type NavChildItem = {
   search?: DashboardNavSearch;
   icon?: LucideIcon;
   panelLabel?: string;
+  pageLabel?: string;
+  slot?: DashboardSlotId;
   fixed?: boolean;
   fixedOrder?: number;
+  fixedActionScope?: "local" | "inherit" | "replace" | "clear";
   sectionLabel?: string;
+  disabled?: boolean;
   serviceOwned?: boolean;
   items?: readonly NavChildItem[];
 };
@@ -44,6 +65,8 @@ type NavPanel = {
   title: string;
   panelLabel?: string;
   landingUrl?: string;
+  landingSearch?: DashboardNavSearch;
+  fixedActionScope?: "local" | "inherit" | "replace" | "clear";
   items: readonly NavChildItem[];
 };
 
@@ -63,18 +86,51 @@ function itemContainsPath(
   item: DashboardNavItem | NavChildItem,
   pathname: string,
   search?: Record<string, unknown>,
+  siblingSearchKeys = new Set<string>(),
 ): boolean {
   const routeMatches =
-    item.url === pathname &&
-    (!item.search ||
-      Object.entries(item.search).every(
-        ([key, value]) => value === undefined || search?.[key] === value,
-      ));
+    item.url === pathname && itemSearchMatches(item, search, siblingSearchKeys);
+
+  if (!item.items?.length) {
+    return routeMatches;
+  }
+
+  const childSiblingSearchKeys = getSiblingSearchKeys(item.items);
 
   return (
     routeMatches ||
-    Boolean(item.items?.some((child) => itemContainsPath(child, pathname, search)))
+    item.items.some((child) =>
+      itemContainsPath(child, pathname, search, childSiblingSearchKeys),
+    )
   );
+}
+
+function getSiblingSearchKeys(
+  items: readonly (DashboardNavItem | NavChildItem)[],
+) {
+  const keys = new Set<string>();
+
+  for (const item of items) {
+    for (const key of Object.keys(item.search ?? {})) {
+      keys.add(key);
+    }
+  }
+
+  return keys;
+}
+
+function itemSearchMatches(
+  item: DashboardNavItem | NavChildItem,
+  search?: Record<string, unknown>,
+  siblingSearchKeys = new Set<string>(),
+) {
+  if (item.search) {
+    return Object.entries(item.search).every(
+      ([key, value]) => value === undefined || search?.[key] === value,
+    );
+  }
+
+  return [...siblingSearchKeys].every((key) => search?.[key] === undefined);
 }
 
 function findActiveTrail(
@@ -82,8 +138,13 @@ function findActiveTrail(
   pathname: string,
   search?: Record<string, unknown>,
 ): NavPanel[] {
+  const rootSiblingSearchKeys = getSiblingSearchKeys(items);
+
   for (const item of items) {
-    if (!item.items?.length || !itemContainsPath(item, pathname, search)) {
+    if (
+      !item.items?.length ||
+      !itemContainsPath(item, pathname, search, rootSiblingSearchKeys)
+    ) {
       continue;
     }
 
@@ -92,21 +153,36 @@ function findActiveTrail(
         title: item.title,
         panelLabel: item.panelLabel,
         landingUrl: item.landingUrl,
+        landingSearch: item.search,
+        fixedActionScope: item.fixedActionScope,
         items: item.items,
       },
     ];
     let current: NavChildItem | undefined = item.items.find(
-      (child) => child.items?.length && itemContainsPath(child, pathname, search),
+      (child) =>
+        child.items?.length &&
+        itemContainsPath(
+          child,
+          pathname,
+          search,
+          getSiblingSearchKeys(item.items ?? []),
+        ),
     );
 
     while (current?.items?.length) {
+      const currentSiblingSearchKeys = getSiblingSearchKeys(current.items);
       panels.push({
         title: current.title,
         panelLabel: current.panelLabel,
+        landingUrl: current.landingUrl,
+        landingSearch: current.search,
+        fixedActionScope: current.fixedActionScope,
         items: current.items,
       });
       current = current.items.find(
-        (child) => child.items?.length && itemContainsPath(child, pathname, search),
+        (child) =>
+          child.items?.length &&
+          itemContainsPath(child, pathname, search, currentSiblingSearchKeys),
       );
     }
 
@@ -135,7 +211,10 @@ function findTrailByTitles(
     panels.push({
       title: match.title,
       panelLabel: match.panelLabel,
-      landingUrl: 'landingUrl' in match ? match.landingUrl as string | undefined : undefined,
+      landingUrl:
+        "landingUrl" in match ? (match.landingUrl as string | undefined) : undefined,
+      landingSearch: match.search,
+      fixedActionScope: match.fixedActionScope,
       items: match.items,
     });
     currentItems = match.items;
@@ -197,6 +276,61 @@ function sortFixedItems(items: readonly NavChildItem[]) {
   );
 }
 
+function fixedItemKey(item: NavChildItem) {
+  return JSON.stringify({
+    title: item.title,
+    url: item.url,
+    search: item.search,
+  });
+}
+
+function dedupeFixedItems(items: readonly NavChildItem[]) {
+  const seen = new Set<string>();
+  const result: NavChildItem[] = [];
+
+  for (const item of items) {
+    const key = fixedItemKey(item);
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push(item);
+  }
+
+  return result;
+}
+
+function resolvePanelFixedItems(
+  panel: NavPanel,
+  inheritedItems: readonly NavChildItem[],
+) {
+  const localItems = sortFixedItems(panel.items.filter((item) => item.fixed));
+
+  switch (panel.fixedActionScope ?? "local") {
+    case "inherit":
+      return dedupeFixedItems([...inheritedItems, ...localItems]);
+    case "clear":
+      return [];
+    case "replace":
+    case "local":
+      return localItems;
+  }
+}
+
+function resolvePanelFixedItemsByIndex(panels: readonly NavPanel[]) {
+  const result = new Map<number, readonly NavChildItem[]>();
+  let inheritedItems: readonly NavChildItem[] = [];
+
+  panels.forEach((panel, index) => {
+    const fixedItems = resolvePanelFixedItems(panel, inheritedItems);
+    result.set(index, fixedItems);
+    inheritedItems = fixedItems;
+  });
+
+  return result;
+}
+
 function groupItemsBySection(items: readonly NavChildItem[]) {
   const groups: Array<{ label?: string; items: NavChildItem[] }> = [];
 
@@ -217,13 +351,18 @@ function groupItemsBySection(items: readonly NavChildItem[]) {
 }
 
 export function NavMain({
+  homeResetKey,
   items,
+  mobileSlotContent,
 }: {
+  homeResetKey?: number;
   items: readonly DashboardNavItem[];
+  mobileSlotContent?: React.ReactNode;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
   const matches = useMatches();
+  const isMobile = useIsMobile();
   const pathname = location.pathname;
   const locationSearch = React.useMemo(
     () => readSearchParams(location.search),
@@ -233,6 +372,7 @@ export function NavMain({
   const routeSidebarTrailKey = [
     ...(getDashboardSidebarTrailFromMatches(matches) ?? []),
     ...(locationSearch.systemTable ? ["System Tables"] : []),
+    ...(workloadViewPanelTitle(locationSearch.workloadView) ?? []),
   ].join("\u0000");
   const routeSidebarTrail = React.useMemo(() => {
     if (!routeSidebarTrailKey) {
@@ -247,9 +387,25 @@ export function NavMain({
   );
   const direction = useDirection();
   const [swiper, setSwiper] = React.useState<SwiperInstance>();
+  const routeSlots = getDashboardSlotsFromMatches(matches);
+  const pageLabel =
+    getDashboardPageLabelFromMatches(matches) ?? panelsLabelFromPath(pathname);
+  const mobileRouteSlots = React.useMemo<DashboardSlotDefinition[]>(
+    () =>
+      routeSlots.length > 0
+        ? [...routeSlots]
+        : [
+            {
+              id: "main",
+              label: pageLabel,
+            },
+          ],
+    [pageLabel, routeSlots],
+  );
   const hasSyncedInitialSlideRef = React.useRef(false);
   const shouldAnimateNextSlideRef = React.useRef(false);
   const manualTrailOverrideRef = React.useRef<NavPanel[] | null>(null);
+  const openSlotsAfterRouteChangeRef = React.useRef(false);
   const lastRouteIdentityRef = React.useRef(currentRouteIdentity);
   const backAnimationCleanupRef = React.useRef<(() => void) | null>(null);
   const hideScrollbarsTimeoutRef = React.useRef<number | null>(null);
@@ -284,7 +440,22 @@ export function NavMain({
     () => [{ title: "Platform", items }, ...trail],
     [items, trail],
   );
-  const currentIndex = trail.length;
+  const panelFixedItemsByIndex = React.useMemo(
+    () => resolvePanelFixedItemsByIndex(panels),
+    [panels],
+  );
+  const navPanelIndex = trail.length;
+  const hasMobileRouteContent = isMobile && Boolean(mobileSlotContent);
+  const [showMobileSlots, setShowMobileSlots] = React.useState(
+    () =>
+      hasMobileRouteContent &&
+      (routeSlots.length === 0 || routeSidebarTrail.length === 0),
+  );
+  const [activeMobileSlotId, setActiveMobileSlotId] =
+    React.useState<DashboardSlotId>(mobileRouteSlots[0]?.id ?? "main");
+  const [mobileSlotTitle, setMobileSlotTitle] = React.useState(pageLabel);
+  const currentIndex =
+    hasMobileRouteContent && showMobileSlots ? panels.length : navPanelIndex;
 
   const syncSidebarSearch = React.useCallback(
     (nextTrail: NavPanel[], replace = true) => {
@@ -307,6 +478,16 @@ export function NavMain({
     if (lastRouteIdentityRef.current !== currentRouteIdentity) {
       lastRouteIdentityRef.current = currentRouteIdentity;
       manualTrailOverrideRef.current = null;
+      setShowMobileSlots(
+        hasMobileRouteContent &&
+          (openSlotsAfterRouteChangeRef.current ||
+            showMobileSlots ||
+            routeSlots.length === 0 ||
+            routeSidebarTrail.length === 0),
+      );
+      setActiveMobileSlotId(mobileRouteSlots[0]?.id ?? "main");
+      setMobileSlotTitle(pageLabel);
+      openSlotsAfterRouteChangeRef.current = false;
     }
 
     if (manualTrailOverrideRef.current) {
@@ -339,8 +520,13 @@ export function NavMain({
     items,
     locationSearch,
     pathname,
+    hasMobileRouteContent,
+    mobileRouteSlots,
+    pageLabel,
+    routeSlots.length,
     routeSidebarTrail,
     sidebarSearch,
+    showMobileSlots,
   ]);
 
   React.useEffect(() => {
@@ -373,8 +559,29 @@ export function NavMain({
   }, []);
 
   React.useLayoutEffect(() => {
-    resetPanelScroll(currentIndex);
-  }, [currentIndex, panels.length]);
+    resetPanelScroll(navPanelIndex);
+  }, [navPanelIndex, panels.length]);
+
+  React.useEffect(() => {
+    if (!homeResetKey) {
+      return;
+    }
+
+    clearBackAnimation();
+    temporarilyHideScrollbars();
+    resetPanelScroll(0);
+    manualTrailOverrideRef.current = [];
+    shouldAnimateNextSlideRef.current = true;
+    setShowMobileSlots(false);
+    setTrail([]);
+    navigate(
+      {
+        pathname: location.pathname,
+        search: mergeSearchParams(location.search, { sidebar: undefined }),
+      },
+      { replace: false, viewTransition: true },
+    );
+  }, [homeResetKey]);
 
   function resetPanelScroll(index: number) {
     const panel = panelContentRefs.current[index];
@@ -423,39 +630,90 @@ export function NavMain({
     resetPanelScroll(nextIndex);
     shouldAnimateNextSlideRef.current = true;
     manualTrailOverrideRef.current = nextTrail;
+    setShowMobileSlots(false);
     setTrail(nextTrail);
 
-    // When opening a top-level section from the root Platform slide, navigate
-    // to the section's canonical landing page so the URL stays coherent.
-    const isFromRoot = trail.length === 0;
-    if (isFromRoot && panel.landingUrl && !pathname.startsWith(panel.landingUrl)) {
+    const targetSearch = mergeSearchParams("", {
+      ...(panel.landingSearch ?? {}),
+      sidebar: panelSearchValue(nextTrail),
+    });
+
+    // Navigate to the panel's canonical landing page so the visible content
+    // keeps pace with slide navigation.
+    if (
+      panel.landingUrl &&
+      routeIdentity(pathname, location.search) !==
+        routeIdentity(panel.landingUrl, targetSearch)
+    ) {
       navigate(
         {
           pathname: panel.landingUrl,
-          search: mergeSearchParams("", { sidebar: panelSearchValue(nextTrail) }),
+          search: targetSearch,
         },
-        { replace: false },
+        { replace: false, viewTransition: true },
       );
     } else {
       syncSidebarSearch(nextTrail, false);
     }
   }
 
+  function openRouteSlotsFromMenuItem(item: NavChildItem) {
+    if (!hasMobileRouteContent || !item.url) {
+      return;
+    }
+
+    setActiveMobileSlotId(item.slot ?? mobileRouteSlots[0]?.id ?? "main");
+    setMobileSlotTitle(item.pageLabel ?? item.title);
+    openSlotsAfterRouteChangeRef.current = true;
+    setShowMobileSlots(true);
+  }
+
+  function closeMobileSlots() {
+    clearBackAnimation();
+    temporarilyHideScrollbars();
+    resetPanelScroll(navPanelIndex);
+    shouldAnimateNextSlideRef.current = true;
+    setShowMobileSlots(false);
+  }
+
   function completeBackNavigation(nextTrail: NavPanel[]) {
     setTrail(nextTrail);
 
     if (nextTrail.length === 0) {
+      const projectId = getProjectIdFromPathname(pathname);
       navigate(
         {
-          pathname: "/",
+          pathname: isProjectManagementPath(pathname)
+            ? "/projects"
+            : toProjectPath("/", projectId),
           search: "",
         },
-        { replace: false },
+        { replace: false, viewTransition: true },
       );
       return;
     }
 
-    syncSidebarSearch(nextTrail, false);
+    const activeParentPanel = nextTrail.at(-1);
+    const targetSearch = mergeSearchParams("", {
+      ...(activeParentPanel?.landingSearch ?? {}),
+      sidebar: panelSearchValue(nextTrail),
+    });
+
+    if (
+      activeParentPanel?.landingUrl &&
+      routeIdentity(pathname, location.search) !==
+        routeIdentity(activeParentPanel.landingUrl, targetSearch)
+    ) {
+      navigate(
+        {
+          pathname: activeParentPanel.landingUrl,
+          search: targetSearch,
+        },
+        { replace: false, viewTransition: true },
+      );
+    } else {
+      syncSidebarSearch(nextTrail, false);
+    }
   }
 
   function goBack() {
@@ -466,42 +724,28 @@ export function NavMain({
     temporarilyHideScrollbars();
     resetPanelScroll(nextIndex);
     manualTrailOverrideRef.current = nextTrail;
+    shouldAnimateNextSlideRef.current = true;
+    setShowMobileSlots(false);
+
+    // Trigger URL and route navigation immediately so the content area
+    // updates in sync with the slide transition
+    completeBackNavigation(nextTrail);
 
     if (!swiper) {
-      completeBackNavigation(nextTrail);
       return;
     }
 
     swiper.update();
-    let hasFinished = false;
-    const finishBackAnimation = () => {
-      if (hasFinished) {
-        return;
-      }
-
-      hasFinished = true;
-      cleanup();
-      completeBackNavigation(nextTrail);
-      backAnimationCleanupRef.current = null;
-    };
-    const fallback = window.setTimeout(finishBackAnimation, 1500);
-    const cleanup = () => {
-      window.clearTimeout(fallback);
-      swiper.off("slideChangeTransitionEnd", finishBackAnimation);
-    };
-
-    swiper.on("slideChangeTransitionEnd", finishBackAnimation);
-    backAnimationCleanupRef.current = cleanup;
     swiper.slideTo(nextIndex);
   }
 
   return (
-    <SidebarGroup className="flex min-h-0 flex-1 flex-col">
+    <SidebarGroup className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <Swiper
-        className="min-h-0 w-full flex-1 overflow-hidden"
+        className="min-h-0 min-w-0 w-full flex-1 overflow-hidden [&_.swiper-slide]:min-w-0 [&_.swiper-wrapper]:min-w-0"
         dir={direction}
         initialSlide={currentIndex}
-        allowTouchMove={false}
+        allowTouchMove={isMobile}
         slidesPerView={1}
         speed={300}
         onSwiper={setSwiper}
@@ -509,15 +753,22 @@ export function NavMain({
       >
         {panels.map((panel, panelIndex) => {
           const previousPanel = panels[panelIndex - 1];
-          const fixedItems = sortFixedItems(
-            panel.items.filter((item) => item.fixed),
-          );
+          const fixedItems = panelFixedItemsByIndex.get(panelIndex) ?? [];
           const scrollItems = panel.items.filter((item) => !item.fixed);
           const scrollGroups = groupItemsBySection(scrollItems);
+          const panelSearchKeys = getSiblingSearchKeys(panel.items);
+          const hasBackButton = panelIndex > 0 && Boolean(previousPanel);
+          const hasHeaderSpacingBeforeScroll =
+            hasBackButton && fixedItems.length === 0;
 
           const renderItem = (item: NavChildItem) => {
             const hasChildren = Boolean(item.items?.length);
-            const isActive = itemContainsPath(item, pathname, locationSearch);
+            const isActive = itemContainsPath(
+              item,
+              pathname,
+              locationSearch,
+              panelSearchKeys,
+            );
             const Icon = item.icon;
 
             return (
@@ -531,6 +782,7 @@ export function NavMain({
                         title: item.title,
                         panelLabel: item.panelLabel,
                         landingUrl: item.landingUrl,
+                        landingSearch: item.search,
                         items: item.items ?? [],
                       })
                     }
@@ -545,11 +797,18 @@ export function NavMain({
                       <Link
                         to={toDashboardPath(item.url, item.search)}
                         aria-current={isActive ? "page" : undefined}
+                        viewTransition
+                        onClick={() => openRouteSlotsFromMenuItem(item)}
                       />
                     }
                     isActive={isActive}
                     tooltip={item.title}
                   >
+                    {Icon ? <Icon /> : null}
+                    <span>{item.title}</span>
+                  </SidebarMenuButton>
+                ) : item.disabled ? (
+                  <SidebarMenuButton disabled tooltip={item.title}>
                     {Icon ? <Icon /> : null}
                     <span>{item.title}</span>
                   </SidebarMenuButton>
@@ -561,29 +820,31 @@ export function NavMain({
           return (
             <SwiperSlide
               key={`${panel.title}-${panelIndex}`}
-              className="h-full min-w-0"
+              className="h-full min-w-0 overflow-hidden"
               aria-hidden={panelIndex !== currentIndex}
             >
-              <div className="flex h-full min-h-0 flex-col gap-1 pr-1">
+              <div className="flex h-full min-h-0 min-w-0 flex-col gap-1 overflow-hidden pr-1">
                 <div className="shrink-0">
-                  <SidebarMenu>
-                    {panelIndex > 0 && previousPanel ? (
+                  {hasBackButton && previousPanel ? (
+                    <SidebarMenu>
                       <SidebarMenuItem>
                         <SidebarMenuButton
+                          className="relative justify-center font-semibold"
                           onClick={goBack}
                           tooltip={`Back to ${previousPanel.panelLabel ?? previousPanel.title}`}
                         >
-                          <ChevronLeft className="rtl:rotate-180" />
-                          <span>{previousPanel.panelLabel ?? previousPanel.title}</span>
+                          <ChevronLeft className="absolute left-3 rtl:left-auto rtl:right-3 rtl:rotate-180 group-data-[collapsible=icon]:left-1/2 group-data-[collapsible=icon]:right-auto group-data-[collapsible=icon]:-translate-x-1/2" />
+                          <span className="px-8 text-center group-data-[collapsible=icon]:hidden">
+                            {panel.panelLabel ?? panel.title}
+                          </span>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
-                    ) : null}
-                  </SidebarMenu>
-                  <SidebarGroupLabel>
-                    {panel.panelLabel ?? panel.title}
-                  </SidebarGroupLabel>
+                    </SidebarMenu>
+                  ) : null}
                   {fixedItems.length > 0 ? (
-                    <SidebarMenu>{fixedItems.map(renderItem)}</SidebarMenu>
+                    <SidebarFixedActionMenu afterHeader={hasBackButton}>
+                      {fixedItems.map(renderItem)}
+                    </SidebarFixedActionMenu>
                   ) : null}
                 </div>
 
@@ -592,30 +853,34 @@ export function NavMain({
                     panelContentRefs.current[panelIndex] = node;
                   }}
                   className={[
-                    "min-h-0 flex-1 overflow-y-auto overscroll-contain",
+                    "min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-x-contain overscroll-y-contain",
+                    hasHeaderSpacingBeforeScroll ? "pt-1" : "",
                     hideScrollbars
                       ? "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                       : "",
                   ].join(" ")}
                 >
-                  <div className="flex min-h-0 w-full shrink-0 flex-col gap-1">
-                    {scrollGroups.map((group, groupIndex) => (
-                      <div
-                        key={`${group.label ?? "ungrouped"}-${groupIndex}`}
-                        className="grid gap-1"
-                      >
-                        {group.label ? (
-                          <SidebarGroupLabel className="h-6">
-                            {group.label}
-                          </SidebarGroupLabel>
-                        ) : null}
-                        <SidebarMenu>{group.items.map(renderItem)}</SidebarMenu>
-                      </div>
-                    ))}
-                    {panel.title === "Workspace" &&
+                  <div className="flex min-h-0 min-w-0 w-full max-w-full shrink-0 flex-col gap-1">
+                    {scrollGroups.map((group, groupIndex) => {
+                      const hasPreviousContent =
+                        fixedItems.length > 0 || groupIndex > 0;
+
+                      return (
+                        <div
+                          key={`${group.label ?? "ungrouped"}-${groupIndex}`}
+                          className="grid gap-1"
+                        >
+                          {hasPreviousContent ? (
+                            <SidebarSeparator className="my-1" />
+                          ) : null}
+                          <SidebarMenu>{group.items.map(renderItem)}</SidebarMenu>
+                        </div>
+                      );
+                    })}
+                    {panel.title === "Extensions" &&
                     !panel.items.some((item) => itemContainsServiceOwnedEntry(item)) ? (
                       <div className="rounded-md border border-dashed bg-muted/35 px-3 py-3 text-sm text-muted-foreground">
-                        Install a service from Marketplace to give Workspace its first service area.
+                        Install a service from Marketplace to give Extensions its first service area.
                       </div>
                     ) : null}
                   </div>
@@ -624,7 +889,123 @@ export function NavMain({
             </SwiperSlide>
           );
         })}
+        {hasMobileRouteContent ? (
+          <SwiperSlide
+            key="route-slots"
+            className="h-full min-w-0 overflow-hidden"
+            aria-hidden={currentIndex !== panels.length}
+          >
+            <MobileRouteSlots
+              title={mobileSlotTitle}
+              slots={mobileRouteSlots}
+              activeSlotId={activeMobileSlotId}
+              onBack={closeMobileSlots}
+            >
+              {mobileSlotContent}
+            </MobileRouteSlots>
+          </SwiperSlide>
+        ) : null}
       </Swiper>
     </SidebarGroup>
+  );
+}
+
+function panelsLabelFromPath(pathname: string) {
+  const segment = pathname.split("/").filter(Boolean).at(-1);
+
+  if (!segment) {
+    return "Page";
+  }
+
+  return segment
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function workloadViewPanelTitle(value: unknown) {
+  switch (value) {
+    case "functions":
+      return ["Functions"];
+    case "jobs":
+      return ["Jobs"];
+    case "schedules":
+      return ["Schedules"];
+    case "webhooks":
+      return ["Webhooks"];
+    default:
+      return undefined;
+  }
+}
+
+function slotVisibilityClassName(slotId: DashboardSlotId) {
+  switch (slotId) {
+    case "overview":
+      return "[&_[data-dashboard-slot]:not([data-dashboard-slot=overview])]:hidden";
+    case "main":
+      return "[&_[data-dashboard-slot]:not([data-dashboard-slot=main])]:hidden";
+    case "detail":
+      return "[&_[data-dashboard-slot]:not([data-dashboard-slot=detail])]:hidden";
+    case "create":
+      return "[&_[data-dashboard-slot]:not([data-dashboard-slot=create])]:hidden";
+    case "edit":
+      return "[&_[data-dashboard-slot]:not([data-dashboard-slot=edit])]:hidden";
+    case "inspect":
+      return "[&_[data-dashboard-slot]:not([data-dashboard-slot=inspect])]:hidden";
+    case "settings":
+      return "[&_[data-dashboard-slot]:not([data-dashboard-slot=settings])]:hidden";
+  }
+}
+
+function MobileRouteSlots({
+  title,
+  slots,
+  activeSlotId,
+  children,
+  onBack,
+}: {
+  title: string;
+  slots: readonly DashboardSlotDefinition[];
+  activeSlotId: DashboardSlotId;
+  children: React.ReactNode;
+  onBack: () => void;
+}) {
+  const activeSlot =
+    slots.find((slot) => slot.id === activeSlotId) ?? slots[0];
+
+  return (
+    <div className="flex h-full min-h-0 min-w-0 flex-col gap-3 overflow-hidden pr-1">
+      <div className="shrink-0">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              className="relative justify-center font-semibold"
+              onClick={onBack}
+              tooltip="Back to navigation"
+            >
+              <ChevronLeft className="absolute left-3 rtl:left-auto rtl:right-3 rtl:rotate-180" />
+              <span className="px-8 text-center">{title}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </div>
+
+      {activeSlot?.description ? (
+        <p className="shrink-0 px-3 text-sm text-sidebar-foreground/65">
+          {activeSlot.description}
+        </p>
+      ) : null}
+
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-1 pb-4">
+        <div
+          className={[
+            "dashboard-mobile-slot-content grid min-w-0 gap-4 [&_[data-dashboard-slot-layout]]:max-w-none [&_[data-dashboard-slot-layout]]:gap-4 [&_[data-dashboard-slot]]:gap-4",
+            slotVisibilityClassName(activeSlot?.id ?? activeSlotId),
+          ].join(" ")}
+        >
+          {children}
+        </div>
+      </div>
+    </div>
   );
 }

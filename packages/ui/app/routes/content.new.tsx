@@ -2,7 +2,7 @@ import { Link, useNavigate, useRevalidator, useRouteLoaderData } from "react-rou
 import { Plus, Save } from "lucide-react";
 import { useState } from "react";
 
-import { PageHeader, ResourceNotice } from "#/components/DashboardPage";
+import { ResourceNotice } from "#/components/DashboardPage";
 import { Button, buttonVariants } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
@@ -14,6 +14,7 @@ import {
   getResolvedDashboardPreferences,
   updateDashboardSettings,
 } from "#/lib/runtime-api";
+import { toProjectPath } from "#/lib/routing";
 import { cn } from "#/lib/utils";
 import type { clientLoader as rootClientLoader } from '../root';
 
@@ -75,7 +76,7 @@ function NewContentTypeRoute() {
       }
 
       setMessage(`Created ${normalizedLabel} (${collection.name}).`);
-      void navigate(`/content/${encodeURIComponent(collection.name)}/edit`);
+      void navigate(toProjectPath(`/content/${encodeURIComponent(collection.name)}/fields`));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -85,18 +86,14 @@ function NewContentTypeRoute() {
 
   return (
     <section className="mx-auto grid w-full max-w-4xl gap-6">
-      <PageHeader
-        eyebrow="Content"
-        title="New Content Type"
-        actions={
-          <Link
-            to="/content"
-            className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
-          >
-            Back to Content
-          </Link>
-        }
-      />
+      <div className="flex justify-end">
+        <Link
+          to={toProjectPath("/content")}
+          className={cn(buttonVariants({ variant: "outline" }))}
+        >
+          Back to Content
+        </Link>
+      </div>
 
       <Card>
         <CardHeader>
@@ -128,9 +125,9 @@ function NewContentTypeRoute() {
             <div className="flex flex-wrap gap-2">
               <Button type="submit" disabled={!name.trim() || saving}>
                 <Plus className="size-4" />
-                Create and Open Editor
+                Create and Open Fields
               </Button>
-              <Button type="button" variant="outline" disabled={saving} onClick={() => void navigate("/content")}>
+              <Button type="button" variant="outline" disabled={saving} onClick={() => void navigate(toProjectPath("/content"))}>
                 <Save className="size-4" />
                 Cancel
               </Button>

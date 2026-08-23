@@ -1,5 +1,6 @@
 import {
   type ZelavisAnyRuntimeServiceInput,
+  type ZelavisMenuFixedActionScope,
   type ZelavisServerRoute,
   type ZelavisRuntimeService,
   type ZelavisRuntimeServiceMenuDefinition,
@@ -8,31 +9,37 @@ import {
 export const ZELAVIS_SERVICE_V1 = "ZELAVIS_SERVICE_V1" as const;
 export type ZelavisServiceContractVersion = typeof ZELAVIS_SERVICE_V1;
 const scopedServiceNamePattern = /^@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/;
+const menuFixedActionScopes = [
+  "local",
+  "inherit",
+  "replace",
+  "clear",
+] as const satisfies readonly ZelavisMenuFixedActionScope[];
 
-export interface ZelavisServiceMenuPageRenderContext {
-  service: string;
-  page: string;
-  rootPath: string;
-  api: ZelavisServiceSetupApiContext;
-}
-
-export interface ZelavisServiceRenderedPageDocument {
-  html: string;
-  status?: number;
-  headers?: HeadersInit;
-  contentType?: string;
+function isBundleRelativeFilePath(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/");
+  const segments = normalized.split("/").filter(Boolean);
+  return (
+    !normalized.startsWith("/") &&
+    segments.length > 0 &&
+    segments.every((segment) => segment !== "." && segment !== "..")
+  );
 }
 
 export interface ZelavisServiceMenuPageDefinition {
   id: string;
   title?: string;
-  render?:
-    | ((
-        context: ZelavisServiceMenuPageRenderContext,
-      ) =>
-        | string
-        | ZelavisServiceRenderedPageDocument
-        | Promise<string | ZelavisServiceRenderedPageDocument>);
+  /**
+   * HTML entry file inside the service dashboard bundle. This follows the
+   * browser-extension style: menu items point at concrete files such as
+   * `dashboard.html`, `settings.html`, or `options.html`.
+   */
+  file: string;
+  /**
+   * Bundle identifier that contains `file`. Defaults to the service app bundle
+   * when one is declared, otherwise `"dist"`.
+   */
+  bundle?: string;
 }
 
 export type ZelavisServiceMenuDefinition = Omit<
@@ -74,18 +81,18 @@ export interface ZelavisServiceMarketplaceMetadata {
  * Controls which capabilities are available to this service.
  *
  * - `"system"` — first-party or statically registered services. Can mount on
- *   any dashboard surface (root, core, workspace, settings). Set automatically
+ *   any dashboard surface (platform, root, core, extensions, settings). Set automatically
  *   when the service is passed directly to `zelavis({ services: [...] })`.
  *
- * - `"workspace"` — runtime-installed services (uploaded ZIP, marketplace).
- *   Always mount under the Workspace surface regardless of what `menu.surface`
+ * - `"extension"` — runtime-installed services (uploaded ZIP, marketplace).
+ *   Always mount under the Extensions surface regardless of what `menu.surface`
  *   declares. Enforced by the activation layer, not the definition.
  *
- * Defaults to `"workspace"`. The activation layer upgrades this to `"system"`
- * for statically registered entries and forces it back to `"workspace"` for
+ * Defaults to `"extension"`. The activation layer upgrades this to `"system"`
+ * for statically registered entries and forces it back to `"extension"` for
  * any service loaded from the registry store.
  */
-export type ZelavisServiceScope = "system" | "workspace";
+export type ZelavisServiceScope = "system" | "extension";
 
 /**
  * Static-asset serving mode for a service app.
@@ -103,10 +110,10 @@ export type ZelavisServiceAppMode = "spa" | "mpa";
  *
  * - `"optional"` — the app can be served from verified domain bindings when
  *   the runtime has them, and otherwise falls back to the shared
- *   `/apps/<service-name>` path for workspace services.
- * - `"required"` — workspace service activation only synthesizes the app route
+ *   `/apps/<service-name>` path for extension services.
+ * - `"required"` — extension service activation only synthesizes the app route
  *   when at least one verified domain binding exists for that service or its
- *   workspace. This is for website/webapp services that should not be exposed on
+ *   project. This is for website/webapp services that should not be exposed on
  *   the shared Zelavis host.
  *
  * Concrete hostnames are runtime activation state, not service metadata.
@@ -164,7 +171,7 @@ export interface ZelavisServiceAppShellDefinition {
 export interface ZelavisServiceAppDefinition {
   /**
    * Path prefix this app is mounted under. Defaults to `"/"` (root).
-   * Workspace-scoped services have their mount rewritten to
+   * Extension-scoped services have their mount rewritten to
    * `/apps/<service-name>` at activation regardless of what they declare.
    */
   mount?: string;
@@ -194,6 +201,12 @@ export interface ZelavisServiceAppDefinition {
    * URL instead of reading from the bundle.
    */
   devUrl?: string;
+  /**
+   * Mount-relative path prefixes that remain owned by the Zelavis runtime even
+   * when `devUrl` is active. Use this for reserved API namespaces under an app
+   * mount, such as a dashboard mounted at `/zelavis` with `/zelavis/api/v1`.
+   */
+  devUrlExcludePaths?: readonly string[];
 }
 
 export interface ZelavisServiceDefinition<
@@ -387,8 +400,14 @@ function validateServiceMenu(
   path = menu.title,
 ): void {
   // `surface` is allowed in the definition — the activation layer enforces
-  // workspace-only scoping for runtime-installed services at registration time,
+  // extension-only scoping for runtime-installed services at registration time,
   // not here. System services registered statically may use any surface.
+  validateOptionalBoolean(menu.fixed, `Service menu fixed flag for "${path}"`);
+  validateOptionalNumber(menu.fixedOrder, `Service menu fixedOrder for "${path}"`);
+  validateOptionalMenuFixedActionScope(
+    menu.fixedActionScope,
+    `Service menu fixedActionScope for "${path}"`,
+  );
 
   if ("page" in menu && menu.page !== undefined) {
     if (!menu.page || typeof menu.page !== "object") {
@@ -404,6 +423,36 @@ function validateServiceMenu(
     }
 
     if (
+      "file" in menu.page &&
+      menu.page.file !== undefined &&
+      typeof menu.page.file !== "string"
+    ) {
+      throw new TypeError(
+        `Service menu page metadata for "${path}" file must be a string when provided.`,
+      );
+    }
+
+    if (
+      "file" in menu.page &&
+      typeof menu.page.file === "string" &&
+      !isBundleRelativeFilePath(menu.page.file)
+    ) {
+      throw new TypeError(
+        `Service menu page metadata for "${path}" file must be a bundle-relative path.`,
+      );
+    }
+
+    if (
+      "bundle" in menu.page &&
+      menu.page.bundle !== undefined &&
+      typeof menu.page.bundle !== "string"
+    ) {
+      throw new TypeError(
+        `Service menu page metadata for "${path}" bundle must be a string when provided.`,
+      );
+    }
+
+    if (
       "title" in menu.page &&
       menu.page.title !== undefined &&
       typeof menu.page.title !== "string"
@@ -413,40 +462,73 @@ function validateServiceMenu(
       );
     }
 
-    if (
-      "render" in menu.page &&
-      menu.page.render !== undefined &&
-      typeof menu.page.render !== "function"
-    ) {
+    if (!menu.page.file) {
       throw new TypeError(
-        `Service menu page metadata for "${path}" render field must be a function.`,
+        `Service menu page metadata for "${path}" must include a page.file HTML entry.`,
       );
     }
   }
 
-  menu.items?.forEach((item) => validateServiceMenu(item, `${path} > ${item.title}`));
-}
+  if ("dynamicItems" in menu && menu.dynamicItems !== undefined) {
+    if (!menu.dynamicItems || typeof menu.dynamicItems !== "object") {
+      throw new TypeError(
+        `Service menu dynamicItems metadata for "${path}" must be an object.`,
+      );
+    }
 
-export function findServiceMenuPageById(
-  menu: ZelavisServiceMenuDefinition | undefined,
-  pageId: string,
-): ZelavisServiceMenuPageDefinition | undefined {
-  if (!menu) {
-    return undefined;
-  }
+    if (
+      !menu.dynamicItems.path ||
+      typeof menu.dynamicItems.path !== "string"
+    ) {
+      throw new TypeError(
+        `Service menu dynamicItems metadata for "${path}" must include a string path.`,
+      );
+    }
 
-  if (menu.page?.id === pageId) {
-    return menu.page;
-  }
+    if (
+      "emptyTitle" in menu.dynamicItems &&
+      menu.dynamicItems.emptyTitle !== undefined &&
+      typeof menu.dynamicItems.emptyTitle !== "string"
+    ) {
+      throw new TypeError(
+        `Service menu dynamicItems metadata for "${path}" emptyTitle must be a string when provided.`,
+      );
+    }
 
-  for (const item of menu.items ?? []) {
-    const page = findServiceMenuPageById(item, pageId);
-    if (page) {
-      return page;
+    if (
+      "emptyPath" in menu.dynamicItems &&
+      menu.dynamicItems.emptyPath !== undefined &&
+      typeof menu.dynamicItems.emptyPath !== "string"
+    ) {
+      throw new TypeError(
+        `Service menu dynamicItems metadata for "${path}" emptyPath must be a string when provided.`,
+      );
+    }
+
+    if (
+      "emptySearch" in menu.dynamicItems &&
+      menu.dynamicItems.emptySearch !== undefined &&
+      (!menu.dynamicItems.emptySearch ||
+        typeof menu.dynamicItems.emptySearch !== "object" ||
+        Array.isArray(menu.dynamicItems.emptySearch))
+    ) {
+      throw new TypeError(
+        `Service menu dynamicItems metadata for "${path}" emptySearch must be an object when provided.`,
+      );
+    }
+
+    if (menu.dynamicItems.emptySearch) {
+      for (const [key, value] of Object.entries(menu.dynamicItems.emptySearch)) {
+        if (typeof key !== "string" || (value !== undefined && typeof value !== "string")) {
+          throw new TypeError(
+            `Service menu dynamicItems metadata for "${path}" emptySearch values must be strings when provided.`,
+          );
+        }
+      }
     }
   }
 
-  return undefined;
+  menu.items?.forEach((item) => validateServiceMenu(item, `${path} > ${item.title}`));
 }
 
 function validateOptionalString(
@@ -455,6 +537,38 @@ function validateOptionalString(
 ): asserts value is string | undefined {
   if (value !== undefined && typeof value !== "string") {
     throw new TypeError(`${fieldName} must be a string when provided.`);
+  }
+}
+
+function validateOptionalBoolean(
+  value: unknown,
+  fieldName: string,
+): asserts value is boolean | undefined {
+  if (value !== undefined && typeof value !== "boolean") {
+    throw new TypeError(`${fieldName} must be a boolean when provided.`);
+  }
+}
+
+function validateOptionalNumber(
+  value: unknown,
+  fieldName: string,
+): asserts value is number | undefined {
+  if (value !== undefined && typeof value !== "number") {
+    throw new TypeError(`${fieldName} must be a number when provided.`);
+  }
+}
+
+function validateOptionalMenuFixedActionScope(
+  value: unknown,
+  fieldName: string,
+): asserts value is ZelavisMenuFixedActionScope | undefined {
+  if (
+    value !== undefined &&
+    !menuFixedActionScopes.includes(value as ZelavisMenuFixedActionScope)
+  ) {
+    throw new TypeError(
+      `${fieldName} must be "local", "inherit", "replace", or "clear" when provided.`,
+    );
   }
 }
 
@@ -633,6 +747,21 @@ function validateServiceApp(app: ZelavisServiceAppDefinition): void {
   ) {
     throw new TypeError("Service app devUrl must be a string when provided.");
   }
+
+  if ("devUrlExcludePaths" in app && app.devUrlExcludePaths !== undefined) {
+    if (!Array.isArray(app.devUrlExcludePaths)) {
+      throw new TypeError(
+        "Service app devUrlExcludePaths must be an array when provided.",
+      );
+    }
+    for (const path of app.devUrlExcludePaths) {
+      if (typeof path !== "string") {
+        throw new TypeError(
+          "Service app devUrlExcludePaths entries must be strings.",
+        );
+      }
+    }
+  }
 }
 
 function freezeServiceApp(
@@ -646,6 +775,9 @@ function freezeServiceApp(
     mode: app.mode,
     shell: app.shell ? Object.freeze({ render: app.shell.render }) : app.shell,
     devUrl: app.devUrl,
+    devUrlExcludePaths: app.devUrlExcludePaths
+      ? Object.freeze([...app.devUrlExcludePaths])
+      : app.devUrlExcludePaths,
   });
 }
 
@@ -932,9 +1064,9 @@ export function defineService<TContext = unknown, TService = unknown>(
   return Object.freeze({
     ...normalized,
     contractVersion: ZELAVIS_SERVICE_V1,
-    // Default to "workspace". The registration path (static vs. uploaded)
+    // Default to "extension". The registration path (static vs. uploaded)
     // overrides this — see loadStoredServiceRegistryModules in index.ts.
-    scope: definition.scope ?? "workspace",
+    scope: definition.scope ?? "extension",
     kind: definition.kind,
     capabilities: definition.capabilities
       ? Object.freeze([...definition.capabilities])

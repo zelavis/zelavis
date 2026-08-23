@@ -132,32 +132,22 @@ test("bun:sqlite database preserves schemas and active versions across reopen", 
   try {
     const first = await createBunSqliteDatabase({ filename: temp.filename });
 
-    await first.schemas.register({
+    await first.schemas.save({
       collection: "products",
       version: 1,
       activate: true,
-      document: {
-        type: "object",
-        additionalProperties: false,
-        required: ["name"],
-        properties: {
-          name: { type: "string", minLength: 1 },
-        },
-      },
+      fields: [
+        { name: "name", field: { _tag: "TextField", label: "Name", required: true } },
+      ],
     });
-    await first.schemas.register({
+    await first.schemas.save({
       collection: "products",
       version: 2,
       activate: true,
-      document: {
-        type: "object",
-        additionalProperties: false,
-        required: ["name", "status"],
-        properties: {
-          name: { type: "string", minLength: 1 },
-          status: { type: "string", enum: ["draft", "published"] },
-        },
-      },
+      fields: [
+        { name: "name", field: { _tag: "TextField", label: "Name", required: true } },
+        { name: "status", field: { _tag: "TextField", label: "Status", required: true } },
+      ],
     });
 
     const reopened = await createBunSqliteDatabase({ filename: temp.filename });
@@ -170,7 +160,7 @@ test("bun:sqlite database preserves schemas and active versions across reopen", 
       },
     ]);
     expect(
-      reopened.schemas.listVersionRecords("products").map((schema) => ({
+      reopened.schemas.listVersions("products").map((schema) => ({
         version: schema.version,
         active: schema.active,
       })),

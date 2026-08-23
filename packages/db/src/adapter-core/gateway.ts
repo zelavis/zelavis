@@ -2,7 +2,7 @@
  * Thin SQLite-flavored gateway every adapter implements. The shared driver
  * factory builds the full `DatabaseDriver` on top of this interface, so
  * adapters only have to translate their underlying client (better-sqlite3,
- * bun:sqlite, Cloudflare D1, libSQL, ...) into these four primitives.
+ * bun:sqlite, libSQL, ...) into these four primitives.
  */
 export interface SqliteGateway {
   /** Run a SELECT statement and return all rows. */
@@ -34,16 +34,15 @@ export interface SqliteGateway {
    * the open transaction so nested calls share atomicity. If the function
    * throws, the underlying driver must roll back.
    *
-   * Implementations that cannot offer real transactions (e.g. Cloudflare D1
-   * without `batch()`) should still preserve the call semantics — they just
-   * fall back to sequential execution.
+   * Implementations that cannot offer real transactions should still preserve
+   * the call semantics — they just fall back to sequential execution.
    */
   transaction<T>(fn: (tx: SqliteGateway) => Promise<T>): Promise<T>;
 
   /**
    * Optional bulk-statement entry point. When provided, the shared driver
    * uses it for performance-critical batch inserts (e.g. time-series append).
-   * Drivers backed by Cloudflare D1's `batch()` or libSQL's `batch()` should
+   * Drivers backed by libSQL's `batch()` or a similar primitive should
    * implement this.
    */
   batch?(

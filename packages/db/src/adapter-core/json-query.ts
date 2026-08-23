@@ -8,7 +8,7 @@ import type { DatabaseJson } from "../contracts/json.js";
  * Translates a `where`/`orderBy` pair against the documents table into a
  * SQL fragment that uses `json_extract(data_json, '$.path')` for pushdown.
  *
- * SQLite (better-sqlite3, bun:sqlite), Cloudflare D1, and libSQL all
+ * SQLite (better-sqlite3, bun:sqlite) and libSQL all
  * implement the JSON1 extension, so this produces the same SQL across every
  * adapter. The result still feeds a parameterized statement — paths are
  * validated against a strict regex and inlined; values flow through bind

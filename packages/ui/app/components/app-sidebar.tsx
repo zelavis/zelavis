@@ -1,12 +1,15 @@
 "use client";
 
 import * as React from "react";
-import { useLocation } from "react-router";
+import { useLocation, useMatches, useNavigate } from "react-router";
 
 import { NavMain } from "#/components/nav-main";
-import { NavSecondary } from "#/components/nav-secondary";
-import { NavUser } from "#/components/nav-user";
-import { TeamSwitcher } from "#/components/team-switcher";
+import {
+  NavUser,
+  NavUserScreen,
+  type SidebarUtilityScreen,
+} from "#/components/nav-user";
+import { ProjectSwitcher } from "#/components/project-switcher";
 import {
   Sidebar,
   SidebarContent,
@@ -17,42 +20,98 @@ import {
   buildContentTypeRows,
 } from "#/lib/content-studio";
 import {
+  buildProjectManagementNavItems,
+  buildManagedProjectNavItems,
   buildPlatformNavItems,
-  platformNavItems,
-  secondaryNavItems,
-  sidebarTeams,
+  filterDashboardNavItemsForAccess,
+  getDashboardProjectsForAccess,
+  toDashboardProjectItem,
 } from "#/lib/dashboard-data";
 import { filterUserDatabaseCollections } from "#/lib/database-collections";
-import { readSearchParams } from "#/lib/routing";
+import {
+  getManagedProjectKindFromId,
+  getProjectIdFromPathname,
+  isProjectManagementPath,
+  readSearchParams,
+} from "#/lib/routing";
+import { getDashboardSidebarTrailFromMatches } from "#/lib/dashboard-route-handles";
+import { cn } from "#/lib/utils";
 import {
   type DashboardSettings,
   getResolvedDashboardPreferences,
   type DatabaseCollection,
   type DatabaseSchemaCollectionSummary,
   type RuntimeConfig,
+  type RuntimeAssistantThread,
+  type RuntimeProject,
 } from "#/lib/runtime-api";
-
-const data = {
-  user: {
-    name: "Runtime dashboard",
-    email: "local workspace",
-    avatar: "",
-  },
-};
 
 export function AppSidebar({
   runtime,
+  assistantConfig,
   settings,
   databaseCollections,
   schemaCollections,
+  projects,
+  assistantThreads,
+  mobileSlotContent,
   ...props
 }: React.ComponentProps<typeof Sidebar> & {
   runtime?: RuntimeConfig;
+  assistantConfig?: RuntimeConfig;
   settings?: DashboardSettings;
   databaseCollections?: readonly DatabaseCollection[];
   schemaCollections?: readonly DatabaseSchemaCollectionSummary[];
+  projects?: readonly RuntimeProject[];
+  assistantThreads?: readonly RuntimeAssistantThread[];
+  mobileSlotContent?: React.ReactNode;
 }) {
   const location = useLocation();
+  const matches = useMatches();
+  const navigate = useNavigate();
+  const [isProjectSwitcherOpen, setIsProjectSwitcherOpen] =
+    React.useState(false);
+  const [activeUtilityScreen, setActiveUtilityScreen] =
+    React.useState<SidebarUtilityScreen | null>(null);
+  const [utilityScreenOpenedFromNested, setUtilityScreenOpenedFromNested] =
+    React.useState(false);
+  const [homeResetKey, setHomeResetKey] = React.useState(0);
+  const isSidebarPopoverOpen = isProjectSwitcherOpen;
+  const sidebarChromeClassName = cn(
+    "transition-[filter,opacity] duration-200 ease-out motion-reduce:transition-none",
+    isSidebarPopoverOpen && "pointer-events-none blur-[2px] opacity-70",
+  );
+  const sidebarChromeInertProps = isSidebarPopoverOpen
+    ? { inert: true }
+    : undefined;
+  const isProjectManagementRoute = isProjectManagementPath(location.pathname);
+  const routeSidebarTrail = getDashboardSidebarTrailFromMatches(matches) ?? [];
+  const currentSidebarSearch = readSearchParams(location.search).sidebar;
+  const hasNestedSidebarContext =
+    (typeof currentSidebarSearch === "string" &&
+      currentSidebarSearch.length > 0) ||
+    routeSidebarTrail.length > 0;
+  const projectId = getProjectIdFromPathname(location.pathname);
+  const isProjectDashboardRoute = Boolean(projectId) && !isProjectManagementRoute;
+  const managedProjectKind = getManagedProjectKindFromId(projectId);
+  const accessibleProjects = React.useMemo(
+    () =>
+      getDashboardProjectsForAccess(
+        (projects ?? []).map(toDashboardProjectItem),
+        runtime?.access,
+      ),
+    [projects, runtime?.access],
+  );
+  const dashboardUser = React.useMemo(
+    () => ({
+      name: runtime?.access?.label
+        ? `${runtime.access.label} dashboard`
+        : "Runtime dashboard",
+      email: runtime?.access?.principal.id ?? "local project",
+      avatar: "",
+    }),
+    [runtime?.access],
+  );
   const selectedDatabaseTable = React.useMemo(() => {
     const search = readSearchParams(location.search);
     return typeof search.databaseTable === "string" && search.databaseTable.length > 0
@@ -90,37 +149,114 @@ export function AppSidebar({
   );
   const items = React.useMemo(
     () =>
-      runtime
-        ? buildPlatformNavItems(
-            runtime.services,
-            runtime.serviceRegistry,
-            contentTypes,
-            filterUserDatabaseCollections(effectiveDatabaseCollections),
+      isProjectManagementRoute
+        ? filterDashboardNavItemsForAccess(
+            buildProjectManagementNavItems(runtime?.services),
+            runtime?.access,
           )
-        : platformNavItems,
+        : projectId && managedProjectKind
+        ? buildManagedProjectNavItems(projectId, managedProjectKind)
+        : runtime && projectId
+        ? filterDashboardNavItemsForAccess(
+            buildPlatformNavItems(
+              runtime.services,
+              runtime.serviceRegistry,
+              contentTypes,
+              filterUserDatabaseCollections(effectiveDatabaseCollections),
+              projectId,
+            ),
+            runtime.access,
+          )
+        : [],
     [
       contentTypes,
       effectiveDatabaseCollections,
+      isProjectManagementRoute,
+      managedProjectKind,
+      projectId,
+      runtime?.access,
       runtime?.serviceRegistry,
       runtime?.services,
     ],
   );
 
   return (
-    <Sidebar variant="inset" collapsible="icon" {...props}>
-      <SidebarHeader>
-        <TeamSwitcher teams={sidebarTeams} />
+    <Sidebar collapsible="icon" {...props}>
+      <SidebarHeader
+        className={sidebarChromeClassName}
+        {...sidebarChromeInertProps}
+      >
+        <div className="flex min-w-0 items-center gap-1">
+          <div className="min-w-0 flex-1">
+            <ProjectSwitcher
+              projects={accessibleProjects}
+              homeIconLinksToProjects={isProjectDashboardRoute}
+              onOpenChange={setIsProjectSwitcherOpen}
+            />
+          </div>
+        </div>
       </SidebarHeader>
-      <SidebarContent className="overflow-hidden">
-        <NavMain items={items} />
-        <NavSecondary
-          title="Help"
-          items={secondaryNavItems}
-          className="mt-auto"
-        />
+      <SidebarContent
+        className={cn("overflow-hidden", sidebarChromeClassName)}
+        {...sidebarChromeInertProps}
+      >
+        <div
+          className={cn(
+            "flex min-h-0 min-w-0 flex-1 flex-col",
+            activeUtilityScreen && "hidden",
+          )}
+        >
+          <NavMain
+            homeResetKey={homeResetKey}
+            items={items}
+            mobileSlotContent={mobileSlotContent}
+          />
+        </div>
+        {activeUtilityScreen ? (
+          <NavUserScreen
+            screen={activeUtilityScreen}
+            openedFromNested={utilityScreenOpenedFromNested}
+            user={dashboardUser}
+            projects={accessibleProjects}
+            assistantThreads={assistantThreads ?? []}
+            assistantConfig={assistantConfig ?? runtime}
+            onClose={() => setActiveUtilityScreen(null)}
+          />
+        ) : null}
       </SidebarContent>
-      <SidebarFooter>
-        <NavUser user={data.user} />
+      <SidebarFooter
+        className={cn(
+          "transition-[filter,opacity] duration-200 ease-out motion-reduce:transition-none",
+          isSidebarPopoverOpen && "pointer-events-none blur-[2px] opacity-70",
+        )}
+        {...sidebarChromeInertProps}
+      >
+        <NavUser
+          activeScreen={activeUtilityScreen}
+          user={dashboardUser}
+          onHome={() => {
+            setActiveUtilityScreen(null);
+            setUtilityScreenOpenedFromNested(false);
+            setHomeResetKey((key) => key + 1);
+          }}
+          onScreenChange={(screen) => {
+            if (!activeUtilityScreen) {
+              setUtilityScreenOpenedFromNested(hasNestedSidebarContext);
+            }
+
+            if (screen === "assistant" && location.pathname !== "/assistant") {
+              const assistantProjectId = projectId ?? accessibleProjects[0]?.id;
+              navigate(
+                assistantProjectId
+                  ? `/assistant?project=${encodeURIComponent(assistantProjectId)}`
+                  : "/assistant",
+                { viewTransition: true },
+              );
+            }
+
+            setActiveUtilityScreen(screen);
+          }}
+        />
       </SidebarFooter>
     </Sidebar>
   );

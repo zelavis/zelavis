@@ -29,7 +29,7 @@ export interface S3CompatibleFileStorageOptions {
 export const s3CacheControlPresets = Object.freeze({
   immutableAsset: "public, max-age=31536000, immutable",
   browserShort: "public, max-age=300, stale-while-revalidate=30",
-  edgeShort: "public, max-age=60, s-maxage=300, stale-while-revalidate=60",
+  cdnShort: "public, max-age=60, s-maxage=300, stale-while-revalidate=60",
   privateDocument: "private, max-age=0, must-revalidate",
   noStore: "no-store",
 });

@@ -1,4 +1,4 @@
-import { useLoaderData, useRevalidator, useRouteLoaderData } from "react-router";
+import { Link, useLoaderData, useParams, useRevalidator, useRouteLoaderData } from "react-router";
 import {
   type ChangeEvent,
   type FormEvent,
@@ -6,16 +6,14 @@ import {
   useState,
 } from "react";
 import {
-  ServerCog,
   Sparkles,
   Upload,
 } from "lucide-react";
 
 import {
-  PageHeader,
   ResourceNotice,
 } from "#/components/DashboardPage";
-import { Button } from "#/components/ui/button";
+import { Button, buttonVariants } from "#/components/ui/button";
 import {
   Card,
   CardContent,
@@ -41,20 +39,22 @@ import {
 } from "#/components/ui/sheet";
 import {
   createDashboardService,
-  getRuntimeConfig,
+  getActiveRuntimeConfig,
   listDashboardServices,
   type RuntimeServiceActivationCapabilities,
   type RuntimeServiceRegistryEntry,
   updateDashboardService,
 } from "#/lib/runtime-api";
+import { cn } from "#/lib/utils";
 import type { clientLoader as rootClientLoader } from '../root';
+import type { Route } from './+types/marketplace';
 
 export const handle = {
   pageLabel: "Marketplace",
 } as const;
 
-export async function clientLoader() {
-  const runtime = await getRuntimeConfig();
+export async function clientLoader({ request }: Route.ClientLoaderArgs) {
+  const runtime = await getActiveRuntimeConfig(request);
   const serviceEntries = await listDashboardServices(runtime).catch(() => undefined);
   return { serviceEntries };
 }
@@ -74,6 +74,96 @@ type MarketplaceCatalogItem = {
   runtimeServiceName?: string;
   pageLabel?: string;
 };
+
+type MarketplaceAppItem = {
+  id: string;
+  title: string;
+  category: string;
+  summary: string;
+  description: string;
+  details: readonly string[];
+  tags: readonly string[];
+  projectType: string;
+  actionLabel: string;
+};
+
+const globalAppCatalog: readonly MarketplaceAppItem[] = [
+  {
+    id: "zelavis-app",
+    title: "Zelavis App",
+    category: "Native",
+    summary: "A full Zelavis-native app with auth, database, content, media, and website hosting.",
+    description:
+      "Creates a project that uses Zelavis as the application platform instead of only as a host control panel.",
+    details: [
+      "Project dashboard uses Zelavis-native sections",
+      "Best fit for apps that want integrated auth, database, and content",
+      "Starter creation is wired through the project creation flow",
+    ],
+    tags: ["zelavis", "app", "starter"],
+    projectType: "zelavis",
+    actionLabel: "Create Zelavis project",
+  },
+  {
+    id: "wordpress",
+    title: "WordPress",
+    category: "One-click app",
+    summary: "A managed WordPress project with hosting-style controls instead of Zelavis-native app sections.",
+    description:
+      "Models the Softaculous-style path: Zelavis can operate the project even when the app itself is not built on Zelavis primitives.",
+    details: [
+      "Project dashboard should expose hosting controls",
+      "WordPress admin stays the application admin",
+      "Future installer can provision files, database, domains, and backups",
+    ],
+    tags: ["wordpress", "cms", "hosting"],
+    projectType: "wordpress",
+    actionLabel: "Create WordPress project",
+  },
+  {
+    id: "static-site",
+    title: "Static Website",
+    category: "Website",
+    summary: "A simple static-site project with domains, files, deploys, and logs.",
+    description:
+      "Useful for templates, portfolios, docs, and landing pages that do not need Zelavis auth or database services.",
+    details: [
+      "Project dashboard focuses on website operations",
+      "Can later connect to local or plugin-backed deployment targets",
+      "Keeps static sites separate from full Zelavis apps",
+    ],
+    tags: ["static", "website", "template"],
+    projectType: "static",
+    actionLabel: "Create static project",
+  },
+] as const;
+
+const globalIntegrationCatalog: readonly MarketplaceAppItem[] = [
+  {
+    id: "dns-provider",
+    title: "DNS Provider",
+    category: "Server integration",
+    summary: "Connect DNS automation for server-level domain management.",
+    description:
+      "Provider integrations belong globally because many projects can share the same DNS account and verification workflow.",
+    details: ["Server-level plugin boundary", "Future domain automation", "Not tied to one project"],
+    tags: ["dns", "domains", "server"],
+    projectType: "server",
+    actionLabel: "Planned",
+  },
+  {
+    id: "backup-storage",
+    title: "Backup Storage",
+    category: "Server integration",
+    summary: "Connect an object store or remote backup destination.",
+    description:
+      "Backups are a host responsibility first; projects can opt into policies once the provider is configured globally.",
+    details: ["Server-level plugin boundary", "Future restore workflows", "Policy-driven backups"],
+    tags: ["backups", "storage", "restore"],
+    projectType: "server",
+    actionLabel: "Planned",
+  },
+] as const;
 
 const communityCatalog: readonly MarketplaceCatalogItem[] = [
   {
@@ -120,7 +210,7 @@ const communityCatalog: readonly MarketplaceCatalogItem[] = [
       "Placeholder listing for community services that add higher-level collaboration or engagement surfaces.",
     details: [
       "Planned catalog entry",
-      "Would likely ship as a service with nested workspace panels",
+      "Would likely ship as a service with nested Extensions panels",
       "Runtime contracts still exploratory",
     ],
     tags: ["comments", "moderation", "community"],
@@ -142,10 +232,10 @@ function createOfficialCatalog(
       category: "Commerce",
       summary: "Products, orders, customers, coupons, and future storefront workflows.",
       description:
-        "Official Zelavis commerce service. This is the best current proving ground for service-owned workspace areas with nested panels.",
+        "Official Zelavis commerce service. This is the best current proving ground for service-owned Extensions areas with nested panels.",
       details: [
       "Promoted official service",
-      "Workspace area with nested slides",
+      "Extensions area with nested slides",
       "Install state is real; host activation applies the live service graph",
       ],
       tags: ["products", "orders", "customers"],
@@ -218,35 +308,13 @@ function formatActivationStrategy(
   switch (strategy) {
     case "runtime-graph":
       return "Runtime graph";
-    case "worker-boundary":
-      return "Worker boundary";
-    case "function-boundary":
-      return "Function boundary";
-    case "custom":
-      return "Custom host";
+    case "external":
+      return "External controller";
   }
 }
 
 function formatCapability(value: boolean) {
   return value ? "Supported" : "Not available";
-}
-
-function getWorkerBoundaryMessage(
-  capabilities: RuntimeServiceActivationCapabilities | undefined,
-) {
-  if (!capabilities || capabilities.strategy !== "worker-boundary") {
-    return undefined;
-  }
-
-  if (
-    capabilities.supportsRuntimeInstall &&
-    capabilities.supportsUploadedSpecifiers &&
-    capabilities.supportsIsolatedExecution
-  ) {
-    return "Worker dispatch is configured for this host. Service installs can be activated through an isolated worker boundary.";
-  }
-
-  return "This host reports a worker-boundary strategy, but dispatch activation is incomplete. Marketplace can update metadata, but runtime service uploads may stay pending until the adapter supplies dispatch, uploaded source, and isolation support.";
 }
 
 function MarketplaceServiceCard({
@@ -287,7 +355,6 @@ function MarketplaceServiceCard({
       <CardFooter className="mt-auto flex min-h-14 items-center gap-2">
         {item.runtimeServiceName ? (
           <Button
-            size="sm"
             variant={isInstalled ? "outline" : "default"}
             disabled={!onInstallToggle || pending}
             onClick={onInstallToggle}
@@ -301,11 +368,11 @@ function MarketplaceServiceCard({
                 : "Install"}
           </Button>
         ) : (
-          <Button size="sm" disabled>
+          <Button disabled>
             Install
           </Button>
         )}
-        <Button size="sm" variant="outline" onClick={onInfo}>
+        <Button variant="outline" onClick={onInfo}>
           Info
         </Button>
       </CardFooter>
@@ -313,7 +380,141 @@ function MarketplaceServiceCard({
   );
 }
 
-function Marketplace() {
+function GlobalAppCard({ item }: { item: MarketplaceAppItem }) {
+  const canCreateProject = item.projectType !== "server";
+
+  return (
+    <Card className="flex h-full min-h-[18rem] flex-col border-border/80">
+      <CardHeader className="gap-4">
+        <div className="flex items-start gap-3 border-b pb-4">
+          <span className="inline-flex size-11 shrink-0 items-center justify-center rounded-md border bg-muted text-muted-foreground">
+            <Sparkles className="size-4" />
+          </span>
+          <div className="space-y-1">
+            <p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+              {item.category}
+            </p>
+            <CardTitle className="text-xl">{item.title}</CardTitle>
+            <CardDescription className="text-sm leading-6">
+              {item.summary}
+            </CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="flex-1 space-y-4">
+        <p className="text-sm leading-6 text-muted-foreground">
+          {item.description}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {item.tags.map((tag) => (
+            <span
+              key={tag}
+              className="rounded-md border bg-muted/35 px-2.5 py-1 text-xs text-muted-foreground"
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
+      </CardContent>
+      <CardFooter className="mt-auto flex min-h-14 items-center gap-2">
+        {canCreateProject ? (
+          <Link
+            to={`/projects?new=1&type=${encodeURIComponent(item.projectType)}`}
+            className={cn(buttonVariants())}
+          >
+            {item.actionLabel}
+          </Link>
+        ) : (
+          <Button disabled>
+            {item.actionLabel}
+          </Button>
+        )}
+      </CardFooter>
+    </Card>
+  );
+}
+
+function GlobalPluginCard({ item }: { item: MarketplaceCatalogItem }) {
+  return (
+    <Card className="flex h-full min-h-[16rem] flex-col border-border/80 opacity-75">
+      <CardHeader>
+        <CardTitle className="text-lg">{item.title}</CardTitle>
+        <CardDescription className="leading-6">{item.summary}</CardDescription>
+      </CardHeader>
+      <CardContent className="flex-1">
+        <p className="text-sm leading-6 text-muted-foreground">
+          {item.description}
+        </p>
+      </CardContent>
+      <CardFooter className="mt-auto flex items-center gap-2">
+        <Button disabled>
+          Project-only
+        </Button>
+        <span className="text-xs text-muted-foreground">
+          Open inside a Zelavis project
+        </span>
+      </CardFooter>
+    </Card>
+  );
+}
+
+function GlobalMarketplace() {
+  const { serviceEntries } = useLoaderData<typeof clientLoader>();
+  const officialCatalog = useMemo(
+    () => createOfficialCatalog(serviceEntries ?? []),
+    [serviceEntries],
+  );
+
+  return (
+    <section className="mx-auto grid w-full max-w-7xl gap-8">
+      <ResourceNotice
+        title="Global marketplace scope"
+        description="Apps here create or affect projects. Plugins extend an existing Zelavis project, so they are disabled in the global marketplace and active in the project marketplace."
+      />
+
+      <section className="grid gap-4">
+        <div>
+          <p className="kicker">Apps</p>
+          <h2 className="text-xl font-semibold tracking-tight">Create projects from apps and starters</h2>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {globalAppCatalog.map((item) => (
+            <GlobalAppCard key={item.id} item={item} />
+          ))}
+        </div>
+      </section>
+
+      <section className="grid gap-4">
+        <div>
+          <p className="kicker">Server</p>
+          <h2 className="text-xl font-semibold tracking-tight">Server integrations</h2>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {globalIntegrationCatalog.map((item) => (
+            <GlobalAppCard key={item.id} item={item} />
+          ))}
+        </div>
+      </section>
+
+      <section className="grid gap-4">
+        <div>
+          <p className="kicker">Project plugins</p>
+          <h2 className="text-xl font-semibold tracking-tight">Install inside Zelavis projects</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            These extend a Zelavis-native project and stay unavailable from the global layer.
+          </p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {[...officialCatalog, ...communityCatalog].map((item) => (
+            <GlobalPluginCard key={item.name} item={item} />
+          ))}
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function ProjectMarketplace() {
   const { serviceEntries: initialServiceEntries } = useLoaderData<typeof clientLoader>();
   const { runtime: runtimeConfig } = useRouteLoaderData<typeof rootClientLoader>('root')!;
   const revalidator = useRevalidator();
@@ -351,7 +552,6 @@ function Marketplace() {
     activationCapabilities?.supportsPackageUploads ?? false;
   const canRegisterServiceSpecifier =
     activationCapabilities?.supportsUploadedSpecifiers ?? false;
-  const workerBoundaryMessage = getWorkerBoundaryMessage(activationCapabilities);
   const marketplaceActivationRequired =
     activationRequired ||
     officialCatalog.some((item) =>
@@ -428,18 +628,12 @@ function Marketplace() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-8">
-      <PageHeader
-        eyebrow="Community"
-        title="Marketplace"
-        description="Official Zelavis services live up top, community services below, and service install state stays separate from runtime activation."
-      />
-
       {marketplaceActivationRequired ? (
         <ResourceNotice
           title="Host activation required"
           description={
             activationMessage ??
-            "Service install state has changed. Marketplace metadata updates now; mounted services activate when the current host applies its live service activation flow."
+            "Service install state has changed. Marketplace metadata updates now; mounted services activate when the local runtime applies its service graph."
           }
         />
       ) : (
@@ -447,7 +641,7 @@ function Marketplace() {
           title="Install flow model"
           description={
             activationMessage ??
-            "The marketplace edits real service registry state. Hosts decide how activation happens: recompose the local runtime, create a worker/function, or attach another live function boundary."
+            "The marketplace edits real service registry state. The local runtime decides whether service changes can activate immediately or need a process restart."
           }
         />
       )}
@@ -506,59 +700,6 @@ function Marketplace() {
         </Card>
       ) : null}
 
-      {workerBoundaryMessage ? (
-        <ResourceNotice
-          title={
-            activationCapabilities?.supportsRuntimeInstall &&
-            activationCapabilities.supportsUploadedSpecifiers &&
-            activationCapabilities.supportsIsolatedExecution
-              ? "Worker dispatch configured"
-              : "Worker dispatch incomplete"
-          }
-          description={workerBoundaryMessage}
-        />
-      ) : null}
-
-      {activationCapabilities?.strategy === "worker-boundary" ? (
-        <Card className="border-border/80">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <ServerCog className="size-4" />
-              Worker dispatch
-            </CardTitle>
-            <CardDescription>
-              Services activate outside the main runtime through an isolated worker endpoint.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-2 text-sm md:grid-cols-3">
-            <div className="rounded-md border bg-muted/35 px-3 py-3">
-              <p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
-                Endpoint
-              </p>
-              <p className="mt-1 font-mono text-xs text-foreground">
-                /__zelavis/service/activate
-              </p>
-            </div>
-            <div className="rounded-md border bg-muted/35 px-3 py-3">
-              <p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
-                Registry changes
-              </p>
-              <p className="mt-1 font-medium text-foreground">
-                Sent to service Worker
-              </p>
-            </div>
-            <div className="rounded-md border bg-muted/35 px-3 py-3">
-              <p className="text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
-                Main runtime
-              </p>
-              <p className="mt-1 font-medium text-foreground">
-                No restart required
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      ) : null}
-
       {actionError ? (
         <ResourceNotice
           title="Service update failed"
@@ -573,7 +714,7 @@ function Marketplace() {
             Upload service
           </CardTitle>
           <CardDescription>
-            Upload a ZIP service package or register an ESM source that the current host can activate through its live service flow.
+            Upload a ZIP service package or register an ESM source that the local runtime can activate through its service graph.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -724,7 +865,6 @@ function Marketplace() {
                 <Button
                   type="button"
                   variant="outline"
-                  size="sm"
                   disabled={pendingServiceName === service.name}
                   onClick={() =>
                     toggleService(
@@ -794,4 +934,10 @@ function Marketplace() {
   );
 }
 
-export default Marketplace;
+function MarketplaceRoute() {
+  const params = useParams();
+
+  return params.projectId ? <ProjectMarketplace /> : <GlobalMarketplace />;
+}
+
+export default MarketplaceRoute;

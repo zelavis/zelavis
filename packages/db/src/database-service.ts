@@ -38,7 +38,10 @@ function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-const VALID_COLLECTION_SURFACES = new Set<DatabaseCollectionSurface>(["content-studio"]);
+const VALID_COLLECTION_SURFACES = new Set<DatabaseCollectionSurface>([
+  "content-studio",
+  "database",
+]);
 
 function readCollectionSurface(value: unknown): DatabaseCollectionSurface | undefined {
   return typeof value === "string" && VALID_COLLECTION_SURFACES.has(value as DatabaseCollectionSurface)
@@ -213,18 +216,57 @@ export function defineDatabaseService(
     basePath: "database",
     menu: {
       title: "Database",
+      path: "/database",
       surface: "core",
       panelLabel: "Database",
+      dynamicItems: {
+        path: "/database/menu/tables",
+        emptyTitle: "No tables yet",
+      },
       items: [
         {
+          title: "Create Table",
+          path: "/database/new",
+          pageLabel: "Database",
+          fixed: true,
+          fixedOrder: 1,
+        },
+        {
           title: "System Tables",
+          path: "/database",
+          search: { systemTable: "zv_collections" },
           panelLabel: "System Tables",
           items: [
-            { title: "zv_collections", path: "/database" },
-            { title: "zv_events", path: "/database" },
-            { title: "zv_schemas", path: "/database" },
-            { title: "zv_time_series_checkpoints", path: "/database" },
-            { title: "zv_time_series_points", path: "/database" },
+            {
+              title: "zv_collections",
+              path: "/database",
+              pageLabel: "Database",
+              search: { systemTable: "zv_collections" },
+            },
+            {
+              title: "zv_events",
+              path: "/database",
+              pageLabel: "Database",
+              search: { systemTable: "zv_events" },
+            },
+            {
+              title: "zv_schemas",
+              path: "/database",
+              pageLabel: "Database",
+              search: { systemTable: "zv_schemas" },
+            },
+            {
+              title: "zv_time_series_checkpoints",
+              path: "/database",
+              pageLabel: "Database",
+              search: { systemTable: "zv_time_series_checkpoints" },
+            },
+            {
+              title: "zv_time_series_points",
+              path: "/database",
+              pageLabel: "Database",
+              search: { systemTable: "zv_time_series_points" },
+            },
           ],
         },
       ],
@@ -232,6 +274,31 @@ export function defineDatabaseService(
     service: database,
     api: {
       v1: [
+        {
+          id: "database.menu.tables",
+          method: "GET",
+          path: "/menu/tables",
+          handler: async ({ service, query }) => {
+            const tenantId = query.get("tenantId") ?? undefined;
+            const collections = await service.documents.listCollections({
+              tenantId,
+            });
+
+            return {
+              body: {
+                items: collections
+                  .filter((collection) => !(collection.name in systemTableMap))
+                  .sort((left, right) => left.name.localeCompare(right.name))
+                  .map((collection) => ({
+                    title: collection.name,
+                    path: "/database",
+                    pageLabel: "Database",
+                    search: { databaseTable: collection.name },
+                  })),
+              },
+            };
+          },
+        },
         {
           id: "database.health",
           method: "GET",

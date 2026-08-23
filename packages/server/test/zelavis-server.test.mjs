@@ -141,6 +141,148 @@ test("zelavisServer exposes fetch and plain handlers without requiring a mount a
   });
 });
 
+test("zelavisServer denies protected routes without an authenticated principal", async () => {
+  const runtime = await zelavisServer({
+    services: [
+      {
+        name: "server",
+        service: {},
+        api: {
+          v1: [
+            {
+              id: "server.restart",
+              method: "POST",
+              path: "/restart",
+              access: {
+                authenticated: true,
+                permissions: ["server.manage"],
+                scope: { type: "system" },
+              },
+              handler: () => ({ status: 204 }),
+            },
+          ],
+        },
+      },
+    ],
+  });
+
+  const response = await runtime.plain({
+    url: "/server/restart",
+    method: "POST",
+  });
+
+  assert.equal(response.status, 401);
+  assert.deepEqual(response.body, { error: "Unauthorized" });
+});
+
+test("zelavisServer allows project-scoped grants on matching project routes", async () => {
+  const runtime = await zelavisServer({
+    services: [
+      {
+        name: "projects",
+        service: {},
+        api: {
+          v1: [
+            {
+              id: "projects.content.update",
+              method: "PATCH",
+              path: "/:projectId/content/:entryId",
+              access: {
+                permissions: ["project.content.write"],
+                scope: { type: "project", projectIdParam: "projectId" },
+              },
+              handler: ({ params, principal }) => ({
+                body: {
+                  projectId: params.projectId,
+                  principalId: principal.id,
+                },
+              }),
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const principal = {
+    id: "user_customer",
+    type: "user",
+    grants: [
+      {
+        permission: "project.content.write",
+        scope: { type: "project", projectId: "acme" },
+      },
+    ],
+  };
+
+  const allowed = await runtime.plain({
+    url: "/projects/acme/content/post-1",
+    method: "PATCH",
+    principal,
+  });
+  const denied = await runtime.plain({
+    url: "/projects/other/content/post-1",
+    method: "PATCH",
+    principal,
+  });
+
+  assert.equal(allowed.status, 200);
+  assert.deepEqual(allowed.body, {
+    projectId: "acme",
+    principalId: "user_customer",
+  });
+  assert.equal(denied.status, 403);
+  assert.deepEqual(denied.body, { error: "Missing required permission" });
+});
+
+test("zelavisServer supports runtime principal resolvers and custom authorizers", async () => {
+  const runtime = await zelavisServer({
+    resolvePrincipal: ({ request }) => {
+      const userId = request.headers.get("x-zelavis-user");
+      return userId
+        ? {
+            id: userId,
+            type: "user",
+            roles: ["support"],
+          }
+        : undefined;
+    },
+    authorize: ({ principal, requirement }) => ({
+      allowed:
+        principal?.roles?.includes("support") === true &&
+        requirement.roles?.includes("support") === true,
+    }),
+    services: [
+      {
+        name: "tickets",
+        service: {},
+        api: {
+          v1: [
+            {
+              id: "tickets.list",
+              method: "GET",
+              path: "/",
+              access: {
+                roles: ["support"],
+              },
+              handler: ({ principal }) => ({
+                body: { userId: principal.id },
+              }),
+            },
+          ],
+        },
+      },
+    ],
+  });
+
+  const response = await runtime.plain({
+    url: "/tickets",
+    headers: { "x-zelavis-user": "user_support" },
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body, { userId: "user_support" });
+});
+
 test("zelavisServer parses multipart payloads and preserves repeated response headers", async () => {
   const runtime = await zelavisServer({
     services: [

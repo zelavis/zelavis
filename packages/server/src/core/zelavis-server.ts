@@ -63,7 +63,9 @@ export async function zelavisServer<TService = unknown>(
     pathOverrides: options.pathOverrides,
   });
   const dispatch = createZelavisDispatcher(resolvedRoutes, {
+    authorize: options.authorize,
     onError: options.onError,
+    resolvePrincipal: options.resolvePrincipal,
   }) as ZelavisServerDispatchHandler<TService>;
   const fetch = createZelavisFetchHandler(
     dispatch,

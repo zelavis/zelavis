@@ -2,26 +2,30 @@
 title: CLI
 ---
 
-`@zelavis/cli` provides command-line tools for bootstrapping, developing, and
-operating Zelavis apps.
+The public `zelavis` command starts and operates the long-running Platform OS.
+`@zelavis/cli` provides its reusable endpoint-backed command implementation.
 
-Use the CLI through a package runner when you do not want to install it globally:
+Install the Platform package to get the complete command, including `serve`:
 
 ```bash
-pnpm dlx @zelavis/cli --help
-npx @zelavis/cli --help
-bunx @zelavis/cli --help
+npm install --global zelavis
+zelavis --help
 ```
 
-The package exposes a `zelavis` binary, so installed projects can also run:
+Operating-system packages expose the same executable without requiring a global
+Node installation:
 
 ```bash
-zelavis --help
+zelavis serve
 ```
 
 ## Commands
 
-- [Bootstrap](./bootstrap.md) - create framework-specific Zelavis endpoints for existing apps.
+- `serve` starts the Platform runtime and dashboard.
+- `services list` lists service registry entries.
+- `services register` registers an ESM service specifier.
+- `services install` activates a registered service.
+- `services disable` returns a service to the available state.
 
 ## Runtime Operations
 
@@ -32,8 +36,12 @@ application code passing service toggles into `new Zelavis(...)`.
 
 Adapter-specific behavior should stay behind adapter boundaries. The CLI can
 ship first-party commands for supported adapters, but concrete host mechanics
-such as local file caches, Cloudflare worker dispatch, or serverless deployment
-hooks should live in adapter modules that the CLI orchestrates.
+such as local file caches or future Deno runtime setup should live in adapter
+modules that the CLI orchestrates.
+
+Framework bootstrap commands are intentionally absent. Zelavis is installed as
+a long-running Platform OS; framework bindings are adapters and provider
+capabilities are plugins rather than hosts for the Platform itself.
 
 Runtime service management is available through the `services` command group:
 

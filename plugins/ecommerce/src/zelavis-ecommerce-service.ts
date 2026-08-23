@@ -37,135 +37,6 @@ function readBodyObject(body: unknown): Record<string, unknown> {
   return body as Record<string, unknown>;
 }
 
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (character) => {
-    switch (character) {
-      case "&":
-        return "&amp;";
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case '"':
-        return "&quot;";
-      default:
-        return "&#39;";
-    }
-  });
-}
-
-function createServiceDocumentPage(options: {
-  title: string;
-  eyebrow: string;
-  description: string;
-  sections: readonly { title: string; detail: string }[];
-}) {
-  const escapedTitle = escapeHtml(options.title);
-  const escapedEyebrow = escapeHtml(options.eyebrow);
-  const escapedDescription = escapeHtml(options.description);
-  const sections = options.sections
-    .map(
-      (section) => `
-        <article class="card">
-          <h2>${escapeHtml(section.title)}</h2>
-          <p>${escapeHtml(section.detail)}</p>
-        </article>
-      `,
-    )
-    .join("");
-
-  return {
-    html: `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>${escapedTitle}</title>
-    <style>
-      :root {
-        color-scheme: light dark;
-        --bg: #ffffff;
-        --fg: #111827;
-        --muted: #6b7280;
-        --border: rgba(15, 23, 42, 0.12);
-        --panel: rgba(15, 23, 42, 0.03);
-      }
-
-      @media (prefers-color-scheme: dark) {
-        :root {
-          --bg: #0b1220;
-          --fg: #f8fafc;
-          --muted: #94a3b8;
-          --border: rgba(148, 163, 184, 0.22);
-          --panel: rgba(148, 163, 184, 0.08);
-        }
-      }
-
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        min-height: 100vh;
-        font: 16px/1.55 system-ui, sans-serif;
-        background: var(--bg);
-        color: var(--fg);
-      }
-      main {
-        width: min(1120px, calc(100vw - 32px));
-        margin: 0 auto;
-        padding: 28px 0 40px;
-      }
-      .eyebrow {
-        margin: 0 0 8px;
-        font-size: 12px;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: var(--muted);
-      }
-      h1 {
-        margin: 0;
-        font-size: clamp(2rem, 3vw, 2.8rem);
-        line-height: 1.05;
-      }
-      .description {
-        margin: 14px 0 0;
-        max-width: 68ch;
-        color: var(--muted);
-      }
-      .grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-        gap: 16px;
-        margin-top: 28px;
-      }
-      .card {
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        background: var(--panel);
-        padding: 16px;
-      }
-      .card h2 {
-        margin: 0 0 8px;
-        font-size: 1rem;
-      }
-      .card p {
-        margin: 0;
-        color: var(--muted);
-      }
-    </style>
-  </head>
-  <body>
-    <main>
-      <p class="eyebrow">${escapedEyebrow}</p>
-      <h1>${escapedTitle}</h1>
-      <p class="description">${escapedDescription}</p>
-      <section class="grid">${sections}</section>
-    </main>
-  </body>
-</html>`,
-  };
-}
-
 function readOptionalString(
   input: Record<string, unknown>,
   key: string,
@@ -449,31 +320,8 @@ export const zelavisEcommerceService = defineService<ZelavisServiceSetupContext>
     page: {
       id: "dashboard",
       title: "Commerce",
-      render() {
-        return createServiceDocumentPage({
-          title: "Ecommerce",
-          eyebrow: "Commerce",
-          description:
-            "Service-owned workspace area rendered through a full-document iframe, independent from the host dashboard framework.",
-          sections: [
-            {
-              title: "Catalog",
-              detail:
-                "Products, prices, and catalog workflows stay inside the service document.",
-            },
-            {
-              title: "Orders",
-              detail:
-                "Operational screens can use any frontend stack without leaking styles into Zelavis.",
-            },
-            {
-              title: "Providers",
-              detail:
-                "Payment and shipping services can grow under this service-owned area later.",
-            },
-          ],
-        });
-      },
+      bundle: "dashboard",
+      file: "dashboard.html",
     },
     items: [
       {
@@ -482,26 +330,8 @@ export const zelavisEcommerceService = defineService<ZelavisServiceSetupContext>
         page: {
           id: "products",
           title: "Products",
-          render() {
-            return createServiceDocumentPage({
-              title: "Products",
-              eyebrow: "Commerce",
-              description:
-                "A standalone service page can own product tooling, previews, scripts, and styles without React coupling.",
-              sections: [
-                {
-                  title: "Product table",
-                  detail:
-                    "The service can render its own listing UI, filters, and creation flows.",
-                },
-                {
-                  title: "Design freedom",
-                  detail:
-                    "This page is a real document, so plain HTML, React, Vue, or web components all stay valid.",
-                },
-              ],
-            });
-          },
+          bundle: "dashboard",
+          file: "products.html",
         },
       },
       {
@@ -510,26 +340,8 @@ export const zelavisEcommerceService = defineService<ZelavisServiceSetupContext>
         page: {
           id: "orders",
           title: "Orders",
-          render() {
-            return createServiceDocumentPage({
-              title: "Orders",
-              eyebrow: "Commerce",
-              description:
-                "Order workflows can stay completely service-owned while still living inside the Zelavis workspace shell.",
-              sections: [
-                {
-                  title: "Drafts",
-                  detail:
-                    "Draft creation, fulfillment, and payment tracking can be handled inside the service document.",
-                },
-                {
-                  title: "Isolation",
-                  detail:
-                    "The iframe boundary prevents CSS and runtime collisions with the host dashboard.",
-                },
-              ],
-            });
-          },
+          bundle: "dashboard",
+          file: "orders.html",
         },
       },
       {
@@ -541,21 +353,8 @@ export const zelavisEcommerceService = defineService<ZelavisServiceSetupContext>
             page: {
               id: "customers",
               title: "Customers",
-              render() {
-                return createServiceDocumentPage({
-                  title: "Customers",
-                  eyebrow: "Commerce",
-                  description:
-                    "Customer records and related workflows can evolve independently from host dashboard internals.",
-                  sections: [
-                    {
-                      title: "Profiles",
-                      detail:
-                        "Customer profile views, notes, and account linking can be handled in service space.",
-                    },
-                  ],
-                });
-              },
+              bundle: "dashboard",
+              file: "customers.html",
             },
           },
           {
@@ -564,21 +363,8 @@ export const zelavisEcommerceService = defineService<ZelavisServiceSetupContext>
             page: {
               id: "coupons",
               title: "Coupons",
-              render() {
-                return createServiceDocumentPage({
-                  title: "Coupons",
-                  eyebrow: "Commerce",
-                  description:
-                    "Promotions and rule editors can ship as a standalone document without needing shared dashboard CSS classes.",
-                  sections: [
-                    {
-                      title: "Discount rules",
-                      detail:
-                        "Coupon editors, previews, and validation UI all stay fully service-owned.",
-                    },
-                  ],
-                });
-              },
+              bundle: "dashboard",
+              file: "coupons.html",
             },
           },
         ],

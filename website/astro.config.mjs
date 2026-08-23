@@ -4,7 +4,7 @@ import starlight from '@astrojs/starlight';
 
 // https://astro.build/config
 export default defineConfig({
-  site: 'https://www.zelavis.com',
+  site: 'https://zelavis.com',
   integrations: [
       starlight({
           title: 'Zelavis Docs',
@@ -12,11 +12,11 @@ export default defineConfig({
           description: 'Composable backend platform for self-hostable app foundations.',
           favicon: '/favicon.svg',
           head: [
-              { tag: 'meta', attrs: { property: 'og:image', content: 'https://www.zelavis.com/brand/zelavis-social-card.png' } },
+              { tag: 'meta', attrs: { property: 'og:image', content: 'https://zelavis.com/brand/zelavis-social-card.png' } },
               { tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },
               { tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
               { tag: 'meta', attrs: { property: 'og:image:alt', content: 'Zelavis logo and wordmark' } },
-              { tag: 'meta', attrs: { name: 'twitter:image', content: 'https://www.zelavis.com/brand/zelavis-social-card.png' } },
+              { tag: 'meta', attrs: { name: 'twitter:image', content: 'https://zelavis.com/brand/zelavis-social-card.png' } },
               { tag: 'meta', attrs: { name: 'twitter:image:alt', content: 'Zelavis logo and wordmark' } },
           ],
           social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/zelavis/zelavis' }],

@@ -12,7 +12,6 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
-  PageHeader,
   ResourceNotice,
   StatCard,
   StatusBadge,
@@ -23,7 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import {
   deleteStorageFile,
-  getRuntimeConfig,
+  getActiveRuntimeConfig,
   getResolvedDashboardPreferences,
   getStorageFileMetadata,
   getStorageFileUrl,
@@ -33,6 +32,7 @@ import {
   updateDashboardSettings,
   uploadStorageFile,
 } from "#/lib/runtime-api";
+import { toProjectPath } from "#/lib/routing";
 import { parseAsString, useTypedSearchParams } from "#/lib/use-typed-search-params";
 import type { clientLoader as rootClientLoader } from '../root';
 import type { Route } from './+types/media';
@@ -43,7 +43,7 @@ export const handle = {
 } as const;
 
 export async function clientLoader({ request }: Route.ClientLoaderArgs) {
-  const runtime = await getRuntimeConfig();
+  const runtime = await getActiveRuntimeConfig(request);
   const storageEnabled = runtime.services.some((s) => s.name === "@zelavis/storage");
   const url = new URL(request.url);
   const prefix = url.searchParams.get('prefix') || undefined;
@@ -417,19 +417,14 @@ function MediaRoute() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Media"
-        title="Media Gallery"
-        description="Editor-facing asset management built on the same Zelavis storage core. Upload visuals, browse reusable files, and hand off structured references when the lower-level storage panel is needed."
-        actions={
-          <Link
-            to="/storage"
-            className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
-          >
-            Open Core Storage
-          </Link>
-        }
-      />
+      <div className="flex justify-end">
+        <Link
+          to={toProjectPath("/storage")}
+          className={cn(buttonVariants({ variant: "outline" }))}
+        >
+          Open Backend Storage
+        </Link>
+      </div>
 
       {!storageEnabled ? (
         <ResourceNotice
@@ -618,7 +613,6 @@ function MediaRoute() {
               <div className="flex flex-wrap items-center gap-2">
                 <Button
                   type="button"
-                  size="sm"
                   variant="outline"
                   onClick={() => setSelectedPaths(orderedFiles.map((file) => file.path))}
                   disabled={orderedFiles.length === 0}
@@ -628,7 +622,6 @@ function MediaRoute() {
                 </Button>
                 <Button
                   type="button"
-                  size="sm"
                   variant="outline"
                   onClick={() => setSelectedPaths([])}
                   disabled={selectedPaths.length === 0}
@@ -637,7 +630,6 @@ function MediaRoute() {
                 </Button>
                 <Button
                   type="button"
-                  size="sm"
                   variant="outline"
                   onClick={handleCopySelectedUrls}
                   disabled={selectedPaths.length === 0}
@@ -647,7 +639,6 @@ function MediaRoute() {
                 </Button>
                 <Button
                   type="button"
-                  size="sm"
                   variant="outline"
                   onClick={handleCopySelectedReferences}
                   disabled={selectedPaths.length === 0}
@@ -657,7 +648,6 @@ function MediaRoute() {
                 </Button>
                 <Button
                   type="button"
-                  size="sm"
                   variant="outline"
                   onClick={handleDeleteSelected}
                   disabled={selectedPaths.length === 0 || busy}
@@ -771,11 +761,11 @@ function MediaRoute() {
                   <p>Purpose: {selectedAsset.metadata?.purpose ?? "Not set"}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Button type="button" variant="outline" size="sm" onClick={handleCopyUrl}>
+                  <Button type="button" variant="outline" onClick={handleCopyUrl}>
                     <Copy className="size-4" />
                     Copy URL
                   </Button>
-                  <Button type="button" variant="outline" size="sm" onClick={handleCopyReference}>
+                  <Button type="button" variant="outline" onClick={handleCopyReference}>
                     <Copy className="size-4" />
                     Copy Reference
                   </Button>
@@ -784,7 +774,7 @@ function MediaRoute() {
                       href={getStorageFileUrl(config, selectedAsset.path)}
                       target="_blank"
                       rel="noreferrer"
-                      className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+                      className={cn(buttonVariants({ variant: "outline" }))}
                     >
                       <ExternalLink className="size-4" />
                       Open File

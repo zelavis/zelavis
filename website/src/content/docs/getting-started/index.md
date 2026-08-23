@@ -3,13 +3,12 @@ title: Getting Started
 ---
 Use this section for first-contact setup and onboarding.
 
-Planned content:
+Current focus:
 
 - installation
 - first runtime
-- first database
-- first auth setup
-- dashboard development workflow
+- dashboard entry points
+- runtime defaults
 
 Guideline:
 

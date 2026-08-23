@@ -34,6 +34,9 @@ jobs:
       - name: Run workspace typechecks and Zelavis runtime tests
         run: pnpm ci:runtime
 
+      - name: Validate distribution contracts
+        run: pnpm distribution:test
+
   ui:
     name: Dashboard e2e
     runs-on: ubuntu-latest

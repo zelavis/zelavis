@@ -104,7 +104,7 @@ The storage service returns ready-to-use Zelavis file references.
 
 You can:
 
-1. upload a file through `/zelavis/storage` or the storage API
+1. upload a file through `/zelavis/projects/:projectId/storage` or the storage API
 2. copy the returned reference
 3. store that reference inside a database document field validated with `type: "file"`
 

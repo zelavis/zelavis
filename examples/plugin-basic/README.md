@@ -30,7 +30,7 @@ Start the Node.js example:
 pnpm --filter @zelavis/example-nodejs dev
 ```
 
-Open `http://localhost:3000/zelavis/marketplace`, then use **Upload service**:
+Open `http://localhost:3000/zelavis/projects/:projectId/marketplace`, then use **Upload service**:
 
 - Service package: select `dist/example-basic.zip`
 
@@ -52,4 +52,4 @@ field when you want to test path-based local imports directly.
 
 For production marketplace installs, the long-term contract is a package or URL
 specifier resolved by the host adapter. Node can cache packages locally, while
-serverless adapters should map installs to their own runtime activation boundary.
+local runtime adapters should map installs to their own service activation boundary.

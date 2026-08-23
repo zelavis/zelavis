@@ -66,7 +66,7 @@ pnpm install
 For end-to-end dashboard work, use:
 
 ```bash
-pnpm run ui:dev
+pnpm dev
 ```
 
 That starts:

@@ -4,7 +4,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { createDatabase } from "@zelavis/db";
-import { defineService, Zelavis, zelavis } from "../dist/index.js";
+import {
+  createInMemoryBundleStore,
+  defineService,
+  Zelavis,
+  zelavis,
+} from "../dist/index.js";
 import { zelavisEcommerceService } from "../../../plugins/ecommerce/dist/index.js";
 
 function createStoredZip(files) {
@@ -70,7 +75,14 @@ test("zelavis exposes fetch handlers without requiring a mount adapter", async (
   assert.equal(payload.api.basePath, "/zelavis/api/v1");
   assert.deepEqual(
     payload.services.map((service) => service.name),
-    ["@zelavis/ui", "@zelavis/db", "@zelavis/auth", "@zelavis/website"],
+    [
+      "@zelavis/ui",
+      "@zelavis/server",
+      "@zelavis/db",
+      "@zelavis/auth",
+      "@zelavis/website",
+      "@zelavis/workloads",
+    ],
   );
   assert.equal(payload.serviceRegistry[0].name, "@zelavis/ecommerce");
   assert.equal(payload.serviceRegistry[0].status, "available");
@@ -138,7 +150,7 @@ test("zelavis includes core services by default", async () => {
   // SPA deep-link: an unmatched client route is caught by `/zelavis/*path`
   // and falls back through `shell.render` to the same shell HTML.
   const settingsResponse = await runtime.fetch(
-    new Request("http://localhost/zelavis/settings"),
+    new Request("http://localhost/zelavis/projects/project-a/settings"),
   );
   assert.equal(settingsResponse.status, 200);
   const settingsBody = await settingsResponse.text();
@@ -201,7 +213,14 @@ test("zelavis includes core services by default", async () => {
   assert.equal(configResponse.body.api.basePath, "/zelavis/api/v1");
   assert.deepEqual(
     configResponse.body.services.map((service) => service.name),
-    ["@zelavis/ui", "@zelavis/db", "@zelavis/auth", "@zelavis/website"],
+    [
+      "@zelavis/ui",
+      "@zelavis/server",
+      "@zelavis/db",
+      "@zelavis/auth",
+      "@zelavis/website",
+      "@zelavis/workloads",
+    ],
   );
   assert.equal(configResponse.body.serviceRegistry.length, 1);
   assert.equal(configResponse.body.serviceRegistry[0].name, "@zelavis/ecommerce");
@@ -401,7 +420,27 @@ test("service registry install state controls service activation on boot", async
       order: 0,
     },
   ];
+  const encoder = new TextEncoder();
+  const bundleStore = createInMemoryBundleStore(
+    new Map([
+      [
+        "system/@zelavis/ecommerce/dashboard/dashboard.html",
+        {
+          body: encoder.encode("<!doctype html><title>Ecommerce</title><main>Commerce workspace</main>"),
+          contentType: "text/html; charset=utf-8",
+        },
+      ],
+      [
+        "system/@zelavis/ecommerce/dashboard/placeholder.css",
+        {
+          body: encoder.encode("main { display: grid; }"),
+          contentType: "text/css; charset=utf-8",
+        },
+      ],
+    ]),
+  );
   const runtime = await zelavis({
+    bundleStore,
     services: {
       entries: [
         {
@@ -437,24 +476,20 @@ test("service registry install state controls service activation on boot", async
   assert.equal(config.serviceRegistry[0].status, "installed");
   assert.equal(
     config.serviceRegistry[0].menu.page.src,
-    "/zelavis/api/v1/runtime/service-pages/%40zelavis%2Fecommerce/dashboard",
+    "/zelavis/api/v1/runtime/service-page-assets/%40zelavis%2Fecommerce/dashboard/dashboard.html",
   );
   assert.ok(config.services.some((service) => service.name === "commerce"));
 
   const servicePageResponse = await runtime.fetch(
     new Request(
-      "http://localhost/zelavis/api/v1/runtime/service-pages/%40zelavis%2Fecommerce/dashboard",
+      "http://localhost/zelavis/api/v1/runtime/service-page-assets/%40zelavis%2Fecommerce/dashboard/dashboard.html",
     ),
   );
   const servicePage = await servicePageResponse.text();
 
   assert.equal(servicePageResponse.status, 200);
-  assert.match(
-    servicePageResponse.headers.get("content-type"),
-    /text\/html/,
-  );
-  assert.match(servicePage, /<!doctype html>/i);
-  assert.match(servicePage, /<title>Ecommerce<\/title>/);
+  assert.match(servicePageResponse.headers.get("content-type"), /text\/html/);
+  assert.match(servicePage, /Commerce workspace/);
 });
 
 test("dashboard service registry can register ESM service sources", async () => {
@@ -527,6 +562,86 @@ test("dashboard service registry can register ESM service sources", async () => 
   assert.equal(uploadedService.status, "installed");
   assert.equal(uploadedService.specifier, specifier);
   assert.equal(uploadedService.menu.path, "/uploaded");
+});
+
+test("service dashboard pages can be static HTML files from service bundles", async () => {
+  const encoder = new TextEncoder();
+  const service = defineService({
+    name: "@example/static-pages",
+    menu: {
+      title: "Static Pages",
+      path: "/static-pages",
+      page: {
+        id: "settings",
+        title: "Settings",
+        file: "settings.html",
+      },
+    },
+  });
+  const bundleStore = createInMemoryBundleStore(
+    new Map([
+      [
+        "system/@example/static-pages/dist/settings.html",
+        {
+          body: encoder.encode(
+            '<!doctype html><html><body><main>Static settings page</main><script type="module" src="./settings.js"></script></body></html>',
+          ),
+          contentType: "text/html; charset=utf-8",
+        },
+      ],
+      [
+        "system/@example/static-pages/dist/settings.js",
+        {
+          body: encoder.encode("export const ok = true;"),
+          contentType: "text/javascript; charset=utf-8",
+        },
+      ],
+    ]),
+  );
+  const runtime = await zelavis({
+    bundleStore,
+    services: {
+      entries: [
+        {
+          service,
+          status: "installed",
+        },
+      ],
+    },
+  });
+
+  const configResponse = await runtime.fetch(
+    new Request("http://localhost/zelavis/api/v1/runtime/config"),
+  );
+  const config = await configResponse.json();
+
+  assert.equal(config.serviceRegistry[0].menu.page.file, "settings.html");
+  assert.equal(
+    config.serviceRegistry[0].menu.page.src,
+    "/zelavis/api/v1/runtime/service-page-assets/%40example%2Fstatic-pages/dist/settings.html",
+  );
+
+  const response = await runtime.fetch(
+    new Request(
+      "http://localhost/zelavis/api/v1/runtime/service-page-assets/%40example%2Fstatic-pages/dist/settings.html",
+    ),
+  );
+  const html = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type"), /text\/html/);
+  assert.match(html, /Static settings page/);
+
+  const scriptResponse = await runtime.fetch(
+    new Request(
+      "http://localhost/zelavis/api/v1/runtime/service-page-assets/%40example%2Fstatic-pages/dist/settings.js",
+    ),
+  );
+  const script = await scriptResponse.text();
+
+  assert.equal(scriptResponse.status, 200);
+  assert.match(scriptResponse.headers.get("content-type"), /javascript/);
+  assert.match(script, /ok = true/);
 });
 
 test("dashboard service upload derives metadata from the selected module", async () => {
@@ -668,11 +783,12 @@ test("node adapter resolves uploaded service paths through its service cache imp
           menu: {
             title: "Node Uploaded",
             path: "/node-uploaded",
-            page: {
-              id: "dashboard",
-              title: "Node Uploaded",
-              render: () => "<!doctype html><html><head><title>Node Uploaded</title></head><body><main>Node uploaded service page</main></body></html>"
-            }
+            items: [
+              {
+                title: "Settings",
+                path: "/node-uploaded/settings"
+              }
+            ]
           },
           setup() {
             return {
@@ -731,15 +847,18 @@ test("node adapter resolves uploaded service paths through its service cache imp
     assert.equal(healthResponse.status, 200);
     assert.deepEqual(health, { ok: true, source: "node-service-cache" });
 
-    const servicePageResponse = await app.fetch(
-      new Request(
-        "http://localhost/zelavis/api/v1/runtime/service-pages/%40example%2Fnode-uploaded-service/dashboard",
-      ),
+    const configResponse = await app.fetch(
+      new Request("http://localhost/zelavis/api/v1/runtime/config"),
     );
-    const servicePage = await servicePageResponse.text();
+    const config = await configResponse.json();
+    const uploadedMenu = config.serviceRegistry.find(
+      (entry) => entry.name === "@example/node-uploaded-service",
+    )?.menu;
 
-    assert.equal(servicePageResponse.status, 200);
-    assert.match(servicePage, /Node uploaded service page/);
+    assert.equal(uploadedMenu.path, "/node-uploaded");
+    assert.equal(uploadedMenu.page, undefined);
+    assert.equal(uploadedMenu.items[0].path, "/node-uploaded/settings");
+    assert.equal(uploadedMenu.items[0].page, undefined);
   } finally {
     await rm(tempDirectory, { recursive: true, force: true });
   }
@@ -883,6 +1002,18 @@ test("zelavis can disable the dashboard core service", async () => {
   assert.ok(
     runtime.routes.every((route) => !route.route.id.startsWith("dashboard.")),
   );
+
+  const configResponse = await runtime.fetch(
+    new Request("http://localhost/zelavis/api/v1/runtime/config"),
+  );
+  assert.equal(configResponse.status, 200);
+  const config = await configResponse.json();
+  assert.ok(!config.services.some((service) => service.name === "@zelavis/ui"));
+  assert.equal(
+    config.services.find((service) => service.name === "@zelavis/db")?.menu
+      ?.title,
+    "Database",
+  );
 });
 
 test("zelavis uses a configurable root path for dashboard and APIs", async () => {
@@ -989,14 +1120,14 @@ test("zelavis can redirect dashboard routes to a UI dev server", async () => {
   });
 
   const settingsResponse = await runtime.fetch(
-    new Request("http://localhost/zelavis/settings?tab=auth", {
+    new Request("http://localhost/zelavis/projects/project-a/settings?tab=auth", {
       redirect: "manual",
     }),
   );
   assert.equal(settingsResponse.status, 307);
   assert.equal(
     settingsResponse.headers.get("location"),
-    "http://127.0.0.1:3001/settings?tab=auth",
+    "http://127.0.0.1:3001/projects/project-a/settings?tab=auth",
   );
 
   const nestedResponse = await runtime.fetch(
@@ -1009,6 +1140,14 @@ test("zelavis can redirect dashboard routes to a UI dev server", async () => {
     nestedResponse.headers.get("location"),
     "http://127.0.0.1:3001/nested/panel",
   );
+
+  const apiResponse = await runtime.fetch(
+    new Request("http://localhost/zelavis/api/v1/runtime/config", {
+      redirect: "manual",
+    }),
+  );
+  assert.equal(apiResponse.status, 200);
+  assert.equal(apiResponse.headers.get("location"), null);
 
   // No per-asset routes are registered when the dev server short-circuit
   // is active — the synthesized `/zelavis/*path` route handles everything.
@@ -1038,29 +1177,59 @@ test("zelavis preserves a mounted dev-server dashboard base path", async () => {
   );
 
   const settingsResponse = await runtime.fetch(
-    new Request("http://localhost/zelavis/settings?tab=auth", {
+    new Request("http://localhost/zelavis/projects/project-a/settings?tab=auth", {
       redirect: "manual",
     }),
   );
   assert.equal(settingsResponse.status, 307);
   assert.equal(
     settingsResponse.headers.get("location"),
-    "http://127.0.0.1:3001/zelavis/settings?tab=auth",
+    "http://127.0.0.1:3001/zelavis/projects/project-a/settings?tab=auth",
   );
 });
 
-test("zelavis can disable all core services", async () => {
+test("zelavis keeps the Platform server when optional mounted services are disabled", async () => {
   const runtime = await zelavis({
     coreServices: {
       auth: false,
       dashboard: false,
       database: false,
       website: false,
+      workloads: false,
     },
   });
 
-  assert.deepEqual(runtime.services, {});
-  assert.equal(runtime.routes.length, 0);
+  assert.deepEqual(Object.keys(runtime.services), ["@zelavis/server"]);
+  assert.deepEqual(
+    runtime.routes.map((route) => route.route.id),
+    [
+      "runtime.config",
+      "runtime.services.read",
+      "runtime.services.create",
+      "runtime.service-page-asset.read",
+      "runtime.services.update",
+      "runtime.settings.read",
+      "runtime.settings.update",
+      "runtime.access",
+      "runtime.blueprints.list",
+      "runtime.assistant.threads.list",
+      "runtime.assistant.threads.create",
+      "runtime.assistant.threads.get",
+      "runtime.assistant.messages.create",
+      "runtime.projects.list",
+      "runtime.projects.create",
+      "runtime.projects.get",
+      "runtime.projects.start",
+      "runtime.projects.stop",
+      "runtime.projects.logs",
+      "runtime.projects.proxy.get",
+      "runtime.projects.proxy.post",
+      "runtime.projects.proxy.put",
+      "runtime.projects.proxy.patch",
+      "runtime.projects.proxy.delete",
+      "runtime.projects.remove",
+    ],
+  );
 });
 
 test("zelavis does not duplicate an explicitly provided database service", async () => {
@@ -1083,13 +1252,16 @@ test("zelavis does not duplicate an explicitly provided database service", async
       auth: false,
       dashboard: false,
       website: false,
+      workloads: false,
     },
     runtimeServices: [databaseService],
   });
 
   assert.equal(runtime.services["@zelavis/db"].service.custom, true);
-  assert.equal(runtime.routes.length, 1);
-  assert.equal(runtime.routes[0].route.id, "custom.database");
+  assert.equal(
+    runtime.routes.filter((route) => route.route.id === "custom.database").length,
+    1,
+  );
 });
 
 test("zelavis does not duplicate an explicitly provided auth service", async () => {
@@ -1112,13 +1284,16 @@ test("zelavis does not duplicate an explicitly provided auth service", async () 
       dashboard: false,
       database: false,
       website: false,
+      workloads: false,
     },
     runtimeServices: [authService],
   });
 
   assert.equal(runtime.services["@zelavis/auth"].service.custom, true);
-  assert.equal(runtime.routes.length, 1);
-  assert.equal(runtime.routes[0].route.id, "custom.auth");
+  assert.equal(
+    runtime.routes.filter((route) => route.route.id === "custom.auth").length,
+    1,
+  );
 });
 
 test("zelavis can provide public website pages as a core service", async () => {

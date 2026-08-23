@@ -298,6 +298,83 @@ test("database schemas can validate file reference fields natively", async () =>
   );
 });
 
+test("database schema validation supports the expanded field catalog", async () => {
+  const database = await createDatabase({
+    schemas: [
+      {
+        collection: "articles",
+        version: 1,
+        activate: true,
+        fields: [
+          { name: "title", field: { _tag: "TextField", label: "Title", required: true, minLength: 3 } },
+          { name: "slug", field: { _tag: "SlugField", label: "Slug", required: true } },
+          { name: "status", field: { _tag: "SelectField", label: "Status", required: true, options: ["draft", "published"] } },
+          { name: "tags", field: { _tag: "MultiSelectField", label: "Tags", required: false, options: ["news", "guide"], maxItems: 2 } },
+          { name: "views", field: { _tag: "IntegerField", label: "Views", required: true, min: 0 } },
+          { name: "publishedAt", field: { _tag: "DateTimeField", label: "Published At", required: true } },
+          { name: "canonicalUrl", field: { _tag: "UrlField", label: "Canonical URL", required: false } },
+          { name: "author", field: { _tag: "ReferenceField", label: "Author", required: true, collection: "authors" } },
+          { name: "metadata", field: { _tag: "JsonField", label: "Metadata", required: false } },
+          { name: "sections", field: { _tag: "RepeaterField", label: "Sections", required: false, minItems: 1, fields: [
+            { name: "heading", field: { _tag: "TextField", label: "Heading", required: true } },
+          ] } },
+        ],
+      },
+    ],
+  });
+
+  const valid = database.schemas.validate("articles", {
+    title: "Hello",
+    slug: "hello-world",
+    status: "published",
+    tags: ["news"],
+    views: 10,
+    publishedAt: "2026-01-01T00:00:00.000Z",
+    canonicalUrl: "https://example.com/hello-world",
+    author: { collection: "authors", id: "author_1" },
+    metadata: { featured: true },
+    sections: [{ heading: "Intro" }],
+  });
+
+  assert.equal(valid.valid, true);
+
+  const baseDocument = {
+    title: "Hello",
+    slug: "hello-world",
+    status: "published",
+    tags: ["news"],
+    views: 10,
+    publishedAt: "2026-01-01T00:00:00.000Z",
+    canonicalUrl: "https://example.com/hello-world",
+    author: { collection: "authors", id: "author_1" },
+    metadata: { featured: true },
+    sections: [{ heading: "Intro" }],
+  };
+  const invalidCases = [
+    ["title", { title: "Hi" }],
+    ["slug", { slug: "Hello World" }],
+    ["status", { status: "archived" }],
+    ["tags", { tags: ["news", "guide", "extra"] }],
+    ["views", { views: 1.5 }],
+    ["publishedAt", { publishedAt: "not-a-date" }],
+    ["canonicalUrl", { canonicalUrl: "nope" }],
+    ["author", { author: { collection: "users", id: "author_1" } }],
+    ["sections", { sections: [] }],
+  ];
+
+  for (const [fieldName, patch] of invalidCases) {
+    const invalid = database.schemas.validate("articles", {
+      ...baseDocument,
+      ...patch,
+    });
+    assert.equal(invalid.valid, false, `${fieldName} should be invalid`);
+    assert.ok(
+      invalid.issues.some((issue) => issue.path.includes(fieldName)),
+      `${fieldName} should report a field-scoped issue`,
+    );
+  }
+});
+
 test("database deduplicates repeated event appends by idempotency key", async () => {
   const database = await createDatabase();
 
@@ -633,4 +710,3 @@ test("parseWriteTargetTable extracts table names from DML and DDL write statemen
   assert.equal(parseWriteTargetTable("CREATE TABLE products (id TEXT)"), null);
   assert.equal(parseWriteTargetTable("PRAGMA table_info(products)"), null);
 });
-

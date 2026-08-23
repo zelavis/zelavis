@@ -12,6 +12,9 @@ dist/
 build/
 coverage/
 *.tsbuildinfo
+/distribution/.cache/
+/distribution/.tmp/
+/distribution/artifacts/
 
 # Logs
 *.log

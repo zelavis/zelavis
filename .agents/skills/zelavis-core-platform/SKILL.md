@@ -16,20 +16,27 @@ Start by reading `AGENTS.md` and the relevant package README before editing.
 
 ## Working rules
 
-- Treat `zelavis()` as the main runtime entrypoint.
+- Treat `new Zelavis(...)` as the public application/runtime entrypoint.
+- Treat `zelavis()` as a lower-level internal composition helper.
 - Keep core packages runtime-neutral and based on standard Web APIs.
 - Put framework or host behavior only in `adapters/*`.
 - Put optional provider or domain capabilities only in `plugins/*`.
+- Keep Zelavis runtime targets to self-hosted Node.js, Bun, and future Deno; do not add serverless function platforms as runtime targets.
+- Let optional provider plugins connect external deployment, storage, DNS, CDN, email, images, or hosting services without making those providers the core architecture.
 - Prefer tightening exports over broad `export *` surfaces.
 - Preserve the service model; do not invent a parallel composition pattern.
+- Everything Zelavis can do must be reachable through a stable server capability and endpoint. The dashboard is a client, not the authority layer.
+- Do not implement platform behavior only in UI routes, framework server actions, local component state, or dashboard-only helpers.
 
 ## Design checklist
 
 1. Start from the public API and package boundary.
 2. Decide whether the change belongs in core, an adapter, or a plugin.
-3. Keep defaults ergonomic, but leave escape hatches.
-4. Update the nearest README when public behavior changes.
-5. Add or update focused tests in the affected package.
+3. Define the domain capability before the transport or dashboard surface.
+4. Expose dashboard-available operations through versioned service endpoints so CLI, AI agents, scripts, plugins, and external admin tools can call them too.
+5. Keep defaults ergonomic, but leave escape hatches.
+6. Update the nearest README when public behavior changes.
+7. Add or update focused tests in the affected package.
 
 ## Validation
 

@@ -12,7 +12,7 @@ An official service package is a top-level Zelavis service:
 - installable through the Zelavis service system
 - visible in the dashboard/service registry
 - able to mount runtime services and API routes
-- packaged as a normal workspace package
+- packaged as a normal monorepo package
 
 Example:
 
@@ -46,7 +46,7 @@ An official service package may expose child services.
   - use the normal `defineService(...)` builder
   - declare `extends: "@zelavis/ecommerce"`
 
-That child service metadata is for extending the ecommerce domain itself, such as payment providers. A child service can be installed through the same registry, but it activates through its parent service instead of appearing as an independent top-level workspace service.
+That child service metadata is for extending the ecommerce domain itself, such as payment providers. A child service can be installed through the same registry, but it activates through its parent service instead of appearing as an independent top-level Extensions service.
 
 Parent services declare accepted children with `childServices`. `zelavis-ecommerce` currently allows the official Stripe and PayPal child services. Child service `marketplace.categories` are interpreted inside the parent service's child marketplace.
 

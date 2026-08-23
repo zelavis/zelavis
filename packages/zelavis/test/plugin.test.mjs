@@ -669,25 +669,25 @@ test("activateServiceRegistry exposes standard platform context to service setup
     },
     core: {},
     platform: {
-      presets: ["cloudflare", "d1"],
+      presets: ["node", "libsql"],
       resources: {
         keyValueStore: true,
         fileStorage: false,
       },
       metadata: {
-        deployment: "edge",
+        deployment: "self-hosted",
       },
     },
   });
 
   assert.deepEqual(seenPlatform, {
-    presets: ["cloudflare", "d1"],
+    presets: ["node", "libsql"],
     resources: {
       keyValueStore: true,
       fileStorage: false,
     },
     metadata: {
-      deployment: "edge",
+      deployment: "self-hosted",
     },
   });
 });

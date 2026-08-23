@@ -15,9 +15,8 @@ This package is intended to stay provider-centric rather than platform-centric.
 Use one Stripe service package across:
 
 - Node.js servers
-- serverless environments
 - fetch-based runtimes
-- worker-style runtimes that can provide compatible HTTP support
+- self-hosted runtimes that can provide compatible HTTP support
 
 The service supports this by allowing either:
 

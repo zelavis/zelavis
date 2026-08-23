@@ -11,8 +11,10 @@ pnpm --filter @zelavis/example-nodejs dev
 Then open:
 
 - `http://localhost:3000/zelavis`
-- `http://localhost:3000/zelavis/media`
-- `http://localhost:3000/zelavis/storage`
+- `http://localhost:3000/zelavis/projects/:projectId`
+- `http://localhost:3000/zelavis/projects/:projectId/media`
+- `http://localhost:3000/zelavis/projects/:projectId/storage`
+- `http://localhost:3000/zelavis/server/domains`
 
 ## Why this example matters
 
@@ -24,7 +26,7 @@ Then open:
 
 Once the runtime is running:
 
-1. upload a file from `/zelavis/storage`
+1. upload a file from `/zelavis/projects/:projectId/storage`
 2. copy the file reference JSON
 3. use that reference in a database document schema field validated with `imageFileSchema(...)` or `fileSchema(...)`
 
@@ -37,7 +39,7 @@ pnpm --filter @zelavis/example-plugin-basic package
 pnpm --filter @zelavis/example-nodejs dev
 ```
 
-Open `http://localhost:3000/zelavis/marketplace`, select
+Open `http://localhost:3000/zelavis/projects/:projectId/marketplace`, select
 `examples/plugin-basic/dist/example-basic.zip` in **Upload service**, then install
 it from **Uploaded sources**.
 

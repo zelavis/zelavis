@@ -1,0 +1,82 @@
+import Database from "better-sqlite3";
+import { mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import {
+  type ZelavisSystemStore,
+  type ZelavisSystemStoreRecord,
+  type ZelavisSystemStoreValue,
+} from "../system-store.js";
+
+export interface LocalSqliteSystemStoreOptions {
+  filename: string;
+}
+
+export function createLocalSqliteSystemStore(
+  options: LocalSqliteSystemStoreOptions,
+): ZelavisSystemStore {
+  const filename = resolve(options.filename);
+  mkdirSync(dirname(filename), { recursive: true });
+  const database = new Database(filename);
+
+  database.pragma("journal_mode = WAL");
+  database.pragma("foreign_keys = ON");
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS zelavis_system_records (
+      namespace TEXT NOT NULL,
+      record_key TEXT NOT NULL,
+      value_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (namespace, record_key)
+    )
+  `);
+
+  const readStatement = database.prepare(
+    "SELECT namespace, record_key, value_json, updated_at FROM zelavis_system_records WHERE namespace = ? AND record_key = ?",
+  );
+  const listStatement = database.prepare(
+    "SELECT namespace, record_key, value_json, updated_at FROM zelavis_system_records WHERE namespace = ? ORDER BY record_key",
+  );
+  const writeStatement = database.prepare(`
+    INSERT INTO zelavis_system_records (namespace, record_key, value_json, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(namespace, record_key) DO UPDATE SET
+      value_json = excluded.value_json,
+      updated_at = excluded.updated_at
+  `);
+  const deleteStatement = database.prepare(
+    "DELETE FROM zelavis_system_records WHERE namespace = ? AND record_key = ?",
+  );
+
+  function toRecord(row: unknown): ZelavisSystemStoreRecord {
+    const value = row as {
+      namespace: string;
+      record_key: string;
+      value_json: string;
+      updated_at: string;
+    };
+    return {
+      namespace: value.namespace,
+      key: value.record_key,
+      value: JSON.parse(value.value_json) as ZelavisSystemStoreValue,
+      updatedAt: value.updated_at,
+    };
+  }
+
+  return {
+    get(namespace, key) {
+      const row = readStatement.get(namespace, key);
+      return row ? toRecord(row) : undefined;
+    },
+    set(namespace, key, value) {
+      const updatedAt = new Date().toISOString();
+      writeStatement.run(namespace, key, JSON.stringify(value), updatedAt);
+      return { namespace, key, value, updatedAt };
+    },
+    delete(namespace, key) {
+      return deleteStatement.run(namespace, key).changes > 0;
+    },
+    list(namespace) {
+      return listStatement.all(namespace).map(toRecord);
+    },
+  };
+}

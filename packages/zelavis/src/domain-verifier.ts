@@ -28,10 +28,9 @@
  *
  * **Runtime portability:** DNS and HTTP both have runtime-specific
  * APIs. We use injectable `DnsTxtResolver` + `fetch` so callers can
- * supply Node's `dns/promises`, Cloudflare's DNS-over-HTTPS, a mock
- * for tests, etc. The default resolver lazy-imports `node:dns/promises`
- * — available on Node 18+, Bun, and Deno; absent on Cloudflare
- * Workers (where the caller wires their own).
+ * supply Node's `dns/promises`, a DNS-over-HTTPS resolver, a mock for tests,
+ * etc. The default resolver lazy-imports `node:dns/promises` — available on
+ * Node 18+, Bun, and future Deno support.
  */
 
 import type { ZelavisRuntimeService, ZelavisServerRoute } from "@zelavis/server";
@@ -47,7 +46,7 @@ type NodeDnsPromisesModule = {
 /**
  * Minimal DNS-TXT resolver interface. Mirrors the shape of Node's
  * `dns.promises.resolveTxt` so the default implementation is a thin
- * passthrough; other backends (DoH on Workers, a mock in tests) just
+ * passthrough; other backends (DoH, a mock in tests) just
  * have to produce the same array-of-strings shape.
  *
  * Implementations should throw on DNS lookup failure (`ENOTFOUND`,
@@ -67,7 +66,7 @@ export interface DnsTxtResolver {
 /**
  * Default Node-based resolver. Lazy-loads `node:dns/promises` on first
  * call so this module remains importable in environments without
- * `node:` builtins (browsers, Workers). If the import fails, the
+ * `node:` builtins. If the import fails, the
  * resolver throws with a clear message pointing at the alternative
  * (inject your own).
  */

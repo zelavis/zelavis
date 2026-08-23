@@ -116,8 +116,14 @@ interface AppHandlerOptions {
    */
   devUrl?: string;
   /**
+   * Mount-relative prefixes that should not redirect to `devUrl`. These paths
+   * fall through to normal runtime handling so reserved API namespaces stay
+   * reachable while a dashboard or app shell is served from a dev server.
+   */
+  devUrlExcludePaths?: readonly string[];
+  /**
    * Optional override resolved when the route handler executes; lets
-   * higher-level code (workspace context, dev-mode toggle) influence the
+   * higher-level code (tenant context, dev-mode toggle) influence the
    * scope at request time without re-synthesizing routes.
    */
   resolveScope?: (request: Request) => BundleScope | undefined;
@@ -151,6 +157,29 @@ function buildDevRedirect(
       "cache-control": "no-cache",
     },
   };
+}
+
+function normalizeDevExcludePath(path: string): string {
+  return path.replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+function isDevRedirectExcluded(
+  relativePath: string,
+  excludePaths: readonly string[] | undefined,
+): boolean {
+  if (!excludePaths || excludePaths.length === 0) {
+    return false;
+  }
+
+  const normalizedPath = normalizeDevExcludePath(relativePath);
+  return excludePaths.some((path) => {
+    const normalizedExclude = normalizeDevExcludePath(path);
+    return (
+      normalizedExclude.length > 0 &&
+      (normalizedPath === normalizedExclude ||
+        normalizedPath.startsWith(`${normalizedExclude}/`))
+    );
+  });
 }
 
 /**
@@ -214,6 +243,7 @@ function createAppAssetHandler(options: AppHandlerOptions) {
     mode,
     shell,
     devUrl,
+    devUrlExcludePaths,
   } = options;
 
   return async (context: {
@@ -252,7 +282,7 @@ function createAppAssetHandler(options: AppHandlerOptions) {
     // under the mount becomes a 307 redirect to the dev server. Bundle
     // store, shell renderer, and MPA resolution all sit out — the
     // browser talks to Vite/RR/Next directly so HMR works.
-    if (devUrl) {
+    if (devUrl && !isDevRedirectExcluded(relativePath, devUrlExcludePaths)) {
       const url = new URL(request.url);
       return buildDevRedirect(devUrl, relativePath, url.search);
     }
@@ -336,20 +366,20 @@ export interface SynthesizeServiceAppOptions {
   /** Bundle store the synthesized handlers will read from. */
   bundleStore: BundleStore;
   /**
-   * Workspace this service belongs to. Optional — undefined is treated as
+   * Project this service belongs to. Optional — undefined is treated as
    * system scope by the default `SharedBundleStore`.
    */
-  workspaceId?: string;
+  projectId?: string;
   /**
    * Override the effective mount path after scope-based rewriting. The
-   * caller (`activateServiceRegistry`) supplies this for workspace-scoped
+   * caller (`activateServiceRegistry`) supplies this for extension-scoped
    * services, which are forced under `/apps/<service-name>` regardless of
    * what their definition claims.
    */
   effectiveMount?: string;
   /**
-   * Domain bindings store. When set, workspace-scoped service apps can be
-   * host-bound to verified bindings owned by their workspace or by the
+   * Domain bindings store. When set, extension-scoped service apps can be
+   * host-bound to verified bindings owned by their project or by the
    * service itself. Concrete hostnames are runtime activation state, not
    * service metadata.
    */
@@ -361,12 +391,12 @@ export interface SynthesizeServiceAppOptions {
  * `undefined` if the service doesn't declare an `app`.
  *
  * Async because the domain-binding store lookups it does for
- * workspace services may be I/O-bound (KV / blob backends).
+ * extension services may be I/O-bound (KV / blob backends).
  */
 export async function synthesizeServiceAppService(
   options: SynthesizeServiceAppOptions,
 ): Promise<ZelavisRuntimeService | undefined> {
-  const { service, bundleStore, workspaceId, effectiveMount, domainBindings } =
+  const { service, bundleStore, projectId, effectiveMount, domainBindings } =
     options;
   const app = service.app;
   if (!app) {
@@ -378,15 +408,15 @@ export async function synthesizeServiceAppService(
   const mode = app.mode ?? "spa";
   const domainPolicy = app.domainPolicy ?? "optional";
 
-  // Gate workspace services behind verified runtime domain bindings.
+  // Gate extension services behind verified runtime domain bindings.
   // System services are trusted host-side code, so their synthesized
   // routes stay host-agnostic unless the host provides a narrower mount
   // through a future deployment adapter.
   let hosts: readonly string[] | undefined;
-  if (service.scope === "workspace") {
+  if (service.scope === "extension") {
     const authorized = await listAuthorizedHostsForService({
-      scope: "workspace",
-      workspaceId,
+      scope: "extension",
+      projectId,
       serviceName: service.name,
       domainBindings,
     });
@@ -399,11 +429,11 @@ export async function synthesizeServiceAppService(
 
   // Mount selection:
   //  - System services keep whatever mount they declared.
-  //  - Workspace services with verified host bindings serve their
+  //  - Extension services with verified host bindings serve their
   //    declared mount (typically "/") restricted to those hosts. The
   //    host itself provides namespace isolation, so no path-prefix
   //    rewrite is needed.
-  //  - Workspace services without verified hosts get the
+  //  - Extension services without verified hosts get the
   //    `/apps/<service-name>` namespaced mount on the shared host,
   //    where path-prefixing is the only thing preventing collisions.
   //
@@ -412,14 +442,14 @@ export async function synthesizeServiceAppService(
   let mount: string;
   if (effectiveMount !== undefined) {
     mount = effectiveMount;
-  } else if (service.scope === "workspace" && (!hosts || hosts.length === 0)) {
+  } else if (service.scope === "extension" && (!hosts || hosts.length === 0)) {
     mount = `/apps/${servicePathSegment(service.name)}`;
   } else {
     mount = app.mount ?? DEFAULT_MOUNT;
   }
 
   const scope: BundleScope = {
-    workspaceId,
+    projectId,
     serviceName: service.name,
     bundle,
   };
@@ -432,6 +462,7 @@ export async function synthesizeServiceAppService(
     mode,
     shell: app.shell,
     devUrl: app.devUrl,
+    devUrlExcludePaths: app.devUrlExcludePaths,
   });
 
   const routes: ZelavisServerRoute<unknown>[] = [
@@ -462,7 +493,7 @@ export async function synthesizeServiceAppService(
 }
 
 /**
- * Apply scope-based mount rewriting. Workspace-scoped services (uploaded
+ * Apply scope-based mount rewriting. Extension-scoped services (uploaded
  * ZIPs, marketplace installs) are corralled under `/apps/<service-name>`
  * regardless of what mount they declare, so a tenant can't squat a
  * reserved prefix like `/zelavis` or `/api`. System-scope services keep
@@ -475,6 +506,6 @@ export function resolveEffectiveMount(
   if (service.scope === "system") {
     return declared;
   }
-  // Workspace scope: always namespaced.
+  // Extension scope: always namespaced.
   return `/apps/${servicePathSegment(service.name)}`;
 }

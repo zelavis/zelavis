@@ -9,6 +9,9 @@ Architecture docs should describe real current behavior and stable design constr
 
 ## Pages
 
-- [Cloudflare Service Workers](./cloudflare-service-workers.md)
-- [Service Model](./service-service-model.md)
+- [Endpoint-Backed Capabilities](./endpoint-backed-capabilities.md)
+- [Assistant Runtime](./assistant-runtime.md)
+- [Mobile-Slot-Ready Dashboard](./mobile-slot-ready-dashboard.md)
+- [Project Model](./project-model.md)
+- [Service Model](./service-model.md)
 - [Website Core Service](./website-core-service.md)

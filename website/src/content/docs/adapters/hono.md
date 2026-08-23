@@ -20,22 +20,23 @@ app.use(honoMiddleware(zv));
 serve({ fetch: app.fetch, port: 3000 });
 ```
 
-## Hono on Cloudflare Workers
+## Hono on Bun
 
 ```ts
 import { Hono } from "hono";
 import { Zelavis } from "zelavis";
-import { cloudflareAdapter } from "zelavis/adapters/cloudflare";
+import { bunAdapter } from "zelavis/adapters/bun";
 import { honoMiddleware } from "zelavis/hono";
 
-export default {
-  fetch(request: Request, env) {
-    const zv = new Zelavis({ adapter: cloudflareAdapter({ env }) });
-    const app = new Hono();
-    app.use(honoMiddleware(zv));
-    return app.fetch(request);
-  },
-};
+const app = new Hono();
+const zv = new Zelavis({ adapter: bunAdapter() });
+
+app.use(honoMiddleware(zv));
+
+Bun.serve({
+  port: 3000,
+  fetch: app.fetch,
+});
 ```
 
 ## API
@@ -46,7 +47,7 @@ honoMiddleware(zv: Zelavis): MiddlewareHandler
 
 ## Good fit
 
-- Hono apps running on Node.js or Cloudflare Workers
+- Hono apps running on Node.js or Bun
 - Apps that already use Hono middleware and route composition
 - Cases where Zelavis should share an app with custom Hono endpoints
 

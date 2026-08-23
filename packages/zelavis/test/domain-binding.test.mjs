@@ -42,12 +42,12 @@ test("in-memory store stores and retrieves bindings (case-insensitive)", async (
   const store = createInMemoryDomainBindingStore();
   const binding = await addDomainBinding(store, {
     host: "ACME.com",
-    workspaceId: "ws-1",
+    projectId: "ws-1",
     serviceName: "@example/kanban",
   });
 
   assert.equal(binding.host, "acme.com");
-  assert.equal(binding.workspaceId, "ws-1");
+  assert.equal(binding.projectId, "ws-1");
   assert.equal(binding.serviceName, "@example/kanban");
   assert.equal(binding.verifiedAt, undefined);
   assert.ok(binding.verificationToken.length > 0);
@@ -83,17 +83,17 @@ test("in-memory store list filters by workspace, service, and verified status", 
   const store = createInMemoryDomainBindingStore();
   await addDomainBinding(store, {
     host: "a.example.com",
-    workspaceId: "ws-1",
+    projectId: "ws-1",
     serviceName: "@example/kanban",
   });
   await addDomainBinding(store, {
     host: "b.example.com",
-    workspaceId: "ws-1",
+    projectId: "ws-1",
     serviceName: "@example/billing",
   });
   await addDomainBinding(store, {
     host: "c.example.com",
-    workspaceId: "ws-2",
+    projectId: "ws-2",
     serviceName: "@example/kanban",
   });
   await verifyDomainBindingManually(store, "a.example.com");
@@ -101,7 +101,7 @@ test("in-memory store list filters by workspace, service, and verified status", 
   // All
   assert.equal((await store.list()).length, 3);
   // By workspace
-  const ws1 = await store.list({ workspaceId: "ws-1" });
+  const ws1 = await store.list({ projectId: "ws-1" });
   assert.deepEqual(
     ws1.map((b) => b.host),
     ["a.example.com", "b.example.com"],
@@ -222,13 +222,13 @@ test("KV store round-trips bindings with the same semantics as the in-memory sto
 
   await addDomainBinding(store, {
     host: "acme.com",
-    workspaceId: "ws-1",
+    projectId: "ws-1",
   });
   await verifyDomainBindingManually(store, "acme.com");
 
   const fetched = await store.get("acme.com");
   assert.ok(fetched);
-  assert.equal(fetched.workspaceId, "ws-1");
+  assert.equal(fetched.projectId, "ws-1");
   assert.ok(fetched.verifiedAt);
 
   // Stored as JSON under the expected key prefix.
@@ -282,8 +282,8 @@ test("listAuthorizedHostsForService returns [] for system scope", async () => {
 
 test("listAuthorizedHostsForService returns [] when no store is configured for workspace", async () => {
   const result = await listAuthorizedHostsForService({
-    scope: "workspace",
-    workspaceId: "ws-1",
+    scope: "extension",
+    projectId: "ws-1",
     serviceName: "@example/kanban",
   });
   assert.deepEqual(result, []);
@@ -293,12 +293,12 @@ test("listAuthorizedHostsForService returns [] without workspace ownership conte
   const store = createInMemoryDomainBindingStore();
   await addDomainBinding(store, {
     host: "workspace.example",
-    workspaceId: "ws-1",
+    projectId: "ws-1",
   });
   await verifyDomainBindingManually(store, "workspace.example");
 
   const result = await listAuthorizedHostsForService({
-    scope: "workspace",
+    scope: "extension",
     serviceName: "@example/kanban",
     domainBindings: store,
   });
@@ -309,33 +309,33 @@ test("listAuthorizedHostsForService only allows verified bindings owned by the s
   const store = createInMemoryDomainBindingStore();
   await addDomainBinding(store, {
     host: "owned.com",
-    workspaceId: "ws-1",
+    projectId: "ws-1",
     serviceName: "@example/kanban",
   });
   await verifyDomainBindingManually(store, "owned.com");
 
   await addDomainBinding(store, {
     host: "other-tenant.com",
-    workspaceId: "ws-2",
+    projectId: "ws-2",
     serviceName: "@example/kanban",
   });
   await verifyDomainBindingManually(store, "other-tenant.com");
 
   await addDomainBinding(store, {
     host: "unverified.com",
-    workspaceId: "ws-1",
+    projectId: "ws-1",
     serviceName: "@example/kanban",
   });
   await addDomainBinding(store, {
     host: "other-service.com",
-    workspaceId: "ws-1",
+    projectId: "ws-1",
     serviceName: "@example/billing",
   });
   await verifyDomainBindingManually(store, "other-service.com");
 
   const allowed = await listAuthorizedHostsForService({
-    scope: "workspace",
-    workspaceId: "ws-1",
+    scope: "extension",
+    projectId: "ws-1",
     serviceName: "@example/kanban",
     domainBindings: store,
   });
@@ -347,7 +347,7 @@ test("listAuthorizedHostsForService rejects wildcard host for workspace services
   await store.put(
     {
       host: "*",
-      workspaceId: "ws-1",
+      projectId: "ws-1",
       serviceName: "@example/kanban",
       verificationToken: "tok",
       verifiedAt: "2026-01-01T00:00:00Z",
@@ -358,8 +358,8 @@ test("listAuthorizedHostsForService rejects wildcard host for workspace services
     "insert",
   );
   const allowed = await listAuthorizedHostsForService({
-    scope: "workspace",
-    workspaceId: "ws-1",
+    scope: "extension",
+    projectId: "ws-1",
     serviceName: "@example/kanban",
     domainBindings: store,
   });
@@ -372,14 +372,14 @@ test("listAuthorizedHostsForService honors workspace-level bindings (no serviceN
   const store = createInMemoryDomainBindingStore();
   await addDomainBinding(store, {
     host: "workspace.example",
-    workspaceId: "ws-1",
+    projectId: "ws-1",
     // serviceName intentionally omitted
   });
   await verifyDomainBindingManually(store, "workspace.example");
 
   const allowed = await listAuthorizedHostsForService({
-    scope: "workspace",
-    workspaceId: "ws-1",
+    scope: "extension",
+    projectId: "ws-1",
     serviceName: "@example/any-service",
     domainBindings: store,
   });
@@ -392,20 +392,20 @@ test("synthesizeServiceAppService uses verified bindings for workspace-service a
   const store = createInMemoryDomainBindingStore();
   await addDomainBinding(store, {
     host: "kanban.acme.com",
-    workspaceId: "ws-1",
+    projectId: "ws-1",
     serviceName: "@example/kanban",
   });
   await verifyDomainBindingManually(store, "kanban.acme.com");
   // unverified binding for evil.com — should NOT enable host routing
   await addDomainBinding(store, {
     host: "evil.com",
-    workspaceId: "ws-1",
+    projectId: "ws-1",
     serviceName: "@example/kanban",
   });
 
   const service = defineService({
     name: "@example/kanban",
-    scope: "workspace",
+    scope: "extension",
     app: {
       mount: "/",
       bundle: "dist",
@@ -436,7 +436,7 @@ test("synthesizeServiceAppService uses verified bindings for workspace-service a
     },
     {
       bundleStore,
-      workspaceId: "ws-1",
+      projectId: "ws-1",
       domainBindings: store,
     },
   );
@@ -504,7 +504,7 @@ test("system services bypass domain bindings entirely", async () => {
 test("workspace apps with required domain policy do not synthesize without verified hosts", async () => {
   const service = defineService({
     name: "@example/public-site",
-    scope: "workspace",
+    scope: "extension",
     app: {
       mount: "/",
       bundle: "dist",
@@ -526,7 +526,7 @@ test("workspace apps with required domain policy do not synthesize without verif
     },
     {
       bundleStore: createInMemoryBundleStore(new Map()),
-      workspaceId: "ws-1",
+      projectId: "ws-1",
       domainBindings: createInMemoryDomainBindingStore(),
     },
   );

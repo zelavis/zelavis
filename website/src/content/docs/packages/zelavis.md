@@ -1,7 +1,7 @@
 ---
 title: zelavis
 ---
-`zelavis` is the high-level runtime package for the Zelavis backend platform.
+`zelavis` is the high-level runtime package for the Zelavis App Platform.
 
 Use it when you want the default platform building blocks wired together through one runtime entry point.
 
@@ -14,6 +14,8 @@ Today, that mostly means:
 - database service
 - storage service when an adapter file store exists
 - website service
+- service activation
+- project and server dashboard surfaces
 - runtime composition
 
 ## Main entry point
@@ -41,17 +43,52 @@ The lower-level `zelavis()` function still exists, but it now intentionally owns
 - direct `services`
 - path and mount overrides
 
-The `Zelavis` class is the product-facing entrypoint. Built-in services are part of the runtime by default; lower-level route mounting knobs stay on `zelavis()`.
+The `Zelavis` class is the product-facing Platform OS entrypoint. With the Node
+adapter it discovers the shipped Zelavis App Blueprint, persists project records in the
+System Store, and runs created projects through the default process runtime
+driver. Lower-level route mounting knobs stay on `zelavis()`.
 
 Examples use `zv` as the short local name for a `Zelavis` runtime instance.
 
 ## Default behavior
 
-By default, Zelavis owns one safe namespace under `/zelavis` and includes dashboard, auth, database, and website core services.
+By default, Zelavis owns one safe namespace under `/zelavis`. The Projects view
+creates version-locked Zelavis App runtimes under `.zelavis/projects/<id>` and the
+project dashboard proxies API operations to the selected runtime.
+
+The Platform process is the only process that mounts `@zelavis/ui`. Zelavis App
+project processes remain headless and expose service metadata through
+`@zelavis/server`. A Blueprint selects those services but is not itself a
+service; Database, Auth, Workloads, and plugins each contribute their own menu
+metadata through the shared service API.
 
 The dashboard stays mounted under the configured root path, while API services stay grouped under `/api/<version>/...`.
 
-Application code can access core service APIs through the runtime instance:
+The dashboard root opens Projects. Global surfaces such as Marketplace and Server live outside project URLs, while Zelavis-native project pages live under `/zelavis/projects/:projectId/*`.
+
+The dashboard is a client of the runtime. Operations shown in the dashboard should also be available through stable runtime capabilities and versioned endpoints so CLI tools, AI agents, scripts, plugins, and external admin clients can perform the same work.
+
+Default dashboard paths include:
+
+```txt
+/zelavis
+/zelavis/marketplace
+/zelavis/projects/:projectId
+/zelavis/projects/:projectId/marketplace
+/zelavis/projects/:projectId/settings
+/zelavis/server
+/zelavis/server/domains
+/zelavis/server/backups
+/zelavis/server/logs
+/zelavis/projects/:projectId/workloads
+```
+
+The Node process driver is the simplest default isolation boundary. It provides
+separate processes, databases, files, logs, and failure domains for trusted
+projects. It does not claim secure multi-tenant sandboxing. Future OCI and
+microVM drivers implement the same project-runtime contract.
+
+Development application code can access the mounted Zelavis App service APIs through the runtime instance:
 
 ```ts
 await zv.db.documents.createCollection({ name: "posts" });
@@ -75,15 +112,18 @@ Use scoped packages directly when you need lower-level control over primitives, 
 - `@zelavis/db`
 - `@zelavis/auth`
 
-The lower-level `zelavis()` function still exists for internal runtime composition, but the main public application-facing entry point is the `Zelavis` class plus an environment adapter.
+The lower-level `zelavis()` function still exists for internal runtime composition, but the main public application-facing entry point is the `Zelavis` class plus a runtime adapter.
 
-Available environment adapters:
+Available runtime adapters:
 
 - `zelavis/adapters/node`
 - `zelavis/adapters/bun`
-- `zelavis/adapters/cloudflare`
-- `zelavis/adapters/netlify`
-- `zelavis/adapters/vercel`
+
+Deno is a planned runtime target.
+
+Serverless function platforms are not Zelavis runtime targets. Managed providers
+may appear through optional plugins for user websites, storage, DNS, CDN, email,
+or other provider adapters.
 
 Framework utilities (small wrappers around `zv.fetch`) live at:
 
@@ -95,5 +135,8 @@ Framework utilities (small wrappers around `zv.fetch`) live at:
 
 - [First Runtime](../getting-started/first-runtime.md)
 - [@zelavis/server](./server.md)
+- [Endpoint-Backed Capabilities](../architecture/endpoint-backed-capabilities.md)
 - [@zelavis/db](./database.md)
 - [@zelavis/auth](./auth.md)
+- [@zelavis/ui](./ui.md)
+- [@zelavis/workloads](./workloads.md)

@@ -75,7 +75,7 @@ type TenantScoped<TInput extends { tenantId?: string }> = Omit<
 };
 
 export interface CreateSqliteCompatibleDriverOptions {
-  /** Reported as `DatabaseDriver.name` (e.g. "better-sqlite3", "cloudflare-d1"). */
+  /** Reported as `DatabaseDriver.name` (e.g. "better-sqlite3"). */
   name: string;
   /** Default node id stamped on events when callers don't supply one. */
   defaultNodeId?: string;
@@ -94,7 +94,7 @@ export interface CreateSqliteCompatibleDriverOptions {
   fromSqlValue?: (value: unknown) => unknown;
   /**
    * Optional async hook the driver awaits before each operation. Useful for
-   * adapters (Cloudflare D1, libSQL) that initialise their schema lazily.
+   * adapters such as libSQL that initialise their schema lazily.
    */
   ready?: () => Promise<void>;
 }
@@ -172,7 +172,7 @@ export function parseWriteTargetTable(statement: string): string | null {
 
 /**
  * Applies the shared DDL to a gateway. Uses `gateway.batch` when available
- * (D1, libSQL) and falls back to per-statement `exec` otherwise.
+ * (for example libSQL) and falls back to per-statement `exec` otherwise.
  */
 export async function applySqliteCompatibleSchema(
   gateway: SqliteGateway,
@@ -191,8 +191,8 @@ export async function applySqliteCompatibleSchema(
  * Builds a complete `DatabaseDriver` on top of any `SqliteGateway`.
  *
  * All event, projection, schema, and time-series logic lives here so that
- * every SQLite-compatible adapter (better-sqlite3, bun:sqlite, Cloudflare
- * D1, libSQL) gets identical behaviour with only ~50 lines of glue code.
+ * every SQLite-compatible adapter (better-sqlite3, bun:sqlite, libSQL) gets
+ * identical behaviour with only ~50 lines of glue code.
  */
 export function createSqliteCompatibleDriver(
   options: CreateSqliteCompatibleDriverOptions,
@@ -526,7 +526,7 @@ export function createSqliteCompatibleDriver(
 
           const payload = input.payload as { data: DatabaseJsonObject };
           // Determine insert-vs-update outside the transaction so adapters
-          // with deferred writes (D1) still pick the correct branch — their
+          // with deferred writes still pick the correct branch; their
           // reads-during-transaction would otherwise see stale state.
           const existing = await gateway.get<{ id: string }>(
             `SELECT id FROM ${collectionTable(input.collection)}
@@ -613,7 +613,7 @@ export function createSqliteCompatibleDriver(
         }
 
         // Pre-flight existence check — same reasoning as the upsert path:
-        // adapters with deferred writes (D1) can't observe `changes` count
+        // adapters with deferred writes can't observe `changes` count
         // inside the transaction, so we verify before queuing.
         const collection = await gateway.get<{ name: string }>(
           `SELECT name FROM zv_collections WHERE tenant_id = ? AND name = ? LIMIT 1`,

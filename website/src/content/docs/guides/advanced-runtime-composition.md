@@ -40,15 +40,18 @@ const runtime = await zv.runtime();
 
 That returns the mounted runtime object with `fetch`, `dispatch`, `plain`, resolved routes, and the service map.
 
-## How built-in core services are created
+## Transitional in-process Zelavis App composition
 
-There is no separate `defineCoreService(...)` helper today.
+There is no separate `defineCoreService(...)` helper. The current in-process
+composition is transitional while Zelavis App moves behind its Blueprint and
+project runtime boundary.
 
 The pattern is:
 
 1. A package exposes a normal server-service factory.
 2. That factory returns a plain `ZelavisRuntimeService` object literal.
-3. The high-level `Zelavis` runtime decides when to call that factory and include the result as a built-in core service.
+3. The current high-level development runtime decides when to call that factory
+   and include the result for the default Zelavis App project.
 
 For example:
 
@@ -61,11 +64,16 @@ Concretely:
 
 - `@zelavis/db` exports `defineDatabaseService(database)`
 - that function returns a plain `{ name, basePath, service, api }` object
-- then the runtime calls `resolveDatabaseCoreService(...)`, wraps the returned database API with `defineDatabaseService(...)`, and adds it to the built-in core service list
+- then the transitional runtime calls `resolveDatabaseCoreService(...)`, wraps
+  the returned database API with `defineDatabaseService(...)`, and mounts it
+  for the default Zelavis App project
 
-The same shape is used for auth, dashboard, website, and storage.
+The same low-level runtime service shape is used for System Services and project
+services, but their ownership and persistence are different.
 
-So the “core” part is not a special helper. The “core” part is that the high-level Zelavis runtime owns when those service factories are created, mounted, and protected.
+Do not build new architecture around the `coreServices` option name. It is
+transitional composition internals, not the product boundary. Platform state
+belongs in the System Store; Zelavis App capabilities belong to Blueprint projects.
 
 ## Why this split exists
 

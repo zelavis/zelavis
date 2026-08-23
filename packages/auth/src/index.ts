@@ -10,4 +10,3 @@ export * from "./services/authentication-service.js";
 export * from "./services/credential-service.js";
 export * from "./services/session-service.js";
 export * from "./storage/in-memory.js";
-export * from "./server/auth-service.js";

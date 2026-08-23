@@ -1,0 +1,67 @@
+name: Distribution artifacts
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  PNPM_CONFIG_MINIMUM_RELEASE_AGE: "0"
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  package:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: darwin-x64
+            runner: macos-15-intel
+          - target: darwin-arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install Linux packaging tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zip
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate distribution contracts
+        run: pnpm distribution:test
+
+      - name: Build target-native release artifacts
+        run: pnpm distribution:build
+
+      - name: Smoke-test packaged CLI
+        shell: bash
+        run: |
+          distribution/.tmp/stage/bin/zelavis --version
+          test "$(distribution/.tmp/stage/runtime/node/bin/node --version)" = "v$(node -p "require('./distribution/release.json').nodeVersion")"
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: zelavis-${{ matrix.target }}
+          path: distribution/artifacts/*
+          if-no-files-found: error

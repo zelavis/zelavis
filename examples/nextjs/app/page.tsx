@@ -44,7 +44,7 @@ export default function Home() {
                 .
               </li>
               <li>
-                • The same runtime can target fetch-oriented platforms next.
+                • The same runtime uses standard Request and Response objects.
               </li>
             </ul>
             <div className="rounded-2xl bg-zinc-950 px-4 py-3 font-mono text-xs leading-6 text-zinc-100 dark:bg-zinc-900">

@@ -3,7 +3,7 @@ import type * as React from 'react'
 import { useEffect, useState } from 'react'
 import { Boxes, Paintbrush, Save } from 'lucide-react'
 
-import { DataRow, PageHeader, ResourceNotice } from '#/components/DashboardPage'
+import { DataRow, ResourceNotice } from '#/components/DashboardPage'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '#/components/ui/card'
 import { Input } from '#/components/ui/input'
@@ -14,7 +14,6 @@ import type { clientLoader as rootClientLoader } from '../root'
 
 export const handle = {
   pageLabel: "Settings",
-  sidebarTrail: ["Settings"],
 } as const;
 
 function Settings() {
@@ -69,22 +68,16 @@ function Settings() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Settings"
-        title="Runtime Settings"
-        description="Root path, API version, and enabled core services."
-        actions={
-          <Button
-            type="submit"
-            size="sm"
-            form="dashboard-root-path-form"
-            disabled={!canEditRootPath || !rootPathChanged || saving}
-          >
-            <Save className="size-4" />
-            Save
-          </Button>
-        }
-      />
+      <div className="flex justify-end">
+        <Button
+          type="submit"
+          form="dashboard-root-path-form"
+          disabled={!canEditRootPath || !rootPathChanged || saving}
+        >
+          <Save className="size-4" />
+          Save
+        </Button>
+      </div>
 
       <Card>
         <CardHeader>
@@ -130,7 +123,6 @@ function Settings() {
             </label>
             <Button
               type="submit"
-              size="sm"
               disabled={!canEditRootPath || !rootPathChanged || saving}
               className="self-end"
             >
@@ -169,12 +161,13 @@ function Settings() {
             label="Theme"
             detail="Configure dashboard light, dark, or system mode."
             meta={
-              <Link
-                to="/settings/appearance"
-                className="inline-flex h-8 items-center justify-center rounded-md border border-input bg-background px-3 text-xs font-medium text-foreground no-underline shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+              <Button
+                variant="outline"
+                nativeButton={false}
+                render={<Link to="/settings/appearance" />}
               >
                 Open
-              </Link>
+              </Button>
             }
           />
         </CardContent>
@@ -192,12 +185,13 @@ function Settings() {
             label="Mounted services"
             detail="Inspect core services and service-provided runtime pieces registered in this runtime."
             meta={
-              <Link
-                to="/services"
-                className="inline-flex h-8 items-center justify-center rounded-md border border-input bg-background px-3 text-xs font-medium text-foreground no-underline shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+              <Button
+                variant="outline"
+                nativeButton={false}
+                render={<Link to="/services" />}
               >
                 Open
-              </Link>
+              </Button>
             }
           />
         </CardContent>

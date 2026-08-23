@@ -3,12 +3,13 @@ title: Guides
 ---
 Use this section for task-oriented documentation.
 
-Planned content:
+Current guide focus:
 
-- configuring auth
 - running the dashboard in development
 - using runtime adapters
-- self-hosting workflows
+- authoring services
+- working with schemas and storage
+- composing runtimes
 
 Guideline:
 

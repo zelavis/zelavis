@@ -267,7 +267,7 @@ function ToolbarPlugin(props: {
           placeholder="https://…"
           aria-label="Link URL"
         />
-        <Button type="button" size="sm" variant="outline" onClick={applyLink}>
+        <Button type="button" variant="outline" onClick={applyLink}>
           Apply link
         </Button>
       </div>
@@ -287,7 +287,6 @@ function ToolbarPlugin(props: {
         />
         <Button
           type="button"
-          size="sm"
           variant="outline"
           onClick={() => {
             insertImage(imageUrl, imageAlt);
@@ -303,7 +302,7 @@ function ToolbarPlugin(props: {
       <Sheet open={showMediaPanel} onOpenChange={setShowMediaPanel}>
         <SheetContent side="right" className="w-full sm:max-w-xl">
           <SheetHeader>
-            <SheetTitle>Embed from Media Gallery</SheetTitle>
+            <SheetTitle>Embed from Media</SheetTitle>
             <SheetDescription>
               Pick an uploaded image and drop it into the current rich-text field.
             </SheetDescription>
@@ -311,7 +310,7 @@ function ToolbarPlugin(props: {
           <div className="grid gap-3 overflow-auto px-4 pb-4">
             {props.mediaItems.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No image files available yet. Upload one in Media Gallery first or paste a direct URL above.
+                No image files available yet. Upload one in Media first or paste a direct URL above.
               </p>
             ) : (
               <div className="grid gap-2 sm:grid-cols-2">
@@ -353,7 +352,7 @@ function ToolbarPlugin(props: {
           <div className="grid gap-3 overflow-auto px-4 pb-4">
             {props.fileItems.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No stored files available yet. Upload one in Media Gallery or Core &gt; Storage first.
+                No stored files available yet. Upload one in Media or Backend &gt; Storage first.
               </p>
             ) : (
               <div className="grid gap-2">
@@ -386,7 +385,7 @@ function ToolbarIconButton(props: {
   onClick: () => void;
 }) {
   return (
-    <Button type="button" size="sm" variant="outline" onClick={props.onClick}>
+    <Button type="button" variant="outline" onClick={props.onClick}>
       {props.icon}
       {props.label}
     </Button>

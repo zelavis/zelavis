@@ -13,7 +13,13 @@ models can still replay ordered changes.
 
 The first time-series slice is now also present as a public contract. Series definitions can declare projection references, event-source filters, mapper functions, and optional definition versions. In-memory queries derive points from the event stream directly, while SQLite-backed drivers can persist mapped samples and query them incrementally.
 
-Collection schemas can also validate Zelavis-style file references natively through `type: "file"`, so documents can carry structured links to the storage service without treating those fields as untyped blobs.
+Collection schemas are Effect Schema v4-backed tagged field definitions. The
+current catalog covers short text, long text, rich text, number, integer,
+boolean, date-time, select, multi-select, file/image/audio/video/document
+references, collection references, JSON, slug, URL, and repeater fields.
+Zelavis-style file references are validated natively, so documents can carry
+structured links to the storage service without treating those fields as
+untyped blobs.
 
 ## Scope
 
@@ -24,6 +30,8 @@ Collection schemas can also validate Zelavis-style file references natively thro
 - In-memory driver for local development and tests.
 - Optional SQL capability contract for SQLite-compatible adapters.
 - Server service routes through the existing `@zelavis/server` service contract, with documents exposed as a nested service.
+- Service-owned dashboard menu metadata for Database, including the fixed
+  "Create Table" action, system tables, and a dynamic table menu endpoint.
 
 ## Non-goals for the first slice
 
@@ -31,11 +39,28 @@ Collection schemas can also validate Zelavis-style file references natively thro
 - No `unstorage` dependency.
 - No replication, offline sync, or distributed transactions.
 
+## Distributed roadmap
+
+Replication, sharding, and distributed multi-master operation are future goals,
+not current behavior. The current database core should still avoid choices that
+would make those goals harder later.
+
+Design constraints to preserve:
+
+- Treat the event log as the future replication stream.
+- Keep event writes idempotent through explicit idempotency keys.
+- Preserve stable node identity on events so writes can be traced to an origin.
+- Keep tenant-aware boundaries explicit; `tenant_id` is the natural shard key.
+- Keep projection rebuilds deterministic from ordered events.
+- Keep replication and conflict-resolution contracts adapter-neutral instead of
+  coupling them to SQLite, libSQL, Node.js, Bun, or any hosting provider.
+- Do not make collection tables the source of truth. They are projections of the
+  event stream.
+
 Platform adapters should provide durable database drivers later, for example:
 
 - `@zelavis/db-bun-sqlite` supplies a Bun SQLite driver using the built-in `bun:sqlite` module.
 - `@zelavis/db-node-sqlite` supplies a Node SQLite driver using `better-sqlite3`.
-- `@zelavis/db-cloudflare-d1` supplies a Cloudflare D1 driver.
 - future libSQL/Turso adapters can follow the same contract without changing the core database API.
 
 ## Usage

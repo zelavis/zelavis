@@ -5,14 +5,12 @@ import {
   Pencil,
   Pin,
   PinOff,
-  Plus,
   Save,
   X,
 } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
 
 import {
-  PageHeader,
   ResourceNotice,
   StatusBadge,
 } from "#/components/DashboardPage";
@@ -31,7 +29,7 @@ import {
   listDatabaseSchemaVersions,
   updateDashboardSettings,
 } from "#/lib/runtime-api";
-import { toDashboardPath } from "#/lib/routing";
+import { matchesProjectPath, toDashboardPath, toProjectPath } from "#/lib/routing";
 import { cn } from "#/lib/utils";
 import type { clientLoader as rootClientLoader } from '../root';
 
@@ -67,7 +65,7 @@ function Content() {
   );
   const pinnedTypes = contentPreferences?.pinnedTypes ?? [];
 
-  if (pathname !== "/content") {
+  if (!matchesProjectPath(pathname, "/content")) {
     return <Outlet />;
   }
 
@@ -232,27 +230,14 @@ function Content() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Content"
-        title="Content Studio"
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
-            <Link
-              to="/content/new"
-              className={cn(buttonVariants({ size: "sm" }))}
-            >
-              <Plus className="size-4" />
-              Create new Content Type
-            </Link>
-            <Link
-              to={toDashboardPath("/database", { sidebar: "Core" })}
-              className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
-            >
-              Open Core Database
-            </Link>
-          </div>
-        }
-      />
+      <div className="flex justify-end">
+        <Link
+          to={toDashboardPath(toProjectPath("/database"), { sidebar: "Backend" })}
+          className={cn(buttonVariants({ variant: "outline" }))}
+        >
+          Open Backend Database
+        </Link>
+      </div>
 
       {message ? <ResourceNotice title="Done" description={message} /> : null}
       {error ? <ResourceNotice title="Action failed" description={error} /> : null}
@@ -357,20 +342,19 @@ function Content() {
                           <td className="px-4 py-3">
                             <div className="flex flex-wrap items-center gap-2">
               <Link
-                to={`/content/${encodeURIComponent(row.name)}`}
-                className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+                  to={toProjectPath(`/content/${encodeURIComponent(row.name)}`)}
+                className={cn(buttonVariants({ variant: "outline" }))}
               >
                 Entries
               </Link>
               <Link
-                to={`/content/${encodeURIComponent(row.name)}/edit`}
-                className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+                  to={toProjectPath(`/content/${encodeURIComponent(row.name)}/fields`)}
+                className={cn(buttonVariants({ variant: "outline" }))}
               >
-                Edit
+                Fields
               </Link>
                               <Button
                                 type="button"
-                                size="sm"
                                 variant="outline"
                                 onClick={() => {
                                   setEditingLabelFor(row.name);
@@ -382,7 +366,6 @@ function Content() {
                               </Button>
                               <Button
                                 type="button"
-                                size="sm"
                                 variant="outline"
                                 onClick={() => {
                                   setDuplicatingType(row.name);
@@ -395,7 +378,6 @@ function Content() {
                               </Button>
                               <Button
                                 type="button"
-                                size="sm"
                                 variant="outline"
                                 onClick={() => void handlePinToggle(row.name)}
                               >
@@ -420,7 +402,6 @@ function Content() {
                                 />
                                 <Button
                                   type="button"
-                                  size="sm"
                                   onClick={() => void handleSaveLabel(row.name)}
                                   disabled={!labelDraft.trim() || saving}
                                 >
@@ -429,7 +410,6 @@ function Content() {
                                 </Button>
                                 <Button
                                   type="button"
-                                  size="sm"
                                   variant="outline"
                                   onClick={() => {
                                     setEditingLabelFor(undefined);
@@ -461,7 +441,6 @@ function Content() {
                                 />
                                 <Button
                                   type="button"
-                                  size="sm"
                                   onClick={() => void handleDuplicateType(row.name)}
                                   disabled={!duplicateName.trim() || saving}
                                 >
@@ -470,7 +449,6 @@ function Content() {
                                 </Button>
                                 <Button
                                   type="button"
-                                  size="sm"
                                   variant="outline"
                                   onClick={() => {
                                     setDuplicatingType(undefined);

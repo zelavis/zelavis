@@ -22,7 +22,7 @@ export interface ZelavisDashboardBundleAsset {
 
 export interface ZelavisDashboardBundleStore {
   read: (
-    scope: { workspaceId?: string; serviceName: string; bundle: string },
+    scope: { projectId?: string; serviceName: string; bundle: string },
     path: string,
   ) =>
     | Promise<ZelavisDashboardBundleAsset | undefined>
@@ -51,25 +51,44 @@ export interface ZelavisDashboardServiceOptions {
 }
 
 export const defaultZelavisDashboardClientRoutes = Object.freeze([
-  "/agents",
-  "/auth",
-  "/builder",
-  "/builder/pages",
-  "/commerce",
-  "/commerce/customers",
-  "/commerce/coupons",
-  "/commerce/orders",
-  "/commerce/products",
-  "/content",
-  "/content/new",
-  "/database",
-  "/media",
+  "/access",
+  "/access/permissions",
+  "/access/users",
+  "/assistant",
   "/marketplace",
+  "/projects",
+  "/resources",
+  "/security",
   "/services",
+  "/server",
+  "/server/backups",
+  "/server/domains",
+  "/server/logs",
   "/settings",
   "/settings/appearance",
-  "/storage",
-  "/users",
+  "/projects/:projectId",
+  "/projects/:projectId/agents",
+  "/projects/:projectId/auth",
+  "/projects/:projectId/content",
+  "/projects/:projectId/content/new",
+  "/projects/:projectId/database",
+  "/projects/:projectId/database/new",
+  "/projects/:projectId/media",
+  "/projects/:projectId/marketplace",
+  "/projects/:projectId/services",
+  "/projects/:projectId/settings",
+  "/projects/:projectId/settings/appearance",
+  "/projects/:projectId/storage",
+  "/projects/:projectId/users",
+  "/projects/:projectId/website",
+  "/projects/:projectId/workloads",
+  "/projects/:projectId/workloads/functions/:workloadId",
+  "/projects/:projectId/workloads/jobs/:workloadId",
+  "/projects/:projectId/workloads/logs",
+  "/projects/:projectId/workloads/new",
+  "/projects/:projectId/workloads/schedules/:workloadId",
+  "/projects/:projectId/workloads/settings",
+  "/projects/:projectId/workloads/webhooks/:workloadId",
 ] as const);
 
 interface DashboardAsset {
@@ -336,6 +355,7 @@ export function createZelavisDashboardService(
       domainPolicy: "optional" as const,
       shell: { render },
       devUrl: options.devServerUrl,
+      devUrlExcludePaths: ["api"],
     },
     api: {
       v1: Object.freeze([...(options.routes ?? [])]),

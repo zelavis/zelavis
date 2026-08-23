@@ -8,10 +8,11 @@ import { Badge } from "#/components/ui/badge"
 import { Button } from "#/components/ui/button"
 import { Input } from "#/components/ui/input"
 import {
-  getRuntimeConfig,
+  getActiveRuntimeConfig,
   listAuthAccounts,
   type AuthAccount,
 } from "#/lib/runtime-api"
+import type { Route } from "./+types/users"
 
 export const handle = {
   pageLabel: "Users",
@@ -21,8 +22,8 @@ type UserFilter = "All" | "Verified" | "Unverified"
 
 const userFilters: UserFilter[] = ["All", "Verified", "Unverified"]
 
-export async function clientLoader() {
-  const runtime = await getRuntimeConfig()
+export async function clientLoader({ request }: Route.ClientLoaderArgs) {
+  const runtime = await getActiveRuntimeConfig(request)
   const accounts = await listAuthAccounts(runtime)
   return { accounts }
 }
@@ -71,7 +72,6 @@ function UsersRoute() {
                 <Button
                   key={filter}
                   type="button"
-                  size="sm"
                   variant={activeFilter === filter ? "secondary" : "ghost"}
                   onClick={() => setActiveFilter(filter)}
                 >

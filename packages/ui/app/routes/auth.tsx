@@ -3,21 +3,21 @@ import { KeyRound, ShieldCheck, UserRoundCog } from 'lucide-react'
 
 import {
   DataRow,
-  PageHeader,
   ResourceNotice,
   StatCard,
 } from '#/components/DashboardPage'
 import { Card, CardContent, CardHeader, CardTitle } from '#/components/ui/card'
-import { getRuntimeConfig, listAuthProviders } from '#/lib/runtime-api'
+import { getActiveRuntimeConfig, listAuthProviders } from '#/lib/runtime-api'
 import type { clientLoader as rootClientLoader } from '../root'
+import type { Route } from './+types/auth'
 
 export const handle = {
   pageLabel: "Auth",
-  sidebarTrail: ["Core"],
+  sidebarTrail: ["Backend"],
 } as const;
 
-export async function clientLoader() {
-  const runtime = await getRuntimeConfig()
+export async function clientLoader({ request }: Route.ClientLoaderArgs) {
+  const runtime = await getActiveRuntimeConfig(request)
   const providers = await listAuthProviders(runtime)
   return { providers }
 }
@@ -28,12 +28,6 @@ function Auth() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Auth"
-        title="Authentication"
-        description="Core auth service with provider services mounted through the runtime."
-      />
-
       <section className="grid gap-4 md:grid-cols-3">
         <StatCard
           label="Service"

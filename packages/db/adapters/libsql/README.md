@@ -43,7 +43,7 @@ const database = await createLibsqlDatabase({ url: ":memory:" });
 
 This adapter is a ~150-line shim. All the real database logic — collections, documents, events, schemas, time-series, idempotency, transactional appends — lives in the shared `createSqliteCompatibleDriver` core in `@zelavis/db`. The adapter only translates between `@libsql/client`'s API and the shared `SqliteGateway` interface.
 
-The same shared core also backs `@zelavis/db-node-sqlite`, `@zelavis/db-bun-sqlite`, and `@zelavis/db-cloudflare-d1`.
+The same shared core also backs `@zelavis/db-node-sqlite` and `@zelavis/db-bun-sqlite`.
 
 ## Transactions
 

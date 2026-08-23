@@ -11,13 +11,6 @@ import {
 } from "#/components/ui/card";
 import { cn } from "#/lib/utils";
 
-interface PageHeaderProps {
-  eyebrow: string;
-  title: string;
-  description?: string;
-  actions?: React.ReactNode;
-}
-
 interface StatCardProps {
   label: string;
   value: string;
@@ -28,32 +21,6 @@ interface StatCardProps {
 interface EmptyPanelProps {
   title: string;
   description: string;
-}
-
-export function PageHeader({
-  eyebrow,
-  title,
-  description,
-  actions,
-}: PageHeaderProps) {
-  return (
-    <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-      <div className="max-w-3xl">
-        <p className="kicker mb-2">{eyebrow}</p>
-        <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-          {title}
-        </h1>
-        {description ? (
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
-            {description}
-          </p>
-        ) : null}
-      </div>
-      {actions ? (
-        <div className="flex items-center gap-2">{actions}</div>
-      ) : null}
-    </header>
-  );
 }
 
 export function StatCard({ label, value, detail, icon: Icon }: StatCardProps) {
@@ -75,10 +42,12 @@ export function StatCard({ label, value, detail, icon: Icon }: StatCardProps) {
 
 export function StatusBadge({ state }: { state: string }) {
   const className =
-    state === "ready" || state === "embedded" || state === "endpoint"
+    state === "ready" || state === "running" || state === "embedded" || state === "endpoint"
       ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-      : state === "planned" || state === "fallback" || state === "checking"
+      : state === "planned" || state === "fallback" || state === "checking" || state === "provisioning" || state === "starting" || state === "stopping"
         ? "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+        : state === "failed"
+          ? "border-destructive/20 bg-destructive/10 text-destructive"
         : undefined;
 
   return (

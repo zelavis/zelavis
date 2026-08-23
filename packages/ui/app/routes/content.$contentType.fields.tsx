@@ -1,41 +1,91 @@
-import { Link, useLoaderData, useRevalidator } from "react-router";
-import { ArrowDown, ArrowUp, PencilLine, Plus, Save, SquarePen, Trash2 } from "lucide-react";
+import { Link, useLoaderData, useRevalidator, useRouteLoaderData } from "react-router";
+import {
+  ArrowDown,
+  ArrowUp,
+  Binary,
+  Braces,
+  CalendarClock,
+  CheckSquare,
+  Copy,
+  File,
+  FileAudio,
+  FileImage,
+  FileText,
+  FileVideo,
+  Hash,
+  LinkIcon,
+  List,
+  ListChecks,
+  PencilLine,
+  Pin,
+  PinOff,
+  Plus,
+  Rows3,
+  Save,
+  SquarePen,
+  Text,
+  TextCursorInput,
+  Trash2,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { ResourceNotice } from "#/components/DashboardPage";
+import { DataRow, ResourceNotice } from "#/components/DashboardPage";
+import { SchemaFieldEditor } from "#/components/content/SchemaFieldEditor";
 import { Button, buttonVariants } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import { Switch } from "#/components/ui/switch";
 import {
+  contentBuilderInputToEntry,
+  contentFieldEntryToBuilderInput,
+  createPreviewFieldValue,
   getContentSchemaFields,
   getContentSchemaUi,
-  inferFieldKindFromEntry,
   insertCollectionField,
   isRichTextSchemaField,
   moveCollectionField,
+  parseCollectionFieldEntriesJson,
   removeCollectionField,
   updateCollectionField,
+  validateCollectionFieldName,
+  type ContentFieldBuilderInput,
   type ContentFieldBuilderKind,
   type ContentSchemaDefinition,
 } from "#/lib/content-schema";
-import type { CollectionFieldEntry } from "#/lib/runtime-api";
-import {
-  createDatabaseSchema,
-  getRuntimeConfig,
-  listDatabaseSchemaVersions,
+import type {
+  CollectionFieldEntry,
+  DashboardSettings,
+  DatabaseCollection,
+  DatabaseSchemaCollectionSummary,
+  DatabaseStoredCollectionSchema,
+  RuntimeConfig,
 } from "#/lib/runtime-api";
-import { toDashboardPath } from "#/lib/routing";
-import type { Route } from './+types/content.$contentType.fields';
+import {
+  activateDatabaseSchemaVersion,
+  createDatabaseCollection,
+  createDatabaseSchema,
+  getResolvedDashboardPreferences,
+  getActiveRuntimeConfig,
+  listDatabaseSchemaVersions,
+  updateDashboardSettings,
+} from "#/lib/runtime-api";
+import { toDashboardPath, toProjectPath } from "#/lib/routing";
+import { parseAsStringLiteral, useTypedSearchParams } from "#/lib/use-typed-search-params";
 import { cn } from "#/lib/utils";
+import type { clientLoader as rootClientLoader } from '../root';
+import type { Route } from "./+types/content.$contentType.fields";
 
 export const handle = {
   pageLabel: "Content",
   sidebarTrail: ["Content"],
 } as const;
 
-export async function clientLoader({ params }: Route.ClientLoaderArgs) {
-  const runtime = await getRuntimeConfig();
+const builderViewSearchSchema = {
+  view: parseAsStringLiteral(["fields", "editor", "settings"] as const).withDefault("fields"),
+} as const;
+
+export async function clientLoader({ params, request }: Route.ClientLoaderArgs) {
+  const runtime = await getActiveRuntimeConfig(request);
   const schemas = await listDatabaseSchemaVersions(runtime, params.contentType);
   return { schemas, contentType: params.contentType };
 }
@@ -44,62 +94,78 @@ const fieldTypeOptions: Array<{
   value: ContentFieldBuilderKind;
   label: string;
   description: string;
+  icon: typeof TextCursorInput;
 }> = [
-  { value: "text", label: "Text", description: "Single-line text field." },
-  { value: "long-text", label: "Long text", description: "Textarea for summaries or notes." },
-  { value: "rich-text", label: "Rich text", description: "Lexical editor stored as HTML." },
-  { value: "number", label: "Number", description: "Numeric field for counts and prices." },
-  { value: "boolean", label: "Boolean", description: "True/false switch." },
-  { value: "status", label: "Status", description: "Draft, review, and published states." },
-  { value: "relation", label: "Relation", description: "Reference another content collection." },
-  { value: "repeater", label: "Repeater", description: "Repeatable list of structured items." },
-  { value: "image", label: "Image", description: "Image file reference." },
-  { value: "document", label: "Document", description: "PDF, text, JSON, or zip reference." },
-  { value: "audio", label: "Audio", description: "Audio file reference." },
-  { value: "video", label: "Video", description: "Video file reference." },
-  { value: "file", label: "Generic file", description: "Unrestricted file reference." },
-  { value: "json", label: "JSON object", description: "Structured object value." },
+  { value: "text", label: "Short Text", description: "Single-line text input.", icon: TextCursorInput },
+  { value: "long-text", label: "Long Text", description: "Multi-line plain text.", icon: Text },
+  { value: "rich-text", label: "Rich Text", description: "Lexical editor stored as HTML.", icon: FileText },
+  { value: "number", label: "Number", description: "Decimal number.", icon: Hash },
+  { value: "integer", label: "Integer", description: "Whole number.", icon: Binary },
+  { value: "boolean", label: "Boolean", description: "True or false switch.", icon: CheckSquare },
+  { value: "datetime", label: "Date & Time", description: "ISO date-time string.", icon: CalendarClock },
+  { value: "select", label: "Select", description: "Single choice from options.", icon: List },
+  { value: "multi-select", label: "Multi Select", description: "Multiple choices from options.", icon: ListChecks },
+  { value: "status", label: "Status", description: "Draft, review, published, archived.", icon: List },
+  { value: "relation", label: "Reference", description: "Link to another collection item.", icon: LinkIcon },
+  { value: "repeater", label: "Repeater", description: "Repeatable group of fields.", icon: Rows3 },
+  { value: "image", label: "Image", description: "Image file reference.", icon: FileImage },
+  { value: "document", label: "Document", description: "PDF, text, JSON, or zip reference.", icon: FileText },
+  { value: "audio", label: "Audio", description: "Audio file reference.", icon: FileAudio },
+  { value: "video", label: "Video", description: "Video file reference.", icon: FileVideo },
+  { value: "file", label: "File", description: "Generic file reference.", icon: File },
+  { value: "json", label: "JSON", description: "Arbitrary structured value.", icon: Braces },
+  { value: "slug", label: "Slug", description: "URL-safe identifier.", icon: LinkIcon },
+  { value: "url", label: "URL", description: "Web address.", icon: LinkIcon },
 ];
+
+const defaultFieldInput: ContentFieldBuilderInput = {
+  name: "",
+  label: "",
+  description: "",
+  kind: "text",
+  required: false,
+  group: "Content",
+  placeholder: "",
+  helpText: "",
+  rows: 5,
+  options: [],
+  relationCollection: "",
+  relationMultiple: false,
+};
 
 function ContentTypeFieldsRoute() {
   const { schemas, contentType } = useLoaderData<typeof clientLoader>();
+  const { runtime, settings, databaseCollections, schemaCollections } =
+    useRouteLoaderData<typeof rootClientLoader>('root')!;
   const revalidator = useRevalidator();
+  const [viewParams, setViewParams] = useTypedSearchParams(builderViewSearchSchema);
   const activeSchema = schemas.find((schema) => schema.active) ?? schemas.at(-1);
   const [schemaDraft, setSchemaDraft] = useState<CollectionFieldEntry[]>();
+  const [schemaJsonDraft, setSchemaJsonDraft] = useState("");
   const [selectedFieldName, setSelectedFieldName] = useState<string>();
-  const [newFieldName, setNewFieldName] = useState("");
-  const [newFieldLabel, setNewFieldLabel] = useState("");
-  const [newFieldDescription, setNewFieldDescription] = useState("");
-  const [newFieldGroup, setNewFieldGroup] = useState("Content");
-  const [newFieldKind, setNewFieldKind] =
-    useState<ContentFieldBuilderKind>("text");
-  const [newFieldRequired, setNewFieldRequired] = useState(false);
-  const [newFieldPlaceholder, setNewFieldPlaceholder] = useState("");
-  const [newFieldHelpText, setNewFieldHelpText] = useState("");
-  const [newFieldRows, setNewFieldRows] = useState("5");
-  const [newFieldRelationCollection, setNewFieldRelationCollection] = useState("");
-  const [editingFieldName, setEditingFieldName] = useState<string>();
-  const [editingFieldLabel, setEditingFieldLabel] = useState("");
-  const [editingFieldDescription, setEditingFieldDescription] = useState("");
-  const [editingFieldGroup, setEditingFieldGroup] = useState("Content");
-  const [editingFieldKind, setEditingFieldKind] =
-    useState<ContentFieldBuilderKind>("text");
-  const [editingFieldRequired, setEditingFieldRequired] = useState(false);
-  const [editingFieldPlaceholder, setEditingFieldPlaceholder] = useState("");
-  const [editingFieldHelpText, setEditingFieldHelpText] = useState("");
-  const [editingFieldRows, setEditingFieldRows] = useState("5");
-  const [editingFieldRelationCollection, setEditingFieldRelationCollection] = useState("");
+  const [builderMode, setBuilderMode] = useState<"create" | "edit">("create");
+  const [builderInput, setBuilderInput] =
+    useState<ContentFieldBuilderInput>(defaultFieldInput);
+  const [optionsText, setOptionsText] = useState("");
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
+  const [pendingRemoval, setPendingRemoval] = useState<string>();
+  const [previewDraft, setPreviewDraft] = useState<Record<string, unknown>>({});
+
+  const collectionRow = databaseCollections.find((collection) => collection.name === contentType);
+  const documentCount = collectionRow?.documentCount ?? 0;
 
   useEffect(() => {
     if (!activeSchema) {
       setSchemaDraft(undefined);
+      setSchemaJsonDraft("");
       setSelectedFieldName(undefined);
       return;
     }
-    setSchemaDraft([...(activeSchema.fields ?? [])]);
+    const nextDraft = [...(activeSchema.fields ?? [])];
+    setSchemaDraft(nextDraft);
+    setSchemaJsonDraft(JSON.stringify(nextDraft, null, 2));
   }, [activeSchema]);
 
   const fields = useMemo(
@@ -114,106 +180,65 @@ function ContentTypeFieldsRoute() {
       existing.push(field);
       grouped.set(group, existing);
     }
-
     return Array.from(grouped.entries());
   }, [fields]);
   const selectedField = fields.find((field) => field.name === selectedFieldName) ?? fields[0];
+  const selectedEntry = schemaDraft?.find((entry) => entry.name === selectedField?.name);
 
   useEffect(() => {
     if (!fields.length) {
       setSelectedFieldName(undefined);
       return;
     }
-
     if (!selectedFieldName || !fields.some((field) => field.name === selectedFieldName)) {
       setSelectedFieldName(fields[0]?.name);
     }
   }, [fields, selectedFieldName]);
 
-  function resetFieldComposer() {
-    setNewFieldName("");
-    setNewFieldLabel("");
-    setNewFieldDescription("");
-    setNewFieldGroup("Content");
-    setNewFieldKind("text");
-    setNewFieldRequired(false);
-    setNewFieldPlaceholder("");
-    setNewFieldHelpText("");
-    setNewFieldRows("5");
-    setNewFieldRelationCollection("");
-  }
-
-  function handleAddField() {
-    if (!schemaDraft) return;
-    try {
-      const next = insertCollectionField(schemaDraft, {
-        name: newFieldName,
-        label: newFieldLabel,
-        description: newFieldDescription,
-        group: newFieldGroup,
-        kind: newFieldKind,
-        required: newFieldRequired,
-        placeholder: newFieldPlaceholder,
-        helpText: newFieldHelpText,
-        rows: Number.isFinite(Number(newFieldRows)) ? Number(newFieldRows) : undefined,
-        relationCollection: newFieldRelationCollection,
-      });
-      setSchemaDraft(next);
-      setSelectedFieldName(newFieldName.trim());
-      setError(undefined);
-      setMessage(`Prepared field "${newFieldName.trim()}" in the draft schema.`);
-      resetFieldComposer();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-      setMessage(undefined);
+  useEffect(() => {
+    if (!fields.length) {
+      setPreviewDraft({});
+      return;
     }
+
+    const nextPreview: Record<string, unknown> = {};
+    for (const field of fields) {
+      nextPreview[field.name] = createPreviewFieldValue(field.definition);
+    }
+    setPreviewDraft(nextPreview);
+  }, [fields]);
+
+  function startCreate(kind: ContentFieldBuilderKind = "text") {
+    setBuilderMode("create");
+    setBuilderInput({ ...defaultFieldInput, kind });
+    setOptionsText(kind === "status" ? "draft\nreview\npublished\narchived" : "");
   }
 
-  function handleRemoveField(fieldName: string) {
+  function startEdit(entry: CollectionFieldEntry) {
+    const input = contentFieldEntryToBuilderInput(entry);
+    setBuilderMode("edit");
+    setBuilderInput(input);
+    setOptionsText((input.options ?? []).join("\n"));
+  }
+
+  function confirmRemoveField(fieldName: string) {
     if (!schemaDraft) return;
     setSchemaDraft(removeCollectionField(schemaDraft, fieldName));
+    setPendingRemoval(undefined);
+    startCreate();
     setError(undefined);
     setMessage(`Removed field "${fieldName}" from the draft schema.`);
   }
 
-  function beginEditingField(fieldName: string) {
-    const entry = schemaDraft?.find((e) => e.name === fieldName);
-    if (!entry) return;
-    setEditingFieldName(entry.name);
-    setEditingFieldLabel(entry.field.label);
-    setEditingFieldDescription("");
-    setEditingFieldGroup("Content");
-    setEditingFieldKind(inferFieldKindFromEntry(entry));
-    setEditingFieldRequired(entry.field.required);
-    setEditingFieldPlaceholder("");
-    setEditingFieldHelpText("");
-    setEditingFieldRows("5");
-    setEditingFieldRelationCollection("");
-  }
-
-  function handleSaveFieldEdits() {
-    if (!schemaDraft || !editingFieldName) return;
-    try {
-      const next = updateCollectionField(schemaDraft, editingFieldName, {
-        name: editingFieldName,
-        label: editingFieldLabel,
-        description: editingFieldDescription,
-        group: editingFieldGroup,
-        kind: editingFieldKind,
-        required: editingFieldRequired,
-        placeholder: editingFieldPlaceholder,
-        helpText: editingFieldHelpText,
-        rows: Number.isFinite(Number(editingFieldRows)) ? Number(editingFieldRows) : undefined,
-        relationCollection: editingFieldRelationCollection,
-      });
-      setSchemaDraft(next);
-      setMessage(`Updated field "${editingFieldName}".`);
-      setError(undefined);
-      setEditingFieldName(undefined);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+  function handleRemoveField(fieldName: string) {
+    if (!schemaDraft) return;
+    if (documentCount > 0) {
+      setPendingRemoval(fieldName);
       setMessage(undefined);
+      setError(undefined);
+      return;
     }
+    confirmRemoveField(fieldName);
   }
 
   function handleMoveField(fieldName: string, direction: -1 | 1) {
@@ -223,12 +248,44 @@ function ContentTypeFieldsRoute() {
     setMessage(`Reordered field "${fieldName}".`);
   }
 
+  function handleSaveBuilderInput() {
+    if (!schemaDraft) return;
+
+    const input = normalizeBuilderInput(builderInput, optionsText);
+    const validationError = validateBuilderInput(input);
+    if (validationError) {
+      setError(validationError);
+      setMessage(undefined);
+      return;
+    }
+
+    try {
+      const next =
+        builderMode === "edit"
+          ? updateCollectionField(schemaDraft, input.name, input)
+          : insertCollectionField(schemaDraft, input);
+      setSchemaDraft(next);
+      setSelectedFieldName(input.name.trim());
+      setError(undefined);
+      setMessage(
+        builderMode === "edit"
+          ? `Updated field "${input.name.trim()}".`
+          : `Prepared field "${input.name.trim()}" in the draft schema.`,
+      );
+      if (builderMode === "create") {
+        startCreate(input.kind);
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+      setMessage(undefined);
+    }
+  }
+
   async function handleSaveSchema() {
     if (!schemaDraft || !activeSchema || saving) {
       return;
     }
 
-    const runtime = await getRuntimeConfig();
     setSaving(true);
     setMessage(undefined);
     setError(undefined);
@@ -249,19 +306,117 @@ function ContentTypeFieldsRoute() {
     }
   }
 
+  async function handleSaveJsonSchema() {
+    if (!activeSchema || saving) {
+      return;
+    }
+
+    setSaving(true);
+    setMessage(undefined);
+    setError(undefined);
+    try {
+      const parsed = parseSchemaJsonDraft(schemaJsonDraft);
+      const nextVersion = (activeSchema.version ?? 0) + 1;
+      await createDatabaseSchema(runtime, {
+        collection: contentType,
+        version: nextVersion,
+        activate: true,
+        fields: parsed,
+      });
+      setSchemaDraft(parsed);
+      revalidator.revalidate();
+      setMessage(`Saved and activated schema v${nextVersion}.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleActivateSchemaVersion(version: number) {
+    if (saving) {
+      return;
+    }
+
+    setSaving(true);
+    setMessage(undefined);
+    setError(undefined);
+    try {
+      await activateDatabaseSchemaVersion(runtime, { collection: contentType, version });
+      revalidator.revalidate();
+      setMessage(`Activated schema v${version}.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
-    <div className="grid gap-6 xl:grid-cols-[minmax(260px,0.8fr)_minmax(0,1.4fr)_minmax(320px,0.9fr)]">
+    <div className="grid gap-6">
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between gap-3">
-          <CardTitle>Fields</CardTitle>
-          <Link
-            to={toDashboardPath("/database", { sidebar: "Core" })}
-            className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+        <CardContent className="flex flex-wrap items-center gap-2 p-3">
+          <Button
+            type="button"
+            variant={viewParams.view === "fields" ? "default" : "outline"}
+            onClick={() => setViewParams({ view: "fields" })}
           >
-            Open Core Database
-          </Link>
-        </CardHeader>
-        <CardContent className="grid gap-4 p-4">
+            <Rows3 className="size-4" />
+            Fields
+          </Button>
+          <Button
+            type="button"
+            variant={viewParams.view === "editor" ? "default" : "outline"}
+            onClick={() => setViewParams({ view: "editor" })}
+          >
+            <Braces className="size-4" />
+            Type Editor
+          </Button>
+          <Button
+            type="button"
+            variant={viewParams.view === "settings" ? "default" : "outline"}
+            onClick={() => setViewParams({ view: "settings" })}
+          >
+            <SquarePen className="size-4" />
+            Type Settings
+          </Button>
+        </CardContent>
+      </Card>
+
+      {viewParams.view === "editor" ? (
+        <TypeEditorPanel
+          schemas={schemas}
+          activeSchemaVersion={activeSchema?.version}
+          schemaJsonDraft={schemaJsonDraft}
+          saving={saving}
+          message={message}
+          error={error}
+          onSchemaJsonDraftChange={setSchemaJsonDraft}
+          onSaveJsonSchema={() => void handleSaveJsonSchema()}
+          onActivateSchemaVersion={(version) => void handleActivateSchemaVersion(version)}
+        />
+      ) : viewParams.view === "settings" ? (
+        <TypeSettingsPanel
+          contentType={contentType}
+          runtime={runtime}
+          settings={settings}
+          databaseCollections={databaseCollections}
+          schemaCollections={schemaCollections}
+          revalidate={() => revalidator.revalidate()}
+        />
+      ) : (
+        <div className="grid gap-6 xl:grid-cols-[minmax(260px,0.82fr)_minmax(0,1.35fr)_minmax(320px,0.9fr)]">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-3">
+              <CardTitle>Fields</CardTitle>
+            <Link
+                to={toDashboardPath(toProjectPath("/database"), { sidebar: "Backend" })}
+                className={cn(buttonVariants({ variant: "outline" }))}
+              >
+                Open Backend Database
+              </Link>
+            </CardHeader>
+            <CardContent className="grid gap-4 p-4">
           {message ? <ResourceNotice title="Done" description={message} /> : null}
           {error ? <ResourceNotice title="Action failed" description={error} /> : null}
 
@@ -272,6 +427,11 @@ function ContentTypeFieldsRoute() {
             />
           ) : (
             <>
+              <Button type="button" onClick={() => startCreate()}>
+                <Plus className="size-4" />
+                New Field
+              </Button>
+
               <div className="grid gap-4">
                 {fieldGroups.map(([group, groupedFields]) => (
                   <div key={group} className="grid gap-2">
@@ -307,95 +467,6 @@ function ContentTypeFieldsRoute() {
                   </div>
                 ))}
               </div>
-
-              <div className="rounded-md border bg-muted/20 p-3">
-                <p className="text-sm font-medium text-foreground">Add field</p>
-                <div className="mt-3 grid gap-3">
-                  <Input
-                    value={newFieldName}
-                    onChange={(event) => setNewFieldName(event.target.value)}
-                    placeholder="authorBio"
-                    aria-label="Field name"
-                  />
-                  <Input
-                    value={newFieldLabel}
-                    onChange={(event) => setNewFieldLabel(event.target.value)}
-                    placeholder="Author bio"
-                    aria-label="Field label"
-                  />
-                  <textarea
-                    value={newFieldDescription}
-                    onChange={(event) => setNewFieldDescription(event.target.value)}
-                    placeholder="Optional field help text"
-                    rows={3}
-                    className="rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                  />
-                  <Input
-                    value={newFieldGroup}
-                    onChange={(event) => setNewFieldGroup(event.target.value)}
-                    placeholder="Content"
-                    aria-label="Field group"
-                  />
-                  <select
-                    value={newFieldKind}
-                    onChange={(event) =>
-                      setNewFieldKind(event.target.value as ContentFieldBuilderKind)
-                    }
-                    className="h-10 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                  >
-                    {fieldTypeOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <Input
-                    value={newFieldPlaceholder}
-                    onChange={(event) => setNewFieldPlaceholder(event.target.value)}
-                    placeholder="Placeholder"
-                    aria-label="Field placeholder"
-                  />
-                  <Input
-                    value={newFieldHelpText}
-                    onChange={(event) => setNewFieldHelpText(event.target.value)}
-                    placeholder="Help text shown to editors"
-                    aria-label="Field help text"
-                  />
-                  {newFieldKind === "long-text" || newFieldKind === "json" || newFieldKind === "repeater" ? (
-                    <Input
-                      value={newFieldRows}
-                      onChange={(event) => setNewFieldRows(event.target.value)}
-                      placeholder="Rows"
-                      inputMode="numeric"
-                      aria-label="Field rows"
-                    />
-                  ) : null}
-                  {newFieldKind === "relation" ? (
-                    <Input
-                      value={newFieldRelationCollection}
-                      onChange={(event) => setNewFieldRelationCollection(event.target.value)}
-                      placeholder="posts"
-                      aria-label="Related collection"
-                    />
-                  ) : null}
-                  <label className="flex items-center gap-3 text-sm text-foreground">
-                    <Switch
-                      checked={newFieldRequired}
-                      onCheckedChange={setNewFieldRequired}
-                    />
-                    Required field
-                  </label>
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={handleAddField}
-                    disabled={!newFieldName.trim()}
-                  >
-                    <Plus className="size-4" />
-                    Add Field
-                  </Button>
-                </div>
-              </div>
             </>
           )}
         </CardContent>
@@ -403,10 +474,9 @@ function ContentTypeFieldsRoute() {
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3">
-          <CardTitle>Field builder</CardTitle>
+          <CardTitle>{builderMode === "edit" ? "Edit field" : "Field builder"}</CardTitle>
           <Button
             type="button"
-            size="sm"
             onClick={() => void handleSaveSchema()}
             disabled={!schemaDraft || !activeSchema || saving}
           >
@@ -414,76 +484,165 @@ function ContentTypeFieldsRoute() {
             Save & Activate
           </Button>
         </CardHeader>
-        <CardContent className="grid gap-4 p-4">
-          {!schemaDraft || !selectedField ? (
+        <CardContent className="grid gap-5 p-4">
+          {!schemaDraft ? (
             <ResourceNotice
-              title="Pick or create a field"
-              description="Select a field to edit it."
+              title="No active schema"
+              description="Create or activate a schema before using the builder."
             />
           ) : (
             <>
-              <div className="rounded-md border bg-muted/15 p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="grid gap-1">
-                    <p className="flex items-center gap-2 text-sm font-medium text-foreground">
-                      <PencilLine className="size-4" />
-                      {selectedField.label}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {selectedField.name} · {renderFieldType(selectedField.definition)}
-                    </p>
+              <TypePicker
+                selectedKind={builderInput.kind}
+                onSelect={(kind) => {
+                  setBuilderInput((current) => ({
+                    ...current,
+                    kind,
+                    nestedFields: kind === "repeater" ? current.nestedFields ?? [] : current.nestedFields,
+                  }));
+                  if (kind === "status" && !optionsText.trim()) {
+                    setOptionsText("draft\nreview\npublished\narchived");
+                  }
+                }}
+              />
+
+              <FieldConfigForm
+                mode={builderMode}
+                input={builderInput}
+                optionsText={optionsText}
+                onOptionsTextChange={setOptionsText}
+                onChange={setBuilderInput}
+                onSave={handleSaveBuilderInput}
+                onCancel={() => startCreate()}
+              />
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Document form preview</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-4 p-4">
+            {!schemaDraft || fields.length === 0 ? (
+              <ResourceNotice
+                title="No fields to preview"
+                description="Add fields to the draft schema to preview the entry editor."
+              />
+            ) : (
+              fields.map((field) => (
+                <SchemaFieldEditor
+                  key={field.name}
+                  name={field.name}
+                  label={field.label}
+                  description={field.description}
+                  required={field.required}
+                  definition={field.definition}
+                  value={previewDraft[field.name]}
+                  onChange={(value) =>
+                    setPreviewDraft((current) => ({
+                      ...current,
+                      [field.name]: value,
+                    }))
+                  }
+                />
+              ))
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Selected field</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-4 p-4">
+            {!schemaDraft || !selectedField || !selectedEntry ? (
+              <ResourceNotice
+                title="Pick or create a field"
+                description="Select a field to inspect its editor behavior."
+              />
+            ) : (
+              <>
+                {pendingRemoval === selectedField.name ? (
+                  <ResourceNotice
+                    title="Remove field from schema?"
+                    description={`This collection has ${documentCount} existing ${documentCount === 1 ? "entry" : "entries"}. Removing "${selectedField.name}" will not delete stored values, but those values will no longer be validated or editable until you migrate them.`}
+                  />
+                ) : null}
+                <div className="rounded-md border bg-muted/15 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="grid gap-1">
+                      <p className="flex items-center gap-2 text-sm font-medium text-foreground">
+                        <PencilLine className="size-4" />
+                        {selectedField.label}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {selectedField.name} · {renderFieldType(selectedField.definition)}
+                      </p>
+                    </div>
+                    {pendingRemoval === selectedField.name ? (
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setPendingRemoval(undefined)}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          onClick={() => confirmRemoveField(selectedField.name)}
+                        >
+                          <Trash2 className="size-4" />
+                          Confirm remove
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => handleRemoveField(selectedField.name)}
+                      >
+                        <Trash2 className="size-4" />
+                        Remove
+                      </Button>
+                    )}
                   </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleRemoveField(selectedField.name)}
-                  >
-                    <Trash2 className="size-4" />
-                    Remove
-                  </Button>
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => handleMoveField(selectedField.name, -1)}
+                    >
+                      <ArrowUp className="size-4" />
+                      Move up
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => handleMoveField(selectedField.name, 1)}
+                    >
+                      <ArrowDown className="size-4" />
+                      Move down
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => startEdit(selectedEntry)}
+                    >
+                      <SquarePen className="size-4" />
+                      Edit field
+                    </Button>
+                  </div>
                 </div>
-                <div className="mt-4 flex flex-wrap items-center gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleMoveField(selectedField.name, -1)}
-                  >
-                    <ArrowUp className="size-4" />
-                    Move up
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleMoveField(selectedField.name, 1)}
-                  >
-                    <ArrowDown className="size-4" />
-                    Move down
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => beginEditingField(selectedField.name)}
-                  >
-                    <SquarePen className="size-4" />
-                    Edit field
-                  </Button>
-                </div>
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+
+                <div className="grid gap-3 sm:grid-cols-2">
                   <FieldPropertyCard
                     label="Editor"
-                    value={
-                      isRichTextSchemaField(selectedField.name, selectedField.definition)
-                        ? "Lexical rich text"
-                        : getContentSchemaUi(selectedField.definition)?.control === "textarea"
-                          ? "Textarea"
-                          : selectedField.definition.type === "boolean"
-                            ? "Switch"
-                            : "Input"
-                    }
+                    value={renderEditorKind(selectedField.definition)}
                   />
                   <FieldPropertyCard
                     label="Required"
@@ -497,176 +656,117 @@ function ContentTypeFieldsRoute() {
                     label="Schema type"
                     value={String(selectedField.definition.type ?? "custom")}
                   />
-                  <FieldPropertyCard
-                    label="Placeholder"
-                    value={getContentSchemaUi(selectedField.definition)?.placeholder ?? "None"}
-                  />
-                  <FieldPropertyCard
-                    label="Help text"
-                    value={getContentSchemaUi(selectedField.definition)?.helpText ?? "None"}
-                  />
-                  <FieldPropertyCard
-                    label="Description"
-                    value={
-                      selectedField.description ??
-                      "No helper copy yet. Add a description when you want editors guided."
-                    }
-                  />
                 </div>
-                {selectedField.definition.type === "string" &&
-                Array.isArray(selectedField.definition.enum) ? (
-                  <div className="mt-4 rounded-md border bg-background p-3">
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      Allowed values
-                    </p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {selectedField.definition.enum.map((value) => (
-                        <span
-                          key={String(value)}
-                          className="rounded-md border px-2 py-1 text-xs text-muted-foreground"
-                        >
-                          {String(value)}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-                {selectedField.definition.type === "file" ? (
-                  <div className="mt-4 rounded-md border bg-background p-3">
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      File validation
-                    </p>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      {Array.isArray(selectedField.definition.mimeTypes)
-                        ? `${selectedField.definition.mimeTypes.length} allowed MIME types`
-                        : "Any MIME type"}
-                      {typeof selectedField.definition.maxSize === "number"
-                        ? ` · max ${selectedField.definition.maxSize.toLocaleString()} bytes`
-                        : ""}
-                    </p>
-                  </div>
-                ) : null}
-              </div>
 
-              <div className="rounded-md border bg-muted/15 p-4">
-                <p className="text-sm font-medium text-foreground">Field preview</p>
-                <pre className="mt-3 overflow-x-auto rounded-md border bg-background p-4 text-xs leading-6 text-muted-foreground">
-                  {JSON.stringify(
-                    schemaDraft?.find((e) => e.name === selectedField.name)?.field,
-                    null, 2
-                  )}
+                <pre className="overflow-x-auto rounded-md border bg-background p-4 text-xs leading-6 text-muted-foreground">
+                  {JSON.stringify(selectedEntry.field, null, 2)}
                 </pre>
-              </div>
-              {editingFieldName ? (
-                <div className="rounded-md border bg-muted/15 p-4">
-                  <p className="text-sm font-medium text-foreground">Edit field</p>
-                  <div className="mt-3 grid gap-3">
-                    <Input
-                      value={editingFieldLabel}
-                      onChange={(event) => setEditingFieldLabel(event.target.value)}
-                      placeholder="Field label"
-                      aria-label="Edit field label"
-                    />
-                    <textarea
-                      value={editingFieldDescription}
-                      onChange={(event) => setEditingFieldDescription(event.target.value)}
-                      rows={3}
-                      placeholder="Field description"
-                      className="rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                    />
-                    <Input
-                      value={editingFieldGroup}
-                      onChange={(event) => setEditingFieldGroup(event.target.value)}
-                      placeholder="Content"
-                      aria-label="Edit field group"
-                    />
-                    <select
-                      value={editingFieldKind}
-                      onChange={(event) =>
-                        setEditingFieldKind(event.target.value as ContentFieldBuilderKind)
-                      }
-                      className="h-10 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                    >
-                      {fieldTypeOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                    <Input
-                      value={editingFieldPlaceholder}
-                      onChange={(event) => setEditingFieldPlaceholder(event.target.value)}
-                      placeholder="Field placeholder"
-                      aria-label="Edit field placeholder"
-                    />
-                    <Input
-                      value={editingFieldHelpText}
-                      onChange={(event) => setEditingFieldHelpText(event.target.value)}
-                      placeholder="Field help text"
-                      aria-label="Edit field help text"
-                    />
-                    {editingFieldKind === "long-text" || editingFieldKind === "json" || editingFieldKind === "repeater" ? (
-                      <Input
-                        value={editingFieldRows}
-                        onChange={(event) => setEditingFieldRows(event.target.value)}
-                        placeholder="Rows"
-                        inputMode="numeric"
-                        aria-label="Edit field rows"
-                      />
-                    ) : null}
-                    {editingFieldKind === "relation" ? (
-                      <Input
-                        value={editingFieldRelationCollection}
-                        onChange={(event) => setEditingFieldRelationCollection(event.target.value)}
-                        placeholder="posts"
-                        aria-label="Edit related collection"
-                      />
-                    ) : null}
-                    <label className="flex items-center gap-3 text-sm text-foreground">
-                      <Switch
-                        checked={editingFieldRequired}
-                        onCheckedChange={setEditingFieldRequired}
-                      />
-                      Required field
-                    </label>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button type="button" size="sm" onClick={handleSaveFieldEdits}>
-                        <Save className="size-4" />
-                        Save field
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setEditingFieldName(undefined)}
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-            </>
-          )}
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Draft schema JSON</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-3 p-4">
+            {schemaDraft ? (
+              <pre className="max-h-[36rem] overflow-auto rounded-md border bg-muted/25 p-4 text-xs leading-6 text-muted-foreground">
+                {JSON.stringify(schemaDraft, null, 2)}
+              </pre>
+            ) : (
+              <ResourceNotice
+                title="No active schema"
+                description="Save a schema version to preview it here."
+              />
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+      )}
+    </div>
+  );
+}
+
+function TypeEditorPanel(props: {
+  schemas: readonly DatabaseStoredCollectionSchema[];
+  activeSchemaVersion?: number;
+  schemaJsonDraft: string;
+  saving: boolean;
+  message?: string;
+  error?: string;
+  onSchemaJsonDraftChange: (value: string) => void;
+  onSaveJsonSchema: () => void;
+  onActivateSchemaVersion: (version: number) => void;
+}) {
+  return (
+    <div className="grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)]">
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between gap-3">
+          <CardTitle>Type Editor</CardTitle>
+          <Button
+            type="button"
+            onClick={props.onSaveJsonSchema}
+            disabled={props.saving || !props.activeSchemaVersion}
+          >
+            <Save className="size-4" />
+            Save & Activate
+          </Button>
+        </CardHeader>
+        <CardContent className="grid gap-4 p-4">
+          {props.message ? <ResourceNotice title="Done" description={props.message} /> : null}
+          {props.error ? <ResourceNotice title="Action failed" description={props.error} /> : null}
+          {!props.activeSchemaVersion ? (
+            <ResourceNotice
+              title="No active schema"
+              description="Create or activate a schema before editing the raw field definition."
+            />
+          ) : null}
+          <textarea
+            value={props.schemaJsonDraft}
+            onChange={(event) => props.onSchemaJsonDraftChange(event.target.value)}
+            rows={28}
+            spellCheck={false}
+            className="min-h-[36rem] rounded-md border bg-background px-3 py-2 font-mono text-xs leading-6 outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            aria-label="Schema JSON"
+          />
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>Active schema JSON</CardTitle>
+          <CardTitle>Schema versions</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3 p-4">
-          {schemaDraft ? (
-            <>
-              <pre className="overflow-x-auto rounded-md border bg-muted/25 p-4 text-xs leading-6 text-muted-foreground">
-                {JSON.stringify(schemaDraft, null, 2)}
-              </pre>
-            </>
+          {props.schemas.length === 0 ? (
+            <ResourceNotice title="No versions" description="This content type has no saved schemas yet." />
           ) : (
-            <ResourceNotice
-              title="No active schema"
-              description="Save a schema version to preview it here."
-            />
+            props.schemas
+              .slice()
+              .sort((left, right) => right.version - left.version)
+              .map((schema) => (
+                <div
+                  key={schema.version}
+                  className="grid gap-2 rounded-md border bg-muted/15 p-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-medium text-foreground">v{schema.version}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {schema.active ? "Active" : `${schema.fields.length} fields`}
+                    </span>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={props.saving || schema.active}
+                    onClick={() => props.onActivateSchemaVersion(schema.version)}
+                  >
+                    Activate version
+                  </Button>
+                </div>
+              ))
           )}
         </CardContent>
       </Card>
@@ -674,17 +774,722 @@ function ContentTypeFieldsRoute() {
   );
 }
 
+function TypeSettingsPanel(props: {
+  contentType: string;
+  runtime: RuntimeConfig;
+  settings: DashboardSettings;
+  databaseCollections: readonly DatabaseCollection[];
+  schemaCollections: readonly DatabaseSchemaCollectionSummary[];
+  revalidate: () => void;
+}) {
+  const contentPreferences = getResolvedDashboardPreferences(props.settings).content;
+  const row = useMemo(
+    () => props.databaseCollections.find((collection) => collection.name === props.contentType),
+    [props.databaseCollections, props.contentType],
+  );
+  const [labelDraft, setLabelDraft] = useState(
+    contentPreferences?.labels?.[props.contentType] ?? props.contentType,
+  );
+  const [duplicateLabel, setDuplicateLabel] = useState(`${props.contentType} Copy`);
+  const [duplicateName, setDuplicateName] = useState(`${props.contentType}-copy`);
+  const [message, setMessage] = useState<string>();
+  const [error, setError] = useState<string>();
+  const [saving, setSaving] = useState(false);
+
+  const activeSchemaVersion =
+    props.schemaCollections.find((entry) => entry.collection === props.contentType)
+      ?.activeVersion ?? null;
+  const pinnedTypes = contentPreferences?.pinnedTypes ?? [];
+  const isPinned = pinnedTypes.includes(props.contentType);
+
+  useEffect(() => {
+    setLabelDraft(contentPreferences?.labels?.[props.contentType] ?? props.contentType);
+  }, [contentPreferences?.labels, props.contentType]);
+
+  async function handleSaveLabel() {
+    if (!labelDraft.trim() || saving) {
+      return;
+    }
+
+    setSaving(true);
+    setMessage(undefined);
+    setError(undefined);
+    try {
+      await updateDashboardSettings(props.runtime, {
+        preferences: {
+          content: {
+            labels: {
+              ...(contentPreferences?.labels ?? {}),
+              [props.contentType]: labelDraft.trim(),
+            },
+            pinnedTypes,
+          },
+        },
+      });
+      props.revalidate();
+      setMessage(`Updated editor label for ${props.contentType}.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleTogglePin() {
+    if (saving) {
+      return;
+    }
+
+    const nextPinnedTypes = isPinned
+      ? pinnedTypes.filter((entry) => entry !== props.contentType)
+      : [...pinnedTypes, props.contentType];
+
+    setSaving(true);
+    setMessage(undefined);
+    setError(undefined);
+    try {
+      await updateDashboardSettings(props.runtime, {
+        preferences: {
+          content: {
+            labels: contentPreferences?.labels ?? {},
+            pinnedTypes: nextPinnedTypes,
+          },
+        },
+      });
+      props.revalidate();
+      setMessage(
+        isPinned
+          ? `Removed ${props.contentType} from pinned content types.`
+          : `Pinned ${props.contentType} to the top of Content Studio.`,
+      );
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDuplicateType() {
+    if (!duplicateName.trim() || saving) {
+      return;
+    }
+
+    setSaving(true);
+    setMessage(undefined);
+    setError(undefined);
+    try {
+      const sourceSchemas = await listDatabaseSchemaVersions(props.runtime, props.contentType);
+      const activeSchema =
+        sourceSchemas.find((schema) => schema.active) ?? sourceSchemas.at(-1);
+      const created = await createDatabaseCollection(props.runtime, {
+        name: duplicateName.trim(),
+        surface: "content-studio",
+        metadata: {
+          kind: "content-type",
+          duplicatedFrom: props.contentType,
+        },
+      });
+
+      if (activeSchema) {
+        await createDatabaseSchema(props.runtime, {
+          collection: created.name,
+          version: 1,
+          activate: true,
+          fields: activeSchema.fields ?? [],
+        });
+      }
+
+      await updateDashboardSettings(props.runtime, {
+        preferences: {
+          content: {
+            labels:
+              duplicateLabel.trim() && duplicateLabel.trim() !== created.name
+                ? {
+                    ...(contentPreferences?.labels ?? {}),
+                    [created.name]: duplicateLabel.trim(),
+                  }
+                : contentPreferences?.labels ?? {},
+            pinnedTypes,
+          },
+        },
+      });
+      props.revalidate();
+      setMessage(`Duplicated ${props.contentType} into ${created.name}.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+      <Card>
+        <CardHeader>
+          <CardTitle>Content type settings</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {message ? <ResourceNotice title="Done" description={message} /> : null}
+          {error ? <ResourceNotice title="Action failed" description={error} /> : null}
+          <DataRow label="Collection" detail={props.contentType} />
+          <DataRow label="Entries" detail={String(row?.documentCount ?? 0)} />
+          <DataRow
+            label="Active schema"
+            detail={activeSchemaVersion ? `v${activeSchemaVersion}` : "No active schema"}
+          />
+          <div className="grid gap-3 border-t p-4">
+            <label className="grid gap-2 text-sm font-medium text-foreground">
+              Editor label
+              <Input value={labelDraft} onChange={(event) => setLabelDraft(event.target.value)} />
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                onClick={() => void handleSaveLabel()}
+                disabled={saving}
+              >
+                <Save className="size-4" />
+                Save label
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void handleTogglePin()}
+                disabled={saving}
+              >
+                {isPinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}
+                {isPinned ? "Unpin" : "Pin"}
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Duplicate this content type</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3 p-4">
+          <label className="grid gap-2 text-sm font-medium text-foreground">
+            New label
+            <Input
+              value={duplicateLabel}
+              onChange={(event) => setDuplicateLabel(event.target.value)}
+            />
+          </label>
+          <label className="grid gap-2 text-sm font-medium text-foreground">
+            New collection name
+            <Input
+              value={duplicateName}
+              onChange={(event) => setDuplicateName(event.target.value)}
+            />
+          </label>
+          <p className="text-sm text-muted-foreground">
+            Duplication copies the active schema and keeps entries separate, which is usually the right starting point for a fresh content model.
+          </p>
+          <div>
+            <Button
+              type="button"
+              onClick={() => void handleDuplicateType()}
+              disabled={!duplicateName.trim() || saving}
+            >
+              <Copy className="size-4" />
+              Duplicate content type
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function parseSchemaJsonDraft(value: string): CollectionFieldEntry[] {
+  return parseCollectionFieldEntriesJson(value);
+}
+
+function TypePicker(props: {
+  selectedKind: ContentFieldBuilderKind;
+  onSelect: (kind: ContentFieldBuilderKind) => void;
+}) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      {fieldTypeOptions.map((option) => {
+        const Icon = option.icon;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => props.onSelect(option.value)}
+            className={cn(
+              "grid min-h-24 grid-cols-[2.5rem_minmax(0,1fr)] gap-3 rounded-md border p-3 text-left transition-colors hover:bg-accent",
+              props.selectedKind === option.value && "border-primary bg-accent/50",
+            )}
+          >
+            <span className="flex size-10 items-center justify-center rounded-md bg-muted text-muted-foreground">
+              <Icon className="size-5" />
+            </span>
+            <span className="grid gap-1">
+              <span className="text-sm font-medium text-foreground">{option.label}</span>
+              <span className="text-xs leading-5 text-muted-foreground">{option.description}</span>
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function FieldConfigForm(props: {
+  mode: "create" | "edit";
+  input: ContentFieldBuilderInput;
+  optionsText: string;
+  onOptionsTextChange: (value: string) => void;
+  onChange: (input: ContentFieldBuilderInput) => void;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  const { input, onChange } = props;
+  const showTextValidation =
+    input.kind === "text" || input.kind === "long-text" || input.kind === "slug";
+  const showNumberValidation = input.kind === "number" || input.kind === "integer";
+  const showOptions =
+    input.kind === "select" || input.kind === "multi-select" || input.kind === "status";
+  const showItemLimits = input.kind === "multi-select" || input.kind === "repeater";
+  const showRows = input.kind === "long-text" || input.kind === "json";
+  const showPlaceholder =
+    input.kind === "text" ||
+    input.kind === "long-text" ||
+    input.kind === "number" ||
+    input.kind === "integer" ||
+    input.kind === "json" ||
+    input.kind === "slug" ||
+    input.kind === "url";
+
+  return (
+    <div className="grid gap-4 rounded-md border bg-muted/15 p-4">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Input
+          value={input.label ?? ""}
+          onChange={(event) => {
+            const label = event.target.value;
+            onChange({
+              ...input,
+              label,
+              name: props.mode === "create" && !input.name ? slugifyFieldName(label) : input.name,
+            });
+          }}
+          placeholder="Author Bio"
+          aria-label="Field label"
+        />
+        <Input
+          value={input.name}
+          onChange={(event) => onChange({ ...input, name: event.target.value })}
+          placeholder="authorBio"
+          aria-label="Field name"
+          disabled={props.mode === "edit"}
+        />
+      </div>
+
+      <textarea
+        value={input.description ?? ""}
+        onChange={(event) => onChange({ ...input, description: event.target.value })}
+        rows={3}
+        placeholder="Optional field description"
+        className="rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      />
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Input
+          value={input.group ?? ""}
+          onChange={(event) => onChange({ ...input, group: event.target.value })}
+          placeholder="Content"
+          aria-label="Field group"
+        />
+        {showPlaceholder ? (
+          <Input
+            value={input.placeholder ?? ""}
+            onChange={(event) => onChange({ ...input, placeholder: event.target.value })}
+            placeholder="Placeholder"
+            aria-label="Field placeholder"
+          />
+        ) : null}
+      </div>
+
+      <Input
+        value={input.helpText ?? ""}
+        onChange={(event) => onChange({ ...input, helpText: event.target.value })}
+        placeholder="Help text shown to editors"
+        aria-label="Field help text"
+      />
+
+      <label className="flex items-center gap-3 text-sm text-foreground">
+        <Switch
+          checked={input.required ?? false}
+          onCheckedChange={(required) => onChange({ ...input, required })}
+        />
+        Required field
+      </label>
+
+      {showTextValidation ? (
+        <div className="grid gap-3 sm:grid-cols-3">
+          <NumericInput
+            value={input.minLength}
+            onChange={(minLength) => onChange({ ...input, minLength })}
+            placeholder="Min length"
+          />
+          <NumericInput
+            value={input.maxLength}
+            onChange={(maxLength) => onChange({ ...input, maxLength })}
+            placeholder="Max length"
+          />
+          <Input
+            value={input.pattern ?? ""}
+            onChange={(event) => onChange({ ...input, pattern: event.target.value })}
+            placeholder={input.kind === "slug" ? "^[a-z0-9]+(?:-[a-z0-9]+)*$" : "Pattern"}
+            aria-label="Validation pattern"
+          />
+        </div>
+      ) : null}
+
+      {showNumberValidation ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <NumericInput
+            value={input.min}
+            onChange={(min) => onChange({ ...input, min })}
+            placeholder="Min value"
+          />
+          <NumericInput
+            value={input.max}
+            onChange={(max) => onChange({ ...input, max })}
+            placeholder="Max value"
+          />
+        </div>
+      ) : null}
+
+      {showOptions ? (
+        <textarea
+          value={props.optionsText}
+          onChange={(event) => props.onOptionsTextChange(event.target.value)}
+          rows={5}
+          placeholder="Option 1&#10;Option 2&#10;Option 3"
+          className="rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        />
+      ) : null}
+
+      {showItemLimits ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <NumericInput
+            value={input.minItems}
+            onChange={(minItems) => onChange({ ...input, minItems })}
+            placeholder="Min items"
+          />
+          <NumericInput
+            value={input.maxItems}
+            onChange={(maxItems) => onChange({ ...input, maxItems })}
+            placeholder="Max items"
+          />
+        </div>
+      ) : null}
+
+      {showRows ? (
+        <NumericInput
+          value={input.rows}
+          onChange={(rows) => onChange({ ...input, rows })}
+          placeholder="Rows"
+        />
+      ) : null}
+
+      {input.kind === "relation" ? (
+        <div className="grid gap-3">
+          <Input
+            value={input.relationCollection ?? ""}
+            onChange={(event) => onChange({ ...input, relationCollection: event.target.value })}
+            placeholder="posts"
+            aria-label="Related collection"
+          />
+          <label className="flex items-center gap-3 text-sm text-foreground">
+            <Switch
+              checked={input.relationMultiple ?? false}
+              onCheckedChange={(relationMultiple) => onChange({ ...input, relationMultiple })}
+            />
+            Allow multiple references
+          </label>
+        </div>
+      ) : null}
+
+      {input.kind === "slug" ? (
+        <Input
+          value={input.from ?? ""}
+          onChange={(event) => onChange({ ...input, from: event.target.value })}
+          placeholder="Generate from field, for example title"
+          aria-label="Slug source field"
+        />
+      ) : null}
+
+      {isFileKind(input.kind) ? (
+        <NumericInput
+          value={input.maxSize}
+          onChange={(maxSize) => onChange({ ...input, maxSize })}
+          placeholder="Max size in bytes"
+        />
+      ) : null}
+
+      {input.kind === "repeater" ? (
+        <NestedFieldsEditor
+          fields={input.nestedFields ?? []}
+          onChange={(nestedFields) => onChange({ ...input, nestedFields })}
+        />
+      ) : null}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" onClick={props.onSave}>
+          <Save className="size-4" />
+          {props.mode === "edit" ? "Update Field" : "Add Field"}
+        </Button>
+        {props.mode === "edit" ? (
+          <Button type="button" variant="outline" onClick={props.onCancel}>
+            Cancel
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function NestedFieldsEditor(props: {
+  fields: CollectionFieldEntry[];
+  onChange: (fields: CollectionFieldEntry[]) => void;
+}) {
+  const [nestedName, setNestedName] = useState("");
+  const [nestedLabel, setNestedLabel] = useState("");
+  const [nestedKind, setNestedKind] = useState<ContentFieldBuilderKind>("text");
+
+  function handleAddNestedField() {
+    const name = nestedName.trim() || slugifyFieldName(nestedLabel);
+    const validationError = validateCollectionFieldName(name);
+    if (validationError) {
+      return;
+    }
+    if (props.fields.some((field) => field.name === name)) {
+      return;
+    }
+
+    props.onChange([
+      ...props.fields,
+      contentBuilderInputToEntry({
+        name,
+        label: nestedLabel.trim() || undefined,
+        kind: nestedKind,
+        required: false,
+      }),
+    ]);
+    setNestedName("");
+    setNestedLabel("");
+    setNestedKind("text");
+  }
+
+  return (
+    <div className="grid gap-3 rounded-md border bg-background p-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-medium text-foreground">Nested fields</p>
+        <span className="text-xs text-muted-foreground">{props.fields.length} fields</span>
+      </div>
+      {props.fields.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Repeaters need at least one nested field for editors to fill in.
+        </p>
+      ) : (
+        <div className="grid gap-2">
+          {props.fields.map((field) => (
+            <div
+              key={field.name}
+              className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"
+            >
+              <div className="grid gap-0.5">
+                <span className="text-sm font-medium text-foreground">{field.field.label}</span>
+                <span className="text-xs text-muted-foreground">
+                  {field.name} · {field.field._tag}
+                </span>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() =>
+                  props.onChange(props.fields.filter((entry) => entry.name !== field.name))
+                }
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_auto]">
+        <Input
+          value={nestedName}
+          onChange={(event) => setNestedName(event.target.value)}
+          placeholder="fieldName"
+          aria-label="Nested field name"
+        />
+        <Input
+          value={nestedLabel}
+          onChange={(event) => setNestedLabel(event.target.value)}
+          placeholder="Field label"
+          aria-label="Nested field label"
+        />
+        <select
+          value={nestedKind}
+          onChange={(event) => setNestedKind(event.target.value as ContentFieldBuilderKind)}
+          className="h-10 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          aria-label="Nested field type"
+        >
+          <option value="text">Short Text</option>
+          <option value="long-text">Long Text</option>
+          <option value="number">Number</option>
+          <option value="integer">Integer</option>
+          <option value="boolean">Boolean</option>
+        </select>
+      </div>
+      <Button
+        type="button"
+        variant="outline"
+        onClick={handleAddNestedField}
+        disabled={!nestedName.trim() && !nestedLabel.trim()}
+      >
+        <Plus className="size-4" />
+        Add nested field
+      </Button>
+    </div>
+  );
+}
+
+function NumericInput(props: {
+  value: number | undefined;
+  onChange: (value: number | undefined) => void;
+  placeholder: string;
+}) {
+  return (
+    <Input
+      value={props.value === undefined ? "" : String(props.value)}
+      onChange={(event) => {
+        const raw = event.target.value.trim();
+        props.onChange(raw ? Number(raw) : undefined);
+      }}
+      placeholder={props.placeholder}
+      inputMode="numeric"
+      aria-label={props.placeholder}
+    />
+  );
+}
+
+function normalizeBuilderInput(
+  input: ContentFieldBuilderInput,
+  optionsText: string,
+): ContentFieldBuilderInput {
+  return {
+    ...input,
+    options: optionsText
+      .split("\n")
+      .map((value) => value.trim())
+      .filter(Boolean),
+  };
+}
+
+function validateBuilderInput(input: ContentFieldBuilderInput): string | undefined {
+  const nameIssue = validateCollectionFieldName(input.name);
+  if (nameIssue) return nameIssue;
+  if (
+    (input.kind === "select" || input.kind === "multi-select" || input.kind === "status") &&
+    (!input.options || input.options.length === 0)
+  ) {
+    return "Select fields need at least one option.";
+  }
+  if (input.kind === "relation" && !input.relationCollection?.trim()) {
+    return "Reference fields need a related collection.";
+  }
+  if (input.kind === "repeater") {
+    const nestedFields = input.nestedFields ?? [];
+    const nestedNames = new Set<string>();
+    for (const nested of nestedFields) {
+      const nestedNameIssue = validateCollectionFieldName(nested.name);
+      if (nestedNameIssue) {
+        return `Nested field "${nested.name || "unnamed"}": ${nestedNameIssue}`;
+      }
+      if (nestedNames.has(nested.name)) {
+        return `Duplicate nested field name "${nested.name}".`;
+      }
+      nestedNames.add(nested.name);
+    }
+  }
+  if (input.min !== undefined && input.max !== undefined && input.min > input.max) {
+    return "Minimum value cannot be greater than maximum value.";
+  }
+  if (
+    input.minLength !== undefined &&
+    input.maxLength !== undefined &&
+    input.minLength > input.maxLength
+  ) {
+    return "Minimum length cannot be greater than maximum length.";
+  }
+  if (
+    input.minItems !== undefined &&
+    input.maxItems !== undefined &&
+    input.minItems > input.maxItems
+  ) {
+    return "Minimum items cannot be greater than maximum items.";
+  }
+  return undefined;
+}
+
+function slugifyFieldName(label: string) {
+  const words = label
+    .trim()
+    .replace(/[^a-zA-Z0-9]+/g, " ")
+    .split(" ")
+    .filter(Boolean);
+  return words
+    .map((word, index) => {
+      const lower = word.toLowerCase();
+      return index === 0 ? lower : `${lower[0]?.toUpperCase() ?? ""}${lower.slice(1)}`;
+    })
+    .join("");
+}
+
+function isFileKind(kind: ContentFieldBuilderKind) {
+  return kind === "image" || kind === "document" || kind === "audio" || kind === "video" || kind === "file";
+}
+
 function renderFieldType(definition: ContentSchemaDefinition) {
+  const ui = getContentSchemaUi(definition);
+  if (ui?.control === "select") return "select";
+  if (ui?.control === "multi-select") return "multi-select";
+  if (ui?.control === "reference") return "reference";
+  if (ui?.control === "slug") return "slug";
+  if (ui?.control === "url") return "url";
+  if (ui?.control === "json") return "json";
   if (definition.type === "file" && Array.isArray(definition.mimeTypes)) {
     const mimes = definition.mimeTypes as string[];
-    if (mimes.some((v) => v.startsWith("image/"))) return "image";
-    if (mimes.some((v) => v.startsWith("audio/"))) return "audio";
-    if (mimes.some((v) => v.startsWith("video/"))) return "video";
-    if (mimes.some((v) => v.includes("pdf"))) return "document";
+    if (mimes.some((value) => value.startsWith("image/"))) return "image";
+    if (mimes.some((value) => value.startsWith("audio/"))) return "audio";
+    if (mimes.some((value) => value.startsWith("video/"))) return "video";
+    if (mimes.some((value) => value.includes("pdf"))) return "document";
     return "file";
   }
   if (isRichTextSchemaField("_content", definition)) return "rich text";
   return typeof definition.type === "string" ? definition.type : "custom";
+}
+
+function renderEditorKind(definition: ContentSchemaDefinition) {
+  const ui = getContentSchemaUi(definition);
+  if (isRichTextSchemaField("_content", definition)) return "Lexical rich text";
+  if (ui?.control === "textarea") return "Textarea";
+  if (ui?.control === "select") return "Select";
+  if (ui?.control === "multi-select") return "Multi-select";
+  if (ui?.control === "reference") return "Reference picker";
+  if (ui?.control === "datetime") return "Date-time input";
+  if (ui?.control === "json") return "JSON editor";
+  if (definition.type === "boolean") return "Switch";
+  return "Input";
 }
 
 function FieldPropertyCard(props: { label: string; value: string }) {

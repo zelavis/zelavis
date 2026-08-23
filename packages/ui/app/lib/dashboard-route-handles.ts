@@ -1,8 +1,11 @@
 import type { UIMatch } from "react-router";
 
+import type { DashboardSlotDefinition } from "#/components/DashboardSlots";
+
 export type DashboardRouteHandle = {
   pageLabel?: string;
   sidebarTrail?: readonly string[];
+  slots?: readonly DashboardSlotDefinition[];
 };
 
 export type DashboardRouteMatch = UIMatch<unknown, DashboardRouteHandle>;
@@ -16,7 +19,8 @@ export function getDashboardRouteHandle(
     .find(
       (handle) =>
         typeof handle?.pageLabel === "string" ||
-        Array.isArray(handle?.sidebarTrail),
+        Array.isArray(handle?.sidebarTrail) ||
+        Array.isArray(handle?.slots),
     );
 }
 
@@ -30,4 +34,8 @@ export function getDashboardSidebarTrailFromMatches(
   matches: readonly UIMatch[],
 ) {
   return getDashboardRouteHandle(matches)?.sidebarTrail;
+}
+
+export function getDashboardSlotsFromMatches(matches: readonly UIMatch[]) {
+  return getDashboardRouteHandle(matches)?.slots ?? [];
 }

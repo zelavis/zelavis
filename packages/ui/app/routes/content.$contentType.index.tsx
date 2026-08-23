@@ -1,4 +1,4 @@
-import { Link, useLoaderData, useNavigate, useRevalidator } from "react-router";
+import { Link, useLoaderData, useNavigate, useRevalidator, useRouteLoaderData } from "react-router";
 import { Copy, Pencil, Plus, Save, SquarePen, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -8,22 +8,24 @@ import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import { createStarterContentEntry } from "#/lib/content-schema";
 import {
-  getRuntimeConfig,
+  getActiveRuntimeConfig,
   insertDatabaseDocument,
   queryDatabaseDocuments,
   updateDatabaseDocument,
   type DatabaseDocument,
 } from "#/lib/runtime-api";
+import { toProjectPath } from "#/lib/routing";
 import { cn } from "#/lib/utils";
 import type { Route } from './+types/content.$contentType.index';
+import type { clientLoader as rootClientLoader } from '../root';
 
 export const handle = {
   pageLabel: "Content",
   sidebarTrail: ["Content"],
 } as const;
 
-export async function clientLoader({ params }: Route.ClientLoaderArgs) {
-  const runtime = await getRuntimeConfig();
+export async function clientLoader({ params, request }: Route.ClientLoaderArgs) {
+  const runtime = await getActiveRuntimeConfig(request);
   const contentType = params.contentType;
   const entries = await queryDatabaseDocuments(runtime, contentType);
   return { entries, contentType };
@@ -33,6 +35,7 @@ function ContentTypeEntriesRoute() {
   const { entries, contentType } = useLoaderData<typeof clientLoader>();
   const revalidator = useRevalidator();
   const navigate = useNavigate();
+  const { runtime } = useRouteLoaderData<typeof rootClientLoader>('root')!;
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
@@ -52,8 +55,6 @@ function ContentTypeEntriesRoute() {
       return;
     }
 
-    const runtime = await getRuntimeConfig();
-
     setSaving(true);
     setMessage(undefined);
     setError(undefined);
@@ -64,7 +65,9 @@ function ContentTypeEntriesRoute() {
       });
       revalidator.revalidate();
       setMessage(`Created draft entry ${created.id}.`);
-      await navigate(`/content/${contentTypePath}/${encodeURIComponent(created.id)}`);
+      await navigate(
+        toProjectPath(`/content/${contentTypePath}/${encodeURIComponent(created.id)}`),
+      );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -83,8 +86,6 @@ function ContentTypeEntriesRoute() {
     if (!editingEntryId || saving) {
       return;
     }
-
-    const runtime = await getRuntimeConfig();
 
     setSaving(true);
     setMessage(undefined);
@@ -116,7 +117,6 @@ function ContentTypeEntriesRoute() {
       return;
     }
 
-    const runtime = await getRuntimeConfig();
     const data = entry.data as Record<string, unknown>;
     const title = typeof data.title === "string" ? data.title : entry.id;
     const slug = typeof data.slug === "string" ? data.slug : entry.id;
@@ -147,7 +147,7 @@ function ContentTypeEntriesRoute() {
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-3">
         <CardTitle>Entries</CardTitle>
-        <Button type="button" size="sm" onClick={() => void handleCreateDraftEntry()} disabled={saving}>
+        <Button type="button" onClick={() => void handleCreateDraftEntry()} disabled={saving}>
           <Plus className="size-4" />
           New Entry
         </Button>
@@ -190,7 +190,9 @@ function ContentTypeEntriesRoute() {
                         ) : (
                           <div className="grid gap-1">
                             <Link
-                              to={`/content/${contentTypePath}/${encodeURIComponent(entry.id)}`}
+                              to={toProjectPath(
+                                `/content/${contentTypePath}/${encodeURIComponent(entry.id)}`,
+                              )}
                               className="font-medium text-foreground underline-offset-4 hover:underline"
                             >
                               {typeof data.title === "string" ? data.title : entry.id}
@@ -224,7 +226,6 @@ function ContentTypeEntriesRoute() {
                             <>
                               <Button
                                 type="button"
-                                size="sm"
                                 onClick={() => void handleSaveEntry(entry)}
                                 disabled={saving}
                               >
@@ -232,7 +233,6 @@ function ContentTypeEntriesRoute() {
                               </Button>
                               <Button
                                 type="button"
-                                size="sm"
                                 variant="outline"
                                 onClick={() => {
                                   setEditingEntryId(undefined);
@@ -246,14 +246,15 @@ function ContentTypeEntriesRoute() {
                           ) : (
                             <>
                               <Link
-                                to={`/content/${contentTypePath}/${encodeURIComponent(entry.id)}`}
-                                className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+                                to={toProjectPath(
+                                  `/content/${contentTypePath}/${encodeURIComponent(entry.id)}`,
+                                )}
+                                className={cn(buttonVariants({ variant: "outline" }))}
                               >
                                 <SquarePen className="size-4" />
                               </Link>
                               <Button
                                 type="button"
-                                size="sm"
                                 variant="outline"
                                 onClick={() => beginEditingEntry(entry)}
                               >
@@ -261,7 +262,6 @@ function ContentTypeEntriesRoute() {
                               </Button>
                               <Button
                                 type="button"
-                                size="sm"
                                 variant="outline"
                                 onClick={() => void handleDuplicateEntry(entry)}
                               >

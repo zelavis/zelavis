@@ -1,0 +1,30 @@
+#!/bin/sh
+set -eu
+
+SCRIPT_PATH=$0
+if command -v readlink >/dev/null 2>&1; then
+  RESOLVED=$(readlink -f "$SCRIPT_PATH" 2>/dev/null || true)
+  if [ -n "$RESOLVED" ]; then
+    SCRIPT_PATH=$RESOLVED
+  fi
+fi
+
+ZELAVIS_HOME=${ZELAVIS_HOME:-$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")/.." && pwd)}
+NODE="$ZELAVIS_HOME/runtime/node/bin/node"
+
+if [ ! -x "$NODE" ]; then
+  NODE=$(command -v node || true)
+fi
+
+if [ -z "$NODE" ] || [ ! -x "$NODE" ]; then
+  echo "Zelavis requires Node.js 24 or newer." >&2
+  exit 1
+fi
+
+NODE_MAJOR=$($NODE -p "Number(process.versions.node.split('.')[0])")
+if [ "$NODE_MAJOR" -lt 24 ]; then
+  echo "Zelavis requires Node.js 24 or newer; found $($NODE --version)." >&2
+  exit 1
+fi
+
+exec "$NODE" "$ZELAVIS_HOME/platform/dist/cli.js" "$@"

@@ -68,7 +68,7 @@ test("defineService rejects an invalid app domain policy", () => {
 
 test("buildBundleStorageKey encodes scope identity into a deterministic path", () => {
   const key = buildBundleStorageKey(
-    { workspaceId: "ws_1", serviceName: "@example/kanban", bundle: "dist" },
+    { projectId: "ws_1", serviceName: "@example/kanban", bundle: "dist" },
     "assets/index.js",
   );
   assert.equal(key, "apps/ws_1/@example/kanban/dist/assets/index.js");
@@ -165,7 +165,7 @@ test("activateServiceRegistry synthesizes an app service for system services", a
 test("workspace-scoped services are remounted under /apps/<name> regardless of declared mount", async () => {
   const service = defineService({
     name: "@example/tenant-app",
-    scope: "workspace",
+    scope: "extension",
     app: { mount: "/zelavis", bundle: "dist" },
   });
 
@@ -461,6 +461,62 @@ test("app.devUrl can include its own base path that prefixes the relative path",
     settingsResponse.headers.get("location"),
     "http://127.0.0.1:3001/zelavis/settings?tab=auth",
   );
+});
+
+test("app.devUrl can leave reserved paths on the runtime", async () => {
+  const service = defineService({
+    name: "@example/rr-app",
+    scope: "system",
+    app: {
+      mount: "/zelavis",
+      bundle: "dist",
+      devUrl: "http://127.0.0.1:3001/zelavis",
+      devUrlExcludePaths: ["api"],
+      shell: {
+        render: ({ path }) => ({
+          status: 418,
+          body: `runtime-owned:${path}`,
+        }),
+      },
+    },
+  });
+
+  const { services } = await activateServiceRegistry(
+    [{ service: service, status: "installed" }],
+    {
+      rootPath: "/",
+      api: { prefix: "/api", version: "v1", basePath: "/api/v1" },
+      platform: {
+        presets: [],
+        resources: { keyValueStore: false, fileStorage: true },
+        metadata: {},
+      },
+      core: {},
+    },
+    { bundleStore: createInMemoryBundleStore(new Map()) },
+  );
+
+  const runtime = await zelavisServer({ services });
+
+  const appResponse = await runtime.fetch(
+    new Request("http://localhost/zelavis/projects/a", {
+      redirect: "manual",
+    }),
+  );
+  assert.equal(appResponse.status, 307);
+  assert.equal(
+    appResponse.headers.get("location"),
+    "http://127.0.0.1:3001/zelavis/projects/a",
+  );
+
+  const apiResponse = await runtime.fetch(
+    new Request("http://localhost/zelavis/api/v1/runtime/config", {
+      redirect: "manual",
+    }),
+  );
+  assert.equal(apiResponse.status, 418);
+  assert.equal(await apiResponse.text(), "runtime-owned:api/v1/runtime/config");
+  assert.equal(apiResponse.headers.get("location"), null);
 });
 
 test("app.devUrl bypasses bundle store and shell.render entirely", async () => {

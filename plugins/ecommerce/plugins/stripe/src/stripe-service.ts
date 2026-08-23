@@ -8,6 +8,7 @@ import {
   type PaymentAttempt,
   type PaymentProvider,
   type RefundPaymentInput,
+  type SubscriptionInterval,
 } from "@zelavis/ecommerce";
 import { defineService } from "zelavis/service";
 import Stripe from "stripe";
@@ -221,7 +222,15 @@ function toBillingSubscription(
   const createdAt = new Date(subscription.created * 1000);
   const firstItem = subscription.items.data[0];
   const recurring = firstItem?.price.recurring;
-  const resolvedInterval = recurring?.interval ?? fallback.interval;
+  const rawInterval = recurring?.interval;
+  const resolvedInterval = (
+    rawInterval === "day" ||
+    rawInterval === "week" ||
+    rawInterval === "month" ||
+    rawInterval === "year"
+      ? rawInterval
+      : fallback.interval
+  ) as SubscriptionInterval;
   const resolvedIntervalCount = recurring?.interval_count ?? fallback.intervalCount;
 
   return {

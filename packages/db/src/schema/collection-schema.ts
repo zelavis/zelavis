@@ -126,47 +126,199 @@ function isFileField(
   );
 }
 
+function addStringConstraints(
+  schema: Schema.Schema<string>,
+  field: {
+    minLength?: number;
+    maxLength?: number;
+    pattern?: string;
+  },
+): Schema.Schema<unknown> {
+  let s: Schema.Schema<unknown> = schema as Schema.Schema<unknown>;
+  if (field.minLength !== undefined) {
+    const minLength = field.minLength;
+    s = (s as Schema.Schema<string>).check(
+      Schema.makeFilter(
+        (value: string) =>
+          value.length >= minLength ? undefined : `must be at least ${minLength} characters`,
+        { title: `minLength(${minLength})` },
+      ),
+    ) as unknown as Schema.Schema<unknown>;
+  }
+  if (field.maxLength !== undefined) {
+    const maxLength = field.maxLength;
+    s = (s as Schema.Schema<string>).check(
+      Schema.makeFilter(
+        (value: string) =>
+          value.length <= maxLength ? undefined : `must be at most ${maxLength} characters`,
+        { title: `maxLength(${maxLength})` },
+      ),
+    ) as unknown as Schema.Schema<unknown>;
+  }
+  if (field.pattern) {
+    const pattern = new RegExp(field.pattern);
+    s = (s as Schema.Schema<string>).check(
+      Schema.makeFilter(
+        (value: string) =>
+          pattern.test(value) ? undefined : "does not match the required pattern",
+        { title: "pattern" },
+      ),
+    ) as unknown as Schema.Schema<unknown>;
+  }
+  return s;
+}
+
+function addNumberConstraints(
+  schema: Schema.Schema<number>,
+  field: { min?: number; max?: number; integer?: boolean },
+): Schema.Schema<unknown> {
+  let s: Schema.Schema<unknown> = schema as Schema.Schema<unknown>;
+  if (field.min !== undefined) {
+    const min = field.min;
+    s = (s as Schema.Schema<number>).check(
+      Schema.makeFilter(
+        (n: number) =>
+          n >= min ? undefined : `must be >= ${min}`,
+        { title: `min(${min})` },
+      ),
+    ) as unknown as Schema.Schema<unknown>;
+  }
+  if (field.max !== undefined) {
+    const max = field.max;
+    s = (s as Schema.Schema<number>).check(
+      Schema.makeFilter(
+        (n: number) =>
+          n <= max ? undefined : `must be <= ${max}`,
+        { title: `max(${max})` },
+      ),
+    ) as unknown as Schema.Schema<unknown>;
+  }
+  if (field.integer) {
+    s = (s as Schema.Schema<number>).check(
+      Schema.makeFilter(
+        (n: number) =>
+          Number.isInteger(n) ? undefined : "must be an integer",
+        { title: "integer" },
+      ),
+    ) as unknown as Schema.Schema<unknown>;
+  }
+  return s;
+}
+
+function addArrayLengthConstraints<T>(
+  schema: Schema.Schema<readonly T[]>,
+  field: { minItems?: number; maxItems?: number },
+): Schema.Schema<unknown> {
+  let s: Schema.Schema<unknown> = schema as Schema.Schema<unknown>;
+  if (field.minItems !== undefined) {
+    const minItems = field.minItems;
+    s = (s as Schema.Schema<readonly T[]>).check(
+      Schema.makeFilter(
+        (items: readonly T[]) =>
+          items.length >= minItems ? undefined : `must contain at least ${minItems} items`,
+        { title: `minItems(${minItems})` },
+      ),
+    ) as unknown as Schema.Schema<unknown>;
+  }
+  if (field.maxItems !== undefined) {
+    const maxItems = field.maxItems;
+    s = (s as Schema.Schema<readonly T[]>).check(
+      Schema.makeFilter(
+        (items: readonly T[]) =>
+          items.length <= maxItems ? undefined : `must contain at most ${maxItems} items`,
+        { title: `maxItems(${maxItems})` },
+      ),
+    ) as unknown as Schema.Schema<unknown>;
+  }
+  return s;
+}
+
+function optionSchema(options: readonly string[]): Schema.Schema<unknown> {
+  let s: Schema.Schema<unknown> = Schema.String as Schema.Schema<unknown>;
+  if (options.length > 0) {
+    s = (s as Schema.Schema<string>).check(
+      Schema.makeFilter(
+        (value: string) =>
+          options.includes(value) ? undefined : `must be one of: ${options.join(", ")}`,
+        { title: "options" },
+      ),
+    ) as unknown as Schema.Schema<unknown>;
+  }
+  return s;
+}
+
 function fieldToValueSchema(field: CollectionField): Schema.Schema<unknown> {
-  if (field._tag === "TextField" || field._tag === "RichTextField") {
+  if (
+    field._tag === "TextField" ||
+    field._tag === "LongTextField"
+  ) {
+    return addStringConstraints(Schema.String, field);
+  }
+
+  if (field._tag === "RichTextField") {
     return Schema.String as Schema.Schema<unknown>;
   }
 
   if (field._tag === "NumberField") {
-    let s: Schema.Schema<unknown> = Schema.Number as Schema.Schema<unknown>;
-    if (field.min !== undefined) {
-      const min = field.min;
-      s = (s as Schema.Schema<number>).check(
-        Schema.makeFilter(
-          (n: number) =>
-            n >= min ? undefined : `must be >= ${min}`,
-          { title: `min(${min})` },
-        ),
-      ) as unknown as Schema.Schema<unknown>;
-    }
-    if (field.max !== undefined) {
-      const max = field.max;
-      s = (s as Schema.Schema<number>).check(
-        Schema.makeFilter(
-          (n: number) =>
-            n <= max ? undefined : `must be <= ${max}`,
-          { title: `max(${max})` },
-        ),
-      ) as unknown as Schema.Schema<unknown>;
-    }
-    if (field.integer) {
-      s = (s as Schema.Schema<number>).check(
-        Schema.makeFilter(
-          (n: number) =>
-            Number.isInteger(n) ? undefined : "must be an integer",
-          { title: "integer" },
-        ),
-      ) as unknown as Schema.Schema<unknown>;
-    }
-    return s;
+    return addNumberConstraints(Schema.Number, field);
+  }
+
+  if (field._tag === "IntegerField") {
+    return addNumberConstraints(Schema.Number, { ...field, integer: true });
   }
 
   if (field._tag === "BooleanField") {
     return Schema.Boolean as Schema.Schema<unknown>;
+  }
+
+  if (field._tag === "DateTimeField") {
+    let s: Schema.Schema<unknown> = Schema.String as Schema.Schema<unknown>;
+    if (field.min !== undefined) {
+      const min = Date.parse(field.min);
+      s = (s as Schema.Schema<string>).check(
+        Schema.makeFilter(
+          (value: string) => {
+            const timestamp = Date.parse(value);
+            return Number.isFinite(timestamp) && timestamp >= min
+              ? undefined
+              : `must be on or after ${field.min}`;
+          },
+          { title: "minDateTime" },
+        ),
+      ) as unknown as Schema.Schema<unknown>;
+    }
+    if (field.max !== undefined) {
+      const max = Date.parse(field.max);
+      s = (s as Schema.Schema<string>).check(
+        Schema.makeFilter(
+          (value: string) => {
+            const timestamp = Date.parse(value);
+            return Number.isFinite(timestamp) && timestamp <= max
+              ? undefined
+              : `must be on or before ${field.max}`;
+          },
+          { title: "maxDateTime" },
+        ),
+      ) as unknown as Schema.Schema<unknown>;
+    }
+    return (s as Schema.Schema<string>).check(
+      Schema.makeFilter(
+        (value: string) =>
+          Number.isFinite(Date.parse(value)) ? undefined : "must be a date-time string",
+        { title: "dateTime" },
+      ),
+    ) as unknown as Schema.Schema<unknown>;
+  }
+
+  if (field._tag === "SelectField") {
+    return optionSchema(field.options);
+  }
+
+  if (field._tag === "MultiSelectField") {
+    return addArrayLengthConstraints(
+      Schema.Array(optionSchema(field.options)) as Schema.Schema<readonly unknown[]>,
+      field,
+    );
   }
 
   if (isFileField(field)) {
@@ -195,6 +347,51 @@ function fieldToValueSchema(field: CollectionField): Schema.Schema<unknown> {
     return s;
   }
 
+  if (field._tag === "ReferenceField") {
+    const singleReference = Schema.Struct({
+      collection: Schema.String,
+      id: Schema.String,
+    }).check(
+      Schema.makeFilter(
+        (ref) =>
+          ref.collection === field.collection
+            ? undefined
+            : `collection must be "${field.collection}"`,
+        { title: "referenceCollection" },
+      ),
+    ) as unknown as Schema.Schema<unknown>;
+    return field.multiple
+      ? Schema.Array(singleReference) as Schema.Schema<unknown>
+      : singleReference;
+  }
+
+  if (field._tag === "JsonField") {
+    return Schema.Unknown as Schema.Schema<unknown>;
+  }
+
+  if (field._tag === "SlugField") {
+    return addStringConstraints(Schema.String, {
+      ...field,
+      pattern: field.pattern ?? "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    });
+  }
+
+  if (field._tag === "UrlField") {
+    return (Schema.String as Schema.Schema<string>).check(
+      Schema.makeFilter(
+        (value: string) => {
+          try {
+            new URL(value);
+            return undefined;
+          } catch {
+            return "must be a URL";
+          }
+        },
+        { title: "url" },
+      ),
+    ) as unknown as Schema.Schema<unknown>;
+  }
+
   if (field._tag === "RepeaterField") {
     const nestedShape: Record<string, Schema.Schema<unknown>> = {};
     for (const { name, field: nestedField } of field.fields) {
@@ -204,7 +401,10 @@ function fieldToValueSchema(field: CollectionField): Schema.Schema<unknown> {
         : (Schema.optionalKey(nestedSchema) as Schema.Schema<unknown>);
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return Schema.Array(Schema.Struct(nestedShape as any)) as Schema.Schema<unknown>;
+    return addArrayLengthConstraints(
+      Schema.Array(Schema.Struct(nestedShape as any)) as Schema.Schema<readonly unknown[]>,
+      field,
+    );
   }
 
   return Schema.Unknown;

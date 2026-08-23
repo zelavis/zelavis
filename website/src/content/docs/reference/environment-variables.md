@@ -12,7 +12,7 @@ Used by the `zelavis` dashboard core service when you want dashboard requests to
 Notes:
 
 - Point this at the mounted dashboard base URL, not just the bare dev-server origin, when the UI dev server is mounted below `/zelavis`.
-- `pnpm run ui:dev` wires this automatically.
+- `pnpm dev` wires this automatically.
 
 ## UI package development
 
@@ -45,7 +45,7 @@ ZELAVIS_UI_BASE_PATH=/zelavis/ pnpm --filter @zelavis/ui dev
 Notes:
 
 - Leave it unset for a root-mounted standalone UI dev server.
-- `pnpm run ui:dev` sets this automatically so the live dashboard dev flow runs under `/zelavis/`.
+- `pnpm dev` sets this automatically so the live dashboard dev flow runs under `/zelavis/`.
 
 ## Related docs
 

@@ -8,7 +8,7 @@ This guide documents the current recommended workflow for dashboard work.
 Use:
 
 ```bash
-pnpm run ui:dev
+pnpm dev
 ```
 
 Current behavior:
@@ -17,12 +17,36 @@ Current behavior:
 - the UI dev server runs on port `3001`
 - dashboard requests under `/zelavis` redirect to the live UI dev server
 - the live UI dev server is mounted at `http://127.0.0.1:3001/zelavis/` for parity with production routing
+- `/zelavis` opens Projects, global Marketplace and Server live outside projects, and project-local pages live under `/zelavis/projects/:projectId/*`
 
 ## Important package boundary
 
-The dashboard source lives in the `@zelavis/ui` workspace package, but application users should serve the dashboard through `zelavis`.
+The dashboard source lives in the `@zelavis/ui` monorepo package, but application users should serve the dashboard through `zelavis`.
 
-The UI package is internal workspace infrastructure, not the public application-facing runtime entry point.
+The UI package is internal repo infrastructure, not the public application-facing runtime entry point.
+
+The dashboard is also not the authority layer for platform behavior. When adding
+a dashboard feature, implement the domain capability and endpoint first, then
+have the dashboard call it. A feature that can only be performed from React
+route code is not a finished Zelavis platform feature.
+
+## Mobile-slot-ready route structure
+
+Build dashboard routes so desktop pages and future mobile/sidebar slides can
+reuse the same feature pieces.
+
+The recommended shape is:
+
+- keep route-level data loading in `clientLoader` or resource routes
+- extract reusable feature or panel components for the feature
+- compose those pieces in the route for the desktop content area
+- wrap mobile-ready regions with `DashboardSlotLayout` and `DashboardSlot`
+- declare optional `handle.slots` metadata when the route naturally maps to
+  mobile slide slots
+
+Good slot boundaries are `overview`, `main`, `create`, `edit`, `inspect`, and
+`settings`. Avoid making a second mobile-only version of forms, builders,
+schema panels, charts, or operational workflows.
 
 ## Embedded dashboard behavior
 

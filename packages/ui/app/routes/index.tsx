@@ -1,9 +1,8 @@
-import { useLoaderData, useRouteLoaderData } from 'react-router'
-import { Activity, Boxes, Database, ShieldCheck } from 'lucide-react'
+import { Link, useLoaderData, useParams, useRouteLoaderData } from 'react-router'
+import { Activity, Boxes, Database, Globe2, ReceiptText, RotateCcw, ShieldCheck } from 'lucide-react'
 
 import {
   DataRow,
-  PageHeader,
   ResourceNotice,
   StatCard,
   StatusBadge,
@@ -13,7 +12,7 @@ import {
 } from '#/lib/dashboard-data'
 import {
   getDatabaseHealth,
-  getRuntimeConfig,
+  getActiveRuntimeConfig,
   listAuthProviders,
 } from '#/lib/runtime-api'
 import {
@@ -22,14 +21,17 @@ import {
   CardHeader,
   CardTitle,
 } from '#/components/ui/card'
+import { buttonVariants } from '#/components/ui/button'
+import { cn } from '#/lib/utils'
 import type { clientLoader as rootClientLoader } from '../root'
+import type { Route } from './+types/index'
 
 export const handle = {
   pageLabel: "Overview",
 } as const;
 
-export async function clientLoader() {
-  const runtime = await getRuntimeConfig()
+export async function clientLoader({ request }: Route.ClientLoaderArgs) {
+  const runtime = await getActiveRuntimeConfig(request)
   const [databaseHealth, providers] = await Promise.all([
     getDatabaseHealth(runtime).catch(() => undefined),
     listAuthProviders(runtime).catch(() => [] as string[]),
@@ -37,19 +39,104 @@ export async function clientLoader() {
   return { databaseHealth, providers }
 }
 
+function getManagedProjectKind(projectId: string | undefined) {
+  if (projectId?.startsWith("wordpress-")) {
+    return "WordPress";
+  }
+
+  if (projectId?.startsWith("static-")) {
+    return "Static website";
+  }
+
+  if (projectId?.startsWith("generic-")) {
+    return "Generic app";
+  }
+
+  return undefined;
+}
+
+function ManagedProjectOverview({ kind }: { kind: string }) {
+  return (
+    <section className="mx-auto grid w-full max-w-7xl gap-6">
+      <div className="flex justify-end">
+        <Link
+          to="/server/domains"
+          className={cn(buttonVariants({ variant: "outline" }))}
+        >
+          <Globe2 className="size-4" />
+          Domains
+        </Link>
+      </div>
+
+      <section className="grid gap-4 md:grid-cols-3">
+        <StatCard
+          label="App"
+          value={kind}
+          detail="Managed through hosting-style controls."
+          icon={Boxes}
+        />
+        <StatCard
+          label="Domains"
+          value="planned"
+          detail="Server-level bindings will attach here."
+          icon={Globe2}
+        />
+        <StatCard
+          label="Backups"
+          value="planned"
+          detail="Project snapshots come from the host backup layer."
+          icon={RotateCcw}
+        />
+      </section>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Hosting controls</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <DataRow
+            label="Application admin"
+            detail={
+              kind === "WordPress"
+                ? "WordPress Admin will open the app's own dashboard."
+                : "The app keeps its own runtime/admin surface."
+            }
+            meta={<StatusBadge state="draft" />}
+          />
+          <DataRow
+            label="Files"
+            detail="Future file manager and deploy controls."
+            meta={<StatusBadge state="draft" />}
+          />
+          <DataRow
+            label="Logs"
+            detail="Future project log stream from the server layer."
+            meta={<ReceiptText className="size-4 text-muted-foreground" />}
+          />
+        </CardContent>
+      </Card>
+
+      <ResourceNotice
+        title="Different project surface"
+        description="Zelavis-native projects show auth, database, content, media, and plugins. Managed app projects show hosting controls because the application itself is not built on Zelavis primitives."
+      />
+    </section>
+  );
+}
+
 function Overview() {
+  const params = useParams();
   const { databaseHealth, providers } = useLoaderData<typeof clientLoader>()
   const { runtime } = useRouteLoaderData<typeof rootClientLoader>('root')!
   const services = runtime.services
+  const managedProjectKind = getManagedProjectKind(params.projectId);
+
+  if (managedProjectKind) {
+    return <ManagedProjectOverview kind={managedProjectKind} />;
+  }
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Overview"
-        title="Zelavis runtime"
-        description="Core services, active paths, and package boundaries in one place."
-      />
-
       <section className="grid gap-4 md:grid-cols-3">
         <StatCard
           label="Mounted core"

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "nodeVersion": "24.12.0",
+  "minimumNodeMajor": 24,
+  "repositoryPackageVersion": "1.0.0",
+  "installPrefix": "/opt/zelavis",
+  "dataDirectory": "/var/lib/zelavis",
+  "aptRepository": "https://apt.zelavis.com",
+  "aptSuite": "stable"
+}

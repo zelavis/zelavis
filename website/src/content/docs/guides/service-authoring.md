@@ -139,7 +139,25 @@ export const zelavisEcommerceService = defineService({
 });
 ```
 
-Child services declare `extends` metadata. They are installed through the same registry, but the parent service decides how to consume them and must allow them through `childServices`. Zelavis does not run child services as independent top-level workspace services.
+Child services declare `extends` metadata. They are installed through the same registry, but the parent service decides how to consume them and must allow them through `childServices`. Zelavis does not run child services as independent top-level Extensions services.
+
+## Rule 5: Make capabilities endpoint-backed
+
+Anything a service lets users do from the dashboard should also be exposed as a service capability and API endpoint.
+
+Service dashboard pages can present forms, charts, setup flows, and actions, but the authoritative behavior belongs in the service/runtime layer. This lets CLI commands, AI agents, scripts, plugins, and external admin clients use the same operation without depending on the dashboard.
+
+Good shape:
+
+- `setup(context)` registers the capability and endpoint
+- `menu.page.file` selects a bundled HTML entry file that calls the endpoint
+- the operation can be tested without rendering the dashboard
+
+Avoid:
+
+- dashboard-only mutations
+- framework-specific server actions as the only execution path
+- hiding service behavior inside page rendering code
 
 ## Runtime service shape
 
@@ -158,20 +176,7 @@ export default defineService({
     page: {
       id: "dashboard",
       title: "Search",
-      render({ service, api }) {
-        return {
-          html: `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <title>${service}</title>
-  </head>
-  <body>
-    <main data-api="${api.basePath}">Search service</main>
-  </body>
-</html>`,
-        };
-      },
+      file: "dashboard.html",
     },
   },
   setup(context) {
@@ -194,17 +199,128 @@ export default defineService({
 });
 ```
 
+The installed service bundle should include `dashboard.html`. That file can be
+plain HTML or boot a client app:
+
+```html
+<main id="app"></main>
+<script type="module" src="./dashboard.js"></script>
+```
+
+`dashboard.js` is served from the same service bundle as the HTML file. If it
+contains a client router, tabs, or a local menu, that navigation belongs to the
+embedded page itself.
+
 Important details:
 
 - `name` is the stable runtime service id and should match the registry/catalog name.
 - `version` is service metadata; package publishing still follows the package registry.
 - `menu` is plain metadata. Services never reach into dashboard sidebar internals.
-- `menu.page.render(...)` returns a full HTML document string or `{ html, status, headers, contentType }`.
 - Service pages are mounted in the dashboard through the `zelavis-service-frame` iframe web component.
+- `menu.path` is the dashboard URL owned by React Router. `menu.page.file` is
+  the browser-extension-style HTML entry file for iframe-backed service UI,
+  such as `dashboard.html`, `settings.html`, or `options.html`.
+- Zelavis serves `page.file` and sibling assets from the service bundle. A page
+  can reference bundled files with normal relative URLs such as
+  `<script type="module" src="./settings.js"></script>`.
+- If the HTML file boots a SPA, that SPA owns its internal router, tabs, and
+  menu. Zelavis sidebar items select concrete HTML entry files; they do not
+  deep-link into plugin-private SPA routes.
+- Core services whose content already ships with `@zelavis/ui` should use
+  `menu.path` without `menu.page`, so the local route renders directly instead
+  of mounting an iframe.
+- Menu items can use `fixed: true` for slide-local pinned actions such as
+  "Add Function". Use `fixedOrder` when a slide has multiple fixed actions.
+- Nested slides can set `fixedActionScope` to control whether parent fixed
+  actions carry forward: `local` uses only the opened slide's fixed actions,
+  `inherit` combines parent and local actions, `replace` uses local actions as
+  an explicit boundary, and `clear` hides fixed actions until a deeper slide
+  reintroduces them.
+- Menu items can use `dynamicItems` when a slide section is backed by runtime
+  state. The dynamic endpoint returns `{ "items": [...] }`, and each item uses
+  the same metadata shape as static service menu items.
+- Menu items can include `search` when navigation depends on URL state, for
+  example `{ databaseTable: "products" }`. Prefer returning that from the
+  service-owned menu endpoint over hardcoding service-specific lists in the
+  dashboard.
+- Statically trusted system services can declare a dashboard `surface`.
+  `platform` renders in the global `/zelavis` management shell; `root`, `core`,
+  `extensions`, and `settings` render in project dashboards. Runtime-installed
+  services are forced under Extensions.
 - `setup(context)` may register runtime services through `context.addService(...)`, `context.addServices(...)`, or by returning `{ runtimeServices }`.
-- Child services use `extends` and are passed to their parent service; they do not get their own Workspace menu area.
+- Child services use `extends` and are passed to their parent service; they do not get their own Extensions menu area.
 
-The repo includes `examples/plugin-basic` as a minimal uploadable service. Build its upload package with `pnpm --filter @zelavis/example-plugin-basic package`, then select `examples/plugin-basic/dist/example-basic.zip` in the Node example Marketplace flow. The service module defines its own `name`, `version`, menu, pages, and services, so the dashboard does not ask for a separate service name. The ZIP includes `zelavis.service.json`, whose `entry` field points at the ESM module the host adapter should import.
+Example fixed action plus dynamic section:
+
+```ts
+menu: {
+  title: "Workloads",
+  items: [
+    {
+      title: "Functions",
+      fixedActionScope: "inherit",
+      items: [
+        {
+          title: "Add Function",
+          path: "/workloads/new",
+          fixed: true,
+          fixedOrder: 1,
+        },
+      ],
+      dynamicItems: {
+        path: "/workloads/menu/functions",
+        emptyTitle: "No functions yet",
+      },
+    },
+  ],
+}
+```
+
+Example clearing a parent action and reintroducing a different action deeper
+down:
+
+```ts
+menu: {
+  title: "Tools",
+  items: [
+    {
+      title: "Create Tool",
+      path: "/tools/new",
+      fixed: true,
+      fixedOrder: 1,
+    },
+    {
+      title: "Advanced",
+      fixedActionScope: "inherit",
+      items: [
+        {
+          title: "Danger Zone",
+          fixedActionScope: "clear",
+          items: [
+            {
+              title: "Recovery",
+              fixedActionScope: "replace",
+              items: [
+                {
+                  title: "Create Recovery Point",
+                  path: "/tools/recovery/new",
+                  fixed: true,
+                  fixedOrder: 1,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+}
+```
+
+In that example, `Advanced` keeps `Create Tool`, `Danger Zone` shows no fixed
+actions, and `Recovery` reintroduces `Create Recovery Point`.
+
+The repo includes `examples/plugin-basic` as a minimal uploadable service. Build its upload package with `pnpm --filter @zelavis/example-plugin-basic package`, then select `examples/plugin-basic/dist/example-basic.zip` in a project Marketplace flow at `/zelavis/projects/:projectId/marketplace`. The service module defines its own `name`, `version`, menu, pages, and services, so the dashboard does not ask for a separate service name. The ZIP includes `zelavis.service.json`, whose `entry` field points at the ESM module the host adapter should import.
 
 ## Registry and activation
 
@@ -220,12 +336,11 @@ The runtime registry stores service entries separately from Marketplace catalog 
 }
 ```
 
-`specifier` is an ESM module entry point. On Node, the adapter can resolve package names, local files, `data:` URLs, and remote ESM cached under `.zelavis/services`. On worker/serverless hosts, the active adapter decides how specifiers are resolved or dispatched.
+`specifier` is an ESM module entry point. On Node, the adapter can resolve package names, local files, `data:` URLs, and remote ESM cached under `.zelavis/services`. Bun follows the same local-runtime shape.
 
 Installing a service updates registry state. Activation is adapter-owned:
 
-- Node-style hosts can recompose the in-process runtime graph.
-- Cloudflare-style hosts can activate through a Worker dispatch boundary.
+- Local runtime adapters can recompose the in-process runtime graph when supported.
 - Hosts without activation support can still store registry metadata, but installs may remain pending.
 
 ## Rule 5: Keep orchestration helpers only when they add real value
@@ -281,7 +396,7 @@ src/
   storage/
 ```
 
-Use this when the package's main integration surface is a service contract rather than a mounted runtime service.
+Use this when the package's main adapter surface is a service contract rather than a mounted runtime service.
 
 ### Nested service package
 
@@ -320,6 +435,6 @@ Avoid names that make the entrypoint harder to spot:
 
 ## Related docs
 
-- [Service Model](../architecture/service-service-model.md)
+- [Service Model](../architecture/service-model.md)
 - [Advanced Runtime Composition](./advanced-runtime-composition.md)
 - [@zelavis/server](../packages/server.md)

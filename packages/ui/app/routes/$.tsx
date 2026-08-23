@@ -6,7 +6,7 @@ export const handle = {
 } as const;
 
 function ServiceFallbackRoute() {
-  return <ServicePageMount fallback={<DashboardNotFound />} />
+  return <ServicePageMount allowPlaceholder fallback={<DashboardNotFound />} />
 }
 
 export default ServiceFallbackRoute;

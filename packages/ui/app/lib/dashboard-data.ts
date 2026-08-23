@@ -1,32 +1,29 @@
 import {
+  Activity,
   Bot,
   Boxes,
   CreditCard,
+  Cpu,
   Database,
+  Archive,
   Files,
   FileText,
   Fingerprint,
-  Github,
+  Globe2,
   LayoutDashboard,
-  LifeBuoy,
   MonitorCog,
-  Paintbrush,
-  PanelsTopLeft,
   Package,
-  Pencil,
   Plus,
   ReceiptText,
   Send,
   Server,
   Settings2,
   ShieldCheck,
-  ShoppingBag,
-  Store,
-  TicketPercent,
   Users,
   type LucideIcon,
 } from "lucide-react";
 import { ZelavisMark } from "#/components/zelavis-mark";
+import type { DashboardSlotId } from "#/components/DashboardSlots";
 import type {
   DatabaseCollection,
   RuntimeService,
@@ -34,39 +31,45 @@ import type {
   RuntimeServicePageDefinition,
   RuntimeServiceRegistryMenuDefinition,
   RuntimeServiceRegistryEntry,
+  RuntimeAccessRequirement,
+  RuntimeDashboardAccess,
+  RuntimePrincipal,
+  RuntimeProject,
 } from "#/lib/runtime-api";
 import type { ContentTypeRow } from "#/lib/content-studio";
-import { isContentTypeDatabaseCollection } from "#/lib/database-collections";
+import { getProjectIdFromPathname, toProjectPath } from "#/lib/routing";
 
 export type DashboardRoutePath =
   | "/"
+  | "/access"
+  | `/projects/${string}`
+  | `/projects/${string}/${string}`
   | "/agents"
   | "/auth"
-  | "/builder"
-  | "/builder/pages"
-  | "/commerce"
-  | "/commerce/customers"
-  | "/commerce/coupons"
-  | "/commerce/orders"
-  | "/commerce/products"
   | "/content"
   | "/content/new"
   | `/content/${string}`
-  | `/content/${string}/edit`
   | `/content/${string}/fields`
-  | `/content/${string}/settings`
   | "/database"
   | "/database/new"
   | "/media"
   | "/marketplace"
+  | "/projects"
+  | "/resources"
+  | "/security"
   | "/services"
   | "/settings"
   | "/settings/appearance"
   | "/storage"
   | "/users"
+  | "/website"
   | `/${string}`;
 
 export type DashboardNavSearch = {
+  [key: string]: string | undefined;
+  domainAction?: "add" | "buy" | "transfer";
+  resourceView?: "processes" | "storage" | "limits";
+  workloadView?: "functions" | "jobs" | "schedules" | "webhooks";
   systemTable?:
     | "zv_collections"
     | "zv_events"
@@ -74,6 +77,7 @@ export type DashboardNavSearch = {
     | "zv_time_series_checkpoints"
     | "zv_time_series_points";
   databaseTable?: string;
+  new?: string;
   sidebar?: string;
 };
 
@@ -86,9 +90,14 @@ export type DashboardNavItem = {
   icon: LucideIcon;
   panelLabel?: string;
   pageLabel?: string;
+  slot?: DashboardSlotId;
   fixed?: boolean;
   fixedOrder?: number;
+  fixedActionScope?: "local" | "inherit" | "replace" | "clear";
   sectionLabel?: string;
+  disabled?: boolean;
+  access?: RuntimeAccessRequirement | readonly RuntimeAccessRequirement[];
+  page?: RuntimeServicePageDefinition;
   serviceOwned?: boolean;
   items?: readonly DashboardNavItem[];
 };
@@ -103,19 +112,22 @@ export type DashboardPackageItem = {
 export type DashboardServiceRegistryMenuItem = {
   title: string;
   url?: DashboardRoutePath;
+  landingUrl?: DashboardRoutePath;
   search?: DashboardNavSearch;
   icon: LucideIcon;
   panelLabel?: string;
   pageLabel?: string;
   fixed?: boolean;
   fixedOrder?: number;
+  fixedActionScope?: "local" | "inherit" | "replace" | "clear";
   sectionLabel?: string;
+  disabled?: boolean;
   page?: RuntimeServicePageDefinition;
   serviceOwned?: boolean;
   items?: readonly DashboardServiceRegistryMenuItem[];
 };
 
-export type DashboardWorkspaceServiceItem = {
+export type DashboardExtensionServiceItem = {
   id: string;
   name: string;
   menu: DashboardServiceRegistryMenuItem;
@@ -123,36 +135,422 @@ export type DashboardWorkspaceServiceItem = {
   source?: "official" | "community";
 };
 
-export type DashboardSecondaryItem = {
-  title: string;
-  url: string;
-  icon: LucideIcon;
-  external?: boolean;
-};
+function menuHasSlideContent(menu: {
+  items?: readonly unknown[];
+  dynamicItems?: unknown;
+}) {
+  return Boolean(menu.items?.length || menu.dynamicItems);
+}
 
-export type DashboardTeamItem = {
+export type DashboardProjectItem = {
+  id: string;
   name: string;
   logo: LucideIcon;
-  plan: string;
+  domain: string;
+  kind: "zelavis" | "wordpress" | "static" | "generic";
+  status: "active" | "draft";
+  updatedAt: string;
 };
 
-export const sidebarTeams: readonly DashboardTeamItem[] = [
-  {
-    name: "Zelavis",
+export function toDashboardProjectItem(project: RuntimeProject): DashboardProjectItem {
+  let domain = "Local runtime";
+  if (project.runtime.url) {
+    try {
+      domain = new URL(project.runtime.url).host;
+    } catch {
+      domain = project.runtime.url;
+    }
+  }
+
+  return {
+    id: project.id,
+    name: project.name,
     logo: ZelavisMark,
-    plan: "Runtime",
+    domain,
+    kind: "zelavis",
+    status: project.runtime.status === "running" ? "active" : "draft",
+    updatedAt: project.updatedAt,
+  };
+}
+
+function matchScopeValue(
+  required: string | undefined,
+  granted: string | undefined,
+) {
+  return required === undefined || granted === undefined || required === granted;
+}
+
+function scopesMatch(
+  requirement: RuntimeAccessRequirement,
+  grant: NonNullable<RuntimePrincipal["grants"]>[number],
+) {
+  const requiredScope = requirement.scope;
+  const grantScope = grant.scope;
+
+  if (!requiredScope) {
+    return true;
+  }
+
+  if (!grantScope) {
+    return requiredScope.type === "system";
+  }
+
+  if (requiredScope.type !== grantScope.type) {
+    return false;
+  }
+
+  if (requiredScope.type === "project" && grantScope.type === "project") {
+    return matchScopeValue(requiredScope.projectId, grantScope.projectId);
+  }
+
+  if (requiredScope.type === "service" && grantScope.type === "service") {
+    return matchScopeValue(requiredScope.serviceName, grantScope.serviceName);
+  }
+
+  return true;
+}
+
+function principalHasPermission(
+  principal: RuntimePrincipal,
+  permission: string,
+  requirement: RuntimeAccessRequirement,
+) {
+  if (
+    principal.permissions?.includes("*") ||
+    principal.permissions?.includes(permission)
+  ) {
+    return true;
+  }
+
+  return (
+    principal.grants?.some(
+      (grant) =>
+        (grant.permission === "*" || grant.permission === permission) &&
+        scopesMatch(requirement, grant),
+    ) ?? false
+  );
+}
+
+function canAccessRequirement(
+  access: RuntimeDashboardAccess | undefined,
+  requirement: RuntimeAccessRequirement,
+) {
+  if (!access) {
+    return true;
+  }
+
+  const principal = access.principal;
+  const requiresAuthentication =
+    requirement.authenticated === true ||
+    Boolean(requirement.roles?.length) ||
+    Boolean(requirement.permissions?.length);
+
+  if (requiresAuthentication && principal.type === "anonymous") {
+    return false;
+  }
+
+  if (
+    requirement.roles?.length &&
+    !requirement.roles.some((role) => principal.roles?.includes(role))
+  ) {
+    return false;
+  }
+
+  return (
+    requirement.permissions?.every((permission) =>
+      principalHasPermission(principal, permission, requirement),
+    ) ?? true
+  );
+}
+
+export function canAccessDashboardItem(
+  access: RuntimeDashboardAccess | undefined,
+  item: Pick<DashboardNavItem, "access">,
+) {
+  if (!item.access) {
+    return true;
+  }
+
+  const requirements = Array.isArray(item.access) ? item.access : [item.access];
+  return requirements.some((requirement) =>
+    canAccessRequirement(access, requirement),
+  );
+}
+
+export function filterDashboardNavItemsForAccess(
+  items: readonly DashboardNavItem[],
+  access?: RuntimeDashboardAccess,
+): readonly DashboardNavItem[] {
+  return items
+    .filter((item) => canAccessDashboardItem(access, item))
+    .map((item) => ({
+      ...item,
+      items: item.items
+        ? filterDashboardNavItemsForAccess(item.items, access)
+        : undefined,
+    }));
+}
+
+export function getDashboardProjectsForAccess(
+  projects: readonly DashboardProjectItem[],
+  access?: RuntimeDashboardAccess,
+): readonly DashboardProjectItem[] {
+  if (!access?.projects?.length || access.principal.permissions?.includes("*")) {
+    return projects;
+  }
+
+  const allowedProjectIds = new Set(access.projects.map((project) => project.id));
+  return projects.filter((project) => allowedProjectIds.has(project.id));
+}
+
+function projectAccess(
+  permission: string,
+  projectId: string,
+): RuntimeAccessRequirement {
+  return {
+    permissions: [permission],
+    scope: { type: "project", projectId },
+  };
+}
+
+export function buildProjectManagementNavItems(
+  services?: readonly RuntimeService[],
+): readonly DashboardNavItem[] {
+  const platformServiceNavItems = (services ?? [])
+    .filter((service) => service.core && getServiceMenuSurface(service) === "platform")
+    .flatMap((service) =>
+      service.menu
+        ? [createDashboardServiceMenuItem(service.menu, service.name)]
+        : [],
+    );
+
+  return [
+  {
+    title: "Projects",
+    url: "/projects",
+    icon: LayoutDashboard,
+    pageLabel: "Projects",
+    sectionLabel: "Projects",
+    access: {
+      permissions: ["projects.list"],
+      scope: { type: "system" },
+    },
+  },
+  ...platformServiceNavItems,
+  {
+    title: "Marketplace",
+    url: "/marketplace",
+    icon: Boxes,
+    pageLabel: "Marketplace",
+    sectionLabel: "Explore",
+    access: {
+      permissions: ["marketplace.view"],
+      scope: { type: "system" },
+    },
   },
   {
-    name: "Local",
-    logo: MonitorCog,
-    plan: "Development",
+    title: "Domains",
+    landingUrl: "/server/domains",
+    icon: Globe2,
+    pageLabel: "Domains",
+    sectionLabel: "Manage",
+    access: {
+      permissions: ["server.domains.view"],
+      scope: { type: "system" },
+    },
+    items: [
+      {
+        title: "Overview",
+        url: "/server/domains",
+        icon: Globe2,
+        pageLabel: "Domains",
+        slot: "overview",
+      },
+      {
+        title: "Add Domain",
+        url: "/server/domains",
+        search: { domainAction: "add" },
+        icon: Plus,
+        pageLabel: "Add Domain",
+        slot: "create",
+      },
+      {
+        title: "Buy",
+        url: "/server/domains",
+        search: { domainAction: "buy" },
+        icon: CreditCard,
+        pageLabel: "Buy Domain",
+        slot: "create",
+      },
+      {
+        title: "Transfer",
+        url: "/server/domains",
+        search: { domainAction: "transfer" },
+        icon: Send,
+        pageLabel: "Transfer Domain",
+        slot: "create",
+      },
+    ],
   },
   {
-    name: "Core",
-    logo: Database,
-    plan: "Services",
+    title: "Resources",
+    icon: Activity,
+    landingUrl: "/resources",
+    pageLabel: "Resources",
+    sectionLabel: "Manage",
+    access: {
+      permissions: ["server.resources.view"],
+      scope: { type: "system" },
+    },
+    items: [
+      {
+        title: "Overview",
+        url: "/resources",
+        icon: Activity,
+        pageLabel: "Resources",
+      },
+      {
+        title: "Processes",
+        url: "/resources",
+        search: { resourceView: "processes" },
+        icon: Cpu,
+        pageLabel: "Processes",
+      },
+      {
+        title: "Storage",
+        url: "/resources",
+        search: { resourceView: "storage" },
+        icon: Database,
+        pageLabel: "Storage",
+      },
+      {
+        title: "Limits",
+        url: "/resources",
+        search: { resourceView: "limits" },
+        icon: MonitorCog,
+        pageLabel: "Limits",
+      },
+    ],
   },
-] as const;
+  {
+    title: "Server",
+    icon: Server,
+    landingUrl: "/server",
+    pageLabel: "Server",
+    sectionLabel: "Manage",
+    access: {
+      permissions: ["server.manage"],
+      scope: { type: "system" },
+    },
+    items: [
+      {
+        title: "Overview",
+        url: "/server",
+        icon: Server,
+        pageLabel: "Server",
+      },
+      {
+        title: "Backups",
+        url: "/server/backups",
+        icon: Archive,
+        pageLabel: "Backups",
+      },
+      {
+        title: "Logs",
+        url: "/server/logs",
+        icon: ReceiptText,
+        pageLabel: "Logs",
+      },
+    ],
+  },
+  {
+    title: "Security",
+    icon: ShieldCheck,
+    landingUrl: "/security",
+    access: {
+      permissions: ["server.security.view"],
+      scope: { type: "system" },
+    },
+    pageLabel: "Security",
+    sectionLabel: "Manage",
+    items: [
+      {
+        title: "Checklist",
+        url: "/security",
+        icon: ShieldCheck,
+        pageLabel: "Security",
+        slot: "main",
+      },
+    ],
+  },
+  ] as const;
+}
+
+export function buildManagedProjectNavItems(
+  projectId: string,
+  kind: "wordpress" | "static" | "generic",
+): readonly DashboardNavItem[] {
+  const appAdminTitle = kind === "wordpress" ? "WordPress Admin" : "App Admin";
+
+  return [
+    {
+      title: "Overview",
+      url: toProjectPath("/", projectId) as DashboardRoutePath,
+      icon: LayoutDashboard,
+      pageLabel: "Overview",
+      sectionLabel: "Overview",
+    },
+    {
+      title: "Domains",
+      url: toProjectPath("/domains", projectId) as DashboardRoutePath,
+      icon: Globe2,
+      pageLabel: "Domains",
+      sectionLabel: "Hosting",
+    },
+    {
+      title: "Files",
+      url: toProjectPath("/files", projectId) as DashboardRoutePath,
+      icon: Files,
+      pageLabel: "Files",
+      sectionLabel: "Hosting",
+    },
+    {
+      title: "Database",
+      url: toProjectPath("/database", projectId) as DashboardRoutePath,
+      icon: Database,
+      pageLabel: "Database",
+      sectionLabel: "Hosting",
+    },
+    {
+      title: "Backups",
+      url: toProjectPath("/backups", projectId) as DashboardRoutePath,
+      icon: Archive,
+      pageLabel: "Backups",
+      sectionLabel: "Operations",
+    },
+    {
+      title: "Logs",
+      url: toProjectPath("/logs", projectId) as DashboardRoutePath,
+      icon: ReceiptText,
+      pageLabel: "Logs",
+      sectionLabel: "Operations",
+    },
+    {
+      title: "Updates",
+      url: toProjectPath("/updates", projectId) as DashboardRoutePath,
+      icon: Package,
+      pageLabel: "Updates",
+      sectionLabel: "Operations",
+    },
+    {
+      title: appAdminTitle,
+      url: toProjectPath("/admin", projectId) as DashboardRoutePath,
+      icon: MonitorCog,
+      pageLabel: appAdminTitle,
+      sectionLabel: "Settings",
+    },
+  ] as const;
+}
 
 function toDashboardRoutePath(path: string): DashboardRoutePath | undefined {
   if (!path.startsWith("/") || path.startsWith("//")) {
@@ -160,6 +558,130 @@ function toDashboardRoutePath(path: string): DashboardRoutePath | undefined {
   }
 
   return path as DashboardRoutePath;
+}
+
+function toProjectRoutePath(path: string, projectId: string): DashboardRoutePath {
+  return toProjectPath(path, projectId) as DashboardRoutePath;
+}
+
+function isBuiltInProjectPath(path: string) {
+  if (path.startsWith("/content/")) {
+    return true;
+  }
+
+  if (path.startsWith("/workloads/")) {
+    return true;
+  }
+
+  return [
+    "/",
+    "/agents",
+    "/auth",
+    "/backend",
+    "/content",
+    "/content/new",
+    "/database",
+    "/database/new",
+    "/extensions",
+    "/media",
+    "/marketplace",
+    "/settings",
+    "/storage",
+    "/users",
+    "/website",
+    "/workloads",
+  ].includes(path);
+}
+
+function toProjectMenuItem(
+  item: DashboardNavItem,
+  projectId: string,
+): DashboardNavItem {
+  return {
+    ...item,
+    url:
+      item.url && isBuiltInProjectPath(item.url)
+        ? toProjectRoutePath(item.url, projectId)
+        : item.url,
+    landingUrl:
+      item.landingUrl && isBuiltInProjectPath(item.landingUrl)
+        ? toProjectRoutePath(item.landingUrl, projectId)
+        : item.landingUrl,
+    items: item.items?.map((child) => toProjectMenuItem(child, projectId)),
+  };
+}
+
+function materializeProjectAccessRequirement(
+  requirement: RuntimeAccessRequirement,
+  projectId: string,
+): RuntimeAccessRequirement {
+  if (
+    requirement.scope?.type === "project" &&
+    "projectIdParam" in requirement.scope
+  ) {
+    return {
+      ...requirement,
+      scope: {
+        type: "project",
+        projectId,
+      },
+    };
+  }
+
+  return requirement;
+}
+
+function isAccessRequirementArray(
+  access: RuntimeAccessRequirement | readonly RuntimeAccessRequirement[],
+): access is readonly RuntimeAccessRequirement[] {
+  return Array.isArray(access);
+}
+
+function materializeProjectAccess(
+  access: RuntimeAccessRequirement | readonly RuntimeAccessRequirement[] | undefined,
+  projectId: string,
+) {
+  if (!access) {
+    return undefined;
+  }
+
+  return isAccessRequirementArray(access)
+    ? access.map((requirement) =>
+        materializeProjectAccessRequirement(requirement, projectId),
+      )
+    : materializeProjectAccessRequirement(access, projectId);
+}
+
+function materializeProjectMenuItemAccess(
+  item: DashboardNavItem,
+  menu: RuntimeServiceMenuDefinition,
+  projectId: string,
+): DashboardNavItem {
+  return {
+    ...item,
+    access: materializeProjectAccess(menu.access, projectId),
+    items: item.items?.map((child, index) => {
+      const childMenu = menu.items?.[index];
+      return childMenu
+        ? materializeProjectMenuItemAccess(child, childMenu, projectId)
+        : child;
+    }),
+  };
+}
+
+function createProjectAwareDashboardServiceMenuItem(
+  menu: RuntimeServiceMenuDefinition,
+  serviceName: string | undefined,
+  projectId: string,
+): DashboardNavItem {
+  return toProjectMenuItem(
+    materializeProjectMenuItemAccess(
+      createDashboardServiceMenuItem(menu, serviceName),
+      menu,
+      projectId,
+    ),
+    projectId,
+  );
 }
 
 function slugifyServiceName(name: string) {
@@ -170,33 +692,8 @@ function slugifyServiceName(name: string) {
     .replace(/^-+|-+$/g, "");
 }
 
-function getServiceRegistryMenuIcon(title: string, path?: string): LucideIcon {
-  switch (path) {
-    case "/commerce":
-      return Store;
-    case "/commerce/products":
-      return ShoppingBag;
-    case "/commerce/orders":
-      return ReceiptText;
-    case "/commerce/customers":
-      return Users;
-    case "/commerce/coupons":
-      return TicketPercent;
-    default:
-      break;
-  }
-
+function getServiceRegistryMenuIcon(title: string): LucideIcon {
   switch (title.toLowerCase()) {
-    case "ecommerce":
-      return Store;
-    case "products":
-      return ShoppingBag;
-    case "orders":
-      return ReceiptText;
-    case "customers":
-      return Users;
-    case "coupons":
-      return TicketPercent;
     case "more":
       return Package;
     default:
@@ -206,24 +703,40 @@ function getServiceRegistryMenuIcon(title: string, path?: string): LucideIcon {
 
 function createDashboardServiceRegistryMenuItem(
   menu: RuntimeServiceRegistryMenuDefinition,
+  serviceName?: string,
+  parentSegments: readonly string[] = [],
 ): DashboardServiceRegistryMenuItem {
+  const path = menu.path ?? deriveServiceMenuPath(menu.title, serviceName, parentSegments);
+  const nextSegments = [...parentSegments, slugifyMenuSegment(menu.title)];
+
   return {
     title: menu.title,
-    url: menu.path ? toDashboardRoutePath(menu.path) : undefined,
-    icon: getServiceRegistryMenuIcon(menu.title, menu.path),
+    url: toDashboardRoutePath(path),
+    search: menu.search,
+    landingUrl:
+      menuHasSlideContent(menu)
+        ? toDashboardRoutePath(path)
+        : undefined,
+    icon: getServiceRegistryMenuIcon(menu.title),
     pageLabel: menu.pageLabel,
     panelLabel: menu.panelLabel,
     fixed: menu.fixed,
     fixedOrder: menu.fixedOrder,
+    fixedActionScope: menu.fixedActionScope,
     sectionLabel: menu.sectionLabel,
+    disabled: menu.disabled,
     page: menu.page,
     serviceOwned: true,
-    items: menu.items?.map(createDashboardServiceRegistryMenuItem),
+    items: menu.items?.map((item) =>
+      createDashboardServiceRegistryMenuItem(item, serviceName, nextSegments),
+    ),
   };
 }
 
 function getServiceMenuIcon(title: string, serviceName?: string): LucideIcon {
   switch (serviceName ?? title.toLowerCase()) {
+    case "@zelavis/server":
+      return Fingerprint;
     case "@zelavis/auth":
       return Fingerprint;
     case "@zelavis/db":
@@ -231,7 +744,9 @@ function getServiceMenuIcon(title: string, serviceName?: string): LucideIcon {
     case "@zelavis/storage":
       return Files;
     case "@zelavis/website":
-      return PanelsTopLeft;
+      return Globe2;
+    case "@zelavis/workloads":
+      return Cpu;
     default:
       return Server;
   }
@@ -240,18 +755,73 @@ function getServiceMenuIcon(title: string, serviceName?: string): LucideIcon {
 function createDashboardServiceMenuItem(
   menu: RuntimeServiceMenuDefinition,
   serviceName?: string,
+  parentSegments: readonly string[] = [],
 ): DashboardNavItem {
+  const path = menu.path ?? deriveServiceMenuPath(menu.title, serviceName, parentSegments);
+  const nextSegments = [...parentSegments, slugifyMenuSegment(menu.title)];
+
   return {
     title: menu.title,
-    url: menu.path ? toDashboardRoutePath(menu.path) : undefined,
+    url: toDashboardRoutePath(path),
+    search: menu.search,
+    landingUrl:
+      menuHasSlideContent(menu)
+        ? toDashboardRoutePath(path)
+        : undefined,
     icon: getServiceMenuIcon(menu.title, serviceName),
     pageLabel: menu.pageLabel,
     panelLabel: menu.panelLabel,
     fixed: menu.fixed,
     fixedOrder: menu.fixedOrder,
+    fixedActionScope: menu.fixedActionScope,
     sectionLabel: menu.sectionLabel,
-    items: menu.items?.map((item) => createDashboardServiceMenuItem(item, serviceName)),
+    disabled: menu.disabled,
+    access: menu.access,
+    page: menu.page,
+    items: menu.items?.map((item) =>
+      createDashboardServiceMenuItem(item, serviceName, nextSegments),
+    ),
   };
+}
+
+function deriveServiceMenuPath(
+  title: string,
+  serviceName: string | undefined,
+  parentSegments: readonly string[],
+) {
+  const serviceSegment = serviceName
+    ? slugifyServiceSegment(serviceName)
+    : undefined;
+  const titleSegment = slugifyMenuSegment(title);
+  const segments = [
+    serviceSegment &&
+    ((parentSegments.length === 0 && serviceSegment === titleSegment) ||
+      parentSegments[0] === serviceSegment)
+      ? undefined
+      : serviceSegment,
+    ...parentSegments,
+    parentSegments.at(-1) === titleSegment ? undefined : titleSegment,
+  ].filter(Boolean);
+
+  return `/${segments.join("/")}`;
+}
+
+function slugifyServiceSegment(value: string) {
+  return value
+    .replace(/^@/, "")
+    .replace(/^zelavis\//, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function slugifyMenuSegment(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 type DashboardServiceSurface = NonNullable<RuntimeServiceMenuDefinition["surface"]>;
@@ -262,7 +832,7 @@ function getServiceMenuSurface(service: RuntimeService): DashboardServiceSurface
 
 export function buildDashboardServiceRegistryEntries(
   serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
-): readonly DashboardWorkspaceServiceItem[] {
+): readonly DashboardExtensionServiceItem[] {
   return [...(serviceRegistry ?? [])]
     .sort((left, right) => {
       const leftOrder = left.order ?? Number.MAX_SAFE_INTEGER
@@ -277,57 +847,25 @@ export function buildDashboardServiceRegistryEntries(
             name: service.name,
             status: service.status,
             source: service.source,
-            menu: createDashboardServiceRegistryMenuItem(service.menu),
+            menu: createDashboardServiceRegistryMenuItem(
+              service.menu,
+              service.name,
+            ),
           },
         ]
       : [],
   )
 }
 
-const defaultRuntimeServiceRegistry = [
-  {
-    name: "@zelavis/ecommerce",
-    version: "0.1.0",
-    status: "available",
-    source: "official",
-    menu: {
-      title: "Ecommerce",
-      path: "/commerce",
-      pageLabel: "Commerce",
-      items: [
-        {
-          title: "Products",
-          path: "/commerce/products",
-        },
-        {
-          title: "Orders",
-          path: "/commerce/orders",
-        },
-        {
-          title: "More",
-          items: [
-            {
-              title: "Customers",
-              path: "/commerce/customers",
-            },
-            {
-              title: "Coupons",
-              path: "/commerce/coupons",
-            },
-          ],
-        },
-      ],
-    },
-  },
-] as const satisfies readonly RuntimeServiceRegistryEntry[];
+const defaultRuntimeServiceRegistry = [] as const satisfies readonly RuntimeServiceRegistryEntry[];
 
 export const dashboardServiceRegistryEntries =
   buildDashboardServiceRegistryEntries(defaultRuntimeServiceRegistry);
 
-export function buildWorkspaceServiceNavItems(
+export function buildExtensionServiceNavItems(
   serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
 ): readonly DashboardServiceRegistryMenuItem[] {
-  // Installable services intentionally get exactly one root workspace area.
+  // Installable services intentionally get exactly one root Extensions area.
   // Any nested navigation must live under that one root item so first-slide
   // ownership stays reserved for built-in product surfaces and core services.
   return buildDashboardServiceRegistryEntries(serviceRegistry)
@@ -335,10 +873,44 @@ export function buildWorkspaceServiceNavItems(
     .map((service) => service.menu);
 }
 
-export const workspaceServiceNavItems =
-  buildWorkspaceServiceNavItems(defaultRuntimeServiceRegistry);
+export const extensionServiceNavItems =
+  buildExtensionServiceNavItems(defaultRuntimeServiceRegistry);
 
 const defaultRuntimeServices: readonly RuntimeService[] = [
+  {
+    name: "@zelavis/server",
+    core: true,
+    apiPath: "/api/v1/runtime",
+    menu: {
+      title: "Access",
+      path: "/access",
+      pageLabel: "Access",
+      panelLabel: "Access",
+      sectionLabel: "Projects",
+      surface: "platform",
+      access: {
+        permissions: ["access.manage"],
+        scope: { type: "system" },
+      },
+      items: [
+        {
+          title: "Overview",
+          path: "/access",
+          pageLabel: "Access",
+        },
+        {
+          title: "Users",
+          path: "/access/users",
+          pageLabel: "Users",
+        },
+        {
+          title: "Permissions",
+          path: "/access/permissions",
+          pageLabel: "Permissions",
+        },
+      ],
+    },
+  },
   {
     name: "@zelavis/ui",
     core: true,
@@ -363,17 +935,57 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
     apiPath: "/api/v1/database",
     menu: {
       title: "Database",
+      path: "/database",
+      surface: "core",
       panelLabel: "Database",
+      dynamicItems: {
+        path: "/database/menu/tables",
+        emptyTitle: "No tables yet",
+      },
       items: [
         {
+          title: "Create Table",
+          path: "/database/new",
+          pageLabel: "Database",
+          fixed: true,
+          fixedOrder: 1,
+        },
+        {
           title: "System Tables",
+          path: "/database",
+          search: { systemTable: "zv_collections" },
           panelLabel: "System Tables",
           items: [
-            { title: "zv_collections", path: "/database" },
-            { title: "zv_events", path: "/database" },
-            { title: "zv_schemas", path: "/database" },
-            { title: "zv_time_series_checkpoints", path: "/database" },
-            { title: "zv_time_series_points", path: "/database" },
+            {
+              title: "zv_collections",
+              path: "/database",
+              pageLabel: "Database",
+              search: { systemTable: "zv_collections" },
+            },
+            {
+              title: "zv_events",
+              path: "/database",
+              pageLabel: "Database",
+              search: { systemTable: "zv_events" },
+            },
+            {
+              title: "zv_schemas",
+              path: "/database",
+              pageLabel: "Database",
+              search: { systemTable: "zv_schemas" },
+            },
+            {
+              title: "zv_time_series_checkpoints",
+              path: "/database",
+              pageLabel: "Database",
+              search: { systemTable: "zv_time_series_checkpoints" },
+            },
+            {
+              title: "zv_time_series_points",
+              path: "/database",
+              pageLabel: "Database",
+              search: { systemTable: "zv_time_series_points" },
+            },
           ],
         },
       ],
@@ -394,102 +1006,58 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
     apiPath: "/",
     menu: {
       title: "Website",
-      path: "/builder/pages",
-      pageLabel: "Builder",
+      path: "/website",
+      pageLabel: "Website",
+      sectionLabel: "Build",
+      surface: "root",
+      access: {
+        permissions: ["project.website.manage"],
+        scope: { type: "project", projectIdParam: "projectId" },
+      },
     },
   },
 ] as const;
 
+export const projectManagementNavItems: readonly DashboardNavItem[] =
+  buildProjectManagementNavItems(defaultRuntimeServices);
+
 export function buildPlatformNavItems(
-  services?: readonly RuntimeService[],
-  serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
-  contentTypes?: readonly ContentTypeRow[],
-  databaseCollections?: readonly DatabaseCollection[],
+  services: readonly RuntimeService[] | undefined,
+  serviceRegistry: readonly RuntimeServiceRegistryEntry[] | undefined,
+  contentTypes: readonly ContentTypeRow[] | undefined,
+  databaseCollections: readonly DatabaseCollection[] | undefined,
+  projectId: string,
 ): readonly DashboardNavItem[] {
-  const workspaceRegistryNavItems = buildWorkspaceServiceNavItems(serviceRegistry);
-  const contentTypesByName = new Map(
-    (contentTypes ?? []).map((contentType) => [contentType.name, contentType]),
-  );
-  const databaseTableItems = [...(databaseCollections ?? [])]
-    .filter(isContentTypeDatabaseCollection)
-    .sort((left, right) => left.name.localeCompare(right.name))
-    .map((collection) => {
-      const contentType = contentTypesByName.get(collection.name);
-      return {
-        title: contentType?.label ?? collection.name,
-        url: "/database" as const,
-        search: { databaseTable: collection.name, systemTable: undefined },
-        icon: Database,
-        pageLabel: "Database",
-        sectionLabel: "Collections",
-      };
-    });
+  const extensionRegistryNavItems = buildExtensionServiceNavItems(serviceRegistry);
+  void databaseCollections;
   const serviceNavItems = (services ?? [])
     .filter((service) => service.core && service.name !== "@zelavis/ui")
     .map((service) => {
       const baseMenu = service.menu
-        ? createDashboardServiceMenuItem(service.menu, service.name)
+        ? createProjectAwareDashboardServiceMenuItem(
+            service.menu,
+            service.name,
+            projectId,
+          )
         : {
             title: service.name,
             icon: getServiceMenuIcon(service.name, service.name),
           };
 
-      if (service.name !== "@zelavis/db") {
-        return {
-          item: baseMenu,
-          surface: getServiceMenuSurface(service),
-        };
-      }
-
-      const systemTableItems =
-        baseMenu.items?.find((item) => item.title === "System Tables")?.items ?? [];
-
       return {
-        item: {
-          ...baseMenu,
-          panelLabel: "Database",
-          items: [
-            {
-              title: "Create Table",
-              url: "/database/new" as const,
-              icon: Plus,
-              pageLabel: "Database",
-              fixed: true,
-              fixedOrder: 1,
-            },
-            ...databaseTableItems,
-            ...(systemTableItems.length > 0
-              ? [
-                  {
-                    title: "System Tables",
-                    icon: Server,
-                    panelLabel: "System Tables",
-                    items: systemTableItems.map((item) => ({
-                      ...item,
-                      url: "/database" as const,
-                      search: {
-                        systemTable: item.title as DashboardNavSearch["systemTable"],
-                        databaseTable: undefined,
-                      },
-                      icon: Database,
-                      pageLabel: "Database",
-                    })),
-                  },
-                ]
-              : []),
-          ],
-        },
+        item: baseMenu,
         surface: getServiceMenuSurface(service),
+        serviceName: service.name,
       };
     });
   const rootServiceNavItems = serviceNavItems
     .filter((entry) => entry.surface === "root")
     .map((entry) => entry.item);
   const coreServiceNavItems = serviceNavItems
-    .filter((entry) => entry.surface === "core" && entry.item.title !== "Website")
+    .filter((entry) => entry.surface === "core")
     .map((entry) => entry.item);
-  const workspaceServiceNavItems = serviceNavItems
-    .filter((entry) => entry.surface === "workspace")
+  const extensionSurfaceServiceNavItems = serviceNavItems
+    .filter((entry) => entry.surface === "extensions")
     .map((entry) => entry.item);
   const settingsServiceNavItems = serviceNavItems
     .filter((entry) => entry.surface === "settings")
@@ -514,7 +1082,8 @@ export function buildPlatformNavItems(
     ...((contentTypes ?? []).map((contentType) => ({
       title: contentType.label,
       icon: FileText,
-      panelLabel: "Views",
+      panelLabel: contentType.label,
+      landingUrl: `/content/${contentType.name}` as DashboardRoutePath,
       sectionLabel: "Collections",
       items: [
         {
@@ -529,113 +1098,108 @@ export function buildPlatformNavItems(
           icon: Package,
           pageLabel: "Content",
         },
-        {
-          title: "Type Editor",
-          url: `/content/${contentType.name}/edit` as DashboardRoutePath,
-          icon: Pencil,
-          pageLabel: "Content",
-        },
-        {
-          title: "Type Settings",
-          url: `/content/${contentType.name}/settings` as DashboardRoutePath,
-          icon: Settings2,
-          pageLabel: "Content",
-        },
       ],
     })) as readonly DashboardNavItem[]),
   ];
 
-  return [
+  const rawItems: readonly DashboardNavItem[] = [
     {
       title: "Overview",
       url: "/",
       icon: LayoutDashboard,
+      sectionLabel: "Overview",
+      access: projectAccess("project.view", projectId),
     },
     {
       title: "Users",
       url: "/users",
       icon: Users,
+      sectionLabel: "Build",
+      access: projectAccess("project.users.manage", projectId),
     },
     {
       title: "Content",
       icon: FileText,
       landingUrl: "/content",
       panelLabel: "Content Types",
+      sectionLabel: "Build",
+      access: projectAccess("project.content.read", projectId),
       items: contentItems,
     },
     {
-      title: "Media Gallery",
+      title: "Media",
       url: "/media",
       icon: Files,
       pageLabel: "Media",
+      sectionLabel: "Build",
+      access: projectAccess("project.media.manage", projectId),
     },
     ...rootServiceNavItems,
     {
       title: "Marketplace",
       url: "/marketplace",
       icon: Boxes,
+      pageLabel: "Marketplace",
+      sectionLabel: "Extend",
+      access: projectAccess("project.marketplace.manage", projectId),
     },
     {
-      title: "Core",
-      icon: Server,
-      items: coreServiceNavItems,
-    },
-    {
-      title: "Workspace",
+      title: "Extensions",
       icon: Bot,
+      landingUrl: "/extensions",
+      panelLabel: "Extensions",
+      sectionLabel: "Extend",
+      access: projectAccess("project.extensions.manage", projectId),
       items: [
         {
           title: "Agents",
           url: "/agents",
           icon: Bot,
         },
-        {
-          title: "Builder",
-          icon: PanelsTopLeft,
-          items: [
-            {
-              title: "Pages",
-              url: "/builder/pages",
-              icon: FileText,
-              pageLabel: "Builder",
-            },
-          ],
-        },
-        ...workspaceServiceNavItems,
-        ...workspaceRegistryNavItems,
+        ...extensionSurfaceServiceNavItems,
+        ...extensionRegistryNavItems,
       ],
+    },
+    {
+      title: "Backend",
+      icon: Server,
+      landingUrl: "/backend",
+      panelLabel: "Backend",
+      sectionLabel: "Backend",
+      access: projectAccess("project.backend.manage", projectId),
+      items: coreServiceNavItems,
     },
     {
       title: "Settings",
       icon: Settings2,
       landingUrl: "/settings",
+      sectionLabel: "Settings",
+      access: projectAccess("project.settings.manage", projectId),
       items: [
         {
-          title: "Runtime",
+          title: "Project Settings",
           url: "/settings",
-          icon: MonitorCog,
+          icon: Settings2,
           pageLabel: "Settings",
-        },
-        {
-          title: "Services",
-          url: "/services",
-          icon: Server,
-        },
-        {
-          title: "Appearance",
-          url: "/settings/appearance",
-          icon: Paintbrush,
         },
         ...settingsServiceNavItems,
       ],
     },
   ] as const;
-}
 
-export const platformNavItems = buildPlatformNavItems(
-  defaultRuntimeServices,
-  defaultRuntimeServiceRegistry,
-);
+  return rawItems.map((item) => {
+    if (item.title === "Backend") {
+      return {
+        ...item,
+        url: item.url ? toProjectRoutePath(item.url, projectId) : undefined,
+        landingUrl: item.landingUrl
+          ? toProjectRoutePath(item.landingUrl, projectId)
+          : undefined,
+      };
+    }
+    return toProjectMenuItem(item, projectId);
+  });
+}
 
 export function buildMarketplacePackageItems(
   serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
@@ -662,27 +1226,6 @@ export const marketplacePackageItems = buildMarketplacePackageItems(
   defaultRuntimeServiceRegistry,
 );
 
-export const secondaryNavItems: readonly DashboardSecondaryItem[] = [
-  {
-    title: "GitHub",
-    url: "https://github.com/zelavis/zelavis",
-    icon: Github,
-    external: true,
-  },
-  {
-    title: "Support",
-    url: "https://github.com/zelavis/zelavis/discussions",
-    icon: LifeBuoy,
-    external: true,
-  },
-  {
-    title: "Feedback",
-    url: "https://github.com/zelavis/zelavis/issues/new",
-    icon: Send,
-    external: true,
-  },
-] as const;
-
 function flattenPlatformItems(
   items: readonly DashboardNavItem[],
 ): Array<{ to: DashboardRoutePath; label: string; icon: LucideIcon }> {
@@ -697,9 +1240,20 @@ function flattenPlatformItems(
 export function buildDashboardNavItems(
   services?: readonly RuntimeService[],
   serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
+  projectId?: string,
 ) {
   return [
-    ...flattenPlatformItems(buildPlatformNavItems(services, serviceRegistry)),
+    ...(projectId
+      ? flattenPlatformItems(
+          buildPlatformNavItems(
+            services,
+            serviceRegistry,
+            undefined,
+            undefined,
+            projectId,
+          ),
+        )
+      : []),
     ...buildMarketplacePackageItems(serviceRegistry)
       .filter(
         (item): item is DashboardPackageItem & { url: DashboardRoutePath } =>
@@ -713,21 +1267,53 @@ export function buildDashboardNavItems(
   ] as const;
 }
 
-export const dashboardNavItems = buildDashboardNavItems(
-  defaultRuntimeServices,
-  defaultRuntimeServiceRegistry,
-);
+export type DashboardMenuContent =
+  | {
+      kind: "frame";
+      title: string;
+      page: RuntimeServicePageDefinition;
+    }
+  | {
+      kind: "placeholder";
+      title: string;
+      description: string;
+    };
 
-export function findServiceMenuPageByPath(
+export function findServiceMenuContentByPath(
   pathname: string,
+  services?: readonly RuntimeService[],
   serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
-): RuntimeServicePageDefinition | undefined {
-  const search = (
-    items: readonly DashboardServiceRegistryMenuItem[],
-  ): RuntimeServicePageDefinition | undefined => {
+): DashboardMenuContent | undefined {
+  const projectId = getProjectIdFromPathname(pathname);
+  const items = projectId
+    ? buildPlatformNavItems(
+        services,
+        serviceRegistry,
+        undefined,
+        undefined,
+        projectId,
+      )
+    : [
+        ...buildProjectManagementNavItems(services),
+        ...buildExtensionServiceNavItems(serviceRegistry),
+      ];
+
+  const search = (items: readonly DashboardNavItem[]): DashboardMenuContent | undefined => {
     for (const item of items) {
       if (item.url === pathname && item.page) {
-        return item.page;
+        return {
+          kind: "frame",
+          title: item.page.title ?? item.pageLabel ?? item.title,
+          page: item.page,
+        };
+      }
+
+      if (item.url === pathname || item.landingUrl === pathname) {
+        return {
+          kind: "placeholder",
+          title: item.pageLabel ?? item.panelLabel ?? item.title,
+          description: `${item.title} is ready for a service-provided page or a dashboard route.`,
+        };
       }
 
       const nested = search(item.items ?? []);
@@ -739,7 +1325,16 @@ export function findServiceMenuPageByPath(
     return undefined;
   };
 
-  return search(buildWorkspaceServiceNavItems(serviceRegistry));
+  return search(items);
+}
+
+export function findServiceMenuPageByPath(
+  pathname: string,
+  serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
+): RuntimeServicePageDefinition | undefined {
+  const content = findServiceMenuContentByPath(pathname, undefined, serviceRegistry);
+
+  return content?.kind === "frame" ? content.page : undefined;
 }
 
 export function getDashboardPageLabel(
@@ -752,7 +1347,11 @@ export function getDashboardPageLabel(
   }
 
   return (
-    buildDashboardNavItems(services, serviceRegistry).find((item) => item.to === pathname)
+    buildDashboardNavItems(
+      services,
+      serviceRegistry,
+      getProjectIdFromPathname(pathname),
+    ).find((item) => item.to === pathname)
       ?.label ?? "Not Found"
   );
 }
@@ -775,12 +1374,6 @@ export const serviceRows = [
     path: "/zelavis/api/v1/database",
     state: "ready",
     scope: "core",
-  },
-  {
-    name: "ecommerce",
-    path: "marketplace package",
-    state: "planned",
-    scope: "official",
   },
 ] as const;
 

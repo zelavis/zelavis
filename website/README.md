@@ -24,4 +24,4 @@ pnpm preview
 
 ## Deployment
 
-The site builds as static Starlight output in `dist/`, suitable for Cloudflare Pages or any static host.
+The site builds as static Starlight output in `dist/`, suitable for any static host.

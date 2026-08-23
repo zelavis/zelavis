@@ -4,7 +4,6 @@ import { useMemo, useRef, useState } from "react";
 
 import {
   DataRow,
-  PageHeader,
   ResourceNotice,
   StatCard,
   StatusBadge,
@@ -15,7 +14,7 @@ import { Input } from "#/components/ui/input";
 import {
   createDatabaseCollection,
   deleteStorageFile,
-  getRuntimeConfig,
+  getActiveRuntimeConfig,
   getStorageFileMetadata,
   insertDatabaseDocument,
   listStorageFiles,
@@ -27,11 +26,11 @@ import type { Route } from './+types/storage';
 
 export const handle = {
   pageLabel: "Storage",
-  sidebarTrail: ["Core"],
+  sidebarTrail: ["Backend"],
 } as const;
 
 export async function clientLoader({ request }: Route.ClientLoaderArgs) {
-  const runtime = await getRuntimeConfig();
+  const runtime = await getActiveRuntimeConfig(request);
   const storageEnabled = runtime.services.some((s) => s.name === "@zelavis/storage");
   const url = new URL(request.url);
   const prefix = url.searchParams.get('prefix') || undefined;
@@ -270,12 +269,6 @@ function StorageRoute() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <PageHeader
-        eyebrow="Core"
-        title="Storage"
-        description="Platform-backed file storage exposed through Zelavis. Upload files, inspect checksums, and keep references ready for later database document linking."
-      />
-
       {!storageEnabled ? (
         <ResourceNotice
           title="Storage service is not mounted"
@@ -513,7 +506,6 @@ function StorageRoute() {
                       <Button
                         type="button"
                         variant="outline"
-                        size="sm"
                         onClick={() => setSelectedPath(file.path)}
                       >
                         Inspect
@@ -521,7 +513,6 @@ function StorageRoute() {
                       <Button
                         type="button"
                         variant="outline"
-                        size="sm"
                         onClick={() => handleDelete(file.path)}
                       >
                         <Trash2 className="size-4" />
@@ -589,13 +580,12 @@ function StorageRoute() {
                         <Button
                           type="button"
                           variant="outline"
-                          size="sm"
                           onClick={handleInsertSampleDocument}
                         >
                           Insert sample document
                         </Button>
                       ) : null}
-                      <Button type="button" variant="outline" size="sm" onClick={handleCopyReference}>
+                      <Button type="button" variant="outline" onClick={handleCopyReference}>
                         Copy JSON
                       </Button>
                     </div>

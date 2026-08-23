@@ -2,17 +2,18 @@ import { Form, Link, redirect, useNavigation } from "react-router";
 import { Database, Plus } from "lucide-react";
 import { useState } from "react";
 
-import { PageHeader, ResourceNotice } from "#/components/DashboardPage";
+import { ResourceNotice } from "#/components/DashboardPage";
 import { Button, buttonVariants } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
-import { createDatabaseCollection, getRuntimeConfig } from "#/lib/runtime-api";
+import { createDatabaseCollection, getActiveRuntimeConfig } from "#/lib/runtime-api";
+import { toProjectPath, toProjectPathFromUrl } from "#/lib/routing";
 import { cn } from "#/lib/utils";
 import type { Route } from "./+types/database.new";
 
 export const handle = {
   pageLabel: "Database",
-  sidebarTrail: ["Core", "Database"],
+  sidebarTrail: ["Backend", "Database"],
 } as const;
 
 function slugifyTableName(value: string) {
@@ -37,16 +38,18 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
   }
 
   try {
-    const config = await getRuntimeConfig();
+    const config = await getActiveRuntimeConfig(request);
     const table = await createDatabaseCollection(config, {
       name: normalizedName,
+      surface: "database",
       metadata: {
-        surface: "database",
         kind: "table",
       },
     });
 
-    return redirect(`/database?databaseTable=${encodeURIComponent(table.name)}`);
+    return redirect(
+      `${toProjectPathFromUrl("/database", request.url)}?databaseTable=${encodeURIComponent(table.name)}`,
+    );
   } catch (caught) {
     return {
       error: caught instanceof Error ? caught.message : String(caught),
@@ -65,18 +68,14 @@ function NewDatabaseTableRoute({ actionData }: Route.ComponentProps) {
 
   return (
     <section className="mx-auto grid w-full max-w-4xl gap-6">
-      <PageHeader
-        eyebrow="Database"
-        title="New Table"
-        actions={
-          <Link
-            to="/database"
-            className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
-          >
-            Back to Database
-          </Link>
-        }
-      />
+      <div className="flex justify-end">
+        <Link
+          to={toProjectPath("/database")}
+          className={cn(buttonVariants({ variant: "outline" }))}
+        >
+          Back to Database
+        </Link>
+      </div>
 
       <Card>
         <CardHeader>
@@ -99,7 +98,7 @@ function NewDatabaseTableRoute({ actionData }: Route.ComponentProps) {
                 Create and Open Table
               </Button>
               <Link
-                to="/database"
+                to={toProjectPath("/database")}
                 aria-disabled={saving}
                 className={cn(buttonVariants({ variant: "outline" }))}
               >

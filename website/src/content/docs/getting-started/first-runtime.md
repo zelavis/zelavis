@@ -24,12 +24,14 @@ When you need direct access to the initialized runtime object, jump to [Advanced
 
 ## What you get by default
 
-Today, a default `new Zelavis(...)` runtime includes these core services by default:
+During the Platform/App migration, a default development runtime mounts the
+current Zelavis App service set in-process:
 
 - dashboard
 - auth
 - database
 - website
+- workloads
 
 When the selected adapter provides file storage, Zelavis can also expose:
 
@@ -39,7 +41,14 @@ Default root namespace:
 
 ```txt
 /zelavis
-/zelavis/settings
+/zelavis/marketplace
+/zelavis/projects/:projectId
+/zelavis/projects/:projectId/marketplace
+/zelavis/projects/:projectId/settings
+/zelavis/server
+/zelavis/server/domains
+/zelavis/server/backups
+/zelavis/server/logs
 /zelavis/assets/*
 /zelavis/api/v1/runtime/config
 /zelavis/api/v1/runtime/settings
@@ -48,9 +57,26 @@ Default root namespace:
 /zelavis/api/v1/storage/files/*
 /zelavis/api/v1/storage/files/*?format=metadata
 /zelavis/api/v1/website/pages
+/zelavis/api/v1/workloads
+/zelavis/api/v1/workloads/http/:projectId/*path
 ```
 
-The website core service also mounts public website pages at `/`, while still reserving the dashboard namespace under `/zelavis`.
+The dashboard root at `/zelavis` opens the Projects overview. Create a project there, then open its project-local pages under `/zelavis/projects/:projectId/*`.
+
+The global Marketplace at `/zelavis/marketplace` is for apps, starters, templates, and server provider plugins. Project plugins live inside Zelavis-native projects at `/zelavis/projects/:projectId/marketplace`. Global management areas such as Domains, Resources, Server, and Security sit outside project URLs; server-owned backing routes currently live under `/zelavis/server/*`.
+
+The website service also mounts public website pages at `/`, while still reserving the dashboard namespace under `/zelavis`.
+
+Platform settings, project registry data, and service installation state are
+stored in the Platform System Store. Local adapters use
+`.zelavis/system/zelavis.sqlite`. The Platform does not expose that store in a
+project Database screen. Each Zelavis App project has an app database at
+`.zelavis/projects/<projectId>/.zelavis/zelavis.sqlite` and private runtime
+metadata at `.zelavis/projects/<projectId>/.zelavis/runtime/zelavis.sqlite`.
+
+The runtime also lists the shipped project recipes at
+`GET /zelavis/api/v1/runtime/blueprints`. See [Platform OS, App, and
+Blueprints](../architecture/platform-app-blueprints.md).
 
 ## Dashboard settings
 
@@ -69,7 +95,7 @@ Root path changes are stored as pending runtime settings and require a restart b
 
 ## Use the fetch-style runtime directly
 
-When the host already speaks the Web `Request` → `Response` model (Cloudflare Workers, Bun, Next.js App Router, etc.), no framework helper is needed — call `zv.fetch(request)` directly:
+When the self-hosted handler already speaks the Web `Request` -> `Response` model (Bun, Next.js App Router on Node, future Deno, etc.), no framework helper is needed — call `zv.fetch(request)` directly:
 
 ```ts
 import { Zelavis } from "zelavis";
