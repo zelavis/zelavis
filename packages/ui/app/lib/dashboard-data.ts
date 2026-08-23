@@ -147,7 +147,7 @@ export type DashboardProjectItem = {
   name: string;
   logo: LucideIcon;
   domain: string;
-  kind: "zelavis" | "wordpress" | "static" | "generic";
+  kind: string;
   status: "active" | "draft";
   updatedAt: string;
 };
@@ -167,7 +167,7 @@ export function toDashboardProjectItem(project: RuntimeProject): DashboardProjec
     name: project.name,
     logo: ZelavisMark,
     domain,
-    kind: "zelavis",
+    kind: project.kind,
     status: project.runtime.status === "running" ? "active" : "draft",
     updatedAt: project.updatedAt,
   };

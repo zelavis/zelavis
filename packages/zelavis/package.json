@@ -67,14 +67,15 @@
   },
   "scripts": {
     "clean": "node scripts/clean-dist.mjs",
-    "build": "pnpm run clean && pnpm --filter @zelavis/server build && pnpm --filter @zelavis/db build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/ui build && pnpm --filter @zelavis/cli build && tsc -p tsconfig.json",
-    "build:runtime": "pnpm run clean && pnpm --filter @zelavis/ui build:plugin && pnpm --filter @zelavis/cli build && tsc -p tsconfig.json",
+    "build": "pnpm run clean && pnpm --filter @zelavis/server build && pnpm --filter @zelavis/db build && pnpm --filter @zelavis/auth build && pnpm --filter @zelavis/workloads build && pnpm --filter @zelavis/app build && pnpm run services:sync && pnpm --filter @zelavis/ui build && pnpm --filter @zelavis/cli build && tsc -p tsconfig.json",
+    "build:runtime": "pnpm run clean && pnpm --filter @zelavis/app build && pnpm run services:sync && pnpm --filter @zelavis/ui build:plugin && pnpm --filter @zelavis/cli build && tsc -p tsconfig.json",
+    "services:sync": "node scripts/sync-services.mjs",
     "typecheck": "pnpm --filter @zelavis/ui build:plugin && pnpm --filter @zelavis/cli build && tsc -p tsconfig.json --noEmit",
     "test": "pnpm run build && pnpm --filter @zelavis/ecommerce build && node --test test/*.test.mjs"
   },
   "files": [
     "dist",
-    "blueprints"
+    "services"
   ],
   "publishConfig": {
     "access": "public"
@@ -90,6 +91,7 @@
   },
   "dependencies": {
     "@zelavis/auth": "workspace:*",
+    "@zelavis/app": "workspace:*",
     "@zelavis/cli": "workspace:*",
     "@zelavis/db": "workspace:*",
     "@zelavis/db-bun-sqlite": "workspace:*",

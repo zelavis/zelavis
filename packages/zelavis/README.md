@@ -3,15 +3,15 @@
 `zelavis` is the Platform OS package for the Zelavis App Platform.
 
 It owns the long-running control plane, dashboard composition, System Store,
-Blueprint registry, service lifecycle, and server/project orchestration.
+service lifecycle, official service directory, and server/project orchestration.
 Lower-level packages such as `@zelavis/server`, `@zelavis/db`, and
 `@zelavis/auth` remain independently useful primitives.
 
-The Platform OS creates version-locked Zelavis App projects from the shipped
-Blueprint catalog. With the Node adapter, every project receives its own data
-directory and long-running Node process. The driver provides operational
-isolation for trusted projects and can later be replaced by an OCI or stronger
-isolation driver without changing the project API.
+The Platform OS creates projects from services with `kind: "app"`. With the
+Node adapter, every project receives its own data directory and long-running
+Node process. The driver provides operational isolation for trusted projects
+and can later be replaced by an OCI or stronger isolation driver without
+changing the project API.
 
 Platform records use a separate System Store. Node and Bun local adapters
 default to `.zelavis/system/zelavis.sqlite`; project data remains in the project
@@ -41,10 +41,9 @@ it serves its application APIs plus `@zelavis/server` runtime metadata, but no
 dashboard shell or dashboard assets. The Platform dashboard uses the project
 proxy to read that metadata and render the Zelavis App services' own menu declarations.
 
-Blueprints and services have separate jobs. A Blueprint is the versioned
-installation recipe and service lock. It has no menu API of its own. The
-services selected by the Blueprint declare fixed and dynamic dashboard menus
-through the shared service contract.
+Project boilerplates are app services. The selected app service is locked into
+the project record and owns its setup behavior, menu metadata, and app-facing
+runtime services through the shared service contract.
 
 The dashboard opens to Projects. Project-local Zelavis surfaces live under
 `/zelavis/projects/:projectId/*`, global app/server discovery lives under
@@ -476,11 +475,10 @@ For local Zelavis development, use the `pnpm dev` workflow. It starts the
 runtime and UI dev server together and wires dashboard requests to the live UI
 build.
 
-`pnpm dev` explicitly loads the source catalog from
-`packages/zelavis/blueprints`. Installed packages discover the bundled catalog,
-and downloaded versions are overlaid from `.zelavis/blueprints`.
+`pnpm dev` uses the official service directory at `packages/zelavis/services`.
+The `services:sync` package script rebuilds `@zelavis/app` and refreshes the
+bundled service copy used by the local runtime importer.
 
-The dashboard, Zelavis App database, application auth, website, and workloads services
-remain mounted together in the current development runtime while Blueprint
-project installation and isolation are implemented. Platform settings and
-service registry state already persist through the separate System Store.
+The dashboard, project registry, Platform settings, and service registry state
+persist through the separate System Store. Zelavis App capabilities run inside
+created app-service project runtimes.

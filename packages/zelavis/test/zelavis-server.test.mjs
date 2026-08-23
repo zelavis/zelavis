@@ -1211,7 +1211,7 @@ test("zelavis keeps the Platform server when optional mounted services are disab
       "runtime.settings.read",
       "runtime.settings.update",
       "runtime.access",
-      "runtime.blueprints.list",
+      "runtime.app-services.list",
       "runtime.assistant.threads.list",
       "runtime.assistant.threads.create",
       "runtime.assistant.threads.get",

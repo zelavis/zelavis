@@ -1,0 +1,5 @@
+{
+  "name": "@zelavis/app",
+  "kind": "app",
+  "entry": "index.js"
+}

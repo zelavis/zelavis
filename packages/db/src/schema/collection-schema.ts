@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Schema, SchemaIssue } from "effect";
 import type { DatabaseJsonObject } from "../contracts/json.js";
 import {
   type CollectionField,
@@ -66,47 +66,18 @@ const FileReferenceSchema = Schema.Struct({
   checksum: Schema.optionalKey(Schema.String),
 });
 
-// ─── Issue flattening ──────────────────────────────────────────────────────
+// ─── Issue formatting ──────────────────────────────────────────────────────
 
 function formatIssuePath(path: ReadonlyArray<string | number>): string {
   return path.length === 0 ? "$" : `$.${path.map(String).join(".")}`;
 }
 
-function flattenIssue(
-  issue: Record<string, unknown>,
-  path: ReadonlyArray<string | number> = [],
-): SchemaValidationIssue[] {
-  switch (issue._tag) {
-    case "Composite": {
-      const issues = issue.issues as Array<Record<string, unknown>>;
-      return issues.flatMap((i) => flattenIssue(i, path));
-    }
-    case "Pointer": {
-      const issuePath = issue.path as Array<string | number>;
-      return flattenIssue(
-        issue.issue as Record<string, unknown>,
-        [...path, ...issuePath],
-      );
-    }
-    case "MissingKey":
-      return [{ path: formatIssuePath(path), message: "is required" }];
-    case "UnexpectedKey":
-      return [{ path: formatIssuePath(path), message: "is not allowed" }];
-    case "InvalidType": {
-      const ast = issue.ast as Record<string, unknown> | undefined;
-      const typeName = (ast?._tag as string | undefined)?.toLowerCase() ?? "valid";
-      return [{ path: formatIssuePath(path), message: `must be a ${typeName}` }];
-    }
-    case "Filter":
-      return flattenIssue(issue.issue as Record<string, unknown>, path);
-    case "InvalidValue": {
-      const annotations = issue.annotations as Record<string, unknown> | undefined;
-      const msg = annotations?.message ?? "is invalid";
-      return [{ path: formatIssuePath(path), message: String(msg) }];
-    }
-    default:
-      return [{ path: formatIssuePath(path), message: "is invalid" }];
-  }
+function formatSchemaIssues(issue: SchemaIssue.Issue): SchemaValidationIssue[] {
+  const formatted = SchemaIssue.makeFormatterStandardSchemaV1()(issue);
+  return formatted.issues.map((i) => ({
+    path: formatIssuePath(i.path as ReadonlyArray<string | number>),
+    message: i.message,
+  }));
 }
 
 // ─── Field → value schema ──────────────────────────────────────────────────
@@ -435,16 +406,11 @@ export function validateDocumentData(
       : (Schema.optionalKey(valueSchema) as Schema.Schema<unknown>);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const structSchema = Schema.Struct(shape as any);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const result = (Schema.decodeUnknownResult as any)(structSchema)(data);
+  const structSchema = Schema.Struct(shape as any) as unknown as Schema.ConstraintDecoder<unknown>;
+  const result = Schema.decodeUnknownResult(structSchema)(data, { errors: "all" });
 
   if (result._tag === "Failure") {
-    const fieldIssues = flattenIssue(
-      result.failure.issue as unknown as Record<string, unknown>,
-    );
-    allIssues.push(...fieldIssues);
+    allIssues.push(...formatSchemaIssues(result.failure.issue));
   }
 
   return { valid: allIssues.length === 0, issues: allIssues };

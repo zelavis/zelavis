@@ -64,10 +64,18 @@ export interface RuntimeServiceRegistryMenuDefinition {
 export interface RuntimeServiceRegistryEntry {
   name: string;
   version?: string;
+  kind?: string;
   specifier?: string;
   status: "installed" | "available";
   source?: "official" | "community";
   order?: number;
+  marketplace?: {
+    title?: string;
+    summary?: string;
+    description?: string;
+    categories?: readonly string[];
+    tags?: readonly string[];
+  };
   menu?: RuntimeServiceRegistryMenuDefinition;
 }
 
@@ -170,10 +178,12 @@ export type RuntimeProjectStatus =
 export interface RuntimeProject {
   id: string;
   name: string;
-  kind: "zelavis";
-  blueprint: {
-    id: string;
-    version: string;
+  kind: string;
+  app: {
+    name: string;
+    title: string;
+    version?: string;
+    specifier: string;
   };
   desiredState: "running" | "stopped";
   runtime: {
@@ -196,6 +206,17 @@ export interface RuntimeProjectDriverInfo {
     persistentFilesystem: boolean;
     description: string;
   };
+}
+
+export interface RuntimeAppService {
+  name: string;
+  title: string;
+  version?: string;
+  specifier?: string;
+  status: "installed" | "available";
+  source?: "official" | "community";
+  summary?: string;
+  marketplace?: RuntimeServiceRegistryEntry["marketplace"];
 }
 
 export interface RuntimeAssistantAction {
@@ -1255,6 +1276,15 @@ export async function listProjects(
   );
 }
 
+export async function listAppServices(
+  config: RuntimeConfig,
+): Promise<RuntimeAppService[]> {
+  const result = await readJson<{ appServices: RuntimeAppService[] }>(
+    `${config.api.basePath}/runtime/app-services`,
+  );
+  return result.appServices;
+}
+
 export async function listAssistantThreads(
   config: RuntimeConfig,
   projectId?: string,
@@ -1347,8 +1377,7 @@ export async function createProject(
   input: {
     name: string;
     id?: string;
-    blueprintId?: string;
-    blueprintVersion?: string;
+    appServiceName?: string;
     start?: boolean;
   },
 ): Promise<RuntimeProject> {

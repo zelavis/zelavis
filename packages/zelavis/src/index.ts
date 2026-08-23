@@ -57,7 +57,6 @@ import {
   type ZelavisServiceSetupContext,
 } from "./service.js";
 export * from "./service.js";
-export * from "./blueprint.js";
 export * from "./system-store.js";
 export * from "./project.js";
 export * from "./assistant.js";
@@ -68,7 +67,6 @@ export * from "./domain-verifier.js";
 import { createSharedBundleStore, type BundleStore } from "./bundle-store.js";
 import type { TlsProvider } from "./tls.js";
 import type { DomainBindingStore } from "./domain-binding.js";
-import type { ZelavisBlueprintRegistry } from "./blueprint.js";
 import {
   createProjectManager,
   ZelavisProjectConflictError,
@@ -509,7 +507,6 @@ export interface ZelavisServerOptions {
    */
   domainBindings?: DomainBindingStore;
   systemStore?: ZelavisSystemStore;
-  blueprints?: ZelavisBlueprintRegistry;
   projectRuntime?: ZelavisProjectRuntimeDriver;
   assistant?: false | ZelavisAssistantResponder;
 }
@@ -598,7 +595,6 @@ export interface ZelavisServicePackageInstaller {
 
 export interface ZelavisPlatformResources {
   systemStore?: ZelavisSystemStore;
-  blueprints?: ZelavisBlueprintRegistry;
   projectRuntime?: ZelavisProjectRuntimeDriver;
   kv?: ZelavisKeyValueStore;
   files?: ZelavisFileStorage;
@@ -715,6 +711,7 @@ const SYSTEM_STORE_SERVICES_NAMESPACE = "services";
 const SYSTEM_STORE_SERVICE_REGISTRY_KEY = "registry";
 const STORAGE_CHECKSUM_METADATA_KEY = "checksum-sha256";
 const RESERVED_CORE_SERVICE_NAMES = new Set([
+  "@zelavis/app",
   "@zelavis/auth",
   "@zelavis/ui",
   "@zelavis/ui:app",
@@ -1955,6 +1952,45 @@ async function loadStoredServiceRegistryModules(
   return resolvedEntries;
 }
 
+async function loadConfiguredServiceRegistryModules(
+  entries: readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[],
+  importer?: ZelavisServiceLoadOptions["importer"],
+): Promise<readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[]> {
+  const resolved: Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[] = [];
+
+  for (const entry of entries) {
+    if (!entry.specifier) {
+      resolved.push(...createServiceRegistry([entry]));
+      continue;
+    }
+
+    const [loaded] = await loadServiceRegistry<ZelavisServiceSetupContext>(
+      [
+        {
+          specifier: entry.specifier,
+          status: entry.status,
+          source: entry.source,
+          ...(entry.order !== undefined ? { order: entry.order } : {}),
+        },
+      ],
+      { importer },
+    );
+    resolved.push(
+      entry.service.scope === undefined
+        ? loaded
+        : Object.freeze({
+            ...loaded,
+            service: Object.freeze({
+              ...loaded.service,
+              scope: entry.service.scope,
+            }),
+          }),
+    );
+  }
+
+  return createServiceRegistry(resolved);
+}
+
 function createServiceSetupPlatformContext(
   platform?:
     | Partial<ZelavisPlatformContext>
@@ -2446,10 +2482,12 @@ async function resolveRuntimeManagementCore(
     const serializedServices = serviceRegistry.map((entry) => ({
       name: entry.service.name,
       version: entry.service.version,
+      kind: entry.service.kind,
       specifier: entry.specifier,
       status: entry.status,
       source: entry.source,
       order: entry.order,
+      marketplace: entry.service.marketplace,
       menu: serializeServiceMenuForDashboard(entry.service.name, entry.service.menu),
     }));
 
@@ -2518,10 +2556,12 @@ async function resolveRuntimeManagementCore(
       const serialized = serviceRegistry.map((entry) => ({
         name: entry.service.name,
         version: entry.service.version,
+        kind: entry.service.kind,
         specifier: entry.specifier,
         status: entry.status,
         source: entry.source,
         order: entry.order,
+        marketplace: entry.service.marketplace,
         menu: serializeServiceMenuForDashboard(entry.service.name, entry.service.menu),
       }));
       const seen = new Set(serialized.map((entry) => entry.name));
@@ -3346,16 +3386,16 @@ async function resolveWorkloadsCoreService(
 }
 
 async function resolveServerCoreService(
-  blueprints?: ZelavisBlueprintRegistry,
+  appServices: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
   systemStore?: ZelavisSystemStore,
   projectRuntime?: ZelavisProjectRuntimeDriver,
   runtimeManagementRoutes: readonly ZelavisServerRoute<any>[] = [],
   assistantOption?: false | ZelavisAssistantResponder,
 ): Promise<ZelavisRuntimeService<any>> {
   const projects =
-    blueprints && systemStore && projectRuntime
+    systemStore && projectRuntime
       ? await createProjectManager({
-          blueprints,
+          appServices,
           store: systemStore,
           runtime: projectRuntime,
         })
@@ -3373,7 +3413,7 @@ async function resolveServerCoreService(
       status: 503,
       body: {
         error:
-          "Project management requires a System Store, Blueprint registry, and project runtime driver.",
+          "Project management requires a System Store and project runtime driver.",
       },
     };
   }
@@ -3452,16 +3492,27 @@ async function resolveServerCoreService(
           }),
         },
         {
-          id: "runtime.blueprints.list",
+          id: "runtime.app-services.list",
           method: "GET",
-          path: "/blueprints",
+          path: "/app-services",
           handler: () => ({
             status: 200,
             body: {
-              blueprints: (blueprints?.list() ?? []).map((entry) => ({
-                ...entry.manifest,
-                origin: entry.origin,
-              })),
+              appServices: appServices
+                .filter((entry) => entry.service.kind === "app")
+                .map((entry) => ({
+                  name: entry.service.name,
+                  version: entry.service.version,
+                  specifier: entry.specifier,
+                  status: entry.status,
+                  source: entry.source,
+                  title:
+                    entry.service.marketplace?.title ??
+                    entry.service.menu?.title ??
+                    entry.service.name,
+                  summary: entry.service.marketplace?.summary,
+                  marketplace: entry.service.marketplace,
+                })),
             },
           }),
         },
@@ -3586,11 +3637,8 @@ async function resolveServerCoreService(
               const project = await projects.create({
                 name: typeof input.name === "string" ? input.name : "",
                 ...(typeof input.id === "string" ? { id: input.id } : {}),
-                ...(typeof input.blueprintId === "string"
-                  ? { blueprintId: input.blueprintId }
-                  : {}),
-                ...(typeof input.blueprintVersion === "string"
-                  ? { blueprintVersion: input.blueprintVersion }
+                ...(typeof input.appServiceName === "string"
+                  ? { appServiceName: input.appServiceName }
                   : {}),
                 ...(typeof input.start === "boolean" ? { start: input.start } : {}),
               });
@@ -3859,7 +3907,10 @@ export async function zelavis(
   const runtimeServices = await Promise.all(options.runtimeServices ?? []);
   const baseServiceRegistry =
     options.services?.entries !== undefined
-      ? createServiceRegistry(options.services.entries)
+      ? await loadConfiguredServiceRegistryModules(
+          options.services.entries,
+          options.services.importer,
+        )
       : defaultDashboardServiceRegistry;
   const hasAuthService = runtimeServices.some((service) => service.name === "@zelavis/auth");
   const hasDashboardService = runtimeServices.some(
@@ -3883,15 +3934,6 @@ export async function zelavis(
   const providedDatabaseService = runtimeServices.find(
     (service) => service.name === "@zelavis/db" && isDatabaseApi(service.service),
   );
-  const databaseApi = hasDatabaseService
-    ? undefined
-    : await resolveDatabaseCoreService(options.coreServices?.database);
-  const databaseService = databaseApi
-    ? defineDatabaseService(databaseApi)
-    : undefined;
-  const resolvedDatabaseApi =
-    (providedDatabaseService?.service as DatabaseApi | undefined) ??
-    databaseApi;
   const systemStore = options.systemStore ?? createMemorySystemStore();
   const serviceRegistryStore = resolveServiceRegistryStore(
     options.services,
@@ -3916,9 +3958,23 @@ export async function zelavis(
     completeServiceRegistry,
     initialServiceRegistryState,
   );
+  const hasAppService = serviceRegistry.some(
+    (entry) => entry.status === "installed" && entry.service.kind === "app",
+  );
+  const databaseApi = hasDatabaseService
+    ? undefined
+    : await resolveDatabaseCoreService(options.coreServices?.database);
+  const databaseService = databaseApi && !hasAppService
+    ? defineDatabaseService(databaseApi)
+    : undefined;
+  const resolvedDatabaseApi =
+    (providedDatabaseService?.service as DatabaseApi | undefined) ??
+    databaseApi;
   const authService = hasAuthService
     ? undefined
-    : await resolveAuthCoreService(
+    : hasAppService
+      ? undefined
+      : await resolveAuthCoreService(
         options.coreServices?.auth,
         collectAuthProviderServices(serviceRegistry),
       );
@@ -3939,10 +3995,10 @@ export async function zelavis(
     {
       bundleStore: options.bundleStore,
       domainBindings: options.domainBindings,
+      reservedRuntimeServiceNames: [...RESERVED_CORE_SERVICE_NAMES],
     },
   );
   const serviceRuntimeServices = await Promise.all(activatedServices.services);
-  assertNoReservedServiceRuntimeServiceNames(serviceRuntimeServices);
   const dashboardSettingsStore = resolveRuntimeSettingsStore(
     options.coreServices?.dashboard,
     createSystemStoreDashboardSettingsStore(systemStore),
@@ -3967,7 +4023,9 @@ export async function zelavis(
       });
   const workloadsCoreService = hasWorkloadsService
     ? undefined
-    : await resolveWorkloadsCoreService(options.coreServices?.workloads);
+    : hasAppService
+      ? undefined
+      : await resolveWorkloadsCoreService(options.coreServices?.workloads);
   const websiteEnabled = hasWebsiteService || Boolean(websiteService);
   let runtimeConfigServices: readonly ZelavisRuntimeService<any>[] = [];
   const runtimeManagement = await resolveRuntimeManagementCore(
@@ -4004,7 +4062,7 @@ export async function zelavis(
   const serverCoreService = hasServerService
     ? undefined
     : await resolveServerCoreService(
-        options.blueprints,
+        serviceRegistry,
         systemStore,
         options.projectRuntime,
         runtimeManagement.routes,
@@ -4276,7 +4334,6 @@ function mergeZelavisServerOptions(
       override.servicePackageInstaller ?? base.servicePackageInstaller,
     serviceActivation: override.serviceActivation ?? base.serviceActivation,
     systemStore: override.systemStore ?? base.systemStore,
-    blueprints: override.blueprints ?? base.blueprints,
     projectRuntime: override.projectRuntime ?? base.projectRuntime,
     services:
       serviceEntries.length > 0 || serviceStore || serviceImporter
@@ -4433,7 +4490,6 @@ function applyPlatformResourceDefaults(
     services: nextServices,
     coreServices: nextCoreServices,
     systemStore: options.systemStore ?? resources.systemStore,
-    blueprints: options.blueprints ?? resources.blueprints,
     projectRuntime: options.projectRuntime ?? resources.projectRuntime,
   };
 }

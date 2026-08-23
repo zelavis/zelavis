@@ -37,7 +37,8 @@
   },
   "dependencies": {
     "@zelavis/db": "workspace:*",
-    "@zelavis/server": "workspace:*"
+    "@zelavis/server": "workspace:*",
+    "effect": "4.0.0-rc.111"
   },
   "peerDependencies": {
     "zelavis": "*"

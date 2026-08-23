@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Zelavis } from "../index.js";
 import { createNodeServer } from "../node/index.js";
@@ -14,14 +15,46 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) {
   throw new Error("Project runner received an invalid port.");
 }
 
+const projectRecord = JSON.parse(
+  await readFile(resolve("project.json"), "utf8"),
+) as {
+  app?: {
+    name?: unknown;
+    version?: unknown;
+    specifier?: unknown;
+  };
+};
+const app = projectRecord.app;
+if (
+  !app ||
+  typeof app.name !== "string" ||
+  typeof app.specifier !== "string"
+) {
+  throw new Error("Project runner requires a locked app service.");
+}
+
 const projectNodeAdapter = nodeAdapter({
   role: "project",
   dataDirectory: resolve(dataDirectory),
-  blueprints: false,
   projects: false,
 });
 const zv = new Zelavis({
   adapter: projectNodeAdapter,
+  services: {
+    entries: [
+      {
+        service: {
+          name: app.name,
+          ...(typeof app.version === "string" ? { version: app.version } : {}),
+          kind: "app",
+          scope: "system",
+        },
+        specifier: app.specifier,
+        status: "installed",
+        source: "official",
+      },
+    ],
+  },
   onError: ({ error }) => ({
     status: 400,
     body: { error: error instanceof Error ? error.message : "Unknown error" },

@@ -4,11 +4,11 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
   ZelavisProjectLogEntry,
+  ZelavisProjectApp,
   ZelavisProjectRecord,
   ZelavisProjectRuntimeDriver,
   ZelavisProjectRuntimeSnapshot,
 } from "../project.js";
-import type { ZelavisBlueprintEntry } from "../blueprint.js";
 
 export interface NodeProcessProjectRuntimeOptions {
   directory: string;
@@ -120,18 +120,16 @@ export function createNodeProcessProjectRuntime(
       description:
         "Runs each trusted project in a separate Node.js process and data directory. This is operational isolation, not a security sandbox.",
     },
-    async prepare(project, blueprint) {
+    async prepare(project, app) {
       const directory = projectDirectory(project.id);
       const dataDirectory = join(directory, ".zelavis");
       await mkdir(dataDirectory, { recursive: true });
       await writeFile(
-        join(directory, "blueprint.lock.json"),
+        join(directory, "project.json"),
         `${JSON.stringify(
           {
-            schemaVersion: 1,
-            projectId: project.id,
-            installedAt: new Date().toISOString(),
-            blueprint: blueprint.manifest,
+            ...project,
+            app: app satisfies ZelavisProjectApp,
             runtime: {
               driver: driver.name,
               capabilities: driver.capabilities,
@@ -140,11 +138,6 @@ export function createNodeProcessProjectRuntime(
           null,
           2,
         )}\n`,
-        "utf8",
-      );
-      await writeFile(
-        join(directory, "project.json"),
-        `${JSON.stringify(project, null, 2)}\n`,
         "utf8",
       );
     },
@@ -160,7 +153,7 @@ export function createNodeProcessProjectRuntime(
       }
 
       const directory = projectDirectory(project.id);
-      await readFile(join(directory, "blueprint.lock.json"), "utf8").catch((error) => {
+      await readFile(join(directory, "project.json"), "utf8").catch((error) => {
         if (isMissingFileError(error)) {
           throw new Error(`Project "${project.id}" has not been prepared.`);
         }

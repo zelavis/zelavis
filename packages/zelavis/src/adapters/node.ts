@@ -1,4 +1,5 @@
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createBetterSqlite3DatabaseDriver } from "@zelavis/db-node-sqlite";
 import {
   defineAdapter,
@@ -6,8 +7,8 @@ import {
   type ZelavisServiceLoadOptions,
   type ZelavisServicePackageInstaller,
   type ZelavisResolvedPlatformOptions,
+  type ZelavisServiceRegistryEntry,
 } from "../index.js";
-import { loadLocalBlueprintRegistry } from "./_local-blueprints.js";
 import { createLocalSqliteSystemStore } from "./_sqlite-system-store.js";
 import {
   createNodeProcessProjectRuntime,
@@ -34,11 +35,6 @@ export interface NodeAdapterDatabaseOptions {
 
 export type NodeAdapterServiceOptions = LocalRuntimeServiceOptions;
 
-export interface NodeAdapterBlueprintOptions {
-  directory?: string;
-  cacheDirectory?: string;
-}
-
 export interface NodeAdapterSystemStoreOptions {
   filename?: string;
 }
@@ -53,7 +49,6 @@ export interface NodeAdapterOptions {
   role?: "platform" | "project";
   dataDirectory?: string;
   database?: false | NodeAdapterDatabaseOptions;
-  blueprints?: false | NodeAdapterBlueprintOptions;
   systemStore?: false | NodeAdapterSystemStoreOptions;
   projects?: false | NodeAdapterProjectOptions;
   services?: false | NodeAdapterServiceOptions;
@@ -67,6 +62,29 @@ export interface NodeAdapterOptions {
 
 export const createNodeServicePackageInstaller = createLocalRuntimeServicePackageInstaller;
 export const createNodeServiceImporter = createLocalRuntimeServiceImporter;
+
+function defaultOfficialAppServiceEntries(): readonly ZelavisServiceRegistryEntry[] {
+  return [
+    {
+      service: {
+        name: "@zelavis/app",
+        version: "1.0.1-alpha.2",
+        kind: "app",
+        marketplace: {
+          title: "Zelavis App",
+          summary:
+            "The official Zelavis-native project backend with database, auth, and workloads.",
+          categories: ["apps", "official"],
+          tags: ["backend", "database", "auth", "workloads"],
+        },
+      },
+      specifier: fileURLToPath(new URL("../../services/zelavis-app/index.js", import.meta.url)),
+      status: "available",
+      source: "official",
+      order: 0,
+    },
+  ];
+}
 
 export function nodeAdapter(options: NodeAdapterOptions = {}) {
   let projectRuntime: ReturnType<typeof createNodeProcessProjectRuntime> | undefined;
@@ -119,22 +137,6 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         options.systemStore === false
           ? undefined
           : createLocalSqliteSystemStore({ filename: systemStoreFilename });
-      const blueprintOptions =
-        options.blueprints === false ? undefined : options.blueprints;
-      const blueprintsEnabled =
-        options.blueprints !== false &&
-        (!isProjectRuntime || blueprintOptions !== undefined);
-      const blueprints =
-        !blueprintsEnabled
-          ? undefined
-          : await loadLocalBlueprintRegistry({
-              ...(blueprintOptions?.directory
-                ? { directory: resolve(blueprintOptions.directory) }
-                : {}),
-              cacheDirectory: blueprintOptions?.cacheDirectory
-                ? resolve(blueprintOptions.cacheDirectory)
-                : join(dataDirectory, "blueprints"),
-            });
       const normalizedProjectOptions =
         options.projects === false ? undefined : options.projects;
       const projectsEnabled =
@@ -170,6 +172,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           options.services === false
             ? undefined
             : {
+                entries: isProjectRuntime ? [] : defaultOfficialAppServiceEntries(),
                 importer: createLocalRuntimeServiceImporter({
                   directory: serviceDirectory,
                   ...(serviceOptions ?? {}),
@@ -177,7 +180,6 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
               },
         resources: {
           systemStore,
-          blueprints,
           projectRuntime: projectsEnabled ? projectRuntime : undefined,
           kv: options.kv === false ? undefined : createMemoryKeyValueStore(),
           files: fileStorage,

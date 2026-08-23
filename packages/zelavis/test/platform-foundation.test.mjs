@@ -7,26 +7,9 @@ import test from "node:test";
 import {
   Zelavis,
   createAssistantManager,
-  createBlueprintRegistry,
   createMemorySystemStore,
-  parseBlueprintManifest,
 } from "../dist/index.js";
 import { nodeAdapter } from "../dist/adapters/node.js";
-
-const appManifest = {
-  schemaVersion: 1,
-  id: "zelavis/app",
-  name: "Zelavis App",
-  version: "1.0.1-alpha.2",
-  kind: "zelavis-app",
-  description: "Official application backend.",
-  source: "official",
-  status: "development",
-  runtime: {
-    type: "javascript",
-    engines: ["node", "bun", "deno"],
-  },
-};
 
 test("System Store keeps platform records outside project database APIs", async () => {
   const store = createMemorySystemStore();
@@ -128,36 +111,16 @@ test("Zelavis accepts a custom Assistant responder at the public entrypoint", as
   assert.equal(result.assistantMessage.content, "Received: hello");
 });
 
-test("Blueprint registry validates identities and resolves versions", () => {
-  const manifest = parseBlueprintManifest(appManifest);
-  const registry = createBlueprintRegistry([
-    { manifest, origin: "shipped", directory: "/blueprints/app/latest" },
-  ]);
-
-  assert.equal(registry.list().length, 1);
-  assert.equal(registry.get("zelavis/app")?.manifest.name, "Zelavis App");
-  assert.equal(
-    registry.get("zelavis/app", "1.0.1-alpha.2")?.origin,
-    "shipped",
-  );
-  assert.throws(
-    () =>
-      createBlueprintRegistry([
-        { manifest, origin: "shipped" },
-        { manifest, origin: "cache" },
-      ]),
-    /Duplicate blueprint/,
-  );
-});
-
-test("Node adapter loads shipped blueprints and persists Platform Store SQLite", async () => {
+test("Node adapter registers shipped app services and persists Platform Store SQLite", async () => {
   const directory = await mkdtemp(join(tmpdir(), "zelavis-platform-"));
 
   try {
     const firstAdapter = nodeAdapter({ dataDirectory: directory });
     const first = await firstAdapter.resolve({});
     const systemStore = first.resources?.systemStore;
-    const blueprints = first.resources?.blueprints;
+    const appService = first.services?.entries?.find(
+      (entry) => entry.service.name === "@zelavis/app",
+    );
 
     assert.ok(systemStore);
     assert.equal(first.coreServices.database, false);
@@ -165,7 +128,8 @@ test("Node adapter loads shipped blueprints and persists Platform Store SQLite",
     assert.equal(first.coreServices.storage, false);
     assert.equal(first.coreServices.workloads, false);
     assert.equal(first.metadata.role, "platform");
-    assert.equal(blueprints?.get("zelavis/app")?.origin, "shipped");
+    assert.equal(appService?.service.kind, "app");
+    assert.equal(appService?.source, "official");
     await systemStore.set("platform", "marker", { ready: true });
 
     const second = await nodeAdapter({ dataDirectory: directory }).resolve({});
@@ -177,13 +141,13 @@ test("Node adapter loads shipped blueprints and persists Platform Store SQLite",
     const zv = new Zelavis({ adapter: nodeAdapter({ dataDirectory: directory }) });
     const runtime = await zv.runtime();
     const response = await runtime.fetch(
-      new Request("http://localhost/zelavis/api/v1/runtime/blueprints"),
+      new Request("http://localhost/zelavis/api/v1/runtime/app-services"),
     );
     const body = await response.json();
 
     assert.equal(response.status, 200);
-    assert.equal(body.blueprints[0].id, "zelavis/app");
-    assert.equal(body.blueprints[0].origin, "shipped");
+    assert.equal(body.appServices[0].name, "@zelavis/app");
+    assert.equal(body.appServices[0].source, "official");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -208,11 +172,12 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
       const response = await runtimeRequest("/projects", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id, name, blueprintId: "zelavis/app" }),
+        body: JSON.stringify({ id, name, appServiceName: "@zelavis/app" }),
       });
       const body = await response.json();
 
       assert.equal(response.status, 201, JSON.stringify(body));
+      assert.equal(body.project.app.name, "@zelavis/app");
       assert.equal(body.project.runtime.status, "running");
       assert.match(body.project.runtime.url, /^http:\/\/127\.0\.0\.1:\d+$/);
       if (id === "alpha") {

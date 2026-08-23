@@ -1,10 +1,11 @@
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   defineAdapter,
   type ZelavisOptions,
   type ZelavisResolvedPlatformOptions,
+  type ZelavisServiceRegistryEntry,
 } from "../index.js";
-import { loadLocalBlueprintRegistry } from "./_local-blueprints.js";
 import { createBunSqliteSystemStore } from "./_bun-sqlite-system-store.js";
 import { createLocalFileStorage, createMemoryKeyValueStore } from "./_shared.js";
 import {
@@ -30,10 +31,6 @@ export interface BunAdapterKeyValueOptions {
 }
 
 export type BunAdapterServiceOptions = LocalRuntimeServiceOptions;
-export interface BunAdapterBlueprintOptions {
-  directory?: string;
-  cacheDirectory?: string;
-}
 
 export interface BunAdapterSystemStoreOptions {
   filename?: string;
@@ -43,11 +40,33 @@ export interface BunAdapterOptions {
   role?: "platform" | "project";
   dataDirectory?: string;
   database?: false | BunAdapterDatabaseOptions;
-  blueprints?: false | BunAdapterBlueprintOptions;
   systemStore?: false | BunAdapterSystemStoreOptions;
   files?: false | BunAdapterFileStorageOptions;
   kv?: false | BunAdapterKeyValueOptions;
   services?: false | BunAdapterServiceOptions;
+}
+
+function defaultOfficialAppServiceEntries(): readonly ZelavisServiceRegistryEntry[] {
+  return [
+    {
+      service: {
+        name: "@zelavis/app",
+        version: "1.0.1-alpha.2",
+        kind: "app",
+        marketplace: {
+          title: "Zelavis App",
+          summary:
+            "The official Zelavis-native project backend with database, auth, and workloads.",
+          categories: ["apps", "official"],
+          tags: ["backend", "database", "auth", "workloads"],
+        },
+      },
+      specifier: fileURLToPath(new URL("../../services/zelavis-app/index.js", import.meta.url)),
+      status: "available",
+      source: "official",
+      order: 0,
+    },
+  ];
 }
 
 export function bunAdapter(options: BunAdapterOptions = {}) {
@@ -101,22 +120,6 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
         options.systemStore === false
           ? undefined
           : await createBunSqliteSystemStore({ filename: systemStoreFilename });
-      const blueprintOptions =
-        options.blueprints === false ? undefined : options.blueprints;
-      const blueprintsEnabled =
-        options.blueprints !== false &&
-        (!isProjectRuntime || blueprintOptions !== undefined);
-      const blueprints =
-        !blueprintsEnabled
-          ? undefined
-          : await loadLocalBlueprintRegistry({
-              ...(blueprintOptions?.directory
-                ? { directory: resolve(blueprintOptions.directory) }
-                : {}),
-              cacheDirectory: blueprintOptions?.cacheDirectory
-                ? resolve(blueprintOptions.cacheDirectory)
-                : join(dataDirectory, "blueprints"),
-            });
       const fileStorage =
         options.files === false
           ? undefined
@@ -132,6 +135,7 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
           options.services === false
             ? undefined
             : {
+                entries: isProjectRuntime ? [] : defaultOfficialAppServiceEntries(),
                 importer: createLocalRuntimeServiceImporter({
                   directory: serviceDirectory,
                   ...(serviceOptions ?? {}),
@@ -139,7 +143,6 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
               },
         resources: {
           systemStore,
-          blueprints,
           kv: options.kv === false ? undefined : createMemoryKeyValueStore(),
           files: fileStorage,
           servicePackages:
