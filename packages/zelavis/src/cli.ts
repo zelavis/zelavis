@@ -17,9 +17,6 @@ async function serve(options: ZelavisCliServeOptions): Promise<void> {
   const zv = new Zelavis({
     adapter: nodeAdapter({
       dataDirectory,
-      ...(options.blueprintsDirectory
-        ? { blueprints: { directory: resolve(options.blueprintsDirectory) } }
-        : {}),
     }),
     onError: ({ error }) => ({
       status: 400,

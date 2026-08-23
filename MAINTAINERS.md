@@ -19,11 +19,11 @@ Maintainers are responsible for:
 
 ## Ownership Areas
 
-- `packages/server` — service contracts, adapters, routing model
+- `packages/zelavis/services/server` — service contracts, adapters, routing model
 - `packages/db` — database core, storage contracts, adapters
 - `packages/auth` — auth core, plugins, auth-facing server surfaces
 - `packages/zelavis` — composed runtime, embedded dashboard delivery
-- `packages/ui` — dashboard UX and frontend architecture
+- `packages/zelavis/services/ui` — dashboard UX and frontend architecture
 - `plugins/*` — official installable Zelavis plugins
 - `.github/*` and release/config files — repo process, CI, dependency policy
 

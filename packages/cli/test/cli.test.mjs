@@ -23,7 +23,6 @@ test("serve delegates to the injected Platform runtime", async () => {
       host: "0.0.0.0",
       port: 4100,
       dataDirectory: "/tmp/zelavis-data",
-      blueprintsDirectory: undefined,
     });
     assert.equal(process.exitCode, undefined);
   } finally {

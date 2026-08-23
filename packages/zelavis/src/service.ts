@@ -256,6 +256,11 @@ export interface ActivateServiceRegistryOptions {
    * project or service. System services are unaffected.
    */
   domainBindings?: DomainBindingStore;
+  /**
+   * Service names that extension-scoped services may not provide through
+   * runtimeServices. Static system services can still compose them.
+   */
+  reservedRuntimeServiceNames?: readonly string[];
 }
 
 export async function activateServiceRegistry<
@@ -291,6 +296,24 @@ export async function activateServiceRegistry<
   const addServices = (services: readonly ZelavisAnyRuntimeServiceInput[]) => {
     activatedServices.push(...services);
   };
+  const assertCanAddRuntimeService = (
+    owner: Readonly<ZelavisServiceDefinition<TContext>>,
+    service: ZelavisAnyRuntimeServiceInput,
+  ) => {
+    if (owner.scope === "system" || !options.reservedRuntimeServiceNames) {
+      return;
+    }
+
+    if (!("name" in service)) {
+      return;
+    }
+
+    if (options.reservedRuntimeServiceNames.includes(service.name)) {
+      throw new TypeError(
+        `Extension service "${owner.name}" cannot register reserved runtime service "${service.name}".`,
+      );
+    }
+  };
   const shouldMountService = (service: ZelavisServiceDefinition<TContext>) =>
     service.basePath !== undefined ||
     service.service !== undefined ||
@@ -306,6 +329,10 @@ export async function activateServiceRegistry<
       .map((installed) => installed.service);
 
     if (shouldMountService(entry.service)) {
+      assertCanAddRuntimeService(
+        entry.service,
+        entry.service as unknown as ZelavisAnyRuntimeServiceInput,
+      );
       addService(entry.service as unknown as ZelavisAnyRuntimeServiceInput);
     }
 
@@ -328,8 +355,18 @@ export async function activateServiceRegistry<
       }
     }
 
+    const addEntryService = (service: ZelavisAnyRuntimeServiceInput) => {
+      assertCanAddRuntimeService(entry.service, service);
+      addService(service);
+    };
+    const addEntryServices = (services: readonly ZelavisAnyRuntimeServiceInput[]) => {
+      for (const service of services) {
+        addEntryService(service);
+      }
+    };
+
     if (entry.service.runtimeServices?.length) {
-      addServices(entry.service.runtimeServices);
+      addEntryServices(entry.service.runtimeServices);
     }
 
     if (!entry.service.setup) {
@@ -344,12 +381,12 @@ export async function activateServiceRegistry<
       >[],
       children,
       runtimeServices: activatedServices,
-      addService,
-      addServices,
+      addService: addEntryService,
+      addServices: addEntryServices,
     } as TContext);
 
     if (result?.runtimeServices?.length) {
-      addServices(result.runtimeServices);
+      addEntryServices(result.runtimeServices);
     }
   }
 

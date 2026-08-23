@@ -40,46 +40,46 @@ const runtime = await zv.runtime();
 
 That returns the mounted runtime object with `fetch`, `dispatch`, `plain`, resolved routes, and the service map.
 
-## Transitional in-process Zelavis App composition
+## App-service project composition
 
 There is no separate `defineCoreService(...)` helper. The current in-process
-composition is transitional while Zelavis App moves behind its Blueprint and
-project runtime boundary.
+composition is internal runtime plumbing; product project templates are
+services with `kind: "app"`.
 
 The pattern is:
 
 1. A package exposes a normal server-service factory.
 2. That factory returns a plain `ZelavisRuntimeService` object literal.
-3. The current high-level development runtime decides when to call that factory
-   and include the result for the default Zelavis App project.
+3. An app service decides when to call that factory and include the result in a
+   created project runtime.
 
 For example:
 
 - database package factory:
-  [packages/db/src/database-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/db/src/database-service.ts)
+  [packages/zelavis/services/zelavis-app/src/db/database-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/zelavis/services/zelavis-app/src/db/database-service.ts)
 - high-level runtime assembly:
   [packages/zelavis/src/index.ts](/Users/ivanjeremicx/Projects/zelavis/packages/zelavis/src/index.ts)
 
 Concretely:
 
-- `@zelavis/db` exports `defineDatabaseService(database)`
+- `@zelavis/app/db` exports `defineDatabaseService(database)`
 - that function returns a plain `{ name, basePath, service, api }` object
-- then the transitional runtime calls `resolveDatabaseCoreService(...)`, wraps
-  the returned database API with `defineDatabaseService(...)`, and mounts it
-  for the default Zelavis App project
+- then `@zelavis/app` receives the project database API, wraps it with
+  `defineDatabaseService(...)`, and mounts it for that project runtime
 
 The same low-level runtime service shape is used for System Services and project
 services, but their ownership and persistence are different.
 
 Do not build new architecture around the `coreServices` option name. It is
 transitional composition internals, not the product boundary. Platform state
-belongs in the System Store; Zelavis App capabilities belong to Blueprint projects.
+belongs in the System Store; app-facing capabilities belong to app-service
+projects.
 
 ## Why this split exists
 
 This gives Zelavis two useful properties:
 
-- packages like `@zelavis/db` stay independently usable
+- packages like `@zelavis/app/db` stay independently usable
 - the high-level runtime can still reserve extra privileges for built-in core services
 
 That means the service factory itself can stay ordinary, while the runtime decides which services are privileged built-ins.

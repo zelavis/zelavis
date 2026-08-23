@@ -1,13 +1,12 @@
 import { join, resolve } from "node:path";
-import { createBetterSqlite3DatabaseDriver } from "@zelavis/db-node-sqlite";
+import { fileURLToPath } from "node:url";
+import { createBetterSqlite3DatabaseDriver } from "@zelavis/app-db-node-sqlite";
 import {
   defineAdapter,
   type ZelavisOptions,
-  type ZelavisServiceLoadOptions,
   type ZelavisServicePackageInstaller,
   type ZelavisResolvedPlatformOptions,
 } from "../index.js";
-import { loadLocalBlueprintRegistry } from "./_local-blueprints.js";
 import { createLocalSqliteSystemStore } from "./_sqlite-system-store.js";
 import {
   createNodeProcessProjectRuntime,
@@ -21,6 +20,7 @@ import {
   normalizeDataDirectory,
   createLocalRuntimeServicePackageInstaller,
   createLocalRuntimeServiceImporter,
+  loadLocalBundledServiceCatalog,
   type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
 
@@ -33,11 +33,6 @@ export interface NodeAdapterDatabaseOptions {
 }
 
 export type NodeAdapterServiceOptions = LocalRuntimeServiceOptions;
-
-export interface NodeAdapterBlueprintOptions {
-  directory?: string;
-  cacheDirectory?: string;
-}
 
 export interface NodeAdapterSystemStoreOptions {
   filename?: string;
@@ -53,7 +48,6 @@ export interface NodeAdapterOptions {
   role?: "platform" | "project";
   dataDirectory?: string;
   database?: false | NodeAdapterDatabaseOptions;
-  blueprints?: false | NodeAdapterBlueprintOptions;
   systemStore?: false | NodeAdapterSystemStoreOptions;
   projects?: false | NodeAdapterProjectOptions;
   services?: false | NodeAdapterServiceOptions;
@@ -106,6 +100,9 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
 
       const serviceOptions = options.services === false ? undefined : options.services;
       const serviceDirectory = join(dataDirectory, "services");
+      const bundledServicesDirectory = fileURLToPath(
+        new URL("../../services", import.meta.url),
+      );
       const systemStoreOptions =
         options.systemStore === false ? undefined : options.systemStore;
       const systemStoreFilename = systemStoreOptions?.filename
@@ -119,22 +116,6 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         options.systemStore === false
           ? undefined
           : createLocalSqliteSystemStore({ filename: systemStoreFilename });
-      const blueprintOptions =
-        options.blueprints === false ? undefined : options.blueprints;
-      const blueprintsEnabled =
-        options.blueprints !== false &&
-        (!isProjectRuntime || blueprintOptions !== undefined);
-      const blueprints =
-        !blueprintsEnabled
-          ? undefined
-          : await loadLocalBlueprintRegistry({
-              ...(blueprintOptions?.directory
-                ? { directory: resolve(blueprintOptions.directory) }
-                : {}),
-              cacheDirectory: blueprintOptions?.cacheDirectory
-                ? resolve(blueprintOptions.cacheDirectory)
-                : join(dataDirectory, "blueprints"),
-            });
       const normalizedProjectOptions =
         options.projects === false ? undefined : options.projects;
       const projectsEnabled =
@@ -166,10 +147,16 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
 
       return {
         coreServices: nextCoreServices,
-        services:
+        serviceRegistry:
           options.services === false
             ? undefined
             : {
+                catalog: isProjectRuntime
+                  ? []
+                  : await loadLocalBundledServiceCatalog({
+                      rootDirectory: bundledServicesDirectory,
+                      kinds: ["app"],
+                    }),
                 importer: createLocalRuntimeServiceImporter({
                   directory: serviceDirectory,
                   ...(serviceOptions ?? {}),
@@ -177,7 +164,6 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
               },
         resources: {
           systemStore,
-          blueprints,
           projectRuntime: projectsEnabled ? projectRuntime : undefined,
           kv: options.kv === false ? undefined : createMemoryKeyValueStore(),
           files: fileStorage,

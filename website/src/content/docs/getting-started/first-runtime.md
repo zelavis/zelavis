@@ -74,9 +74,9 @@ project Database screen. Each Zelavis App project has an app database at
 `.zelavis/projects/<projectId>/.zelavis/zelavis.sqlite` and private runtime
 metadata at `.zelavis/projects/<projectId>/.zelavis/runtime/zelavis.sqlite`.
 
-The runtime also lists the shipped project recipes at
-`GET /zelavis/api/v1/runtime/blueprints`. See [Platform OS, App, and
-Blueprints](../architecture/platform-app-blueprints.md).
+The runtime lists project app services at
+`GET /zelavis/api/v1/runtime/app-services`. See [Platform OS and App
+Services](../architecture/platform-app-services.md).
 
 ## Dashboard settings
 
@@ -110,4 +110,4 @@ const response = await zv.fetch(
 
 - [Node adapter](../adapters/node.md)
 - [zelavis package](../packages/zelavis.md)
-- [@zelavis/server](../packages/server.md)
+- [@zelavis/server](../packages/zelavis/services/server.md)

@@ -1,0 +1,51 @@
+{
+  "name": "@zelavis/app-db-bun-sqlite",
+  "version": "1.0.1-alpha.2",
+  "private": false,
+  "description": "Bun bun:sqlite adapter for @zelavis/app/db.",
+  "license": "MIT",
+  "author": "Ivan Jeremic",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm --filter @zelavis/app build && pnpm run build && if command -v bun >/dev/null 2>&1; then bun test test/*.test.ts; else echo 'Skipping bun-sqlite tests because Bun is not installed.'; fi"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zelavis/zelavis.git",
+    "directory": "packages/app/db/adapters/bun-sqlite"
+  },
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/packages/app/db/adapters/bun-sqlite#readme",
+  "bugs": {
+    "url": "https://github.com/zelavis/zelavis/issues"
+  },
+  "dependencies": {
+    "@zelavis/app": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "typescript": "^5.9.0"
+  },
+  "keywords": [
+    "database",
+    "sqlite",
+    "bun",
+    "bun:sqlite",
+    "adapter"
+  ]
+}

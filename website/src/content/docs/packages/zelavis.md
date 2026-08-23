@@ -44,23 +44,23 @@ The lower-level `zelavis()` function still exists, but it now intentionally owns
 - path and mount overrides
 
 The `Zelavis` class is the product-facing Platform OS entrypoint. With the Node
-adapter it discovers the shipped Zelavis App Blueprint, persists project records in the
-System Store, and runs created projects through the default process runtime
-driver. Lower-level route mounting knobs stay on `zelavis()`.
+adapter it discovers shipped `kind: "app"` services, persists project records
+in the System Store, and runs created projects through the default process
+runtime driver. Lower-level route mounting knobs stay on `zelavis()`.
 
 Examples use `zv` as the short local name for a `Zelavis` runtime instance.
 
 ## Default behavior
 
 By default, Zelavis owns one safe namespace under `/zelavis`. The Projects view
-creates version-locked Zelavis App runtimes under `.zelavis/projects/<id>` and the
+creates app-service runtimes under `.zelavis/projects/<id>` and the
 project dashboard proxies API operations to the selected runtime.
 
 The Platform process is the only process that mounts `@zelavis/ui`. Zelavis App
 project processes remain headless and expose service metadata through
-`@zelavis/server`. A Blueprint selects those services but is not itself a
-service; Database, Auth, Workloads, and plugins each contribute their own menu
-metadata through the shared service API.
+`@zelavis/server`. The selected app service composes Database, Auth, Workloads,
+and plugins, and each service contributes menu metadata through the shared
+service API.
 
 The dashboard stays mounted under the configured root path, while API services stay grouped under `/api/<version>/...`.
 
@@ -109,8 +109,8 @@ const account = await zv.auth.accounts.create({
 Use scoped packages directly when you need lower-level control over primitives, adapters, or tests:
 
 - `@zelavis/server`
-- `@zelavis/db`
-- `@zelavis/auth`
+- `@zelavis/app/db`
+- `@zelavis/app/auth`
 
 The lower-level `zelavis()` function still exists for internal runtime composition, but the main public application-facing entry point is the `Zelavis` class plus a runtime adapter.
 

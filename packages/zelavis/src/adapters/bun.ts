@@ -1,16 +1,17 @@
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   defineAdapter,
   type ZelavisOptions,
   type ZelavisResolvedPlatformOptions,
 } from "../index.js";
-import { loadLocalBlueprintRegistry } from "./_local-blueprints.js";
 import { createBunSqliteSystemStore } from "./_bun-sqlite-system-store.js";
 import { createLocalFileStorage, createMemoryKeyValueStore } from "./_shared.js";
 import {
   normalizeDataDirectory,
   createLocalRuntimeServicePackageInstaller,
   createLocalRuntimeServiceImporter,
+  loadLocalBundledServiceCatalog,
   type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
 
@@ -30,10 +31,6 @@ export interface BunAdapterKeyValueOptions {
 }
 
 export type BunAdapterServiceOptions = LocalRuntimeServiceOptions;
-export interface BunAdapterBlueprintOptions {
-  directory?: string;
-  cacheDirectory?: string;
-}
 
 export interface BunAdapterSystemStoreOptions {
   filename?: string;
@@ -43,7 +40,6 @@ export interface BunAdapterOptions {
   role?: "platform" | "project";
   dataDirectory?: string;
   database?: false | BunAdapterDatabaseOptions;
-  blueprints?: false | BunAdapterBlueprintOptions;
   systemStore?: false | BunAdapterSystemStoreOptions;
   files?: false | BunAdapterFileStorageOptions;
   kv?: false | BunAdapterKeyValueOptions;
@@ -71,7 +67,7 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
 
       if (databaseOptions !== false) {
         const { createBunSqliteDatabaseDriver } = await import(
-          "@zelavis/db-bun-sqlite"
+          "@zelavis/app-db-bun-sqlite"
         );
         nextCoreServices.database = {
           defaultTenantId: databaseOptions.defaultTenantId,
@@ -88,6 +84,9 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
 
       const serviceOptions = options.services === false ? undefined : options.services;
       const serviceDirectory = join(dataDirectory, "services");
+      const bundledServicesDirectory = fileURLToPath(
+        new URL("../../services", import.meta.url),
+      );
       const systemStoreOptions =
         options.systemStore === false ? undefined : options.systemStore;
       const systemStoreFilename = systemStoreOptions?.filename
@@ -101,22 +100,6 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
         options.systemStore === false
           ? undefined
           : await createBunSqliteSystemStore({ filename: systemStoreFilename });
-      const blueprintOptions =
-        options.blueprints === false ? undefined : options.blueprints;
-      const blueprintsEnabled =
-        options.blueprints !== false &&
-        (!isProjectRuntime || blueprintOptions !== undefined);
-      const blueprints =
-        !blueprintsEnabled
-          ? undefined
-          : await loadLocalBlueprintRegistry({
-              ...(blueprintOptions?.directory
-                ? { directory: resolve(blueprintOptions.directory) }
-                : {}),
-              cacheDirectory: blueprintOptions?.cacheDirectory
-                ? resolve(blueprintOptions.cacheDirectory)
-                : join(dataDirectory, "blueprints"),
-            });
       const fileStorage =
         options.files === false
           ? undefined
@@ -128,10 +111,16 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
 
       return {
         coreServices: nextCoreServices,
-        services:
+        serviceRegistry:
           options.services === false
             ? undefined
             : {
+                catalog: isProjectRuntime
+                  ? []
+                  : await loadLocalBundledServiceCatalog({
+                      rootDirectory: bundledServicesDirectory,
+                      kinds: ["app"],
+                    }),
                 importer: createLocalRuntimeServiceImporter({
                   directory: serviceDirectory,
                   ...(serviceOptions ?? {}),
@@ -139,7 +128,6 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
               },
         resources: {
           systemStore,
-          blueprints,
           kv: options.kv === false ? undefined : createMemoryKeyValueStore(),
           files: fileStorage,
           servicePackages:

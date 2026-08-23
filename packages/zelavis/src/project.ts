@@ -1,7 +1,8 @@
 import type {
-  ZelavisBlueprintEntry,
-  ZelavisBlueprintRegistry,
-} from "./blueprint.js";
+  ZelavisServiceDefinition,
+  ZelavisServiceRegistryEntry,
+  ZelavisServiceSetupContext,
+} from "./service.js";
 import type {
   ZelavisSystemStore,
   ZelavisSystemStoreValue,
@@ -24,14 +25,20 @@ export interface ZelavisProjectRuntimeState {
   error?: string;
 }
 
+export type ZelavisProjectKind = string;
+
+export interface ZelavisProjectApp {
+  name: string;
+  title: string;
+  version?: string;
+  specifier: string;
+}
+
 export interface ZelavisProjectRecord {
   id: string;
   name: string;
-  kind: "zelavis";
-  blueprint: {
-    id: string;
-    version: string;
-  };
+  kind: ZelavisProjectKind;
+  app: ZelavisProjectApp;
   desiredState: "running" | "stopped";
   runtime: ZelavisProjectRuntimeState;
   createdAt: string;
@@ -64,7 +71,7 @@ export interface ZelavisProjectRuntimeDriver {
   readonly capabilities: ZelavisProjectRuntimeCapabilities;
   prepare(
     project: ZelavisProjectRecord,
-    blueprint: ZelavisBlueprintEntry,
+    app: ZelavisProjectApp,
   ): Promise<void>;
   start(project: ZelavisProjectRecord): Promise<ZelavisProjectRuntimeSnapshot>;
   stop(projectId: string): Promise<ZelavisProjectRuntimeSnapshot>;
@@ -76,8 +83,7 @@ export interface ZelavisProjectRuntimeDriver {
 export interface ZelavisProjectCreateInput {
   name: string;
   id?: string;
-  blueprintId?: string;
-  blueprintVersion?: string;
+  appServiceName?: string;
   start?: boolean;
 }
 
@@ -91,6 +97,7 @@ export interface ZelavisProjectManager {
   create(input: ZelavisProjectCreateInput): Promise<ZelavisProjectRecord>;
   start(id: string): Promise<ZelavisProjectRecord>;
   stop(id: string): Promise<ZelavisProjectRecord>;
+  restart(id: string): Promise<ZelavisProjectRecord>;
   logs(id: string): Promise<readonly ZelavisProjectLogEntry[]>;
   remove(id: string): Promise<boolean>;
 }
@@ -117,7 +124,7 @@ export class ZelavisProjectNotFoundError extends Error {
 }
 
 const PROJECTS_NAMESPACE = "projects";
-const DEFAULT_BLUEPRINT_ID = "zelavis/app";
+const DEFAULT_APP_SERVICE_NAME = "@zelavis/app";
 
 function normalizeProjectId(value: string): string {
   const normalized = value
@@ -155,6 +162,10 @@ function parseStoredProject(value: ZelavisSystemStoreValue): ZelavisProjectRecor
   return JSON.parse(JSON.stringify(value)) as ZelavisProjectRecord;
 }
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
 function applySnapshot(
   project: ZelavisProjectRecord,
   snapshot: ZelavisProjectRuntimeSnapshot,
@@ -169,16 +180,137 @@ function applySnapshot(
   };
 }
 
+function projectKindFromAppService(serviceName: string): ZelavisProjectKind {
+  if (serviceName === "@zelavis/app") {
+    return "zelavis";
+  }
+
+  return serviceName
+    .replace(/^@/, "")
+    .replace(/^zelavis\//, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "generic";
+}
+
+function appTitleFromService(
+  service: Readonly<ZelavisServiceDefinition<ZelavisServiceSetupContext>>,
+) {
+  return service.marketplace?.title ?? service.menu?.title ?? service.name;
+}
+
+function appLockFromRegistryEntry(
+  entry: Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>,
+): ZelavisProjectApp {
+  return {
+    name: entry.service.name,
+    title: appTitleFromService(entry.service),
+    ...(entry.service.version ? { version: entry.service.version } : {}),
+    specifier: entry.specifier ?? entry.service.name,
+  };
+}
+
 export async function createProjectManager(options: {
   store: ZelavisSystemStore;
-  blueprints: ZelavisBlueprintRegistry;
+  appServices: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[];
   runtime: ZelavisProjectRuntimeDriver;
 }): Promise<ZelavisProjectManager> {
-  const { store, blueprints, runtime } = options;
+  const { store, appServices, runtime } = options;
+
+  const appServiceMap = new Map(
+    appServices
+      .filter((entry) => entry.service.kind === "app")
+      .map((entry) => [entry.service.name, entry]),
+  );
+
+  function resolveAppLock(rawProject: Record<string, unknown>): {
+    app: ZelavisProjectApp;
+    repaired: boolean;
+  } {
+    const rawApp = rawProject.app;
+    const rawBlueprint = rawProject.blueprint;
+    const appName =
+      isObjectRecord(rawApp) && typeof rawApp.name === "string" && rawApp.name
+        ? rawApp.name
+        : isObjectRecord(rawBlueprint) && rawBlueprint.id === "zelavis/app"
+          ? DEFAULT_APP_SERVICE_NAME
+        : rawProject.kind === "zelavis"
+          ? DEFAULT_APP_SERVICE_NAME
+          : undefined;
+
+    if (!appName) {
+      throw new ZelavisProjectValidationError(
+        "Stored project record is missing its app service lock.",
+      );
+    }
+
+    const appService = appServiceMap.get(appName);
+    if (!appService) {
+      throw new ZelavisProjectValidationError(
+        `App service "${appName}" was not found.`,
+      );
+    }
+
+    const app = appLockFromRegistryEntry(appService);
+    if (
+      isObjectRecord(rawApp) &&
+      rawApp.name === app.name &&
+      rawApp.title === app.title &&
+      rawApp.version === app.version &&
+      rawApp.specifier === app.specifier
+    ) {
+      return { app, repaired: false };
+    }
+
+    return { app, repaired: true };
+  }
+
+  function normalizeStoredProject(value: ZelavisSystemStoreValue): {
+    project: ZelavisProjectRecord;
+    repaired: boolean;
+  } {
+    const rawProject = parseStoredProject(value);
+    const rawRecord = rawProject as unknown as Record<string, unknown>;
+    const { app, repaired: repairedApp } = resolveAppLock(rawRecord);
+    const project: ZelavisProjectRecord = {
+      id: rawProject.id,
+      name: rawProject.name,
+      kind: rawProject.kind || projectKindFromAppService(app.name),
+      app,
+      desiredState: rawProject.desiredState,
+      runtime:
+        rawProject.runtime?.driver && rawProject.runtime.status
+          ? rawProject.runtime
+          : {
+              driver: runtime.name,
+              status: "stopped",
+            },
+      createdAt: rawProject.createdAt,
+      updatedAt: rawProject.updatedAt,
+    };
+
+    return {
+      project,
+      repaired:
+        repairedApp ||
+        rawProject.kind !== project.kind ||
+        "blueprint" in rawRecord ||
+        rawProject.runtime !== project.runtime,
+    };
+  }
 
   async function read(id: string): Promise<ZelavisProjectRecord | undefined> {
     const record = await store.get(PROJECTS_NAMESPACE, normalizeProjectId(id));
-    return record ? parseStoredProject(record.value) : undefined;
+    if (!record) {
+      return undefined;
+    }
+
+    const { project, repaired } = normalizeStoredProject(record.value);
+    if (repaired) {
+      await write(project);
+    }
+    return project;
   }
 
   async function write(project: ZelavisProjectRecord): Promise<ZelavisProjectRecord> {
@@ -215,7 +347,13 @@ export async function createProjectManager(options: {
     async list() {
       const records = await store.list(PROJECTS_NAMESPACE);
       const projects = await Promise.all(
-        records.map((record) => refresh(parseStoredProject(record.value))),
+        records.map(async (record) => {
+          const { project, repaired } = normalizeStoredProject(record.value);
+          if (repaired) {
+            await write(project);
+          }
+          return refresh(project);
+        }),
       );
       return projects.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     },
@@ -230,28 +368,20 @@ export async function createProjectManager(options: {
         throw new ZelavisProjectConflictError(`Project "${id}" already exists.`);
       }
 
-      const blueprintId = input.blueprintId?.trim() || DEFAULT_BLUEPRINT_ID;
-      const blueprint = blueprints.get(blueprintId, input.blueprintVersion);
-      if (!blueprint) {
+      const appServiceName = input.appServiceName?.trim() || DEFAULT_APP_SERVICE_NAME;
+      const appService = appServiceMap.get(appServiceName);
+      if (!appService) {
         throw new ZelavisProjectValidationError(
-          `Blueprint "${blueprintId}${input.blueprintVersion ? `@${input.blueprintVersion}` : ""}" was not found.`,
+          `App service "${appServiceName}" was not found.`,
         );
       }
-      if (blueprint.manifest.kind !== "zelavis-app") {
-        throw new ZelavisProjectValidationError(
-          "Only the Zelavis App blueprint can currently create projects.",
-        );
-      }
-
+      const app = appLockFromRegistryEntry(appService);
       const now = new Date().toISOString();
       let project: ZelavisProjectRecord = {
         id,
         name,
-        kind: "zelavis",
-        blueprint: {
-          id: blueprint.manifest.id,
-          version: blueprint.manifest.version,
-        },
+        kind: projectKindFromAppService(app.name),
+        app,
         desiredState: input.start === false ? "stopped" : "running",
         runtime: {
           driver: runtime.name,
@@ -263,7 +393,7 @@ export async function createProjectManager(options: {
       await write(project);
 
       try {
-        await runtime.prepare(project, blueprint);
+        await runtime.prepare(project, app);
         project = await write({
           ...project,
           runtime: { driver: runtime.name, status: "stopped" },
@@ -294,6 +424,7 @@ export async function createProjectManager(options: {
       });
 
       try {
+        await runtime.prepare(project, project.app);
         return write(applySnapshot(project, await runtime.start(project)));
       } catch (error) {
         const failed = {
@@ -319,6 +450,38 @@ export async function createProjectManager(options: {
       });
       return write(applySnapshot(project, await runtime.stop(project.id)));
     },
+    async restart(id) {
+      let project = await requireProject(id);
+      project = await write({
+        ...project,
+        desiredState: "running",
+        runtime: { driver: runtime.name, status: "stopping" },
+        updatedAt: new Date().toISOString(),
+      });
+      await runtime.stop(project.id);
+      project = await write({
+        ...project,
+        runtime: { driver: runtime.name, status: "starting" },
+        updatedAt: new Date().toISOString(),
+      });
+
+      try {
+        await runtime.prepare(project, project.app);
+        return write(applySnapshot(project, await runtime.start(project)));
+      } catch (error) {
+        const failed = {
+          ...project,
+          runtime: {
+            driver: runtime.name,
+            status: "failed" as const,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          updatedAt: new Date().toISOString(),
+        };
+        await write(failed);
+        throw error;
+      }
+    },
     async logs(id) {
       await requireProject(id);
       return runtime.logs(normalizeProjectId(id));
@@ -337,7 +500,10 @@ export async function createProjectManager(options: {
   const existing = await store.list(PROJECTS_NAMESPACE);
   await Promise.all(
     existing.map(async (record) => {
-      const project = parseStoredProject(record.value);
+      const { project, repaired } = normalizeStoredProject(record.value);
+      if (repaired) {
+        await write(project);
+      }
       if (project.desiredState !== "running") {
         return;
       }

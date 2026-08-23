@@ -5,13 +5,14 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "build": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/db build && pnpm --filter @zelavis/auth build && pnpm --filter zelavis build:runtime && pnpm exec tsc -p tsconfig.json",
+    "build": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/app build && pnpm --filter zelavis build:runtime && pnpm exec tsc -p tsconfig.json",
     "package": "pnpm run build && node scripts/build-package.mjs",
     "specifier": "node scripts/print-specifier.mjs",
-    "typecheck": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/db build && pnpm --filter @zelavis/auth build && pnpm --filter zelavis build:runtime && pnpm exec tsc -p tsconfig.json --noEmit"
+    "typecheck": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/app build && pnpm --filter zelavis build:runtime && pnpm exec tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "zelavis": "workspace:*"
+    "zelavis": "workspace:*",
+    "@zelavis/app": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.9.0"

@@ -1,0 +1,18 @@
+{
+  "name": "@zelavis/app",
+  "version": "1.0.1-alpha.2",
+  "kind": "app",
+  "entry": "index.js",
+  "marketplace": {
+    "title": "Zelavis App",
+    "summary": "The official Zelavis-native project backend with database, auth, and workloads.",
+    "categories": ["apps", "official"],
+    "tags": ["backend", "database", "auth", "workloads"]
+  },
+  "boilerplate": {
+    "package": "package.json",
+    "source": "src",
+    "adapters": "adapters",
+    "plugins": "plugins"
+  }
+}

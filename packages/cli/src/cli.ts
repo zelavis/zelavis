@@ -11,7 +11,6 @@ export interface ZelavisCliServeOptions {
   host: string;
   port: number;
   dataDirectory?: string;
-  blueprintsDirectory?: string;
 }
 
 export interface ZelavisCliRuntime {
@@ -30,7 +29,6 @@ interface ParsedArgs {
   host?: string;
   port?: number;
   dataDirectory?: string;
-  blueprintsDirectory?: string;
   url?: string;
   specifier?: string;
   source?: RuntimeServiceSource;
@@ -61,7 +59,6 @@ Options:
   --host <host>             Listener host. Defaults to 127.0.0.1.
   --port <port>             Listener port. Defaults to 3000.
   --data-dir <path>         Platform data directory.
-  --blueprints-dir <path>   Override the shipped Blueprint directory.
   --url <url>               Zelavis root URL for endpoint-backed commands.
   --specifier <specifier>   ESM specifier for services register.
   --name <name>             Optional service name override.
@@ -129,11 +126,6 @@ function parseArgs(args: readonly string[]): ParsedArgs {
       index += 1;
     } else if (arg.startsWith("--data-dir=")) {
       parsed.dataDirectory = arg.slice("--data-dir=".length);
-    } else if (arg === "--blueprints-dir") {
-      parsed.blueprintsDirectory = readValue(args, index, arg);
-      index += 1;
-    } else if (arg.startsWith("--blueprints-dir=")) {
-      parsed.blueprintsDirectory = arg.slice("--blueprints-dir=".length);
     } else if (arg === "--url") {
       parsed.url = readValue(args, index, arg);
       index += 1;
@@ -264,8 +256,6 @@ export async function runCli(
         host: parsed.host ?? process.env.HOST ?? "127.0.0.1",
         port: parsed.port ?? parsePort(process.env.PORT ?? "3000"),
         dataDirectory: parsed.dataDirectory ?? process.env.ZELAVIS_DATA_DIR,
-        blueprintsDirectory:
-          parsed.blueprintsDirectory ?? process.env.ZELAVIS_BLUEPRINTS_DIR,
       });
       return;
     }

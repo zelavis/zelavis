@@ -6,11 +6,9 @@ Use this section for package-level overviews that connect the package READMEs in
 Current package pages:
 
 - `zelavis`
+- `@zelavis/app`
 - `@zelavis/server`
-- `@zelavis/db`
-- `@zelavis/auth`
 - `@zelavis/ui`
-- `@zelavis/workloads`
 
 Guideline:
 
@@ -19,8 +17,6 @@ Keep package-specific installation and quick usage in each package README, and u
 ## Pages
 
 - [zelavis](./zelavis.md)
+- [@zelavis/app](./app.md)
 - [@zelavis/server](./server.md)
-- [@zelavis/db](./database.md)
-- [@zelavis/auth](./auth.md)
 - [@zelavis/ui](./ui.md)
-- [@zelavis/workloads](./workloads.md)

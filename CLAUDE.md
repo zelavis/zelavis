@@ -53,7 +53,7 @@ The event log is the replication stream. Replay events on replicas to rebuild co
 
 **Core > Database sidebar section** — shows **all** registered collections (both `surface: "content-studio"` and `surface: "database"`). Content types use their editor label when available; database tables use the collection name. Section label for table entries: "Tables". System tables (`events`, `schemas`, `collections`, etc.) are nested under "System Tables".
 
-The sidebar structure is built in `packages/ui/app/lib/dashboard-data.ts` → `buildPlatformNavItems`. Any change to nav items requires rebuilding `packages/ui/src/generated/dashboard-assets.ts` via `pnpm --filter @zelavis/ui build`.
+The sidebar structure is built in `packages/zelavis/services/ui/app/lib/dashboard-data.ts` → `buildPlatformNavItems`. Any change to nav items requires rebuilding `packages/zelavis/services/ui/src/generated/dashboard-assets.ts` via `pnpm --filter @zelavis/ui build`.
 
 Nested sidebar slide headers use a larger standard gap before the next menu content. Sidebar panels with pinned/fixed action rows should use `SidebarFixedActionMenu`; when those actions sit directly below the centered slide back/title header, pass `afterHeader` so the spacing stays consistent across Content, Database, and future nested panels.
 
@@ -75,11 +75,11 @@ sharing.
 - Pattern: `/^[A-Za-z_][A-Za-z0-9_-]*$/`
 - Reserved names: `zv_collections`, `zv_events`, `zv_schemas`, `zv_time_series_checkpoints`, `zv_time_series_points`
 - Any name starting with `zv_` is blanket-reserved for future Zelavis internals
-- Validated in `validateDatabaseCollectionName` in `packages/db/src/contracts/documents.ts`
+- Validated in `validateDatabaseCollectionName` in `packages/zelavis/services/zelavis-app/src/db/contracts/documents.ts`
 
 ## Content Studio Routes (UI)
 
-All Content Studio routes live under `packages/ui/app/routes/content*.tsx`. When creating a collection from any of these routes, always pass `surface: "content-studio"` as a top-level field to `createDatabaseCollection` — not inside `metadata`.
+All Content Studio routes live under `packages/zelavis/services/ui/app/routes/content*.tsx`. When creating a collection from any of these routes, always pass `surface: "content-studio"` as a top-level field to `createDatabaseCollection` — not inside `metadata`.
 
 ```ts
 await createDatabaseCollection(runtime, {
@@ -99,21 +99,21 @@ await createDatabaseCollection(runtime, {
   It isolates data, event loops, and crashes, but is not a security sandbox.
   Keep lifecycle code behind `ZelavisProjectRuntimeDriver`; OCI and microVM
   implementations must not require dashboard or project-model changes.
-- `@zelavis/db` — application/project DB contracts, driver, event sourcing, and
+- `@zelavis/app/db` — application/project DB contracts, driver, event sourcing, and
   SQL protection. It must not own Platform OS settings, users, project registry,
   Blueprint cache state, or service installation state.
-- `@zelavis/db/adapters/*` — runtime-specific storage adapters. Each wraps `createSqliteCompatibleDriver`.
+- `@zelavis/app/adapters/*` — runtime-specific storage adapters. Each wraps `createSqliteCompatibleDriver`.
 - `@zelavis/server` — reusable service/endpoint and access contracts for both
   Platform and isolated project runtimes. It also owns runtime introspection,
   service-menu discovery, and service-registry endpoints. It is not the
   Platform OS product.
-- `@zelavis/auth` — application auth and method plugins. Platform identities and
+- `@zelavis/app/auth` — application auth and method plugins. Platform identities and
   Zelavis App project identities are separate realms unless explicitly bridged.
 - `@zelavis/ui` — the single Platform dashboard SPA (React Router v7, SPA
   mode). Project runtimes never mount a second dashboard; the Platform UI reads
   their service menus and APIs through the project proxy. See `AGENTS.md` UI
   section.
-- `@zelavis/workloads` — first-party Zelavis App project service for functions, jobs,
+- `@zelavis/app/workloads` — first-party Zelavis App project service for functions, jobs,
   schedules, and webhooks. It is not Platform OS persistence.
 
 The published `zelavis` package ships official manifests from
@@ -203,7 +203,7 @@ The base authorization contract belongs in `@zelavis/server`, because every
 runtime service route needs to declare and enforce access requirements
 independently of the authentication method that produced the caller.
 
-`@zelavis/auth` owns authentication primitives: accounts, credentials, sessions,
+`@zelavis/app/auth` owns authentication primitives: accounts, credentials, sessions,
 and pluggable auth methods such as email/password, passkeys, OAuth, SSO, API
 keys, and service-token providers. It resolves identities into principals; the
 server contract enforces route access.
@@ -238,10 +238,10 @@ implementation.
 
 ## Testing
 
-- `@zelavis/db`: Node test runner, `.mjs` files in `test/` and `adapters/*/test/`. Run with `pnpm --filter @zelavis/db test`.
+- `@zelavis/app/db`: Node test runner, `.mjs` files in `packages/zelavis/services/zelavis-app/test` and `packages/zelavis/services/zelavis-app/adapters/*/test`. Run with `pnpm --filter @zelavis/app test`.
 - `@zelavis/ui`: Vitest for unit tests, Playwright for e2e. Run with `pnpm --filter @zelavis/ui test`.
-- After any `@zelavis/db` contract change, rebuild with `pnpm --filter @zelavis/db build` before running adapter tests.
-- After any `@zelavis/ui` source change that affects the compiled dashboard, rebuild with `pnpm --filter @zelavis/ui build` to regenerate `packages/ui/src/generated/dashboard-assets.ts`.
+- After any `@zelavis/app/db` contract change, rebuild with `pnpm --filter @zelavis/app build` before running adapter tests.
+- After any `@zelavis/ui` source change that affects the compiled dashboard, rebuild with `pnpm --filter @zelavis/ui build` to regenerate `packages/zelavis/services/ui/src/generated/dashboard-assets.ts`.
 
 ## Effect Version
 

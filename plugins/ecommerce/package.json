@@ -15,8 +15,8 @@
     }
   },
   "scripts": {
-    "build": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/db build && pnpm --filter @zelavis/auth build && pnpm --filter zelavis build:runtime && tsc -p tsconfig.json",
-    "typecheck": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/db build && pnpm --filter @zelavis/auth build && pnpm --filter zelavis build:runtime && tsc -p tsconfig.json --noEmit",
+    "build": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/app build && pnpm --filter zelavis build:runtime && tsc -p tsconfig.json",
+    "typecheck": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/app build && pnpm --filter zelavis build:runtime && tsc -p tsconfig.json --noEmit",
     "test": "pnpm run typecheck"
   },
   "files": [
@@ -36,8 +36,9 @@
     "url": "https://github.com/zelavis/zelavis/issues"
   },
   "dependencies": {
-    "@zelavis/db": "workspace:*",
-    "@zelavis/server": "workspace:*"
+    "@zelavis/server": "workspace:*",
+    "effect": "4.0.0-rc.111",
+    "@zelavis/app": "workspace:*"
   },
   "peerDependencies": {
     "zelavis": "*"

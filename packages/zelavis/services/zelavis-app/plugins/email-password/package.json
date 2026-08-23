@@ -1,0 +1,53 @@
+{
+  "name": "@zelavis/app-auth-email-password",
+  "version": "1.0.1-alpha.2",
+  "private": false,
+  "description": "Email/password provider service for @zelavis/app/auth.",
+  "license": "MIT",
+  "author": "Ivan Jeremic",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run typecheck"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zelavis/zelavis.git",
+    "directory": "packages/app/auth/plugins/email-password"
+  },
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/packages/app/auth/plugins/email-password#readme",
+  "bugs": {
+    "url": "https://github.com/zelavis/zelavis/issues"
+  },
+  "dependencies": {
+    "@zelavis/app": "workspace:*"
+  },
+  "peerDependencies": {
+    "zelavis": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "zelavis": "workspace:*"
+  },
+  "keywords": [
+    "auth",
+    "email",
+    "password",
+    "service"
+  ]
+}

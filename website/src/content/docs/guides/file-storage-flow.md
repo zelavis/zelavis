@@ -50,7 +50,7 @@ Use the database schema helpers when the field is meant to store a file referenc
 
 ```ts
 import { Zelavis } from "zelavis";
-import { imageFileSchema } from "@zelavis/db";
+import { imageFileSchema } from "@zelavis/app/db";
 
 const zv = new Zelavis();
 

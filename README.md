@@ -32,10 +32,10 @@ Zelavis starts at a Projects overview. A project is the operational unit the das
 - The **Server** area is outside projects and owns machine-level concerns such as domains, backups, and logs.
 
 The current Node host can create multiple Zelavis App projects from the
-shipped Blueprint. Each project locks its exact Blueprint version and runs with
-its own process and data directory. This default is operational isolation for
-trusted code; stronger OCI and microVM drivers remain future implementations of
-the same project-runtime contract.
+shipped `@zelavis/app` service boilerplate. Each project locks its exact app
+service version and runs with its own process and data directory. This default
+is operational isolation for trusted code; stronger OCI and microVM drivers
+remain future implementations of the same project-runtime contract.
 
 Zelavis serves one dashboard application from the Platform OS. Project
 runtimes do not contain hidden dashboard copies. When a user opens a project,
@@ -43,10 +43,10 @@ the Platform UI reads that runtime's service metadata and proxies its APIs, so
 Database, Auth, Workloads, and installed plugin menus still come from the
 project that owns them.
 
-A Blueprint is a project recipe, not a service. It chooses and locks the
-services that make up a project. Those services use the normal service menu API
-for fixed items, dynamic sections, pages, and nested slides; the Blueprint does
-not invent a second navigation contract.
+An app service is both the project recipe and the runtime service entrypoint.
+It owns the app-facing modules, declares menu metadata, and gives project
+creation a real boilerplate folder to copy or execute. WordPress-style app
+services can follow the same shape later.
 
 Native website hosting is part of the core product story. External hosts, storage providers, DNS providers, CDNs, and deploy targets can be connected through plugins, but they are optional user choices rather than Zelavis runtime targets.
 
@@ -87,7 +87,7 @@ Zelavis currently focuses on these layers:
 - **Dashboard**: an admin UI package mounted by the runtime at the platform root path, opening to Projects and then into project-local control surfaces.
 - **CLI**: workspace tooling for future platform and developer workflows.
 - **Website hosting**: built-in public page delivery from the Zelavis runtime, with dashboard and API routes kept under a reserved platform namespace.
-- **Workloads**: first-party project functions, jobs, schedules, and webhooks exposed through `@zelavis/workloads` and managed from the project dashboard.
+- **Workloads**: first-party project functions, jobs, schedules, and webhooks exposed through `@zelavis/app/workloads` and managed from the project dashboard.
 - **Server management**: dashboard surfaces for domains, backups, logs, and local hosting operations.
 - **Plugins**: optional domain and provider packages that extend the core platform.
 - **Assistant**: System Store-backed project conversations exposed through the
@@ -121,7 +121,7 @@ and AI agents should all pass through that same model.
 
 The base authorization contract lives in `@zelavis/server`, because route
 access requirements must be enforceable for every service no matter which auth
-method produced the principal. `@zelavis/auth` owns accounts, credentials,
+method produced the principal. `@zelavis/app/auth` owns accounts, credentials,
 sessions, and pluggable authentication methods.
 
 That split is important for the future official Hosting Provider module:
@@ -138,34 +138,34 @@ Core packages:
 
 - [packages/zelavis](packages/zelavis)
   The high-level runtime package. It composes core services such as auth, database, website, workloads, and dashboard delivery, and re-exports server adapters.
-- [packages/server](packages/server)
+- [packages/zelavis/services/server](packages/zelavis/services/server)
   Shared service, endpoint, and framework adapter contracts for mounting Zelavis packages.
-- [packages/auth](packages/auth)
+- [packages/zelavis/services/zelavis-app/src/auth](packages/zelavis/services/zelavis-app/src/auth)
   A low-level authentication core for accounts, credentials, sessions, and opt-in auth method services.
-- [packages/db](packages/db)
+- [packages/zelavis/services/zelavis-app/src/db](packages/zelavis/services/zelavis-app/src/db)
   A document-first, tenant-aware database core with an in-memory driver, optional SQL capability, and a mountable server service.
-- [packages/ui](packages/ui)
+- [packages/zelavis/services/ui](packages/zelavis/services/ui)
   The admin/dashboard frontend used by the high-level runtime.
-- [packages/workloads](packages/workloads)
+- [packages/zelavis/services/zelavis-app/src/workloads](packages/zelavis/services/zelavis-app/src/workloads)
   A first-party core plugin for project-scoped functions, jobs, schedules, and webhooks.
 - [packages/cli](packages/cli)
   Command-line tooling for Zelavis workflows.
 
 Database adapters:
 
-- [packages/db/adapters/bun-sqlite](packages/db/adapters/bun-sqlite)
-  A Bun SQLite adapter package for `@zelavis/db`.
-- [packages/db/adapters/node-sqlite](packages/db/adapters/node-sqlite)
-  A Node.js SQLite adapter package for `@zelavis/db`.
-- [packages/db/adapters/libsql](packages/db/adapters/libsql)
-  A libSQL adapter package for `@zelavis/db`.
+- [packages/zelavis/services/zelavis-app/adapters/bun-sqlite](packages/zelavis/services/zelavis-app/adapters/bun-sqlite)
+  A Bun SQLite adapter package for `@zelavis/app/db`.
+- [packages/zelavis/services/zelavis-app/adapters/node-sqlite](packages/zelavis/services/zelavis-app/adapters/node-sqlite)
+  A Node.js SQLite adapter package for `@zelavis/app/db`.
+- [packages/zelavis/services/zelavis-app/adapters/libsql](packages/zelavis/services/zelavis-app/adapters/libsql)
+  A libSQL adapter package for `@zelavis/app/db`.
 
 Auth plugins:
 
-- [packages/auth/plugins/email-password](packages/auth/plugins/email-password)
-  An email/password auth provider service for `@zelavis/auth`.
-- [packages/auth/plugins/username-password](packages/auth/plugins/username-password)
-  A username/password auth provider service for `@zelavis/auth`.
+- [packages/zelavis/services/zelavis-app/plugins/email-password](packages/zelavis/services/zelavis-app/plugins/email-password)
+  An email/password auth provider service for `@zelavis/app/auth`.
+- [packages/zelavis/services/zelavis-app/plugins/username-password](packages/zelavis/services/zelavis-app/plugins/username-password)
+  A username/password auth provider service for `@zelavis/app/auth`.
 
 Official domain plugins:
 
@@ -249,7 +249,7 @@ That moves the dashboard and APIs together:
 /admin/api/v1/workloads
 ```
 
-Use scoped packages such as `@zelavis/server`, `@zelavis/db`, and `@zelavis/auth` when building lower-level primitives, adapters, plugins, or tests that need direct package APIs.
+Use scoped packages such as `@zelavis/server`, `@zelavis/app/db`, and `@zelavis/app/auth` when building lower-level primitives, adapters, plugins, or tests that need direct package APIs.
 
 ## Core Services
 
