@@ -178,6 +178,7 @@ export interface ZelavisRuntimeServiceDynamicMenuResponse {
 
 export interface ZelavisRuntimeService<TService = unknown> {
   name: string;
+  kind?: string;
   basePath?: string;
   api: Record<string, readonly ZelavisServerRoute<TService>[]>;
   service: TService;

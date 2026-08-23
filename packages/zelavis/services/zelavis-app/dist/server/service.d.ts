@@ -20,7 +20,7 @@ export type ZelavisServiceMenuDefinition = Omit<ZelavisRuntimeServiceMenuDefinit
     page?: ZelavisServiceMenuPageDefinition;
     items?: readonly ZelavisServiceMenuDefinition[];
 };
-export type ZelavisServiceKind = "app" | "plugin" | "web-app" | "website" | "dashboard-extension" | "provider" | "template";
+export type ZelavisServiceKind = "app" | "core" | "plugin" | "web-app" | "website" | "dashboard-extension" | "provider" | "template";
 export type ZelavisServiceCapability = "web:app" | "web:site" | "api:routes" | "dashboard:menu" | "dashboard:settings" | "provider:auth" | "provider:database" | "provider:payments" | (string & {});
 export interface ZelavisServiceMarketplaceMetadata {
     title?: string;

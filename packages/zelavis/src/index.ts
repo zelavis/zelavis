@@ -2506,6 +2506,7 @@ async function resolveRuntimeManagementCore(
       },
       services: context.getServices().map((service) => ({
         name: service.name,
+        kind: service.kind,
         core:
           service.name === "@zelavis/ui" ||
           service.name === "@zelavis/server" ||
@@ -3448,6 +3449,7 @@ async function resolveServerCoreService(
 
   return {
     name: "@zelavis/server",
+    kind: "core",
     basePath: "/runtime",
     menu: {
       title: "Access",

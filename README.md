@@ -138,7 +138,7 @@ Core packages:
 
 - [packages/zelavis](packages/zelavis)
   The high-level runtime package. It composes core services such as auth, database, website, workloads, and dashboard delivery, and re-exports server adapters.
-- [packages/server](packages/server)
+- [packages/zelavis/services/server](packages/zelavis/services/server)
   Shared service, endpoint, and framework adapter contracts for mounting Zelavis packages.
 - [packages/zelavis/services/zelavis-app/src/auth](packages/zelavis/services/zelavis-app/src/auth)
   A low-level authentication core for accounts, credentials, sessions, and opt-in auth method services.

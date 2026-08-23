@@ -29,7 +29,7 @@ and coordinate a fix before public disclosure when that is appropriate.
 
 Security reports are especially useful for:
 
-- `packages/server`
+- `packages/zelavis/services/server`
 - `packages/db`
 - `packages/auth`
 - `packages/zelavis`

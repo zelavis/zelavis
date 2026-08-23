@@ -5,10 +5,12 @@ import type { Zelavis } from "../index.js";
 export function honoMiddleware(zelavis: Zelavis): MiddlewareHandler {
   let middleware: MiddlewareHandler | undefined;
   return async (context, next) => {
-    if (!middleware) {
+    let handle = middleware;
+    if (!handle) {
       const runtime = await zelavis.runtime();
-      middleware = bindHonoRuntime(runtime);
+      handle = bindHonoRuntime(runtime);
+      middleware = handle;
     }
-    return middleware(context, next);
+    return handle(context, next);
   };
 }

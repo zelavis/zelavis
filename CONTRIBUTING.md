@@ -28,7 +28,7 @@ The main platform building blocks are:
 Today, the most important packages are:
 
 - [packages/zelavis](packages/zelavis)
-- [packages/server](packages/server)
+- [packages/zelavis/services/server](packages/zelavis/services/server)
 - [packages/db](packages/db)
 - [packages/auth](packages/auth)
 - [packages/ui](packages/ui)

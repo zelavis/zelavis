@@ -357,6 +357,7 @@ export function defineService(definition) {
     if ("kind" in definition && definition.kind !== undefined) {
         const allowedKinds = [
             "app",
+            "core",
             "plugin",
             "web-app",
             "website",
@@ -365,7 +366,7 @@ export function defineService(definition) {
             "template",
         ];
         if (!allowedKinds.includes(definition.kind)) {
-            throw new TypeError('Service kind must be "app", "plugin", "web-app", "website", "dashboard-extension", "provider", or "template".');
+            throw new TypeError('Service kind must be "app", "core", "plugin", "web-app", "website", "dashboard-extension", "provider", or "template".');
         }
     }
     if ("capabilities" in definition &&

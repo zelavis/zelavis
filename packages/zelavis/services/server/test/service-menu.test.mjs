@@ -2,6 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { defineService } from "../dist/index.js";
 
+test('defineService accepts core platform services', () => {
+  const service = defineService({
+    name: "@zelavis/server",
+    kind: "core",
+    service: {},
+  });
+
+  assert.equal(service.kind, "core");
+});
+
 test("defineService accepts fixed dashboard menu actions", () => {
   const service = defineService({
     name: "@acme/workloads",

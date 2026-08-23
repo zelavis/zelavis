@@ -1,0 +1,5 @@
+{
+  "name": "@zelavis/server",
+  "kind": "core",
+  "entry": "index.js"
+}

@@ -437,4 +437,4 @@ Avoid names that make the entrypoint harder to spot:
 
 - [Service Model](../architecture/service-model.md)
 - [Advanced Runtime Composition](./advanced-runtime-composition.md)
-- [@zelavis/server](../packages/server.md)
+- [@zelavis/server](../packages/zelavis/services/server.md)

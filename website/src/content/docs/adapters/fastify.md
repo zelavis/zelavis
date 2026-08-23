@@ -40,4 +40,4 @@ fastifyPlugin(zv: Zelavis): FastifyPluginAsync
 
 - [Adapter Entry Points](./entry-points.md)
 - [First Runtime](../getting-started/first-runtime.md)
-- [@zelavis/server](../packages/server.md)
+- [@zelavis/server](../packages/zelavis/services/server.md)
