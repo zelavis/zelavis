@@ -12,7 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "next": "16.2.6",
+    "next": "16.2.11",
     "zelavis": "workspace:*",
     "react": "19.2.7",
     "react-dom": "19.2.7"
@@ -22,7 +22,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^10",
-    "eslint-config-next": "16.2.6",
+    "eslint-config-next": "16.2.9",
     "typescript": "^5"
   }
 }

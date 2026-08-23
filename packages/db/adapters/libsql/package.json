@@ -35,11 +35,11 @@
     "url": "https://github.com/zelavis/zelavis/issues"
   },
   "dependencies": {
-    "@libsql/client": "^0.17.3",
+    "@libsql/client": "^0.17.4",
     "@zelavis/db": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^25.9.1",
+    "@types/node": "^25.9.3",
     "typescript": "^5.9.0"
   },
   "keywords": [

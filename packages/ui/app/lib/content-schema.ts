@@ -858,6 +858,8 @@ export function createPreviewFieldValue(definition: ContentSchemaDefinition): un
   return "";
 }
 
+// ─── Form value helpers (used by entry editor) ────────────────────────────────
+
 export function normalizeSchemaFieldValue(
   definition: ContentSchemaDefinition,
   rawValue: unknown,
