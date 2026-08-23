@@ -1,8 +1,16 @@
 import * as React from "react";
 import { Plus, Search } from "lucide-react";
-import { Link, useLocation } from "react-router";
+import { Link, useLocation, useMatches } from "react-router";
 
 import { AppSidebar } from "#/components/app-sidebar";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "#/components/ui/breadcrumb";
 import { Button } from "#/components/ui/button";
 import { useDirection } from "#/components/ui/direction";
 import {
@@ -19,6 +27,10 @@ import {
 } from "#/components/ui/sidebar";
 import { TooltipProvider } from "#/components/ui/tooltip";
 import { useIsMobile } from "#/hooks/use-mobile";
+import {
+  getDashboardPageLabelFromMatches,
+  getDashboardSidebarTrailFromMatches,
+} from "#/lib/dashboard-route-handles";
 import type {
   DashboardSettings,
   DatabaseCollection,
@@ -73,11 +85,15 @@ const projectHeaderSearchSchema = {
 
 function UtilityHeader({ runtime }: { runtime?: RuntimeConfig }) {
   const { pathname } = useLocation();
+  const matches = useMatches();
   const [{ q }, setParams] = useTypedSearchParams(projectHeaderSearchSchema);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
   const isProjectsOverview = pathname === "/" || pathname === "/projects";
   const canCreateProjects =
     runtime?.access?.principal.permissions?.includes("*") ?? true;
+
+  const pageLabel = getDashboardPageLabelFromMatches(matches);
+  const sidebarTrail = getDashboardSidebarTrailFromMatches(matches);
 
   React.useEffect(() => {
     if (!isProjectsOverview) return;
@@ -115,16 +131,23 @@ function UtilityHeader({ runtime }: { runtime?: RuntimeConfig }) {
   }, [isProjectsOverview]);
 
   return (
-    <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
-      <div className="flex min-w-0 flex-1 items-center gap-2 px-4">
-        <SidebarTrigger className="-ms-1" />
+    <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        <SidebarTrigger className="-ml-1" />
         <Separator
           orientation="vertical"
-          className="me-2 data-[orientation=vertical]:h-4"
+          className="mr-2 data-[orientation=vertical]:h-4"
         />
         {isProjectsOverview ? (
           <>
-            <InputGroup className="flex-1">
+            <Breadcrumb className="mr-auto hidden sm:block">
+              <BreadcrumbList>
+                <BreadcrumbItem>
+                  <BreadcrumbPage>Projects</BreadcrumbPage>
+                </BreadcrumbItem>
+              </BreadcrumbList>
+            </Breadcrumb>
+            <InputGroup className="max-w-xs flex-1 sm:max-w-sm">
               <InputGroupAddon>
                 <Search />
               </InputGroupAddon>
@@ -161,7 +184,25 @@ function UtilityHeader({ runtime }: { runtime?: RuntimeConfig }) {
               </Button>
             ) : null}
           </>
-        ) : null}
+        ) : (
+          <Breadcrumb>
+            <BreadcrumbList>
+              {sidebarTrail?.map((trailItem, index) => (
+                <React.Fragment key={`${trailItem}-${index}`}>
+                  <BreadcrumbItem className="hidden md:block">
+                    <BreadcrumbLink href="#">{trailItem}</BreadcrumbLink>
+                  </BreadcrumbItem>
+                  <BreadcrumbSeparator className="hidden md:block" />
+                </React.Fragment>
+              ))}
+              {pageLabel ? (
+                <BreadcrumbItem>
+                  <BreadcrumbPage>{pageLabel}</BreadcrumbPage>
+                </BreadcrumbItem>
+              ) : null}
+            </BreadcrumbList>
+          </Breadcrumb>
+        )}
       </div>
     </header>
   );
@@ -318,7 +359,7 @@ export function DashboardShell({
               className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
             >
               <div
-                className="dashboard-view-transition flex min-h-full min-w-0 flex-col gap-4 p-4 pt-0"
+                className="dashboard-view-transition flex min-h-full min-w-0 flex-col gap-4 p-4"
               >
                 <RestartRequiredBanner settings={activeDashboardData?.settings} />
                 {children}
