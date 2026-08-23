@@ -8,6 +8,10 @@ export function getProjectIdFromPathname(pathname: string) {
   return pathname.match(/(?:^|\/)projects\/([^/]+)/)?.[1];
 }
 
+export function isProjectRootPath(pathname: string) {
+  return /^\/projects\/[^/]+\/?$/.test(pathname);
+}
+
 export function getManagedProjectKindFromId(projectId: string | undefined) {
   if (projectId?.startsWith("wordpress-")) {
     return "wordpress";

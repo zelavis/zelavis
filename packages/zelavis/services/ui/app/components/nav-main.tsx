@@ -31,6 +31,7 @@ import type {
 } from "#/lib/dashboard-data";
 import {
   getProjectIdFromPathname,
+  isProjectRootPath,
   isProjectManagementPath,
   mergeSearchParams,
   readSearchParams,
@@ -364,15 +365,22 @@ export function NavMain({
   const matches = useMatches();
   const isMobile = useIsMobile();
   const pathname = location.pathname;
+  const isProjectRootRoute = isProjectRootPath(pathname);
   const locationSearch = React.useMemo(
     () => readSearchParams(location.search),
     [location.search],
   );
-  const sidebarSearch = locationSearch.sidebar;
+  const sidebarSearch = isProjectRootRoute ? undefined : locationSearch.sidebar;
   const routeSidebarTrailKey = [
-    ...(getDashboardSidebarTrailFromMatches(matches) ?? []),
-    ...(locationSearch.systemTable ? ["System Tables"] : []),
-    ...(workloadViewPanelTitle(locationSearch.workloadView) ?? []),
+    ...(isProjectRootRoute
+      ? []
+      : (getDashboardSidebarTrailFromMatches(matches) ?? [])),
+    ...(isProjectRootRoute || !locationSearch.systemTable
+      ? []
+      : ["System Tables"]),
+    ...(isProjectRootRoute
+      ? []
+      : (workloadViewPanelTitle(locationSearch.workloadView) ?? [])),
   ].join("\u0000");
   const routeSidebarTrail = React.useMemo(() => {
     if (!routeSidebarTrailKey) {
@@ -475,6 +483,16 @@ export function NavMain({
   React.useEffect(() => {
     clearBackAnimation();
 
+    if (isProjectRootRoute && locationSearch.sidebar) {
+      navigate(
+        {
+          pathname,
+          search: mergeSearchParams(location.search, { sidebar: undefined }),
+        },
+        { replace: true },
+      );
+    }
+
     if (lastRouteIdentityRef.current !== currentRouteIdentity) {
       lastRouteIdentityRef.current = currentRouteIdentity;
       manualTrailOverrideRef.current = null;
@@ -518,7 +536,10 @@ export function NavMain({
     applyTrail,
     currentRouteIdentity,
     items,
+    isProjectRootRoute,
+    location.search,
     locationSearch,
+    navigate,
     pathname,
     hasMobileRouteContent,
     mobileRouteSlots,
