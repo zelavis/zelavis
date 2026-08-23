@@ -130,6 +130,7 @@ export type DashboardExtensionServiceItem = {
   id: string;
   name: string;
   menu: DashboardServiceRegistryMenuItem;
+  surface: "platform" | "root" | "core" | "extensions" | "settings";
   status: "installed" | "available";
   source?: "official" | "community";
 };
@@ -817,6 +818,7 @@ export function buildDashboardServiceRegistryEntries(
             name: service.name,
             status: service.status,
             source: service.source,
+            surface: service.menu.surface ?? "extensions",
             menu: createDashboardServiceRegistryMenuItem(
               service.menu,
               service.name,
@@ -839,7 +841,10 @@ export function buildExtensionServiceNavItems(
   // Any nested navigation must live under that one root item so first-slide
   // ownership stays reserved for built-in product surfaces and core services.
   return buildDashboardServiceRegistryEntries(serviceRegistry)
-    .filter((service) => service.status === "installed")
+    .filter(
+      (service) =>
+        service.status === "installed" && service.surface === "extensions",
+    )
     .map((service) => service.menu);
 }
 

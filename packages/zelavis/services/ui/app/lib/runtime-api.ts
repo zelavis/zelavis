@@ -54,6 +54,7 @@ export interface RuntimeServiceRegistryMenuDefinition {
   fixedActionScope?: "local" | "inherit" | "replace" | "clear";
   sectionLabel?: string;
   disabled?: boolean;
+  surface?: "platform" | "root" | "core" | "extensions" | "settings";
   access?: RuntimeAccessRequirement | readonly RuntimeAccessRequirement[];
   dynamicItems?: {
     path: string;

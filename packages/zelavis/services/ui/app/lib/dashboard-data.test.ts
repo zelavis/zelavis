@@ -80,6 +80,36 @@ describe("dashboard navigation ownership", () => {
     expect(nav.some((item) => item.title === "Ecommerce")).toBe(false);
   });
 
+  it("does not copy trusted non-extension menus into Extensions", () => {
+    const services = [
+      {
+        name: "@zelavis/app",
+        kind: "app",
+        status: "installed",
+        source: "official",
+        menu: {
+          title: "Overview",
+          path: "/",
+          surface: "root",
+        },
+      },
+    ] satisfies readonly RuntimeServiceRegistryEntry[];
+
+    expect(buildExtensionServiceNavItems(services)).toEqual([]);
+
+    const nav = buildPlatformNavItems(
+      [],
+      services,
+      undefined,
+      undefined,
+      "project-a",
+    );
+    const extensions = nav.find((item) => item.title === "Extensions");
+
+    expect(extensions?.items?.map((item) => item.title)).toEqual(["Agents"]);
+    expect(findNavItem(nav, "Overview")?.url).toBe("/projects/project-a");
+  });
+
   it("keeps arbitrary service dashboard paths clickable and page-resolvable", () => {
     const services = [
       {
