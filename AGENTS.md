@@ -86,12 +86,18 @@ another dashboard bundle. They expose capabilities, runtime metadata, and servic
 through `@zelavis/server`; the Platform dashboard proxies those endpoints and
 renders the selected project's navigation under `/zelavis/projects/:projectId`.
 
-## Effect Version
+## Effect Version & Vendored Source (@repos/effect)
 
-- Use [Effect v4](https://raw.githubusercontent.com/Effect-TS/effect-smol/refs/heads/main/LLMS.md) instead of Effect v3.
-  - When using Schema, refer to the v4 documentation at [SCHEMA.md](https://raw.githubusercontent.com/Effect-TS/effect-smol/refs/heads/main/packages/effect/SCHEMA.md)
-  - When using HttpApi, refer to the v4 documentation at [HTTPAPI.md](https://raw.githubusercontent.com/Effect-TS/effect-smol/refs/heads/main/packages/effect/HTTPAPI.md)
-  - If the docs are insufficient, browse the source at https://github.com/Effect-TS/effect-smol/tree/main/packages/effect/src
+- Use **Effect v4** instead of Effect v3.
+- The authoritative Effect v4 codebase is vendored locally under `repos/effect/`.
+- When writing or refactoring Effect code (Schema, Services, Layer, HttpApi, Stream, Context):
+  - Check `repos/effect/LLMS.md` first for official Effect v4 rules and patterns.
+  - Review `repos/effect/packages/effect/SCHEMA.md` and `repos/effect/packages/effect/HTTPAPI.md` for dedicated sub-module guidance.
+  - Inspect `repos/effect/packages/effect/src/` and `repos/effect/packages/effect/test/` for real implementations, types, and test patterns instead of guessing or using v3 habits.
+- **Vendored repo usage rules**:
+  - Treat `repos/effect/` strictly as **read-only reference material**.
+  - **Never import from `repos/effect/`** in application code; always import from official package dependencies (e.g. `import { Schema } from "effect"`).
+  - Do not edit files under `repos/effect/` unless explicitly asked.
 
 ## High-Level Principles
 
