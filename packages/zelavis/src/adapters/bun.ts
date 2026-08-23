@@ -90,7 +90,7 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
 
       if (databaseOptions !== false) {
         const { createBunSqliteDatabaseDriver } = await import(
-          "@zelavis/db-bun-sqlite"
+          "@zelavis/app-db-bun-sqlite"
         );
         nextCoreServices.database = {
           defaultTenantId: databaseOptions.defaultTenantId,

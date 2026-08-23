@@ -1,5 +1,11 @@
 {
   "name": "@zelavis/app",
   "kind": "app",
-  "entry": "index.js"
+  "entry": "index.js",
+  "boilerplate": {
+    "package": "package.json",
+    "source": "src",
+    "adapters": "adapters",
+    "plugins": "plugins"
+  }
 }

@@ -153,7 +153,7 @@ test("Zelavis applies adapter resolve output as platform resources, metadata, an
 test("Zelavis platform resources back dashboard settings, website pages, storage service, and ecommerce persistence", async () => {
   const { Zelavis, defineAdapter, zelavis: createZelavis } =
     await import("zelavis");
-  const { createDatabase } = await import("@zelavis/db");
+  const { createDatabase } = await import("@zelavis/app/db");
 
   const kv = new Map();
   const files = new Map();

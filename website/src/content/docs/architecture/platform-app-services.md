@@ -20,7 +20,7 @@ SQLite at:
 ```
 
 The System Store is not a user project database. It must never appear as a
-table in a project's Database screen or be exposed through `@zelavis/db`
+table in a project's Database screen or be exposed through `@zelavis/app/db`
 document APIs.
 
 The Platform process does not mount an app-facing database service by default.
@@ -112,4 +112,4 @@ Current limitations:
 - resource limits and rootless OCI/container orchestration are not implemented
 
 Do not move existing project data into the System Store and do not use
-`@zelavis/db` as a fallback for Platform OS records.
+`@zelavis/app/db` as a fallback for Platform OS records.

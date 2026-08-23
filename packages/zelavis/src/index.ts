@@ -6,7 +6,7 @@ import {
   type AuthServiceOptions,
   type AuthProviderService,
   type AuthApi,
-} from "@zelavis/auth";
+} from "@zelavis/app/auth";
 import {
   createDatabase,
   defineDatabaseService,
@@ -17,7 +17,7 @@ import {
   type DatabaseApi,
   type DatabaseJsonObject,
   DatabaseNotFoundError,
-} from "@zelavis/db";
+} from "@zelavis/app/db";
 import {
   createMappedJsonErrorResponse,
   zelavisServer as mountZelavisServer,
@@ -40,7 +40,7 @@ import {
 import {
   workloadsService,
   type WorkloadsServiceOptions,
-} from "@zelavis/workloads";
+} from "@zelavis/app/workloads";
 import {
   activateServiceRegistry,
   applyServiceRegistryState,
@@ -96,7 +96,7 @@ export type {
   CreateDatabaseOptions,
   DatabaseApi,
   DatabaseJsonObject,
-} from "@zelavis/db";
+} from "@zelavis/app/db";
 export {
   type ZelavisAnyRuntimeServiceInput,
   type ZelavisServerErrorHandler,

@@ -46,9 +46,9 @@ Example route requirement:
 }
 ```
 
-## Why This Is Not Only `@zelavis/auth`
+## Why This Is Not Only `@zelavis/app/auth`
 
-`@zelavis/auth` owns authentication building blocks: accounts, credentials,
+`@zelavis/app/auth` owns authentication building blocks: accounts, credentials,
 sessions, and pluggable auth methods such as email/password, username/password,
 passkeys, OAuth, SSO, API keys, or service-token providers.
 

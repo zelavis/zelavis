@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
-import { createDatabase } from "@zelavis/db";
+import { createDatabase } from "@zelavis/app/db";
 import {
   createInMemoryBundleStore,
   defineService,

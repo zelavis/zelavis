@@ -4,8 +4,8 @@
 
 It owns the long-running control plane, dashboard composition, System Store,
 service lifecycle, official service directory, and server/project orchestration.
-Lower-level packages such as `@zelavis/server`, `@zelavis/db`, and
-`@zelavis/auth` remain independently useful primitives.
+Lower-level packages such as `@zelavis/server`, `@zelavis/app/db`, and
+`@zelavis/app/auth` remain independently useful primitives.
 
 The Platform OS creates projects from services with `kind: "app"`. With the
 Node adapter, every project receives its own data directory and long-running
@@ -17,7 +17,7 @@ Platform records use a separate System Store. Node and Bun local adapters
 default to `.zelavis/system/zelavis.sqlite`; project data remains in the project
 database and is never exposed through that store.
 
-The Platform does not mount `@zelavis/db` as a global application database by
+The Platform does not mount `@zelavis/app/db` as a global application database by
 default. Node process projects live under `.zelavis/projects/<projectId>`; each
 has an app database at `.zelavis/zelavis.sqlite` and private runtime metadata at
 `.zelavis/runtime/zelavis.sqlite` relative to its project directory. There is
@@ -118,7 +118,7 @@ Use scoped packages when building lower-level primitives, adapters, services, or
 
 ```ts
 import { defineService } from "zelavis";
-import { authService } from "@zelavis/auth";
+import { authService } from "@zelavis/app/auth";
 ```
 
 Services are the public extension unit. A service can be a dashboard extension,

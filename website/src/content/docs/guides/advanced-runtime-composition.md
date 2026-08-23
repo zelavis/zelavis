@@ -56,13 +56,13 @@ The pattern is:
 For example:
 
 - database package factory:
-  [packages/db/src/database-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/db/src/database-service.ts)
+  [packages/zelavis-app/src/db/database-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/zelavis-app/src/db/database-service.ts)
 - high-level runtime assembly:
   [packages/zelavis/src/index.ts](/Users/ivanjeremicx/Projects/zelavis/packages/zelavis/src/index.ts)
 
 Concretely:
 
-- `@zelavis/db` exports `defineDatabaseService(database)`
+- `@zelavis/app/db` exports `defineDatabaseService(database)`
 - that function returns a plain `{ name, basePath, service, api }` object
 - then `@zelavis/app` receives the project database API, wraps it with
   `defineDatabaseService(...)`, and mounts it for that project runtime
@@ -79,7 +79,7 @@ projects.
 
 This gives Zelavis two useful properties:
 
-- packages like `@zelavis/db` stay independently usable
+- packages like `@zelavis/app/db` stay independently usable
 - the high-level runtime can still reserve extra privileges for built-in core services
 
 That means the service factory itself can stay ordinary, while the runtime decides which services are privileged built-ins.

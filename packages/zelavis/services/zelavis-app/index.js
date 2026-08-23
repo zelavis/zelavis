@@ -1,2 +1,2 @@
-export * from "./zelavis-app-service.js";
-export { default } from "./zelavis-app-service.js";
+export * from "./dist/index.js";
+export { default } from "./dist/index.js";

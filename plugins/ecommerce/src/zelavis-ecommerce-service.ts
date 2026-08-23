@@ -15,7 +15,7 @@ import type {
   Order,
   Product,
 } from "./domain/entities.js";
-import type { DatabaseApi } from "@zelavis/db";
+import type { DatabaseApi } from "@zelavis/app/db";
 import type { CreateCouponInput } from "./services/coupon-service.js";
 import type { CreateCustomerInput } from "./services/customer-service.js";
 import type { CreateOrderInput } from "./services/order-service.js";

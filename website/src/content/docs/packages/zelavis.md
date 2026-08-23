@@ -109,8 +109,8 @@ const account = await zv.auth.accounts.create({
 Use scoped packages directly when you need lower-level control over primitives, adapters, or tests:
 
 - `@zelavis/server`
-- `@zelavis/db`
-- `@zelavis/auth`
+- `@zelavis/app/db`
+- `@zelavis/app/auth`
 
 The lower-level `zelavis()` function still exists for internal runtime composition, but the main public application-facing entry point is the `Zelavis` class plus a runtime adapter.
 

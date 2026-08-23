@@ -14,10 +14,10 @@
     ],
     "paths": {
       "@zelavis/auth": [
-        "packages/auth/src/index.ts"
+        "packages/zelavis-app/src/auth/index.ts"
       ],
       "@zelavis/db": [
-        "packages/db/src/index.ts"
+        "packages/zelavis-app/src/db/index.ts"
       ],
       "@zelavis/ecommerce": [
         "plugins/ecommerce/src/index.ts"

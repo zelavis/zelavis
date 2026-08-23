@@ -1,6 +1,6 @@
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createBetterSqlite3DatabaseDriver } from "@zelavis/db-node-sqlite";
+import { createBetterSqlite3DatabaseDriver } from "@zelavis/app-db-node-sqlite";
 import {
   defineAdapter,
   type ZelavisOptions,

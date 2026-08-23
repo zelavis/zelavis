@@ -227,6 +227,9 @@ importers:
 
   examples/plugin-basic:
     dependencies:
+      '@zelavis/app':
+        specifier: workspace:*
+        version: link:../../packages/zelavis-app
       zelavis:
         specifier: workspace:*
         version: link:../../packages/zelavis
@@ -245,108 +248,8 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/auth:
-    dependencies:
-      '@zelavis/server':
-        specifier: workspace:*
-        version: link:../server
-    devDependencies:
-      '@types/node':
-        specifier: ^25.9.3
-        version: 25.9.5
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
-  packages/auth/plugins/email-password:
-    dependencies:
-      '@zelavis/auth':
-        specifier: workspace:*
-        version: link:../..
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      zelavis:
-        specifier: workspace:*
-        version: link:../../../zelavis
-
-  packages/auth/plugins/username-password:
-    dependencies:
-      '@zelavis/auth':
-        specifier: workspace:*
-        version: link:../..
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      zelavis:
-        specifier: workspace:*
-        version: link:../../../zelavis
-
   packages/cli:
     devDependencies:
-      '@types/node':
-        specifier: ^25.9.3
-        version: 25.9.5
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
-  packages/db:
-    dependencies:
-      '@zelavis/server':
-        specifier: workspace:*
-        version: link:../server
-      effect:
-        specifier: 4.0.0-rc.111
-        version: 4.0.0-rc.111
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
-  packages/db/adapters/bun-sqlite:
-    dependencies:
-      '@zelavis/db':
-        specifier: workspace:*
-        version: link:../..
-    devDependencies:
-      '@types/node':
-        specifier: ^25.9.3
-        version: 25.9.5
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
-  packages/db/adapters/libsql:
-    dependencies:
-      '@libsql/client':
-        specifier: ^0.17.4
-        version: 0.17.4
-      '@zelavis/db':
-        specifier: workspace:*
-        version: link:../..
-    devDependencies:
-      '@types/node':
-        specifier: ^25.9.3
-        version: 25.9.5
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
-  packages/db/adapters/node-sqlite:
-    dependencies:
-      '@zelavis/db':
-        specifier: workspace:*
-        version: link:../..
-      better-sqlite3:
-        specifier: ^12.11.1
-        version: 12.11.1
-    devDependencies:
-      '@types/better-sqlite3':
-        specifier: ^7.6.13
-        version: 7.6.13
       '@types/node':
         specifier: ^25.9.3
         version: 25.9.5
@@ -541,48 +444,32 @@ importers:
         specifier: ^4.1.9
         version: 4.1.11(@types/node@25.9.1)(jsdom@28.1.0(@noble/hashes@1.8.0))(vite@8.2.2(@types/node@25.9.1)(esbuild@0.27.7)(jiti@2.7.0))
 
-  packages/workloads:
-    dependencies:
-      '@zelavis/server':
-        specifier: workspace:*
-        version: link:../server
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
   packages/zelavis:
     dependencies:
       '@zelavis/app':
         specifier: workspace:*
         version: link:../zelavis-app
-      '@zelavis/auth':
+      '@zelavis/app-db-bun-sqlite':
         specifier: workspace:*
-        version: link:../auth
+        version: link:../zelavis-app/adapters/bun-sqlite
+      '@zelavis/app-db-node-sqlite':
+        specifier: workspace:*
+        version: link:../zelavis-app/adapters/node-sqlite
       '@zelavis/cli':
         specifier: workspace:*
         version: link:../cli
-      '@zelavis/db':
-        specifier: workspace:*
-        version: link:../db
-      '@zelavis/db-bun-sqlite':
-        specifier: workspace:*
-        version: link:../db/adapters/bun-sqlite
-      '@zelavis/db-node-sqlite':
-        specifier: workspace:*
-        version: link:../db/adapters/node-sqlite
       '@zelavis/server':
         specifier: workspace:*
         version: link:../server
       '@zelavis/ui':
         specifier: workspace:*
         version: link:../ui
-      '@zelavis/workloads':
-        specifier: workspace:*
-        version: link:../workloads
       better-sqlite3:
         specifier: ^12.10.0
         version: 12.10.0
+      effect:
+        specifier: 4.0.0-rc.111
+        version: 4.0.0-rc.111
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.13
@@ -611,28 +498,96 @@ importers:
 
   packages/zelavis-app:
     dependencies:
-      '@zelavis/auth':
-        specifier: workspace:*
-        version: link:../auth
-      '@zelavis/db':
-        specifier: workspace:*
-        version: link:../db
       '@zelavis/server':
         specifier: workspace:*
         version: link:../server
-      '@zelavis/workloads':
-        specifier: workspace:*
-        version: link:../workloads
+      effect:
+        specifier: 4.0.0-rc.111
+        version: 4.0.0-rc.111
     devDependencies:
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
 
+  packages/zelavis-app/adapters/bun-sqlite:
+    dependencies:
+      '@zelavis/app':
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^25.9.3
+        version: 25.9.5
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+
+  packages/zelavis-app/adapters/libsql:
+    dependencies:
+      '@libsql/client':
+        specifier: ^0.17.4
+        version: 0.17.4
+      '@zelavis/app':
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      '@types/node':
+        specifier: ^25.9.3
+        version: 25.9.5
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+
+  packages/zelavis-app/adapters/node-sqlite:
+    dependencies:
+      '@zelavis/app':
+        specifier: workspace:*
+        version: link:../..
+      better-sqlite3:
+        specifier: ^12.11.1
+        version: 12.11.1
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.13
+        version: 7.6.13
+      '@types/node':
+        specifier: ^25.9.3
+        version: 25.9.5
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+
+  packages/zelavis-app/plugins/email-password:
+    dependencies:
+      '@zelavis/app':
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      zelavis:
+        specifier: workspace:*
+        version: link:../../../zelavis
+
+  packages/zelavis-app/plugins/username-password:
+    dependencies:
+      '@zelavis/app':
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      zelavis:
+        specifier: workspace:*
+        version: link:../../../zelavis
+
   plugins/ecommerce:
     dependencies:
-      '@zelavis/db':
+      '@zelavis/app':
         specifier: workspace:*
-        version: link:../../packages/db
+        version: link:../../packages/zelavis-app
       '@zelavis/server':
         specifier: workspace:*
         version: link:../../packages/server
@@ -11310,7 +11265,7 @@ snapshots:
   '@types/body-parser@1.19.6':
     dependencies:
       '@types/connect': 3.4.38
-      '@types/node': 25.9.1
+      '@types/node': 25.9.5
 
   '@types/chai@5.2.3':
     dependencies:
@@ -11319,7 +11274,7 @@ snapshots:
 
   '@types/connect@3.4.38':
     dependencies:
-      '@types/node': 25.9.1
+      '@types/node': 25.9.5
 
   '@types/d3-array@3.2.2': {}
 
@@ -11363,7 +11318,7 @@ snapshots:
 
   '@types/express-serve-static-core@5.1.1':
     dependencies:
-      '@types/node': 25.9.1
+      '@types/node': 25.9.5
       '@types/qs': 6.14.0
       '@types/range-parser': 1.2.7
       '@types/send': 1.2.1
@@ -11426,16 +11381,16 @@ snapshots:
 
   '@types/sax@1.2.7':
     dependencies:
-      '@types/node': 25.9.1
+      '@types/node': 25.9.5
 
   '@types/send@1.2.1':
     dependencies:
-      '@types/node': 25.9.1
+      '@types/node': 25.9.5
 
   '@types/serve-static@2.2.0':
     dependencies:
       '@types/http-errors': 2.0.5
-      '@types/node': 25.9.1
+      '@types/node': 25.9.5
 
   '@types/trusted-types@2.0.7': {}
 
@@ -11449,7 +11404,7 @@ snapshots:
 
   '@types/ws@8.18.1':
     dependencies:
-      '@types/node': 25.9.1
+      '@types/node': 25.9.5
 
   '@typescript-eslint/eslint-plugin@8.59.0(@typescript-eslint/parser@8.59.0(eslint@10.4.1(jiti@2.7.0))(typescript@5.9.3))(eslint@10.4.1(jiti@2.7.0))(typescript@5.9.3)':
     dependencies:
