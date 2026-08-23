@@ -554,11 +554,13 @@ export function workloadsService(
     service,
     menu: {
       title: "Workloads",
+      path: "/workloads",
       panelLabel: "Workloads",
       surface: "core",
       items: [
         {
           title: "Functions",
+          path: "/workloads/functions",
           panelLabel: "Functions",
           items: [
             {
@@ -572,30 +574,37 @@ export function workloadsService(
           dynamicItems: {
             path: "/workloads/menu/functions",
             emptyTitle: "No functions yet",
+            emptyPath: "/workloads/functions",
           },
         },
         {
           title: "Jobs",
+          path: "/workloads/jobs",
           panelLabel: "Jobs",
           dynamicItems: {
             path: "/workloads/menu/jobs",
             emptyTitle: "No jobs yet",
+            emptyPath: "/workloads/jobs",
           },
         },
         {
           title: "Schedules",
+          path: "/workloads/schedules",
           panelLabel: "Schedules",
           dynamicItems: {
             path: "/workloads/menu/schedules",
             emptyTitle: "No schedules yet",
+            emptyPath: "/workloads/schedules",
           },
         },
         {
           title: "Webhooks",
+          path: "/workloads/webhooks",
           panelLabel: "Webhooks",
           dynamicItems: {
             path: "/workloads/menu/webhooks",
             emptyTitle: "No webhooks yet",
+            emptyPath: "/workloads/webhooks",
           },
         },
         { title: "Logs", path: "/workloads/logs", pageLabel: "Workloads" },

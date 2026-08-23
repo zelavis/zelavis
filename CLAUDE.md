@@ -61,6 +61,15 @@ Shared UI primitives should stay aligned with the current shadcn CLI output unle
 
 Dashboard routes should use shared control defaults. Do not pass `size="sm"` / `size="lg"` or `buttonVariants({ size: ... })` for ordinary text buttons; reserve explicit size variants for icon-only controls or a clearly distinct component primitive.
 
+Navigation is route-backed. Clicking any sidebar menu item or slide must update
+the URL and change the content area to a dedicated page or panel. Parent items
+with child slides need a canonical Overview route through `landingUrl`; planned
+or unfinished areas still render a structured placeholder instead of becoming
+dead clicks. Slide Back buttons must move both the sidebar and content area back
+to the parent route. The full navigation state must be reconstructable from the
+URL (`pathname` plus `?sidebar=...` and feature search params) after reload or
+sharing.
+
 ## Collection Name Rules
 
 - Pattern: `/^[A-Za-z_][A-Za-z0-9_-]*$/`
@@ -138,11 +147,34 @@ streaming, tool-call, approval, and agent-run adapters remain provider/runtime
 work behind the same Zelavis capability boundary.
 
 Service dashboard menus can declare dynamic sections with `dynamicItems`. Those
-sections must be backed by service-owned endpoints and return ordinary menu
-items. Database uses this for tables; Workloads uses it for project functions,
+sections must be backed by service-owned endpoints that return
+`{ "items": [...] }`, where each item uses the same metadata shape as static
+service menu items. Database uses this for tables; Workloads uses it for project functions,
 jobs, schedules, and webhooks. Menu items may include `search` metadata for
 route state such as the selected table, so services do not need dashboard-only
 sidebar exceptions.
+Dynamic sections must remain route-backed even when empty. Use
+`dynamicItems.emptyPath` and `dynamicItems.emptySearch` to point an empty
+dynamic section at a real content route/search view instead of leaving a
+placeholder-only slide.
+Service menu content may be either a dashboard-local `path` handled by
+`@zelavis/ui` or a `page.file` HTML entry rendered through the service-frame
+iframe boundary.
+The dashboard derives stable paths for pathless service menu items and dynamic
+items, then renders a structured placeholder for generated paths without a
+dedicated route or iframe page.
+`menu.path` is always the dashboard URL and must update React Router, sidebar
+state, active menu state, and reload/share behavior. `menu.page.file` is the
+browser-extension-style HTML entry file for iframe-backed service UI, such as
+`dashboard.html`, `settings.html`, or `options.html`. Zelavis serves that file
+from the service bundle through the generated service-page-asset endpoint; iframes
+must never point at raw filesystem paths. Core services whose content already
+ships with `@zelavis/ui` should use `menu.path` without `menu.page` so the local
+React Router route renders directly.
+If a service page wants to be a SPA, the service author owns that SPA's internal
+router, tabs, and menu inside the bundled HTML/JS. Zelavis menu metadata selects
+the HTML entry file only; it must not deep-link into a plugin SPA's private
+routes.
 
 Service dashboard menus can declare a `surface`. `platform` is the global
 `/zelavis` owner/operator shell, `root` is the first slide of a project
@@ -227,3 +259,7 @@ implementation.
 - Do not add backward-compat shims — this project is pre-release with no public users. Remove stale shapes cleanly.
 - Do not ship a dashboard feature that cannot also be performed through a stable endpoint.
 - Do not treat serverless deployability of connectors as permission to make serverless the Zelavis core runtime target.
+- Do not create menu items or slides that do not change the content area — every menu item click must navigate to its own content/overview page and update the URL.
+- Do not leave menu items without content — render a structured placeholder page/panel if domain content is not yet implemented.
+- Do not allow slide back navigation to leave the main content area out of sync — clicking Back in a slide must navigate both the slide and content area back to the parent route.
+- Do not allow UI state to be unshareable — every navigation step must be fully reconstructable from the URL (`pathname` + `?sidebar=...`).

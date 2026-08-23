@@ -116,6 +116,12 @@ interface AppHandlerOptions {
    */
   devUrl?: string;
   /**
+   * Mount-relative prefixes that should not redirect to `devUrl`. These paths
+   * fall through to normal runtime handling so reserved API namespaces stay
+   * reachable while a dashboard or app shell is served from a dev server.
+   */
+  devUrlExcludePaths?: readonly string[];
+  /**
    * Optional override resolved when the route handler executes; lets
    * higher-level code (tenant context, dev-mode toggle) influence the
    * scope at request time without re-synthesizing routes.
@@ -151,6 +157,29 @@ function buildDevRedirect(
       "cache-control": "no-cache",
     },
   };
+}
+
+function normalizeDevExcludePath(path: string): string {
+  return path.replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+function isDevRedirectExcluded(
+  relativePath: string,
+  excludePaths: readonly string[] | undefined,
+): boolean {
+  if (!excludePaths || excludePaths.length === 0) {
+    return false;
+  }
+
+  const normalizedPath = normalizeDevExcludePath(relativePath);
+  return excludePaths.some((path) => {
+    const normalizedExclude = normalizeDevExcludePath(path);
+    return (
+      normalizedExclude.length > 0 &&
+      (normalizedPath === normalizedExclude ||
+        normalizedPath.startsWith(`${normalizedExclude}/`))
+    );
+  });
 }
 
 /**
@@ -214,6 +243,7 @@ function createAppAssetHandler(options: AppHandlerOptions) {
     mode,
     shell,
     devUrl,
+    devUrlExcludePaths,
   } = options;
 
   return async (context: {
@@ -252,7 +282,7 @@ function createAppAssetHandler(options: AppHandlerOptions) {
     // under the mount becomes a 307 redirect to the dev server. Bundle
     // store, shell renderer, and MPA resolution all sit out — the
     // browser talks to Vite/RR/Next directly so HMR works.
-    if (devUrl) {
+    if (devUrl && !isDevRedirectExcluded(relativePath, devUrlExcludePaths)) {
       const url = new URL(request.url);
       return buildDevRedirect(devUrl, relativePath, url.search);
     }
@@ -432,6 +462,7 @@ export async function synthesizeServiceAppService(
     mode,
     shell: app.shell,
     devUrl: app.devUrl,
+    devUrlExcludePaths: app.devUrlExcludePaths,
   });
 
   const routes: ZelavisServerRoute<unknown>[] = [

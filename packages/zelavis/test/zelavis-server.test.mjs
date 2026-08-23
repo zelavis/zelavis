@@ -4,7 +4,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { createDatabase } from "@zelavis/db";
-import { defineService, Zelavis, zelavis } from "../dist/index.js";
+import {
+  createInMemoryBundleStore,
+  defineService,
+  Zelavis,
+  zelavis,
+} from "../dist/index.js";
 import { zelavisEcommerceService } from "../../../plugins/ecommerce/dist/index.js";
 
 function createStoredZip(files) {
@@ -415,7 +420,27 @@ test("service registry install state controls service activation on boot", async
       order: 0,
     },
   ];
+  const encoder = new TextEncoder();
+  const bundleStore = createInMemoryBundleStore(
+    new Map([
+      [
+        "system/@zelavis/ecommerce/dashboard/dashboard.html",
+        {
+          body: encoder.encode("<!doctype html><title>Ecommerce</title><main>Commerce workspace</main>"),
+          contentType: "text/html; charset=utf-8",
+        },
+      ],
+      [
+        "system/@zelavis/ecommerce/dashboard/placeholder.css",
+        {
+          body: encoder.encode("main { display: grid; }"),
+          contentType: "text/css; charset=utf-8",
+        },
+      ],
+    ]),
+  );
   const runtime = await zelavis({
+    bundleStore,
     services: {
       entries: [
         {
@@ -451,24 +476,20 @@ test("service registry install state controls service activation on boot", async
   assert.equal(config.serviceRegistry[0].status, "installed");
   assert.equal(
     config.serviceRegistry[0].menu.page.src,
-    "/zelavis/api/v1/runtime/service-pages/%40zelavis%2Fecommerce/dashboard",
+    "/zelavis/api/v1/runtime/service-page-assets/%40zelavis%2Fecommerce/dashboard/dashboard.html",
   );
   assert.ok(config.services.some((service) => service.name === "commerce"));
 
   const servicePageResponse = await runtime.fetch(
     new Request(
-      "http://localhost/zelavis/api/v1/runtime/service-pages/%40zelavis%2Fecommerce/dashboard",
+      "http://localhost/zelavis/api/v1/runtime/service-page-assets/%40zelavis%2Fecommerce/dashboard/dashboard.html",
     ),
   );
   const servicePage = await servicePageResponse.text();
 
   assert.equal(servicePageResponse.status, 200);
-  assert.match(
-    servicePageResponse.headers.get("content-type"),
-    /text\/html/,
-  );
-  assert.match(servicePage, /<!doctype html>/i);
-  assert.match(servicePage, /<title>Ecommerce<\/title>/);
+  assert.match(servicePageResponse.headers.get("content-type"), /text\/html/);
+  assert.match(servicePage, /Commerce workspace/);
 });
 
 test("dashboard service registry can register ESM service sources", async () => {
@@ -541,6 +562,86 @@ test("dashboard service registry can register ESM service sources", async () => 
   assert.equal(uploadedService.status, "installed");
   assert.equal(uploadedService.specifier, specifier);
   assert.equal(uploadedService.menu.path, "/uploaded");
+});
+
+test("service dashboard pages can be static HTML files from service bundles", async () => {
+  const encoder = new TextEncoder();
+  const service = defineService({
+    name: "@example/static-pages",
+    menu: {
+      title: "Static Pages",
+      path: "/static-pages",
+      page: {
+        id: "settings",
+        title: "Settings",
+        file: "settings.html",
+      },
+    },
+  });
+  const bundleStore = createInMemoryBundleStore(
+    new Map([
+      [
+        "system/@example/static-pages/dist/settings.html",
+        {
+          body: encoder.encode(
+            '<!doctype html><html><body><main>Static settings page</main><script type="module" src="./settings.js"></script></body></html>',
+          ),
+          contentType: "text/html; charset=utf-8",
+        },
+      ],
+      [
+        "system/@example/static-pages/dist/settings.js",
+        {
+          body: encoder.encode("export const ok = true;"),
+          contentType: "text/javascript; charset=utf-8",
+        },
+      ],
+    ]),
+  );
+  const runtime = await zelavis({
+    bundleStore,
+    services: {
+      entries: [
+        {
+          service,
+          status: "installed",
+        },
+      ],
+    },
+  });
+
+  const configResponse = await runtime.fetch(
+    new Request("http://localhost/zelavis/api/v1/runtime/config"),
+  );
+  const config = await configResponse.json();
+
+  assert.equal(config.serviceRegistry[0].menu.page.file, "settings.html");
+  assert.equal(
+    config.serviceRegistry[0].menu.page.src,
+    "/zelavis/api/v1/runtime/service-page-assets/%40example%2Fstatic-pages/dist/settings.html",
+  );
+
+  const response = await runtime.fetch(
+    new Request(
+      "http://localhost/zelavis/api/v1/runtime/service-page-assets/%40example%2Fstatic-pages/dist/settings.html",
+    ),
+  );
+  const html = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type"), /text\/html/);
+  assert.match(html, /Static settings page/);
+
+  const scriptResponse = await runtime.fetch(
+    new Request(
+      "http://localhost/zelavis/api/v1/runtime/service-page-assets/%40example%2Fstatic-pages/dist/settings.js",
+    ),
+  );
+  const script = await scriptResponse.text();
+
+  assert.equal(scriptResponse.status, 200);
+  assert.match(scriptResponse.headers.get("content-type"), /javascript/);
+  assert.match(script, /ok = true/);
 });
 
 test("dashboard service upload derives metadata from the selected module", async () => {
@@ -682,11 +783,12 @@ test("node adapter resolves uploaded service paths through its service cache imp
           menu: {
             title: "Node Uploaded",
             path: "/node-uploaded",
-            page: {
-              id: "dashboard",
-              title: "Node Uploaded",
-              render: () => "<!doctype html><html><head><title>Node Uploaded</title></head><body><main>Node uploaded service page</main></body></html>"
-            }
+            items: [
+              {
+                title: "Settings",
+                path: "/node-uploaded/settings"
+              }
+            ]
           },
           setup() {
             return {
@@ -745,15 +847,18 @@ test("node adapter resolves uploaded service paths through its service cache imp
     assert.equal(healthResponse.status, 200);
     assert.deepEqual(health, { ok: true, source: "node-service-cache" });
 
-    const servicePageResponse = await app.fetch(
-      new Request(
-        "http://localhost/zelavis/api/v1/runtime/service-pages/%40example%2Fnode-uploaded-service/dashboard",
-      ),
+    const configResponse = await app.fetch(
+      new Request("http://localhost/zelavis/api/v1/runtime/config"),
     );
-    const servicePage = await servicePageResponse.text();
+    const config = await configResponse.json();
+    const uploadedMenu = config.serviceRegistry.find(
+      (entry) => entry.name === "@example/node-uploaded-service",
+    )?.menu;
 
-    assert.equal(servicePageResponse.status, 200);
-    assert.match(servicePage, /Node uploaded service page/);
+    assert.equal(uploadedMenu.path, "/node-uploaded");
+    assert.equal(uploadedMenu.page, undefined);
+    assert.equal(uploadedMenu.items[0].path, "/node-uploaded/settings");
+    assert.equal(uploadedMenu.items[0].page, undefined);
   } finally {
     await rm(tempDirectory, { recursive: true, force: true });
   }
@@ -1036,6 +1141,14 @@ test("zelavis can redirect dashboard routes to a UI dev server", async () => {
     "http://127.0.0.1:3001/nested/panel",
   );
 
+  const apiResponse = await runtime.fetch(
+    new Request("http://localhost/zelavis/api/v1/runtime/config", {
+      redirect: "manual",
+    }),
+  );
+  assert.equal(apiResponse.status, 200);
+  assert.equal(apiResponse.headers.get("location"), null);
+
   // No per-asset routes are registered when the dev server short-circuit
   // is active — the synthesized `/zelavis/*path` route handles everything.
   assert.ok(
@@ -1093,7 +1206,7 @@ test("zelavis keeps the Platform server when optional mounted services are disab
       "runtime.config",
       "runtime.services.read",
       "runtime.services.create",
-      "runtime.service-page.read",
+      "runtime.service-page-asset.read",
       "runtime.services.update",
       "runtime.settings.read",
       "runtime.settings.update",

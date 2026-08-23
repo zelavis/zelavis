@@ -166,8 +166,14 @@ export interface ZelavisRuntimeServiceMenuDefinition {
   dynamicItems?: {
     path: string;
     emptyTitle?: string;
+    emptyPath?: string;
+    emptySearch?: Record<string, string | undefined>;
   };
   items?: readonly ZelavisRuntimeServiceMenuDefinition[];
+}
+
+export interface ZelavisRuntimeServiceDynamicMenuResponse {
+  items: readonly ZelavisRuntimeServiceMenuDefinition[];
 }
 
 export interface ZelavisRuntimeService<TService = unknown> {

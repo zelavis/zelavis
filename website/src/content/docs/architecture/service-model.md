@@ -54,7 +54,15 @@ The dashboard should reflect that split:
 - Each installed service gets exactly one root entry under `Extensions`.
 - Each service may own unlimited nested sidebar slides inside its own Extensions area.
 - Service-owned dashboard navigation should be declared through a plain menu object such as `menu: { ... }`, not by reaching into sidebar internals directly.
-- A service menu item may declare `page: { id, title, render }` when that menu item owns dashboard content.
+- A service menu item may declare `page: { id, title, file }` when that menu
+  item owns iframe-backed dashboard content.
+- `menu.path` is the dashboard URL. `menu.page.file` is the
+  browser-extension-style HTML entry file for service-owned dashboard documents.
+  Use `menu.path` without `menu.page` for core service screens already provided
+  by `@zelavis/ui`.
+- If a service page is implemented as a SPA, that SPA owns its internal
+  navigation inside the iframe. Zelavis service menu metadata selects HTML entry
+  files; it does not model private routes inside plugin-owned SPAs.
 - A service menu item may declare `search` metadata for route state such as
   `{ databaseTable: "products" }`. Dynamic menu endpoints should return the
   same menu item shape when runtime-owned lists need active search state.
@@ -110,7 +118,7 @@ not automatically expose Zelavis-native service navigation. Their dashboard
 surface should look like hosting/project management unless the managed app is
 explicitly backed by Zelavis services.
 
-Service pages are served as full HTML documents and mounted by the dashboard inside the `zelavis-service-frame` iframe web component. That lets service authors use plain HTML, React, Vue, web components, or any other browser-side approach without coupling service settings or workspaces to the internal dashboard React tree. Zelavis serializes those page definitions to dashboard-safe URLs such as `/zelavis/api/v1/runtime/service-pages/:service/:page`.
+Service pages are served as full HTML documents and mounted by the dashboard inside the `zelavis-service-frame` iframe web component. That lets service authors use plain HTML, React, Vue, web components, or any other browser-side approach without coupling service settings or workspaces to the internal dashboard React tree. A service page declares `page.file`, and Zelavis serializes it to a dashboard-safe asset URL under `/zelavis/api/v1/runtime/service-page-assets/:service/:bundle/*`. Relative bundled assets such as scripts and stylesheets resolve beside the HTML file. Service-owned dashboard pages are browser-extension-style HTML entry files.
 
 ## TypeScript direction
 

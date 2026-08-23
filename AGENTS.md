@@ -141,13 +141,38 @@ LLM. Future streaming and rich tool state should extend the endpoint protocol
 without moving authority into React or Assistant Cloud.
 
 Dashboard menu metadata may include dynamic sections through `dynamicItems`.
-Dynamic menu sections must point at service-owned endpoints and return the same
-menu item shape as static sections. Use this for runtime-owned lists such as
+Dynamic menu sections must point at service-owned endpoints and return
+`{ "items": [...] }`, where each item uses the same shape as static service menu
+items. Use this for runtime-owned lists such as
 Database tables and Workloads functions, jobs, schedules, and webhooks; do not
 hardcode those lists inside the dashboard. Menu items may include `search`
 metadata for route state such as the selected database table; dynamic endpoints
 should return that state as menu metadata instead of requiring dashboard-specific
 sidebar code.
+Dynamic sections must also stay route-backed when empty. Use
+`dynamicItems.emptyPath` and `dynamicItems.emptySearch` when the empty state
+should open a specific route or route state, such as `/workloads/jobs`.
+Do not rely on disabled placeholder-only rows for dynamic sections that own a
+content area.
+Service menu content has two supported shapes: a dashboard-local `path` that
+the `@zelavis/ui` router owns, or a `page.file` HTML entry document that the
+dashboard renders inside the content area through the service-frame iframe
+boundary. If a service or dynamic endpoint forgets to provide a path, the
+dashboard derives a stable
+dashboard path from the service name and menu trail and renders a structured
+placeholder instead of a dead menu item.
+`menu.path` is always the dashboard URL. It changes React Router state, sidebar
+state, active menu state, and reload/share behavior. `menu.page.file` is the
+browser-extension-style HTML entry file for iframe-backed service UI, such as
+`dashboard.html`, `settings.html`, or `options.html`. Zelavis serves that file
+from the service bundle through the generated service-page-asset endpoint; iframes
+must never point at raw filesystem paths. Core services with content already
+shipped in `@zelavis/ui` should use `menu.path` without `menu.page`, so the
+local dashboard route renders directly and no iframe is mounted.
+If a service page wants to be a SPA, the service author owns that SPA's internal
+router, tabs, and menu inside the bundled HTML/JS. Zelavis menu metadata selects
+the HTML entry file only; it must not deep-link into a plugin SPA's private
+routes.
 
 Dashboard menu metadata may declare a `surface`. `platform` is the global
 `/zelavis` owner/operator shell, `root` is the first slide of a project
@@ -311,7 +336,15 @@ When creating a new core package, service package, or plugin package:
 
 **Data loading**: every route that fetches data uses a `clientLoader` + `useLoaderData`. Never fetch in `useEffect` for page-level data. After mutations, use `useRevalidator().revalidate()`. Root loader data (`runtime`, `settings`, `databaseCollections`, `schemaCollections`) is accessed in child routes via `useRouteLoaderData<typeof rootClientLoader>('root')`.
 
-**URL state**: everything that can survive a reload must be in the URL. Use `useTypedSearchParams` / `useTypedSearchParam` from `app/lib/use-typed-search-params.ts`. `clientLoader` reads search params from `request.url` so data and URL are always in sync on reload.
+**URL state & reconstructability**:
+- Everything that can survive a reload must be in the URL. Use `useTypedSearchParams` / `useTypedSearchParam` from `app/lib/use-typed-search-params.ts`. `clientLoader` reads search params from `request.url` so data and URL are always in sync on reload.
+- Every navigation step and sidebar slide depth must be reflected in the URL (`pathname` + `?sidebar=...`). Sharing or reloading a URL must reconstruct the exact same sidebar slide depth and active content area.
+
+**Menu items and content area rules**:
+- **Rule 1 (Always Change Content)**: Clicking any menu item or slide **MUST** update the URL and change the content area to its own dedicated page or panel. Even parent items with nested child items must land on an Overview page/route of that section when opened.
+- **Rule 2 (No Empty/Missing Content)**: If a specific domain feature is not yet built or is planned, a structured placeholder page/panel **MUST** still be rendered. A menu item must never be without content or act as a dead click.
+- **Rule 3 (Back Button Synchronization)**: Clicking the Back button on any sidebar slide must navigate both the sidebar slide and the content area back to the corresponding parent route and update the URL.
+- **Rule 4 (URL State Reconstructability)**: Every navigation step and sidebar slide depth must be reflected in the URL (`pathname` + `?sidebar=...`). Sharing or reloading a URL must reconstruct the exact same sidebar slide depth and active content area.
 
 When working on UI behavior:
 

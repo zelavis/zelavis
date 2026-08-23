@@ -53,3 +53,60 @@ test("project dynamic menus stay scoped by the proxy without a project query", a
   );
   expect(resolved.services[0]?.menu?.items?.[0]?.title).toBe("articles");
 });
+
+test("empty dynamic menus can still route to their empty-state content", async () => {
+  const fetchMock = vi.fn(async () =>
+    new Response(JSON.stringify({ items: [] }), {
+      headers: { "content-type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const config = {
+    name: "zelavis",
+    rootPath: "/zelavis",
+    api: {
+      prefix: "/api",
+      version: "v1",
+      basePath: "/zelavis/api/v1",
+    },
+    dashboard: { title: "zelavis", clientRoutes: [], assetRoot: "/assets" },
+    services: [
+      {
+        name: "@zelavis/workloads",
+        core: true,
+        apiPath: "/zelavis/api/v1/workloads",
+        menu: {
+          title: "Workloads",
+          path: "/workloads",
+          items: [
+            {
+              title: "Jobs",
+              path: "/workloads/jobs",
+              dynamicItems: {
+                path: "/workloads/menu/jobs",
+                emptyTitle: "No jobs yet",
+                emptyPath: "/workloads/jobs",
+              },
+            },
+          ],
+        },
+      },
+    ],
+    serviceRegistry: [],
+  } satisfies RuntimeConfig;
+
+  const resolved = await resolveRuntimeDynamicMenus(config);
+  const jobs = resolved.services[0]?.menu?.items?.[0];
+
+  expect(jobs).toMatchObject({
+    title: "Jobs",
+    path: "/workloads/jobs",
+    items: [
+      {
+        title: "No jobs yet",
+        path: "/workloads/jobs",
+        disabled: false,
+      },
+    ],
+  });
+});

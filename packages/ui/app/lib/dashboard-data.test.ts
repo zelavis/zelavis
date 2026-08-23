@@ -5,6 +5,7 @@ import {
   buildProjectManagementNavItems,
   projectManagementNavItems,
   buildExtensionServiceNavItems,
+  findServiceMenuContentByPath,
   findServiceMenuPageByPath,
   type DashboardNavItem,
 } from "./dashboard-data";
@@ -90,7 +91,8 @@ describe("dashboard navigation ownership", () => {
           path: "/example-basic",
           page: {
             id: "dashboard",
-            src: "/zelavis/api/v1/runtime/service-pages/%40zelavis%2Fexample-plugin-basic/dashboard",
+            file: "dashboard.html",
+            src: "/zelavis/api/v1/runtime/service-page-assets/%40zelavis%2Fexample-plugin-basic/dist/dashboard.html",
           },
         },
       },
@@ -365,6 +367,7 @@ describe("dashboard navigation ownership", () => {
         apiPath: "/api/v1/database",
         menu: {
           title: "Database",
+          path: "/database",
           surface: "core",
           panelLabel: "Database",
           items: [
@@ -389,6 +392,8 @@ describe("dashboard navigation ownership", () => {
             },
             {
               title: "System Tables",
+              path: "/database",
+              search: { systemTable: "zv_collections" },
               panelLabel: "System Tables",
               items: [
                 {
@@ -445,12 +450,21 @@ describe("dashboard navigation ownership", () => {
     );
 
     const database = findNavItem(nav, "Database");
+    expect(database).toMatchObject({
+      url: "/projects/project-a/database",
+      landingUrl: "/projects/project-a/database",
+    });
     expect(database?.items?.map((item) => item.title)).toEqual([
       "Create Table",
       "audit_log",
       "fruits",
       "System Tables",
     ]);
+    expect(findNavItem(database?.items ?? [], "System Tables")).toMatchObject({
+      url: "/projects/project-a/database",
+      landingUrl: "/projects/project-a/database",
+      search: { systemTable: "zv_collections" },
+    });
     expect(findNavItem(database?.items ?? [], "Create Table")).toMatchObject({
       url: "/projects/project-a/database/new",
       fixed: true,
@@ -477,5 +491,219 @@ describe("dashboard navigation ownership", () => {
       },
     });
     expect(findNavItem(database?.items ?? [], "zv_collections")).toBeDefined();
+  });
+
+  it("gives workload parent slides canonical route targets", () => {
+    const services = [
+      {
+        name: "@zelavis/workloads",
+        core: true,
+        apiPath: "/api/v1/workloads",
+        menu: {
+          title: "Workloads",
+          path: "/workloads",
+          surface: "core",
+          panelLabel: "Workloads",
+          items: [
+            {
+              title: "Functions",
+              path: "/workloads/functions",
+              panelLabel: "Functions",
+              items: [
+                {
+                  title: "Add Function",
+                  path: "/workloads/new",
+                  pageLabel: "Workloads",
+                  fixed: true,
+                  fixedOrder: 1,
+                },
+              ],
+            },
+            {
+              title: "Jobs",
+              path: "/workloads/jobs",
+              panelLabel: "Jobs",
+              dynamicItems: {
+                path: "/workloads/menu/jobs",
+                emptyTitle: "No jobs yet",
+              },
+            },
+          ],
+        },
+      },
+    ] satisfies readonly RuntimeService[];
+
+    const nav = buildPlatformNavItems(
+      services,
+      [],
+      undefined,
+      undefined,
+      "project-a",
+    );
+
+    expect(findNavItem(nav, "Workloads")).toMatchObject({
+      url: "/projects/project-a/workloads",
+      landingUrl: "/projects/project-a/workloads",
+    });
+    expect(findNavItem(nav, "Functions")).toMatchObject({
+      url: "/projects/project-a/workloads/functions",
+      landingUrl: "/projects/project-a/workloads/functions",
+    });
+    expect(findNavItem(nav, "Jobs")).toMatchObject({
+      url: "/projects/project-a/workloads/jobs",
+      landingUrl: "/projects/project-a/workloads/jobs",
+    });
+  });
+
+  it("derives dashboard paths for service menu items that forgot to declare content routes", () => {
+    const services = [
+      {
+        name: "@zelavis/workloads",
+        core: true,
+        apiPath: "/api/v1/workloads",
+        menu: {
+          title: "Workloads",
+          surface: "core",
+          panelLabel: "Workloads",
+          items: [
+            {
+              title: "Functions",
+              panelLabel: "Functions",
+              dynamicItems: {
+                path: "/workloads/menu/functions",
+                emptyTitle: "No functions yet",
+              },
+            },
+          ],
+        },
+      },
+    ] satisfies readonly RuntimeService[];
+
+    const nav = buildPlatformNavItems(
+      services,
+      [],
+      undefined,
+      undefined,
+      "project-a",
+    );
+
+    expect(findNavItem(nav, "Workloads")).toMatchObject({
+      url: "/projects/project-a/workloads",
+      landingUrl: "/projects/project-a/workloads",
+    });
+    expect(findNavItem(nav, "Functions")).toMatchObject({
+      url: "/projects/project-a/workloads/functions",
+      landingUrl: "/projects/project-a/workloads/functions",
+    });
+  });
+
+  it("returns placeholder content for service menu parents without explicit pages", () => {
+    const services = [
+      {
+        name: "@zelavis/workloads",
+        core: true,
+        apiPath: "/api/v1/workloads",
+        menu: {
+          title: "Workloads",
+          path: "/workloads",
+          surface: "core",
+          panelLabel: "Workloads",
+          items: [
+            {
+              title: "Functions",
+              path: "/workloads/functions",
+              panelLabel: "Functions",
+              items: [
+                {
+                  title: "Add Function",
+                  path: "/workloads/new",
+                  fixed: true,
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ] satisfies readonly RuntimeService[];
+
+    const rootContent = findServiceMenuContentByPath(
+      "/projects/project-a/workloads",
+      services,
+      [],
+    );
+    const nestedContent = findServiceMenuContentByPath(
+      "/projects/project-a/workloads/functions",
+      services,
+      [],
+    );
+
+    expect(rootContent).toMatchObject({
+      kind: "placeholder",
+      title: "Workloads",
+    });
+    expect(nestedContent).toMatchObject({
+      kind: "placeholder",
+      title: "Functions",
+    });
+  });
+
+  it("finds iframe-backed service pages through generated menu paths", () => {
+    const content = findServiceMenuPageByPath("/example-basic/dashboard", [
+      {
+        name: "@example/basic",
+        status: "installed",
+        menu: {
+          title: "Dashboard",
+          page: {
+            id: "dashboard",
+            file: "dashboard.html",
+            src: "/zelavis/api/v1/runtime/service-page-assets/%40example%2Fbasic/dist/dashboard.html",
+          },
+        },
+      },
+    ]);
+
+    expect(content?.id).toBe("dashboard");
+  });
+
+  it("keeps dashboard paths separate from iframe page files", () => {
+    const services = [
+      {
+        name: "@example/embedded",
+        status: "installed",
+        menu: {
+          title: "Embedded",
+          path: "/embedded",
+          page: {
+            id: "dashboard",
+            file: "dashboard.html",
+            src: "/zelavis/api/v1/runtime/service-page-assets/%40example%2Fembedded/dist/dashboard.html",
+          },
+          items: [
+            {
+              title: "Settings",
+              path: "/embedded/settings",
+              page: {
+                id: "settings",
+                file: "settings.html",
+                src: "/zelavis/api/v1/runtime/service-page-assets/%40example%2Fembedded/dist/settings.html",
+              },
+            },
+          ],
+        },
+      },
+    ] satisfies readonly RuntimeServiceRegistryEntry[];
+
+    const rootPage = findServiceMenuPageByPath("/embedded", services);
+    const settingsPage = findServiceMenuPageByPath("/embedded/settings", services);
+
+    expect(rootPage?.file).toBe("dashboard.html");
+    expect(rootPage?.src).toBe(
+      "/zelavis/api/v1/runtime/service-page-assets/%40example%2Fembedded/dist/dashboard.html",
+    );
+    expect(settingsPage?.file).toBe("settings.html");
+    expect(settingsPage?.src).toBe(
+      "/zelavis/api/v1/runtime/service-page-assets/%40example%2Fembedded/dist/settings.html",
+    );
   });
 });

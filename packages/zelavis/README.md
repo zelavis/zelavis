@@ -360,7 +360,7 @@ The dashboard service registry also has runtime endpoints:
 GET /zelavis/api/v1/runtime/services
 POST /zelavis/api/v1/runtime/services
 PATCH /zelavis/api/v1/runtime/services/:name
-GET /zelavis/api/v1/runtime/service-pages/:service/:page
+GET /zelavis/api/v1/runtime/service-page-assets/:service/:bundle/*
 ```
 
 When a service registry store is configured, these endpoints read and update
@@ -380,6 +380,72 @@ menu items with `menu.page`. The dashboard receives a safe `src` URL from
 runtime config and mounts it through the `zelavis-service-frame` web component,
 so service UI can be a full HTML document instead of a React component tied to
 Zelavis dashboard internals.
+
+`menu.path` and `menu.page.file` intentionally mean different things:
+
+- `menu.path` is the dashboard URL. Core services whose screens already ship
+  with `@zelavis/ui` should use this without `menu.page`; the dashboard renders
+  the local React Router route directly and no iframe is mounted.
+- `menu.page.file` is a browser-extension-style HTML entry file inside the
+  service bundle. Zelavis serves it through the generated service-page asset URL
+  and the dashboard iframe loads that URL. The iframe never points at a raw
+  filesystem path. Relative assets such as `<script src="./settings.js">` work
+  when they are shipped beside the HTML file in the same bundle.
+- If the HTML file boots a SPA, that SPA owns its internal router, tabs, and
+  menu. Zelavis sidebar items select concrete HTML entry files; they do not
+  deep-link into plugin-private SPA routes.
+
+That lets a custom service ship simple static dashboard pages:
+
+```ts
+defineService({
+  name: "@acme/reports",
+  menu: {
+    title: "Reports",
+    path: "/reports",
+    page: {
+      id: "dashboard",
+      file: "dashboard.html",
+    },
+    items: [
+      {
+        title: "Settings",
+        path: "/reports/settings",
+        page: {
+          id: "settings",
+          file: "settings.html",
+        },
+      },
+    ],
+  },
+});
+```
+
+`dashboard.html` can be plain HTML or boot a client app with normal relative
+assets from the same bundle:
+
+```html
+<main id="app"></main>
+<script type="module" src="./dashboard.js"></script>
+```
+
+Dynamic menu sections use the same item schema as static service menus. A
+service-owned endpoint returns a JSON menu fragment:
+
+```json
+{
+  "items": [
+    {
+      "title": "Reports",
+      "path": "/reports/monthly",
+      "page": {
+        "id": "monthly",
+        "file": "monthly.html"
+      }
+    }
+  ]
+}
+```
 
 When a file storage resource exists, Zelavis can also expose a built-in storage core service:
 

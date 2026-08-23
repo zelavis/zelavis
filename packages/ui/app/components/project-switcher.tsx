@@ -18,6 +18,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "#/components/ui/sidebar"
+import { ZelavisMark } from "#/components/zelavis-mark"
 import type { DashboardProjectItem } from "#/lib/dashboard-data"
 import { getProjectIdFromPathname, toProjectPath } from "#/lib/routing"
 
@@ -35,10 +36,7 @@ export function ProjectSwitcher({
   const currentProjectId = getProjectIdFromPathname(location.pathname)
   const activeProject =
     projects.find((project) => project.id === currentProjectId) ?? projects[0]
-
-  if (!activeProject) {
-    return null
-  }
+  const ActiveLogo = activeProject?.logo ?? ZelavisMark
 
   return (
     <SidebarMenu>
@@ -53,7 +51,7 @@ export function ProjectSwitcher({
             {homeIconLinksToProjects ? (
               <House className="size-4" />
             ) : (
-              <activeProject.logo className="size-4" />
+              <ActiveLogo className="size-4" />
             )}
           </div>
           <span className="sr-only">Projects</span>
@@ -65,8 +63,12 @@ export function ProjectSwitcher({
             className="min-w-0 flex-1 data-popup-open:bg-sidebar-accent data-popup-open:text-sidebar-accent-foreground group-data-[collapsible=icon]:hidden"
           >
             <div className="grid flex-1 text-left text-sm leading-tight">
-              <span className="truncate font-semibold">{activeProject.name}</span>
-              <span className="truncate text-xs">{activeProject.domain}</span>
+              <span className="truncate font-semibold">
+                {activeProject?.name ?? "Zelavis"}
+              </span>
+              <span className="truncate text-xs">
+                {activeProject?.domain ?? "No projects yet"}
+              </span>
             </div>
             <ChevronsUpDown className="ms-auto" />
           </SidebarMenuButton>
@@ -81,32 +83,46 @@ export function ProjectSwitcher({
               <DropdownMenuLabel className="text-xs text-muted-foreground">
                 Projects
               </DropdownMenuLabel>
-              {projects.map((project) => {
-                const isActive = project.id === activeProject.id
+              {projects.length > 0 ? (
+                projects.map((project) => {
+                  const isActive = project.id === activeProject?.id
 
-                return (
-                  <DropdownMenuItem
-                    key={project.id}
-                    onClick={() => {
-                      navigate(toProjectPath("/", project.id), {
-                        viewTransition: true,
-                      })
-                    }}
-                    className="gap-2 p-2"
-                  >
-                    <div className="flex size-6 items-center justify-center rounded-sm border">
-                      <project.logo className="size-4 shrink-0" />
-                    </div>
-                    <div className="grid min-w-0 flex-1">
-                      <span className="truncate">{project.name}</span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {project.domain}
-                      </span>
-                    </div>
-                    {isActive ? <Check className="ms-auto size-4" /> : null}
-                  </DropdownMenuItem>
-                )
-              })}
+                  return (
+                    <DropdownMenuItem
+                      key={project.id}
+                      onClick={() => {
+                        navigate(toProjectPath("/", project.id), {
+                          viewTransition: true,
+                        })
+                      }}
+                      className="gap-2 p-2"
+                    >
+                      <div className="flex size-6 items-center justify-center rounded-sm border">
+                        <project.logo className="size-4 shrink-0" />
+                      </div>
+                      <div className="grid min-w-0 flex-1">
+                        <span className="truncate">{project.name}</span>
+                        <span className="truncate text-xs text-muted-foreground">
+                          {project.domain}
+                        </span>
+                      </div>
+                      {isActive ? <Check className="ms-auto size-4" /> : null}
+                    </DropdownMenuItem>
+                  )
+                })
+              ) : (
+                <DropdownMenuItem disabled className="gap-2 p-2">
+                  <div className="flex size-6 items-center justify-center rounded-sm border">
+                    <ZelavisMark className="size-4 shrink-0" />
+                  </div>
+                  <div className="grid min-w-0 flex-1">
+                    <span className="truncate">No projects yet</span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      Create a Zelavis App project
+                    </span>
+                  </div>
+                </DropdownMenuItem>
+              )}
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem

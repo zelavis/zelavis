@@ -3,7 +3,6 @@ import { Plus, Search } from "lucide-react";
 import { Link, useLocation } from "react-router";
 
 import { AppSidebar } from "#/components/app-sidebar";
-import Footer from "#/components/Footer";
 import { Button } from "#/components/ui/button";
 import { useDirection } from "#/components/ui/direction";
 import {
@@ -319,11 +318,10 @@ export function DashboardShell({
               className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
             >
               <div
-                className="dashboard-view-transition flex min-h-full min-w-0 flex-col gap-4 p-4"
+                className="dashboard-view-transition flex min-h-full min-w-0 flex-col gap-4 p-4 pt-0"
               >
                 <RestartRequiredBanner settings={activeDashboardData?.settings} />
                 {children}
-                <Footer />
               </div>
             </div>
           </SidebarInset>

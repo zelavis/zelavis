@@ -45,7 +45,6 @@ import {
   activateServiceRegistry,
   applyServiceRegistryState,
   createServiceRegistry,
-  findServiceMenuPageById,
   loadService,
   loadServiceRegistry,
   serializeServiceRegistryState,
@@ -793,6 +792,52 @@ function encodeStoragePath(path: string): string {
     .filter(Boolean)
     .map((segment) => encodeURIComponent(segment))
     .join("/");
+}
+
+function normalizeBundleAssetPath(path: string): string {
+  const normalized = path.replace(/^\/+/, "").replace(/\\/g, "/");
+  const segments = normalized.split("/").filter(Boolean);
+  if (
+    segments.length === 0 ||
+    segments.some((segment) => segment === "." || segment === "..")
+  ) {
+    throw new ZelavisValidationError(
+      "Service page file must be a bundle-relative path.",
+    );
+  }
+
+  return segments.join("/");
+}
+
+const SERVICE_ASSET_CONTENT_TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".htm": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".txt": "text/plain; charset=utf-8",
+};
+
+function guessServiceAssetContentType(path: string): string {
+  const dotIndex = path.lastIndexOf(".");
+  if (dotIndex < 0) {
+    return "application/octet-stream";
+  }
+
+  return (
+    SERVICE_ASSET_CONTENT_TYPES[path.slice(dotIndex).toLowerCase()] ??
+    "application/octet-stream"
+  );
 }
 
 function escapeHtml(value: string): string {
@@ -2194,6 +2239,7 @@ function collectAuthProviderServices(
 type DashboardServicePageReference = {
   id: string;
   title?: string;
+  file?: string;
   src: string;
 };
 
@@ -2258,6 +2304,7 @@ async function resolveRuntimeManagementCore(
     getServices: () => readonly ZelavisRuntimeService<any>[];
     settingsStore?: ZelavisDashboardSettingsStore;
     websiteEnabled: boolean;
+    bundleStore?: BundleStore;
   },
 ): Promise<ZelavisRuntimeManagementCore> {
   const dashboardOption = option ?? true;
@@ -2321,14 +2368,18 @@ async function resolveRuntimeManagementCore(
         ? {
             id: menu.page.id,
             title: menu.page.title,
+            file: menu.page.file,
             src: joinPathParts(
               rootPath,
               context.apiPrefix,
               context.apiVersion,
               "runtime",
-              "service-pages",
+              "service-page-assets",
               encodeURIComponent(serviceName),
-              encodeURIComponent(menu.page.id),
+              joinPathParts(
+                encodeURIComponent(menu.page.bundle ?? "dist"),
+                encodeStoragePath(normalizeBundleAssetPath(menu.page.file)),
+              ).replace(/^\/+/, ""),
             ),
           }
         : undefined,
@@ -2337,9 +2388,10 @@ async function resolveRuntimeManagementCore(
       ) as readonly DashboardSerializedServiceMenuDefinition[] | undefined,
     };
   };
-  const renderServicePageDocument = async (
+  const renderServicePageAsset = async (
     serviceName: string,
-    pageId: string,
+    bundle: string,
+    assetPath: string,
   ) => {
     const serviceRegistry = await readResolvedServiceRegistry();
     const entry = serviceRegistry.find(
@@ -2350,53 +2402,43 @@ async function resolveRuntimeManagementCore(
       return {
         status: 404,
         body: {
-          error: "Service page not found.",
+          error: "Service asset not found.",
         },
       };
     }
 
-    const page = findServiceMenuPageById(entry.service.menu, pageId);
-    if (!page?.render) {
+    const normalizedPath = normalizeBundleAssetPath(assetPath);
+    const asset = await context.bundleStore?.read(
+      {
+        serviceName: entry.service.name,
+        bundle,
+      },
+      normalizedPath,
+    );
+
+    if (!asset) {
       return {
         status: 404,
         body: {
-          error: "Service page not found.",
+          error: "Service asset not found.",
         },
       };
     }
 
-    const rendered = await page.render({
-      service: entry.service.name,
-      page: page.id,
-      rootPath,
-      api: {
-        prefix: context.apiPrefix,
-        version: context.apiVersion,
-        basePath: joinPathParts(
-          rootPath,
-          context.apiPrefix,
-          context.apiVersion,
-        ),
-      },
-    });
-    const document =
-      typeof rendered === "string" ? { html: rendered } : rendered;
-    const headers = new Headers(document.headers);
-
-    if (!headers.has("content-type")) {
-      headers.set(
-        "content-type",
-        document.contentType ?? "text/html; charset=utf-8",
-      );
-    }
-    if (!headers.has("cache-control")) {
-      headers.set("cache-control", "no-cache");
+    const headers = new Headers();
+    headers.set(
+      "content-type",
+      asset.contentType ?? guessServiceAssetContentType(normalizedPath),
+    );
+    headers.set("cache-control", asset.cacheControl ?? "no-cache");
+    if (asset.contentDisposition) {
+      headers.set("content-disposition", asset.contentDisposition);
     }
 
     return {
-      status: document.status ?? 200,
+      status: 200,
       headers,
-      body: document.html,
+      body: asset.body,
     };
   };
   const createDashboardRuntimeConfig = async () => {
@@ -2631,12 +2673,12 @@ async function resolveRuntimeManagementCore(
           },
         },
         {
-          id: "runtime.service-page.read",
+          id: "runtime.service-page-asset.read",
           method: "GET",
           path: joinPathParts(
             context.apiPrefix,
             context.apiVersion,
-            "runtime/service-pages/:service/:page",
+            "runtime/service-page-assets/:service/:bundle/*path",
           ),
           handler: async ({
             params,
@@ -2645,14 +2687,19 @@ async function resolveRuntimeManagementCore(
           }) => {
             try {
               const serviceName = params.service?.trim();
-              const pageId = params.page?.trim();
-              if (!serviceName || !pageId) {
+              const bundle = params.bundle?.trim();
+              const assetPath = params.path?.trim();
+              if (!serviceName || !bundle || !assetPath) {
                 throw new ZelavisValidationError(
-                  "Service name and page id are required.",
+                  "Service name, bundle, and asset path are required.",
                 );
               }
 
-              return await renderServicePageDocument(serviceName, pageId);
+              return await renderServicePageAsset(
+                serviceName,
+                bundle,
+                assetPath,
+              );
             } catch (error) {
               return zelavisErrorResponse(error, 400);
             }
@@ -3937,6 +3984,7 @@ export async function zelavis(
       getServices: () => runtimeConfigServices,
       settingsStore: dashboardSettingsStore,
       websiteEnabled,
+      bundleStore: options.bundleStore,
     },
   );
   const effectiveRuntimeServices = runtimeServices.map((service) =>

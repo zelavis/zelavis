@@ -463,6 +463,62 @@ test("app.devUrl can include its own base path that prefixes the relative path",
   );
 });
 
+test("app.devUrl can leave reserved paths on the runtime", async () => {
+  const service = defineService({
+    name: "@example/rr-app",
+    scope: "system",
+    app: {
+      mount: "/zelavis",
+      bundle: "dist",
+      devUrl: "http://127.0.0.1:3001/zelavis",
+      devUrlExcludePaths: ["api"],
+      shell: {
+        render: ({ path }) => ({
+          status: 418,
+          body: `runtime-owned:${path}`,
+        }),
+      },
+    },
+  });
+
+  const { services } = await activateServiceRegistry(
+    [{ service: service, status: "installed" }],
+    {
+      rootPath: "/",
+      api: { prefix: "/api", version: "v1", basePath: "/api/v1" },
+      platform: {
+        presets: [],
+        resources: { keyValueStore: false, fileStorage: true },
+        metadata: {},
+      },
+      core: {},
+    },
+    { bundleStore: createInMemoryBundleStore(new Map()) },
+  );
+
+  const runtime = await zelavisServer({ services });
+
+  const appResponse = await runtime.fetch(
+    new Request("http://localhost/zelavis/projects/a", {
+      redirect: "manual",
+    }),
+  );
+  assert.equal(appResponse.status, 307);
+  assert.equal(
+    appResponse.headers.get("location"),
+    "http://127.0.0.1:3001/zelavis/projects/a",
+  );
+
+  const apiResponse = await runtime.fetch(
+    new Request("http://localhost/zelavis/api/v1/runtime/config", {
+      redirect: "manual",
+    }),
+  );
+  assert.equal(apiResponse.status, 418);
+  assert.equal(await apiResponse.text(), "runtime-owned:api/v1/runtime/config");
+  assert.equal(apiResponse.headers.get("location"), null);
+});
+
 test("app.devUrl bypasses bundle store and shell.render entirely", async () => {
   // If devUrl is configured, neither the bundle store nor any
   // configured shell.render should be invoked — the dev server is the

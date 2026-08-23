@@ -16,30 +16,30 @@ const menuFixedActionScopes = [
   "clear",
 ] as const satisfies readonly ZelavisMenuFixedActionScope[];
 
-export interface ZelavisServiceMenuPageRenderContext {
-  service: string;
-  page: string;
-  rootPath: string;
-  api: ZelavisServiceSetupApiContext;
-}
-
-export interface ZelavisServiceRenderedPageDocument {
-  html: string;
-  status?: number;
-  headers?: HeadersInit;
-  contentType?: string;
+function isBundleRelativeFilePath(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/");
+  const segments = normalized.split("/").filter(Boolean);
+  return (
+    !normalized.startsWith("/") &&
+    segments.length > 0 &&
+    segments.every((segment) => segment !== "." && segment !== "..")
+  );
 }
 
 export interface ZelavisServiceMenuPageDefinition {
   id: string;
   title?: string;
-  render?:
-    | ((
-        context: ZelavisServiceMenuPageRenderContext,
-      ) =>
-        | string
-        | ZelavisServiceRenderedPageDocument
-        | Promise<string | ZelavisServiceRenderedPageDocument>);
+  /**
+   * HTML entry file inside the service dashboard bundle. This follows the
+   * browser-extension style: menu items point at concrete files such as
+   * `dashboard.html`, `settings.html`, or `options.html`.
+   */
+  file: string;
+  /**
+   * Bundle identifier that contains `file`. Defaults to the service app bundle
+   * when one is declared, otherwise `"dist"`.
+   */
+  bundle?: string;
 }
 
 export type ZelavisServiceMenuDefinition = Omit<
@@ -201,6 +201,12 @@ export interface ZelavisServiceAppDefinition {
    * URL instead of reading from the bundle.
    */
   devUrl?: string;
+  /**
+   * Mount-relative path prefixes that remain owned by the Zelavis runtime even
+   * when `devUrl` is active. Use this for reserved API namespaces under an app
+   * mount, such as a dashboard mounted at `/zelavis` with `/zelavis/api/v1`.
+   */
+  devUrlExcludePaths?: readonly string[];
 }
 
 export interface ZelavisServiceDefinition<
@@ -417,6 +423,36 @@ function validateServiceMenu(
     }
 
     if (
+      "file" in menu.page &&
+      menu.page.file !== undefined &&
+      typeof menu.page.file !== "string"
+    ) {
+      throw new TypeError(
+        `Service menu page metadata for "${path}" file must be a string when provided.`,
+      );
+    }
+
+    if (
+      "file" in menu.page &&
+      typeof menu.page.file === "string" &&
+      !isBundleRelativeFilePath(menu.page.file)
+    ) {
+      throw new TypeError(
+        `Service menu page metadata for "${path}" file must be a bundle-relative path.`,
+      );
+    }
+
+    if (
+      "bundle" in menu.page &&
+      menu.page.bundle !== undefined &&
+      typeof menu.page.bundle !== "string"
+    ) {
+      throw new TypeError(
+        `Service menu page metadata for "${path}" bundle must be a string when provided.`,
+      );
+    }
+
+    if (
       "title" in menu.page &&
       menu.page.title !== undefined &&
       typeof menu.page.title !== "string"
@@ -426,13 +462,9 @@ function validateServiceMenu(
       );
     }
 
-    if (
-      "render" in menu.page &&
-      menu.page.render !== undefined &&
-      typeof menu.page.render !== "function"
-    ) {
+    if (!menu.page.file) {
       throw new TypeError(
-        `Service menu page metadata for "${path}" render field must be a function.`,
+        `Service menu page metadata for "${path}" must include a page.file HTML entry.`,
       );
     }
   }
@@ -462,31 +494,41 @@ function validateServiceMenu(
         `Service menu dynamicItems metadata for "${path}" emptyTitle must be a string when provided.`,
       );
     }
-  }
 
-  menu.items?.forEach((item) => validateServiceMenu(item, `${path} > ${item.title}`));
-}
+    if (
+      "emptyPath" in menu.dynamicItems &&
+      menu.dynamicItems.emptyPath !== undefined &&
+      typeof menu.dynamicItems.emptyPath !== "string"
+    ) {
+      throw new TypeError(
+        `Service menu dynamicItems metadata for "${path}" emptyPath must be a string when provided.`,
+      );
+    }
 
-export function findServiceMenuPageById(
-  menu: ZelavisServiceMenuDefinition | undefined,
-  pageId: string,
-): ZelavisServiceMenuPageDefinition | undefined {
-  if (!menu) {
-    return undefined;
-  }
+    if (
+      "emptySearch" in menu.dynamicItems &&
+      menu.dynamicItems.emptySearch !== undefined &&
+      (!menu.dynamicItems.emptySearch ||
+        typeof menu.dynamicItems.emptySearch !== "object" ||
+        Array.isArray(menu.dynamicItems.emptySearch))
+    ) {
+      throw new TypeError(
+        `Service menu dynamicItems metadata for "${path}" emptySearch must be an object when provided.`,
+      );
+    }
 
-  if (menu.page?.id === pageId) {
-    return menu.page;
-  }
-
-  for (const item of menu.items ?? []) {
-    const page = findServiceMenuPageById(item, pageId);
-    if (page) {
-      return page;
+    if (menu.dynamicItems.emptySearch) {
+      for (const [key, value] of Object.entries(menu.dynamicItems.emptySearch)) {
+        if (typeof key !== "string" || (value !== undefined && typeof value !== "string")) {
+          throw new TypeError(
+            `Service menu dynamicItems metadata for "${path}" emptySearch values must be strings when provided.`,
+          );
+        }
+      }
     }
   }
 
-  return undefined;
+  menu.items?.forEach((item) => validateServiceMenu(item, `${path} > ${item.title}`));
 }
 
 function validateOptionalString(
@@ -705,6 +747,21 @@ function validateServiceApp(app: ZelavisServiceAppDefinition): void {
   ) {
     throw new TypeError("Service app devUrl must be a string when provided.");
   }
+
+  if ("devUrlExcludePaths" in app && app.devUrlExcludePaths !== undefined) {
+    if (!Array.isArray(app.devUrlExcludePaths)) {
+      throw new TypeError(
+        "Service app devUrlExcludePaths must be an array when provided.",
+      );
+    }
+    for (const path of app.devUrlExcludePaths) {
+      if (typeof path !== "string") {
+        throw new TypeError(
+          "Service app devUrlExcludePaths entries must be strings.",
+        );
+      }
+    }
+  }
 }
 
 function freezeServiceApp(
@@ -718,6 +775,9 @@ function freezeServiceApp(
     mode: app.mode,
     shell: app.shell ? Object.freeze({ render: app.shell.render }) : app.shell,
     devUrl: app.devUrl,
+    devUrlExcludePaths: app.devUrlExcludePaths
+      ? Object.freeze([...app.devUrlExcludePaths])
+      : app.devUrlExcludePaths,
   });
 }
 

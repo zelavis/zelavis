@@ -6,14 +6,23 @@ import {
   Plus,
   Search,
   SquareStack,
+  Trash2,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useRevalidator, useRouteLoaderData } from "react-router";
 
 import { ResourceNotice, StatusBadge } from "#/components/DashboardPage";
 import { AssistantButton } from "#/components/assistant/AssistantButton";
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "#/components/ui/empty";
 import { Input } from "#/components/ui/input";
 import {
   getDashboardProjectsForAccess,
@@ -21,6 +30,7 @@ import {
 } from "#/lib/dashboard-data";
 import {
   createProject,
+  deleteProject,
   setProjectRunning,
   type RuntimeProject,
 } from "#/lib/runtime-api";
@@ -81,6 +91,15 @@ function ProjectsRoute() {
     );
   }, [allowedProjectIds, projects, q]);
 
+  useEffect(() => {
+    if (!message) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => setMessage(undefined), 4500);
+    return () => window.clearTimeout(timeout);
+  }, [message]);
+
   async function handleCreateProject(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!rootData) {
@@ -116,6 +135,31 @@ function ProjectsRoute() {
     try {
       await setProjectRunning(rootData.runtime, project.id, running);
       setMessage(`${project.name} ${running ? "started" : "stopped"}.`);
+      revalidator.revalidate();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setPendingProjectId(undefined);
+    }
+  }
+
+  async function handleDeleteProject(project: RuntimeProject) {
+    if (!rootData) {
+      return;
+    }
+    const confirmed = window.confirm(
+      `Delete ${project.name}? This permanently removes the project runtime, database, files, and metadata.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setMessage(undefined);
+    setError(undefined);
+    setPendingProjectId(project.id);
+    try {
+      await deleteProject(rootData.runtime, project.id);
+      setMessage(`${project.name} was deleted.`);
       revalidator.revalidate();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -197,12 +241,8 @@ function ProjectsRoute() {
             className="pl-9"
           />
         </div>
-        <div className="flex items-center justify-between gap-3 sm:justify-end lg:ms-auto">
-          <p className="text-sm text-muted-foreground">
-            {filteredProjects.length}{" "}
-            {filteredProjects.length === 1 ? "project" : "projects"}
-          </p>
-          {canCreateProjects ? (
+        {canCreateProjects ? (
+          <div className="flex items-center justify-end lg:ms-auto">
             <Button
               type="button"
               className="lg:hidden"
@@ -211,8 +251,8 @@ function ProjectsRoute() {
               <Plus className="size-4" />
               New project
             </Button>
-          ) : null}
-        </div>
+          </div>
+        ) : null}
       </div>
 
       {filteredProjects.length > 0 ? (
@@ -290,6 +330,15 @@ function ProjectsRoute() {
                       )}
                       {isRunning ? "Stop" : "Start"}
                     </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      disabled={isPending}
+                      onClick={() => handleDeleteProject(project)}
+                    >
+                      <Trash2 className="size-4" />
+                      Delete
+                    </Button>
                     <AssistantButton
                       label={`Ask Assistant about ${project.name}`}
                       to={`/assistant?project=${encodeURIComponent(project.id)}`}
@@ -300,14 +349,31 @@ function ProjectsRoute() {
             );
           })}
         </section>
+      ) : projects.length === 0 ? (
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <SquareStack />
+            </EmptyMedia>
+            <EmptyTitle>No projects yet</EmptyTitle>
+            <EmptyDescription>
+              Create a Zelavis App project to start its independent local
+              runtime.
+            </EmptyDescription>
+          </EmptyHeader>
+          {canCreateProjects ? (
+            <EmptyContent>
+              <Button type="button" onClick={() => setParams({ new: "1" })}>
+                <Plus data-icon="inline-start" />
+                Create project
+              </Button>
+            </EmptyContent>
+          ) : null}
+        </Empty>
       ) : (
         <ResourceNotice
-          title={projects.length > 0 ? "No matching projects" : "No projects yet"}
-          description={
-            projects.length > 0
-              ? "Try a different project search."
-              : "Create a Zelavis App project to start its independent local runtime."
-          }
+          title="No matching projects"
+          description="Try a different project search."
         />
       )}
     </section>

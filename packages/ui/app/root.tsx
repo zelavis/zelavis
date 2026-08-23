@@ -44,6 +44,13 @@ function inferProjectIdFromRequestUrl(requestUrl: string) {
   return match?.[1] ? decodeURIComponent(match[1]) : undefined;
 }
 
+function hasRuntimeService(
+  runtime: { services?: readonly { name: string }[] },
+  serviceName: string,
+) {
+  return runtime.services?.some((service) => service.name === serviceName) ?? false;
+}
+
 function resolveDemoDashboardAccess(requestUrl: string): RuntimeDashboardAccess {
   const mode = new URL(requestUrl).searchParams.get("as");
   const projectId = inferProjectIdFromRequestUrl(requestUrl);
@@ -155,10 +162,11 @@ export async function clientLoader({ request }: Route.ClientLoaderArgs) {
   commitNavigationRuntime(runtimeConfig);
 
   const runtime = await resolveRuntimeDynamicMenus(runtimeConfig);
+  const hasDatabaseService = hasRuntimeService(runtime, "@zelavis/db");
   const [settings, databaseCollections, schemaCollections] = await Promise.all([
     getDashboardSettings(runtime),
-    listDatabaseCollections(runtime),
-    listDatabaseSchemaCollections(runtime),
+    hasDatabaseService ? listDatabaseCollections(runtime) : [],
+    hasDatabaseService ? listDatabaseSchemaCollections(runtime) : [],
   ]);
 
   return {

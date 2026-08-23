@@ -20,6 +20,7 @@
     "test": "pnpm run typecheck"
   },
   "files": [
+    "dashboard",
     "dist"
   ],
   "publishConfig": {

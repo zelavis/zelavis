@@ -20,14 +20,10 @@ export default [
     route("appearance", "routes/settings.appearance.tsx"),
   ]),
   route("projects/:projectId", "routes/index.tsx"),
+  route("projects/:projectId/backend", "routes/backend.tsx"),
+  route("projects/:projectId/extensions", "routes/extensions.tsx"),
   route("projects/:projectId/agents", "routes/agents.tsx"),
   route("projects/:projectId/auth", "routes/auth.tsx"),
-  route("projects/:projectId/commerce", "routes/commerce.tsx", [
-    route("products", "routes/commerce.products.tsx"),
-    route("orders", "routes/commerce.orders.tsx"),
-    route("customers", "routes/commerce.customers.tsx"),
-    route("coupons", "routes/commerce.coupons.tsx"),
-  ]),
   route("projects/:projectId/content", "routes/content.tsx", [
     route("new", "routes/content.new.tsx"),
     route(":contentType", "routes/content.$contentType.tsx", [
@@ -45,6 +41,10 @@ export default [
   route("projects/:projectId/users", "routes/users.tsx"),
   route("projects/:projectId/website", "routes/website.tsx"),
   route("projects/:projectId/workloads", "routes/workloads.tsx"),
+  route("projects/:projectId/workloads/functions", "routes/workloads.functions.tsx"),
+  route("projects/:projectId/workloads/jobs", "routes/workloads.jobs.tsx"),
+  route("projects/:projectId/workloads/schedules", "routes/workloads.schedules.tsx"),
+  route("projects/:projectId/workloads/webhooks", "routes/workloads.webhooks.tsx"),
   route("projects/:projectId/workloads/new", "routes/workloads.new.tsx"),
   route("projects/:projectId/workloads/logs", "routes/workloads.logs.tsx"),
   route("projects/:projectId/workloads/settings", "routes/workloads.settings.tsx"),

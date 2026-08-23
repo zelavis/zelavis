@@ -65,6 +65,7 @@ type NavPanel = {
   title: string;
   panelLabel?: string;
   landingUrl?: string;
+  landingSearch?: DashboardNavSearch;
   fixedActionScope?: "local" | "inherit" | "replace" | "clear";
   items: readonly NavChildItem[];
 };
@@ -152,6 +153,7 @@ function findActiveTrail(
         title: item.title,
         panelLabel: item.panelLabel,
         landingUrl: item.landingUrl,
+        landingSearch: item.search,
         fixedActionScope: item.fixedActionScope,
         items: item.items,
       },
@@ -172,6 +174,8 @@ function findActiveTrail(
       panels.push({
         title: current.title,
         panelLabel: current.panelLabel,
+        landingUrl: current.landingUrl,
+        landingSearch: current.search,
         fixedActionScope: current.fixedActionScope,
         items: current.items,
       });
@@ -207,7 +211,9 @@ function findTrailByTitles(
     panels.push({
       title: match.title,
       panelLabel: match.panelLabel,
-      landingUrl: 'landingUrl' in match ? match.landingUrl as string | undefined : undefined,
+      landingUrl:
+        "landingUrl" in match ? (match.landingUrl as string | undefined) : undefined,
+      landingSearch: match.search,
       fixedActionScope: match.fixedActionScope,
       items: match.items,
     });
@@ -366,6 +372,7 @@ export function NavMain({
   const routeSidebarTrailKey = [
     ...(getDashboardSidebarTrailFromMatches(matches) ?? []),
     ...(locationSearch.systemTable ? ["System Tables"] : []),
+    ...(workloadViewPanelTitle(locationSearch.workloadView) ?? []),
   ].join("\u0000");
   const routeSidebarTrail = React.useMemo(() => {
     if (!routeSidebarTrailKey) {
@@ -626,13 +633,22 @@ export function NavMain({
     setShowMobileSlots(false);
     setTrail(nextTrail);
 
+    const targetSearch = mergeSearchParams("", {
+      ...(panel.landingSearch ?? {}),
+      sidebar: panelSearchValue(nextTrail),
+    });
+
     // Navigate to the panel's canonical landing page so the visible content
     // keeps pace with slide navigation.
-    if (panel.landingUrl && !pathname.startsWith(panel.landingUrl)) {
+    if (
+      panel.landingUrl &&
+      routeIdentity(pathname, location.search) !==
+        routeIdentity(panel.landingUrl, targetSearch)
+    ) {
       navigate(
         {
           pathname: panel.landingUrl,
-          search: mergeSearchParams("", { sidebar: panelSearchValue(nextTrail) }),
+          search: targetSearch,
         },
         { replace: false, viewTransition: true },
       );
@@ -677,7 +693,27 @@ export function NavMain({
       return;
     }
 
-    syncSidebarSearch(nextTrail, false);
+    const activeParentPanel = nextTrail.at(-1);
+    const targetSearch = mergeSearchParams("", {
+      ...(activeParentPanel?.landingSearch ?? {}),
+      sidebar: panelSearchValue(nextTrail),
+    });
+
+    if (
+      activeParentPanel?.landingUrl &&
+      routeIdentity(pathname, location.search) !==
+        routeIdentity(activeParentPanel.landingUrl, targetSearch)
+    ) {
+      navigate(
+        {
+          pathname: activeParentPanel.landingUrl,
+          search: targetSearch,
+        },
+        { replace: false, viewTransition: true },
+      );
+    } else {
+      syncSidebarSearch(nextTrail, false);
+    }
   }
 
   function goBack() {
@@ -688,33 +724,18 @@ export function NavMain({
     temporarilyHideScrollbars();
     resetPanelScroll(nextIndex);
     manualTrailOverrideRef.current = nextTrail;
+    shouldAnimateNextSlideRef.current = true;
     setShowMobileSlots(false);
 
+    // Trigger URL and route navigation immediately so the content area
+    // updates in sync with the slide transition
+    completeBackNavigation(nextTrail);
+
     if (!swiper) {
-      completeBackNavigation(nextTrail);
       return;
     }
 
     swiper.update();
-    let hasFinished = false;
-    const finishBackAnimation = () => {
-      if (hasFinished) {
-        return;
-      }
-
-      hasFinished = true;
-      cleanup();
-      completeBackNavigation(nextTrail);
-      backAnimationCleanupRef.current = null;
-    };
-    const fallback = window.setTimeout(finishBackAnimation, 1500);
-    const cleanup = () => {
-      window.clearTimeout(fallback);
-      swiper.off("slideChangeTransitionEnd", finishBackAnimation);
-    };
-
-    swiper.on("slideChangeTransitionEnd", finishBackAnimation);
-    backAnimationCleanupRef.current = cleanup;
     swiper.slideTo(nextIndex);
   }
 
@@ -761,6 +782,7 @@ export function NavMain({
                         title: item.title,
                         panelLabel: item.panelLabel,
                         landingUrl: item.landingUrl,
+                        landingSearch: item.search,
                         items: item.items ?? [],
                       })
                     }
@@ -899,6 +921,21 @@ function panelsLabelFromPath(pathname: string) {
     .split("-")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function workloadViewPanelTitle(value: unknown) {
+  switch (value) {
+    case "functions":
+      return ["Functions"];
+    case "jobs":
+      return ["Jobs"];
+    case "schedules":
+      return ["Schedules"];
+    case "webhooks":
+      return ["Webhooks"];
+    default:
+      return undefined;
+  }
 }
 
 function slotVisibilityClassName(slotId: DashboardSlotId) {

@@ -216,6 +216,7 @@ export function defineDatabaseService(
     basePath: "database",
     menu: {
       title: "Database",
+      path: "/database",
       surface: "core",
       panelLabel: "Database",
       dynamicItems: {
@@ -232,6 +233,8 @@ export function defineDatabaseService(
         },
         {
           title: "System Tables",
+          path: "/database",
+          search: { systemTable: "zv_collections" },
           panelLabel: "System Tables",
           items: [
             {

@@ -7,7 +7,13 @@ import {
   listWorkloads,
   type WorkloadDefinition,
 } from "#/lib/runtime-api";
-import type { Route } from "./+types/workloads";
+
+const workloadViews = ["functions", "jobs", "schedules", "webhooks"] as const;
+type WorkloadView = (typeof workloadViews)[number];
+type WorkloadsClientLoaderArgs = {
+  params: { projectId: string };
+  request: Request;
+};
 
 export const handle = {
   pageLabel: "Workloads",
@@ -15,13 +21,29 @@ export const handle = {
   slots: [{ id: "overview", label: "Overview" }],
 } as const;
 
-export async function clientLoader({ params, request }: Route.ClientLoaderArgs) {
+export async function clientLoader({ params, request }: WorkloadsClientLoaderArgs) {
   const runtime = await getActiveRuntimeConfig(request);
+  const url = new URL(request.url);
+  const requestedView =
+    workloadViewFromPath(url.pathname) ?? url.searchParams.get("workloadView");
   const workloads = await listWorkloads(runtime, {
     projectId: params.projectId,
   });
 
-  return { projectId: params.projectId, workloads };
+  return {
+    projectId: params.projectId,
+    workloads,
+    workloadView: workloadViews.includes(requestedView as WorkloadView)
+      ? (requestedView as WorkloadView)
+      : undefined,
+  };
+}
+
+function workloadViewFromPath(pathname: string): WorkloadView | undefined {
+  const lastSegment = pathname.split("/").filter(Boolean).at(-1);
+  return workloadViews.includes(lastSegment as WorkloadView)
+    ? (lastSegment as WorkloadView)
+    : undefined;
 }
 
 function typePath(workload: WorkloadDefinition) {
@@ -38,11 +60,20 @@ function typePath(workload: WorkloadDefinition) {
 }
 
 export default function WorkloadsRoute() {
-  const { workloads } = useLoaderData<typeof clientLoader>();
+  const { workloads, workloadView } = useLoaderData<typeof clientLoader>();
   const functions = workloads.filter((workload) => workload.type === "function");
   const jobs = workloads.filter((workload) => workload.type === "job");
   const schedules = workloads.filter((workload) => workload.type === "schedule");
   const webhooks = workloads.filter((workload) => workload.type === "webhook");
+  const visibleWorkloads = workloadView
+    ? workloads.filter((workload) => workload.type === workloadTypeForView(workloadView))
+    : workloads;
+  const emptyTitle = workloadView
+    ? `No ${workloadView} yet`
+    : "No workloads yet";
+  const emptyDescription = workloadView
+    ? `Use the sidebar action to add the first project ${singularWorkloadView(workloadView)}.`
+    : "Use the sidebar action to add the first project function.";
 
   return (
     <section
@@ -80,8 +111,8 @@ export default function WorkloadsRoute() {
       </div>
 
       <div className="overflow-hidden rounded-md border">
-        {workloads.length > 0 ? (
-          workloads.map((workload) => (
+        {visibleWorkloads.length > 0 ? (
+          visibleWorkloads.map((workload) => (
             <DataRow
               key={workload.id}
               label={workload.name}
@@ -98,11 +129,37 @@ export default function WorkloadsRoute() {
           ))
         ) : (
           <EmptyPanel
-            title="No workloads yet"
-            description="Use the sidebar action to add the first project function."
+            title={emptyTitle}
+            description={emptyDescription}
           />
         )}
       </div>
     </section>
   );
+}
+
+function workloadTypeForView(view: WorkloadView): WorkloadDefinition["type"] {
+  switch (view) {
+    case "functions":
+      return "function";
+    case "jobs":
+      return "job";
+    case "schedules":
+      return "schedule";
+    case "webhooks":
+      return "webhook";
+  }
+}
+
+function singularWorkloadView(view: WorkloadView) {
+  switch (view) {
+    case "functions":
+      return "function";
+    case "jobs":
+      return "job";
+    case "schedules":
+      return "schedule";
+    case "webhooks":
+      return "webhook";
+  }
 }

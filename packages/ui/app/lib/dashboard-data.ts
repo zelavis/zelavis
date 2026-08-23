@@ -19,9 +19,6 @@ import {
   Server,
   Settings2,
   ShieldCheck,
-  ShoppingBag,
-  Store,
-  TicketPercent,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -49,11 +46,6 @@ export type DashboardRoutePath =
   | `/projects/${string}/${string}`
   | "/agents"
   | "/auth"
-  | "/commerce"
-  | "/commerce/customers"
-  | "/commerce/coupons"
-  | "/commerce/orders"
-  | "/commerce/products"
   | "/content"
   | "/content/new"
   | `/content/${string}`
@@ -77,6 +69,7 @@ export type DashboardNavSearch = {
   [key: string]: string | undefined;
   domainAction?: "add" | "buy" | "transfer";
   resourceView?: "processes" | "storage" | "limits";
+  workloadView?: "functions" | "jobs" | "schedules" | "webhooks";
   systemTable?:
     | "zv_collections"
     | "zv_events"
@@ -104,6 +97,7 @@ export type DashboardNavItem = {
   sectionLabel?: string;
   disabled?: boolean;
   access?: RuntimeAccessRequirement | readonly RuntimeAccessRequirement[];
+  page?: RuntimeServicePageDefinition;
   serviceOwned?: boolean;
   items?: readonly DashboardNavItem[];
 };
@@ -118,6 +112,7 @@ export type DashboardPackageItem = {
 export type DashboardServiceRegistryMenuItem = {
   title: string;
   url?: DashboardRoutePath;
+  landingUrl?: DashboardRoutePath;
   search?: DashboardNavSearch;
   icon: LucideIcon;
   panelLabel?: string;
@@ -139,6 +134,13 @@ export type DashboardExtensionServiceItem = {
   status: "installed" | "available";
   source?: "official" | "community";
 };
+
+function menuHasSlideContent(menu: {
+  items?: readonly unknown[];
+  dynamicItems?: unknown;
+}) {
+  return Boolean(menu.items?.length || menu.dynamicItems);
+}
 
 export type DashboardProjectItem = {
   id: string;
@@ -575,15 +577,12 @@ function isBuiltInProjectPath(path: string) {
     "/",
     "/agents",
     "/auth",
-    "/commerce",
-    "/commerce/customers",
-    "/commerce/coupons",
-    "/commerce/orders",
-    "/commerce/products",
+    "/backend",
     "/content",
     "/content/new",
     "/database",
     "/database/new",
+    "/extensions",
     "/media",
     "/marketplace",
     "/settings",
@@ -693,33 +692,8 @@ function slugifyServiceName(name: string) {
     .replace(/^-+|-+$/g, "");
 }
 
-function getServiceRegistryMenuIcon(title: string, path?: string): LucideIcon {
-  switch (path) {
-    case "/commerce":
-      return Store;
-    case "/commerce/products":
-      return ShoppingBag;
-    case "/commerce/orders":
-      return ReceiptText;
-    case "/commerce/customers":
-      return Users;
-    case "/commerce/coupons":
-      return TicketPercent;
-    default:
-      break;
-  }
-
+function getServiceRegistryMenuIcon(title: string): LucideIcon {
   switch (title.toLowerCase()) {
-    case "ecommerce":
-      return Store;
-    case "products":
-      return ShoppingBag;
-    case "orders":
-      return ReceiptText;
-    case "customers":
-      return Users;
-    case "coupons":
-      return TicketPercent;
     case "more":
       return Package;
     default:
@@ -729,12 +703,21 @@ function getServiceRegistryMenuIcon(title: string, path?: string): LucideIcon {
 
 function createDashboardServiceRegistryMenuItem(
   menu: RuntimeServiceRegistryMenuDefinition,
+  serviceName?: string,
+  parentSegments: readonly string[] = [],
 ): DashboardServiceRegistryMenuItem {
+  const path = menu.path ?? deriveServiceMenuPath(menu.title, serviceName, parentSegments);
+  const nextSegments = [...parentSegments, slugifyMenuSegment(menu.title)];
+
   return {
     title: menu.title,
-    url: menu.path ? toDashboardRoutePath(menu.path) : undefined,
+    url: toDashboardRoutePath(path),
     search: menu.search,
-    icon: getServiceRegistryMenuIcon(menu.title, menu.path),
+    landingUrl:
+      menuHasSlideContent(menu)
+        ? toDashboardRoutePath(path)
+        : undefined,
+    icon: getServiceRegistryMenuIcon(menu.title),
     pageLabel: menu.pageLabel,
     panelLabel: menu.panelLabel,
     fixed: menu.fixed,
@@ -744,7 +727,9 @@ function createDashboardServiceRegistryMenuItem(
     disabled: menu.disabled,
     page: menu.page,
     serviceOwned: true,
-    items: menu.items?.map(createDashboardServiceRegistryMenuItem),
+    items: menu.items?.map((item) =>
+      createDashboardServiceRegistryMenuItem(item, serviceName, nextSegments),
+    ),
   };
 }
 
@@ -770,14 +755,18 @@ function getServiceMenuIcon(title: string, serviceName?: string): LucideIcon {
 function createDashboardServiceMenuItem(
   menu: RuntimeServiceMenuDefinition,
   serviceName?: string,
+  parentSegments: readonly string[] = [],
 ): DashboardNavItem {
+  const path = menu.path ?? deriveServiceMenuPath(menu.title, serviceName, parentSegments);
+  const nextSegments = [...parentSegments, slugifyMenuSegment(menu.title)];
+
   return {
     title: menu.title,
-    url: menu.path ? toDashboardRoutePath(menu.path) : undefined,
+    url: toDashboardRoutePath(path),
     search: menu.search,
     landingUrl:
-      menu.path && menu.items?.length
-        ? toDashboardRoutePath(menu.path)
+      menuHasSlideContent(menu)
+        ? toDashboardRoutePath(path)
         : undefined,
     icon: getServiceMenuIcon(menu.title, serviceName),
     pageLabel: menu.pageLabel,
@@ -788,8 +777,51 @@ function createDashboardServiceMenuItem(
     sectionLabel: menu.sectionLabel,
     disabled: menu.disabled,
     access: menu.access,
-    items: menu.items?.map((item) => createDashboardServiceMenuItem(item, serviceName)),
+    page: menu.page,
+    items: menu.items?.map((item) =>
+      createDashboardServiceMenuItem(item, serviceName, nextSegments),
+    ),
   };
+}
+
+function deriveServiceMenuPath(
+  title: string,
+  serviceName: string | undefined,
+  parentSegments: readonly string[],
+) {
+  const serviceSegment = serviceName
+    ? slugifyServiceSegment(serviceName)
+    : undefined;
+  const titleSegment = slugifyMenuSegment(title);
+  const segments = [
+    serviceSegment &&
+    ((parentSegments.length === 0 && serviceSegment === titleSegment) ||
+      parentSegments[0] === serviceSegment)
+      ? undefined
+      : serviceSegment,
+    ...parentSegments,
+    parentSegments.at(-1) === titleSegment ? undefined : titleSegment,
+  ].filter(Boolean);
+
+  return `/${segments.join("/")}`;
+}
+
+function slugifyServiceSegment(value: string) {
+  return value
+    .replace(/^@/, "")
+    .replace(/^zelavis\//, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function slugifyMenuSegment(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 type DashboardServiceSurface = NonNullable<RuntimeServiceMenuDefinition["surface"]>;
@@ -815,49 +847,17 @@ export function buildDashboardServiceRegistryEntries(
             name: service.name,
             status: service.status,
             source: service.source,
-            menu: createDashboardServiceRegistryMenuItem(service.menu),
+            menu: createDashboardServiceRegistryMenuItem(
+              service.menu,
+              service.name,
+            ),
           },
         ]
       : [],
   )
 }
 
-const defaultRuntimeServiceRegistry = [
-  {
-    name: "@zelavis/ecommerce",
-    version: "0.1.0",
-    status: "available",
-    source: "official",
-    menu: {
-      title: "Ecommerce",
-      path: "/commerce",
-      pageLabel: "Commerce",
-      items: [
-        {
-          title: "Products",
-          path: "/commerce/products",
-        },
-        {
-          title: "Orders",
-          path: "/commerce/orders",
-        },
-        {
-          title: "More",
-          items: [
-            {
-              title: "Customers",
-              path: "/commerce/customers",
-            },
-            {
-              title: "Coupons",
-              path: "/commerce/coupons",
-            },
-          ],
-        },
-      ],
-    },
-  },
-] as const satisfies readonly RuntimeServiceRegistryEntry[];
+const defaultRuntimeServiceRegistry = [] as const satisfies readonly RuntimeServiceRegistryEntry[];
 
 export const dashboardServiceRegistryEntries =
   buildDashboardServiceRegistryEntries(defaultRuntimeServiceRegistry);
@@ -935,6 +935,7 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
     apiPath: "/api/v1/database",
     menu: {
       title: "Database",
+      path: "/database",
       surface: "core",
       panelLabel: "Database",
       dynamicItems: {
@@ -951,6 +952,8 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
         },
         {
           title: "System Tables",
+          path: "/database",
+          search: { systemTable: "zv_collections" },
           panelLabel: "System Tables",
           items: [
             {
@@ -1143,6 +1146,8 @@ export function buildPlatformNavItems(
     {
       title: "Extensions",
       icon: Bot,
+      landingUrl: "/extensions",
+      panelLabel: "Extensions",
       sectionLabel: "Extend",
       access: projectAccess("project.extensions.manage", projectId),
       items: [
@@ -1158,6 +1163,8 @@ export function buildPlatformNavItems(
     {
       title: "Backend",
       icon: Server,
+      landingUrl: "/backend",
+      panelLabel: "Backend",
       sectionLabel: "Backend",
       access: projectAccess("project.backend.manage", projectId),
       items: coreServiceNavItems,
@@ -1260,16 +1267,53 @@ export function buildDashboardNavItems(
   ] as const;
 }
 
-export function findServiceMenuPageByPath(
+export type DashboardMenuContent =
+  | {
+      kind: "frame";
+      title: string;
+      page: RuntimeServicePageDefinition;
+    }
+  | {
+      kind: "placeholder";
+      title: string;
+      description: string;
+    };
+
+export function findServiceMenuContentByPath(
   pathname: string,
+  services?: readonly RuntimeService[],
   serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
-): RuntimeServicePageDefinition | undefined {
-  const search = (
-    items: readonly DashboardServiceRegistryMenuItem[],
-  ): RuntimeServicePageDefinition | undefined => {
+): DashboardMenuContent | undefined {
+  const projectId = getProjectIdFromPathname(pathname);
+  const items = projectId
+    ? buildPlatformNavItems(
+        services,
+        serviceRegistry,
+        undefined,
+        undefined,
+        projectId,
+      )
+    : [
+        ...buildProjectManagementNavItems(services),
+        ...buildExtensionServiceNavItems(serviceRegistry),
+      ];
+
+  const search = (items: readonly DashboardNavItem[]): DashboardMenuContent | undefined => {
     for (const item of items) {
       if (item.url === pathname && item.page) {
-        return item.page;
+        return {
+          kind: "frame",
+          title: item.page.title ?? item.pageLabel ?? item.title,
+          page: item.page,
+        };
+      }
+
+      if (item.url === pathname || item.landingUrl === pathname) {
+        return {
+          kind: "placeholder",
+          title: item.pageLabel ?? item.panelLabel ?? item.title,
+          description: `${item.title} is ready for a service-provided page or a dashboard route.`,
+        };
       }
 
       const nested = search(item.items ?? []);
@@ -1281,7 +1325,16 @@ export function findServiceMenuPageByPath(
     return undefined;
   };
 
-  return search(buildExtensionServiceNavItems(serviceRegistry));
+  return search(items);
+}
+
+export function findServiceMenuPageByPath(
+  pathname: string,
+  serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
+): RuntimeServicePageDefinition | undefined {
+  const content = findServiceMenuContentByPath(pathname, undefined, serviceRegistry);
+
+  return content?.kind === "frame" ? content.page : undefined;
 }
 
 export function getDashboardPageLabel(
@@ -1321,12 +1374,6 @@ export const serviceRows = [
     path: "/zelavis/api/v1/database",
     state: "ready",
     scope: "core",
-  },
-  {
-    name: "ecommerce",
-    path: "marketplace package",
-    state: "planned",
-    scope: "official",
   },
 ] as const;
 

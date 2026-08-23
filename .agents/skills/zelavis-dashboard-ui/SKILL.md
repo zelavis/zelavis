@@ -77,11 +77,17 @@ Available parsers: `parseAsString`, `parseAsStringLiteral`. Add new parsers to `
 
 `clientLoader` reads search params from `request.url` (not `useLocation`) so data loading and URL state are always in sync on reload.
 
-## Sidebar rules
+## Sidebar and navigation rules
 
 - The sidebar uses a Swiper-based slide navigation model — each slide is a distinct panel
 - Top-level sections that have a natural entry page declare `landingUrl` in `dashboard-data.ts`; this navigates the main content area when the section is opened from the Platform root
 - Add `landingUrl` to any new top-level section that has a clear entry page
+- **Rule 1 (Always Change Content)**: clicking any menu item or slide must update the URL and change the content area to its own dedicated page or panel. Even parent items with child items must land on an Overview page/route of that section when opened.
+- **Rule 2 (No Empty/Missing Content)**: if a specific domain feature is not yet built or is planned, a structured placeholder page/panel must still be rendered. A menu item must never be without content or act as a dead click.
+- **Rule 3 (Back Button Synchronization)**: clicking the Back button on any sidebar slide must navigate both the sidebar slide and the content area back to the corresponding parent route and update the URL.
+- **Rule 4 (URL State Reconstructability)**: every navigation step and sidebar slide depth must be reflected in the URL (`pathname` + `?sidebar=...`). Sharing or reloading a URL must reconstruct the exact same sidebar slide depth and active content area.
+- Dynamic menu sections must stay route-backed when empty. Use `dynamicItems.emptyPath` and `dynamicItems.emptySearch` for empty dynamic sections that should open a specific content route/search view.
+- Service menu `path` is the dashboard React Router URL. Service menu `page.file` is the browser-extension-style HTML entry file for iframe-backed service UI. Core services with UI routes in `@zelavis/ui` use `path` without `page`; custom service pages use concrete bundled files such as `dashboard.html`, `settings.html`, or `options.html`. If that file boots a SPA, its internal router/menu belongs inside the iframe content; the Zelavis sidebar still selects only the HTML entry file.
 - Do not hand-edit the sidebar slide structure unless the task explicitly changes navigation
 - Nested slide headers use a larger standard gap before the next menu content. Use `SidebarFixedActionMenu` for pinned/fixed action rows inside sidebar panels, and pass `afterHeader` when the action rows sit directly below a slide back/title header.
 - Build feature surfaces as mobile-slot-ready modules. Desktop routes should compose reusable workspace/panel components, and mobile sidebar slots should be able to mount the same components later.

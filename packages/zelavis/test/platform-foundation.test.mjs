@@ -337,6 +337,27 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
     assert.equal(listBody.runtime.driver, "node-process");
     assert.equal(listBody.runtime.capabilities.secureIsolation, false);
     assert.equal(listBody.projects.length, 2);
+
+    const deleteResponse = await runtimeRequest("/projects/alpha", {
+      method: "DELETE",
+    });
+    const deleteBody = await deleteResponse.json();
+    assert.equal(deleteResponse.status, 200, JSON.stringify(deleteBody));
+    assert.deepEqual(deleteBody, { deleted: true });
+    await assert.rejects(access(join(directory, "projects", "alpha")), {
+      code: "ENOENT",
+    });
+
+    const afterDeleteResponse = await runtimeRequest("/projects");
+    const afterDeleteBody = await afterDeleteResponse.json();
+    assert.equal(afterDeleteResponse.status, 200);
+    assert.deepEqual(
+      afterDeleteBody.projects.map((project) => project.id),
+      ["beta"],
+    );
+
+    const deletedProjectResponse = await runtimeRequest("/projects/alpha");
+    assert.equal(deletedProjectResponse.status, 404);
   } finally {
     for (const id of ["alpha", "beta"]) {
       await runtimeRequest(`/projects/${id}/stop`, {

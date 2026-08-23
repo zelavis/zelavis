@@ -150,7 +150,7 @@ Service dashboard pages can present forms, charts, setup flows, and actions, but
 Good shape:
 
 - `setup(context)` registers the capability and endpoint
-- `menu.page` renders UI that calls the endpoint
+- `menu.page.file` selects a bundled HTML entry file that calls the endpoint
 - the operation can be tested without rendering the dashboard
 
 Avoid:
@@ -176,20 +176,7 @@ export default defineService({
     page: {
       id: "dashboard",
       title: "Search",
-      render({ service, api }) {
-        return {
-          html: `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <title>${service}</title>
-  </head>
-  <body>
-    <main data-api="${api.basePath}">Search service</main>
-  </body>
-</html>`,
-        };
-      },
+      file: "dashboard.html",
     },
   },
   setup(context) {
@@ -212,13 +199,36 @@ export default defineService({
 });
 ```
 
+The installed service bundle should include `dashboard.html`. That file can be
+plain HTML or boot a client app:
+
+```html
+<main id="app"></main>
+<script type="module" src="./dashboard.js"></script>
+```
+
+`dashboard.js` is served from the same service bundle as the HTML file. If it
+contains a client router, tabs, or a local menu, that navigation belongs to the
+embedded page itself.
+
 Important details:
 
 - `name` is the stable runtime service id and should match the registry/catalog name.
 - `version` is service metadata; package publishing still follows the package registry.
 - `menu` is plain metadata. Services never reach into dashboard sidebar internals.
-- `menu.page.render(...)` returns a full HTML document string or `{ html, status, headers, contentType }`.
 - Service pages are mounted in the dashboard through the `zelavis-service-frame` iframe web component.
+- `menu.path` is the dashboard URL owned by React Router. `menu.page.file` is
+  the browser-extension-style HTML entry file for iframe-backed service UI,
+  such as `dashboard.html`, `settings.html`, or `options.html`.
+- Zelavis serves `page.file` and sibling assets from the service bundle. A page
+  can reference bundled files with normal relative URLs such as
+  `<script type="module" src="./settings.js"></script>`.
+- If the HTML file boots a SPA, that SPA owns its internal router, tabs, and
+  menu. Zelavis sidebar items select concrete HTML entry files; they do not
+  deep-link into plugin-private SPA routes.
+- Core services whose content already ships with `@zelavis/ui` should use
+  `menu.path` without `menu.page`, so the local route renders directly instead
+  of mounting an iframe.
 - Menu items can use `fixed: true` for slide-local pinned actions such as
   "Add Function". Use `fixedOrder` when a slide has multiple fixed actions.
 - Nested slides can set `fixedActionScope` to control whether parent fixed
@@ -227,7 +237,8 @@ Important details:
   an explicit boundary, and `clear` hides fixed actions until a deeper slide
   reintroduces them.
 - Menu items can use `dynamicItems` when a slide section is backed by runtime
-  state. The dynamic endpoint should return ordinary menu item metadata.
+  state. The dynamic endpoint returns `{ "items": [...] }`, and each item uses
+  the same metadata shape as static service menu items.
 - Menu items can include `search` when navigation depends on URL state, for
   example `{ databaseTable: "products" }`. Prefer returning that from the
   service-owned menu endpoint over hardcoding service-specific lists in the

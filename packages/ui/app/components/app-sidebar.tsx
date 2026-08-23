@@ -181,7 +181,7 @@ export function AppSidebar({
   );
 
   return (
-    <Sidebar variant="inset" collapsible="icon" {...props}>
+    <Sidebar collapsible="icon" {...props}>
       <SidebarHeader
         className={sidebarChromeClassName}
         {...sidebarChromeInertProps}

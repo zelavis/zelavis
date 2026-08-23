@@ -54,12 +54,14 @@ function createStoredZip(files) {
 }
 
 const index = await readFile(join(root, "dist", "index.js"));
+const dashboard = await readFile(join(root, "public", "dashboard.html"));
 const declarations = await readFile(join(root, "dist", "index.d.ts")).catch(
   () => undefined,
 );
 const files = {
   "zelavis.service.json": `${JSON.stringify({ entry: "./dist/index.js" }, null, 2)}\n`,
   "dist/index.js": index,
+  "dist/dashboard.html": dashboard,
 };
 
 if (declarations) {

@@ -20,7 +20,6 @@ export {
   defineServiceCatalog,
   defineServiceCatalogEntry,
   defineService,
-  findServiceMenuPageById,
   isChildServiceAllowed,
 } from "@zelavis/server";
 export type {
@@ -43,13 +42,11 @@ export type {
   ZelavisServiceMarketplaceMetadata,
   ZelavisServiceMenuDefinition,
   ZelavisServiceMenuPageDefinition,
-  ZelavisServiceMenuPageRenderContext,
   ZelavisServiceModule,
   ZelavisServiceRegistryEntry,
   ZelavisServiceRegistryModuleEntry,
   ZelavisServiceRegistryStateEntry,
   ZelavisServiceRegistryStore,
-  ZelavisServiceRenderedPageDocument,
   ZelavisServiceScope,
   ZelavisServiceSetupApiContext,
   ZelavisServiceSetupContext,

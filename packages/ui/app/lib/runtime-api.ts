@@ -1,6 +1,7 @@
 export interface RuntimeServiceMenuDefinition {
   title: string;
   path?: string;
+  page?: RuntimeServicePageDefinition;
   pageLabel?: string;
   panelLabel?: string;
   search?: Record<string, string | undefined>;
@@ -14,8 +15,14 @@ export interface RuntimeServiceMenuDefinition {
   dynamicItems?: {
     path: string;
     emptyTitle?: string;
+    emptyPath?: string;
+    emptySearch?: Record<string, string | undefined>;
   };
   items?: readonly RuntimeServiceMenuDefinition[];
+}
+
+export interface RuntimeServiceDynamicMenuResponse {
+  items: readonly RuntimeServiceMenuDefinition[];
 }
 
 export interface RuntimeService {
@@ -28,6 +35,7 @@ export interface RuntimeService {
 export interface RuntimeServicePageDefinition {
   id: string;
   title?: string;
+  file?: string;
   src: string;
 }
 
@@ -46,6 +54,8 @@ export interface RuntimeServiceRegistryMenuDefinition {
   dynamicItems?: {
     path: string;
     emptyTitle?: string;
+    emptyPath?: string;
+    emptySearch?: Record<string, string | undefined>;
   };
   page?: RuntimeServicePageDefinition;
   items?: readonly RuntimeServiceRegistryMenuDefinition[];
@@ -297,42 +307,6 @@ export interface WebsitePage {
   description?: string;
 }
 
-export interface CommerceCustomer {
-  id: string;
-  accountId?: string;
-  email: string;
-  firstName?: string;
-  lastName?: string;
-  metadata?: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface CommerceCoupon {
-  code: string;
-  description?: string;
-  discountType: "percentage" | "fixed";
-  discountValue: number;
-  active: boolean;
-  metadata?: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface CommerceProduct {
-  id: string;
-  slug: string;
-  title: string;
-  description?: string;
-  price: {
-    amount: number;
-    currency: string;
-  };
-  metadata?: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface AuthAccount {
   id: string;
   email?: string;
@@ -342,65 +316,6 @@ export interface AuthAccount {
   metadata?: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface CommerceOrder {
-  id: string;
-  customerId: string;
-  items: Array<{
-    productId: string;
-    quantity: number;
-    unitPrice: number;
-  }>;
-  couponCodes: string[];
-  status: "draft" | "pending" | "paid" | "cancelled" | "fulfilled";
-  totals: {
-    subtotal: number;
-    discountTotal: number;
-    taxTotal: number;
-    grandTotal: number;
-    currency: string;
-  };
-  metadata?: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface CommercePaymentAttempt {
-  id: string;
-  orderId: string;
-  provider: string;
-  amount: number;
-  currency: string;
-  status: "requires_action" | "authorized" | "captured" | "failed" | "refunded";
-  reference?: string;
-  metadata?: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface CommerceSubscription {
-  id: string;
-  customerId: string;
-  provider: string;
-  amount: number;
-  currency: string;
-  interval: "day" | "week" | "month" | "year";
-  intervalCount: number;
-  status: "pending" | "active" | "past_due" | "cancelled" | "expired" | "failed";
-  cancelAtPeriodEnd: boolean;
-  currentPeriodStart?: string;
-  currentPeriodEnd?: string;
-  reference?: string;
-  metadata?: Record<string, unknown>;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface CommerceProvider {
-  name: string;
-  parentService: string;
-  childService: boolean;
 }
 
 export interface StorageFile {
@@ -581,11 +496,6 @@ const fallbackConfig: RuntimeConfig = {
       "/projects/:projectId",
       "/projects/:projectId/agents",
       "/projects/:projectId/auth",
-      "/projects/:projectId/commerce",
-      "/projects/:projectId/commerce/customers",
-      "/projects/:projectId/commerce/coupons",
-      "/projects/:projectId/commerce/orders",
-      "/projects/:projectId/commerce/products",
       "/projects/:projectId/content",
       "/projects/:projectId/content/new",
       "/projects/:projectId/database",
@@ -597,12 +507,16 @@ const fallbackConfig: RuntimeConfig = {
       "/projects/:projectId/users",
       "/projects/:projectId/website",
       "/projects/:projectId/workloads",
+      "/projects/:projectId/workloads/functions",
       "/projects/:projectId/workloads/functions/:workloadId",
+      "/projects/:projectId/workloads/jobs",
       "/projects/:projectId/workloads/jobs/:workloadId",
       "/projects/:projectId/workloads/logs",
       "/projects/:projectId/workloads/new",
+      "/projects/:projectId/workloads/schedules",
       "/projects/:projectId/workloads/schedules/:workloadId",
       "/projects/:projectId/workloads/settings",
+      "/projects/:projectId/workloads/webhooks",
       "/projects/:projectId/workloads/webhooks/:workloadId",
     ],
     assetRoot: "/assets",
@@ -668,6 +582,7 @@ const fallbackConfig: RuntimeConfig = {
       apiPath: "/api/v1/database",
       menu: {
         title: "Database",
+        path: "/database",
         surface: "core",
         panelLabel: "Database",
         dynamicItems: {
@@ -682,9 +597,11 @@ const fallbackConfig: RuntimeConfig = {
             fixed: true,
             fixedOrder: 1,
           },
-          {
-            title: "System Tables",
-            panelLabel: "System Tables",
+            {
+              title: "System Tables",
+              path: "/database",
+              search: { systemTable: "zv_collections" },
+              panelLabel: "System Tables",
             items: [
               {
                 title: "zv_collections",
@@ -753,11 +670,13 @@ const fallbackConfig: RuntimeConfig = {
       apiPath: "/api/v1/workloads",
       menu: {
         title: "Workloads",
+        path: "/workloads",
         surface: "core",
         panelLabel: "Workloads",
         items: [
           {
             title: "Functions",
+            path: "/workloads/functions",
             panelLabel: "Functions",
             items: [
               {
@@ -771,30 +690,37 @@ const fallbackConfig: RuntimeConfig = {
             dynamicItems: {
               path: "/workloads/menu/functions",
               emptyTitle: "No functions yet",
+              emptyPath: "/workloads/functions",
             },
           },
           {
             title: "Jobs",
+            path: "/workloads/jobs",
             panelLabel: "Jobs",
             dynamicItems: {
               path: "/workloads/menu/jobs",
               emptyTitle: "No jobs yet",
+              emptyPath: "/workloads/jobs",
             },
           },
           {
             title: "Schedules",
+            path: "/workloads/schedules",
             panelLabel: "Schedules",
             dynamicItems: {
               path: "/workloads/menu/schedules",
               emptyTitle: "No schedules yet",
+              emptyPath: "/workloads/schedules",
             },
           },
           {
             title: "Webhooks",
+            path: "/workloads/webhooks",
             panelLabel: "Webhooks",
             dynamicItems: {
               path: "/workloads/menu/webhooks",
               emptyTitle: "No webhooks yet",
+              emptyPath: "/workloads/webhooks",
             },
           },
           { title: "Logs", path: "/workloads/logs", pageLabel: "Workloads" },
@@ -807,42 +733,7 @@ const fallbackConfig: RuntimeConfig = {
       },
     },
   ],
-  serviceRegistry: [
-    {
-      name: "@zelavis/ecommerce",
-      version: "0.1.0",
-      status: "available",
-      source: "official",
-      menu: {
-        title: "Ecommerce",
-        path: "/commerce",
-        pageLabel: "Commerce",
-        items: [
-          {
-            title: "Products",
-            path: "/commerce/products",
-          },
-          {
-            title: "Orders",
-            path: "/commerce/orders",
-          },
-          {
-            title: "More",
-            items: [
-              {
-                title: "Customers",
-                path: "/commerce/customers",
-              },
-              {
-                title: "Coupons",
-                path: "/commerce/coupons",
-              },
-            ],
-          },
-        ],
-      },
-    },
-  ],
+  serviceRegistry: [],
   serviceActivation: {
     mode: "runtime",
     capabilities: {
@@ -871,9 +762,93 @@ function normalizeRuntimeServices(
       ...fallback,
       ...service,
       apiPath: service.apiPath,
-      menu: service.menu ?? fallback?.menu,
+      menu: normalizeRuntimeServiceMenu(
+        service.menu ?? fallback?.menu,
+        service.name,
+      ),
     };
   });
+}
+
+function normalizeRuntimeServiceRegistry(
+  services: readonly RuntimeServiceRegistryEntry[],
+): RuntimeServiceRegistryEntry[] {
+  return services.map((service) => ({
+    ...service,
+    menu: normalizeRuntimeServiceMenu(service.menu, service.name) as
+      | RuntimeServiceRegistryMenuDefinition
+      | undefined,
+  }));
+}
+
+function normalizeRuntimeServiceMenu<
+  TMenu extends RuntimeServiceMenuDefinition | RuntimeServiceRegistryMenuDefinition,
+>(
+  menu: TMenu | undefined,
+  serviceName: string,
+  parentSegments: readonly string[] = [],
+): TMenu | undefined {
+  if (!menu) {
+    return undefined;
+  }
+
+  const segment = slugifyMenuSegment(menu.title);
+  const nextSegments = [...parentSegments, segment];
+  const path =
+    menu.path ??
+    deriveRuntimeServiceMenuPath(serviceName, menu.title, parentSegments);
+
+  return {
+    ...menu,
+    path,
+    dynamicItems: menu.dynamicItems
+      ? {
+          ...menu.dynamicItems,
+          emptyPath: menu.dynamicItems.emptyPath ?? path,
+          emptySearch: menu.dynamicItems.emptySearch ?? menu.search,
+        }
+      : menu.dynamicItems,
+    items: menu.items?.map((item) =>
+      normalizeRuntimeServiceMenu(item, serviceName, nextSegments),
+    ) as TMenu["items"],
+  };
+}
+
+function slugifyServiceSegment(value: string) {
+  return value
+    .replace(/^@/, "")
+    .replace(/^zelavis\//, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function deriveRuntimeServiceMenuPath(
+  serviceName: string,
+  title: string,
+  parentSegments: readonly string[],
+) {
+  const serviceSegment = slugifyServiceSegment(serviceName);
+  const titleSegment = slugifyMenuSegment(title);
+  const segments = [
+    (parentSegments.length === 0 && serviceSegment === titleSegment) ||
+    parentSegments[0] === serviceSegment
+      ? undefined
+      : serviceSegment,
+    ...parentSegments,
+    parentSegments.at(-1) === titleSegment ? undefined : titleSegment,
+  ].filter(Boolean);
+
+  return `/${segments.join("/")}`;
+}
+
+function slugifyMenuSegment(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 export const EMPTY_DASHBOARD_PREFERENCES: DashboardPreferences = {};
@@ -1003,10 +978,10 @@ async function resolveDynamicMenuItems(
       ),
     ),
     menu.dynamicItems
-      ? readJson<{ items?: RuntimeServiceMenuDefinition[] }>(
+      ? readJson<RuntimeServiceDynamicMenuResponse>(
           joinApiPath(config.api.basePath, menu.dynamicItems.path),
         )
-          .then((result) => result.items ?? [])
+          .then((result) => normalizeDynamicMenuItems(result.items, menu.path))
           .catch(() => [] as RuntimeServiceMenuDefinition[])
       : Promise.resolve([] as RuntimeServiceMenuDefinition[]),
   ]);
@@ -1021,12 +996,43 @@ async function resolveDynamicMenuItems(
           ? [
               {
                 title: menu.dynamicItems.emptyTitle,
-                disabled: true,
+                path: menu.dynamicItems.emptyPath ?? menu.path,
+                search: menu.dynamicItems.emptySearch ?? menu.search,
+                pageLabel: menu.pageLabel,
+                disabled: !(menu.dynamicItems.emptyPath ?? menu.path),
               },
             ]
           : []),
     ],
   };
+}
+
+function normalizeDynamicMenuItems(
+  items: readonly RuntimeServiceMenuDefinition[],
+  parentPath: string | undefined,
+): RuntimeServiceMenuDefinition[] {
+  return items.map((item) => {
+    const path =
+      item.path ??
+      (parentPath
+        ? `${parentPath.replace(/\/$/, "")}/${slugifyMenuSegment(item.title)}`
+        : undefined);
+
+    return {
+      ...item,
+      path,
+      dynamicItems: item.dynamicItems
+        ? {
+            ...item.dynamicItems,
+            emptyPath: item.dynamicItems.emptyPath ?? path,
+            emptySearch: item.dynamicItems.emptySearch ?? item.search,
+          }
+        : item.dynamicItems,
+      items: item.items
+        ? normalizeDynamicMenuItems(item.items, path)
+        : item.items,
+    };
+  });
 }
 
 async function resolveRuntimeServiceDynamicMenu(
@@ -1096,6 +1102,9 @@ async function _fetchRuntimeConfig(): Promise<RuntimeConfig> {
       services: normalizeRuntimeServices(
         window.__ZELAVIS_RUNTIME_CONFIG__.services ?? [],
       ),
+      serviceRegistry: normalizeRuntimeServiceRegistry(
+        window.__ZELAVIS_RUNTIME_CONFIG__.serviceRegistry ?? [],
+      ),
       configSource: "embedded",
     };
   }
@@ -1110,6 +1119,7 @@ async function _fetchRuntimeConfig(): Promise<RuntimeConfig> {
     return {
       ...config,
       services: normalizeRuntimeServices(config.services ?? []),
+      serviceRegistry: normalizeRuntimeServiceRegistry(config.serviceRegistry ?? []),
       configSource: "endpoint",
     };
   } catch {
@@ -1129,6 +1139,9 @@ async function _fetchRuntimeConfig(): Promise<RuntimeConfig> {
               ? fallbackRootPath || "/"
               : `${fallbackRootPath}${service.apiPath}`,
         })),
+      ),
+      serviceRegistry: normalizeRuntimeServiceRegistry(
+        fallbackConfig.serviceRegistry ?? [],
       ),
     };
   }
@@ -1323,6 +1336,9 @@ export async function getProjectRuntimeConfig(
             : service.apiPath,
         })),
     ),
+    serviceRegistry: normalizeRuntimeServiceRegistry(
+      projectConfig.serviceRegistry ?? [],
+    ),
   };
 }
 
@@ -1353,6 +1369,16 @@ export async function setProjectRunning(
     { method: "POST", body: JSON.stringify({}) },
   );
   return result.project;
+}
+
+export async function deleteProject(
+  config: RuntimeConfig,
+  projectId: string,
+): Promise<void> {
+  await readJson<{ deleted: true }>(
+    `${config.api.basePath}/runtime/projects/${encodeURIComponent(projectId)}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function getDashboardSettings(
@@ -1739,105 +1765,6 @@ export async function listAuthProviders(config: RuntimeConfig) {
 
 export async function listAuthAccounts(config: RuntimeConfig) {
   return readJson<AuthAccount[]>(`${config.api.basePath}/auth/accounts`);
-}
-
-export async function listCommerceProducts(config: RuntimeConfig) {
-  return readJson<CommerceProduct[]>(`${config.api.basePath}/commerce/products`);
-}
-
-export async function createCommerceProduct(
-  config: RuntimeConfig,
-  input: {
-    title: string;
-    slug?: string;
-    description?: string;
-    price: {
-      amount: number;
-      currency: string;
-    };
-  },
-) {
-  return readJson<CommerceProduct>(`${config.api.basePath}/commerce/products`, {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
-
-export async function listCommerceCustomers(config: RuntimeConfig) {
-  return readJson<CommerceCustomer[]>(`${config.api.basePath}/commerce/customers`);
-}
-
-export async function createCommerceCustomer(
-  config: RuntimeConfig,
-  input: {
-    email: string;
-    firstName?: string;
-    lastName?: string;
-    accountId?: string;
-  },
-) {
-  return readJson<CommerceCustomer>(`${config.api.basePath}/commerce/customers`, {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
-
-export async function listCommerceCoupons(config: RuntimeConfig) {
-  return readJson<CommerceCoupon[]>(`${config.api.basePath}/commerce/coupons`);
-}
-
-export async function createCommerceCoupon(
-  config: RuntimeConfig,
-  input: {
-    code: string;
-    description?: string;
-    discountType: "percentage" | "fixed";
-    discountValue: number;
-    active?: boolean;
-  },
-) {
-  return readJson<CommerceCoupon>(`${config.api.basePath}/commerce/coupons`, {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
-
-export async function listCommerceOrders(config: RuntimeConfig) {
-  return readJson<CommerceOrder[]>(`${config.api.basePath}/commerce/orders`);
-}
-
-export async function createCommerceOrder(
-  config: RuntimeConfig,
-  input: {
-    customerId: string;
-    items: CommerceOrder["items"];
-    couponCodes?: string[];
-    totals: CommerceOrder["totals"];
-  },
-) {
-  return readJson<CommerceOrder>(`${config.api.basePath}/commerce/orders`, {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
-
-export async function listCommerceProviders(config: RuntimeConfig) {
-  const result = await readJson<{ providers: CommerceProvider[] }>(
-    `${config.api.basePath}/commerce/payments/providers`,
-  );
-  return result.providers;
-}
-
-export async function listCommercePaymentAttempts(config: RuntimeConfig) {
-  return readJson<CommercePaymentAttempt[]>(
-    `${config.api.basePath}/commerce/payments/attempts`,
-  );
-}
-
-export async function listCommerceSubscriptions(config: RuntimeConfig) {
-  return readJson<CommerceSubscription[]>(
-    `${config.api.basePath}/commerce/subscriptions`,
-  );
 }
 
 export async function listDatabaseCollections(config: RuntimeConfig) {

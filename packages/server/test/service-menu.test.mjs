@@ -38,6 +38,142 @@ test("defineService accepts fixed dashboard menu actions", () => {
   assert.equal(service.menu?.items?.[0]?.items?.[1]?.fixedActionScope, "inherit");
 });
 
+test("defineService accepts route-backed dynamic menu empty states", () => {
+  const service = defineService({
+    name: "@acme/workloads",
+    menu: {
+      title: "Workloads",
+      items: [
+        {
+          title: "Jobs",
+          path: "/workloads",
+          dynamicItems: {
+            path: "/workloads/menu/jobs",
+            emptyTitle: "No jobs yet",
+            emptyPath: "/workloads",
+            emptySearch: { workloadView: "jobs" },
+          },
+        },
+      ],
+    },
+  });
+
+  assert.equal(service.menu?.items?.[0]?.dynamicItems?.emptyPath, "/workloads");
+  assert.deepEqual(service.menu?.items?.[0]?.dynamicItems?.emptySearch, {
+    workloadView: "jobs",
+  });
+});
+
+test("defineService accepts iframe page files separate from dashboard menu paths", () => {
+  const service = defineService({
+    name: "@acme/embedded",
+    menu: {
+      title: "Embedded",
+      path: "/embedded",
+      page: {
+        id: "dashboard",
+        file: "dashboard.html",
+      },
+      items: [
+        {
+          title: "Settings",
+          path: "/embedded/settings",
+          page: {
+            id: "settings",
+            file: "settings.html",
+          },
+        },
+      ],
+    },
+  });
+
+  assert.equal(service.menu?.page?.file, "dashboard.html");
+  assert.equal(service.menu?.items?.[0]?.page?.file, "settings.html");
+});
+
+test("defineService rejects invalid iframe page files", () => {
+  assert.throws(
+    () =>
+      defineService({
+        name: "@acme/missing-page-file",
+        menu: {
+          title: "Bad",
+          path: "/bad",
+          page: {
+            id: "dashboard",
+          },
+        },
+      }),
+    /page\.file/,
+  );
+
+  assert.throws(
+    () =>
+      defineService({
+        name: "@acme/bad-page-file",
+        menu: {
+          title: "Bad",
+          path: "/bad",
+          page: {
+            id: "dashboard",
+            file: 42,
+          },
+        },
+      }),
+    /page metadata.*file/,
+  );
+
+  assert.throws(
+    () =>
+      defineService({
+        name: "@acme/bad-page-file-path",
+        menu: {
+          title: "Bad",
+          path: "/bad",
+          page: {
+            id: "dashboard",
+            file: "../dashboard.html",
+          },
+        },
+      }),
+    /bundle-relative path/,
+  );
+});
+
+test("defineService rejects invalid dynamic menu empty state routes", () => {
+  assert.throws(
+    () =>
+      defineService({
+        name: "@acme/bad-empty-path",
+        menu: {
+          title: "Bad",
+          path: "/bad",
+          dynamicItems: {
+            path: "/bad/menu",
+            emptyPath: 42,
+          },
+        },
+      }),
+    /emptyPath/,
+  );
+
+  assert.throws(
+    () =>
+      defineService({
+        name: "@acme/bad-empty-search",
+        menu: {
+          title: "Bad",
+          path: "/bad",
+          dynamicItems: {
+            path: "/bad/menu",
+            emptySearch: ["bad"],
+          },
+        },
+      }),
+    /emptySearch/,
+  );
+});
+
 test("defineService rejects invalid fixed dashboard menu metadata", () => {
   assert.throws(
     () =>
