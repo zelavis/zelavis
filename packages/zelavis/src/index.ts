@@ -3777,6 +3777,24 @@ async function resolveServerCoreService(
           },
         },
         {
+          id: "runtime.projects.restart",
+          method: "POST",
+          path: "/projects/:projectId/restart",
+          handler: async ({ params }: { params: Record<string, string> }) => {
+            if (!projects) {
+              return unavailableProjectsResponse();
+            }
+            try {
+              return {
+                status: 200,
+                body: { project: await projects.restart(params.projectId ?? "") },
+              };
+            } catch (error) {
+              return projectErrorResponse(error);
+            }
+          },
+        },
+        {
           id: "runtime.projects.logs",
           method: "GET",
           path: "/projects/:projectId/logs",

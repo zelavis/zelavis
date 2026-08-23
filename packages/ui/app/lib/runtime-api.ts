@@ -1540,6 +1540,17 @@ export async function setProjectRunning(
   return normalizeRuntimeProject(result.project);
 }
 
+export async function restartProject(
+  config: RuntimeConfig,
+  projectId: string,
+): Promise<RuntimeProject> {
+  const result = await readJson<{ project: RuntimeProject }>(
+    `${config.api.basePath}/runtime/projects/${encodeURIComponent(projectId)}/restart`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+  return normalizeRuntimeProject(result.project);
+}
+
 export async function deleteProject(
   config: RuntimeConfig,
   projectId: string,

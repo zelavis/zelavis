@@ -4,6 +4,7 @@ import {
   Pause,
   Play,
   Plus,
+  RotateCw,
   Search,
   SquareStack,
   Trash2,
@@ -31,6 +32,7 @@ import {
 import {
   createProject,
   deleteProject,
+  restartProject,
   setProjectRunning,
   type RuntimeProject,
 } from "#/lib/runtime-api";
@@ -150,6 +152,24 @@ function ProjectsRoute() {
     try {
       await setProjectRunning(rootData.runtime, project.id, running);
       setMessage(`${project.name} ${running ? "started" : "stopped"}.`);
+      revalidator.revalidate();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setPendingProjectId(undefined);
+    }
+  }
+
+  async function handleRestartProject(project: RuntimeProject) {
+    if (!rootData) {
+      return;
+    }
+    setMessage(undefined);
+    setError(undefined);
+    setPendingProjectId(project.id);
+    try {
+      await restartProject(rootData.runtime, project.id);
+      setMessage(`${project.name} restarted.`);
       revalidator.revalidate();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -361,6 +381,15 @@ function ProjectsRoute() {
                         <Play className="size-4" />
                       )}
                       {isRunning ? "Stop" : "Start"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={isPending || project.runtime.status === "provisioning"}
+                      onClick={() => handleRestartProject(project)}
+                    >
+                      <RotateCw className="size-4" />
+                      Restart
                     </Button>
                     <Button
                       type="button"

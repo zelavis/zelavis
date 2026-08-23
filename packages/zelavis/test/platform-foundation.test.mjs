@@ -229,6 +229,14 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
       headers: { "content-type": "application/json" },
       body: "{}",
     });
+    const restartResponse = await runtimeRequest("/projects/alpha/restart", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    const restartedProject = (await restartResponse.json()).project;
+    assert.equal(restartResponse.status, 200);
+    assert.equal(restartedProject.runtime.status, "running");
     const persistedSettings = await (
       await runtimeRequest(
         "/projects/alpha/proxy/zelavis/api/v1/runtime/settings",

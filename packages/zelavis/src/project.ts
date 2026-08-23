@@ -97,6 +97,7 @@ export interface ZelavisProjectManager {
   create(input: ZelavisProjectCreateInput): Promise<ZelavisProjectRecord>;
   start(id: string): Promise<ZelavisProjectRecord>;
   stop(id: string): Promise<ZelavisProjectRecord>;
+  restart(id: string): Promise<ZelavisProjectRecord>;
   logs(id: string): Promise<readonly ZelavisProjectLogEntry[]>;
   remove(id: string): Promise<boolean>;
 }
@@ -353,6 +354,37 @@ export async function createProjectManager(options: {
         updatedAt: new Date().toISOString(),
       });
       return write(applySnapshot(project, await runtime.stop(project.id)));
+    },
+    async restart(id) {
+      let project = await requireProject(id);
+      project = await write({
+        ...project,
+        desiredState: "running",
+        runtime: { driver: runtime.name, status: "stopping" },
+        updatedAt: new Date().toISOString(),
+      });
+      await runtime.stop(project.id);
+      project = await write({
+        ...project,
+        runtime: { driver: runtime.name, status: "starting" },
+        updatedAt: new Date().toISOString(),
+      });
+
+      try {
+        return write(applySnapshot(project, await runtime.start(project)));
+      } catch (error) {
+        const failed = {
+          ...project,
+          runtime: {
+            driver: runtime.name,
+            status: "failed" as const,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          updatedAt: new Date().toISOString(),
+        };
+        await write(failed);
+        throw error;
+      }
     },
     async logs(id) {
       await requireProject(id);
