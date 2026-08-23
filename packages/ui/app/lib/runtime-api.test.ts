@@ -2,8 +2,10 @@ import { afterEach, expect, test, vi } from "vitest";
 
 import {
   getResolvedDashboardPreferences,
+  normalizeRuntimeProject,
   resolveRuntimeDynamicMenus,
   type RuntimeConfig,
+  type RuntimeProject,
 } from "./runtime-api";
 
 afterEach(() => {
@@ -12,6 +14,28 @@ afterEach(() => {
 
 test("getResolvedDashboardPreferences falls back to an empty object when preferences are missing", () => {
   expect(getResolvedDashboardPreferences({})).toEqual({});
+});
+
+test("normalizeRuntimeProject recovers a missing app lock for project cards", () => {
+  const project = normalizeRuntimeProject({
+    id: "vibe",
+    name: "Vibe",
+    kind: "zelavis",
+    desiredState: "running",
+    runtime: {
+      driver: "node",
+      status: "running",
+      url: "http://127.0.0.1:3100",
+    },
+    createdAt: "2026-08-23T00:00:00.000Z",
+    updatedAt: "2026-08-23T00:00:00.000Z",
+  } as RuntimeProject);
+
+  expect(project.app).toEqual({
+    name: "@zelavis/app",
+    title: "Zelavis App",
+    specifier: "@zelavis/app",
+  });
 });
 
 test("project dynamic menus stay scoped by the proxy without a project query", async () => {

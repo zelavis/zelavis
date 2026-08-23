@@ -208,6 +208,42 @@ export interface RuntimeProjectDriverInfo {
   };
 }
 
+function appTitleFromName(name: string): string {
+  if (name === "@zelavis/app") {
+    return "Zelavis App";
+  }
+
+  return name
+    .replace(/^@/, "")
+    .replace(/^zelavis\//, "")
+    .replace(/[-_/]+/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+export function normalizeRuntimeProject(project: RuntimeProject): RuntimeProject {
+  const storedApp = project.app as RuntimeProject["app"] | undefined;
+  const appName =
+    typeof storedApp?.name === "string" && storedApp.name.length > 0
+      ? storedApp.name
+      : project.kind === "zelavis"
+        ? "@zelavis/app"
+        : project.kind || "app";
+  const appTitle =
+    typeof storedApp?.title === "string" && storedApp.title.length > 0
+      ? storedApp.title
+      : appTitleFromName(appName);
+
+  return {
+    ...project,
+    app: {
+      name: appName,
+      title: appTitle,
+      ...(storedApp?.version ? { version: storedApp.version } : {}),
+      specifier: storedApp?.specifier ?? appName,
+    },
+  };
+}
+
 export interface RuntimeAppService {
   name: string;
   title: string;
@@ -1271,9 +1307,16 @@ export async function getDashboardAccess(
 export async function listProjects(
   config: RuntimeConfig,
 ): Promise<{ runtime: RuntimeProjectDriverInfo; projects: RuntimeProject[] }> {
-  return readJson<{ runtime: RuntimeProjectDriverInfo; projects: RuntimeProject[] }>(
+  const result = await readJson<{
+    runtime: RuntimeProjectDriverInfo;
+    projects: RuntimeProject[];
+  }>(
     `${config.api.basePath}/runtime/projects`,
   );
+  return {
+    ...result,
+    projects: result.projects.map(normalizeRuntimeProject),
+  };
 }
 
 export async function listAppServices(
@@ -1385,7 +1428,7 @@ export async function createProject(
     `${config.api.basePath}/runtime/projects`,
     { method: "POST", body: JSON.stringify(input) },
   );
-  return result.project;
+  return normalizeRuntimeProject(result.project);
 }
 
 export async function setProjectRunning(
@@ -1397,7 +1440,7 @@ export async function setProjectRunning(
     `${config.api.basePath}/runtime/projects/${encodeURIComponent(projectId)}/${running ? "start" : "stop"}`,
     { method: "POST", body: JSON.stringify({}) },
   );
-  return result.project;
+  return normalizeRuntimeProject(result.project);
 }
 
 export async function deleteProject(
