@@ -4,10 +4,8 @@ import { createBetterSqlite3DatabaseDriver } from "@zelavis/app-db-node-sqlite";
 import {
   defineAdapter,
   type ZelavisOptions,
-  type ZelavisServiceLoadOptions,
   type ZelavisServicePackageInstaller,
   type ZelavisResolvedPlatformOptions,
-  type ZelavisServiceRegistryEntry,
 } from "../index.js";
 import { createLocalSqliteSystemStore } from "./_sqlite-system-store.js";
 import {
@@ -22,6 +20,7 @@ import {
   normalizeDataDirectory,
   createLocalRuntimeServicePackageInstaller,
   createLocalRuntimeServiceImporter,
+  loadLocalBundledServiceCatalog,
   type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
 
@@ -63,29 +62,6 @@ export interface NodeAdapterOptions {
 export const createNodeServicePackageInstaller = createLocalRuntimeServicePackageInstaller;
 export const createNodeServiceImporter = createLocalRuntimeServiceImporter;
 
-function defaultOfficialAppServiceEntries(): readonly ZelavisServiceRegistryEntry[] {
-  return [
-    {
-      service: {
-        name: "@zelavis/app",
-        version: "1.0.1-alpha.2",
-        kind: "app",
-        marketplace: {
-          title: "Zelavis App",
-          summary:
-            "The official Zelavis-native project backend with database, auth, and workloads.",
-          categories: ["apps", "official"],
-          tags: ["backend", "database", "auth", "workloads"],
-        },
-      },
-      specifier: fileURLToPath(new URL("../../services/zelavis-app/index.js", import.meta.url)),
-      status: "available",
-      source: "official",
-      order: 0,
-    },
-  ];
-}
-
 export function nodeAdapter(options: NodeAdapterOptions = {}) {
   let projectRuntime: ReturnType<typeof createNodeProcessProjectRuntime> | undefined;
 
@@ -124,6 +100,9 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
 
       const serviceOptions = options.services === false ? undefined : options.services;
       const serviceDirectory = join(dataDirectory, "services");
+      const bundledServicesDirectory = fileURLToPath(
+        new URL("../../services", import.meta.url),
+      );
       const systemStoreOptions =
         options.systemStore === false ? undefined : options.systemStore;
       const systemStoreFilename = systemStoreOptions?.filename
@@ -168,11 +147,16 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
 
       return {
         coreServices: nextCoreServices,
-        services:
+        serviceRegistry:
           options.services === false
             ? undefined
             : {
-                entries: isProjectRuntime ? [] : defaultOfficialAppServiceEntries(),
+                catalog: isProjectRuntime
+                  ? []
+                  : await loadLocalBundledServiceCatalog({
+                      rootDirectory: bundledServicesDirectory,
+                      kinds: ["app"],
+                    }),
                 importer: createLocalRuntimeServiceImporter({
                   directory: serviceDirectory,
                   ...(serviceOptions ?? {}),

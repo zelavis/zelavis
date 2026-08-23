@@ -1,5 +1,5 @@
 {
-  "name": "@zelavis/server",
+  "name": "@zelavis/ui",
   "version": "1.0.1-alpha.2",
   "kind": "core",
   "entry": "index.js"

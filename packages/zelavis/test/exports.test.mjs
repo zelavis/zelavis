@@ -116,6 +116,22 @@ test("Zelavis rejects internal runtime options on the public class constructor",
       }),
     /does not accept internal runtime options/,
   );
+
+  assert.throws(
+    () =>
+      new Zelavis({
+        services: {},
+      }),
+    /does not accept internal runtime options/,
+  );
+
+  assert.throws(
+    () =>
+      new Zelavis({
+        serviceRegistry: {},
+      }),
+    /does not accept internal runtime options/,
+  );
 });
 
 test("Zelavis applies adapter resolve output as platform resources, metadata, and presets", async () => {
@@ -217,36 +233,36 @@ test("Zelavis platform resources back dashboard settings, website pages, storage
             },
           },
         },
+        serviceRegistry: {
+          catalog: [
+            {
+              service: zelavisEcommerceService,
+              status: "installed",
+              source: "official",
+              order: 0,
+            },
+          ],
+          store: {
+            read() {
+              return [
+                {
+                  name: "@zelavis/ecommerce",
+                  status: "installed",
+                  order: 0,
+                },
+              ];
+            },
+            write(entries) {
+              return entries;
+            },
+          },
+        },
       };
     },
   });
 
   const zelavis = new Zelavis({
     adapter,
-    services: {
-      entries: [
-        {
-          service: zelavisEcommerceService,
-          status: "installed",
-          source: "official",
-          order: 0,
-        },
-      ],
-      store: {
-        read() {
-          return [
-            {
-              name: "@zelavis/ecommerce",
-              status: "installed",
-              order: 0,
-            },
-          ];
-        },
-        write(entries) {
-          return entries;
-        },
-      },
-    },
   });
 
   const commerceHealthResponse = await zelavis.fetch(
@@ -355,8 +371,8 @@ test("Zelavis platform resources back dashboard settings, website pages, storage
     coreServices: {
       database: databaseBacked,
     },
-    services: {
-      entries: [
+    serviceRegistry: {
+      catalog: [
         {
           service: zelavisEcommerceService,
           status: "installed",
@@ -403,8 +419,8 @@ test("Zelavis platform resources back dashboard settings, website pages, storage
     coreServices: {
       database: databaseBacked,
     },
-    services: {
-      entries: [
+    serviceRegistry: {
+      catalog: [
         {
           service: zelavisEcommerceService,
           status: "installed",
@@ -527,7 +543,7 @@ test("Zelavis platform resources back dashboard settings, website pages, storage
 });
 
 test("Zelavis rejects installed services that try to register reserved core service names", async () => {
-  const { Zelavis, defineService, createServiceRegistry } =
+  const { Zelavis, defineAdapter, defineService, createServiceRegistry } =
     await import("zelavis");
 
   const forbiddenService = defineService({
@@ -544,14 +560,21 @@ test("Zelavis rejects installed services that try to register reserved core serv
   });
 
   const zelavis = new Zelavis({
-    services: {
-      entries: createServiceRegistry([
-        {
-          service: forbiddenService,
-          status: "installed",
-        },
-      ]),
-    },
+    adapter: defineAdapter({
+      name: "reserved-service-test",
+      resolve() {
+        return {
+          serviceRegistry: {
+            catalog: createServiceRegistry([
+              {
+                service: forbiddenService,
+                status: "installed",
+              },
+            ]),
+          },
+        };
+      },
+    }),
   });
 
   await assert.rejects(

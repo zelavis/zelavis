@@ -25,7 +25,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/zelavis/zelavis.git",
-    "directory": "packages/ui"
+    "directory": "packages/zelavis/services/ui"
   },
   "homepage": "https://www.zelavis.com",
   "bugs": {
@@ -55,13 +55,13 @@
     "@fontsource-variable/inter": "^5.2.8",
     "@fontsource-variable/montserrat": "^5.2.8",
     "@glideapps/glide-data-grid": "^6.0.3",
-    "@lexical/history": "^0.45.0",
-    "@lexical/html": "^0.45.0",
+    "@lexical/history": "^0.46.0",
+    "@lexical/html": "^0.46.0",
     "@lexical/link": "^0.46.0",
-    "@lexical/list": "^0.45.0",
-    "@lexical/react": "^0.45.0",
+    "@lexical/list": "^0.46.0",
+    "@lexical/react": "^0.46.0",
     "@lexical/rich-text": "^0.46.0",
-    "@lexical/selection": "^0.45.0",
+    "@lexical/selection": "^0.46.0",
     "@react-router/node": "7.17.0",
     "@react-router/serve": "7.16.0",
     "class-variance-authority": "^0.7.1",

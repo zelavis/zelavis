@@ -31,7 +31,7 @@ Today, the most important packages are:
 - [packages/zelavis/services/server](packages/zelavis/services/server)
 - [packages/db](packages/db)
 - [packages/auth](packages/auth)
-- [packages/ui](packages/ui)
+- [packages/zelavis/services/ui](packages/zelavis/services/ui)
 
 The ecommerce package is still useful, but it should be treated as an optional domain layer on top of the core platform.
 
@@ -87,8 +87,8 @@ pnpm typecheck
 pnpm audit:security
 pnpm ci:runtime
 pnpm ci:ui
-pnpm --filter ./packages/ui build
-pnpm --filter ./packages/ui test
+pnpm --filter ./packages/zelavis/services/ui build
+pnpm --filter ./packages/zelavis/services/ui test
 pnpm --filter zelavis test
 ```
 
@@ -98,7 +98,7 @@ The UI package has extra rules:
 
 - It uses TanStack Start, TanStack Router, shadcn/ui, and Tailwind CSS.
 - Stay on the current Radix-based shadcn approach unless a migration is explicitly requested.
-- `packages/ui/src/routeTree.gen.ts` is generated and should not be hand-edited.
+- `packages/zelavis/services/ui/src/routeTree.gen.ts` is generated and should not be hand-edited.
 - The sidebar uses a slide-based navigation model.
 - The `Community` section belongs inside the first sidebar slide.
 
@@ -154,7 +154,7 @@ If a test setup does not exist yet, keep the change easy to validate and documen
 
 Be careful with these:
 
-- `packages/ui/src/routeTree.gen.ts` is generated
+- `packages/zelavis/services/ui/src/routeTree.gen.ts` is generated
 - `packages/*/dist/*` is build output
 - `website/.astro/*` and `website/dist/*` are generated site output
 

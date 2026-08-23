@@ -53,7 +53,7 @@ The event log is the replication stream. Replay events on replicas to rebuild co
 
 **Core > Database sidebar section** — shows **all** registered collections (both `surface: "content-studio"` and `surface: "database"`). Content types use their editor label when available; database tables use the collection name. Section label for table entries: "Tables". System tables (`events`, `schemas`, `collections`, etc.) are nested under "System Tables".
 
-The sidebar structure is built in `packages/ui/app/lib/dashboard-data.ts` → `buildPlatformNavItems`. Any change to nav items requires rebuilding `packages/ui/src/generated/dashboard-assets.ts` via `pnpm --filter @zelavis/ui build`.
+The sidebar structure is built in `packages/zelavis/services/ui/app/lib/dashboard-data.ts` → `buildPlatformNavItems`. Any change to nav items requires rebuilding `packages/zelavis/services/ui/src/generated/dashboard-assets.ts` via `pnpm --filter @zelavis/ui build`.
 
 Nested sidebar slide headers use a larger standard gap before the next menu content. Sidebar panels with pinned/fixed action rows should use `SidebarFixedActionMenu`; when those actions sit directly below the centered slide back/title header, pass `afterHeader` so the spacing stays consistent across Content, Database, and future nested panels.
 
@@ -79,7 +79,7 @@ sharing.
 
 ## Content Studio Routes (UI)
 
-All Content Studio routes live under `packages/ui/app/routes/content*.tsx`. When creating a collection from any of these routes, always pass `surface: "content-studio"` as a top-level field to `createDatabaseCollection` — not inside `metadata`.
+All Content Studio routes live under `packages/zelavis/services/ui/app/routes/content*.tsx`. When creating a collection from any of these routes, always pass `surface: "content-studio"` as a top-level field to `createDatabaseCollection` — not inside `metadata`.
 
 ```ts
 await createDatabaseCollection(runtime, {
@@ -241,7 +241,7 @@ implementation.
 - `@zelavis/app/db`: Node test runner, `.mjs` files in `packages/zelavis/services/zelavis-app/test` and `packages/zelavis/services/zelavis-app/adapters/*/test`. Run with `pnpm --filter @zelavis/app test`.
 - `@zelavis/ui`: Vitest for unit tests, Playwright for e2e. Run with `pnpm --filter @zelavis/ui test`.
 - After any `@zelavis/app/db` contract change, rebuild with `pnpm --filter @zelavis/app build` before running adapter tests.
-- After any `@zelavis/ui` source change that affects the compiled dashboard, rebuild with `pnpm --filter @zelavis/ui build` to regenerate `packages/ui/src/generated/dashboard-assets.ts`.
+- After any `@zelavis/ui` source change that affects the compiled dashboard, rebuild with `pnpm --filter @zelavis/ui build` to regenerate `packages/zelavis/services/ui/src/generated/dashboard-assets.ts`.
 
 ## Effect Version
 

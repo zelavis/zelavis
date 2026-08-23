@@ -222,7 +222,7 @@ those grants, while endpoints remain the authority layer.
 - `packages/zelavis/services/zelavis-app/src/db` contains the document-first database core and server-facing database service.
 - `packages/zelavis/services/zelavis-app/src/auth` contains the low-level auth core and auth method plugins.
 - `packages/zelavis/services/zelavis-app/src/workloads` contains project-scoped workloads.
-- `packages/ui` contains the admin/dashboard UI used by the runtime package.
+- `packages/zelavis/services/ui` contains the admin/dashboard UI used by the runtime package.
 - `packages/*/adapters/*` contains framework or external-system adapters.
 - `packages/*/plugins/*` contains package-local capability/provider plugins for core services.
 - `examples/*` contains runnable example workspace packages.
@@ -320,12 +320,12 @@ When creating a new core package, service package, or plugin package:
 
 ## UI Package Rules
 
-`packages/ui` is a special package with extra constraints:
+`packages/zelavis/services/ui` is a special package with extra constraints:
 
 - It uses **React Router v7** (SPA mode, `ssr: false`) — not TanStack Router or TanStack Start.
 - Styling is Tailwind CSS v4 + shadcn/ui (Base UI components).
 - Generated route types live in `.react-router/types/`. Do not hand-edit them.
-- Route source files are under `packages/ui/app/routes/`. Edit these; typegen runs automatically.
+- Route source files are under `packages/zelavis/services/ui/app/routes/`. Edit these; typegen runs automatically.
 - The dashboard sidebar uses a slide-based navigation model. Treat each slide as a distinct sidebar panel.
 - Nested sidebar slide headers use a larger standard gap before the next menu content. Sidebar panels with pinned/fixed action rows use `SidebarFixedActionMenu`; pass `afterHeader` when fixed actions sit directly under the slide back/title header.
 - Build dashboard features as mobile-slot-ready modules. Route files may compose those modules into a wide desktop page, while mobile sidebar slides can later mount the same modules into named slots such as `overview`, `main`, `create`, `edit`, `inspect`, and `settings`.
@@ -360,7 +360,7 @@ When working on UI behavior:
 
 Treat these carefully:
 
-- `packages/ui/.react-router/types/` is generated. Do not hand-edit it.
+- `packages/zelavis/services/ui/.react-router/types/` is generated. Do not hand-edit it.
 - `packages/*/dist/*` is build output.
 - `website/.astro/*` and `website/dist/*` are generated site output.
 

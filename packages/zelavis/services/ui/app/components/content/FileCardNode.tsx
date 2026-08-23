@@ -7,6 +7,7 @@ import {
   type EditorConfig,
   type LexicalNode,
   type NodeKey,
+  type SerializedLexicalNode,
 } from "lexical";
 import * as React from "react";
 
@@ -49,11 +50,14 @@ export class FileCardNode extends DecoratorNode<React.JSX.Element> {
     return new FileCardNode(node.__href, node.__label, node.__meta, node.__key);
   }
 
-  static importJSON(serializedNode: SerializedFileCardNode): FileCardNode {
+  static importJSON(
+    serializedNode: SerializedLexicalNode & Record<string, unknown>,
+  ): FileCardNode {
     return $createFileCardNode({
-      href: serializedNode.href,
-      label: serializedNode.label,
-      meta: serializedNode.meta ?? "",
+      href: typeof serializedNode.href === "string" ? serializedNode.href : "#",
+      label:
+        typeof serializedNode.label === "string" ? serializedNode.label : "File",
+      meta: typeof serializedNode.meta === "string" ? serializedNode.meta : "",
     });
   }
 

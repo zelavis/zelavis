@@ -84,8 +84,7 @@ test("zelavis exposes fetch handlers without requiring a mount adapter", async (
       "@zelavis/workloads",
     ],
   );
-  assert.equal(payload.serviceRegistry[0].name, "@zelavis/ecommerce");
-  assert.equal(payload.serviceRegistry[0].status, "available");
+  assert.deepEqual(payload.serviceRegistry, []);
 });
 
 test("zelavis includes core services by default", async () => {
@@ -222,10 +221,7 @@ test("zelavis includes core services by default", async () => {
       "@zelavis/workloads",
     ],
   );
-  assert.equal(configResponse.body.serviceRegistry.length, 1);
-  assert.equal(configResponse.body.serviceRegistry[0].name, "@zelavis/ecommerce");
-  assert.equal(configResponse.body.serviceRegistry[0].status, "available");
-  assert.equal(configResponse.body.serviceRegistry[0].menu.items[0].path, "/commerce/products");
+  assert.deepEqual(configResponse.body.serviceRegistry, []);
 
   const pluginsRoute = routes.find(
     (route) =>
@@ -242,42 +238,7 @@ test("zelavis includes core services by default", async () => {
   });
 
   assert.equal(pluginsResponse.status, 200);
-  assert.equal(pluginsResponse.body.services[0].status, "available");
-
-  const updatePluginRoute = routes.find(
-    (route) =>
-      route.fullPath === "/zelavis/api/v1/runtime/services/:name" &&
-      route.route.method === "PATCH",
-  );
-  const updatePluginResponse = await updatePluginRoute.route.handler({
-    service: updatePluginRoute.service.service,
-    params: { name: "@zelavis/ecommerce" },
-    query: new URLSearchParams(),
-    body: {
-      status: "installed",
-      order: 3,
-    },
-    headers: {},
-    request: undefined,
-  });
-
-  assert.equal(updatePluginResponse.status, 200);
-  assert.equal(updatePluginResponse.body.services[0].status, "installed");
-  assert.equal(updatePluginResponse.body.services[0].order, 3);
-
-  const configResponseAfterPluginUpdate = await configRoute.route.handler({
-    service: configRoute.service.service,
-    params: {},
-    query: new URLSearchParams(),
-    body: undefined,
-    headers: {},
-    request: undefined,
-  });
-
-  assert.equal(
-    configResponseAfterPluginUpdate.body.serviceRegistry[0].status,
-    "installed",
-  );
+  assert.deepEqual(pluginsResponse.body.services, []);
 
   const dashboardSettingsRoute = routes.find(
     (route) =>
@@ -372,8 +333,8 @@ test("auth provider child services extend the built-in auth service", async () =
         childServices: ["@example/test-auth-provider"],
       },
     },
-    services: {
-      entries: [
+    serviceRegistry: {
+      catalog: [
         {
           service: defineService({
             name: "@example/test-auth-provider",
@@ -441,8 +402,8 @@ test("service registry install state controls service activation on boot", async
   );
   const runtime = await zelavis({
     bundleStore,
-    services: {
-      entries: [
+    serviceRegistry: {
+      catalog: [
         {
           service: zelavisEcommerceService,
           status: "installed",
@@ -539,7 +500,7 @@ test("dashboard service registry can register ESM service sources", async () => 
     },
   ];
   const loadedRuntime = await zelavis({
-    services: {
+    serviceRegistry: {
       store: {
         read() {
           return storeState;
@@ -600,8 +561,8 @@ test("service dashboard pages can be static HTML files from service bundles", as
   );
   const runtime = await zelavis({
     bundleStore,
-    services: {
-      entries: [
+    serviceRegistry: {
+      catalog: [
         {
           service,
           status: "installed",
@@ -1221,6 +1182,7 @@ test("zelavis keeps the Platform server when optional mounted services are disab
       "runtime.projects.get",
       "runtime.projects.start",
       "runtime.projects.stop",
+      "runtime.projects.restart",
       "runtime.projects.logs",
       "runtime.projects.proxy.get",
       "runtime.projects.proxy.post",
@@ -1232,67 +1194,19 @@ test("zelavis keeps the Platform server when optional mounted services are disab
   );
 });
 
-test("zelavis does not duplicate an explicitly provided database service", async () => {
-  const databaseService = {
-    name: "@zelavis/db",
-    service: { custom: true },
-    api: {
-      v1: [
-        {
-          id: "custom.database",
-          method: "GET",
-          path: "/custom",
-          handler: () => ({ status: 204 }),
-        },
-      ],
-    },
-  };
-  const runtime = await zelavis({
-    coreServices: {
-      auth: false,
-      dashboard: false,
-      website: false,
-      workloads: false,
-    },
-    runtimeServices: [databaseService],
-  });
-
-  assert.equal(runtime.services["@zelavis/db"].service.custom, true);
-  assert.equal(
-    runtime.routes.filter((route) => route.route.id === "custom.database").length,
-    1,
-  );
-});
-
-test("zelavis does not duplicate an explicitly provided auth service", async () => {
-  const authService = {
-    name: "@zelavis/auth",
-    service: { custom: true },
-    api: {
-      v1: [
-        {
-          id: "custom.auth",
-          method: "GET",
-          path: "/custom",
-          handler: () => ({ status: 204 }),
-        },
-      ],
-    },
-  };
-  const runtime = await zelavis({
-    coreServices: {
-      dashboard: false,
-      database: false,
-      website: false,
-      workloads: false,
-    },
-    runtimeServices: [authService],
-  });
-
-  assert.equal(runtime.services["@zelavis/auth"].service.custom, true);
-  assert.equal(
-    runtime.routes.filter((route) => route.route.id === "custom.auth").length,
-    1,
+test("zelavis rejects obsolete direct runtime service options", async () => {
+  await assert.rejects(
+    () =>
+      zelavis({
+        runtimeServices: [
+          {
+            name: "@example/obsolete",
+            service: {},
+            api: { v1: [] },
+          },
+        ],
+      }),
+    /no longer accepts direct service options/,
   );
 });
 

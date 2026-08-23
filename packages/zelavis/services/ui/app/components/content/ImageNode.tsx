@@ -7,6 +7,7 @@ import {
   type EditorConfig,
   type LexicalNode,
   type NodeKey,
+  type SerializedLexicalNode,
 } from "lexical";
 import * as React from "react";
 
@@ -42,10 +43,15 @@ export class ImageNode extends DecoratorNode<React.JSX.Element> {
     return new ImageNode(node.__src, node.__altText, node.__key);
   }
 
-  static importJSON(serializedNode: SerializedImageNode): ImageNode {
+  static importJSON(
+    serializedNode: SerializedLexicalNode & Record<string, unknown>,
+  ): ImageNode {
     return $createImageNode({
-      src: serializedNode.src,
-      altText: serializedNode.altText,
+      src: typeof serializedNode.src === "string" ? serializedNode.src : "",
+      altText:
+        typeof serializedNode.altText === "string"
+          ? serializedNode.altText
+          : "",
     });
   }
 

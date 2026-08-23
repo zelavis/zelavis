@@ -4,7 +4,6 @@ import {
   defineAdapter,
   type ZelavisOptions,
   type ZelavisResolvedPlatformOptions,
-  type ZelavisServiceRegistryEntry,
 } from "../index.js";
 import { createBunSqliteSystemStore } from "./_bun-sqlite-system-store.js";
 import { createLocalFileStorage, createMemoryKeyValueStore } from "./_shared.js";
@@ -12,6 +11,7 @@ import {
   normalizeDataDirectory,
   createLocalRuntimeServicePackageInstaller,
   createLocalRuntimeServiceImporter,
+  loadLocalBundledServiceCatalog,
   type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
 
@@ -44,29 +44,6 @@ export interface BunAdapterOptions {
   files?: false | BunAdapterFileStorageOptions;
   kv?: false | BunAdapterKeyValueOptions;
   services?: false | BunAdapterServiceOptions;
-}
-
-function defaultOfficialAppServiceEntries(): readonly ZelavisServiceRegistryEntry[] {
-  return [
-    {
-      service: {
-        name: "@zelavis/app",
-        version: "1.0.1-alpha.2",
-        kind: "app",
-        marketplace: {
-          title: "Zelavis App",
-          summary:
-            "The official Zelavis-native project backend with database, auth, and workloads.",
-          categories: ["apps", "official"],
-          tags: ["backend", "database", "auth", "workloads"],
-        },
-      },
-      specifier: fileURLToPath(new URL("../../services/zelavis-app/index.js", import.meta.url)),
-      status: "available",
-      source: "official",
-      order: 0,
-    },
-  ];
 }
 
 export function bunAdapter(options: BunAdapterOptions = {}) {
@@ -107,6 +84,9 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
 
       const serviceOptions = options.services === false ? undefined : options.services;
       const serviceDirectory = join(dataDirectory, "services");
+      const bundledServicesDirectory = fileURLToPath(
+        new URL("../../services", import.meta.url),
+      );
       const systemStoreOptions =
         options.systemStore === false ? undefined : options.systemStore;
       const systemStoreFilename = systemStoreOptions?.filename
@@ -131,11 +111,16 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
 
       return {
         coreServices: nextCoreServices,
-        services:
+        serviceRegistry:
           options.services === false
             ? undefined
             : {
-                entries: isProjectRuntime ? [] : defaultOfficialAppServiceEntries(),
+                catalog: isProjectRuntime
+                  ? []
+                  : await loadLocalBundledServiceCatalog({
+                      rootDirectory: bundledServicesDirectory,
+                      kinds: ["app"],
+                    }),
                 importer: createLocalRuntimeServiceImporter({
                   directory: serviceDirectory,
                   ...(serviceOptions ?? {}),

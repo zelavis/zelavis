@@ -144,7 +144,7 @@ Core packages:
   A low-level authentication core for accounts, credentials, sessions, and opt-in auth method services.
 - [packages/zelavis/services/zelavis-app/src/db](packages/zelavis/services/zelavis-app/src/db)
   A document-first, tenant-aware database core with an in-memory driver, optional SQL capability, and a mountable server service.
-- [packages/ui](packages/ui)
+- [packages/zelavis/services/ui](packages/zelavis/services/ui)
   The admin/dashboard frontend used by the high-level runtime.
 - [packages/zelavis/services/zelavis-app/src/workloads](packages/zelavis/services/zelavis-app/src/workloads)
   A first-party core plugin for project-scoped functions, jobs, schedules, and webhooks.

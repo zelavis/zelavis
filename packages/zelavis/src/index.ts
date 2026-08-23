@@ -466,7 +466,7 @@ export interface ZelavisDashboardSettingsStore {
 }
 
 export interface ZelavisServiceRegistryOptions {
-  entries?: readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[];
+  catalog?: readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[];
   store?: ZelavisServiceRegistryStore;
   importer?: ZelavisServiceLoadOptions["importer"];
 }
@@ -478,8 +478,6 @@ export interface ZelavisServiceContextOptions {
 export interface ZelavisServerOptions {
   rootPath?: string;
   api?: ZelavisApiOptions;
-  services?: ZelavisServiceRegistryOptions;
-  runtimeServices?: readonly ZelavisAnyRuntimeServiceInput[];
   servicePackageInstaller?: ZelavisServicePackageInstaller;
   serviceActivation?: ZelavisServiceActivationController;
   serviceContext?: ZelavisServiceContextOptions;
@@ -509,6 +507,10 @@ export interface ZelavisServerOptions {
   systemStore?: ZelavisSystemStore;
   projectRuntime?: ZelavisProjectRuntimeDriver;
   assistant?: false | ZelavisAssistantResponder;
+}
+
+interface ZelavisRuntimeCompositionOptions extends ZelavisServerOptions {
+  serviceRegistry?: ZelavisServiceRegistryOptions;
 }
 
 export interface ZelavisKeyValueStore {
@@ -627,7 +629,7 @@ export interface ZelavisPlatformContext {
 }
 
 export interface ZelavisResolvedPlatformOptions
-  extends Partial<ZelavisServerOptions> {
+  extends Partial<ZelavisRuntimeCompositionOptions> {
   resources?: ZelavisPlatformResources;
   metadata?: Record<string, unknown>;
 }
@@ -682,7 +684,6 @@ export interface ZelavisServiceActivationController {
 export interface ZelavisOptions {
   rootPath?: string;
   api?: ZelavisApiOptions;
-  services?: ZelavisServiceRegistryOptions;
   assistant?: false | ZelavisAssistantResponder;
   onError?: ZelavisServerErrorHandler;
   adapter?: ZelavisAdapter;
@@ -1857,34 +1858,7 @@ export function createFileReference(
   };
 }
 
-const defaultDashboardServiceRegistry = createServiceRegistry<ZelavisServiceSetupContext>([
-  {
-    service: {
-      name: "@zelavis/ecommerce",
-      version: "1.0.1-alpha.2",
-      menu: {
-        title: "Ecommerce",
-        path: "/commerce",
-        pageLabel: "Commerce",
-        items: [
-          { title: "Products", path: "/commerce/products" },
-          { title: "Orders", path: "/commerce/orders" },
-          {
-            title: "More",
-            items: [
-              { title: "Customers", path: "/commerce/customers" },
-              { title: "Coupons", path: "/commerce/coupons" },
-            ],
-          },
-        ],
-      },
-    },
-    specifier: "@zelavis/ecommerce",
-    status: "available",
-    source: "official",
-    order: 0,
-  },
-]);
+const defaultDashboardServiceRegistry = createServiceRegistry<ZelavisServiceSetupContext>([]);
 
 async function loadStoredServiceRegistryModules(
   entries: readonly ZelavisServiceRegistryStateEntry[] | undefined,
@@ -3990,49 +3964,38 @@ function createServicePrefixes(
 export async function zelavis(
   options: ZelavisServerOptions = {},
 ): Promise<ZelavisServerRuntime<unknown>> {
+  const rawOptions = options as Record<string, unknown>;
+  const obsoleteKeys = ["services", "runtimeServices"].filter(
+    (key) => rawOptions[key] !== undefined,
+  );
+
+  if (obsoleteKeys.length > 0) {
+    throw new TypeError(
+      `zelavis(...) no longer accepts direct service options (${obsoleteKeys.join(", ")}). Put services in the services folder or install them through the service registry endpoints.`,
+    );
+  }
+
+  const compositionOptions = options as ZelavisRuntimeCompositionOptions;
   const rootPath = normalizePath(options.rootPath, "/zelavis");
   const apiPrefix = normalizePath(options.api?.prefix, "/api");
   const apiVersion = normalizePathPart(options.api?.version ?? "v1");
-  const runtimeServices = await Promise.all(options.runtimeServices ?? []);
   const baseServiceRegistry =
-    options.services?.entries !== undefined
+    compositionOptions.serviceRegistry?.catalog !== undefined
       ? await loadConfiguredServiceRegistryModules(
-          options.services.entries,
-          options.services.importer,
+          compositionOptions.serviceRegistry.catalog,
+          compositionOptions.serviceRegistry.importer,
         )
       : defaultDashboardServiceRegistry;
-  const hasAuthService = runtimeServices.some((service) => service.name === "@zelavis/auth");
-  const hasDashboardService = runtimeServices.some(
-    (service) => service.name === "@zelavis/ui",
-  );
-  const hasServerService = runtimeServices.some(
-    (service) => service.name === "@zelavis/server",
-  );
-  const hasWebsiteService = runtimeServices.some(
-    (service) => service.name === "@zelavis/website",
-  );
-  const hasStorageService = runtimeServices.some(
-    (service) => service.name === "@zelavis/storage",
-  );
-  const hasWorkloadsService = runtimeServices.some(
-    (service) => service.name === "@zelavis/workloads",
-  );
-  const hasDatabaseService = runtimeServices.some(
-    (service) => service.name === "@zelavis/db",
-  );
-  const providedDatabaseService = runtimeServices.find(
-    (service) => service.name === "@zelavis/db" && isDatabaseApi(service.service),
-  );
   const systemStore = options.systemStore ?? createMemorySystemStore();
   const serviceRegistryStore = resolveServiceRegistryStore(
-    options.services,
+    compositionOptions.serviceRegistry,
     createSystemStoreServiceRegistryStore(systemStore),
   );
   const initialServiceRegistryState =
     await readInitialServiceRegistryState(serviceRegistryStore);
   const storedServiceRegistry = await loadStoredServiceRegistryModules(
     initialServiceRegistryState,
-    options.services?.importer,
+    compositionOptions.serviceRegistry?.importer,
   );
   const knownServiceNames = new Set(
     baseServiceRegistry.map((entry) => entry.service.name),
@@ -4050,18 +4013,12 @@ export async function zelavis(
   const hasAppService = serviceRegistry.some(
     (entry) => entry.status === "installed" && entry.service.kind === "app",
   );
-  const databaseApi = hasDatabaseService
-    ? undefined
-    : await resolveDatabaseCoreService(options.coreServices?.database);
+  const databaseApi = await resolveDatabaseCoreService(options.coreServices?.database);
   const databaseService = databaseApi && !hasAppService
     ? defineDatabaseService(databaseApi)
     : undefined;
-  const resolvedDatabaseApi =
-    (providedDatabaseService?.service as DatabaseApi | undefined) ??
-    databaseApi;
-  const authService = hasAuthService
-    ? undefined
-    : hasAppService
+  const resolvedDatabaseApi = databaseApi;
+  const authService = hasAppService
       ? undefined
       : await resolveAuthCoreService(
         options.coreServices?.auth,
@@ -4093,9 +4050,7 @@ export async function zelavis(
     createSystemStoreDashboardSettingsStore(systemStore),
   );
   const websiteCoreOptions = options.coreServices?.website;
-  const websiteService = hasWebsiteService
-    ? undefined
-    : await resolveWebsiteCoreService(websiteCoreOptions, {
+  const websiteService = await resolveWebsiteCoreService(websiteCoreOptions, {
         rootPath,
         apiPrefix,
         apiVersion,
@@ -4103,19 +4058,15 @@ export async function zelavis(
           ? createDatabaseWebsitePagesStore(resolvedDatabaseApi)
           : undefined,
       });
-  const storageService = hasStorageService
-    ? undefined
-    : await resolveStorageCoreService(options.coreServices?.storage, {
+  const storageService = await resolveStorageCoreService(options.coreServices?.storage, {
         rootPath,
         apiPrefix,
         apiVersion,
       });
-  const workloadsCoreService = hasWorkloadsService
-    ? undefined
-    : hasAppService
+  const workloadsCoreService = hasAppService
       ? undefined
       : await resolveWorkloadsCoreService(options.coreServices?.workloads);
-  const websiteEnabled = hasWebsiteService || Boolean(websiteService);
+  const websiteEnabled = Boolean(websiteService);
   let runtimeConfigServices: readonly ZelavisRuntimeService<any>[] = [];
   const runtimeManagement = await resolveRuntimeManagementCore(
     options.coreServices?.dashboard,
@@ -4124,7 +4075,7 @@ export async function zelavis(
       apiVersion,
       serviceRegistry,
       serviceRegistryStore,
-      serviceImporter: options.services?.importer,
+      serviceImporter: compositionOptions.serviceRegistry?.importer,
       servicePackageInstaller: options.servicePackageInstaller,
       serviceActivation: options.serviceActivation,
       rootPath,
@@ -4134,23 +4085,7 @@ export async function zelavis(
       bundleStore: options.bundleStore,
     },
   );
-  const effectiveRuntimeServices = runtimeServices.map((service) =>
-    service.name === "@zelavis/server"
-      ? {
-          ...service,
-          api: {
-            ...service.api,
-            v1: [
-              ...(service.api.v1 ?? []),
-              ...runtimeManagement.routes,
-            ],
-          },
-        }
-      : service,
-  );
-  const serverCoreService = hasServerService
-    ? undefined
-    : await resolveServerCoreService(
+  const serverCoreService = await resolveServerCoreService(
         serviceRegistry,
         systemStore,
         options.projectRuntime,
@@ -4168,9 +4103,7 @@ export async function zelavis(
   ].filter(
     (service): service is ZelavisRuntimeService<any> => Boolean(service),
   );
-  const dashboardService = hasDashboardService
-    ? undefined
-    : await resolveDashboardCoreService(options.coreServices?.dashboard, {
+  const dashboardService = await resolveDashboardCoreService(options.coreServices?.dashboard, {
         rootPath,
         createRuntimeConfig: runtimeManagement.createRuntimeConfig,
       });
@@ -4194,7 +4127,6 @@ export async function zelavis(
   runtimeConfigServices = [
     sanitizedDashboardService,
     ...coreServices,
-    ...effectiveRuntimeServices,
   ].filter(
     (service): service is ZelavisRuntimeService<any> => Boolean(service),
   );
@@ -4203,7 +4135,6 @@ export async function zelavis(
     dashboardAppService,
     domainChallengeService,
     ...coreServices,
-    ...effectiveRuntimeServices,
   ].filter(
     (service): service is ZelavisRuntimeService<any> => Boolean(service),
   );
@@ -4233,6 +4164,8 @@ function assertNoInternalConstructorOptions(
 ): void {
   const raw = options as Record<string, unknown>;
   const forbiddenKeys = [
+    "services",
+    "serviceRegistry",
     "runtimeServices",
     "coreServices",
     "serviceContext",
@@ -4394,15 +4327,17 @@ function createRuntimeServiceApiProxy<TService>(
 }
 
 function mergeZelavisServerOptions(
-  base: ZelavisServerOptions,
-  override: ZelavisServerOptions,
-): ZelavisServerOptions {
-  const serviceEntries = [
-    ...(base.services?.entries ?? []),
-    ...(override.services?.entries ?? []),
+  base: ZelavisRuntimeCompositionOptions,
+  override: ZelavisRuntimeCompositionOptions,
+): ZelavisRuntimeCompositionOptions {
+  const serviceCatalog = [
+    ...(base.serviceRegistry?.catalog ?? []),
+    ...(override.serviceRegistry?.catalog ?? []),
   ];
-  const serviceStore = override.services?.store ?? base.services?.store;
-  const serviceImporter = override.services?.importer ?? base.services?.importer;
+  const serviceStore =
+    override.serviceRegistry?.store ?? base.serviceRegistry?.store;
+  const serviceImporter =
+    override.serviceRegistry?.importer ?? base.serviceRegistry?.importer;
   const serviceContext = {
     ...(base.serviceContext ?? {}),
     ...(override.serviceContext ?? {}),
@@ -4415,19 +4350,15 @@ function mergeZelavisServerOptions(
       ...(base.api ?? {}),
       ...(override.api ?? {}),
     },
-    runtimeServices: [
-      ...(base.runtimeServices ?? []),
-      ...(override.runtimeServices ?? []),
-    ],
     servicePackageInstaller:
       override.servicePackageInstaller ?? base.servicePackageInstaller,
     serviceActivation: override.serviceActivation ?? base.serviceActivation,
     systemStore: override.systemStore ?? base.systemStore,
     projectRuntime: override.projectRuntime ?? base.projectRuntime,
-    services:
-      serviceEntries.length > 0 || serviceStore || serviceImporter
+    serviceRegistry:
+      serviceCatalog.length > 0 || serviceStore || serviceImporter
         ? {
-            ...(serviceEntries.length > 0 ? { entries: serviceEntries } : {}),
+            ...(serviceCatalog.length > 0 ? { catalog: serviceCatalog } : {}),
             ...(serviceStore ? { store: serviceStore } : {}),
             ...(serviceImporter ? { importer: serviceImporter } : {}),
           }
@@ -4472,10 +4403,10 @@ function mergePlatformMetadata(
 async function resolvePlatformState(
   options: ZelavisOptions,
 ): Promise<{
-  serverOptions: ZelavisServerOptions;
+  serverOptions: ZelavisRuntimeCompositionOptions;
   context: ZelavisPlatformContext;
 }> {
-  let resolved: ZelavisServerOptions = {};
+  let resolved: ZelavisRuntimeCompositionOptions = {};
   let resources: ZelavisPlatformResources = {};
   let metadata: Record<string, unknown> = {};
   const presets: string[] = [];
@@ -4500,14 +4431,14 @@ async function resolvePlatformState(
 }
 
 function applyPlatformResourceDefaults(
-  options: ZelavisServerOptions,
+  options: ZelavisRuntimeCompositionOptions,
   resources: ZelavisPlatformResources,
-): ZelavisServerOptions {
+): ZelavisRuntimeCompositionOptions {
   const nextCoreServices: ZelavisCoreServicesOptions = {
     ...(options.coreServices ?? {}),
   };
-  const nextServices: ZelavisServiceRegistryOptions = {
-    ...(options.services ?? {}),
+  const nextServiceRegistry: ZelavisServiceRegistryOptions = {
+    ...(options.serviceRegistry ?? {}),
   };
   const databaseConfigured =
     nextCoreServices.database !== undefined && nextCoreServices.database !== false;
@@ -4564,8 +4495,8 @@ function applyPlatformResourceDefaults(
     }
   }
 
-  if (!nextServices.store) {
-    nextServices.store = resources.systemStore
+  if (!nextServiceRegistry.store) {
+    nextServiceRegistry.store = resources.systemStore
       ? createSystemStoreServiceRegistryStore(resources.systemStore)
       : resources.kv
         ? createKeyValueServiceRegistryStore(resources.kv)
@@ -4576,7 +4507,7 @@ function applyPlatformResourceDefaults(
 
   return {
     ...options,
-    services: nextServices,
+    serviceRegistry: nextServiceRegistry,
     coreServices: nextCoreServices,
     systemStore: options.systemStore ?? resources.systemStore,
     projectRuntime: options.projectRuntime ?? resources.projectRuntime,
@@ -4658,9 +4589,9 @@ export class Zelavis {
         resolved.serverOptions,
         platformResources,
       );
-      const services = {
-        ...(serverOptions.services ?? {}),
-        store: serverOptions.services?.store ?? this.serviceRegistryStore,
+      const serviceRegistry = {
+        ...(serverOptions.serviceRegistry ?? {}),
+        store: serverOptions.serviceRegistry?.store ?? this.serviceRegistryStore,
       };
       // Default bundle store: wrap the adapter's file storage when present.
       // Explicit user-provided `bundleStore` always wins. Without either,
@@ -4676,10 +4607,9 @@ export class Zelavis {
       // which is the safe default.
       const domainBindings =
         serverOptions.domainBindings ?? platformResources.domainBindings;
-      const runtime = await zelavis(
-        {
+      const runtimeOptions: ZelavisRuntimeCompositionOptions = {
           ...serverOptions,
-          services,
+          serviceRegistry,
           servicePackageInstaller: platformResources.servicePackages,
           serviceActivation: platformResources.services,
           bundleStore,
@@ -4690,8 +4620,8 @@ export class Zelavis {
               this.resolvedPlatformContext,
             ),
           },
-        },
-      );
+        };
+      const runtime = await zelavis(runtimeOptions);
       return runtime;
     })();
 

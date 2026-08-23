@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { Zelavis } from "../index.js";
+import { defineAdapter, Zelavis } from "../index.js";
 import { createNodeServer } from "../node/index.js";
 import { nodeAdapter } from "./node.js";
 
@@ -32,6 +32,10 @@ if (
 ) {
   throw new Error("Project runner requires a locked app service.");
 }
+const lockedAppName = app.name;
+const lockedAppVersion =
+  typeof app.version === "string" ? app.version : undefined;
+const lockedAppSpecifier = app.specifier;
 
 const projectNodeAdapter = nodeAdapter({
   role: "project",
@@ -39,22 +43,32 @@ const projectNodeAdapter = nodeAdapter({
   projects: false,
 });
 const zv = new Zelavis({
-  adapter: projectNodeAdapter,
-  services: {
-    entries: [
-      {
-        service: {
-          name: app.name,
-          ...(typeof app.version === "string" ? { version: app.version } : {}),
-          kind: "app",
-          scope: "system",
+  adapter: defineAdapter({
+    name: "node-project",
+    async resolve(options) {
+      const resolved = await projectNodeAdapter.resolve?.(options);
+      return {
+        ...(resolved ?? {}),
+        serviceRegistry: {
+          ...(resolved?.serviceRegistry ?? {}),
+          catalog: [
+            ...(resolved?.serviceRegistry?.catalog ?? []),
+            {
+              service: {
+                name: lockedAppName,
+                ...(lockedAppVersion ? { version: lockedAppVersion } : {}),
+                kind: "app",
+                scope: "system",
+              },
+              specifier: lockedAppSpecifier,
+              status: "installed",
+              source: "official",
+            },
+          ],
         },
-        specifier: app.specifier,
-        status: "installed",
-        source: "official",
-      },
-    ],
-  },
+      };
+    },
+  }),
   onError: ({ error }) => ({
     status: 400,
     body: { error: error instanceof Error ? error.message : "Unknown error" },

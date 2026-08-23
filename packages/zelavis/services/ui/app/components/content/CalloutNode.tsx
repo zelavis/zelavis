@@ -6,6 +6,7 @@ import {
   type DOMExportOutput,
   type LexicalNode,
   type NodeKey,
+  type SerializedLexicalNode,
 } from "lexical";
 import * as React from "react";
 
@@ -45,10 +46,15 @@ export class CalloutNode extends DecoratorNode<React.JSX.Element> {
     return new CalloutNode(node.__title, node.__body, node.__key);
   }
 
-  static importJSON(serializedNode: SerializedCalloutNode): CalloutNode {
+  static importJSON(
+    serializedNode: SerializedLexicalNode & Record<string, unknown>,
+  ): CalloutNode {
     return $createCalloutNode({
-      title: serializedNode.title,
-      body: serializedNode.body,
+      title:
+        typeof serializedNode.title === "string"
+          ? serializedNode.title
+          : "Callout",
+      body: typeof serializedNode.body === "string" ? serializedNode.body : "",
     });
   }
 

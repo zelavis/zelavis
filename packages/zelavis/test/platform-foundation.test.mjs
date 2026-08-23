@@ -119,7 +119,7 @@ test("Node adapter registers shipped app services and persists Platform Store SQ
     const firstAdapter = nodeAdapter({ dataDirectory: directory });
     const first = await firstAdapter.resolve({});
     const systemStore = first.resources?.systemStore;
-    const appService = first.services?.entries?.find(
+    const appService = first.serviceRegistry?.catalog?.find(
       (entry) => entry.service.name === "@zelavis/app",
     );
 
