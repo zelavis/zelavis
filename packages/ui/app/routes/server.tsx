@@ -1,4 +1,4 @@
-import { Archive, Globe2, ReceiptText, Server } from "lucide-react";
+import { Archive, Fingerprint, Globe2, ReceiptText, Server } from "lucide-react";
 import { Link, Outlet, useLocation } from "react-router";
 
 import {
@@ -24,6 +24,12 @@ const serverSections = [
     detail: "Hostnames, TLS, and project bindings.",
   },
   {
+    title: "Access",
+    path: "/server/access",
+    icon: Fingerprint,
+    detail: "Principals, grants, users, and permissions.",
+  },
+  {
     title: "Backups",
     path: "/server/backups",
     icon: Archive,
@@ -46,12 +52,18 @@ function ServerRoute() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <section className="grid gap-4 md:grid-cols-3">
+      <section className="grid gap-4 md:grid-cols-4">
         <StatCard
           label="Domains"
           value="planned"
           detail="Bind hostnames to projects and system services."
           icon={Globe2}
+        />
+        <StatCard
+          label="Access"
+          value="draft"
+          detail="Manage system principals, grants, and permission scopes."
+          icon={Fingerprint}
         />
         <StatCard
           label="Backups"
