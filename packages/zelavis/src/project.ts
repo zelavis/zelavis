@@ -162,6 +162,10 @@ function parseStoredProject(value: ZelavisSystemStoreValue): ZelavisProjectRecor
   return JSON.parse(JSON.stringify(value)) as ZelavisProjectRecord;
 }
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
 function applySnapshot(
   project: ZelavisProjectRecord,
   snapshot: ZelavisProjectRuntimeSnapshot,
@@ -220,9 +224,93 @@ export async function createProjectManager(options: {
       .map((entry) => [entry.service.name, entry]),
   );
 
+  function resolveAppLock(rawProject: Record<string, unknown>): {
+    app: ZelavisProjectApp;
+    repaired: boolean;
+  } {
+    const rawApp = rawProject.app;
+    const rawBlueprint = rawProject.blueprint;
+    const appName =
+      isObjectRecord(rawApp) && typeof rawApp.name === "string" && rawApp.name
+        ? rawApp.name
+        : isObjectRecord(rawBlueprint) && rawBlueprint.id === "zelavis/app"
+          ? DEFAULT_APP_SERVICE_NAME
+        : rawProject.kind === "zelavis"
+          ? DEFAULT_APP_SERVICE_NAME
+          : undefined;
+
+    if (!appName) {
+      throw new ZelavisProjectValidationError(
+        "Stored project record is missing its app service lock.",
+      );
+    }
+
+    const appService = appServiceMap.get(appName);
+    if (!appService) {
+      throw new ZelavisProjectValidationError(
+        `App service "${appName}" was not found.`,
+      );
+    }
+
+    const app = appLockFromRegistryEntry(appService);
+    if (
+      isObjectRecord(rawApp) &&
+      rawApp.name === app.name &&
+      rawApp.title === app.title &&
+      rawApp.version === app.version &&
+      rawApp.specifier === app.specifier
+    ) {
+      return { app, repaired: false };
+    }
+
+    return { app, repaired: true };
+  }
+
+  function normalizeStoredProject(value: ZelavisSystemStoreValue): {
+    project: ZelavisProjectRecord;
+    repaired: boolean;
+  } {
+    const rawProject = parseStoredProject(value);
+    const rawRecord = rawProject as unknown as Record<string, unknown>;
+    const { app, repaired: repairedApp } = resolveAppLock(rawRecord);
+    const project: ZelavisProjectRecord = {
+      id: rawProject.id,
+      name: rawProject.name,
+      kind: rawProject.kind || projectKindFromAppService(app.name),
+      app,
+      desiredState: rawProject.desiredState,
+      runtime:
+        rawProject.runtime?.driver && rawProject.runtime.status
+          ? rawProject.runtime
+          : {
+              driver: runtime.name,
+              status: "stopped",
+            },
+      createdAt: rawProject.createdAt,
+      updatedAt: rawProject.updatedAt,
+    };
+
+    return {
+      project,
+      repaired:
+        repairedApp ||
+        rawProject.kind !== project.kind ||
+        "blueprint" in rawRecord ||
+        rawProject.runtime !== project.runtime,
+    };
+  }
+
   async function read(id: string): Promise<ZelavisProjectRecord | undefined> {
     const record = await store.get(PROJECTS_NAMESPACE, normalizeProjectId(id));
-    return record ? parseStoredProject(record.value) : undefined;
+    if (!record) {
+      return undefined;
+    }
+
+    const { project, repaired } = normalizeStoredProject(record.value);
+    if (repaired) {
+      await write(project);
+    }
+    return project;
   }
 
   async function write(project: ZelavisProjectRecord): Promise<ZelavisProjectRecord> {
@@ -259,7 +347,13 @@ export async function createProjectManager(options: {
     async list() {
       const records = await store.list(PROJECTS_NAMESPACE);
       const projects = await Promise.all(
-        records.map((record) => refresh(parseStoredProject(record.value))),
+        records.map(async (record) => {
+          const { project, repaired } = normalizeStoredProject(record.value);
+          if (repaired) {
+            await write(project);
+          }
+          return refresh(project);
+        }),
       );
       return projects.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     },
@@ -330,6 +424,7 @@ export async function createProjectManager(options: {
       });
 
       try {
+        await runtime.prepare(project, project.app);
         return write(applySnapshot(project, await runtime.start(project)));
       } catch (error) {
         const failed = {
@@ -371,6 +466,7 @@ export async function createProjectManager(options: {
       });
 
       try {
+        await runtime.prepare(project, project.app);
         return write(applySnapshot(project, await runtime.start(project)));
       } catch (error) {
         const failed = {
@@ -404,7 +500,10 @@ export async function createProjectManager(options: {
   const existing = await store.list(PROJECTS_NAMESPACE);
   await Promise.all(
     existing.map(async (record) => {
-      const project = parseStoredProject(record.value);
+      const { project, repaired } = normalizeStoredProject(record.value);
+      if (repaired) {
+        await write(project);
+      }
       if (project.desiredState !== "running") {
         return;
       }

@@ -8,6 +8,7 @@ import {
   Zelavis,
   createAssistantManager,
   createMemorySystemStore,
+  createProjectManager,
 } from "../dist/index.js";
 import { nodeAdapter } from "../dist/adapters/node.js";
 
@@ -151,6 +152,86 @@ test("Node adapter registers shipped app services and persists Platform Store SQ
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("Project manager repairs legacy blueprint project records before start", async () => {
+  const store = createMemorySystemStore();
+  const prepared = new Set();
+  const appService = {
+    service: {
+      name: "@zelavis/app",
+      kind: "app",
+      version: "1.0.1-alpha.2",
+      marketplace: { title: "Zelavis App" },
+    },
+    specifier: "@zelavis/app",
+    status: "installed",
+    source: "official",
+  };
+  const runtime = {
+    name: "test-runtime",
+    capabilities: {
+      secureIsolation: false,
+      resourceLimits: false,
+      persistentFilesystem: true,
+      description: "Test runtime",
+    },
+    async prepare(project, app) {
+      assert.equal(project.id, "legacy");
+      assert.equal(app.name, "@zelavis/app");
+      assert.equal(app.specifier, "@zelavis/app");
+      prepared.add(project.id);
+    },
+    async start(project) {
+      assert.equal(prepared.has(project.id), true);
+      return {
+        status: "running",
+        url: "http://127.0.0.1:49152",
+        startedAt: new Date().toISOString(),
+      };
+    },
+    async stop() {
+      return { status: "stopped", stoppedAt: new Date().toISOString() };
+    },
+    async status() {
+      return { status: "stopped" };
+    },
+    async logs() {
+      return [];
+    },
+    async destroy() {},
+  };
+
+  await store.set("projects", "legacy", {
+    id: "legacy",
+    name: "Legacy",
+    kind: "zelavis",
+    blueprint: {
+      id: "zelavis/app",
+      version: "1.0.1-alpha.2",
+    },
+    desiredState: "stopped",
+    runtime: {
+      driver: "test-runtime",
+      status: "failed",
+      error: "Project process exited with code 1.",
+    },
+    createdAt: "2026-08-23T08:15:14.633Z",
+    updatedAt: "2026-08-23T08:15:14.633Z",
+  });
+
+  const manager = await createProjectManager({
+    store,
+    appServices: [appService],
+    runtime,
+  });
+  const project = await manager.start("legacy");
+  const stored = (await store.get("projects", "legacy")).value;
+
+  assert.equal(project.runtime.status, "running");
+  assert.equal(stored.app.name, "@zelavis/app");
+  assert.equal(stored.app.specifier, "@zelavis/app");
+  assert.equal("blueprint" in stored, false);
 });
 
 test("Node adapter creates independently persisted Zelavis App runtimes", async () => {
