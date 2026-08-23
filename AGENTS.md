@@ -219,9 +219,9 @@ those grants, while endpoints remain the authority layer.
 - `plugins/*` contains official user-installable Zelavis plugins.
 - `packages/zelavis` is the Platform OS package and ships official services under `packages/zelavis/services`.
 - `packages/server` defines the shared service and route mounting model.
-- `packages/zelavis-app/src/db` contains the document-first database core and server-facing database service.
-- `packages/zelavis-app/src/auth` contains the low-level auth core and auth method plugins.
-- `packages/zelavis-app/src/workloads` contains project-scoped workloads.
+- `packages/zelavis/services/zelavis-app/src/db` contains the document-first database core and server-facing database service.
+- `packages/zelavis/services/zelavis-app/src/auth` contains the low-level auth core and auth method plugins.
+- `packages/zelavis/services/zelavis-app/src/workloads` contains project-scoped workloads.
 - `packages/ui` contains the admin/dashboard UI used by the runtime package.
 - `packages/*/adapters/*` contains framework or external-system adapters.
 - `packages/*/plugins/*` contains package-local capability/provider plugins for core services.

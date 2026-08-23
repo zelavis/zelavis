@@ -80,7 +80,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/zelavis/zelavis.git",
-    "directory": "packages/zelavis-app"
+    "directory": "packages/zelavis/services/zelavis-app"
   },
   "homepage": "https://www.zelavis.com",
   "bugs": {

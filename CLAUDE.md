@@ -75,7 +75,7 @@ sharing.
 - Pattern: `/^[A-Za-z_][A-Za-z0-9_-]*$/`
 - Reserved names: `zv_collections`, `zv_events`, `zv_schemas`, `zv_time_series_checkpoints`, `zv_time_series_points`
 - Any name starting with `zv_` is blanket-reserved for future Zelavis internals
-- Validated in `validateDatabaseCollectionName` in `packages/zelavis-app/src/db/contracts/documents.ts`
+- Validated in `validateDatabaseCollectionName` in `packages/zelavis/services/zelavis-app/src/db/contracts/documents.ts`
 
 ## Content Studio Routes (UI)
 
@@ -238,7 +238,7 @@ implementation.
 
 ## Testing
 
-- `@zelavis/app/db`: Node test runner, `.mjs` files in `packages/zelavis-app/test` and `packages/zelavis-app/adapters/*/test`. Run with `pnpm --filter @zelavis/app test`.
+- `@zelavis/app/db`: Node test runner, `.mjs` files in `packages/zelavis/services/zelavis-app/test` and `packages/zelavis/services/zelavis-app/adapters/*/test`. Run with `pnpm --filter @zelavis/app test`.
 - `@zelavis/ui`: Vitest for unit tests, Playwright for e2e. Run with `pnpm --filter @zelavis/ui test`.
 - After any `@zelavis/app/db` contract change, rebuild with `pnpm --filter @zelavis/app build` before running adapter tests.
 - After any `@zelavis/ui` source change that affects the compiled dashboard, rebuild with `pnpm --filter @zelavis/ui build` to regenerate `packages/ui/src/generated/dashboard-assets.ts`.

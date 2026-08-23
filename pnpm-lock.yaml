@@ -229,7 +229,7 @@ importers:
     dependencies:
       '@zelavis/app':
         specifier: workspace:*
-        version: link:../../packages/zelavis-app
+        version: link:../../packages/zelavis/services/zelavis-app
       zelavis:
         specifier: workspace:*
         version: link:../../packages/zelavis
@@ -448,13 +448,13 @@ importers:
     dependencies:
       '@zelavis/app':
         specifier: workspace:*
-        version: link:../zelavis-app
+        version: link:services/zelavis-app
       '@zelavis/app-db-bun-sqlite':
         specifier: workspace:*
-        version: link:../zelavis-app/adapters/bun-sqlite
+        version: link:services/zelavis-app/adapters/bun-sqlite
       '@zelavis/app-db-node-sqlite':
         specifier: workspace:*
-        version: link:../zelavis-app/adapters/node-sqlite
+        version: link:services/zelavis-app/adapters/node-sqlite
       '@zelavis/cli':
         specifier: workspace:*
         version: link:../cli
@@ -496,7 +496,7 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/zelavis-app:
+  packages/zelavis/services/zelavis-app:
     dependencies:
       effect:
         specifier: 4.0.0-rc.111
@@ -530,7 +530,7 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/zelavis-app/adapters/bun-sqlite:
+  packages/zelavis/services/zelavis-app/adapters/bun-sqlite:
     dependencies:
       '@zelavis/app':
         specifier: workspace:*
@@ -543,7 +543,7 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/zelavis-app/adapters/libsql:
+  packages/zelavis/services/zelavis-app/adapters/libsql:
     dependencies:
       '@libsql/client':
         specifier: ^0.17.4
@@ -559,7 +559,7 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/zelavis-app/adapters/node-sqlite:
+  packages/zelavis/services/zelavis-app/adapters/node-sqlite:
     dependencies:
       '@zelavis/app':
         specifier: workspace:*
@@ -578,7 +578,7 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/zelavis-app/plugins/email-password:
+  packages/zelavis/services/zelavis-app/plugins/email-password:
     dependencies:
       '@zelavis/app':
         specifier: workspace:*
@@ -589,9 +589,9 @@ importers:
         version: 5.9.3
       zelavis:
         specifier: workspace:*
-        version: link:../../../zelavis
+        version: link:../../../..
 
-  packages/zelavis-app/plugins/username-password:
+  packages/zelavis/services/zelavis-app/plugins/username-password:
     dependencies:
       '@zelavis/app':
         specifier: workspace:*
@@ -602,13 +602,13 @@ importers:
         version: 5.9.3
       zelavis:
         specifier: workspace:*
-        version: link:../../../zelavis
+        version: link:../../../..
 
   plugins/ecommerce:
     dependencies:
       '@zelavis/app':
         specifier: workspace:*
-        version: link:../../packages/zelavis-app
+        version: link:../../packages/zelavis/services/zelavis-app
       '@zelavis/server':
         specifier: workspace:*
         version: link:../../packages/server

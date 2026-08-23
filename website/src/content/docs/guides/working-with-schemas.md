@@ -110,5 +110,5 @@ You can:
 
 ## Related docs
 
-- [@zelavis/db](../packages/zelavis-app/src/db.md)
+- [@zelavis/app](../packages/app.md)
 - [Adapters and Fetch-Native Hosts](./adapters-and-fetch-native.md)

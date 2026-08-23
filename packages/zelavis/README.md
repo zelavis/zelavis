@@ -476,8 +476,8 @@ runtime and UI dev server together and wires dashboard requests to the live UI
 build.
 
 `pnpm dev` uses the official service directory at `packages/zelavis/services`.
-The `services:sync` package script rebuilds `@zelavis/app` and refreshes the
-bundled service copy used by the local runtime importer.
+`@zelavis/app` lives directly at `packages/zelavis/services/zelavis-app` as a
+nested workspace package and bundled app-service boilerplate.
 
 The dashboard, project registry, Platform settings, and service registry state
 persist through the separate System Store. Zelavis App capabilities run inside

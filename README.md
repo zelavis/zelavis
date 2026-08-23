@@ -140,31 +140,31 @@ Core packages:
   The high-level runtime package. It composes core services such as auth, database, website, workloads, and dashboard delivery, and re-exports server adapters.
 - [packages/server](packages/server)
   Shared service, endpoint, and framework adapter contracts for mounting Zelavis packages.
-- [packages/zelavis-app/src/auth](packages/zelavis-app/src/auth)
+- [packages/zelavis/services/zelavis-app/src/auth](packages/zelavis/services/zelavis-app/src/auth)
   A low-level authentication core for accounts, credentials, sessions, and opt-in auth method services.
-- [packages/zelavis-app/src/db](packages/zelavis-app/src/db)
+- [packages/zelavis/services/zelavis-app/src/db](packages/zelavis/services/zelavis-app/src/db)
   A document-first, tenant-aware database core with an in-memory driver, optional SQL capability, and a mountable server service.
 - [packages/ui](packages/ui)
   The admin/dashboard frontend used by the high-level runtime.
-- [packages/zelavis-app/src/workloads](packages/zelavis-app/src/workloads)
+- [packages/zelavis/services/zelavis-app/src/workloads](packages/zelavis/services/zelavis-app/src/workloads)
   A first-party core plugin for project-scoped functions, jobs, schedules, and webhooks.
 - [packages/cli](packages/cli)
   Command-line tooling for Zelavis workflows.
 
 Database adapters:
 
-- [packages/zelavis-app/adapters/bun-sqlite](packages/zelavis-app/adapters/bun-sqlite)
+- [packages/zelavis/services/zelavis-app/adapters/bun-sqlite](packages/zelavis/services/zelavis-app/adapters/bun-sqlite)
   A Bun SQLite adapter package for `@zelavis/app/db`.
-- [packages/zelavis-app/adapters/node-sqlite](packages/zelavis-app/adapters/node-sqlite)
+- [packages/zelavis/services/zelavis-app/adapters/node-sqlite](packages/zelavis/services/zelavis-app/adapters/node-sqlite)
   A Node.js SQLite adapter package for `@zelavis/app/db`.
-- [packages/zelavis-app/adapters/libsql](packages/zelavis-app/adapters/libsql)
+- [packages/zelavis/services/zelavis-app/adapters/libsql](packages/zelavis/services/zelavis-app/adapters/libsql)
   A libSQL adapter package for `@zelavis/app/db`.
 
 Auth plugins:
 
-- [packages/zelavis-app/plugins/email-password](packages/zelavis-app/plugins/email-password)
+- [packages/zelavis/services/zelavis-app/plugins/email-password](packages/zelavis/services/zelavis-app/plugins/email-password)
   An email/password auth provider service for `@zelavis/app/auth`.
-- [packages/zelavis-app/plugins/username-password](packages/zelavis-app/plugins/username-password)
+- [packages/zelavis/services/zelavis-app/plugins/username-password](packages/zelavis/services/zelavis-app/plugins/username-password)
   A username/password auth provider service for `@zelavis/app/auth`.
 
 Official domain plugins:

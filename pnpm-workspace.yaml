@@ -1,5 +1,8 @@
 packages:
   - "packages/*"
+  - "packages/zelavis/services/*"
+  - "packages/zelavis/services/*/adapters/*"
+  - "packages/zelavis/services/*/plugins/*"
   - "plugins/*"
   - "plugins/*/adapters/*"
   - "plugins/*/plugins/*"
