@@ -75,8 +75,10 @@ For the Node process driver, each project lives below
 There is one dashboard application, mounted by the Platform OS from
 `@zelavis/ui`. App project runtimes are headless and do not serve their own
 dashboard bundle. They expose runtime metadata, APIs, and service menus through
-`@zelavis/server`; the Platform dashboard reads those endpoints through the
-project proxy and renders the selected project's navigation.
+`@zelavis/app/server`; the Platform dashboard reads those endpoints through the
+project proxy and renders the selected project's navigation. App services must
+not be executed directly inside the Platform process because that would share
+memory, credentials, crash fate, and workload execution with the owner console.
 
 Project lifecycle is endpoint-backed:
 

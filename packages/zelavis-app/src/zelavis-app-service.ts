@@ -13,7 +13,7 @@ import {
   defineService,
   type ZelavisAnyRuntimeServiceInput,
   type ZelavisServiceSetupContext,
-} from "@zelavis/server";
+} from "./server/index.js";
 import {
   workloadsService,
   type WorkloadsServiceOptions,

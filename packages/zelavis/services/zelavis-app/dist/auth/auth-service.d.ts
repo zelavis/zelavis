@@ -1,4 +1,4 @@
-import { type ZelavisServiceDefinition, type ZelavisRuntimeService } from "@zelavis/server";
+import { type ZelavisServiceDefinition, type ZelavisRuntimeService } from "../server/index.js";
 import type { AuthApi, AuthProviderService } from "./core/types.js";
 import { type CreateAuthOptions } from "./core/create-auth.js";
 export type AuthServiceDefinition = Readonly<ZelavisRuntimeService<AuthApi> & ZelavisServiceDefinition<AuthApi, AuthApi>>;

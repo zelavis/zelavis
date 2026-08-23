@@ -64,10 +64,10 @@ The repo still contains domain packages such as `@zelavis/ecommerce`, but they a
 - Project routes and grants always require a real project ID. Never introduce
   an implicit `default` project or fall back from a project API request to the
   Platform runtime.
-- `@zelavis/server` is a reusable endpoint/runtime kernel shared by control
-  plane and project runtimes. The Platform OS server composition belongs in
-  `zelavis`; isolated Zelavis App projects may reuse `@zelavis/server` without
-  importing the Platform OS.
+- `@zelavis/server` is the Platform OS endpoint/runtime kernel. Zelavis App
+  owns its app-facing server contract under `@zelavis/app/server` so app
+  projects can be packaged as self-contained services without importing the
+  Platform OS server package.
 
 The Platform OS can create multiple Zelavis App projects from the shipped
 `@zelavis/app` service boilerplate. The default Node adapter prepares each project under
@@ -76,6 +76,9 @@ locks the exact app service version, and runs it in a separate Node process. Thi
 is operational isolation for trusted project code, not a hostile-code security
 sandbox. Project lifecycle code must stay behind the runtime-driver contract so
 rootless OCI containers and stronger isolation can replace it later.
+Do not run app project services directly inside the Platform process; the
+Platform dashboard must communicate with project runtimes through the project
+proxy boundary.
 
 There is exactly one Zelavis dashboard application: `@zelavis/ui`, mounted by
 the Platform OS. Isolated Zelavis App project runtimes must not mount or serve

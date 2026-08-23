@@ -1,4 +1,4 @@
-import { createMappedJsonErrorResponse, defineService, } from "@zelavis/server";
+import { createMappedJsonErrorResponse, defineService, } from "../server/index.js";
 import { createAuth } from "./core/create-auth.js";
 import { AuthDomainError, AuthNotFoundError, AuthValidationError, } from "./core/errors.js";
 const authErrorRules = [

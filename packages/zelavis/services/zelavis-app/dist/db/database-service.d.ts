@@ -1,4 +1,4 @@
-import { type ZelavisRuntimeService } from "@zelavis/server";
+import { type ZelavisRuntimeService } from "../server/index.js";
 import type { DatabaseApi } from "./core/types.js";
 export type DatabaseServiceDefinition = ZelavisRuntimeService<DatabaseApi>;
 export declare function defineDatabaseService(database: DatabaseApi): DatabaseServiceDefinition;

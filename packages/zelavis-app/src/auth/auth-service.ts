@@ -4,7 +4,7 @@ import {
   defineService,
   type ZelavisServiceDefinition,
   type ZelavisRuntimeService,
-} from "@zelavis/server";
+} from "../server/index.js";
 import type { AuthApi, AuthProviderService } from "./core/types.js";
 import { createAuth, type CreateAuthOptions } from "./core/create-auth.js";
 import {

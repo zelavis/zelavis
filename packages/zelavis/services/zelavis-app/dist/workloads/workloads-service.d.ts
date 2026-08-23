@@ -1,4 +1,4 @@
-import type { ZelavisRuntimeService } from "@zelavis/server";
+import type { ZelavisRuntimeService } from "../server/index.js";
 export type WorkloadType = "function" | "job" | "schedule" | "webhook";
 export interface WorkloadDefinition {
     id: string;

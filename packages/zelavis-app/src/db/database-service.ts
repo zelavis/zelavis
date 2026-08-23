@@ -2,7 +2,7 @@ import {
   createMappedJsonErrorResponse,
   type ZelavisServerErrorStatusRule,
   type ZelavisRuntimeService,
-} from "@zelavis/server";
+} from "../server/index.js";
 import type { DatabaseApi } from "./core/types.js";
 import type {
   DatabaseCollectionSurface,

@@ -32,12 +32,44 @@
     "./workloads": {
       "types": "./dist/workloads/index.d.ts",
       "import": "./dist/workloads/index.js"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.js"
+    },
+    "./server/adapters/node": {
+      "types": "./dist/server/adapters/node.d.ts",
+      "import": "./dist/server/adapters/node.js"
+    },
+    "./server/adapters/elysia": {
+      "types": "./dist/server/adapters/elysia.d.ts",
+      "import": "./dist/server/adapters/elysia.js"
+    },
+    "./server/adapters/express": {
+      "types": "./dist/server/adapters/express.d.ts",
+      "import": "./dist/server/adapters/express.js"
+    },
+    "./server/adapters/fastify": {
+      "types": "./dist/server/adapters/fastify.d.ts",
+      "import": "./dist/server/adapters/fastify.js"
+    },
+    "./server/adapters/h3": {
+      "types": "./dist/server/adapters/h3.d.ts",
+      "import": "./dist/server/adapters/h3.js"
+    },
+    "./server/adapters/hono": {
+      "types": "./dist/server/adapters/hono.d.ts",
+      "import": "./dist/server/adapters/hono.js"
+    },
+    "./server/adapters/nextjs-pages-router": {
+      "types": "./dist/server/adapters/nextjs-pages-router.d.ts",
+      "import": "./dist/server/adapters/nextjs-pages-router.js"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "pnpm --filter @zelavis/server build && pnpm run build && node --test test/*.test.mjs"
+    "test": "pnpm run build && node --test test/*.test.mjs"
   },
   "files": [
     "dist"
@@ -55,11 +87,18 @@
     "url": "https://github.com/zelavis/zelavis/issues"
   },
   "dependencies": {
-    "@zelavis/server": "workspace:*",
     "effect": "4.0.0-rc.111"
   },
   "devDependencies": {
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "@types/express": "^5.0.0",
+    "@types/node": "^25.9.3",
+    "elysia": "^1.4.29",
+    "express": "^5.0.0",
+    "fastify": "^5.9.0",
+    "h3": "2.0.1-rc.22",
+    "hono": "^4.12.34",
+    "next": "16.2.11"
   },
   "keywords": [
     "zelavis",

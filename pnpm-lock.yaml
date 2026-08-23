@@ -498,13 +498,34 @@ importers:
 
   packages/zelavis-app:
     dependencies:
-      '@zelavis/server':
-        specifier: workspace:*
-        version: link:../server
       effect:
         specifier: 4.0.0-rc.111
         version: 4.0.0-rc.111
     devDependencies:
+      '@types/express':
+        specifier: ^5.0.0
+        version: 5.0.6
+      '@types/node':
+        specifier: ^25.9.3
+        version: 25.9.5
+      elysia:
+        specifier: ^1.4.29
+        version: 1.4.29(@sinclair/typebox@0.34.49)(exact-mirror@1.0.0)(file-type@22.0.1)(openapi-types@12.1.3)(typescript@5.9.3)
+      express:
+        specifier: ^5.0.0
+        version: 5.2.1
+      fastify:
+        specifier: ^5.9.0
+        version: 5.12.1
+      h3:
+        specifier: 2.0.1-rc.22
+        version: 2.0.1-rc.22
+      hono:
+        specifier: ^4.12.18
+        version: 4.13.3
+      next:
+        specifier: 16.2.11
+        version: 16.2.11(@playwright/test@1.62.1)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
       typescript:
         specifier: ^5.9.0
         version: 5.9.3

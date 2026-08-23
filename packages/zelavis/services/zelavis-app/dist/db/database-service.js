@@ -1,4 +1,4 @@
-import { createMappedJsonErrorResponse, } from "@zelavis/server";
+import { createMappedJsonErrorResponse, } from "../server/index.js";
 import { DatabaseEventIdempotencyConflictError, } from "./contracts/events.js";
 import { DatabaseConflictError, DatabaseDomainError, DatabaseNotFoundError, DatabaseRevisionMismatchError, DatabaseSchemaValidationError, DatabaseValidationError, } from "./core/errors.js";
 function readBodyObject(body) {

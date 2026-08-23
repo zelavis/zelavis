@@ -19,4 +19,10 @@ Lower-level app modules are owned by this package:
 import { createDatabase } from "@zelavis/app/db";
 import { createAuth } from "@zelavis/app/auth";
 import { workloadsService } from "@zelavis/app/workloads";
+import { zelavisServer } from "@zelavis/app/server";
 ```
+
+`@zelavis/app/server` is the app-owned server contract/runtime used by the app
+modules. The Platform still runs projects out of process and reaches them
+through the project proxy; it should not execute app services directly inside
+the Platform process.

@@ -20,6 +20,7 @@ Use subpath imports when lower-level code needs direct access:
 import { createDatabase, defineDatabaseService } from "@zelavis/app/db";
 import { createAuth, authService } from "@zelavis/app/auth";
 import { workloadsService } from "@zelavis/app/workloads";
+import { zelavisServer } from "@zelavis/app/server";
 ```
 
 Runtime service IDs remain stable:
@@ -38,3 +39,8 @@ The published `zelavis` package ships the official app service under
 runtime entry, package metadata, source, adapters, and plugins so project
 creation can use it as a real project boilerplate rather than a dist-only
 service bundle.
+
+The app package also owns `@zelavis/app/server`. App modules use that server
+contract instead of importing the Platform's `@zelavis/server` package. The
+Platform still starts app projects in isolated runtimes and proxies requests to
+them; sharing the Platform process would collapse the isolation boundary.

@@ -1,7 +1,7 @@
 import type {
   ZelavisRouteContext,
   ZelavisRuntimeService,
-} from "@zelavis/server";
+} from "../server/index.js";
 
 export type WorkloadType = "function" | "job" | "schedule" | "webhook";
 

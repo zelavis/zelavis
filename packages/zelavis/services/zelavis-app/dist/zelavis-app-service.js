@@ -1,6 +1,6 @@
 import { authService, } from "./auth/index.js";
 import { createDatabase, defineDatabaseService, } from "./db/index.js";
-import { defineService, } from "@zelavis/server";
+import { defineService, } from "./server/index.js";
 import { workloadsService, } from "./workloads/index.js";
 function isDatabaseApi(value) {
     return Boolean(value &&
