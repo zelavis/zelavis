@@ -13,9 +13,7 @@ import {
   LayoutDashboard,
   MonitorCog,
   Package,
-  Plus,
   ReceiptText,
-  Send,
   Server,
   Settings2,
   ShieldCheck,
@@ -41,7 +39,6 @@ import { getProjectIdFromPathname, toProjectPath } from "#/lib/routing";
 
 export type DashboardRoutePath =
   | "/"
-  | "/access"
   | `/projects/${string}`
   | `/projects/${string}/${string}`
   | "/agents"
@@ -91,6 +88,7 @@ export type DashboardNavItem = {
   panelLabel?: string;
   pageLabel?: string;
   slot?: DashboardSlotId;
+  order?: number;
   fixed?: boolean;
   fixedOrder?: number;
   fixedActionScope?: "local" | "inherit" | "replace" | "clear";
@@ -117,6 +115,7 @@ export type DashboardServiceRegistryMenuItem = {
   icon: LucideIcon;
   panelLabel?: string;
   pageLabel?: string;
+  order?: number;
   fixed?: boolean;
   fixedOrder?: number;
   fixedActionScope?: "local" | "inherit" | "replace" | "clear";
@@ -313,177 +312,125 @@ function projectAccess(
   };
 }
 
+function sortRootNavItems(items: readonly DashboardNavItem[]): readonly DashboardNavItem[] {
+  return [...items].sort(
+    (left, right) =>
+      (left.order ?? Number.MAX_SAFE_INTEGER) -
+        (right.order ?? Number.MAX_SAFE_INTEGER) ||
+      left.title.localeCompare(right.title),
+  );
+}
+
 export function buildProjectManagementNavItems(
   services?: readonly RuntimeService[],
 ): readonly DashboardNavItem[] {
   const platformServiceNavItems = (services ?? [])
-    .filter((service) => service.core && getServiceMenuSurface(service) === "platform")
+    .filter((service) => service.core)
     .flatMap((service) =>
-      service.menu
-        ? [createDashboardServiceMenuItem(service.menu, service.name)]
-        : [],
+      [service.menu, ...(service.menus ?? [])]
+        .filter(
+          (menu): menu is RuntimeServiceMenuDefinition => {
+            if (!menu) {
+              return false;
+            }
+
+            return (
+              (menu.surface ?? getServiceMenuSurface(service)) === "platform"
+            );
+          },
+        )
+        .map((menu) => createDashboardServiceMenuItem(menu, service.name)),
     );
 
-  return [
-  {
-    title: "Projects",
-    url: "/projects",
-    icon: LayoutDashboard,
-    pageLabel: "Projects",
-    sectionLabel: "Projects",
-    access: {
-      permissions: ["projects.list"],
-      scope: { type: "system" },
+  return sortRootNavItems([
+    {
+      title: "Projects",
+      url: "/projects",
+      icon: LayoutDashboard,
+      pageLabel: "Projects",
+      sectionLabel: "Projects",
+      order: 10,
+      access: {
+        permissions: ["projects.list"],
+        scope: { type: "system" },
+      },
     },
-  },
-  ...platformServiceNavItems,
-  {
-    title: "Marketplace",
-    url: "/marketplace",
-    icon: Boxes,
-    pageLabel: "Marketplace",
-    sectionLabel: "Explore",
-    access: {
-      permissions: ["marketplace.view"],
-      scope: { type: "system" },
+    ...platformServiceNavItems,
+    {
+      title: "Marketplace",
+      url: "/marketplace",
+      icon: Boxes,
+      pageLabel: "Marketplace",
+      sectionLabel: "Explore",
+      order: 30,
+      access: {
+        permissions: ["marketplace.view"],
+        scope: { type: "system" },
+      },
     },
-  },
-  {
-    title: "Domains",
-    landingUrl: "/server/domains",
-    icon: Globe2,
-    pageLabel: "Domains",
-    sectionLabel: "Manage",
-    access: {
-      permissions: ["server.domains.view"],
-      scope: { type: "system" },
+    {
+      title: "Resources",
+      icon: Activity,
+      landingUrl: "/resources",
+      pageLabel: "Resources",
+      sectionLabel: "Manage",
+      order: 50,
+      access: {
+        permissions: ["server.resources.view"],
+        scope: { type: "system" },
+      },
+      items: [
+        {
+          title: "Overview",
+          url: "/resources",
+          icon: Activity,
+          pageLabel: "Resources",
+        },
+        {
+          title: "Processes",
+          url: "/resources",
+          search: { resourceView: "processes" },
+          icon: Cpu,
+          pageLabel: "Processes",
+        },
+        {
+          title: "Storage",
+          url: "/resources",
+          search: { resourceView: "storage" },
+          icon: Database,
+          pageLabel: "Storage",
+        },
+        {
+          title: "Limits",
+          url: "/resources",
+          search: { resourceView: "limits" },
+          icon: MonitorCog,
+          pageLabel: "Limits",
+        },
+      ],
     },
-    items: [
-      {
-        title: "Overview",
-        url: "/server/domains",
-        icon: Globe2,
-        pageLabel: "Domains",
-        slot: "overview",
+    {
+      title: "Security",
+      icon: ShieldCheck,
+      landingUrl: "/security",
+      order: 70,
+      access: {
+        permissions: ["server.security.view"],
+        scope: { type: "system" },
       },
-      {
-        title: "Add Domain",
-        url: "/server/domains",
-        search: { domainAction: "add" },
-        icon: Plus,
-        pageLabel: "Add Domain",
-        slot: "create",
-      },
-      {
-        title: "Buy",
-        url: "/server/domains",
-        search: { domainAction: "buy" },
-        icon: CreditCard,
-        pageLabel: "Buy Domain",
-        slot: "create",
-      },
-      {
-        title: "Transfer",
-        url: "/server/domains",
-        search: { domainAction: "transfer" },
-        icon: Send,
-        pageLabel: "Transfer Domain",
-        slot: "create",
-      },
-    ],
-  },
-  {
-    title: "Resources",
-    icon: Activity,
-    landingUrl: "/resources",
-    pageLabel: "Resources",
-    sectionLabel: "Manage",
-    access: {
-      permissions: ["server.resources.view"],
-      scope: { type: "system" },
+      pageLabel: "Security",
+      sectionLabel: "Manage",
+      items: [
+        {
+          title: "Checklist",
+          url: "/security",
+          icon: ShieldCheck,
+          pageLabel: "Security",
+          slot: "main",
+        },
+      ],
     },
-    items: [
-      {
-        title: "Overview",
-        url: "/resources",
-        icon: Activity,
-        pageLabel: "Resources",
-      },
-      {
-        title: "Processes",
-        url: "/resources",
-        search: { resourceView: "processes" },
-        icon: Cpu,
-        pageLabel: "Processes",
-      },
-      {
-        title: "Storage",
-        url: "/resources",
-        search: { resourceView: "storage" },
-        icon: Database,
-        pageLabel: "Storage",
-      },
-      {
-        title: "Limits",
-        url: "/resources",
-        search: { resourceView: "limits" },
-        icon: MonitorCog,
-        pageLabel: "Limits",
-      },
-    ],
-  },
-  {
-    title: "Server",
-    icon: Server,
-    landingUrl: "/server",
-    pageLabel: "Server",
-    sectionLabel: "Manage",
-    access: {
-      permissions: ["server.manage"],
-      scope: { type: "system" },
-    },
-    items: [
-      {
-        title: "Overview",
-        url: "/server",
-        icon: Server,
-        pageLabel: "Server",
-      },
-      {
-        title: "Backups",
-        url: "/server/backups",
-        icon: Archive,
-        pageLabel: "Backups",
-      },
-      {
-        title: "Logs",
-        url: "/server/logs",
-        icon: ReceiptText,
-        pageLabel: "Logs",
-      },
-    ],
-  },
-  {
-    title: "Security",
-    icon: ShieldCheck,
-    landingUrl: "/security",
-    access: {
-      permissions: ["server.security.view"],
-      scope: { type: "system" },
-    },
-    pageLabel: "Security",
-    sectionLabel: "Manage",
-    items: [
-      {
-        title: "Checklist",
-        url: "/security",
-        icon: ShieldCheck,
-        pageLabel: "Security",
-        slot: "main",
-      },
-    ],
-  },
-  ] as const;
+  ] as const);
 }
 
 export function buildManagedProjectNavItems(
@@ -720,6 +667,7 @@ function createDashboardServiceRegistryMenuItem(
     icon: getServiceRegistryMenuIcon(menu.title),
     pageLabel: menu.pageLabel,
     panelLabel: menu.panelLabel,
+    order: menu.order,
     fixed: menu.fixed,
     fixedOrder: menu.fixedOrder,
     fixedActionScope: menu.fixedActionScope,
@@ -734,6 +682,19 @@ function createDashboardServiceRegistryMenuItem(
 }
 
 function getServiceMenuIcon(title: string, serviceName?: string): LucideIcon {
+  switch (title.toLowerCase()) {
+    case "server":
+      return Server;
+    case "domains":
+      return Globe2;
+    case "access":
+      return Fingerprint;
+    case "backups":
+      return Archive;
+    case "logs":
+      return ReceiptText;
+  }
+
   switch (serviceName ?? title.toLowerCase()) {
     case "@zelavis/server":
       return Fingerprint;
@@ -771,6 +732,7 @@ function createDashboardServiceMenuItem(
     icon: getServiceMenuIcon(menu.title, serviceName),
     pageLabel: menu.pageLabel,
     panelLabel: menu.panelLabel,
+    order: menu.order,
     fixed: menu.fixed,
     fixedOrder: menu.fixedOrder,
     fixedActionScope: menu.fixedActionScope,
@@ -830,6 +792,14 @@ function getServiceMenuSurface(service: RuntimeService): DashboardServiceSurface
   return service.menu?.surface ?? "core";
 }
 
+function getRuntimeServiceMenus(
+  service: RuntimeService,
+): readonly RuntimeServiceMenuDefinition[] {
+  return [service.menu, ...(service.menus ?? [])].filter(
+    (menu): menu is RuntimeServiceMenuDefinition => Boolean(menu),
+  );
+}
+
 export function buildDashboardServiceRegistryEntries(
   serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
 ): readonly DashboardExtensionServiceItem[] {
@@ -882,31 +852,93 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
     core: true,
     apiPath: "/api/v1/runtime",
     menu: {
-      title: "Access",
-      path: "/access",
-      pageLabel: "Access",
-      panelLabel: "Access",
-      sectionLabel: "Projects",
+      title: "Server",
+      path: "/server",
+      pageLabel: "Server",
+      sectionLabel: "Manage",
+      order: 60,
       surface: "platform",
       access: {
-        permissions: ["access.manage"],
+        permissions: ["server.manage"],
         scope: { type: "system" },
       },
       items: [
         {
           title: "Overview",
-          path: "/access",
+          path: "/server",
+          pageLabel: "Server",
+        },
+        {
+          title: "Domains",
+          path: "/server/domains",
+          pageLabel: "Domains",
+          panelLabel: "Domains",
+          access: {
+            permissions: ["server.domains.view"],
+            scope: { type: "system" },
+          },
+          items: [
+            {
+              title: "Overview",
+              path: "/server/domains",
+              pageLabel: "Domains",
+            },
+            {
+              title: "Add Domain",
+              path: "/server/domains",
+              search: { domainAction: "add" },
+              pageLabel: "Add Domain",
+            },
+            {
+              title: "Buy",
+              path: "/server/domains",
+              search: { domainAction: "buy" },
+              pageLabel: "Buy Domain",
+            },
+            {
+              title: "Transfer",
+              path: "/server/domains",
+              search: { domainAction: "transfer" },
+              pageLabel: "Transfer Domain",
+            },
+          ],
+        },
+        {
+          title: "Access",
+          path: "/server/access",
           pageLabel: "Access",
+          panelLabel: "Access",
+          access: {
+            permissions: ["access.manage"],
+            scope: { type: "system" },
+          },
+          items: [
+            {
+              title: "Overview",
+              path: "/server/access",
+              pageLabel: "Access",
+            },
+            {
+              title: "Users",
+              path: "/server/access/users",
+              pageLabel: "Users",
+            },
+            {
+              title: "Permissions",
+              path: "/server/access/permissions",
+              pageLabel: "Permissions",
+            },
+          ],
         },
         {
-          title: "Users",
-          path: "/access/users",
-          pageLabel: "Users",
+          title: "Backups",
+          path: "/server/backups",
+          pageLabel: "Backups",
         },
         {
-          title: "Permissions",
-          path: "/access/permissions",
-          pageLabel: "Permissions",
+          title: "Logs",
+          path: "/server/logs",
+          pageLabel: "Logs",
         },
       ],
     },
@@ -1032,23 +1064,30 @@ export function buildPlatformNavItems(
   void databaseCollections;
   const serviceNavItems = (services ?? [])
     .filter((service) => service.core && service.name !== "@zelavis/ui")
-    .map((service) => {
-      const baseMenu = service.menu
-        ? createProjectAwareDashboardServiceMenuItem(
-            service.menu,
-            service.name,
-            projectId,
-          )
-        : {
-            title: service.name,
-            icon: getServiceMenuIcon(service.name, service.name),
-          };
+    .flatMap((service) => {
+      const menus = getRuntimeServiceMenus(service);
+      if (menus.length === 0) {
+        return [
+          {
+            item: {
+              title: service.name,
+              icon: getServiceMenuIcon(service.name, service.name),
+            },
+            surface: getServiceMenuSurface(service),
+            serviceName: service.name,
+          },
+        ];
+      }
 
-      return {
-        item: baseMenu,
-        surface: getServiceMenuSurface(service),
+      return menus.map((menu) => ({
+        item: createProjectAwareDashboardServiceMenuItem(
+          menu,
+          service.name,
+          projectId,
+        ),
+        surface: menu.surface ?? getServiceMenuSurface(service),
         serviceName: service.name,
-      };
+      }));
     });
   const rootServiceNavItems = serviceNavItems
     .filter((entry) => entry.surface === "root")

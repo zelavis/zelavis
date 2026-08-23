@@ -132,6 +132,11 @@ export interface ZelavisRuntimeServiceMenuDefinition {
   panelLabel?: string;
   search?: Record<string, string | undefined>;
   /**
+   * Sort order for sibling menu items on the same dashboard surface.
+   * Lower numbers appear first; omitted values keep their default placement.
+   */
+  order?: number;
+  /**
    * Render this item in the panel's fixed action area instead of the normal
    * scrollable menu list. Use for primary actions such as "Add Function".
    */
@@ -183,6 +188,7 @@ export interface ZelavisRuntimeService<TService = unknown> {
   api: Record<string, readonly ZelavisServerRoute<TService>[]>;
   service: TService;
   menu?: ZelavisRuntimeServiceMenuDefinition;
+  menus?: readonly ZelavisRuntimeServiceMenuDefinition[];
   services?: readonly ZelavisAnyRuntimeServiceInput[];
 }
 

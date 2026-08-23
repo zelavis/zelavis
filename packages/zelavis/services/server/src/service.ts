@@ -230,6 +230,7 @@ export interface ZelavisServiceDefinition<
   service?: TService;
   version?: string;
   menu?: ZelavisServiceMenuDefinition;
+  menus?: readonly ZelavisServiceMenuDefinition[];
   /**
    * Declare a hosted web application for this service. See
    * {@link ZelavisServiceAppDefinition}.
@@ -404,6 +405,7 @@ function validateServiceMenu(
   // `surface` is allowed in the definition — the activation layer enforces
   // extension-only scoping for runtime-installed services at registration time,
   // not here. System services registered statically may use any surface.
+  validateOptionalNumber(menu.order, `Service menu order for "${path}"`);
   validateOptionalBoolean(menu.fixed, `Service menu fixed flag for "${path}"`);
   validateOptionalNumber(menu.fixedOrder, `Service menu fixedOrder for "${path}"`);
   validateOptionalMenuFixedActionScope(
@@ -1040,10 +1042,23 @@ export function defineService<TContext = unknown, TService = unknown>(
   if ("extends" in definition && definition.extends !== undefined) {
     validateScopedServiceName(definition.extends, "Service extends");
 
-    if (definition.menu !== undefined) {
+    if (definition.menu !== undefined || definition.menus !== undefined) {
       throw new TypeError(
         "Child services cannot declare top-level dashboard menu metadata.",
       );
+    }
+  }
+
+  if ("menus" in definition && definition.menus !== undefined) {
+    if (!Array.isArray(definition.menus)) {
+      throw new TypeError("Service menus must be provided as an array.");
+    }
+
+    for (const [index, menu] of definition.menus.entries()) {
+      if (!menu || typeof menu !== "object") {
+        throw new TypeError(`Service menu ${index} must be an object.`);
+      }
+      validateServiceMenu(menu, menu.title ?? `menus[${index}]`);
     }
   }
 
@@ -1057,6 +1072,9 @@ export function defineService<TContext = unknown, TService = unknown>(
     api: definition.api ?? {},
     service: definition.service as unknown,
     menu: definition.menu ? freezeMenu(definition.menu) : definition.menu,
+    menus: definition.menus
+      ? Object.freeze(definition.menus.map(freezeMenu))
+      : definition.menus,
     runtimeServices: definition.runtimeServices
       ? Object.freeze([...definition.runtimeServices])
       : definition.runtimeServices,

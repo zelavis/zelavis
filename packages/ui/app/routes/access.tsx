@@ -99,14 +99,14 @@ export default function AccessRoute() {
             <Button
               variant="outline"
               nativeButton={false}
-              render={<Link to="/access?as=owner" />}
+              render={<Link to="/server/access?as=owner" />}
             >
               Owner
             </Button>
             <Button
               variant="outline"
               nativeButton={false}
-              render={<Link to="/access?as=customer" />}
+              render={<Link to="/server/access?as=customer" />}
             >
               Customer
             </Button>

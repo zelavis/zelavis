@@ -2489,6 +2489,9 @@ async function resolveRuntimeManagementCore(
       order: entry.order,
       marketplace: entry.service.marketplace,
       menu: serializeServiceMenuForDashboard(entry.service.name, entry.service.menu),
+      menus: entry.service.menus?.map((menu) =>
+        serializeServiceMenuForDashboard(entry.service.name, menu),
+      ),
     }));
 
     return {
@@ -2527,6 +2530,7 @@ async function resolveRuntimeManagementCore(
                   service.basePath ?? service.name,
                 ),
         menu: service.menu,
+        menus: service.menus,
       })),
       serviceRegistry: serializedServices,
       serviceActivation: context.serviceActivation
@@ -2564,6 +2568,9 @@ async function resolveRuntimeManagementCore(
         order: entry.order,
         marketplace: entry.service.marketplace,
         menu: serializeServiceMenuForDashboard(entry.service.name, entry.service.menu),
+        menus: entry.service.menus?.map((menu) =>
+          serializeServiceMenuForDashboard(entry.service.name, menu),
+        ),
       }));
       const seen = new Set(serialized.map((entry) => entry.name));
       const storedEntries = await context.serviceRegistryStore.read();
@@ -3452,31 +3459,93 @@ async function resolveServerCoreService(
     kind: "core",
     basePath: "/runtime",
     menu: {
-      title: "Access",
-      path: "/access",
-      pageLabel: "Access",
-      panelLabel: "Access",
-      sectionLabel: "Projects",
+      title: "Server",
+      path: "/server",
+      pageLabel: "Server",
+      sectionLabel: "Manage",
+      order: 60,
       surface: "platform",
       access: {
-        permissions: ["access.manage"],
+        permissions: ["server.manage"],
         scope: { type: "system" },
       },
       items: [
         {
           title: "Overview",
-          path: "/access",
+          path: "/server",
+          pageLabel: "Server",
+        },
+        {
+          title: "Domains",
+          path: "/server/domains",
+          pageLabel: "Domains",
+          panelLabel: "Domains",
+          access: {
+            permissions: ["server.domains.view"],
+            scope: { type: "system" },
+          },
+          items: [
+            {
+              title: "Overview",
+              path: "/server/domains",
+              pageLabel: "Domains",
+            },
+            {
+              title: "Add Domain",
+              path: "/server/domains",
+              search: { domainAction: "add" },
+              pageLabel: "Add Domain",
+            },
+            {
+              title: "Buy",
+              path: "/server/domains",
+              search: { domainAction: "buy" },
+              pageLabel: "Buy Domain",
+            },
+            {
+              title: "Transfer",
+              path: "/server/domains",
+              search: { domainAction: "transfer" },
+              pageLabel: "Transfer Domain",
+            },
+          ],
+        },
+        {
+          title: "Access",
+          path: "/server/access",
           pageLabel: "Access",
+          panelLabel: "Access",
+          access: {
+            permissions: ["access.manage"],
+            scope: { type: "system" },
+          },
+          items: [
+            {
+              title: "Overview",
+              path: "/server/access",
+              pageLabel: "Access",
+            },
+            {
+              title: "Users",
+              path: "/server/access/users",
+              pageLabel: "Users",
+            },
+            {
+              title: "Permissions",
+              path: "/server/access/permissions",
+              pageLabel: "Permissions",
+            },
+          ],
         },
         {
-          title: "Users",
-          path: "/access/users",
-          pageLabel: "Users",
+          title: "Backups",
+          path: "/server/backups",
+          pageLabel: "Backups",
         },
         {
-          title: "Permissions",
-          path: "/access/permissions",
-          pageLabel: "Permissions",
+          title: "Logs",
+          path: "/server/logs",
+          pageLabel: "Logs",
         },
       ],
     },

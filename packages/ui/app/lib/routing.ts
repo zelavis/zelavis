@@ -59,8 +59,6 @@ export function toProjectPathFromUrl(path: string, requestUrl: string) {
 export function isProjectManagementPath(pathname: string) {
   return (
     pathname === "/" ||
-    pathname === "/access" ||
-    pathname.startsWith("/access/") ||
     pathname === "/projects" ||
     pathname === "/marketplace" ||
     pathname === "/resources" ||

@@ -163,35 +163,96 @@ describe("dashboard navigation ownership", () => {
         core: true,
         apiPath: "/api/v1/runtime",
         menu: {
-          title: "Access",
-          path: "/access",
-          pageLabel: "Access",
-          panelLabel: "Access",
+          title: "Server",
+          path: "/server",
+          pageLabel: "Server",
+          sectionLabel: "Manage",
+          order: 60,
           surface: "platform",
           access: {
-            permissions: ["access.manage"],
+            permissions: ["server.manage"],
             scope: { type: "system" },
           },
           items: [
             {
-              title: "Users",
-              path: "/access/users",
-              pageLabel: "Users",
+              title: "Overview",
+              path: "/server",
+              pageLabel: "Server",
             },
             {
-              title: "Permissions",
-              path: "/access/permissions",
-              pageLabel: "Permissions",
+              title: "Domains",
+              path: "/server/domains",
+              pageLabel: "Domains",
+              items: [
+                {
+                  title: "Add Domain",
+                  path: "/server/domains",
+                  search: { domainAction: "add" },
+                  pageLabel: "Add Domain",
+                },
+              ],
+            },
+            {
+              title: "Access",
+              path: "/server/access",
+              pageLabel: "Access",
+              panelLabel: "Access",
+              access: {
+                permissions: ["access.manage"],
+                scope: { type: "system" },
+              },
+              items: [
+                {
+                  title: "Users",
+                  path: "/server/access/users",
+                  pageLabel: "Users",
+                },
+                {
+                  title: "Permissions",
+                  path: "/server/access/permissions",
+                  pageLabel: "Permissions",
+                },
+              ],
+            },
+            {
+              title: "Backups",
+              path: "/server/backups",
+              pageLabel: "Backups",
+            },
+            {
+              title: "Logs",
+              path: "/server/logs",
+              pageLabel: "Logs",
             },
           ],
         },
       },
     ]);
 
-    expect(nav.map((item) => item.title)).toContain("Access");
+    expect(nav.map((item) => item.title)).not.toContain("Access");
+    expect(nav.map((item) => item.title)).toContain("Server");
+    expect(findNavItem(nav, "Server")).toMatchObject({
+      url: "/server",
+      landingUrl: "/server",
+      pageLabel: "Server",
+      access: {
+        permissions: ["server.manage"],
+        scope: { type: "system" },
+      },
+    });
+    expect(findNavItem(nav, "Domains")).toMatchObject({
+      url: "/server/domains",
+      landingUrl: "/server/domains",
+      pageLabel: "Domains",
+    });
+    expect(findNavItem(nav, "Add Domain")).toMatchObject({
+      url: "/server/domains",
+      search: { domainAction: "add" },
+      pageLabel: "Add Domain",
+    });
     expect(findNavItem(nav, "Access")).toMatchObject({
-      url: "/access",
-      landingUrl: "/access",
+      url: "/server/access",
+      landingUrl: "/server/access",
       pageLabel: "Access",
       access: {
         permissions: ["access.manage"],
@@ -199,8 +260,12 @@ describe("dashboard navigation ownership", () => {
       },
     });
     expect(findNavItem(nav, "Users")).toMatchObject({
-      url: "/access/users",
+      url: "/server/access/users",
       pageLabel: "Users",
+    });
+    expect(findNavItem(nav, "Backups")).toMatchObject({
+      url: "/server/backups",
+      pageLabel: "Backups",
     });
   });
 
@@ -287,24 +352,20 @@ describe("dashboard navigation ownership", () => {
   it("uses a management nav for the all-projects view", () => {
     expect(projectManagementNavItems.map((item) => item.title)).toEqual([
       "Projects",
-      "Access",
       "Marketplace",
-      "Domains",
       "Resources",
       "Server",
       "Security",
     ]);
     expect(projectManagementNavItems.map((item) => item.sectionLabel)).toEqual([
       "Projects",
-      "Projects",
       "Explore",
-      "Manage",
       "Manage",
       "Manage",
       "Manage",
     ]);
     expect(findNavItem(projectManagementNavItems, "Users")).toMatchObject({
-      url: "/access/users",
+      url: "/server/access/users",
       pageLabel: "Users",
     });
     expect(findNavItem(projectManagementNavItems, "Website")).toBeUndefined();
@@ -312,7 +373,19 @@ describe("dashboard navigation ownership", () => {
       url: "/marketplace",
       pageLabel: "Marketplace",
     });
-    const domains = projectManagementNavItems.find((item) => item.title === "Domains");
+    const server = projectManagementNavItems.find((item) => item.title === "Server");
+    expect(server).toMatchObject({
+      landingUrl: "/server",
+      pageLabel: "Server",
+    });
+    expect(server?.items?.map((item) => item.title)).toEqual([
+      "Overview",
+      "Domains",
+      "Access",
+      "Backups",
+      "Logs",
+    ]);
+    const domains = server?.items?.find((item) => item.title === "Domains");
     expect(domains).toMatchObject({
       landingUrl: "/server/domains",
       pageLabel: "Domains",
@@ -328,11 +401,6 @@ describe("dashboard navigation ownership", () => {
       search: { domainAction: "add" },
       pageLabel: "Add Domain",
     });
-    expect(
-      projectManagementNavItems
-        .find((item) => item.title === "Server")
-        ?.items?.some((item) => item.title === "Domains"),
-    ).toBe(false);
     const resources = projectManagementNavItems.find((item) => item.title === "Resources");
     expect(resources).toMatchObject({
       landingUrl: "/resources",

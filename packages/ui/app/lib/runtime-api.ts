@@ -5,6 +5,7 @@ export interface RuntimeServiceMenuDefinition {
   pageLabel?: string;
   panelLabel?: string;
   search?: Record<string, string | undefined>;
+  order?: number;
   fixed?: boolean;
   fixedOrder?: number;
   fixedActionScope?: "local" | "inherit" | "replace" | "clear";
@@ -27,9 +28,11 @@ export interface RuntimeServiceDynamicMenuResponse {
 
 export interface RuntimeService {
   name: string;
+  kind?: string;
   core: boolean;
   apiPath: string;
   menu?: RuntimeServiceMenuDefinition;
+  menus?: readonly RuntimeServiceMenuDefinition[];
 }
 
 export interface RuntimeServicePageDefinition {
@@ -45,6 +48,7 @@ export interface RuntimeServiceRegistryMenuDefinition {
   pageLabel?: string;
   panelLabel?: string;
   search?: Record<string, string | undefined>;
+  order?: number;
   fixed?: boolean;
   fixedOrder?: number;
   fixedActionScope?: "local" | "inherit" | "replace" | "clear";
@@ -77,6 +81,7 @@ export interface RuntimeServiceRegistryEntry {
     tags?: readonly string[];
   };
   menu?: RuntimeServiceRegistryMenuDefinition;
+  menus?: readonly RuntimeServiceRegistryMenuDefinition[];
 }
 
 export interface RuntimeServiceRegistryUpdate {
@@ -535,9 +540,9 @@ const fallbackConfig: RuntimeConfig = {
   dashboard: {
     title: "zelavis",
     clientRoutes: [
-      "/access",
-      "/access/permissions",
-      "/access/users",
+      "/server/access",
+      "/server/access/permissions",
+      "/server/access/users",
       "/assistant",
       "/marketplace",
       "/projects",
@@ -584,31 +589,93 @@ const fallbackConfig: RuntimeConfig = {
       core: true,
       apiPath: "/api/v1/runtime",
       menu: {
-        title: "Access",
-        path: "/access",
-        pageLabel: "Access",
-        panelLabel: "Access",
-        sectionLabel: "Projects",
+        title: "Server",
+        path: "/server",
+        pageLabel: "Server",
+        sectionLabel: "Manage",
+        order: 60,
         surface: "platform",
         access: {
-          permissions: ["access.manage"],
+          permissions: ["server.manage"],
           scope: { type: "system" },
         },
         items: [
           {
             title: "Overview",
-            path: "/access",
+            path: "/server",
+            pageLabel: "Server",
+          },
+          {
+            title: "Domains",
+            path: "/server/domains",
+            pageLabel: "Domains",
+            panelLabel: "Domains",
+            access: {
+              permissions: ["server.domains.view"],
+              scope: { type: "system" },
+            },
+            items: [
+              {
+                title: "Overview",
+                path: "/server/domains",
+                pageLabel: "Domains",
+              },
+              {
+                title: "Add Domain",
+                path: "/server/domains",
+                search: { domainAction: "add" },
+                pageLabel: "Add Domain",
+              },
+              {
+                title: "Buy",
+                path: "/server/domains",
+                search: { domainAction: "buy" },
+                pageLabel: "Buy Domain",
+              },
+              {
+                title: "Transfer",
+                path: "/server/domains",
+                search: { domainAction: "transfer" },
+                pageLabel: "Transfer Domain",
+              },
+            ],
+          },
+          {
+            title: "Access",
+            path: "/server/access",
             pageLabel: "Access",
+            panelLabel: "Access",
+            access: {
+              permissions: ["access.manage"],
+              scope: { type: "system" },
+            },
+            items: [
+              {
+                title: "Overview",
+                path: "/server/access",
+                pageLabel: "Access",
+              },
+              {
+                title: "Users",
+                path: "/server/access/users",
+                pageLabel: "Users",
+              },
+              {
+                title: "Permissions",
+                path: "/server/access/permissions",
+                pageLabel: "Permissions",
+              },
+            ],
           },
           {
-            title: "Users",
-            path: "/access/users",
-            pageLabel: "Users",
+            title: "Backups",
+            path: "/server/backups",
+            pageLabel: "Backups",
           },
           {
-            title: "Permissions",
-            path: "/access/permissions",
-            pageLabel: "Permissions",
+            title: "Logs",
+            path: "/server/logs",
+            pageLabel: "Logs",
           },
         ],
       },
@@ -823,6 +890,10 @@ function normalizeRuntimeServices(
         service.menu ?? fallback?.menu,
         service.name,
       ),
+      menus: [
+        ...(service.menus ?? []),
+        ...((service.menus === undefined && fallback?.menus) ? fallback.menus : []),
+      ].map((menu) => normalizeRuntimeServiceMenu(menu, service.name)!),
     };
   });
 }
@@ -835,6 +906,13 @@ function normalizeRuntimeServiceRegistry(
     menu: normalizeRuntimeServiceMenu(service.menu, service.name) as
       | RuntimeServiceRegistryMenuDefinition
       | undefined,
+    menus: service.menus?.map(
+      (menu) =>
+        normalizeRuntimeServiceMenu(
+          menu,
+          service.name,
+        ) as RuntimeServiceRegistryMenuDefinition,
+    ),
   }));
 }
 
@@ -1096,7 +1174,7 @@ async function resolveRuntimeServiceDynamicMenu(
   config: RuntimeConfig,
   service: RuntimeService,
 ): Promise<RuntimeService> {
-  if (!hasDynamicItems(service.menu)) {
+  if (!hasDynamicItems(service.menu) && !service.menus?.some(hasDynamicItems)) {
     return service;
   }
 
@@ -1105,6 +1183,13 @@ async function resolveRuntimeServiceDynamicMenu(
     menu: service.menu
       ? await resolveDynamicMenuItems(config, service.menu)
       : service.menu,
+    menus: service.menus
+      ? await Promise.all(
+          service.menus.map((menu) =>
+            hasDynamicItems(menu) ? resolveDynamicMenuItems(config, menu) : menu,
+          ),
+        )
+      : service.menus,
   };
 }
 
@@ -1112,7 +1197,7 @@ async function resolveRuntimeRegistryDynamicMenu(
   config: RuntimeConfig,
   service: RuntimeServiceRegistryEntry,
 ): Promise<RuntimeServiceRegistryEntry> {
-  if (!hasDynamicItems(service.menu)) {
+  if (!hasDynamicItems(service.menu) && !service.menus?.some(hasDynamicItems)) {
     return service;
   }
 
@@ -1124,6 +1209,18 @@ async function resolveRuntimeRegistryDynamicMenu(
           service.menu,
         )) as RuntimeServiceRegistryMenuDefinition
       : service.menu,
+    menus: service.menus
+      ? await Promise.all(
+          service.menus.map((menu) =>
+            hasDynamicItems(menu)
+              ? (resolveDynamicMenuItems(
+                  config,
+                  menu,
+                ) as Promise<RuntimeServiceRegistryMenuDefinition>)
+              : menu,
+          ),
+        )
+      : service.menus,
   };
 }
 
