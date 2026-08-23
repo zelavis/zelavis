@@ -52,7 +52,6 @@ export type ZelavisServiceMenuDefinition = Omit<
 
 export type ZelavisServiceKind =
   | "app"
-  | "core"
   | "plugin"
   | "web-app"
   | "website"
@@ -948,7 +947,6 @@ export function defineService<TContext = unknown, TService = unknown>(
   if ("kind" in definition && definition.kind !== undefined) {
     const allowedKinds: readonly ZelavisServiceKind[] = [
       "app",
-      "core",
       "plugin",
       "web-app",
       "website",
@@ -958,7 +956,7 @@ export function defineService<TContext = unknown, TService = unknown>(
     ];
     if (!allowedKinds.includes(definition.kind)) {
       throw new TypeError(
-        'Service kind must be "app", "core", "plugin", "web-app", "website", "dashboard-extension", "provider", or "template".',
+        'Service kind must be "app", "plugin", "web-app", "website", "dashboard-extension", "provider", or "template".',
       );
     }
   }
