@@ -281,11 +281,11 @@ export function DashboardShell({
         );
 
         const nextServices = current.runtime?.services?.map((service) => {
-          if (service.name !== "database") {
+          if (service.name !== "database" || !service.menu) {
             return service;
           }
 
-          const existingItems = service.menu?.items ?? [];
+          const existingItems = service.menu.items ?? [];
           const hasExisting = existingItems.some(
             (item) => item.search?.databaseTable === collection.name,
           );
