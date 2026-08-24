@@ -222,6 +222,10 @@ test("zelavis includes core services by default", async () => {
     ],
   );
   assert.deepEqual(configResponse.body.serviceRegistry, []);
+  assert.deepEqual(configResponse.body.runtime, {
+    engine: "node",
+    availableEngines: ["node", "bun", "deno"],
+  });
 
   const pluginsRoute = routes.find(
     (route) =>
@@ -257,11 +261,18 @@ test("zelavis includes core services by default", async () => {
   assert.equal(dashboardSettingsResponse.status, 200);
   assert.equal(dashboardSettingsResponse.body.rootPath, "/zelavis");
   assert.equal(dashboardSettingsResponse.body.apiBasePath, "/zelavis/api/v1");
+  assert.deepEqual(dashboardSettingsResponse.body.runtimeEngine, {
+    current: "node",
+    desired: "node",
+    available: ["node", "bun", "deno"],
+    restartRequired: false,
+  });
   assert.equal(dashboardSettingsResponse.body.persistence, "runtime");
   assert.equal(dashboardSettingsResponse.body.restartRequired, false);
   assert.deepEqual(dashboardSettingsResponse.body.preferences, {});
   assert.deepEqual(dashboardSettingsResponse.body.editable, {
     rootPath: true,
+    runtimeEngine: true,
     theme: true,
     pageBuilder: true,
   });
@@ -277,6 +288,7 @@ test("zelavis includes core services by default", async () => {
     query: new URLSearchParams(),
     body: {
       rootPath: "/admin",
+      runtimeEngine: "bun",
       theme: "dark",
       preferences: {
         content: {
@@ -297,6 +309,12 @@ test("zelavis includes core services by default", async () => {
   assert.equal(updateResponse.status, 200);
   assert.equal(updateResponse.body.rootPath, "/zelavis");
   assert.equal(updateResponse.body.pendingRootPath, "/admin");
+  assert.deepEqual(updateResponse.body.runtimeEngine, {
+    current: "node",
+    desired: "bun",
+    available: ["node", "bun", "deno"],
+    restartRequired: true,
+  });
   assert.equal(updateResponse.body.theme, "dark");
   assert.equal(updateResponse.body.restartRequired, true);
   assert.deepEqual(updateResponse.body.preferences, {
@@ -324,6 +342,20 @@ test("zelavis includes core services by default", async () => {
 
   assert.equal(invalidUpdateResponse.status, 400);
   assert.match(invalidUpdateResponse.body.error, /Theme must be/);
+
+  const invalidRuntimeEngineResponse = await updateRoute.route.handler({
+    service: updateRoute.service.service,
+    params: {},
+    query: new URLSearchParams(),
+    body: {
+      runtimeEngine: "workerd",
+    },
+    headers: {},
+    request: undefined,
+  });
+
+  assert.equal(invalidRuntimeEngineResponse.status, 400);
+  assert.match(invalidRuntimeEngineResponse.body.error, /Runtime engine must be/);
 });
 
 test("auth provider child services extend the built-in auth service", async () => {

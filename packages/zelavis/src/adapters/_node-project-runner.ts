@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { defineAdapter, Zelavis } from "../index.js";
-import { createNodeServer } from "../node/index.js";
+import { createNodeServer } from "../runtimes/node.js";
 import { nodeAdapter } from "./node.js";
 
 const projectId = process.env.ZELAVIS_PROJECT_ID?.trim();

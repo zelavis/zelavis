@@ -216,6 +216,16 @@ function parseStoredDashboardSettingsUpdate(
     update.theme = input.theme;
   }
 
+  if ("runtimeEngine" in input) {
+    if (!isRuntimeEngine(input.runtimeEngine)) {
+      throw new ZelavisValidationError(
+        'Stored runtime engine must be one of "node", "bun", or "deno".',
+      );
+    }
+
+    update.runtimeEngine = input.runtimeEngine;
+  }
+
   if ("pageBuilderEnabled" in input) {
     if (!isBoolean(input.pageBuilderEnabled)) {
       throw new ZelavisValidationError(
@@ -417,6 +427,7 @@ export interface ZelavisApiOptions {
 }
 
 export type ZelavisDashboardThemeMode = "light" | "dark" | "auto";
+export type ZelavisRuntimeEngine = "node" | "bun" | "deno";
 
 export interface ZelavisDashboardContentPreferences {
   pinnedTypes?: string[];
@@ -436,12 +447,19 @@ export interface ZelavisDashboardSettings {
   rootPath: string;
   pendingRootPath?: string;
   apiBasePath: string;
+  runtimeEngine: {
+    current: ZelavisRuntimeEngine;
+    desired: ZelavisRuntimeEngine;
+    available: readonly ZelavisRuntimeEngine[];
+    restartRequired: boolean;
+  };
   theme: ZelavisDashboardThemeMode;
   pageBuilderEnabled: boolean;
   preferences: ZelavisDashboardPreferences;
   persistence: "runtime" | "read-only";
   editable: {
     rootPath: boolean;
+    runtimeEngine: boolean;
     theme: boolean;
     pageBuilder: boolean;
   };
@@ -450,6 +468,7 @@ export interface ZelavisDashboardSettings {
 
 export interface ZelavisDashboardSettingsUpdate {
   rootPath?: string;
+  runtimeEngine?: ZelavisRuntimeEngine;
   theme?: ZelavisDashboardThemeMode;
   pageBuilderEnabled?: boolean;
   preferences?: ZelavisDashboardPreferences;
@@ -868,6 +887,33 @@ function isDashboardThemeMode(
   value: unknown,
 ): value is ZelavisDashboardThemeMode {
   return value === "light" || value === "dark" || value === "auto";
+}
+
+function isRuntimeEngine(value: unknown): value is ZelavisRuntimeEngine {
+  return value === "node" || value === "bun" || value === "deno";
+}
+
+function detectCurrentRuntimeEngine(
+  metadata?: Record<string, unknown>,
+): ZelavisRuntimeEngine {
+  if (isRuntimeEngine(metadata?.runtime)) {
+    return metadata.runtime;
+  }
+
+  const globals = globalThis as typeof globalThis & {
+    Bun?: unknown;
+    Deno?: unknown;
+  };
+
+  if (globals.Bun) {
+    return "bun";
+  }
+
+  if (globals.Deno) {
+    return "deno";
+  }
+
+  return "node";
 }
 
 function isBoolean(value: unknown): value is boolean {
@@ -1630,7 +1676,8 @@ function readDashboardSettingsUpdate(
       .replace(/^Stored dashboard /, "")
       .replace(/^Stored page builder enabled/, "Page builder enabled")
       .replace(/^Stored dashboard theme/, "Theme")
-      .replace(/^Stored dashboard root path/, "Root path");
+      .replace(/^Stored dashboard root path/, "Root path")
+      .replace(/^Stored runtime engine/, "Runtime engine");
 
     throw new ZelavisValidationError(
       normalizedMessage.charAt(0).toUpperCase() + normalizedMessage.slice(1),
@@ -2315,6 +2362,7 @@ async function resolveRuntimeManagementCore(
     settingsStore?: ZelavisDashboardSettingsStore;
     websiteEnabled: boolean;
     bundleStore?: BundleStore;
+    platform?: ZelavisServiceSetupPlatformContext;
   },
 ): Promise<ZelavisRuntimeManagementCore> {
   const dashboardOption = option ?? true;
@@ -2322,6 +2370,14 @@ async function resolveRuntimeManagementCore(
     dashboardOption === true || dashboardOption === false ? {} : dashboardOption;
   const title = options.title ?? "zelavis";
   const rootPath = context.rootPath;
+  const currentRuntimeEngine = detectCurrentRuntimeEngine(
+    context.platform?.metadata,
+  );
+  const availableRuntimeEngines: readonly ZelavisRuntimeEngine[] = [
+    "node",
+    "bun",
+    "deno",
+  ];
   const settingsStore =
     context.settingsStore ??
     options.settingsStore ??
@@ -2481,6 +2537,10 @@ async function resolveRuntimeManagementCore(
         clientRoutes,
         assetRoot: joinPathParts(rootPath, "assets"),
       },
+      runtime: {
+        engine: currentRuntimeEngine,
+        availableEngines: availableRuntimeEngines,
+      },
       services: context.getServices().map((service) => ({
         name: service.name,
         kind: service.kind,
@@ -2593,6 +2653,9 @@ async function resolveRuntimeManagementCore(
       ? stored.pageBuilderEnabled
       : false;
     const preferences = stored.preferences ?? {};
+    const desiredRuntimeEngine = stored.runtimeEngine ?? currentRuntimeEngine;
+    const runtimeEngineRestartRequired =
+      desiredRuntimeEngine !== currentRuntimeEngine;
 
     return {
       rootPath,
@@ -2602,16 +2665,23 @@ async function resolveRuntimeManagementCore(
         context.apiPrefix,
         context.apiVersion,
       ),
+      runtimeEngine: {
+        current: currentRuntimeEngine,
+        desired: desiredRuntimeEngine,
+        available: availableRuntimeEngines,
+        restartRequired: runtimeEngineRestartRequired,
+      },
       theme,
       pageBuilderEnabled,
       preferences,
       persistence: "runtime",
       editable: {
         rootPath: true,
+        runtimeEngine: true,
         theme: true,
         pageBuilder: context.websiteEnabled,
       },
-      restartRequired: Boolean(pendingRootPath),
+      restartRequired: Boolean(pendingRootPath) || runtimeEngineRestartRequired,
     };
   };
   const routes: ZelavisServerRoute<any>[] = [
@@ -4083,6 +4153,7 @@ export async function zelavis(
       settingsStore: dashboardSettingsStore,
       websiteEnabled,
       bundleStore: options.bundleStore,
+      platform: options.serviceContext?.platform,
     },
   );
   const serverCoreService = await resolveServerCoreService(
