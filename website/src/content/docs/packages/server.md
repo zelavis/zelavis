@@ -5,7 +5,8 @@ title: "@zelavis/server"
 
 ## Current role
 
-Packages expose server services through a shared contract, and adapters mount or embed the resolved runtime.
+Packages expose server services through a shared contract, and the runtime
+exposes Web-standard handlers plus a standalone Node HTTP adapter.
 
 ## Core ideas
 
@@ -13,7 +14,7 @@ Packages expose server services through a shared contract, and adapters mount or
 - core packages should expose one obvious top-level service-definition file so package authors can find the service entrypoint without hunting through nested folders
 - services can compose nested services
 - `zelavisServer(...)` resolves routes once and exposes reusable runtime handlers
-- adapters adapt the resolved runtime to framework-specific shapes
+- `@zelavis/server/adapters/node` adapts the resolved runtime to a standalone Node HTTP server
 
 ## Runtime surfaces
 

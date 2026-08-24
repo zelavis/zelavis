@@ -8,7 +8,7 @@ This page shows the simplest current way to start Zelavis.
 ```ts
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
-import { createNodeServer } from "zelavis/node";
+import { createNodeServer } from "zelavis/runtimes/node";
 
 const zv = new Zelavis({
   adapter: nodeAdapter(),

@@ -1,12 +1,10 @@
 ---
 title: Adapter Entry Points
 ---
-Zelavis has two adapter layers:
+Zelavis has one public adapter layer in the main package:
 
 1. **Runtime adapters** (`zelavis/adapters/*`) describe the local JavaScript
-   runtime Zelavis runs on.
-2. **Framework utilities** (`zelavis/<framework>`) wrap `zv.fetch(request)` for
-   a specific self-hosted framework server.
+   runtime Zelavis runs on and provide Platform OS resources.
 
 ## Runtime adapters
 
@@ -40,23 +38,36 @@ import { nodeAdapter } from "zelavis/adapters/node";
 const zv = new Zelavis({ adapter: nodeAdapter() });
 ```
 
-## Framework utilities
+## Host utilities
 
-Framework utilities take a `Zelavis` instance and return whatever shape the
-framework expects. They live at `zelavis/<framework>`:
+The main package ships the standalone Node HTTP host utility:
 
 ```txt
-zelavis/express       — expressMiddleware(zv)
-zelavis/hono          — honoMiddleware(zv)
-zelavis/fastify       — fastifyPlugin(zv)
-zelavis/h3            — h3Handler(zv)
-zelavis/elysia        — elysiaPlugin(zv)
-zelavis/nextjs/pages  — nextjsPagesRouterHandler(zv, options?)
-zelavis/node          — createNodeServer(zv)
+zelavis/runtimes/node          — createNodeServer(zv)
+zelavis/runtimes/bun           — bun marker
+zelavis/runtimes/deno          — deno marker
 ```
 
-These are not runtime adapters. The `Zelavis` instance is constructed once with
-its runtime adapter, and the utility only adapts request and response handling.
+Fetch-native hosts can call `zv.fetch(request)` directly. Framework-specific
+mounting helpers are not part of the main Platform OS package surface.
+Runtime host utilities are intentionally split into separate subpaths so
+bundlers can omit code for runtimes that are not imported.
+
+## SDK entry points
+
+SDK entry points are client bundle surfaces, not runtime adapters:
+
+```txt
+zelavis/sdk                  — fetch-native SDK core
+zelavis/sdk/browser          — browser SDK surface
+zelavis/sdk/node             — Node SDK surface using native fetch
+```
+
+They intentionally exclude the dashboard, runtime host utilities, and local
+server adapters. Browser storage adapters such as IndexedDB and SQLite WASM
+should live behind the app database driver boundary rather than in
+`zelavis/adapters/*`, because they are SDK/client storage surfaces, not
+Platform OS host runtimes.
 
 ## defineAdapter
 

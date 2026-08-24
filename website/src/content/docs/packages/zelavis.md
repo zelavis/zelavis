@@ -125,11 +125,50 @@ Serverless function platforms are not Zelavis runtime targets. Managed providers
 may appear through optional plugins for user websites, storage, DNS, CDN, email,
 or other provider adapters.
 
-Framework utilities (small wrappers around `zv.fetch`) live at:
+The main package also ships `zelavis/runtimes/node` for the standalone
+long-running Node HTTP server. `zelavis/runtimes/bun` and
+`zelavis/runtimes/deno` are separate runtime marker subpaths for bundle-aware
+host selection. Fetch-native hosts can call `zv.fetch(request)` directly.
 
-- `zelavis/express`, `zelavis/hono`, `zelavis/fastify`, `zelavis/h3`, `zelavis/elysia`
-- `zelavis/nextjs/pages` (Next.js Pages Router)
-- `zelavis/node` (standalone Node HTTP server)
+## SDK bundle surfaces
+
+The official SDK is a bundle surface of `zelavis` itself. SDK entry points reuse
+the portable app contracts and database core, but exclude the dashboard UI,
+host runtime utilities, Node/Bun/Deno adapters, and project process
+orchestration.
+
+Available SDK entry points:
+
+```txt
+zelavis/sdk
+zelavis/sdk/browser
+zelavis/sdk/node
+```
+
+Use the browser SDK to talk to a running Zelavis Platform OS from browser code:
+
+```ts
+import { createBrowserZelavisClient } from "zelavis/sdk/browser";
+
+const client = createBrowserZelavisClient({
+  baseUrl: "https://example.com",
+});
+
+const settings = await client.runtime.settings();
+```
+
+The SDK surface also exposes runtime-neutral `@zelavis/app/db` and
+`@zelavis/app/auth` APIs. Browser database adapters such as IndexedDB or SQLite
+WASM should plug into the same database driver boundary later, so local-first
+browser apps and server runtimes share the same document/event model.
+
+Build only the SDK surfaces with:
+
+```sh
+pnpm build:sdk
+pnpm build:sdk:browser
+pnpm build:sdk:node
+```
 
 ## Related docs
 

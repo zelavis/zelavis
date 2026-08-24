@@ -2,7 +2,9 @@
 title: Zelavis
 ---
 
-The `Zelavis` class is the main entry point. It holds configuration, lazily initializes the runtime on the first request, and exposes the request-handling methods used by framework adapters.
+The `Zelavis` class is the main entry point. It holds configuration, lazily
+initializes the runtime on the first request, and exposes the Web-standard
+request-handling methods used by long-running hosts.
 
 Zelavis API routes are the stable transport surface for platform capabilities. The dashboard should call the same capability endpoints that CLI commands, AI agents, scripts, plugins, and external admin tools can call.
 
@@ -43,7 +45,8 @@ new Zelavis(options?: ZelavisOptions)
 zv.fetch(request: Request, context?: ZelavisServerExecutionContext): Promise<Response>
 ```
 
-Handles an incoming request and returns a standard `Response`. This is the method called by framework route handlers and fetch-style self-hosted runtimes.
+Handles an incoming request and returns a standard `Response`. This is the
+portable method used by fetch-style self-hosted runtimes.
 
 ```ts
 // React Router resource route
@@ -70,7 +73,7 @@ Lower-level alternative to `fetch`. Returns a structured result object instead o
 zv.plain(request): Promise<ZelavisPlainResult>
 ```
 
-Handles a plain (non-fetch-API) request object. Used by adapters that wrap non-standard request shapes before passing them to the runtime.
+Handles a plain request object for tests and object-in/object-out embedding.
 
 ### `runtime`
 

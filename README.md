@@ -183,7 +183,7 @@ Applications should usually import from `zelavis`, where core services are inclu
 ```ts
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
-import { createNodeServer } from "zelavis/node";
+import { createNodeServer } from "zelavis/runtimes/node";
 
 const zv = new Zelavis({ adapter: nodeAdapter() });
 const server = await createNodeServer(zv);
@@ -203,7 +203,22 @@ const response = await zv.fetch(
 );
 ```
 
-When a host framework needs fallthrough-aware mounting, use its thin utility instead. For example, h3 apps can use `app.use("/**", h3Handler(zv))` while still keeping Zelavis at `/zelavis`.
+SDK bundles are separate import surfaces of the same package. They talk to a
+running Zelavis runtime through fetch-native endpoints and do not import the
+dashboard, host runtimes, or local server adapters:
+
+```ts
+import { createBrowserZelavisClient } from "zelavis/sdk/browser";
+
+const client = createBrowserZelavisClient({
+  baseUrl: "https://example.com",
+});
+
+const config = await client.runtime.config();
+```
+
+Use `pnpm build:sdk:browser` or `pnpm build:sdk:node` to check those surfaces
+without building runtime host utilities.
 
 By default, Zelavis owns one safe namespace:
 
@@ -314,7 +329,7 @@ Node.js is the current supported production host. Zelavis core packages remain
 designed around JavaScript, TypeScript, and standard Web platform primitives
 such as `Request`, `Response`, `Headers`, `URL`, streams, and standard `crypto`.
 
-Runtime-specific behavior belongs in adapters. Provider-specific behavior belongs in plugins. The core platform should remain portable across Node, Bun, future Deno, and framework utilities without treating external deployment providers as runtime targets.
+Runtime-specific behavior belongs in adapters. Provider-specific behavior belongs in plugins. The core platform should remain portable across Node, Bun, and future Deno without treating external deployment providers or framework mounts as runtime targets.
 
 ## Error Model
 

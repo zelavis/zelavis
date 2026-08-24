@@ -1,12 +1,10 @@
 ---
-title: Adapters and Framework Utilities
+title: Runtime Adapters and Fetch-Native Hosting
 ---
-Zelavis has a clean two-layer adapter model:
+Zelavis has a focused runtime adapter model:
 
 1. **Runtime adapters** describe the self-hosted JavaScript runtime Zelavis runs
    on. Today that means Node.js and Bun. Deno is planned.
-2. **Framework utilities** are small helpers that wrap `zv.fetch(request)` for a
-   specific host framework such as Express, Hono, Fastify, h3, or Elysia.
 
 The core request handler remains Web-standard: `zv.fetch(request)` accepts a
 standard `Request` and returns a standard `Response`. That keeps the core
@@ -19,25 +17,11 @@ portable without making serverless platforms runtime targets.
 ```ts
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
-import { createNodeServer } from "zelavis/node";
+import { createNodeServer } from "zelavis/runtimes/node";
 
 const zv = new Zelavis({ adapter: nodeAdapter() });
 const server = await createNodeServer(zv);
 server.listen(3000);
-```
-
-### Express middleware
-
-```ts
-import express from "express";
-import { Zelavis } from "zelavis";
-import { nodeAdapter } from "zelavis/adapters/node";
-import { expressMiddleware } from "zelavis/express";
-
-const zv = new Zelavis({ adapter: nodeAdapter() });
-const app = express();
-app.use(expressMiddleware(zv));
-app.listen(3000);
 ```
 
 ### Bun fetch handler
@@ -73,23 +57,35 @@ import {
 } from "zelavis/adapters";
 ```
 
-## Framework utilities
+## Host utilities
 
-Framework utilities take a `Zelavis` instance and return whatever shape the host
-framework expects:
-
-| Framework | Import | Returns |
+| Host | Import | Returns |
 |---|---|---|
-| Express | `zelavis/express` -> `expressMiddleware(zv)` | `RequestHandler` |
-| Hono | `zelavis/hono` -> `honoMiddleware(zv)` | `MiddlewareHandler` |
-| Fastify | `zelavis/fastify` -> `fastifyPlugin(zv)` | `FastifyPluginAsync` |
-| h3 | `zelavis/h3` -> `h3Handler(zv)` | h3 handler |
-| Elysia | `zelavis/elysia` -> `elysiaPlugin(zv)` | Elysia service instance |
-| Next.js Pages Router | `zelavis/nextjs/pages` -> `nextjsPagesRouterHandler(zv, options?)` | `NextApiHandler` |
-| Node HTTP server | `zelavis/node` -> `createNodeServer(zv)` | `Promise<http.Server>` |
+| Node HTTP server | `zelavis/runtimes/node` -> `createNodeServer(zv)` | `Promise<http.Server>` |
+| Bun marker | `zelavis/runtimes/bun` | `bun = true` |
+| Deno marker | `zelavis/runtimes/deno` | `deno = true` |
 
-Each utility internally lazy-initializes the runtime on first request, so you can
-construct your `Zelavis` instance at module top level.
+Fetch-native hosts can call `zv.fetch(request)` directly.
+
+## SDK bundle surfaces
+
+Browser support means SDK/client code, not running the Platform OS in a browser.
+Use `zelavis/sdk/browser` for a browser-safe fetch client and portable
+`@zelavis/app/db` / `@zelavis/app/auth` contracts without importing the
+dashboard, runtime host utilities, or local server adapters.
+
+```ts
+import { createBrowserZelavisClient } from "zelavis/sdk/browser";
+
+const client = createBrowserZelavisClient({
+  baseUrl: "https://example.com",
+});
+
+await client.runtime.config();
+```
+
+Future browser database adapters such as IndexedDB or SQLite WASM should plug
+into the same database driver boundary used by server adapters.
 
 ## Why no serverless runtime targets
 
