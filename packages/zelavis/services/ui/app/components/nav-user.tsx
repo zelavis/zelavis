@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Home,
+  LogOut,
   Paintbrush,
   Search,
   Settings2,
@@ -561,6 +562,7 @@ function buildUtilityPanel({
               },
             ],
           },
+          { title: "Logout", icon: LogOut, url: "/login" },
         ],
       }
   }

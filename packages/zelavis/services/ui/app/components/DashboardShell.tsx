@@ -245,9 +245,11 @@ export function DashboardShell({
   children: React.ReactNode;
   dashboardData?: DashboardShellData;
 }) {
+  const { pathname } = useLocation();
   const direction = useDirection();
   const isMobile = useIsMobile();
   const [activeDashboardData, setActiveDashboardData] = React.useState(dashboardData);
+  const isLoginRoute = pathname === "/login" || pathname === "/login/";
 
   React.useEffect(() => {
     document.documentElement.dataset.zelavisHydrated = "true";
@@ -279,16 +281,16 @@ export function DashboardShell({
         );
 
         const nextServices = current.runtime?.services?.map((service) => {
-          if (service.name !== "@zelavis/db" || !service.menu) {
+          if (service.name !== "database") {
             return service;
           }
 
-          const existingItems = service.menu.items ?? [];
-          const hasTable = existingItems.some(
-            (item) => item.title === collection.name || item.search?.databaseTable === collection.name,
+          const existingItems = service.menu?.items ?? [];
+          const hasExisting = existingItems.some(
+            (item) => item.search?.databaseTable === collection.name,
           );
 
-          if (hasTable) {
+          if (hasExisting) {
             return service;
           }
 
@@ -334,6 +336,16 @@ export function DashboardShell({
       );
     };
   }, []);
+
+  if (isLoginRoute) {
+    return (
+      <TooltipProvider>
+        <div className="h-svh w-full overflow-y-auto bg-background">
+          {children}
+        </div>
+      </TooltipProvider>
+    );
+  }
 
   return (
     <TooltipProvider>
