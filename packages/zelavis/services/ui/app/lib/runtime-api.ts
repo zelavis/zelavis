@@ -119,6 +119,8 @@ export interface RuntimeServiceActivation {
   capabilities: RuntimeServiceActivationCapabilities;
 }
 
+export type RuntimeEngine = "node" | "bun" | "deno";
+
 export type RuntimePrincipalType =
   | "anonymous"
   | "user"
@@ -302,6 +304,10 @@ export interface RuntimeConfig {
     clientRoutes: string[];
     assetRoot: string;
   };
+  runtime?: {
+    engine: RuntimeEngine;
+    availableEngines: readonly RuntimeEngine[];
+  };
   services: RuntimeService[];
   serviceRegistry: RuntimeServiceRegistryEntry[];
   serviceActivation?: RuntimeServiceActivation;
@@ -343,12 +349,19 @@ export interface DashboardSettings {
   rootPath: string;
   pendingRootPath?: string;
   apiBasePath: string;
+  runtimeEngine: {
+    current: RuntimeEngine;
+    desired: RuntimeEngine;
+    available: readonly RuntimeEngine[];
+    restartRequired: boolean;
+  };
   theme: DashboardThemeMode;
   pageBuilderEnabled: boolean;
   preferences: DashboardPreferences;
   persistence: "runtime" | "read-only";
   editable: {
     rootPath: boolean;
+    runtimeEngine: boolean;
     theme: boolean;
     pageBuilder: boolean;
   };
@@ -357,6 +370,7 @@ export interface DashboardSettings {
 
 export interface DashboardSettingsUpdate {
   rootPath?: string;
+  runtimeEngine?: RuntimeEngine;
   theme?: DashboardThemeMode;
   pageBuilderEnabled?: boolean;
   preferences?: DashboardPreferences;

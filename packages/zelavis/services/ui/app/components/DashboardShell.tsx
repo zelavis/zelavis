@@ -217,6 +217,15 @@ function RestartRequiredBanner({
     return null;
   }
 
+  const changes = [
+    settings.pendingRootPath
+      ? `root path ${settings.pendingRootPath}`
+      : undefined,
+    settings.runtimeEngine.restartRequired
+      ? `runtime engine ${settings.runtimeEngine.desired}`
+      : undefined,
+  ].filter(Boolean);
+
   return (
     <div
       role="status"
@@ -224,8 +233,7 @@ function RestartRequiredBanner({
     >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <span>
-          Restart required to apply pending root path{" "}
-          {settings.pendingRootPath}.
+          Restart required to apply {changes.join(" and ")}.
         </span>
         <Link
           to="/settings"

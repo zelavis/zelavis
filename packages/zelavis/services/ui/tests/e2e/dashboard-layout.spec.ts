@@ -197,7 +197,7 @@ test('mounted dev server can serve the dashboard from /zelavis/', async ({
   await expect(page.locator('html[data-zelavis-hydrated="true"]')).toBeVisible()
 })
 
-test('database route restores the system tables sidebar panel', async ({ page }, testInfo) => {
+test('database route restores the database sidebar panel', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
   await gotoDashboard(page, '/database')
@@ -208,8 +208,9 @@ test('database route restores the system tables sidebar panel', async ({ page },
     .locator('.swiper-slide-active')
     .first()
 
+  await expect(activeSlide.getByRole('button', { name: 'Database', exact: true })).toBeVisible()
   await expect(activeSlide.getByRole('button', { name: 'System Tables', exact: true })).toBeVisible()
-  await expect(activeSlide.getByRole('link', { name: 'zv_collections', exact: true })).toBeVisible()
+  await expect(activeSlide.getByRole('link', { name: 'zv_collections', exact: true })).toBeHidden()
 })
 
 test('storage lives under the core slide for advanced runtime management', async ({
@@ -939,8 +940,9 @@ test('sidebar route panels restore from the current route on refresh', async ({
   const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
   const activeSlide = sidebar.locator('.swiper-slide-active').first()
 
-  await expect(activeSlide).toContainText('System Tables')
-  await expect(activeSlide.getByRole('link', { name: 'zv_collections', exact: true })).toBeVisible()
+  await expect(activeSlide.getByRole('button', { name: 'Database', exact: true })).toBeVisible()
+  await expect(activeSlide.getByRole('button', { name: 'System Tables', exact: true })).toBeVisible()
+  await expect(activeSlide.getByRole('link', { name: 'zv_collections', exact: true })).toBeHidden()
 })
 
 test('sidebar has one internal link per dashboard route', async ({
