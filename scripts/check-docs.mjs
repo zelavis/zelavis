@@ -7,10 +7,10 @@ const docsRoot = "website/src/content/docs";
 const targets = [
   docsRoot,
   "packages/zelavis/README.md",
-  "packages/zelavis/services/ui/README.md",
-  "packages/zelavis/services/server/README.md",
-  "packages/db/README.md",
-  "packages/auth/README.md",
+  "packages/zelavis/services/zelavis-ui/README.md",
+  "packages/zelavis/services/zelavis-server/README.md",
+  "packages/zelavis/services/zelavis-fabric/README.md",
+  "packages/zelavis/services/zelavis-app/README.md",
 ];
 
 const stalePatterns = [

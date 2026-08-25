@@ -7,6 +7,13 @@ service lifecycle, official service directory, and server/project orchestration.
 Lower-level packages such as `@zelavis/server`, `@zelavis/app/db`, and
 `@zelavis/app/auth` remain independently useful primitives.
 
+The Platform mounts `@zelavis/fabric` as a trusted core service. Fabric begins
+as an honest single-node inventory and project-placement capability, then grows
+into the node, routing, balancing, migration, recovery, and replication control
+plane for multi-machine installations. It places every managed project kind;
+only Zelavis App projects receive the deeper tenant-aware database placement,
+sharding, replica, and schema-rollout capabilities.
+
 The Platform OS creates projects from services with `kind: "app"`. With the
 Node adapter, every project receives its own data directory and long-running
 Node process. The driver provides operational isolation for trusted projects
@@ -49,6 +56,8 @@ The dashboard opens to Projects. Project-local Zelavis surfaces live under
 `/zelavis/projects/:projectId/*`, global app/server discovery lives under
 `/zelavis/marketplace`, global management routes live outside projects, and
 server-owned operation routes live under `/zelavis/server/*`.
+Fabric operations and settings live under `/zelavis/server/fabric/*`, backed by
+versioned endpoints under `/zelavis/api/v1/fabric/*`.
 
 The dashboard is a client of the runtime, not the source of truth. Any operation
 available in the dashboard should also be exposed through a stable runtime

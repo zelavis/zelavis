@@ -125,4 +125,4 @@ Concrete hostnames live in runtime domain bindings, not in service package metad
 - [Service Model](../architecture/service-model.md)
 - [Project Model](../architecture/project-model.md)
 - [First Runtime](../getting-started/first-runtime.md)
-- [@zelavis/server](../packages/zelavis/services/server.md)
+- [@zelavis/server](../packages/server.md)

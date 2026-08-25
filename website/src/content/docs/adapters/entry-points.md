@@ -97,4 +97,4 @@ process when live activation is unavailable.
 - [Adapters Guide](../guides/adapters-and-fetch-native.md)
 - [Runtime Targets](../reference/runtime-targets.md)
 - [First Runtime](../getting-started/first-runtime.md)
-- [@zelavis/server](../packages/zelavis/services/server.md)
+- [@zelavis/server](../packages/server.md)

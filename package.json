@@ -13,7 +13,7 @@
     "build:sdk:browser": "pnpm --filter zelavis build:sdk:browser",
     "build:sdk:node": "pnpm --filter zelavis build:sdk:node",
     "check": "pnpm run typecheck",
-    "ci:runtime": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/app build && pnpm --filter @zelavis/app-db-node-sqlite build && pnpm --filter @zelavis/app-db-bun-sqlite build && pnpm --filter @zelavis/ecommerce build && pnpm check && pnpm --filter zelavis test",
+    "ci:runtime": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/fabric build && pnpm --filter @zelavis/app build && pnpm --filter @zelavis/app-db-node-sqlite build && pnpm --filter @zelavis/app-db-bun-sqlite build && pnpm --filter @zelavis/ecommerce build && pnpm check && pnpm --filter zelavis test",
     "ci:ui": "pnpm --filter @zelavis/ui typecheck && ZELAVIS_UI_BASE_PATH=/zelavis/ pnpm --filter @zelavis/ui exec playwright test --project=desktop",
     "changeset": "changeset",
     "changeset:add": "node scripts/create-changeset.mjs",

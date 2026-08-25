@@ -9,7 +9,7 @@
     "noEmit": true,
     "baseUrl": "../..",
     "typeRoots": [
-      "packages/zelavis/services/server/node_modules/@types",
+      "packages/zelavis/services/zelavis-server/node_modules/@types",
       "node_modules/@types"
     ],
     "paths": {
@@ -29,7 +29,7 @@
         "plugins/ecommerce/plugins/stripe/src/index.ts"
       ],
       "@zelavis/server": [
-        "packages/zelavis/services/server/src/index.ts"
+        "packages/zelavis/services/zelavis-server/src/index.ts"
       ],
       "bun:sqlite": [
         "packages/db/adapters/bun-sqlite/src/bun-sqlite.d.ts"

@@ -16,6 +16,14 @@ export default [
     route("access/permissions", "routes/server.access.permissions.tsx"),
     route("backups", "routes/server.backups.tsx"),
     route("logs", "routes/server.logs.tsx"),
+    route("fabric", "routes/server.fabric.tsx", [
+      route(":fabricSection", "routes/server.fabric.$fabricSection.tsx", [
+        route(
+          ":fabricDetail",
+          "routes/server.fabric.$fabricSection.$fabricDetail.tsx",
+        ),
+      ]),
+    ]),
   ]),
   route("settings", "routes/settings.tsx", [
     route("appearance", "routes/settings.appearance.tsx"),

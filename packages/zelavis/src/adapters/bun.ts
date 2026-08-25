@@ -57,7 +57,7 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
       const databaseOptions =
         options.database ?? (isProjectRuntime ? {} : false);
       const nextCoreServices: Record<string, unknown> = isProjectRuntime
-        ? { dashboard: false }
+        ? { dashboard: false, fabric: false }
         : {
             database: false,
             website: false,

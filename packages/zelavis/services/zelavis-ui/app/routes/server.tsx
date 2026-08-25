@@ -1,4 +1,11 @@
-import { Archive, Fingerprint, Globe2, ReceiptText, Server } from "lucide-react";
+import {
+  Archive,
+  Fingerprint,
+  Globe2,
+  ReceiptText,
+  Server,
+  Waypoints,
+} from "lucide-react";
 import { Link, Outlet, useLocation } from "react-router";
 
 import {
@@ -17,6 +24,12 @@ export const handle = {
 } as const;
 
 const serverSections = [
+  {
+    title: "Fabric",
+    path: "/server/fabric",
+    icon: Waypoints,
+    detail: "Nodes, placement, routing, balancing, data distribution, and infrastructure providers.",
+  },
   {
     title: "Domains",
     path: "/server/domains",
@@ -52,7 +65,13 @@ function ServerRoute() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <section className="grid gap-4 md:grid-cols-4">
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <StatCard
+          label="Fabric"
+          value="single-node"
+          detail="The control plane is mounted and ready to grow into a cluster."
+          icon={Waypoints}
+        />
         <StatCard
           label="Domains"
           value="planned"

@@ -216,6 +216,70 @@ export interface RuntimeProjectDriverInfo {
   };
 }
 
+export type FabricFeatureState = "available" | "planned";
+
+export interface FabricNode {
+  id: string;
+  status: "ready" | "degraded" | "draining" | "unavailable";
+  roles: readonly ("gateway" | "control" | "worker")[];
+  runtimeEngine?: string;
+  runtimeDriver?: string;
+  capacity?: {
+    cpuCores?: number;
+    memoryBytes?: number;
+    diskBytes?: number;
+  };
+  load?: {
+    cpu?: number;
+    memory?: number;
+    disk?: number;
+    diskIo?: number;
+    network?: number;
+    activeRequests?: number;
+    sqliteWritePressure?: number;
+    jobPressure?: number;
+  };
+  labels?: Readonly<Record<string, string>>;
+}
+
+export interface FabricProjectPlacement {
+  projectId: string;
+  projectKind: string;
+  nodeId: string;
+  generation: number;
+  state: "active" | "preparing" | "moving" | "recovering" | "unavailable";
+  runtimeStatus?: string;
+}
+
+export interface FabricMigration {
+  id: string;
+  scope: "project" | "tenant-data";
+  projectId: string;
+  tenantId?: string;
+  sourceNodeId: string;
+  destinationNodeId: string;
+  expectedGeneration: number;
+  state: string;
+}
+
+export interface FabricSnapshot {
+  mode: "single-node" | "cluster";
+  status: "ready" | "degraded" | "unavailable";
+  localNodeId: string;
+  nodes: readonly FabricNode[];
+  projectPlacements: readonly FabricProjectPlacement[];
+  migrations: readonly FabricMigration[];
+  features: {
+    projectPlacement: FabricFeatureState;
+    multiNode: FabricFeatureState;
+    automaticBalancing: FabricFeatureState;
+    projectMigration: FabricFeatureState;
+    zelavisAppDataPlacement: FabricFeatureState;
+    replication: FabricFeatureState;
+    infrastructureAutoscaling: FabricFeatureState;
+  };
+}
+
 function appTitleFromName(name: string): string {
   if (name === "@zelavis/app") {
     return "Zelavis App";
@@ -1948,6 +2012,10 @@ export async function deleteStorageFile(
       method: "DELETE",
     },
   );
+}
+
+export async function getFabricSnapshot(config: RuntimeConfig) {
+  return readJson<FabricSnapshot>(`${config.api.basePath}/fabric/snapshot`);
 }
 
 export async function getDatabaseHealth(config: RuntimeConfig) {
