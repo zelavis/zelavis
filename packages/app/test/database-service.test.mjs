@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { zelavisServer } from "@zelavis/server";
 import { createDatabase, defineDatabaseService } from "../dist/db/index.js";
-import { zelavisServer } from "../dist/server/index.js";
 
 test("databaseService exposes database routes through the existing service contract", async () => {
   const database = await createDatabase();
