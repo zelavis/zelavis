@@ -18,6 +18,9 @@ Use this skill for changes in:
 - Prefer simple automation with clear ownership over clever repo machinery.
 - Do not claim GitHub settings are enabled unless they were verified.
 - Separate repo-policy changes from product code changes when possible.
+- Treat `AGENTS.md` as the canonical coding-agent instruction file.
+- Do not add durable project guidance to `CLAUDE.md`; if a change would do so, tell the developer the content belongs in `AGENTS.md`.
+- Keep `.agents/` synchronized with `AGENTS.md`. When repo guidance affects a specific workflow, update the relevant skill or add a focused reference file.
 
 ## Repo checklist
 
@@ -25,6 +28,7 @@ Use this skill for changes in:
 2. Keep issue labels and templates aligned.
 3. Document any manual GitHub UI steps that cannot be done from code or CLI.
 4. Leave unrelated local-only folders and machine state alone.
+5. Check whether changes to `AGENTS.md` should also update `.agents/skills/*/SKILL.md` or `.agents/references/*`.
 
 ## Validation
 

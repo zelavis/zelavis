@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "for d in \"$(git rev-parse --show-toplevel)\"/.agents/skills/*/; do skill=$(basename \"$d\"); ln -sfn \"$d\" \"$(git rev-parse --show-toplevel)/.claude/skills/$skill\"; done"
+            "command": "repo=\"$(git rev-parse --show-toplevel)\"; mkdir -p \"$repo/.claude/skills\"; for d in \"$repo\"/.agents/skills/*/; do [ -d \"$d\" ] || continue; skill=$(basename \"$d\"); ln -sfn \"$d\" \"$repo/.claude/skills/$skill\"; done; [ -d \"$repo/.agents/references\" ] && ln -sfn \"$repo/.agents/references\" \"$repo/.claude/references\""
           }
         ]
       }

@@ -27,6 +27,9 @@ Start by reading `AGENTS.md` and the relevant package README before editing.
 - Preserve the service model; do not invent a parallel composition pattern.
 - Everything Zelavis can do must be reachable through a stable server capability and endpoint. The dashboard is a client, not the authority layer.
 - Do not implement platform behavior only in UI routes, framework server actions, local component state, or dashboard-only helpers.
+- Keep `AGENTS.md` as the canonical durable instruction source; do not add project rules to `CLAUDE.md`.
+- If durable platform guidance changes, update the relevant `.agents/skills/*/SKILL.md` or `.agents/references/*` material so skill-loaded agents stay current.
+- For `@zelavis/app/db`, preserve the event-sourced per-collection-table model. Do not reintroduce a shared `documents` table, do not write directly to registered collection tables, and keep `surface` as a first-class collection field.
 
 ## Design checklist
 

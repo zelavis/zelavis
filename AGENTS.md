@@ -31,12 +31,39 @@ Core platform work currently centers on:
 
 - `zelavis`
 - `@zelavis/server`
+- `@zelavis/fabric`
 - `@zelavis/app/db`
 - `@zelavis/app/auth`
 - `@zelavis/ui`
 - `@zelavis/app/workloads`
 
 The repo still contains domain packages such as `@zelavis/ecommerce`, but they are optional layers on top of the platform primitives, not the main product definition.
+
+## Agent Instruction Source Of Truth
+
+`AGENTS.md` is the canonical instruction file for coding agents in this repo.
+Do not add new project rules, architecture notes, or workflow instructions to
+`CLAUDE.md`. If an agent finds something worth preserving from `CLAUDE.md`,
+move or summarize it here instead.
+
+It is technically acceptable for `CLAUDE.md` to become a short pointer to
+`AGENTS.md`. Until that migration happens, treat `CLAUDE.md` as legacy context
+only. If a requested change would add or update `CLAUDE.md`, stop and notify
+the developer that the content belongs in `AGENTS.md`.
+
+Keep the `.agents/` folder in sync with this file. When adding or changing
+durable guidance that affects a specific agent workflow, update the relevant
+`.agents/skills/*/SKILL.md` file or add a focused reference under
+`.agents/references/` so skill-loaded agents receive the same current guidance.
+
+`.claude/` is Claude-specific tool configuration, not a second instruction
+system. It may contain Claude settings, local permissions, worktree state, or
+symlinks that point Claude at `.agents/skills/*` and `.agents/references`.
+Do not duplicate instructions or skill content into `.claude/`. If a Claude
+integration needs access to repo-maintained guidance, point it at `AGENTS.md`
+or symlink/read from `.agents/`; keep the maintained source in `AGENTS.md` and
+`.agents/`. The tracked Claude session-start hook should keep those symlinks
+current automatically.
 
 ## Platform And App Service Boundary
 
@@ -109,6 +136,85 @@ renders the selected project's navigation under `/zelavis/projects/:projectId`.
 - Favor composition and adapters over inheritance.
 - Do not introduce heavy dependencies without a clear reason.
 - Keep future distributed multi-master operation possible: prefer deterministic event application, explicit idempotency, stable node identity, tenant-aware boundaries, and adapter-neutral replication contracts over hidden single-node assumptions.
+
+## Database Architecture Rules
+
+`@zelavis/app/db` is a document-first database core backed by SQL-capable
+drivers. Its event log is the source of truth for writes and the natural future
+replication stream.
+
+Key rules:
+
+- Every registered collection has its own table. Do not reintroduce a shared
+  `documents` table.
+- All document writes go through the documents API and append events before
+  projecting into the collection table. Do not write to registered collection
+  tables directly with raw SQL.
+- Collection tables are created inside the `collection.created` event
+  transaction.
+- `DatabaseCollection.surface` is a first-class field. Use
+  `surface: "content-studio"` for Content Studio content types and
+  `surface: "database"` for raw database tables. Do not bury `surface` inside
+  `metadata`.
+- Every collection table row has `tenant_id`. The database driver already
+  declares `tenantRouting: true`; `tenant_id` is the intended shard key.
+- SQLite-compatible adapters such as better-sqlite3, Bun SQLite, and libSQL
+  should inherit shared behavior through `createSqliteCompatibleDriver`.
+- `sql.execute()` must protect registered collection tables from direct DML/DDL
+  writes and point callers to the documents API. `sql.query()` may read them.
+- Do not expose `sql.execute()` through an endpoint unless collection-table
+  write protection is preserved.
+
+System tables are not document collections. Tables such as `zv_collections`,
+`zv_events`, `zv_schemas`, `zv_time_series_checkpoints`, and
+`zv_time_series_points` are raw internal SQL tables. They are not created
+through `createCollection`, are not accessed through `documents.*`, and are not
+part of the collection event pipeline. Names beginning with `zv_` are reserved
+for Zelavis internals and must be rejected as collection names.
+
+The dashboard may use UI route state such as `systemTable` for system-table
+views, but that is not a physical table-name convention. Physical internal
+tables use the `zv_*` prefix.
+
+## Open Protocols And Embeddable Core
+
+Zelavis should be useful as a full product, as an embeddable library, and as a
+set of small composable tools. Prefer open protocols and narrow entry points
+over closed product-only integration paths.
+
+Design extension surfaces so they can be used by:
+
+- the dashboard
+- the CLI
+- browser and native-fetch SDK bundles
+- background agents
+- MCP servers and clients
+- local scripts and software-factory workflows
+- cloud-hosted connectors and provider plugins
+
+The package boundary should follow a Unix-like composition rule: small focused
+programs and services do one thing well, expose stable contracts, and compose by
+calling each other through explicit APIs. The full Platform OS can assemble
+those pieces, but the pieces must remain useful without the full dashboard or
+host runtime.
+
+`zelavis` should therefore keep a clear embeddable core:
+
+- core contracts, schemas, service definitions, and typed clients stay
+  runtime-neutral
+- `zelavis/sdk/*` surfaces are SDK/client bundles of Zelavis itself, excluding
+  UI and host runtime code
+- `zelavis/runtimes/*` surfaces are host utilities for long-running Platform OS
+  processes
+- adapters provide host, storage, or external-system bindings behind explicit
+  subpaths
+- plugins add optional capabilities without becoming the platform foundation
+
+Do not make the product shell the only integration point. If a capability is
+valuable, it should be reachable through a stable endpoint, embeddable API, or
+protocol-facing surface so users can build their own CLI, local agent,
+background worker, browser app, native-fetch client, or higher-level factory on
+top of Zelavis.
 
 ## Endpoint-Backed Capability Rule
 
@@ -224,11 +330,12 @@ those grants, while endpoints remain the authority layer.
 - `packages/*` contains core platform workspace packages.
 - `plugins/*` contains official user-installable Zelavis plugins.
 - `packages/zelavis` is the Platform OS package and ships official services under `packages/zelavis/services`.
-- `packages/zelavis/services/server` defines the shared service and route mounting model.
+- `packages/zelavis/services/zelavis-server` defines the shared service and route mounting model.
+- `packages/zelavis/services/zelavis-fabric` defines the trusted Platform OS node, placement, routing, balancing, migration, and recovery control plane.
 - `packages/zelavis/services/zelavis-app/src/db` contains the document-first database core and server-facing database service.
 - `packages/zelavis/services/zelavis-app/src/auth` contains the low-level auth core and auth method plugins.
 - `packages/zelavis/services/zelavis-app/src/workloads` contains project-scoped workloads.
-- `packages/zelavis/services/ui` contains the admin/dashboard UI used by the runtime package.
+- `packages/zelavis/services/zelavis-ui` contains the admin/dashboard UI used by the runtime package.
 - `packages/*/adapters/*` contains framework or external-system adapters.
 - `packages/*/plugins/*` contains package-local capability/provider plugins for core services.
 - `examples/*` contains runnable example workspace packages.
@@ -326,12 +433,12 @@ When creating a new core package, service package, or plugin package:
 
 ## UI Package Rules
 
-`packages/zelavis/services/ui` is a special package with extra constraints:
+`packages/zelavis/services/zelavis-ui` is a special package with extra constraints:
 
 - It uses **React Router v7** (SPA mode, `ssr: false`) — not TanStack Router or TanStack Start.
 - Styling is Tailwind CSS v4 + shadcn/ui (Base UI components).
 - Generated route types live in `.react-router/types/`. Do not hand-edit them.
-- Route source files are under `packages/zelavis/services/ui/app/routes/`. Edit these; typegen runs automatically.
+- Route source files are under `packages/zelavis/services/zelavis-ui/app/routes/`. Edit these; typegen runs automatically.
 - The dashboard sidebar uses a slide-based navigation model. Treat each slide as a distinct sidebar panel.
 - Nested sidebar slide headers use a larger standard gap before the next menu content. Sidebar panels with pinned/fixed action rows use `SidebarFixedActionMenu`; pass `afterHeader` when fixed actions sit directly under the slide back/title header.
 - Build dashboard features as mobile-slot-ready modules. Route files may compose those modules into a wide desktop page, while mobile sidebar slides can later mount the same modules into named slots such as `overview`, `main`, `create`, `edit`, `inspect`, and `settings`.
@@ -342,6 +449,14 @@ When creating a new core package, service package, or plugin package:
 - Do not add blog-style route title blocks that repeat the breadcrumb, sidebar slide title, or active navigation item. Dashboard content should start with the actual workspace, table, form, chart, or contextual controls unless the page needs a title for a genuinely distinct object or focused editor.
 - The "Community" section is intentionally rendered inside the first navigation slide.
 - Dummy community entries may exist as markup-only placeholders and do not imply real routes.
+- Content Studio routes must create collections with
+  `surface: "content-studio"` as a top-level field.
+- Database routes that create raw tables must use `surface: "database"`.
+- Content Studio sidebar sections show only `surface: "content-studio"`
+  collections and label them as Collections.
+- Core Database sidebar sections show all registered collections, label raw
+  collection entries as Tables, and keep system tables in a distinct System
+  Tables area.
 
 **Data loading**: every route that fetches data uses a `clientLoader` + `useLoaderData`. Never fetch in `useEffect` for page-level data. After mutations, use `useRevalidator().revalidate()`. Root loader data (`runtime`, `settings`, `databaseCollections`, `schemaCollections`) is accessed in child routes via `useRouteLoaderData<typeof rootClientLoader>('root')`.
 
@@ -366,7 +481,7 @@ When working on UI behavior:
 
 Treat these carefully:
 
-- `packages/zelavis/services/ui/.react-router/types/` is generated. Do not hand-edit it.
+- `packages/zelavis/services/zelavis-ui/.react-router/types/` is generated. Do not hand-edit it.
 - `packages/*/dist/*` is build output.
 - `website/.astro/*` and `website/dist/*` are generated site output.
 
