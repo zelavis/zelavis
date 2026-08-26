@@ -14,6 +14,13 @@ A unified, self-hostable App Platform that replaces and combines:
 - **Project workloads** — first-party functions, jobs, schedules, and webhooks served by the long-running Zelavis runtime
 - **AI chat** — a built-in chat area inside the dashboard for interacting with Zelavis and building via AI (think Claude / Codex)
 
+## Effect v4 & Vendored Library Source (@repos/effect)
+
+- Zelavis uses **Effect v4**.
+- The full Effect v4 source is vendored locally under `repos/effect/`.
+- When writing Effect code, always refer to `repos/effect/LLMS.md`, `repos/effect/packages/effect/SCHEMA.md`, and the real source files in `repos/effect/packages/effect/src/` for idiomatic v4 patterns.
+- `repos/effect/` is read-only reference material. Never import from `repos/effect/` in project code (import from `effect` or submodules).
+
 ## Database Architecture — Key Facts
 
 ### Per-collection tables
