@@ -4,8 +4,8 @@ import { FabricWorkspace } from "#/components/fabric/FabricWorkspace";
 import type { FabricOutletContext } from "./server.fabric";
 
 export const handle = {
-  pageLabel: "Fabric",
-  sidebarTrail: ["Fabric"],
+  pageLabel: "Server",
+  sidebarTrail: ["Server"],
 } as const;
 
 export default function ServerFabricDetailRoute() {

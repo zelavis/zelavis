@@ -19,8 +19,12 @@ import {
   DatabaseNotFoundError,
 } from "@zelavis/app/db";
 import {
+  createFabricService,
   createMappedJsonErrorResponse,
   zelavisServer as mountZelavisServer,
+  type FabricPlacementState,
+  type FabricProjectPlacement,
+  type FabricServiceOptions,
   type ZelavisServerErrorStatusRule,
   type ZelavisAnyRuntimeServiceInput,
   type ZelavisServerDispatchHandler,
@@ -41,12 +45,6 @@ import {
   workloadsService,
   type WorkloadsServiceOptions,
 } from "@zelavis/app/workloads";
-import {
-  createFabricService,
-  type FabricPlacementState,
-  type FabricProjectPlacement,
-  type FabricServiceOptions,
-} from "@zelavis/fabric";
 import {
   activateServiceRegistry,
   applyServiceRegistryState,
@@ -743,7 +741,7 @@ const STORAGE_CHECKSUM_METADATA_KEY = "checksum-sha256";
 const RESERVED_CORE_SERVICE_NAMES = new Set([
   "@zelavis/app",
   "@zelavis/auth",
-  "@zelavis/fabric",
+  "@zelavis/server-fabric",
   "@zelavis/ui",
   "@zelavis/ui:app",
   "@zelavis/db",
@@ -2526,7 +2524,7 @@ async function resolveRuntimeManagementCore(
         core:
           service.name === "@zelavis/ui" ||
           service.name === "@zelavis/server" ||
-          service.name === "@zelavis/fabric" ||
+          service.name === "@zelavis/server-fabric" ||
           service.name === "@zelavis/auth" ||
           service.name === "@zelavis/db" ||
           service.name === "@zelavis/storage" ||

@@ -9,7 +9,6 @@ const targets = [
   "packages/zelavis/README.md",
   "packages/zelavis/services/zelavis-ui/README.md",
   "packages/zelavis/services/zelavis-server/README.md",
-  "packages/zelavis/services/zelavis-fabric/README.md",
   "packages/zelavis/services/zelavis-app/README.md",
 ];
 

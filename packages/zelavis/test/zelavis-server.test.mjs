@@ -78,7 +78,7 @@ test("zelavis exposes fetch handlers without requiring a mount adapter", async (
     [
       "@zelavis/ui",
       "@zelavis/server",
-      "@zelavis/fabric",
+      "@zelavis/server-fabric",
       "@zelavis/db",
       "@zelavis/auth",
       "@zelavis/website",
@@ -93,7 +93,10 @@ test("zelavis includes core services by default", async () => {
   const routes = runtime.routes;
 
   assert.equal(runtime.services["@zelavis/ui"].name, "@zelavis/ui");
-  assert.equal(runtime.services["@zelavis/fabric"].name, "@zelavis/fabric");
+  assert.equal(
+    runtime.services["@zelavis/server-fabric"].name,
+    "@zelavis/server-fabric",
+  );
   assert.equal(runtime.services["@zelavis/auth"].name, "@zelavis/auth");
   assert.equal(runtime.services["@zelavis/db"].name, "@zelavis/db");
   assert.equal(runtime.services["@zelavis/website"].name, "@zelavis/website");
@@ -217,7 +220,7 @@ test("zelavis includes core services by default", async () => {
     [
       "@zelavis/ui",
       "@zelavis/server",
-      "@zelavis/fabric",
+      "@zelavis/server-fabric",
       "@zelavis/db",
       "@zelavis/auth",
       "@zelavis/website",
@@ -1184,7 +1187,7 @@ test("zelavis preserves a mounted dev-server dashboard base path", async () => {
   );
 });
 
-test("zelavis keeps the Platform server and Fabric when optional mounted services are disabled", async () => {
+test("zelavis keeps the Platform server control plane when optional mounted services are disabled", async () => {
   const runtime = await zelavis({
     coreServices: {
       auth: false,
@@ -1197,7 +1200,7 @@ test("zelavis keeps the Platform server and Fabric when optional mounted service
 
   assert.deepEqual(Object.keys(runtime.services), [
     "@zelavis/server",
-    "@zelavis/fabric",
+    "@zelavis/server-fabric",
   ]);
   assert.deepEqual(
     runtime.routes.map((route) => route.route.id),

@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { zelavisServer } from "@zelavis/server";
-import { createFabricService } from "../dist/index.js";
+import { createFabricService, zelavisServer } from "../dist/index.js";
 
 test("Fabric mounts a single-node core service with project placement inventory", async () => {
   const service = createFabricService({
@@ -87,7 +86,7 @@ test("Fabric mounts a single-node core service with project placement inventory"
     },
   });
   assert.equal(service.kind, "core");
-  assert.equal(service.menu?.path, "/server/fabric");
+  assert.equal(service.menu, undefined);
 });
 
 test("Fabric returns 404 for unknown nodes and placements", async () => {

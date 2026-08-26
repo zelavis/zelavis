@@ -1,8 +1,7 @@
 import type {
   ZelavisRuntimeService,
-  ZelavisRuntimeServiceMenuDefinition,
   ZelavisServerRoute,
-} from "@zelavis/server";
+} from "./contracts.js";
 import { Context, Data, Effect, Layer, ManagedRuntime } from "effect";
 
 export type FabricMode = "single-node" | "cluster";
@@ -144,7 +143,7 @@ export class Fabric extends Context.Service<
   {
     readonly snapshot: Effect.Effect<FabricSnapshot, FabricInventoryError>;
   }
->()("@zelavis/fabric/Fabric") {}
+>()("@zelavis/server/Fabric") {}
 
 const defaultFeatures: FabricFeatures = {
   projectPlacement: "available",
@@ -287,141 +286,6 @@ function createFabricApi(options: FabricServiceOptions): FabricApi {
   };
 }
 
-const fabricMenu: ZelavisRuntimeServiceMenuDefinition = {
-  title: "Fabric",
-  path: "/server/fabric",
-  pageLabel: "Fabric",
-  panelLabel: "Fabric",
-  sectionLabel: "Manage",
-  order: 65,
-  surface: "platform",
-  access: {
-    permissions: ["fabric.view"],
-    scope: { type: "system" },
-  },
-  items: [
-    {
-      title: "Overview",
-      path: "/server/fabric",
-      pageLabel: "Fabric",
-    },
-    {
-      title: "Nodes",
-      path: "/server/fabric/nodes",
-      pageLabel: "Nodes",
-    },
-    {
-      title: "Placements",
-      path: "/server/fabric/placements",
-      pageLabel: "Placements",
-    },
-    {
-      title: "Migrations",
-      path: "/server/fabric/migrations",
-      pageLabel: "Migrations",
-    },
-    {
-      title: "Balancing",
-      path: "/server/fabric/balancing",
-      pageLabel: "Balancing",
-    },
-    {
-      title: "Replication & Failover",
-      path: "/server/fabric/replication",
-      pageLabel: "Replication & Failover",
-    },
-    {
-      title: "Backups & Recovery",
-      path: "/server/fabric/backups",
-      pageLabel: "Backups & Recovery",
-    },
-    {
-      title: "Observability",
-      path: "/server/fabric/observability",
-      pageLabel: "Observability",
-    },
-    {
-      title: "Data Fabric",
-      path: "/server/fabric/data",
-      pageLabel: "Data Fabric",
-      panelLabel: "Data Fabric",
-      items: [
-        {
-          title: "Overview",
-          path: "/server/fabric/data",
-          pageLabel: "Data Fabric",
-        },
-        {
-          title: "Shards",
-          path: "/server/fabric/data/shards",
-          pageLabel: "Shards",
-        },
-        {
-          title: "Replicas",
-          path: "/server/fabric/data/replicas",
-          pageLabel: "Replicas",
-        },
-        {
-          title: "Schema Rollouts",
-          path: "/server/fabric/data/schema-rollouts",
-          pageLabel: "Schema Rollouts",
-        },
-      ],
-    },
-    {
-      title: "Infrastructure",
-      path: "/server/fabric/infrastructure",
-      pageLabel: "Infrastructure",
-      panelLabel: "Infrastructure",
-      items: [
-        {
-          title: "Overview",
-          path: "/server/fabric/infrastructure",
-          pageLabel: "Infrastructure",
-        },
-        {
-          title: "Providers",
-          path: "/server/fabric/infrastructure/providers",
-          pageLabel: "Infrastructure Providers",
-        },
-        {
-          title: "Autoscaling",
-          path: "/server/fabric/infrastructure/autoscaling",
-          pageLabel: "Infrastructure Autoscaling",
-        },
-      ],
-    },
-    {
-      title: "Settings",
-      path: "/server/fabric/settings",
-      pageLabel: "Fabric Settings",
-      panelLabel: "Fabric Settings",
-      items: [
-        {
-          title: "Overview",
-          path: "/server/fabric/settings",
-          pageLabel: "Fabric Settings",
-        },
-        {
-          title: "Placement Policies",
-          path: "/server/fabric/settings/placement-policies",
-          pageLabel: "Placement Policies",
-        },
-        {
-          title: "Networking",
-          path: "/server/fabric/settings/networking",
-          pageLabel: "Fabric Networking",
-        },
-        {
-          title: "Limits & Safety",
-          path: "/server/fabric/settings/limits",
-          pageLabel: "Limits & Safety",
-        },
-      ],
-    },
-  ],
-};
-
 function createFabricRoutes(): readonly ZelavisServerRoute<FabricApi>[] {
   return [
     {
@@ -511,11 +375,10 @@ export function createFabricService(
   options: FabricServiceOptions = {},
 ): ZelavisRuntimeService<FabricApi> {
   return {
-    name: "@zelavis/fabric",
+    name: "@zelavis/server-fabric",
     kind: "core",
     basePath: "/fabric",
     service: createFabricApi(options),
-    menu: fabricMenu,
     api: {
       v1: createFabricRoutes(),
     },

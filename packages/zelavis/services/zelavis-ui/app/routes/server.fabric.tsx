@@ -9,8 +9,8 @@ import {
 import type { Route } from "./+types/server.fabric";
 
 export const handle = {
-  pageLabel: "Fabric",
-  sidebarTrail: ["Fabric"],
+  pageLabel: "Server",
+  sidebarTrail: ["Server"],
 } as const;
 
 export interface FabricOutletContext {

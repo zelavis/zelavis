@@ -145,9 +145,6 @@ importers:
       '@zelavis/cli':
         specifier: workspace:*
         version: link:../cli
-      '@zelavis/fabric':
-        specifier: workspace:*
-        version: link:services/zelavis-fabric
       '@zelavis/server':
         specifier: workspace:*
         version: link:services/zelavis-server
@@ -258,20 +255,11 @@ importers:
         specifier: workspace:*
         version: link:../../../..
 
-  packages/zelavis/services/zelavis-fabric:
+  packages/zelavis/services/zelavis-server:
     dependencies:
-      '@zelavis/server':
-        specifier: workspace:*
-        version: link:../zelavis-server
       effect:
         specifier: 4.0.0-rc.111
         version: 4.0.0-rc.111
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
-  packages/zelavis/services/zelavis-server:
     devDependencies:
       '@types/node':
         specifier: ^25.9.3
