@@ -29,10 +29,11 @@ The main platform building blocks are:
 Today, the most important packages are:
 
 - [packages/zelavis](packages/zelavis)
-- [packages/zelavis/services/zelavis-server](packages/zelavis/services/zelavis-server)
-- [packages/zelavis/services/zelavis-fabric](packages/zelavis/services/zelavis-fabric)
-- [packages/zelavis/services/zelavis-app](packages/zelavis/services/zelavis-app)
-- [packages/zelavis/services/zelavis-ui](packages/zelavis/services/zelavis-ui)
+- [packages/server](packages/server)
+- [packages/zelavis/product-services/zelavis-core](packages/zelavis/product-services/zelavis-core)
+- [packages/zelavis/product-services/zelavis-marketplace](packages/zelavis/product-services/zelavis-marketplace)
+- [packages/app](packages/app)
+- [packages/zelavis/product-services/zelavis-ui](packages/zelavis/product-services/zelavis-ui)
 
 The ecommerce package is still useful, but it should be treated as an optional domain layer on top of the core platform.
 
@@ -88,8 +89,8 @@ pnpm typecheck
 pnpm audit:security
 pnpm ci:runtime
 pnpm ci:ui
-pnpm --filter ./packages/zelavis/services/zelavis-ui build
-pnpm --filter ./packages/zelavis/services/zelavis-ui test
+pnpm --filter ./packages/zelavis/product-services/zelavis-ui build
+pnpm --filter ./packages/zelavis/product-services/zelavis-ui test
 pnpm --filter zelavis test
 ```
 
@@ -99,7 +100,7 @@ The UI package has extra rules:
 
 - It uses TanStack Start, TanStack Router, shadcn/ui, and Tailwind CSS.
 - Stay on the current Radix-based shadcn approach unless a migration is explicitly requested.
-- `packages/zelavis/services/zelavis-ui/src/routeTree.gen.ts` is generated and should not be hand-edited.
+- `packages/zelavis/product-services/zelavis-ui/src/routeTree.gen.ts` is generated and should not be hand-edited.
 - The sidebar uses a slide-based navigation model.
 - The `Community` section belongs inside the first sidebar slide.
 
@@ -155,7 +156,7 @@ If a test setup does not exist yet, keep the change easy to validate and documen
 
 Be careful with these:
 
-- `packages/zelavis/services/zelavis-ui/src/routeTree.gen.ts` is generated
+- `packages/zelavis/product-services/zelavis-ui/src/routeTree.gen.ts` is generated
 - `packages/*/dist/*` is build output
 - `website/.astro/*` and `website/dist/*` are generated site output
 

@@ -3,16 +3,17 @@
 `zelavis` is the Platform OS package for the Zelavis App Platform.
 
 It owns the long-running control plane, dashboard composition, System Store,
-service lifecycle, official service directory, and server/project orchestration.
+service lifecycle, official product services, and server/project orchestration.
 Lower-level packages such as `@zelavis/server`, `@zelavis/app/db`, and
 `@zelavis/app/auth` remain independently useful primitives.
 
-`@zelavis/server` owns the Fabric control-plane subsystem. Fabric begins as an
-honest single-node inventory and project-placement capability, then grows into
-the node, routing, balancing, migration, recovery, and replication control
-plane for multi-machine installations. It places every managed project kind;
-only Zelavis App projects receive the deeper tenant-aware database placement,
-sharding, replica, and schema-rollout capabilities.
+`@zelavis/server` owns reusable Fabric, workload, Agent, service, routing, and
+access primitives. The bundled `@zelavis/core` service grants those primitives
+Platform authority and owns the Server dashboard surface. The bundled
+`@zelavis/marketplace` and `@zelavis/ui` services add the product Marketplace
+and dashboard. This assembly, plus official Project recipes such as
+`@zelavis/app`, is what makes the reusable server framework the Zelavis
+Platform OS.
 
 The Platform OS creates projects from services with `kind: "app"`. With the
 Node adapter, every project receives its own data directory and long-running
@@ -350,6 +351,53 @@ zelavis/runtimes/deno          deno marker
 Runtime host utilities are separate subpath exports. Import only the runtime
 subpath you need so bundlers can drop code for the other host runtimes.
 
+## Project runtime lifecycle
+
+The built-in Node project runtime is the dependable single-host mode used by
+local development and smaller self-hosted installations. Each running project
+is a separate Node process, but the Platform process owns those children. On
+startup, desired-running projects are reconciled in the background one at a
+time by default, so Platform readiness does not trigger an unbounded process
+storm or wait for the whole project fleet. Operators can raise the bounded
+limit when the host has enough capacity:
+
+```ts
+const zv = new Zelavis({
+  adapter: nodeAdapter({
+    projects: {
+      startupConcurrency: 4,
+      shutdownConcurrency: 8,
+    },
+  }),
+});
+```
+
+Call `await zv.close()` during host shutdown. It stops startup reconciliation,
+waits for in-flight lifecycle work, asks owned project processes to terminate,
+and escalates an individual child to `SIGKILL` when it does not exit after its
+grace period. The bundled `zelavis serve` command and Node development example
+already combine this with graceful HTTP server shutdown. `close()` is
+idempotent.
+
+This process-owned driver deliberately reports
+`runtimeOwnership: "platform-process"` and
+`survivesControlPlaneRestart: false`. That is
+not the intended Zelavis Cloud failure model. At production fleet scale,
+project runtimes should be owned by separately supervised Zelavis Agents. The
+Platform Fabric remains the global decision maker; each Agent executes
+authenticated placement and lifecycle commands through a runtime driver such
+as Node process or future rootless OCI. Such a driver reports
+`runtimeOwnership: "zelavis-agent"` and
+`survivesControlPlaneRestart: true`; stopping or restarting the control plane
+does not stop customer apps. Zelavis stays unified at the API, desired-state,
+access, and dashboard layers without making every app share the control
+plane's process lifetime.
+
+The current local System Store lists projects as a single collection. A cloud
+driver with thousands or millions of projects must add paginated discovery,
+durable reconciliation queues, leases or fencing, placement, and per-node rate
+limits rather than using the local in-memory child-process map as a scheduler.
+
 ## SDK bundle surfaces
 
 The official SDK is a bundle surface of Zelavis itself, not a separate client
@@ -546,9 +594,10 @@ For local Zelavis development, use the `pnpm dev` workflow. It starts the
 runtime and UI dev server together and wires dashboard requests to the live UI
 build.
 
-`pnpm dev` uses the official service directory at `packages/zelavis/services`.
-`@zelavis/app` lives directly at `packages/zelavis/services/zelavis-app` as a
-nested workspace package and bundled app-service boilerplate.
+`pnpm dev` builds the product services under `packages/zelavis/product-services` and
+registers the direct `@zelavis/app` dependency as the official native Project
+recipe. `@zelavis/app` lives at `packages/app`; it is not copied into the
+Platform service directory.
 
 The dashboard, project registry, Platform settings, and service registry state
 persist through the separate System Store. Zelavis App capabilities run inside

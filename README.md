@@ -138,35 +138,39 @@ Core packages:
 
 - [packages/zelavis](packages/zelavis)
   The high-level runtime package. It composes core services such as auth, database, website, workloads, and dashboard delivery, and re-exports server adapters.
-- [packages/zelavis/services/zelavis-server](packages/zelavis/services/zelavis-server)
+- [packages/server](packages/server)
   Shared service, endpoint, and framework adapter contracts for mounting Zelavis packages.
-- [packages/zelavis/services/zelavis-fabric](packages/zelavis/services/zelavis-fabric)
-  The Platform OS core service for node inventory, project placement, routing, balancing, migration, recovery, and Zelavis App data distribution.
-- [packages/zelavis/services/zelavis-app/src/auth](packages/zelavis/services/zelavis-app/src/auth)
+- [packages/app](packages/app)
+  The official native Zelavis App Project recipe and runtime stack.
+- [packages/zelavis/product-services/zelavis-core](packages/zelavis/product-services/zelavis-core)
+  The Zelavis-specific Platform control plane and Server dashboard surface.
+- [packages/zelavis/product-services/zelavis-marketplace](packages/zelavis/product-services/zelavis-marketplace)
+  The global Marketplace product service and dashboard contribution.
+- [packages/app/src/auth](packages/app/src/auth)
   A low-level authentication core for accounts, credentials, sessions, and opt-in auth method services.
-- [packages/zelavis/services/zelavis-app/src/db](packages/zelavis/services/zelavis-app/src/db)
+- [packages/app/src/db](packages/app/src/db)
   A document-first, tenant-aware database core with an in-memory driver, optional SQL capability, and a mountable server service.
-- [packages/zelavis/services/zelavis-ui](packages/zelavis/services/zelavis-ui)
+- [packages/zelavis/product-services/zelavis-ui](packages/zelavis/product-services/zelavis-ui)
   The admin/dashboard frontend used by the high-level runtime.
-- [packages/zelavis/services/zelavis-app/src/workloads](packages/zelavis/services/zelavis-app/src/workloads)
+- [packages/app/src/workloads](packages/app/src/workloads)
   A first-party core plugin for project-scoped functions, jobs, schedules, and webhooks.
 - [packages/cli](packages/cli)
   Command-line tooling for Zelavis workflows.
 
 Database adapters:
 
-- [packages/zelavis/services/zelavis-app/adapters/bun-sqlite](packages/zelavis/services/zelavis-app/adapters/bun-sqlite)
+- [packages/app/adapters/bun-sqlite](packages/app/adapters/bun-sqlite)
   A Bun SQLite adapter package for `@zelavis/app/db`.
-- [packages/zelavis/services/zelavis-app/adapters/node-sqlite](packages/zelavis/services/zelavis-app/adapters/node-sqlite)
+- [packages/app/adapters/node-sqlite](packages/app/adapters/node-sqlite)
   A Node.js SQLite adapter package for `@zelavis/app/db`.
-- [packages/zelavis/services/zelavis-app/adapters/libsql](packages/zelavis/services/zelavis-app/adapters/libsql)
+- [packages/app/adapters/libsql](packages/app/adapters/libsql)
   A libSQL adapter package for `@zelavis/app/db`.
 
 Auth plugins:
 
-- [packages/zelavis/services/zelavis-app/plugins/email-password](packages/zelavis/services/zelavis-app/plugins/email-password)
+- [packages/app/plugins/email-password](packages/app/plugins/email-password)
   An email/password auth provider service for `@zelavis/app/auth`.
-- [packages/zelavis/services/zelavis-app/plugins/username-password](packages/zelavis/services/zelavis-app/plugins/username-password)
+- [packages/app/plugins/username-password](packages/app/plugins/username-password)
   A username/password auth provider service for `@zelavis/app/auth`.
 
 Official domain plugins:

@@ -6,11 +6,8 @@ title: "@zelavis/app"
 database, auth, and workloads modules that used to live as separate workspace
 packages.
 
-The package is both:
-
-- an installable `kind: "app"` service used by the Platform project creator
-- the source for the bundled `packages/zelavis/services/zelavis-app`
-  production boilerplate
+The package is an independently published `kind: "app"` Project recipe and
+runtime stack used directly by the Platform project creator.
 
 ## App-Owned Modules
 
@@ -20,7 +17,7 @@ Use subpath imports when lower-level code needs direct access:
 import { createDatabase, defineDatabaseService } from "@zelavis/app/db";
 import { createAuth, authService } from "@zelavis/app/auth";
 import { workloadsService } from "@zelavis/app/workloads";
-import { zelavisServer } from "@zelavis/app/server";
+import { zelavisServer } from "@zelavis/server";
 ```
 
 Runtime service IDs remain stable:
@@ -32,15 +29,13 @@ Runtime service IDs remain stable:
 Those names identify mounted runtime capabilities and dashboard menus. They are
 not standalone package names anymore.
 
-## Bundled Boilerplate
+## Project Recipe
 
-The published `zelavis` package ships the official app service under
-`packages/zelavis/services/zelavis-app`. The sync script stages the built
-runtime entry, package metadata, source, adapters, and plugins so project
-creation can use it as a real project boilerplate rather than a dist-only
-service bundle.
+The source lives at `packages/app`. The `zelavis` package declares it as a
+workspace/package dependency and registers it directly as the official native
+Project recipe. No copied package under `packages/zelavis/product-services` is needed.
 
-The app package also owns `@zelavis/app/server`. App modules use that server
-contract instead of importing the Platform's `@zelavis/server` package. The
-Platform still starts app projects in isolated runtimes and proxies requests to
-them; sharing the Platform process would collapse the isolation boundary.
+App modules consume the product-neutral `@zelavis/server` package. Reusing the
+engine does not reuse Platform authority: the Platform still starts App
+Projects in isolated runtimes and proxies requests through the Project
+Gateway. Sharing the Platform process would collapse the isolation boundary.
