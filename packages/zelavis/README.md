@@ -413,7 +413,7 @@ surfaces separate from UI, host runtimes, and local server adapters.
 
 Runtime resources now also feed real core-service persistence in the high-level `Zelavis` class:
 
-- dashboard settings can persist through local KV or local files
+- dashboard settings persist through the Platform System Store, or through a configured KV resource in runtimes without a System Store
 - the storage core service can expose local file storage through the Zelavis API
 - website pages can persist through local files when no database core service is configured
 

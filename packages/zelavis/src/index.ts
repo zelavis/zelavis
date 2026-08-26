@@ -1465,38 +1465,6 @@ export function createSystemStoreDashboardSettingsStore(
   };
 }
 
-export function createFileStorageDashboardSettingsStore(
-  storage: ZelavisFileStorage,
-  path = DEFAULT_PLATFORM_DASHBOARD_SETTINGS_KEY,
-): ZelavisDashboardSettingsStore {
-  return {
-    async read() {
-      const file = await storage.get(path);
-      if (!file) {
-        return undefined;
-      }
-
-      return parseStoredDashboardSettingsUpdate(
-        readBodyObject(
-          JSON.parse(new TextDecoder().decode(file.body)) as unknown,
-        ),
-      );
-    },
-    async write(update) {
-      const normalized = mergeDashboardSettingsUpdate(
-        (await this.read()) ?? {},
-        parseStoredDashboardSettingsUpdate(readBodyObject(update)),
-      );
-      await storage.put({
-        path,
-        body: JSON.stringify(normalized, null, 2),
-        contentType: "application/json; charset=utf-8",
-      });
-      return normalized;
-    },
-  };
-}
-
 export function createFileStorageWebsitePagesStore(
   storage: ZelavisFileStorage,
   path = DEFAULT_PLATFORM_WEBSITE_PAGES_PATH,
@@ -4611,8 +4579,6 @@ function applyPlatformResourceDefaults(
         ? createSystemStoreDashboardSettingsStore(resources.systemStore)
         : resources.kv
           ? createKeyValueDashboardSettingsStore(resources.kv)
-        : resources.files
-          ? createFileStorageDashboardSettingsStore(resources.files)
           : undefined;
 
       if (settingsStore) {
