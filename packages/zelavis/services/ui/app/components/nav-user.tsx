@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Home,
+  LogOut,
   Paintbrush,
   Search,
   Settings2,
@@ -281,22 +282,12 @@ export function NavUserScreen({
                         className="relative justify-center font-semibold"
                         tooltip={
                           isRoot
-                            ? openedFromNested
-                              ? "Close"
-                              : "Home"
+                            ? "Back"
                             : `Back to ${screenLabels[screen]}`
                         }
                         onClick={isRoot ? onClose : goBack}
                       >
-                        {isRoot ? (
-                          openedFromNested ? (
-                            <X className="absolute left-3 rtl:left-auto rtl:right-3" />
-                          ) : (
-                            <Home className="absolute left-3 rtl:left-auto rtl:right-3" />
-                          )
-                        ) : (
-                          <ChevronLeft className="absolute left-3 rtl:left-auto rtl:right-3 rtl:rotate-180" />
-                        )}
+                        <ChevronLeft className="absolute left-3 rtl:left-auto rtl:right-3 rtl:rotate-180" />
                         <span className="px-8 text-center">{panel.title}</span>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
@@ -561,6 +552,7 @@ function buildUtilityPanel({
               },
             ],
           },
+          { title: "Logout", icon: LogOut, url: "/login" },
         ],
       }
   }

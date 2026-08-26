@@ -10,12 +10,19 @@ export type DashboardSettings = RuntimeDashboardSettings;
 export const DEFAULT_DASHBOARD_SETTINGS: DashboardSettings = {
   rootPath: "/zelavis",
   apiBasePath: "/zelavis/api/v1",
+  runtimeEngine: {
+    current: "node",
+    desired: "node",
+    available: ["node", "bun", "deno"],
+    restartRequired: false,
+  },
   theme: "auto",
   pageBuilderEnabled: false,
   preferences: EMPTY_DASHBOARD_PREFERENCES,
   persistence: "read-only",
   editable: {
     rootPath: false,
+    runtimeEngine: false,
     theme: false,
     pageBuilder: false,
   },
@@ -53,12 +60,19 @@ export function createDashboardSettings(
     apiBasePath:
       runtimeConfig?.api.basePath ??
       (rootPath === "/" ? "/api/v1" : `${rootPath}/api/v1`),
+    runtimeEngine: {
+      current: runtimeConfig?.runtime?.engine ?? "node",
+      desired: runtimeConfig?.runtime?.engine ?? "node",
+      available: runtimeConfig?.runtime?.availableEngines ?? ["node", "bun", "deno"],
+      restartRequired: false,
+    },
     theme,
     pageBuilderEnabled: false,
     preferences: EMPTY_DASHBOARD_PREFERENCES,
     persistence: "read-only",
     editable: {
       rootPath: false,
+      runtimeEngine: false,
       theme: false,
       pageBuilder: false,
     },

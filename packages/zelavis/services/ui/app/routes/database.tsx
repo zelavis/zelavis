@@ -23,6 +23,7 @@ import {
 import { parseAsString, parseAsStringLiteral, useTypedSearchParams } from "#/lib/use-typed-search-params";
 import type { clientLoader as rootClientLoader } from '../root';
 import { cn } from "#/lib/utils";
+import { getDatabaseSidebarTrail } from "#/lib/database-route-state";
 
 export const handle = {
   pageLabel: "Database",
@@ -849,7 +850,7 @@ function DatabaseDataGrid(props: {
 
 const databaseSchema = {
   databaseTable: parseAsString,
-  systemTable: parseAsStringLiteral(DATABASE_SYSTEM_TABLES).withDefault(DEFAULT_SYSTEM_TABLE),
+  systemTable: parseAsStringLiteral(DATABASE_SYSTEM_TABLES),
   inspectedId: parseAsString,
   view: parseAsString,
   sidebar: parseAsString,
@@ -866,11 +867,12 @@ function DatabaseRoute() {
   const setSelectedRowId = (id: string | undefined) => setParams({ inspectedId: id ?? null });
   const selectedDatabaseTable = search.databaseTable || undefined;
   const selectedSystemTable = selectedDatabaseTable ? undefined : search.systemTable;
-  const selectedTarget = selectedDatabaseTable ?? selectedSystemTable ?? DEFAULT_SYSTEM_TABLE;
+  const selectedTarget = selectedDatabaseTable ?? selectedSystemTable;
   const activeViewName = search.view;
-  const desiredSidebar = selectedDatabaseTable
-    ? "Backend/Database"
-    : "Backend/Database/System Tables";
+  const desiredSidebar = getDatabaseSidebarTrail({
+    databaseTable: selectedDatabaseTable,
+    systemTable: selectedSystemTable,
+  });
   const systemRowsResource = { data: systemRowsData, loading: false, error: undefined as Error | undefined };
   const tableRowsResource = { data: tableRowsData, loading: false, error: undefined as Error | undefined };
 
@@ -899,12 +901,26 @@ function DatabaseRoute() {
       })),
     [tableRowsResource.data],
   );
-  const activeRows = selectedDatabaseTable ? tableRows : systemRows;
-  const activeResource = selectedDatabaseTable ? tableRowsResource : systemRowsResource;
-  const activeKind = selectedDatabaseTable ? "Collection table" : "System table";
+  const activeRows = selectedDatabaseTable
+    ? tableRows
+    : selectedSystemTable
+      ? systemRows
+      : [];
+  const activeResource = selectedDatabaseTable
+    ? tableRowsResource
+    : selectedSystemTable
+      ? systemRowsResource
+      : undefined;
+  const activeKind = selectedDatabaseTable
+    ? "Collection table"
+    : selectedSystemTable
+      ? "System table"
+      : "Database";
   const emptyDescription = selectedDatabaseTable
     ? `The collection table ${selectedDatabaseTable} has no rows yet.`
-    : `The system table ${selectedSystemTable} is empty or unavailable.`;
+    : selectedSystemTable
+      ? `The system table ${selectedSystemTable} is empty or unavailable.`
+      : "Select a collection table or open System Tables from the sidebar.";
   const rowColumns = useMemo(() => {
     const keys = new Set<string>();
     for (const row of activeRows) {
@@ -943,18 +959,6 @@ function DatabaseRoute() {
   }
 
   useEffect(() => {
-    if (selectedDatabaseTable) {
-      return;
-    }
-
-    if (search.systemTable === selectedSystemTable) {
-      return;
-    }
-
-    setParams({ systemTable: selectedSystemTable });
-  }, [search.systemTable, selectedDatabaseTable, selectedSystemTable]);
-
-  useEffect(() => {
     if (search.sidebar === desiredSidebar) {
       return;
     }
@@ -973,7 +977,7 @@ function DatabaseRoute() {
       <div className="grid gap-4">
         <div className="grid gap-2">
           <h2 className="text-lg font-semibold">
-            {activeKind}: {selectedTarget}
+            {selectedTarget ? `${activeKind}: ${selectedTarget}` : "Database"}
           </h2>
           <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
             <span className="rounded-md border bg-muted/20 px-2 py-1">
@@ -983,12 +987,21 @@ function DatabaseRoute() {
               {activeRows.length} rows loaded
             </span>
             <span className="rounded-md border bg-muted/20 px-2 py-1">
-              {selectedDatabaseTable ? "Raw rows" : "SQL read-only"}
+              {selectedDatabaseTable
+                ? "Raw rows"
+                : selectedSystemTable
+                  ? "SQL read-only"
+                  : "Table overview"}
             </span>
           </div>
         </div>
 
-        {activeResource.error ? (
+        {!selectedTarget ? (
+          <ResourceNotice
+            title="Choose a table"
+            description={emptyDescription}
+          />
+        ) : activeResource?.error ? (
           <ResourceNotice
             title={
               selectedDatabaseTable

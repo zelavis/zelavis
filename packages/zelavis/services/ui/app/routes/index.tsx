@@ -184,7 +184,7 @@ function Overview() {
               <div className="p-4">
                 <ResourceNotice
                   title="Runtime config unavailable"
-                  description="Start Zelavis through the Node or Express example to load live service metadata."
+                  description="Start Zelavis through the Node example to load live service metadata."
                 />
               </div>
             ) : null}
