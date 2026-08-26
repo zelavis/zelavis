@@ -24,8 +24,8 @@ table in a project's Database screen or be exposed through `@zelavis/app/db`
 document APIs.
 
 The Platform process does not mount an app-facing database service by default.
-In repository development, its System Store lives at
-`examples/nodejs/.zelavis/system/zelavis.sqlite`.
+In repository development through `pnpm dev`, its System Store lives at
+`packages/zelavis/.zelavis/system/zelavis.sqlite`.
 
 ## App Services
 

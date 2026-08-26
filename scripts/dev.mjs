@@ -165,9 +165,11 @@ async function main() {
   const uiOrigin = `http://127.0.0.1:${uiPort}`;
   const uiDashboardOrigin = new URL(uiBasePath, uiOrigin).toString();
   const uiDashboardRedirectOrigin = uiDashboardOrigin.replace(/\/+$/, "");
+  const dataDirectory = resolve("packages/zelavis/.zelavis");
 
   console.log(`Starting Zelavis runtime on ${backendOrigin} ...`);
   console.log(`Starting UI dev server on ${uiDashboardOrigin} ...`);
+  console.log(`Using Platform data directory ${dataDirectory} ...`);
   console.log(
     `Dashboard requests to ${backendOrigin}/zelavis will redirect to ${uiDashboardOrigin}.`,
   );
@@ -207,6 +209,7 @@ async function main() {
     ),
     startProcess("node-runtime-example", "pnpm", ["--filter", "@zelavis/example-nodejs", "dev"], {
       PORT: String(backendPort),
+      ZELAVIS_DATA_DIR: dataDirectory,
       ZELAVIS_BLUEPRINTS_DIR: resolve("packages/zelavis/blueprints"),
       ZELAVIS_UI_DEV_SERVER: uiDashboardRedirectOrigin,
     }),

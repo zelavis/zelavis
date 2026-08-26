@@ -4,7 +4,9 @@ import { bunAdapter } from "zelavis/adapters/bun";
 const port = Number(Bun.env.PORT ?? 3000);
 
 const zv = new Zelavis({
-  adapter: bunAdapter(),
+  adapter: bunAdapter({
+    dataDirectory: Bun.env.ZELAVIS_DATA_DIR,
+  }),
   onError: ({ error }) => ({
     status: 400,
     body: { error: error instanceof Error ? error.message : "Unknown error" },

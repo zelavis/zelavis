@@ -6,7 +6,9 @@ async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
 
   const zv = new Zelavis({
-    adapter: nodeAdapter(),
+    adapter: nodeAdapter({
+      dataDirectory: process.env.ZELAVIS_DATA_DIR,
+    }),
     onError: ({ error }) => ({
       status: 400,
       body: { error: error instanceof Error ? error.message : "Unknown error" },
