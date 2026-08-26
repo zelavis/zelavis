@@ -1,9 +1,12 @@
 # @zelavis/server
 
-`@zelavis/server` defines a shared service contract plus a Web-first execution
-layer for running Zelavis APIs in the long-running Zelavis runtime.
+`@zelavis/server` is the reusable, Web-first server and workload-runtime
+foundation behind both the Zelavis Platform and Zelavis Apps.
 
-It is intended to be the common adapter layer for platform packages such as `@zelavis/app/auth`, `@zelavis/app/db`, and the high-level `zelavis` runtime, while remaining reusable for optional domain packages such as `@zelavis/ecommerce`.
+The Platform is a privileged Zelavis application. It reuses these primitives
+with explicit hosting authority; customer Projects reuse them only inside their
+own scope and granted resources. See [ARCHITECTURE.md](./ARCHITECTURE.md) for
+the canonical terminology, current gap analysis, and migration order.
 
 ## Core ideas
 
@@ -13,6 +16,18 @@ It is intended to be the common adapter layer for platform packages such as `@ze
 - `zelavisServer({ services })` resolves routes once and exposes reusable runtime handlers.
 - Route prefixes and per-endpoint path overrides are applied before dispatch.
 - `zelavisServer(...)` returns `{ services, routes, fetch, plain, dispatch }`.
+- Runtime-neutral workload contracts define scoped identity, authority,
+  Project capabilities, resource envelopes, and placement generations.
+
+Use narrow subpaths when only the workload or Fabric contracts are needed:
+
+```ts
+import type {
+  ZelavisProjectDriverCapabilities,
+  ZelavisRuntimeAuthority,
+} from "@zelavis/server/workload";
+import type { FabricProjectPlacement } from "@zelavis/server/fabric";
+```
 
 ## Endpoint-backed capabilities
 

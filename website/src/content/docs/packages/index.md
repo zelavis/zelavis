@@ -8,6 +8,8 @@ Current package pages:
 - `zelavis`
 - `@zelavis/app`
 - `@zelavis/server`
+- `@zelavis/core`
+- `@zelavis/marketplace`
 - `@zelavis/ui`
 
 Guideline:
@@ -19,4 +21,6 @@ Keep package-specific installation and quick usage in each package README, and u
 - [zelavis](./zelavis.md)
 - [@zelavis/app](./app.md)
 - [@zelavis/server](./server.md)
+- [@zelavis/core](./core.md)
+- [@zelavis/marketplace](./marketplace.md)
 - [@zelavis/ui](./ui.md)

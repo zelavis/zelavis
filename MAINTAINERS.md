@@ -19,12 +19,14 @@ Maintainers are responsible for:
 
 ## Ownership Areas
 
-- `packages/zelavis/services/zelavis-server` — service contracts, adapters, routing model
-- `packages/zelavis/services/zelavis-fabric` — node inventory, placement, balancing, migration, replication, and infrastructure-provider boundaries
-- `packages/zelavis/services/zelavis-app/src/db` — app database core, storage contracts, and adapters
-- `packages/zelavis/services/zelavis-app/src/auth` — app auth core, methods, and auth-facing service surfaces
+- `packages/server` — service contracts, adapters, routing model
+- `packages/zelavis/product-services/zelavis-core` — Platform authority, Project control plane, and Server product surface
+- `packages/zelavis/product-services/zelavis-marketplace` — global Marketplace product service
+- `packages/server/src/fabric.ts` — reusable node inventory, placement, migration, and Agent-facing contracts
+- `packages/app/src/db` — app database core, storage contracts, and adapters
+- `packages/app/src/auth` — app auth core, methods, and auth-facing service surfaces
 - `packages/zelavis` — composed runtime, embedded dashboard delivery
-- `packages/zelavis/services/zelavis-ui` — dashboard UX and frontend architecture
+- `packages/zelavis/product-services/zelavis-ui` — dashboard UX and frontend architecture
 - `plugins/*` — official installable Zelavis plugins
 - `.github/*` and release/config files — repo process, CI, dependency policy
 

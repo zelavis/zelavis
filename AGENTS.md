@@ -14,7 +14,7 @@ Zelavis is a unified, self-hostable App Platform. It replaces — and combines �
 | Workers / Functions platforms | Project-scoped workloads: functions, jobs, schedules, and webhooks hosted by the long-running Zelavis runtime |
 | Claude / Codex chat | AI chat area built into the dashboard for interacting with Zelavis and building via AI |
 
-The difference from Firebase/Supabase is depth and ownership: Zelavis is fully self-hostable, runtime-neutral, and built to scale beyond a single database engine. The database layer is the deepest differentiator — `@zelavis/app/db` extends SQL with a Document DB model (event-sourced, tenant-aware, per-collection tables) while keeping the storage engine swappable (SQLite, libSQL, and future engines). Replication, sharding, and eventually distributed multi-master operation are roadmap goals; the event log is the natural replication stream and `tenant_id` is the natural shard key. That is the same role Vitess plays for MySQL, but Zelavis is not coupled to any single SQL engine.
+The difference from Firebase/Supabase is depth and ownership: Zelavis is fully self-hostable, runtime-neutral, and built to scale beyond a single database engine. The database layer is the deepest differentiator — `@zelavis/app/db` extends SQL with a Document DB model (event-sourced, tenant-aware, per-collection tables) while keeping the storage engine swappable (SQLite, libSQL, and future engines). Tenant placement, replication, failover, and eventual sharding are roadmap goals; the event log is the natural replication stream and `tenant_id` is the natural shard key. That is the same role Vitess plays for MySQL, but Zelavis is not coupled to any single SQL engine. Replicas do not imply multiple writable owners; multi-writer consistency requires a separate explicit data specification.
 
 Zelavis should be able to host websites itself on user-controlled infrastructure. Managed deployment providers may be optional targets through plugins, but they are not the default hosting model and must not replace native Zelavis website hosting.
 
@@ -31,6 +31,8 @@ Core platform work currently centers on:
 
 - `zelavis`
 - `@zelavis/server`
+- `@zelavis/core`
+- `@zelavis/marketplace`
 - `@zelavis/app/db`
 - `@zelavis/app/auth`
 - `@zelavis/ui`
@@ -72,10 +74,10 @@ current automatically.
 - **Zelavis App** is the official Firebase/Supabase-style project stack made
   from app-facing database, auth, storage, and workload services. It is a
   `kind: "app"` service and production boilerplate, not the Platform OS itself.
-- **App services** are versioned project recipes and runtime entrypoints. The
-  published `zelavis` package ships official services under
-  `packages/zelavis/services`; `packages/zelavis/services/zelavis-app` is the
-  bundled official Zelavis App boilerplate. App services own menu metadata and
+- **App services** are versioned Project recipes and runtime entrypoints.
+  `packages/app` is the independently published official Zelavis App recipe;
+  the `zelavis` package registers it as a direct dependency instead of copying
+  it into the Platform service directory. App services own menu metadata and
   may contribute static and dynamic menus through the service menu API.
 - **System Services** are trusted Platform OS capabilities. Do not call every
   bundled project service a core service.
@@ -90,21 +92,77 @@ current automatically.
 - Project routes and grants always require a real project ID. Never introduce
   an implicit `default` project or fall back from a project API request to the
   Platform runtime.
-- `@zelavis/server` is the Platform OS endpoint/runtime kernel. Zelavis App
-  owns its app-facing server contract under `@zelavis/app/server` so app
-  projects can be packaged as self-contained services without importing the
-  Platform OS server package.
+- `@zelavis/server` is the reusable server and workload-runtime foundation for
+  both the privileged Platform and scoped Zelavis Apps. Hosting business logic
+  stays in the Platform layer; App business logic stays inside the Project.
+  Scope and explicit capabilities determine authority.
+- `@zelavis/core` is the product-specific Platform control-plane service. It
+  owns the Platform runtime service identity and global Server dashboard menu.
+  `@zelavis/marketplace` owns the global Marketplace contribution, and
+  `@zelavis/ui` owns dashboard delivery. These bundled product services are
+  what assemble `@zelavis/server` primitives into Zelavis.
 
-The Platform OS can create multiple Zelavis App projects from the shipped
-`@zelavis/app` service boilerplate. The default Node adapter prepares each project under
+`@zelavis/server` owns the generic service definition, loading, composition,
+endpoint, and contribution transport contracts. Product services may define
+namespaced extension points on top of that mechanism. Only statically trusted
+product/core services may introduce a new extension-point schema or privileged
+manifest capability; ordinary services and marketplace extensions may
+contribute values to an allowed extension point after validation.
+
+Dashboard menu semantics belong to `@zelavis/ui`: it defines what a menu
+contribution means and renders it. `@zelavis/server` may carry runtime-neutral
+menu/contribution wire data so headless Project runtimes do not need to bundle
+the dashboard. Do not let services add arbitrary top-level keys to
+`zelavis.service.json`; use a stable namespaced contribution map when the
+generic extension-point mechanism is introduced.
+
+The Platform OS can create multiple Zelavis App projects from the official
+`@zelavis/app` Project recipe. The default Node adapter prepares each project under
 `.zelavis/projects/<id>`,
 locks the exact app service version, and runs it in a separate Node process. This
 is operational isolation for trusted project code, not a hostile-code security
 sandbox. Project lifecycle code must stay behind the runtime-driver contract so
 rootless OCI containers and stronger isolation can replace it later.
 Do not run app project services directly inside the Platform process; the
-Platform dashboard must communicate with project runtimes through the project
-proxy boundary.
+Platform dashboard must communicate with project runtimes through the Project
+Gateway boundary. The current proxy route is the first local implementation of
+that boundary.
+
+The canonical hierarchy is: Platform scales Projects, Projects scale Tenants,
+and exceptional Tenants may eventually scale Shards. Project is the universal
+first-level workload and hard isolation boundary for Zelavis Apps, WordPress,
+static sites, generic applications, and future managed kinds. Tenant is an
+App-owned logical data/workload boundary. Principal/User is an authenticated
+identity and is not interchangeable with either Project or Tenant.
+
+Treat the Platform OS as the control plane and project runtimes as the data
+plane. A unified product does not require both planes to share one failure
+domain. The Platform Fabric is the one privileged hosting authority: it owns
+physical nodes, Project allocation, placement, routing, generation/fencing,
+and fleet policy. A Zelavis App may reuse workload primitives only within its
+Project authority and granted resource envelope. A child knows its parent but
+never becomes its parent.
+
+Fabric decides globally and authenticated Zelavis Agents execute locally.
+Runtime drivers such as Node process, Bun, OCI, VM, or dedicated host are Agent
+execution implementations, not competing schedulers. The built-in Node process
+driver is the development and small single-host mode: the Platform process owns
+its children, reconciles desired state with bounded concurrency, and stops them
+when `Zelavis.close()` runs. Production worker Agents must be supervised
+separately so customer runtimes survive control-plane restarts while remaining
+subject to the one logical Platform authority.
+
+Never restore all desired-running projects with an unbounded `Promise.all` or
+make control-plane readiness wait for an entire fleet to start. Reconciliation
+must be bounded, asynchronous, idempotent, and safe to retry. Distributed
+drivers will also need leases or fencing, durable work queues, health-based
+placement, and paginated project discovery; do not stretch the in-process Node
+child map into the Zelavis Cloud scheduler.
+
+Keep traffic balancing, placement, replication, and infrastructure
+provisioning as separate capabilities. A placement is authoritative; a runtime
+URL is only an Agent-reported route target. Replicas do not imply multiple
+writable owners. Provider adapters supply capacity but never define Zelavis.
 
 There is exactly one Zelavis dashboard application: `@zelavis/ui`, mounted by
 the Platform OS. Isolated Zelavis App project runtimes must not mount or serve
@@ -134,7 +192,7 @@ renders the selected project's navigation under `/zelavis/projects/:projectId`.
 - Avoid app-specific assumptions in shared packages.
 - Favor composition and adapters over inheritance.
 - Do not introduce heavy dependencies without a clear reason.
-- Keep future distributed multi-master operation possible: prefer deterministic event application, explicit idempotency, stable node identity, tenant-aware boundaries, and adapter-neutral replication contracts over hidden single-node assumptions.
+- Keep future replication and explicit consistency models possible: prefer deterministic event application, explicit idempotency, stable node identity, tenant-aware boundaries, ownership generations, and adapter-neutral replication contracts over hidden single-node assumptions. Do not imply multi-writer behavior merely because replicas exist.
 
 ## Database Architecture Rules
 
@@ -328,13 +386,15 @@ those grants, while endpoints remain the authority layer.
 
 - `packages/*` contains core platform workspace packages.
 - `plugins/*` contains official user-installable Zelavis plugins.
-- `packages/zelavis` is the Platform OS package and ships official services under `packages/zelavis/services`.
-- `packages/zelavis/services/zelavis-server` defines the shared service and route mounting model.
-- `packages/zelavis/services/zelavis-server` defines the shared service/runtime endpoint contract and owns the trusted server control-plane features, including the Fabric node, placement, routing, balancing, migration, and recovery subsystem.
-- `packages/zelavis/services/zelavis-app/src/db` contains the document-first database core and server-facing database service.
-- `packages/zelavis/services/zelavis-app/src/auth` contains the low-level auth core and auth method plugins.
-- `packages/zelavis/services/zelavis-app/src/workloads` contains project-scoped workloads.
-- `packages/zelavis/services/zelavis-ui` contains the admin/dashboard UI used by the runtime package.
+- `packages/zelavis` is the Platform OS package and ships trusted product services under `packages/zelavis/product-services`.
+- `packages/server` is the independently reusable `@zelavis/server` framework. It owns service and endpoint contracts, Web routing, access enforcement primitives, and generic Fabric/workload/Agent/runtime-driver machinery. It does not own Zelavis product menus or Platform authority.
+- `packages/app` is the independently published `@zelavis/app` Project recipe and native App runtime stack. It consumes `@zelavis/server`; never restore a private App copy of the server contracts or dispatcher.
+- `packages/zelavis/product-services/zelavis-core` is the product-specific Platform control-plane service and Server menu owner.
+- `packages/zelavis/product-services/zelavis-marketplace` is the global Marketplace service and menu owner.
+- `packages/app/src/db` contains the document-first database core and server-facing database service.
+- `packages/app/src/auth` contains the low-level auth core and auth method plugins.
+- `packages/app/src/workloads` contains project-scoped workloads.
+- `packages/zelavis/product-services/zelavis-ui` contains the admin/dashboard UI used by the runtime package.
 - `packages/*/adapters/*` contains framework or external-system adapters.
 - `packages/*/plugins/*` contains package-local capability/provider plugins for core services.
 - `examples/*` contains runnable example workspace packages.
@@ -365,8 +425,9 @@ Each package should remain independently useful and focused.
 - In repository development through `pnpm dev`, runtime state lives below
   `packages/zelavis/.zelavis`: the Platform System Store is under `system/` and
   isolated project directories are under `projects/<projectId>/`.
-- `pnpm dev` explicitly syncs `@zelavis/app` into `packages/zelavis/services/zelavis-app` and starts both the
-  long-running runtime and React Router dashboard dev server.
+- `pnpm dev` builds the direct `@zelavis/app` Project recipe dependency and the
+  bundled Platform services, then starts both the long-running runtime and
+  React Router dashboard dev server.
 - That dev flow starts:
   - the Zelavis runtime on `http://127.0.0.1:3000`
   - the UI dev server on `http://127.0.0.1:3001`
@@ -432,12 +493,12 @@ When creating a new core package, service package, or plugin package:
 
 ## UI Package Rules
 
-`packages/zelavis/services/zelavis-ui` is a special package with extra constraints:
+`packages/zelavis/product-services/zelavis-ui` is a special package with extra constraints:
 
 - It uses **React Router v7** (SPA mode, `ssr: false`) — not TanStack Router or TanStack Start.
 - Styling is Tailwind CSS v4 + shadcn/ui (Base UI components).
 - Generated route types live in `.react-router/types/`. Do not hand-edit them.
-- Route source files are under `packages/zelavis/services/zelavis-ui/app/routes/`. Edit these; typegen runs automatically.
+- Route source files are under `packages/zelavis/product-services/zelavis-ui/app/routes/`. Edit these; typegen runs automatically.
 - The dashboard sidebar uses a slide-based navigation model. Treat each slide as a distinct sidebar panel.
 - Nested sidebar slide headers use a larger standard gap before the next menu content. Sidebar panels with pinned/fixed action rows use `SidebarFixedActionMenu`; pass `afterHeader` when fixed actions sit directly under the slide back/title header.
 - Build dashboard features as mobile-slot-ready modules. Route files may compose those modules into a wide desktop page, while mobile sidebar slides can later mount the same modules into named slots such as `overview`, `main`, `create`, `edit`, `inspect`, and `settings`.
@@ -480,7 +541,7 @@ When working on UI behavior:
 
 Treat these carefully:
 
-- `packages/zelavis/services/zelavis-ui/.react-router/types/` is generated. Do not hand-edit it.
+- `packages/zelavis/product-services/zelavis-ui/.react-router/types/` is generated. Do not hand-edit it.
 - `packages/*/dist/*` is build output.
 - `website/.astro/*` and `website/dist/*` are generated site output.
 

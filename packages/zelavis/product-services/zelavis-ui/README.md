@@ -81,8 +81,8 @@ dashboard bundle from this package. The runtime decides the effective mount
 ## Development
 
 ```bash
-pnpm --filter ./packages/zelavis/services/zelavis-ui dev
-pnpm --filter ./packages/zelavis/services/zelavis-ui dev:mounted
+pnpm --filter ./packages/zelavis/product-services/zelavis-ui dev
+pnpm --filter ./packages/zelavis/product-services/zelavis-ui dev:mounted
 ```
 
 `dev:mounted` sets `ZELAVIS_UI_BASE_PATH=/zelavis/` so generated assets and
@@ -91,9 +91,9 @@ client routes match the runtime-mounted dashboard path.
 ## Build And Validation
 
 ```bash
-pnpm --filter ./packages/zelavis/services/zelavis-ui typecheck
-pnpm --filter ./packages/zelavis/services/zelavis-ui test
-pnpm --filter ./packages/zelavis/services/zelavis-ui build
+pnpm --filter ./packages/zelavis/product-services/zelavis-ui typecheck
+pnpm --filter ./packages/zelavis/product-services/zelavis-ui test
+pnpm --filter ./packages/zelavis/product-services/zelavis-ui build
 ```
 
 The app uses React Router route config in `app/routes.ts`; route modules live in

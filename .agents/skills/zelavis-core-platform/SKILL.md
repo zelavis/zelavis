@@ -1,6 +1,6 @@
 ---
 name: zelavis-core-platform
-description: Use when changing Zelavis core packages such as zelavis, @zelavis/server, @zelavis/db, or @zelavis/auth, especially for service boundaries, adapters vs plugins, public API shape, and runtime-neutral architecture decisions.
+description: Use when changing Zelavis core packages such as zelavis, @zelavis/server, @zelavis/app, or trusted product services, especially for service boundaries, adapters vs plugins, public API shape, and runtime-neutral architecture decisions.
 ---
 
 # Zelavis Core Platform
@@ -9,8 +9,8 @@ Use this skill for changes in:
 
 - `packages/zelavis`
 - `packages/server`
-- `packages/db`
-- `packages/auth`
+- `packages/app`
+- `packages/zelavis/product-services/*`
 
 Start by reading `AGENTS.md` and the relevant package README before editing.
 
@@ -22,6 +22,15 @@ Start by reading `AGENTS.md` and the relevant package README before editing.
 - Put framework or host behavior only in `adapters/*`.
 - Put optional provider or domain capabilities only in `plugins/*`.
 - Keep Zelavis runtime targets to self-hosted Node.js, Bun, and future Deno; do not add serverless function platforms as runtime targets.
+- Keep the canonical hierarchy explicit: Platform scales Projects, Projects scale Tenants, and exceptional Tenants may later scale Shards. Project, Tenant, and Principal/User are different boundaries.
+- Keep `@zelavis/server` product-neutral. It owns service, endpoint, access, Fabric, workload, Agent, and runtime-driver primitives; `@zelavis/core`, `@zelavis/marketplace`, and `@zelavis/ui` assemble those primitives into the Zelavis Platform product.
+- Treat `@zelavis/app` as an independently published Project recipe/runtime stack that consumes `@zelavis/server`. Do not copy it into `packages/zelavis/product-services` or recreate App-private server contracts.
+- Let `@zelavis/server` own the generic service and contribution mechanism. Only statically trusted product/core services may define new extension-point schemas or privileged manifest capabilities. Ordinary services may contribute to allowed extension points after validation.
+- Treat dashboard menu semantics and rendering as `@zelavis/ui` concerns while keeping the contribution wire format runtime-neutral so headless Project runtimes do not bundle the dashboard.
+- Keep one privileged Platform Fabric. Fabric decides Project placement globally; authenticated Zelavis Agents execute locally; runtime drivers are Agent execution implementations. A scoped App Fabric never receives physical fleet authority.
+- Keep project lifecycle behind capability-aware runtime-driver and Agent contracts. The local Node process driver is Platform-owned and stops children during `Zelavis.close()`; production worker Agents should be separately supervised so runtimes survive control-plane outages without becoming independent authorities.
+- Reconcile desired-running projects asynchronously with bounded concurrency. Never fan out an entire persisted fleet through an unbounded `Promise.all`, and do not make control-plane readiness wait for every project runtime.
+- Keep traffic balancing, authoritative placement, replication, and infrastructure provisioning separate. Route through scoped identity and placement; never treat an incidental runtime URL as placement authority.
 - Let optional provider plugins connect external deployment, storage, DNS, CDN, email, images, or hosting services without making those providers the core architecture.
 - Prefer tightening exports over broad `export *` surfaces.
 - Preserve the service model; do not invent a parallel composition pattern.
@@ -48,7 +57,7 @@ Run the smallest useful checks first, then broaden as needed:
 ```bash
 pnpm --filter zelavis test
 pnpm --filter @zelavis/server test
-pnpm --filter @zelavis/db test
-pnpm --filter @zelavis/auth test
+pnpm --filter @zelavis/app test
+pnpm --filter @zelavis/ui test
 pnpm check
 ```

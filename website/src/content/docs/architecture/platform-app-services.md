@@ -25,7 +25,7 @@ document APIs.
 
 The Platform process does not mount an app-facing database service by default.
 In repository development through `pnpm dev`, its System Store lives at
-`packages/zelavis/.zelavis/system/zelavis.sqlite`.
+`examples/nodejs/.zelavis/system/zelavis.sqlite`.
 
 ## App Services
 
@@ -34,16 +34,23 @@ the create-project unit: it owns the menu metadata, setup behavior, default
 files, provisioning hooks, and the app-facing runtime services it wants to
 mount inside the created project.
 
-The published `zelavis` package ships official services in:
+The published `zelavis` Platform product is assembled from trusted product
+services in:
 
 ```text
-packages/zelavis/services
+packages/zelavis/product-services
 ```
 
-The first official app service is `@zelavis/app`, the Zelavis-native backend
-that composes application database, application auth, and workloads. Future
-WordPress, Drupal, static-site, or other project boilerplates should use the
-same `kind: "app"` service shape.
+That directory currently contains `@zelavis/core`, `@zelavis/marketplace`, and
+`@zelavis/ui`. It belongs to the `zelavis` product package; it is not the home
+of every service that can run on the generic server engine.
+
+The official native Project recipe is the independently published
+`@zelavis/app` package at `packages/app`. It is still a real `kind: "app"`
+service: its root service composes application database, application auth, and
+workloads. The `zelavis` package registers it directly as an official recipe
+dependency. Future WordPress, Drupal, static-site, or other Project recipes
+should use the same service shape without moving into `product-services`.
 
 The current runtime exposes available app services through:
 
@@ -75,8 +82,9 @@ For the Node process driver, each project lives below
 There is one dashboard application, mounted by the Platform OS from
 `@zelavis/ui`. App project runtimes are headless and do not serve their own
 dashboard bundle. They expose runtime metadata, APIs, and service menus through
-`@zelavis/app/server`; the Platform dashboard reads those endpoints through the
-project proxy and renders the selected project's navigation. App services must
+the shared `@zelavis/server` engine under Project-scoped authority; the Platform
+dashboard reads those endpoints through the Project Gateway and renders the
+selected project's navigation. App services must
 not be executed directly inside the Platform process because that would share
 memory, credentials, crash fate, and workload execution with the owner console.
 
@@ -96,8 +104,8 @@ Implemented now:
 
 - `kind: "app"` services in the service contract
 - a shipped official `@zelavis/app` service
-- a shipped `packages/zelavis/services` directory
-- local Node/Bun registration of official app services
+- trusted Core, Marketplace, and UI product services
+- direct local Node/Bun registration of official Project recipes
 - a separate Platform System Store contract
 - default local SQLite System Store persistence
 - dashboard settings and service registry persistence through the System Store
