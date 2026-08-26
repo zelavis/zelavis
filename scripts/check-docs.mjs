@@ -7,9 +7,11 @@ const docsRoot = "website/src/content/docs";
 const targets = [
   docsRoot,
   "packages/zelavis/README.md",
-  "packages/zelavis/services/zelavis-ui/README.md",
-  "packages/zelavis/services/zelavis-server/README.md",
-  "packages/zelavis/services/zelavis-app/README.md",
+  "packages/zelavis/product-services/zelavis-ui/README.md",
+  "packages/server/README.md",
+  "packages/app/README.md",
+  "packages/zelavis/product-services/zelavis-core/README.md",
+  "packages/zelavis/product-services/zelavis-marketplace/README.md",
 ];
 
 const stalePatterns = [
@@ -38,6 +40,11 @@ const stalePatterns = [
   {
     pattern: /Use `docs\/` as the canonical home/i,
     message: "Docs still point at the removed docs/ folder as canonical.",
+  },
+  {
+    pattern: /core `@zelavis\/server` service/i,
+    message:
+      "Docs assign Zelavis product authority to the reusable @zelavis/server package.",
   },
 ];
 

@@ -13,6 +13,8 @@ import type {
 export interface NodeProcessProjectRuntimeOptions {
   directory: string;
   startupTimeoutMs?: number;
+  startupConcurrency?: number;
+  shutdownConcurrency?: number;
   logLimit?: number;
 }
 
@@ -24,6 +26,8 @@ interface NodeProjectProcess {
 }
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15_000;
+const DEFAULT_STARTUP_CONCURRENCY = 1;
+const DEFAULT_SHUTDOWN_CONCURRENCY = 8;
 const DEFAULT_LOG_LIMIT = 500;
 const activeProjectChildren = new Set<ChildProcess>();
 let exitCleanupInstalled = false;
@@ -56,14 +60,52 @@ function isMissingFileError(error: unknown): boolean {
   );
 }
 
+function positiveInteger(value: number | undefined, fallback: number): number {
+  if (value === undefined || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(1, Math.floor(value));
+}
+
+async function runWithConcurrency<TValue>(
+  values: readonly TValue[],
+  concurrency: number,
+  run: (value: TValue) => Promise<void>,
+): Promise<void> {
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < values.length) {
+      await run(values[nextIndex++]!);
+    }
+  }
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(concurrency, values.length) },
+      () => worker(),
+    ),
+  );
+}
+
 export function createNodeProcessProjectRuntime(
   options: NodeProcessProjectRuntimeOptions,
 ): ZelavisProjectRuntimeDriver {
   const projectsDirectory = resolve(options.directory);
   const startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
+  const startupConcurrency = positiveInteger(
+    options.startupConcurrency,
+    DEFAULT_STARTUP_CONCURRENCY,
+  );
+  const shutdownConcurrency = positiveInteger(
+    options.shutdownConcurrency,
+    DEFAULT_SHUTDOWN_CONCURRENCY,
+  );
   const logLimit = options.logLimit ?? DEFAULT_LOG_LIMIT;
   const runnerPath = fileURLToPath(new URL("./_node-project-runner.js", import.meta.url));
   const processes = new Map<string, NodeProjectProcess>();
+  let closed = false;
+  let closePromise: Promise<void> | undefined;
 
   function projectDirectory(projectId: string): string {
     return join(projectsDirectory, projectId);
@@ -111,15 +153,28 @@ export function createNodeProcessProjectRuntime(
     });
   }
 
+  const capabilities = {
+    movable: false,
+    liveMigration: false,
+    secureIsolation: false,
+    resourceLimits: false,
+    persistentFilesystem: true,
+    statelessRuntimeReplicas: false,
+    managedStorage: true,
+    managedDatabase: true,
+    databaseReplication: false,
+    tenantPlacement: false,
+    databaseSharding: false,
+    runtimeOwnership: "platform-process" as const,
+    survivesControlPlaneRestart: false,
+    description:
+      "Runs each trusted project in a separate Node.js process and data directory. This is operational isolation, not a security sandbox.",
+  };
+
   const driver: ZelavisProjectRuntimeDriver = {
     name: "node-process",
-    capabilities: {
-      secureIsolation: false,
-      resourceLimits: false,
-      persistentFilesystem: true,
-      description:
-        "Runs each trusted project in a separate Node.js process and data directory. This is operational isolation, not a security sandbox.",
-    },
+    startupConcurrency,
+    capabilities: () => capabilities,
     async prepare(project, app) {
       const directory = projectDirectory(project.id);
       const dataDirectory = join(directory, ".zelavis");
@@ -132,7 +187,7 @@ export function createNodeProcessProjectRuntime(
             app: app satisfies ZelavisProjectApp,
             runtime: {
               driver: driver.name,
-              capabilities: driver.capabilities,
+              capabilities: driver.capabilities(project),
             },
           },
           null,
@@ -142,6 +197,10 @@ export function createNodeProcessProjectRuntime(
       );
     },
     async start(project) {
+      if (closed) {
+        throw new Error("The Node project runtime is shutting down.");
+      }
+
       const current = processes.get(project.id);
       if (
         current?.child &&
@@ -303,6 +362,19 @@ export function createNodeProcessProjectRuntime(
       await driver.stop(projectId);
       processes.delete(projectId);
       await rm(projectDirectory(projectId), { recursive: true, force: true });
+    },
+    close() {
+      closePromise ??= (async () => {
+        closed = true;
+        await runWithConcurrency(
+          [...processes.keys()],
+          shutdownConcurrency,
+          async (projectId) => {
+            await driver.stop(projectId);
+          },
+        );
+      })();
+      return closePromise;
     },
   };
 

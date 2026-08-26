@@ -1,3 +1,4 @@
+import type { ZelavisProjectDriverCapabilities } from "@zelavis/server";
 import type {
   ZelavisServiceDefinition,
   ZelavisServiceRegistryEntry,
@@ -34,22 +35,19 @@ export interface ZelavisProjectApp {
   specifier: string;
 }
 
-export interface ZelavisProjectRecord {
+export interface ZelavisProjectDescriptor {
   id: string;
   name: string;
   kind: ZelavisProjectKind;
   app: ZelavisProjectApp;
+}
+
+export interface ZelavisProjectRecord extends ZelavisProjectDescriptor {
+  capabilities: ZelavisProjectDriverCapabilities;
   desiredState: "running" | "stopped";
   runtime: ZelavisProjectRuntimeState;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface ZelavisProjectRuntimeCapabilities {
-  secureIsolation: boolean;
-  resourceLimits: boolean;
-  persistentFilesystem: boolean;
-  description: string;
 }
 
 export interface ZelavisProjectRuntimeSnapshot {
@@ -68,7 +66,10 @@ export interface ZelavisProjectLogEntry {
 
 export interface ZelavisProjectRuntimeDriver {
   readonly name: string;
-  readonly capabilities: ZelavisProjectRuntimeCapabilities;
+  readonly startupConcurrency?: number;
+  capabilities(
+    project: Readonly<ZelavisProjectDescriptor>,
+  ): ZelavisProjectDriverCapabilities;
   prepare(
     project: ZelavisProjectRecord,
     app: ZelavisProjectApp,
@@ -78,6 +79,7 @@ export interface ZelavisProjectRuntimeDriver {
   status(projectId: string): Promise<ZelavisProjectRuntimeSnapshot>;
   logs(projectId: string): Promise<readonly ZelavisProjectLogEntry[]>;
   destroy(projectId: string): Promise<void>;
+  close(): Promise<void>;
 }
 
 export interface ZelavisProjectCreateInput {
@@ -90,7 +92,6 @@ export interface ZelavisProjectCreateInput {
 export interface ZelavisProjectManager {
   readonly runtime: {
     driver: string;
-    capabilities: ZelavisProjectRuntimeCapabilities;
   };
   list(): Promise<readonly ZelavisProjectRecord[]>;
   get(id: string): Promise<ZelavisProjectRecord | undefined>;
@@ -100,6 +101,8 @@ export interface ZelavisProjectManager {
   restart(id: string): Promise<ZelavisProjectRecord>;
   logs(id: string): Promise<readonly ZelavisProjectLogEntry[]>;
   remove(id: string): Promise<boolean>;
+  reconcile(): Promise<void>;
+  close(): Promise<void>;
 }
 
 export class ZelavisProjectValidationError extends Error {
@@ -125,6 +128,39 @@ export class ZelavisProjectNotFoundError extends Error {
 
 const PROJECTS_NAMESPACE = "projects";
 const DEFAULT_APP_SERVICE_NAME = "@zelavis/app";
+const DEFAULT_STARTUP_CONCURRENCY = 1;
+
+function normalizeConcurrency(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) {
+    return DEFAULT_STARTUP_CONCURRENCY;
+  }
+
+  return Math.max(1, Math.floor(value));
+}
+
+async function mapWithConcurrency<TValue, TResult>(
+  values: readonly TValue[],
+  concurrency: number,
+  map: (value: TValue, index: number) => Promise<TResult>,
+): Promise<TResult[]> {
+  const results = new Array<TResult>(values.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < values.length) {
+      const index = nextIndex++;
+      results[index] = await map(values[index]!, index);
+    }
+  }
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(concurrency, values.length) },
+      () => worker(),
+    ),
+  );
+  return results;
+}
 
 function normalizeProjectId(value: string): string {
   const normalized = value
@@ -217,6 +253,10 @@ export async function createProjectManager(options: {
   runtime: ZelavisProjectRuntimeDriver;
 }): Promise<ZelavisProjectManager> {
   const { store, appServices, runtime } = options;
+  const startupConcurrency = normalizeConcurrency(runtime.startupConcurrency);
+  let closing = false;
+  let reconciliationPromise: Promise<void> | undefined;
+  let closePromise: Promise<void> | undefined;
 
   const appServiceMap = new Map(
     appServices
@@ -273,11 +313,16 @@ export async function createProjectManager(options: {
     const rawProject = parseStoredProject(value);
     const rawRecord = rawProject as unknown as Record<string, unknown>;
     const { app, repaired: repairedApp } = resolveAppLock(rawRecord);
-    const project: ZelavisProjectRecord = {
+    const descriptor: ZelavisProjectDescriptor = {
       id: rawProject.id,
       name: rawProject.name,
       kind: rawProject.kind || projectKindFromAppService(app.name),
       app,
+    };
+    const capabilities = runtime.capabilities(descriptor);
+    const project: ZelavisProjectRecord = {
+      ...descriptor,
+      capabilities,
       desiredState: rawProject.desiredState,
       runtime:
         rawProject.runtime?.driver && rawProject.runtime.status
@@ -295,6 +340,8 @@ export async function createProjectManager(options: {
       repaired:
         repairedApp ||
         rawProject.kind !== project.kind ||
+        JSON.stringify(rawRecord.capabilities) !==
+          JSON.stringify(capabilities) ||
         "blueprint" in rawRecord ||
         rawProject.runtime !== project.runtime,
     };
@@ -342,18 +389,19 @@ export async function createProjectManager(options: {
   const manager: ZelavisProjectManager = {
     runtime: {
       driver: runtime.name,
-      capabilities: runtime.capabilities,
     },
     async list() {
       const records = await store.list(PROJECTS_NAMESPACE);
-      const projects = await Promise.all(
-        records.map(async (record) => {
+      const projects = await mapWithConcurrency(
+        records,
+        startupConcurrency,
+        async (record) => {
           const { project, repaired } = normalizeStoredProject(record.value);
           if (repaired) {
             await write(project);
           }
           return refresh(project);
-        }),
+        },
       );
       return projects.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     },
@@ -377,11 +425,15 @@ export async function createProjectManager(options: {
       }
       const app = appLockFromRegistryEntry(appService);
       const now = new Date().toISOString();
-      let project: ZelavisProjectRecord = {
+      const descriptor: ZelavisProjectDescriptor = {
         id,
         name,
         kind: projectKindFromAppService(app.name),
         app,
+      };
+      let project: ZelavisProjectRecord = {
+        ...descriptor,
+        capabilities: runtime.capabilities(descriptor),
         desiredState: input.start === false ? "stopped" : "running",
         runtime: {
           driver: runtime.name,
@@ -495,24 +547,48 @@ export async function createProjectManager(options: {
       await runtime.destroy(project.id);
       return store.delete(PROJECTS_NAMESPACE, project.id);
     },
+    reconcile() {
+      reconciliationPromise ??= (async () => {
+        const existing = await store.list(PROJECTS_NAMESPACE);
+        await mapWithConcurrency(
+          existing,
+          startupConcurrency,
+          async (record) => {
+            if (closing) {
+              return;
+            }
+
+            const { project, repaired } = normalizeStoredProject(record.value);
+            if (repaired) {
+              await write(project);
+            }
+            if (project.desiredState !== "running") {
+              return;
+            }
+            const snapshot = await runtime.status(project.id);
+            if (
+              !closing &&
+              snapshot.status !== "running" &&
+              snapshot.status !== "starting"
+            ) {
+              await manager.start(project.id).catch(() => undefined);
+            }
+          },
+        );
+      })();
+      return reconciliationPromise;
+    },
+    close() {
+      closePromise ??= (async () => {
+        closing = true;
+        await reconciliationPromise?.catch(() => undefined);
+        await runtime.close();
+      })();
+      return closePromise;
+    },
   };
 
-  const existing = await store.list(PROJECTS_NAMESPACE);
-  await Promise.all(
-    existing.map(async (record) => {
-      const { project, repaired } = normalizeStoredProject(record.value);
-      if (repaired) {
-        await write(project);
-      }
-      if (project.desiredState !== "running") {
-        return;
-      }
-      const snapshot = await runtime.status(project.id);
-      if (snapshot.status !== "running" && snapshot.status !== "starting") {
-        await manager.start(project.id).catch(() => undefined);
-      }
-    }),
-  );
+  void manager.reconcile();
 
   return manager;
 }

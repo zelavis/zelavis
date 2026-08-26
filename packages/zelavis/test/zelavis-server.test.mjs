@@ -77,7 +77,8 @@ test("zelavis exposes fetch handlers without requiring a mount adapter", async (
     payload.services.map((service) => service.name),
     [
       "@zelavis/ui",
-      "@zelavis/server",
+      "@zelavis/core",
+      "@zelavis/marketplace",
       "@zelavis/server-fabric",
       "@zelavis/db",
       "@zelavis/auth",
@@ -93,6 +94,11 @@ test("zelavis includes core services by default", async () => {
   const routes = runtime.routes;
 
   assert.equal(runtime.services["@zelavis/ui"].name, "@zelavis/ui");
+  assert.equal(runtime.services["@zelavis/core"].name, "@zelavis/core");
+  assert.equal(
+    runtime.services["@zelavis/marketplace"].name,
+    "@zelavis/marketplace",
+  );
   assert.equal(
     runtime.services["@zelavis/server-fabric"].name,
     "@zelavis/server-fabric",
@@ -219,7 +225,8 @@ test("zelavis includes core services by default", async () => {
     configResponse.body.services.map((service) => service.name),
     [
       "@zelavis/ui",
-      "@zelavis/server",
+      "@zelavis/core",
+      "@zelavis/marketplace",
       "@zelavis/server-fabric",
       "@zelavis/db",
       "@zelavis/auth",
@@ -1199,7 +1206,8 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
   });
 
   assert.deepEqual(Object.keys(runtime.services), [
-    "@zelavis/server",
+    "@zelavis/core",
+    "@zelavis/marketplace",
     "@zelavis/server-fabric",
   ]);
   assert.deepEqual(
@@ -1246,6 +1254,11 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
   );
   assert.equal(fabricResponse.status, 200);
   assert.deepEqual(await fabricResponse.json(), {
+    authority: {
+      scope: "platform",
+      scopeId: "local-platform",
+      capabilities: ["hosting:projects", "hosting:fabric"],
+    },
     mode: "single-node",
     status: "ready",
     localNodeId: "local",
@@ -1270,6 +1283,48 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       infrastructureAutoscaling: "planned",
     },
   });
+});
+
+test("zelavis uses a configured Fabric placement list for point lookups", async () => {
+  const placement = {
+    identity: {
+      scopeId: "platform-a",
+      workloadId: "external-project",
+      type: "project",
+    },
+    projectKind: "generic",
+    runtimeNodeId: "local",
+    generation: 4,
+    state: "active",
+    runtimeStatus: "running",
+  };
+  const runtime = await zelavis({
+    coreServices: {
+      fabric: {
+        authority: {
+          scope: "platform",
+          scopeId: "platform-a",
+          capabilities: ["hosting:projects", "hosting:fabric"],
+        },
+        inventory: {
+          projectPlacements: () => [placement],
+        },
+      },
+    },
+  });
+
+  try {
+    const response = await runtime.fetch(
+      new Request(
+        "http://localhost/zelavis/api/v1/fabric/placements/projects/external-project",
+      ),
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { placement });
+  } finally {
+    await runtime.close();
+  }
 });
 
 test("zelavis rejects obsolete direct runtime service options", async () => {

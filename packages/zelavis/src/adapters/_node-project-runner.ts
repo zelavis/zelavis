@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { defineAdapter, Zelavis } from "../index.js";
-import { createNodeServer } from "../runtimes/node.js";
+import { closeNodeServer, createNodeServer } from "../runtimes/node.js";
 import { nodeAdapter } from "./node.js";
 
 const projectId = process.env.ZELAVIS_PROJECT_ID?.trim();
@@ -90,8 +90,18 @@ server.listen(port, "127.0.0.1", () => {
   );
 });
 
+let shutdownPromise: Promise<void> | undefined;
 function shutdown() {
-  server.close(() => process.exit(0));
+  shutdownPromise ??= Promise.all([
+    closeNodeServer(server),
+    zv.close(),
+  ]).then(
+    () => undefined,
+    (error) => {
+      console.error(error);
+      process.exitCode = 1;
+    },
+  );
 }
 
 process.once("SIGINT", shutdown);
