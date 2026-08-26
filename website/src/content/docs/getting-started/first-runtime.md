@@ -110,4 +110,4 @@ const response = await zv.fetch(
 
 - [Node adapter](../adapters/node.md)
 - [zelavis package](../packages/zelavis.md)
-- [@zelavis/server](../packages/zelavis/services/server.md)
+- [@zelavis/server](../packages/server.md)

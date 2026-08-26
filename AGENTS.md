@@ -31,7 +31,6 @@ Core platform work currently centers on:
 
 - `zelavis`
 - `@zelavis/server`
-- `@zelavis/fabric`
 - `@zelavis/app/db`
 - `@zelavis/app/auth`
 - `@zelavis/ui`
@@ -331,7 +330,7 @@ those grants, while endpoints remain the authority layer.
 - `plugins/*` contains official user-installable Zelavis plugins.
 - `packages/zelavis` is the Platform OS package and ships official services under `packages/zelavis/services`.
 - `packages/zelavis/services/zelavis-server` defines the shared service and route mounting model.
-- `packages/zelavis/services/zelavis-fabric` defines the trusted Platform OS node, placement, routing, balancing, migration, and recovery control plane.
+- `packages/zelavis/services/zelavis-server` defines the shared service/runtime endpoint contract and owns the trusted server control-plane features, including the Fabric node, placement, routing, balancing, migration, and recovery subsystem.
 - `packages/zelavis/services/zelavis-app/src/db` contains the document-first database core and server-facing database service.
 - `packages/zelavis/services/zelavis-app/src/auth` contains the low-level auth core and auth method plugins.
 - `packages/zelavis/services/zelavis-app/src/workloads` contains project-scoped workloads.
@@ -363,8 +362,8 @@ Each package should remain independently useful and focused.
 - Projects may represent Zelavis-native apps or managed apps such as WordPress/static/generic projects. Managed app projects should show hosting-style controls instead of Zelavis-native Auth/Database/Content plugin navigation.
 - The runtime supports dashboard dev-server mode through `ZELAVIS_UI_DEV_SERVER`; the lower-level `coreServices.dashboard.devServerUrl` option remains transitional composition internals during the Platform/App split.
 - The main local platform workflow is `pnpm dev`.
-- In repository development, runtime state lives below
-  `examples/nodejs/.zelavis`: the Platform System Store is under `system/` and
+- In repository development through `pnpm dev`, runtime state lives below
+  `packages/zelavis/.zelavis`: the Platform System Store is under `system/` and
   isolated project directories are under `projects/<projectId>/`.
 - `pnpm dev` explicitly syncs `@zelavis/app` into `packages/zelavis/services/zelavis-app` and starts both the
   long-running runtime and React Router dashboard dev server.

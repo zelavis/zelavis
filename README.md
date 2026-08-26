@@ -138,13 +138,15 @@ Core packages:
 
 - [packages/zelavis](packages/zelavis)
   The high-level runtime package. It composes core services such as auth, database, website, workloads, and dashboard delivery, and re-exports server adapters.
-- [packages/zelavis/services/server](packages/zelavis/services/server)
+- [packages/zelavis/services/zelavis-server](packages/zelavis/services/zelavis-server)
   Shared service, endpoint, and framework adapter contracts for mounting Zelavis packages.
+- [packages/zelavis/services/zelavis-fabric](packages/zelavis/services/zelavis-fabric)
+  The Platform OS core service for node inventory, project placement, routing, balancing, migration, recovery, and Zelavis App data distribution.
 - [packages/zelavis/services/zelavis-app/src/auth](packages/zelavis/services/zelavis-app/src/auth)
   A low-level authentication core for accounts, credentials, sessions, and opt-in auth method services.
 - [packages/zelavis/services/zelavis-app/src/db](packages/zelavis/services/zelavis-app/src/db)
   A document-first, tenant-aware database core with an in-memory driver, optional SQL capability, and a mountable server service.
-- [packages/zelavis/services/ui](packages/zelavis/services/ui)
+- [packages/zelavis/services/zelavis-ui](packages/zelavis/services/zelavis-ui)
   The admin/dashboard frontend used by the high-level runtime.
 - [packages/zelavis/services/zelavis-app/src/workloads](packages/zelavis/services/zelavis-app/src/workloads)
   A first-party core plugin for project-scoped functions, jobs, schedules, and webhooks.

@@ -70,6 +70,16 @@ That lets the same `/zelavis` dashboard shell act as:
 Hiding a dashboard menu item is only presentation. The endpoint must enforce
 the same requirement because it is the authority layer.
 
+## Fabric control plane
+
+Fabric is the server-owned scaling subsystem for node inventory, project
+placement, routing, balancing, migration, recovery, and future replication
+coordination. It is part of `@zelavis/server`, not a separate package.
+
+The high-level Platform OS mounts the Fabric endpoints under
+`/zelavis/api/v1/fabric/*` while the dashboard presents those capabilities from
+the regular Server area instead of a standalone Fabric menu item.
+
 ## Runtime surfaces
 
 - `fetch(request)` for Web and fetch-compatible runtimes

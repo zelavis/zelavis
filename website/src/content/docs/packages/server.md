@@ -30,6 +30,16 @@ documents. This metadata remains available in headless project runtimes, so the
 single Platform `@zelavis/ui` dashboard can render a selected project's menus
 without that project serving another dashboard application.
 
+## Fabric Control Plane
+
+Fabric is the server-owned scaling subsystem for node inventory, project
+placement, routing, balancing, migration, recovery, and future replication
+coordination. It lives inside `@zelavis/server`, not as a separate package.
+
+The Platform OS exposes its current read capabilities under
+`/zelavis/api/v1/fabric/*`. The dashboard reaches them from the regular Server
+area rather than through a standalone Fabric service menu item.
+
 ## Access Model
 
 `@zelavis/server` defines the shared access-control vocabulary for Zelavis

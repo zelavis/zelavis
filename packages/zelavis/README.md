@@ -7,6 +7,13 @@ service lifecycle, official service directory, and server/project orchestration.
 Lower-level packages such as `@zelavis/server`, `@zelavis/app/db`, and
 `@zelavis/app/auth` remain independently useful primitives.
 
+`@zelavis/server` owns the Fabric control-plane subsystem. Fabric begins as an
+honest single-node inventory and project-placement capability, then grows into
+the node, routing, balancing, migration, recovery, and replication control
+plane for multi-machine installations. It places every managed project kind;
+only Zelavis App projects receive the deeper tenant-aware database placement,
+sharding, replica, and schema-rollout capabilities.
+
 The Platform OS creates projects from services with `kind: "app"`. With the
 Node adapter, every project receives its own data directory and long-running
 Node process. The driver provides operational isolation for trusted projects
@@ -48,7 +55,9 @@ runtime services through the shared service contract.
 The dashboard opens to Projects. Project-local Zelavis surfaces live under
 `/zelavis/projects/:projectId/*`, global app/server discovery lives under
 `/zelavis/marketplace`, global management routes live outside projects, and
-server-owned operation routes live under `/zelavis/server/*`.
+server-owned operation routes live under `/zelavis/server/*`. Server scaling
+and placement operations live under `/zelavis/server/fabric/*`, backed by
+versioned endpoints under `/zelavis/api/v1/fabric/*`.
 
 The dashboard is a client of the runtime, not the source of truth. Any operation
 available in the dashboard should also be exposed through a stable runtime
@@ -404,7 +413,7 @@ surfaces separate from UI, host runtimes, and local server adapters.
 
 Runtime resources now also feed real core-service persistence in the high-level `Zelavis` class:
 
-- dashboard settings can persist through local KV or local files
+- dashboard settings persist through the Platform System Store, or through a configured KV resource in runtimes without a System Store
 - the storage core service can expose local file storage through the Zelavis API
 - website pages can persist through local files when no database core service is configured
 

@@ -78,6 +78,7 @@ test("zelavis exposes fetch handlers without requiring a mount adapter", async (
     [
       "@zelavis/ui",
       "@zelavis/server",
+      "@zelavis/server-fabric",
       "@zelavis/db",
       "@zelavis/auth",
       "@zelavis/website",
@@ -92,6 +93,10 @@ test("zelavis includes core services by default", async () => {
   const routes = runtime.routes;
 
   assert.equal(runtime.services["@zelavis/ui"].name, "@zelavis/ui");
+  assert.equal(
+    runtime.services["@zelavis/server-fabric"].name,
+    "@zelavis/server-fabric",
+  );
   assert.equal(runtime.services["@zelavis/auth"].name, "@zelavis/auth");
   assert.equal(runtime.services["@zelavis/db"].name, "@zelavis/db");
   assert.equal(runtime.services["@zelavis/website"].name, "@zelavis/website");
@@ -215,6 +220,7 @@ test("zelavis includes core services by default", async () => {
     [
       "@zelavis/ui",
       "@zelavis/server",
+      "@zelavis/server-fabric",
       "@zelavis/db",
       "@zelavis/auth",
       "@zelavis/website",
@@ -1181,7 +1187,7 @@ test("zelavis preserves a mounted dev-server dashboard base path", async () => {
   );
 });
 
-test("zelavis keeps the Platform server when optional mounted services are disabled", async () => {
+test("zelavis keeps the Platform server control plane when optional mounted services are disabled", async () => {
   const runtime = await zelavis({
     coreServices: {
       auth: false,
@@ -1192,7 +1198,10 @@ test("zelavis keeps the Platform server when optional mounted services are disab
     },
   });
 
-  assert.deepEqual(Object.keys(runtime.services), ["@zelavis/server"]);
+  assert.deepEqual(Object.keys(runtime.services), [
+    "@zelavis/server",
+    "@zelavis/server-fabric",
+  ]);
   assert.deepEqual(
     runtime.routes.map((route) => route.route.id),
     [
@@ -1222,8 +1231,45 @@ test("zelavis keeps the Platform server when optional mounted services are disab
       "runtime.projects.proxy.patch",
       "runtime.projects.proxy.delete",
       "runtime.projects.remove",
+      "fabric.snapshot",
+      "fabric.health",
+      "fabric.nodes.list",
+      "fabric.nodes.get",
+      "fabric.project-placements.list",
+      "fabric.project-placements.get",
+      "fabric.migrations.list",
     ],
   );
+
+  const fabricResponse = await runtime.fetch(
+    new Request("http://localhost/zelavis/api/v1/fabric/snapshot"),
+  );
+  assert.equal(fabricResponse.status, 200);
+  assert.deepEqual(await fabricResponse.json(), {
+    mode: "single-node",
+    status: "ready",
+    localNodeId: "local",
+    nodes: [
+      {
+        id: "local",
+        status: "ready",
+        roles: ["gateway", "control", "worker"],
+        runtimeEngine: "node",
+        runtimeDriver: "local",
+      },
+    ],
+    projectPlacements: [],
+    migrations: [],
+    features: {
+      projectPlacement: "available",
+      multiNode: "planned",
+      automaticBalancing: "planned",
+      projectMigration: "planned",
+      zelavisAppDataPlacement: "planned",
+      replication: "planned",
+      infrastructureAutoscaling: "planned",
+    },
+  });
 });
 
 test("zelavis rejects obsolete direct runtime service options", async () => {

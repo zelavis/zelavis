@@ -151,6 +151,16 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+[data-slot="sidebar"] {
+  user-select: none;
+}
+
+[data-slot="sidebar"] input,
+[data-slot="sidebar"] textarea,
+[data-slot="sidebar"] [contenteditable="true"] {
+  user-select: text;
+}
+
 code {
   border: 1px solid var(--border);
   border-radius: 0.375rem;

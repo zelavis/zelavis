@@ -75,7 +75,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
       const databaseOptions =
         options.database ?? (isProjectRuntime ? {} : false);
       const nextCoreServices: Record<string, unknown> = isProjectRuntime
-        ? { dashboard: false }
+        ? { dashboard: false, fabric: false }
         : {
             database: false,
             website: false,

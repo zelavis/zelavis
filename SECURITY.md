@@ -29,11 +29,12 @@ and coordinate a fix before public disclosure when that is appropriate.
 
 Security reports are especially useful for:
 
-- `packages/zelavis/services/server`
-- `packages/db`
-- `packages/auth`
+- `packages/zelavis/services/zelavis-server`
+- `packages/zelavis/services/zelavis-fabric`
+- `packages/zelavis/services/zelavis-app/src/db`
+- `packages/zelavis/services/zelavis-app/src/auth`
 - `packages/zelavis`
-- `packages/zelavis/services/ui`
+- `packages/zelavis/services/zelavis-ui`
 - official plugins under `plugins/*`
 - CI, release, and dependency-supply-chain concerns in this repository
 

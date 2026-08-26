@@ -42,11 +42,11 @@ export function StatCard({ label, value, detail, icon: Icon }: StatCardProps) {
 
 export function StatusBadge({ state }: { state: string }) {
   const className =
-    state === "ready" || state === "running" || state === "embedded" || state === "endpoint"
+    state === "ready" || state === "running" || state === "embedded" || state === "endpoint" || state === "active" || state === "available"
       ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-      : state === "planned" || state === "fallback" || state === "checking" || state === "provisioning" || state === "starting" || state === "stopping"
+      : state === "planned" || state === "fallback" || state === "checking" || state === "provisioning" || state === "starting" || state === "stopping" || state === "degraded" || state === "draining" || state === "preparing" || state === "moving" || state === "recovering"
         ? "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300"
-        : state === "failed"
+        : state === "failed" || state === "unavailable"
           ? "border-destructive/20 bg-destructive/10 text-destructive"
         : undefined;
 

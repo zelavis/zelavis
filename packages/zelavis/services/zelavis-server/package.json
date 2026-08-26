@@ -32,11 +32,14 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/zelavis/zelavis.git",
-    "directory": "packages/zelavis/services/server"
+    "directory": "packages/zelavis/services/zelavis-server"
   },
-  "homepage": "https://github.com/zelavis/zelavis/tree/main/packages/zelavis/services/server#readme",
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/packages/zelavis/services/zelavis-server#readme",
   "bugs": {
     "url": "https://github.com/zelavis/zelavis/issues"
+  },
+  "dependencies": {
+    "effect": "4.0.0-rc.111"
   },
   "devDependencies": {
     "@types/node": "^25.9.3",

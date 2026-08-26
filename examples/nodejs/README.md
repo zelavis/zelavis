@@ -18,9 +18,10 @@ Then open:
 
 ## Why this example matters
 
-- it uses `nodeAdapter()` from `zelavis/adapters/node` for the Node infrastructure (SQLite, file storage, dashboard settings)
+- it uses `nodeAdapter()` from `zelavis/adapters/node` for the Node infrastructure (SQLite, file storage, Platform System Store)
 - it uses `createNodeServer(zv)` from `zelavis/runtimes/node` to spin up a standalone HTTP server
 - it is the easiest local setup for trying the storage service and copying a Zelavis file reference into a database schema field
+- when started through `pnpm dev`, workspace state is stored in `packages/zelavis/.zelavis`; otherwise the adapter uses `.zelavis` relative to this example unless `ZELAVIS_DATA_DIR` is set
 
 ## File-reference workflow
 
@@ -44,8 +45,8 @@ Open `http://localhost:3000/zelavis/projects/:projectId/marketplace`, select
 it from **Uploaded sources**.
 
 The service module defines its own `name`, `version`, menu, pages, and services,
-so the dashboard does not ask for a separate service name. The Node adapter unpacks
-the ZIP into `.zelavis/services`, reads `zelavis.service.json`, and imports the
-declared ESM entry from there.
+so the dashboard does not ask for a separate service name. The Node adapter
+unpacks the ZIP into the active data directory's `services` folder, reads
+`zelavis.service.json`, and imports the declared ESM entry from there.
 
 After install, the service dashboard page is available at `/zelavis/example-basic` and its API health route is available at `/zelavis/api/v1/example-basic/health`.
