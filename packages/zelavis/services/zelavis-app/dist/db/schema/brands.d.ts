@@ -1,9 +1,0 @@
-import { Schema } from "effect";
-export declare const CollectionName: Schema.brand<Schema.String, "CollectionName">;
-export type CollectionName = Schema.Schema.Type<typeof CollectionName>;
-export declare const TenantId: Schema.brand<Schema.String, "TenantId">;
-export type TenantId = Schema.Schema.Type<typeof TenantId>;
-export declare const DocumentId: Schema.brand<Schema.String, "DocumentId">;
-export type DocumentId = Schema.Schema.Type<typeof DocumentId>;
-export declare const FieldName: Schema.brand<Schema.String, "FieldName">;
-export type FieldName = Schema.Schema.Type<typeof FieldName>;

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { zelavisEcommerceService } from "../../../plugins/ecommerce/dist/index.js";
 
@@ -107,12 +109,18 @@ test("Zelavis accepts a node env adapter and exposes a Node HTTP server through 
   const { nodeAdapter } = await import("zelavis/adapters/node");
   const { createNodeServer } = await import("zelavis/runtimes/node");
 
+  const directory = await mkdtemp(join(tmpdir(), "zelavis-exports-"));
   const zelavis = new Zelavis({
-    adapter: nodeAdapter(),
+    adapter: nodeAdapter({ dataDirectory: directory }),
   });
 
-  const server = await createNodeServer(zelavis);
-  assert.equal(typeof server.listen, "function");
+  try {
+    const server = await createNodeServer(zelavis);
+    assert.equal(typeof server.listen, "function");
+  } finally {
+    await zelavis.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("Zelavis exposes default core APIs", async () => {

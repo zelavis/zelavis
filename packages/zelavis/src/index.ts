@@ -22,6 +22,7 @@ import {
   createFabricService,
   createMappedJsonErrorResponse,
   zelavisServer as mountZelavisServer,
+  type FabricApi,
   type FabricPlacementState,
   type FabricProjectPlacement,
   type FabricServiceOptions,
@@ -41,6 +42,8 @@ import {
   createZelavisDashboardService,
   defaultZelavisDashboardClientRoutes,
 } from "@zelavis/ui/service";
+import { createZelavisCoreService } from "@zelavis/core";
+import { marketplaceService } from "@zelavis/marketplace";
 import {
   workloadsService,
   type WorkloadsServiceOptions,
@@ -78,6 +81,7 @@ import {
   ZelavisProjectValidationError,
   type ZelavisProjectRuntimeDriver,
   type ZelavisProjectManager,
+  type ZelavisProjectRecord,
 } from "./project.js";
 import {
   createAssistantManager,
@@ -741,6 +745,8 @@ const STORAGE_CHECKSUM_METADATA_KEY = "checksum-sha256";
 const RESERVED_CORE_SERVICE_NAMES = new Set([
   "@zelavis/app",
   "@zelavis/auth",
+  "@zelavis/core",
+  "@zelavis/marketplace",
   "@zelavis/server-fabric",
   "@zelavis/ui",
   "@zelavis/ui:app",
@@ -2523,7 +2529,8 @@ async function resolveRuntimeManagementCore(
         kind: service.kind,
         core:
           service.name === "@zelavis/ui" ||
-          service.name === "@zelavis/server" ||
+          service.name === "@zelavis/core" ||
+          service.name === "@zelavis/marketplace" ||
           service.name === "@zelavis/server-fabric" ||
           service.name === "@zelavis/auth" ||
           service.name === "@zelavis/db" ||
@@ -3435,7 +3442,7 @@ function resolveFabricCoreService(
     projects?: ZelavisProjectManager;
     runtimeEngine: ZelavisRuntimeEngine;
   },
-): ZelavisRuntimeService<any> | undefined {
+): ZelavisRuntimeService<FabricApi> | undefined {
   const fabricOption = option ?? true;
   if (fabricOption === false) {
     return undefined;
@@ -3443,21 +3450,39 @@ function resolveFabricCoreService(
 
   const configured = fabricOption === true ? {} : fabricOption;
   const localNodeId = configured.localNode?.id ?? "local";
+  const platformScopeId = configured.authority?.scopeId ?? "local-platform";
   const projectPlacements = async (): Promise<
     readonly FabricProjectPlacement[]
   > => {
     if (!context.projects) {
       return [];
     }
+    const projects = context.projects;
 
-    return (await context.projects.list()).map((project) => ({
-      projectId: project.id,
-      projectKind: project.kind,
-      nodeId: localNodeId,
-      generation: 1,
-      state: placementStateFromRuntimeStatus(project.runtime.status),
-      runtimeStatus: project.runtime.status,
-    }));
+    return (await projects.list()).map((project) => toPlacement(project));
+  };
+  const toPlacement = (
+    project: ZelavisProjectRecord,
+  ): FabricProjectPlacement => ({
+    identity: {
+      scopeId: platformScopeId,
+      workloadId: project.id,
+      type: "project" as const,
+    },
+    projectKind: project.kind,
+    runtimeNodeId: localNodeId,
+    ...(project.capabilities.managedDatabase
+      ? { databaseNodeId: localNodeId }
+      : {}),
+    generation: 1,
+    state: placementStateFromRuntimeStatus(project.runtime.status),
+    runtimeStatus: project.runtime.status,
+  });
+  const projectPlacement = async (
+    projectId: string,
+  ): Promise<FabricProjectPlacement | undefined> => {
+    const project = await context.projects?.get(projectId);
+    return project ? toPlacement(project) : undefined;
   };
 
   return createFabricService({
@@ -3475,13 +3500,19 @@ function resolveFabricCoreService(
       ...configured.inventory,
       projectPlacements:
         configured.inventory?.projectPlacements ?? projectPlacements,
+      ...(configured.inventory?.projectPlacement
+        ? { projectPlacement: configured.inventory.projectPlacement }
+        : configured.inventory?.projectPlacements
+          ? {}
+          : { projectPlacement }),
     },
   });
 }
 
-async function resolveServerCoreService(
+async function resolvePlatformCoreService(
   appServices: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
   projects?: ZelavisProjectManager,
+  fabric?: FabricApi,
   systemStore?: ZelavisSystemStore,
   runtimeManagementRoutes: readonly ZelavisServerRoute<any>[] = [],
   assistantOption?: false | ZelavisAssistantResponder,
@@ -3532,104 +3563,9 @@ async function resolveServerCoreService(
     };
   }
 
-  return {
-    name: "@zelavis/server",
-    kind: "core",
-    basePath: "/runtime",
-    menu: {
-      title: "Server",
-      path: "/server",
-      pageLabel: "Server",
-      sectionLabel: "Manage",
-      order: 60,
-      surface: "platform",
-      access: {
-        permissions: ["server.manage"],
-        scope: { type: "system" },
-      },
-      items: [
-        {
-          title: "Overview",
-          path: "/server",
-          pageLabel: "Server",
-        },
-        {
-          title: "Domains",
-          path: "/server/domains",
-          pageLabel: "Domains",
-          panelLabel: "Domains",
-          access: {
-            permissions: ["server.domains.view"],
-            scope: { type: "system" },
-          },
-          items: [
-            {
-              title: "Overview",
-              path: "/server/domains",
-              pageLabel: "Domains",
-            },
-            {
-              title: "Add Domain",
-              path: "/server/domains",
-              search: { domainAction: "add" },
-              pageLabel: "Add Domain",
-            },
-            {
-              title: "Buy",
-              path: "/server/domains",
-              search: { domainAction: "buy" },
-              pageLabel: "Buy Domain",
-            },
-            {
-              title: "Transfer",
-              path: "/server/domains",
-              search: { domainAction: "transfer" },
-              pageLabel: "Transfer Domain",
-            },
-          ],
-        },
-        {
-          title: "Access",
-          path: "/server/access",
-          pageLabel: "Access",
-          panelLabel: "Access",
-          access: {
-            permissions: ["access.manage"],
-            scope: { type: "system" },
-          },
-          items: [
-            {
-              title: "Overview",
-              path: "/server/access",
-              pageLabel: "Access",
-            },
-            {
-              title: "Users",
-              path: "/server/access/users",
-              pageLabel: "Users",
-            },
-            {
-              title: "Permissions",
-              path: "/server/access/permissions",
-              pageLabel: "Permissions",
-            },
-          ],
-        },
-        {
-          title: "Backups",
-          path: "/server/backups",
-          pageLabel: "Backups",
-        },
-        {
-          title: "Logs",
-          path: "/server/logs",
-          pageLabel: "Logs",
-        },
-      ],
-    },
+  return createZelavisCoreService({
     service: {},
-    api: {
-      v1: [
+    routes: [
         ...runtimeManagementRoutes,
         {
           id: "runtime.access",
@@ -3921,6 +3857,32 @@ async function resolveServerCoreService(
                   };
                 }
 
+                const placement = await fabric?.getProjectPlacement(project.id);
+                if (
+                  !placement ||
+                  placement.identity.type !== "project" ||
+                  placement.identity.workloadId !== project.id ||
+                  placement.state !== "active"
+                ) {
+                  return {
+                    status: 409,
+                    body: {
+                      error: `Project "${project.id}" has no active Fabric placement.`,
+                    },
+                  };
+                }
+                const placementNode = await fabric?.getNode(
+                  placement.runtimeNodeId,
+                );
+                if (!placementNode || placementNode.status === "unavailable") {
+                  return {
+                    status: 503,
+                    body: {
+                      error: `Project "${project.id}" is placed on an unavailable Fabric node.`,
+                    },
+                  };
+                }
+
                 const target = new URL(
                   (params.path ?? "").replace(/^\/+/, ""),
                   `${project.runtime.url.replace(/\/+$/, "")}/`,
@@ -3929,6 +3891,19 @@ async function resolveServerCoreService(
                 const headers = new Headers(request.headers);
                 headers.delete("host");
                 headers.delete("content-length");
+                headers.set(
+                  "x-zelavis-platform-scope-id",
+                  placement.identity.scopeId,
+                );
+                headers.set("x-zelavis-project-id", project.id);
+                headers.set(
+                  "x-zelavis-placement-generation",
+                  String(placement.generation),
+                );
+                headers.set(
+                  "x-zelavis-runtime-node-id",
+                  placement.runtimeNodeId,
+                );
                 const body =
                   request.method === "GET" || request.method === "HEAD"
                     ? undefined
@@ -3974,9 +3949,8 @@ async function resolveServerCoreService(
             }
           },
         },
-      ],
-    },
-  };
+    ],
+  });
 }
 
 async function synthesizeDashboardAppService(
@@ -4067,7 +4041,7 @@ function createServicePrefixes(
 
 export async function zelavis(
   options: ZelavisServerOptions = {},
-): Promise<ZelavisServerRuntime<unknown>> {
+): Promise<ZelavisRuntime> {
   const rawOptions = options as Record<string, unknown>;
   const obsoleteKeys = ["services", "runtimeServices"].filter(
     (key) => rawOptions[key] !== undefined,
@@ -4207,15 +4181,17 @@ export async function zelavis(
       platform: options.serviceContext?.platform,
     },
   );
-  const serverCoreService = await resolveServerCoreService(
-        serviceRegistry,
-        projects,
-        systemStore,
-        runtimeManagement.routes,
-        options.assistant,
-      );
+  const platformCoreService = await resolvePlatformCoreService(
+    serviceRegistry,
+    projects,
+    fabricCoreService?.service,
+    systemStore,
+    runtimeManagement.routes,
+    options.assistant,
+  );
   const coreServices = [
-    serverCoreService,
+    platformCoreService,
+    marketplaceService,
     fabricCoreService,
     databaseService,
     authService,
@@ -4263,7 +4239,7 @@ export async function zelavis(
   );
   const mountPrefix = websiteEnabled ? "/" : rootPath;
 
-  return mountZelavisServer({
+  const runtime = await mountZelavisServer({
     ...options,
     prefix: mountPrefix,
     version: "v1",
@@ -4276,6 +4252,17 @@ export async function zelavis(
       overrides: options.servicePrefixes,
     }),
   });
+  let closePromise: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    closePromise ??= projects?.close() ?? Promise.resolve();
+    return closePromise;
+  };
+
+  return Object.assign(runtime, { close });
+}
+
+export interface ZelavisRuntime extends ZelavisServerRuntime<unknown> {
+  close(): Promise<void>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -4638,7 +4625,10 @@ function applyPlatformResourceDefaults(
 export class Zelavis {
   private readonly options: ZelavisOptions;
   private readonly serviceRegistryStore = createMemoryServiceRegistryStore([]);
-  private runtimePromise?: Promise<ZelavisServerRuntime<unknown>>;
+  private runtimePromise?: Promise<ZelavisRuntime>;
+  private readonly activeRuntimes = new Set<ZelavisRuntime>();
+  private closed = false;
+  private closePromise?: Promise<void>;
   private resolvedAuthApi?: AuthApi;
   private resolvedDatabaseApi?: DatabaseApi;
   private resolvedPlatformContext: ZelavisPlatformContext = {
@@ -4672,7 +4662,11 @@ export class Zelavis {
     this.resolvedDatabaseApi = undefined;
   }
 
-  async runtime(): Promise<ZelavisServerRuntime<unknown>> {
+  async runtime(): Promise<ZelavisRuntime> {
+    if (this.closed) {
+      throw new Error("This Zelavis runtime has been closed.");
+    }
+
     this.runtimePromise ??= (async () => {
       const resolved = await resolvePlatformState(this.options);
       const platformResources: ZelavisPlatformResources = {
@@ -4743,6 +4737,7 @@ export class Zelavis {
           },
         };
       const runtime = await zelavis(runtimeOptions);
+      this.activeRuntimes.add(runtime);
       return runtime;
     })();
 
@@ -4795,5 +4790,17 @@ export class Zelavis {
     const runtime = await this.runtime();
     const handler = runtime.plain as ZelavisServerPlainHandler<unknown>;
     return handler(request);
+  }
+
+  close(): Promise<void> {
+    this.closePromise ??= (async () => {
+      this.closed = true;
+      await this.runtimePromise?.catch(() => undefined);
+      await Promise.all(
+        [...this.activeRuntimes].map((runtime) => runtime.close()),
+      );
+      this.activeRuntimes.clear();
+    })();
+    return this.closePromise;
   }
 }

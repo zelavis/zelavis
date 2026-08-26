@@ -1,5 +1,4 @@
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { createBetterSqlite3DatabaseDriver } from "@zelavis/app-db-node-sqlite";
 import {
   defineAdapter,
@@ -20,9 +19,9 @@ import {
   normalizeDataDirectory,
   createLocalRuntimeServicePackageInstaller,
   createLocalRuntimeServiceImporter,
-  loadLocalBundledServiceCatalog,
   type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
+import { officialProjectRecipes } from "../project-recipes.js";
 
 export interface NodeAdapterDatabaseOptions {
   filename?: string;
@@ -41,6 +40,8 @@ export interface NodeAdapterSystemStoreOptions {
 export interface NodeAdapterProjectOptions {
   directory?: string;
   startupTimeoutMs?: number;
+  startupConcurrency?: number;
+  shutdownConcurrency?: number;
   logLimit?: number;
 }
 
@@ -100,9 +101,6 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
 
       const serviceOptions = options.services === false ? undefined : options.services;
       const serviceDirectory = join(dataDirectory, "services");
-      const bundledServicesDirectory = fileURLToPath(
-        new URL("../../services", import.meta.url),
-      );
       const systemStoreOptions =
         options.systemStore === false ? undefined : options.systemStore;
       const systemStoreFilename = systemStoreOptions?.filename
@@ -130,6 +128,12 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           ...(projectOptions?.startupTimeoutMs === undefined
             ? {}
             : { startupTimeoutMs: projectOptions.startupTimeoutMs }),
+          ...(projectOptions?.startupConcurrency === undefined
+            ? {}
+            : { startupConcurrency: projectOptions.startupConcurrency }),
+          ...(projectOptions?.shutdownConcurrency === undefined
+            ? {}
+            : { shutdownConcurrency: projectOptions.shutdownConcurrency }),
           ...(projectOptions?.logLimit === undefined
             ? {}
             : { logLimit: projectOptions.logLimit }),
@@ -151,12 +155,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           options.services === false
             ? undefined
             : {
-                catalog: isProjectRuntime
-                  ? []
-                  : await loadLocalBundledServiceCatalog({
-                      rootDirectory: bundledServicesDirectory,
-                      kinds: ["app"],
-                    }),
+                catalog: isProjectRuntime ? [] : officialProjectRecipes,
                 importer: createLocalRuntimeServiceImporter({
                   directory: serviceDirectory,
                   ...(serviceOptions ?? {}),

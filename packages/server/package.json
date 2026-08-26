@@ -1,0 +1,62 @@
+{
+  "name": "@zelavis/server",
+  "version": "1.0.1-alpha.2",
+  "private": false,
+  "description": "Reusable server and capability-aware workload runtime for Zelavis Platforms and Apps.",
+  "license": "MIT",
+  "author": "Ivan Jeremic",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./workload": {
+      "types": "./dist/workload.d.ts",
+      "import": "./dist/workload.js"
+    },
+    "./fabric": {
+      "types": "./dist/fabric.d.ts",
+      "import": "./dist/fabric.js"
+    },
+    "./adapters/node": {
+      "types": "./dist/adapters/node.d.ts",
+      "import": "./dist/adapters/node.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build && node --test test/*.test.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zelavis/zelavis.git",
+    "directory": "packages/server"
+  },
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/packages/server#readme",
+  "bugs": {
+    "url": "https://github.com/zelavis/zelavis/issues"
+  },
+  "dependencies": {
+    "effect": "4.0.0-rc.111"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "typescript": "^5.9.0"
+  },
+  "keywords": [
+    "server",
+    "endpoints",
+    "node",
+    "adapter"
+  ]
+}

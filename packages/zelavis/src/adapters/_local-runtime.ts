@@ -9,7 +9,7 @@ import {
   mkdirSync,
   renameSync,
 } from "node:fs";
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { inflateRawSync } from "node:zlib";
 import { dirname, join, relative, resolve } from "node:path";
@@ -17,8 +17,6 @@ import { pathToFileURL } from "node:url";
 import type {
   ZelavisServiceLoadOptions,
   ZelavisServicePackageInstaller,
-  ZelavisServiceKind,
-  ZelavisServiceRegistryEntry,
 } from "../index.js";
 
 // ---------------------------------------------------------------------------
@@ -281,96 +279,6 @@ async function downloadRemoteService(
 export interface LocalRuntimeServiceOptions {
   directory?: string;
   allowRemote?: boolean;
-}
-
-export interface LocalBundledServiceCatalogOptions {
-  rootDirectory: string;
-  kinds?: readonly ZelavisServiceKind[];
-}
-
-interface LocalBundledServiceManifest {
-  name?: unknown;
-  version?: unknown;
-  kind?: unknown;
-  entry?: unknown;
-  marketplace?: unknown;
-}
-
-function isServiceKind(value: unknown): value is ZelavisServiceKind {
-  return (
-    value === "app" ||
-    value === "core" ||
-    value === "plugin" ||
-    value === "web-app" ||
-    value === "website" ||
-    value === "dashboard-extension" ||
-    value === "provider" ||
-    value === "template"
-  );
-}
-
-function readString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-export async function loadLocalBundledServiceCatalog(
-  options: LocalBundledServiceCatalogOptions,
-): Promise<readonly ZelavisServiceRegistryEntry[]> {
-  const kinds = options.kinds ? new Set(options.kinds) : undefined;
-  const rootDirectory = resolve(options.rootDirectory);
-  const serviceDirectories = await readdir(rootDirectory, {
-    withFileTypes: true,
-  }).catch(() => []);
-  const entries: ZelavisServiceRegistryEntry[] = [];
-
-  for (const directory of serviceDirectories) {
-    if (!directory.isDirectory()) {
-      continue;
-    }
-
-    const serviceDirectory = join(rootDirectory, directory.name);
-    const manifestPath = join(serviceDirectory, "zelavis.service.json");
-    let manifest: LocalBundledServiceManifest;
-
-    try {
-      manifest = JSON.parse(await readFile(manifestPath, "utf8")) as LocalBundledServiceManifest;
-    } catch {
-      continue;
-    }
-
-    const name = readString(manifest.name);
-    const entry = readString(manifest.entry);
-
-    if (!name || !entry || !isServiceKind(manifest.kind)) {
-      throw new Error(
-        `Bundled service manifest "${manifestPath}" must declare name, kind, and entry.`,
-      );
-    }
-
-    if (kinds && !kinds.has(manifest.kind)) {
-      continue;
-    }
-
-    entries.push({
-      service: {
-        name,
-        kind: manifest.kind,
-        scope: manifest.kind === "core" ? "system" : undefined,
-        ...(readString(manifest.version)
-          ? { version: readString(manifest.version) }
-          : {}),
-        ...(manifest.marketplace && typeof manifest.marketplace === "object"
-          ? { marketplace: manifest.marketplace as Record<string, unknown> }
-          : {}),
-      },
-      specifier: join(serviceDirectory, entry),
-      status: "available",
-      source: "official",
-      order: entries.length,
-    });
-  }
-
-  return entries;
 }
 
 // ---------------------------------------------------------------------------

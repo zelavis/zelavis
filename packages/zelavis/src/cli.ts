@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { runCli, type ZelavisCliServeOptions } from "@zelavis/cli";
 import { nodeAdapter } from "./adapters/node.js";
 import { Zelavis } from "./index.js";
-import { createNodeServer } from "./runtimes/node.js";
+import { closeNodeServer, createNodeServer } from "./runtimes/node.js";
 
 async function readVersion(): Promise<string> {
   const source = await readFile(new URL("../package.json", import.meta.url), "utf8");
@@ -40,13 +40,18 @@ async function serve(options: ZelavisCliServeOptions): Promise<void> {
   );
   console.log(`Platform data: ${dataDirectory}`);
 
+  let shutdownPromise: Promise<void> | undefined;
   const shutdown = () => {
-    server.close((error) => {
-      if (error) {
+    shutdownPromise ??= Promise.all([
+      closeNodeServer(server),
+      zv.close(),
+    ]).then(
+      () => undefined,
+      (error) => {
         console.error(error);
         process.exitCode = 1;
-      }
-    });
+      },
+    );
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);

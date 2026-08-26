@@ -103,7 +103,7 @@ importers:
     dependencies:
       '@zelavis/app':
         specifier: workspace:*
-        version: link:../../packages/zelavis/services/zelavis-app
+        version: link:../../packages/app
       zelavis:
         specifier: workspace:*
         version: link:../../packages/zelavis
@@ -122,54 +122,11 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/cli:
-    devDependencies:
-      '@types/node':
-        specifier: ^25.9.3
-        version: 25.9.5
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
-  packages/zelavis:
+  packages/app:
     dependencies:
-      '@zelavis/app':
-        specifier: workspace:*
-        version: link:services/zelavis-app
-      '@zelavis/app-db-bun-sqlite':
-        specifier: workspace:*
-        version: link:services/zelavis-app/adapters/bun-sqlite
-      '@zelavis/app-db-node-sqlite':
-        specifier: workspace:*
-        version: link:services/zelavis-app/adapters/node-sqlite
-      '@zelavis/cli':
-        specifier: workspace:*
-        version: link:../cli
       '@zelavis/server':
         specifier: workspace:*
-        version: link:services/zelavis-server
-      '@zelavis/ui':
-        specifier: workspace:*
-        version: link:services/zelavis-ui
-      better-sqlite3:
-        specifier: ^12.10.0
-        version: 12.10.0
-      effect:
-        specifier: 4.0.0-rc.111
-        version: 4.0.0-rc.111
-    devDependencies:
-      '@types/better-sqlite3':
-        specifier: ^7.6.13
-        version: 7.6.13
-      '@types/node':
-        specifier: ^25.9.1
-        version: 25.9.1
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
-  packages/zelavis/services/zelavis-app:
-    dependencies:
+        version: link:../server
       effect:
         specifier: 4.0.0-rc.111
         version: 4.0.0-rc.111
@@ -181,7 +138,7 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/zelavis/services/zelavis-app/adapters/bun-sqlite:
+  packages/app/adapters/bun-sqlite:
     dependencies:
       '@zelavis/app':
         specifier: workspace:*
@@ -194,7 +151,7 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/zelavis/services/zelavis-app/adapters/libsql:
+  packages/app/adapters/libsql:
     dependencies:
       '@libsql/client':
         specifier: ^0.17.4
@@ -210,7 +167,7 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/zelavis/services/zelavis-app/adapters/node-sqlite:
+  packages/app/adapters/node-sqlite:
     dependencies:
       '@zelavis/app':
         specifier: workspace:*
@@ -229,7 +186,7 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/zelavis/services/zelavis-app/plugins/email-password:
+  packages/app/plugins/email-password:
     dependencies:
       '@zelavis/app':
         specifier: workspace:*
@@ -240,9 +197,9 @@ importers:
         version: 5.9.3
       zelavis:
         specifier: workspace:*
-        version: link:../../../..
+        version: link:../../../zelavis
 
-  packages/zelavis/services/zelavis-app/plugins/username-password:
+  packages/app/plugins/username-password:
     dependencies:
       '@zelavis/app':
         specifier: workspace:*
@@ -253,9 +210,18 @@ importers:
         version: 5.9.3
       zelavis:
         specifier: workspace:*
-        version: link:../../../..
+        version: link:../../../zelavis
 
-  packages/zelavis/services/zelavis-server:
+  packages/cli:
+    devDependencies:
+      '@types/node':
+        specifier: ^25.9.3
+        version: 25.9.5
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+
+  packages/server:
     dependencies:
       effect:
         specifier: 4.0.0-rc.111
@@ -268,7 +234,76 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/zelavis/services/zelavis-ui:
+  packages/zelavis:
+    dependencies:
+      '@zelavis/app':
+        specifier: workspace:*
+        version: link:../app
+      '@zelavis/app-db-bun-sqlite':
+        specifier: workspace:*
+        version: link:../app/adapters/bun-sqlite
+      '@zelavis/app-db-node-sqlite':
+        specifier: workspace:*
+        version: link:../app/adapters/node-sqlite
+      '@zelavis/cli':
+        specifier: workspace:*
+        version: link:../cli
+      '@zelavis/core':
+        specifier: workspace:*
+        version: link:product-services/zelavis-core
+      '@zelavis/marketplace':
+        specifier: workspace:*
+        version: link:product-services/zelavis-marketplace
+      '@zelavis/server':
+        specifier: workspace:*
+        version: link:../server
+      '@zelavis/ui':
+        specifier: workspace:*
+        version: link:product-services/zelavis-ui
+      better-sqlite3:
+        specifier: ^12.10.0
+        version: 12.10.0
+      effect:
+        specifier: 4.0.0-rc.111
+        version: 4.0.0-rc.111
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.13
+        version: 7.6.13
+      '@types/node':
+        specifier: ^25.9.1
+        version: 25.9.1
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+
+  packages/zelavis/product-services/zelavis-core:
+    dependencies:
+      '@zelavis/server':
+        specifier: workspace:*
+        version: link:../../../server
+    devDependencies:
+      '@types/node':
+        specifier: ^25.9.3
+        version: 25.9.5
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+
+  packages/zelavis/product-services/zelavis-marketplace:
+    dependencies:
+      '@zelavis/server':
+        specifier: workspace:*
+        version: link:../../../server
+    devDependencies:
+      '@types/node':
+        specifier: ^25.9.3
+        version: 25.9.5
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+
+  packages/zelavis/product-services/zelavis-ui:
     dependencies:
       '@assistant-ui/core':
         specifier: 0.3.14
@@ -429,10 +464,10 @@ importers:
     dependencies:
       '@zelavis/app':
         specifier: workspace:*
-        version: link:../../packages/zelavis/services/zelavis-app
+        version: link:../../packages/app
       '@zelavis/server':
         specifier: workspace:*
-        version: link:../../packages/zelavis/services/zelavis-server
+        version: link:../../packages/server
       effect:
         specifier: 4.0.0-rc.111
         version: 4.0.0-rc.111

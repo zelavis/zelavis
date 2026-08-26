@@ -1,5 +1,4 @@
 import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   defineAdapter,
   type ZelavisOptions,
@@ -11,9 +10,9 @@ import {
   normalizeDataDirectory,
   createLocalRuntimeServicePackageInstaller,
   createLocalRuntimeServiceImporter,
-  loadLocalBundledServiceCatalog,
   type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
+import { officialProjectRecipes } from "../project-recipes.js";
 
 export interface BunAdapterDatabaseOptions {
   filename?: string;
@@ -84,9 +83,6 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
 
       const serviceOptions = options.services === false ? undefined : options.services;
       const serviceDirectory = join(dataDirectory, "services");
-      const bundledServicesDirectory = fileURLToPath(
-        new URL("../../services", import.meta.url),
-      );
       const systemStoreOptions =
         options.systemStore === false ? undefined : options.systemStore;
       const systemStoreFilename = systemStoreOptions?.filename
@@ -115,12 +111,7 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
           options.services === false
             ? undefined
             : {
-                catalog: isProjectRuntime
-                  ? []
-                  : await loadLocalBundledServiceCatalog({
-                      rootDirectory: bundledServicesDirectory,
-                      kinds: ["app"],
-                    }),
+                catalog: isProjectRuntime ? [] : officialProjectRecipes,
                 importer: createLocalRuntimeServiceImporter({
                   directory: serviceDirectory,
                   ...(serviceOptions ?? {}),

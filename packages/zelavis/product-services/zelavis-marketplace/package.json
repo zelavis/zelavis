@@ -1,0 +1,49 @@
+{
+  "name": "@zelavis/marketplace",
+  "version": "1.0.1-alpha.2",
+  "private": false,
+  "description": "Official Zelavis Marketplace Platform service.",
+  "license": "MIT",
+  "author": "Ivan Jeremic",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build && node --test test/*.test.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zelavis/zelavis.git",
+    "directory": "packages/zelavis/product-services/zelavis-marketplace"
+  },
+  "homepage": "https://www.zelavis.com",
+  "bugs": {
+    "url": "https://github.com/zelavis/zelavis/issues"
+  },
+  "dependencies": {
+    "@zelavis/server": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "typescript": "^5.9.0"
+  },
+  "keywords": [
+    "zelavis",
+    "marketplace",
+    "service"
+  ]
+}

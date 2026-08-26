@@ -9,15 +9,15 @@
     "noEmit": true,
     "baseUrl": "../..",
     "typeRoots": [
-      "packages/zelavis/services/zelavis-server/node_modules/@types",
+      "packages/server/node_modules/@types",
       "node_modules/@types"
     ],
     "paths": {
       "@zelavis/auth": [
-        "packages/zelavis/services/zelavis-app/src/auth/index.ts"
+        "packages/app/src/auth/index.ts"
       ],
       "@zelavis/db": [
-        "packages/zelavis/services/zelavis-app/src/db/index.ts"
+        "packages/app/src/db/index.ts"
       ],
       "@zelavis/ecommerce": [
         "plugins/ecommerce/src/index.ts"
@@ -29,10 +29,10 @@
         "plugins/ecommerce/plugins/stripe/src/index.ts"
       ],
       "@zelavis/server": [
-        "packages/zelavis/services/zelavis-server/src/index.ts"
+        "packages/server/src/index.ts"
       ],
       "@zelavis/server/adapters/node": [
-        "packages/zelavis/services/zelavis-server/src/adapters/node.ts"
+        "packages/server/src/adapters/node.ts"
       ],
       "zelavis": [
         "packages/zelavis/src/index.ts"
