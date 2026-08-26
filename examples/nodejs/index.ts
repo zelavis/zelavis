@@ -1,6 +1,6 @@
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
-import { createNodeServer } from "zelavis/node";
+import { createNodeServer } from "zelavis/runtimes/node";
 
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);

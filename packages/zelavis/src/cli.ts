@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { runCli, type ZelavisCliServeOptions } from "@zelavis/cli";
 import { nodeAdapter } from "./adapters/node.js";
 import { Zelavis } from "./index.js";
-import { createNodeServer } from "./node/index.js";
+import { createNodeServer } from "./runtimes/node.js";
 
 async function readVersion(): Promise<string> {
   const source = await readFile(new URL("../package.json", import.meta.url), "utf8");

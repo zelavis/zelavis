@@ -94,7 +94,7 @@ Use `Zelavis` for application and runtime code:
 ```ts
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
-import { createNodeServer } from "zelavis/node";
+import { createNodeServer } from "zelavis/runtimes/node";
 
 const zv = new Zelavis({ adapter: nodeAdapter() });
 const server = await createNodeServer(zv);
@@ -179,7 +179,7 @@ should use `new Zelavis(...)`.
 ```ts
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
-import { createNodeServer } from "zelavis/node";
+import { createNodeServer } from "zelavis/runtimes/node";
 
 const zv = new Zelavis({ adapter: nodeAdapter() });
 const server = await createNodeServer(zv);
@@ -187,7 +187,8 @@ const server = await createNodeServer(zv);
 server.listen(3000);
 ```
 
-When you do not need a framework-specific adapter, use the Web-style runtime handlers directly:
+When you do not need the standalone Node HTTP server, use the Web-style runtime
+handler directly:
 
 ```ts
 const zv = new Zelavis({});
@@ -309,13 +310,14 @@ can host websites itself from the local runtime; provider adapters such as
 external static hosts, DNS, CDN, object storage, image storage, or email belong
 in plugins and should not redefine where the Zelavis runtime itself lives.
 
-The runtime supports two complementary adapter patterns:
+The main package keeps one adapter layer: **runtime adapters**
+(`zelavis/adapters/*`). These describe the self-hosted JavaScript runtime
+Zelavis runs on and supply System Store, database, file storage, service package,
+and project-runtime defaults.
 
-- **runtime adapters** (`zelavis/adapters/*`) — describe the self-hosted JavaScript runtime Zelavis runs on, supply database/KV/file storage defaults
-- **framework utilities** (`zelavis/<framework>`) — small helper functions that wrap `zv.fetch` for a specific framework signature
-
-For fetch-native self-hosted handlers such as Bun or Next.js App Router running
-on Node, no framework utility is needed — call `zv.fetch(request)` directly.
+Framework-specific mounting helpers are not part of the main Platform OS
+surface. Long-running hosts should use `zelavis/runtimes/node` for the bundled
+Node HTTP server or call `zv.fetch(request)` from fetch-native code.
 
 Available runtime adapters:
 
@@ -328,17 +330,77 @@ Node.js is the current supported production host. Bun remains an adapter target
 while its full platform and project-runtime suite is completed; Deno is a
 planned adapter target.
 
-Available framework utilities:
+Available host utilities:
 
 ```txt
-zelavis/express       expressMiddleware(zv)
-zelavis/hono          honoMiddleware(zv)
-zelavis/fastify       fastifyPlugin(zv)
-zelavis/h3            h3Handler(zv)
-zelavis/elysia        elysiaPlugin(zv)
-zelavis/nextjs/pages  nextjsPagesRouterHandler(zv, options?)
-zelavis/node          createNodeServer(zv)
+zelavis/runtimes/node          createNodeServer(zv)
+zelavis/runtimes/bun           bun marker
+zelavis/runtimes/deno          deno marker
 ```
+
+Runtime host utilities are separate subpath exports. Import only the runtime
+subpath you need so bundlers can drop code for the other host runtimes.
+
+## SDK bundle surfaces
+
+The official SDK is a bundle surface of Zelavis itself, not a separate client
+architecture. SDK entry points reuse the portable app contracts and database
+core, but intentionally exclude:
+
+- the dashboard UI service
+- long-running host runtime utilities
+- Node, Bun, and future Deno adapters
+- server/project process orchestration
+
+Available SDK entry points:
+
+```txt
+zelavis/sdk                  fetch-native SDK core
+zelavis/sdk/browser          browser SDK surface
+zelavis/sdk/node             Node SDK surface using native fetch
+```
+
+Use the browser SDK when code should talk to a running Zelavis Platform OS
+without importing host runtime code:
+
+```ts
+import {
+  createBrowserZelavisClient,
+  createDatabase,
+} from "zelavis/sdk/browser";
+
+const client = createBrowserZelavisClient({
+  baseUrl: "https://example.com",
+});
+
+const config = await client.runtime.config();
+```
+
+The SDK also re-exports the runtime-neutral `@zelavis/app/db` and
+`@zelavis/app/auth` core APIs. Today that enables in-memory local development.
+Future browser storage adapters such as IndexedDB and SQLite WASM should attach
+to the same database driver boundary instead of creating a separate browser DB
+model.
+
+SDK builds can be checked without building the dashboard or host runtimes:
+
+```sh
+pnpm --filter zelavis build:sdk
+pnpm --filter zelavis build:sdk:browser
+pnpm --filter zelavis build:sdk:node
+```
+
+At the workspace root, the same commands are available as:
+
+```sh
+pnpm build:sdk
+pnpm build:sdk:browser
+pnpm build:sdk:node
+```
+
+These scripts compile only the selected SDK source entry and its imports. They
+are the current enforcement point for keeping browser and native-fetch SDK
+surfaces separate from UI, host runtimes, and local server adapters.
 
 Runtime resources now also feed real core-service persistence in the high-level `Zelavis` class:
 

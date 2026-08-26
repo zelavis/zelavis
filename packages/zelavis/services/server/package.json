@@ -2,7 +2,7 @@
   "name": "@zelavis/server",
   "version": "1.0.1-alpha.2",
   "private": false,
-  "description": "Unified endpoint contract and framework adapters for zelavis server packages.",
+  "description": "Unified endpoint contract and long-running Node host adapter for Zelavis server packages.",
   "license": "MIT",
   "author": "Ivan Jeremic",
   "type": "module",
@@ -12,30 +12,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./adapters/elysia": {
-      "types": "./dist/adapters/elysia.d.ts",
-      "import": "./dist/adapters/elysia.js"
-    },
-    "./adapters/express": {
-      "types": "./dist/adapters/express.d.ts",
-      "import": "./dist/adapters/express.js"
-    },
-    "./adapters/fastify": {
-      "types": "./dist/adapters/fastify.d.ts",
-      "import": "./dist/adapters/fastify.js"
-    },
-    "./adapters/hono": {
-      "types": "./dist/adapters/hono.d.ts",
-      "import": "./dist/adapters/hono.js"
-    },
-    "./adapters/h3": {
-      "types": "./dist/adapters/h3.d.ts",
-      "import": "./dist/adapters/h3.js"
-    },
-    "./adapters/nextjs-pages-router": {
-      "types": "./dist/adapters/nextjs-pages-router.d.ts",
-      "import": "./dist/adapters/nextjs-pages-router.js"
     },
     "./adapters/node": {
       "types": "./dist/adapters/node.d.ts",
@@ -62,55 +38,14 @@
   "bugs": {
     "url": "https://github.com/zelavis/zelavis/issues"
   },
-  "peerDependencies": {
-    "elysia": "^1.4.0",
-    "express": "^4.18.0 || ^5.0.0",
-    "fastify": "^5.0.0",
-    "h3": "^2.0.0",
-    "hono": "^4.13.3",
-    "next": "^16.2.5"
-  },
-  "peerDependenciesMeta": {
-    "elysia": {
-      "optional": true
-    },
-    "express": {
-      "optional": true
-    },
-    "fastify": {
-      "optional": true
-    },
-    "h3": {
-      "optional": true
-    },
-    "hono": {
-      "optional": true
-    },
-    "next": {
-      "optional": true
-    }
-  },
   "devDependencies": {
-    "@types/express": "^5.0.0",
     "@types/node": "^25.9.3",
-    "elysia": "^1.4.29",
-    "express": "^5.0.0",
-    "fastify": "^5.9.0",
-    "h3": "2.0.1-rc.22",
-    "hono": "^4.13.3",
-    "next": "16.2.11",
     "typescript": "^5.9.0"
   },
   "keywords": [
     "server",
     "endpoints",
-    "elysia",
-    "express",
-    "fastify",
-    "h3",
-    "hono",
-    "nextjs",
-    "pages-router",
+    "node",
     "adapter"
   ]
 }

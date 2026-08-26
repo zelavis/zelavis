@@ -31,9 +31,6 @@
       "@zelavis/server": [
         "packages/zelavis/services/server/src/index.ts"
       ],
-      "@zelavis/server/adapters/express": [
-        "packages/zelavis/services/server/src/adapters/express.ts"
-      ],
       "@zelavis/server/adapters/node": [
         "packages/zelavis/services/server/src/adapters/node.ts"
       ],
@@ -43,8 +40,8 @@
       "zelavis/adapters/node": [
         "packages/zelavis/src/adapters/node.ts"
       ],
-      "zelavis/node": [
-        "packages/zelavis/src/node/index.ts"
+      "zelavis/runtimes/node": [
+        "packages/zelavis/src/runtimes/node.ts"
       ]
     }
   },

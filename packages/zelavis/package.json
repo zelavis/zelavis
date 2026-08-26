@@ -32,33 +32,29 @@
       "types": "./dist/adapters/bun.d.ts",
       "import": "./dist/adapters/bun.js"
     },
-    "./express": {
-      "types": "./dist/express/index.d.ts",
-      "import": "./dist/express/index.js"
+    "./runtimes/node": {
+      "types": "./dist/runtimes/node.d.ts",
+      "import": "./dist/runtimes/node.js"
     },
-    "./hono": {
-      "types": "./dist/hono/index.d.ts",
-      "import": "./dist/hono/index.js"
+    "./runtimes/bun": {
+      "types": "./dist/runtimes/bun.d.ts",
+      "import": "./dist/runtimes/bun.js"
     },
-    "./fastify": {
-      "types": "./dist/fastify/index.d.ts",
-      "import": "./dist/fastify/index.js"
+    "./runtimes/deno": {
+      "types": "./dist/runtimes/deno.d.ts",
+      "import": "./dist/runtimes/deno.js"
     },
-    "./h3": {
-      "types": "./dist/h3/index.d.ts",
-      "import": "./dist/h3/index.js"
+    "./sdk": {
+      "types": "./dist/sdk/fetch.d.ts",
+      "import": "./dist/sdk/fetch.js"
     },
-    "./elysia": {
-      "types": "./dist/elysia/index.d.ts",
-      "import": "./dist/elysia/index.js"
+    "./sdk/browser": {
+      "types": "./dist/sdk/browser.d.ts",
+      "import": "./dist/sdk/browser.js"
     },
-    "./nextjs/pages": {
-      "types": "./dist/nextjs/pages/index.d.ts",
-      "import": "./dist/nextjs/pages/index.js"
-    },
-    "./node": {
-      "types": "./dist/node/index.d.ts",
-      "import": "./dist/node/index.js"
+    "./sdk/node": {
+      "types": "./dist/sdk/node.d.ts",
+      "import": "./dist/sdk/node.js"
     },
     "./storage/s3": {
       "types": "./dist/storage/s3.d.ts",
@@ -69,6 +65,9 @@
     "clean": "node scripts/clean-dist.mjs",
     "build": "pnpm run clean && pnpm --filter @zelavis/server build && pnpm --filter @zelavis/app build && pnpm --filter @zelavis/app-db-node-sqlite build && pnpm --filter @zelavis/ui build && pnpm --filter @zelavis/cli build && tsc -p tsconfig.json",
     "build:runtime": "pnpm run clean && pnpm --filter @zelavis/app build && pnpm --filter @zelavis/app-db-node-sqlite build && pnpm --filter @zelavis/ui build:plugin && pnpm --filter @zelavis/cli build && tsc -p tsconfig.json",
+    "build:sdk": "pnpm run build:sdk:browser && pnpm run build:sdk:node",
+    "build:sdk:browser": "pnpm --filter @zelavis/app build && tsc -p tsconfig.sdk.browser.json",
+    "build:sdk:node": "pnpm --filter @zelavis/app build && tsc -p tsconfig.sdk.node.json",
     "typecheck": "pnpm --filter @zelavis/app build && pnpm --filter @zelavis/app-db-node-sqlite build && pnpm --filter @zelavis/ui build:plugin && pnpm --filter @zelavis/cli build && tsc -p tsconfig.json --noEmit",
     "test": "pnpm run build && pnpm --filter @zelavis/ecommerce build && node --test test/*.test.mjs"
   },
@@ -101,11 +100,6 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.9.1",
-    "elysia": "^1.4.28",
-    "fastify": "^5.9.0",
-    "h3": "2.0.1-rc.22",
-    "hono": "^4.13.3",
-    "next": "16.2.11",
     "typescript": "^5.9.0"
   },
   "keywords": [

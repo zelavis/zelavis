@@ -1,19 +1,19 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { zelavisEcommerceService } from "../../../plugins/ecommerce/dist/index.js";
 
-test("zelavis package exports runtime APIs, local adapters, and framework utility subpaths", async () => {
+test("zelavis package exports runtime APIs and local host adapters", async () => {
   const runtime = await import("zelavis");
   const adapters = await import("zelavis/adapters");
   const nodeAdapter = await import("zelavis/adapters/node");
   const bunAdapter = await import("zelavis/adapters/bun");
-  const expressUtil = await import("zelavis/express");
-  const honoUtil = await import("zelavis/hono");
-  const fastifyUtil = await import("zelavis/fastify");
-  const h3Util = await import("zelavis/h3");
-  const elysiaUtil = await import("zelavis/elysia");
-  const nextjsPagesUtil = await import("zelavis/nextjs/pages");
-  const nodeServerUtil = await import("zelavis/node");
+  const nodeServerUtil = await import("zelavis/runtimes/node");
+  const bunRuntime = await import("zelavis/runtimes/bun");
+  const denoRuntime = await import("zelavis/runtimes/deno");
+  const sdk = await import("zelavis/sdk");
+  const browserSdk = await import("zelavis/sdk/browser");
+  const nodeSdk = await import("zelavis/sdk/node");
   const s3Storage = await import("zelavis/storage/s3");
 
   assert.equal(typeof runtime.zelavis, "function");
@@ -43,24 +43,69 @@ test("zelavis package exports runtime APIs, local adapters, and framework utilit
   assert.equal(typeof nodeAdapter.createNodeServicePackageInstaller, "function");
   assert.equal(typeof bunAdapter.bunAdapter, "function");
 
-  // Framework utility helpers
-  assert.equal(typeof expressUtil.expressMiddleware, "function");
-  assert.equal(typeof honoUtil.honoMiddleware, "function");
-  assert.equal(typeof fastifyUtil.fastifyPlugin, "function");
-  assert.equal(typeof h3Util.h3Handler, "function");
-  assert.equal(typeof elysiaUtil.elysiaPlugin, "function");
-  assert.equal(typeof nextjsPagesUtil.nextjsPagesRouterHandler, "function");
+  // Long-running Node host utility
+  assert.equal(nodeServerUtil.node, true);
   assert.equal(typeof nodeServerUtil.createNodeServer, "function");
+  assert.equal(bunRuntime.bun, true);
+  assert.equal(denoRuntime.deno, true);
+
+  // SDK bundle surfaces
+  assert.equal(typeof sdk.createZelavisClient, "function");
+  assert.equal(sdk.fetchSdkSurface.excludes.ui, true);
+  assert.deepEqual(sdk.fetchSdkSurface.excludes.runtimes, [
+    "node",
+    "bun",
+    "deno",
+  ]);
+  assert.equal(browserSdk.browser, true);
+  assert.equal(typeof browserSdk.createBrowserZelavisClient, "function");
+  assert.equal(nodeSdk.nodeSdk, true);
+  assert.equal(typeof nodeSdk.createNodeZelavisClient, "function");
 
   // Storage helpers
   assert.equal(typeof s3Storage.createS3CompatibleFileStorage, "function");
   assert.equal(typeof s3Storage.resolveS3CacheControlPreset, "function");
 });
 
+test("SDK browser surface compiles without runtime host or dashboard imports", async () => {
+  const emitted = await Promise.all([
+    readFile(new URL("../dist/sdk/browser.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist/sdk/fetch.js", import.meta.url), "utf8"),
+  ]);
+  const joined = emitted.join("\n");
+
+  assert.equal(/from ["']@zelavis\/ui/.test(joined), false);
+  assert.equal(/from ["']@zelavis\/server/.test(joined), false);
+  assert.equal(/from ["']node:/.test(joined), false);
+  assert.equal(/from ["']better-sqlite3/.test(joined), false);
+  assert.equal(/from ["']@zelavis\/app-db-node-sqlite/.test(joined), false);
+  assert.equal(/from ["']@zelavis\/app-db-bun-sqlite/.test(joined), false);
+  assert.equal(/from ["']\.\.\/runtimes\//.test(joined), false);
+  assert.equal(/from ["']\.\.\/adapters\//.test(joined), false);
+});
+
+test("SDK client resolves Zelavis runtime endpoints through native fetch", async () => {
+  const { createZelavisClient } = await import("zelavis/sdk/browser");
+  const requested = [];
+  const client = createZelavisClient({
+    baseUrl: "https://example.test",
+    fetch(input, init) {
+      requested.push({ input: String(input), init });
+      return Response.json({ ok: true });
+    },
+  });
+
+  assert.deepEqual(await client.runtime.config(), { ok: true });
+  assert.equal(
+    requested[0].input,
+    "https://example.test/zelavis/api/v1/runtime/config",
+  );
+});
+
 test("Zelavis accepts a node env adapter and exposes a Node HTTP server through the utility", async () => {
   const { Zelavis } = await import("zelavis");
   const { nodeAdapter } = await import("zelavis/adapters/node");
-  const { createNodeServer } = await import("zelavis/node");
+  const { createNodeServer } = await import("zelavis/runtimes/node");
 
   const zelavis = new Zelavis({
     adapter: nodeAdapter(),

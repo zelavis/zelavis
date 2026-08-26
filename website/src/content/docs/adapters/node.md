@@ -4,14 +4,14 @@ title: Node.js
 The Node.js adapter has two pieces:
 
 - `nodeAdapter()` from `zelavis/adapters/node` — the environment adapter that provides SQLite, file storage, and dashboard settings persistence.
-- `createNodeServer(zv)` from `zelavis/node` — a utility that creates a standalone Node HTTP server bound to Zelavis.
+- `createNodeServer(zv)` from `zelavis/runtimes/node` — a utility that creates a standalone Node HTTP server bound to Zelavis.
 
 ## Basic usage
 
 ```ts
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
-import { createNodeServer } from "zelavis/node";
+import { createNodeServer } from "zelavis/runtimes/node";
 
 const zv = new Zelavis({ adapter: nodeAdapter() });
 const server = await createNodeServer(zv);
@@ -24,7 +24,8 @@ server.listen(3000);
 nodeAdapter({
   dataDirectory?: string;           // default: ".zelavis"
   database?: false | { /* ... */ };
-  dashboard?: false | { /* ... */ };
+  systemStore?: false | { filename?: string };
+  projects?: false | { /* ... */ };
   services?: false | {
     directory?: string;             // default: ".zelavis/services"
     allowRemote?: boolean;          // default: true
@@ -43,13 +44,8 @@ nodeAdapter({
 
 ## Dashboard settings storage
 
-The Node adapter automatically wires a file-backed dashboard settings store. The helper is also exported if you want it directly:
-
-```ts
-import { createFileDashboardSettingsStore } from "zelavis/adapters/node";
-```
-
-Use it when you want runtime-editable dashboard settings persisted to disk.
+The Node adapter automatically wires the Platform System Store. Runtime-editable
+dashboard settings persist there by default, separate from project databases.
 
 ## Runtime service imports
 

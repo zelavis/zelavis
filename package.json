@@ -9,6 +9,9 @@
     "audit:security": "pnpm audit --audit-level=moderate --ignore GHSA-rmmr-r34h-pfm5",
     "audit:security:full": "pnpm audit --audit-level=low",
     "build": "pnpm -r --filter './packages/*' --filter './plugins/*' --filter './plugins/*/adapters/*' --filter './plugins/*/plugins/*' --filter './packages/*/adapters/*' --filter './packages/*/plugins/*' --if-present build",
+    "build:sdk": "pnpm --filter zelavis build:sdk",
+    "build:sdk:browser": "pnpm --filter zelavis build:sdk:browser",
+    "build:sdk:node": "pnpm --filter zelavis build:sdk:node",
     "check": "pnpm run typecheck",
     "ci:runtime": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/app build && pnpm --filter @zelavis/app-db-node-sqlite build && pnpm --filter @zelavis/app-db-bun-sqlite build && pnpm --filter @zelavis/ecommerce build && pnpm check && pnpm --filter zelavis test",
     "ci:ui": "pnpm --filter @zelavis/ui typecheck && ZELAVIS_UI_BASE_PATH=/zelavis/ pnpm --filter @zelavis/ui exec playwright test --project=desktop",
@@ -21,13 +24,7 @@
     "example:plugin-basic:package": "pnpm install --filter @zelavis/example-plugin-basic && pnpm --filter @zelavis/example-plugin-basic package",
     "example:plugin-basic:specifier": "pnpm install --filter @zelavis/example-plugin-basic && pnpm --filter @zelavis/example-plugin-basic specifier",
     "example:bun": "pnpm --filter @zelavis/example-bun dev",
-    "example:elysia": "pnpm --filter @zelavis/example-elysia dev",
-    "example:express": "pnpm --filter @zelavis/example-express dev",
-    "example:fastify": "pnpm --filter @zelavis/example-fastify dev",
-    "example:h3": "pnpm --filter @zelavis/example-h3 dev",
-    "example:hono": "pnpm --filter @zelavis/example-hono dev",
     "example:nextjs": "pnpm --filter @zelavis/example-nextjs dev",
-    "example:nextjs-pages-router": "pnpm --filter @zelavis/example-nextjs-pages-router dev",
     "example:nodejs": "pnpm --filter @zelavis/example-nodejs dev",
     "example:web-fetch": "pnpm --filter @zelavis/example-web-fetch typecheck",
     "release:check": "pnpm typecheck && pnpm test && pnpm build",
@@ -66,8 +63,6 @@
   "devDependencies": {
     "@changesets/changelog-git": "^0.2.1",
     "@changesets/cli": "^2.31.0",
-    "@types/express": "^5.0.6",
-    "express": "^5.2.1",
     "get-port": "^7.2.0",
     "zelavis": "workspace:*"
   }
