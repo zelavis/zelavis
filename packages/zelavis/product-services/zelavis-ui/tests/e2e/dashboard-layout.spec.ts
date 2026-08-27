@@ -14,6 +14,37 @@ function normalizeDashboardBasePath(path: string) {
 const dashboardBasePath = normalizeDashboardBasePath(
   process.env.ZELAVIS_UI_BASE_PATH ?? '/',
 )
+const e2eProjectId = process.env.ZELAVIS_E2E_PROJECT_ID
+const projectLocalPaths = new Set([
+  '/',
+  '/auth',
+  '/backend',
+  '/content',
+  '/database',
+  '/extensions',
+  '/marketplace',
+  '/media',
+  '/storage',
+  '/users',
+  '/website',
+  '/workloads',
+])
+
+function scopeProjectPath(path: string) {
+  if (!e2eProjectId) {
+    return path
+  }
+
+  const url = new URL(path, 'http://zelavis.local')
+  const root = `/${url.pathname.split('/').filter(Boolean)[0] ?? ''}`
+  if (!projectLocalPaths.has(root)) {
+    return path
+  }
+
+  const projectRoot = `/projects/${encodeURIComponent(e2eProjectId)}`
+  const projectPath = url.pathname === '/' ? projectRoot : `${projectRoot}${url.pathname}`
+  return `${projectPath}${url.search}`
+}
 
 function toDashboardPath(path: string) {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`
@@ -30,7 +61,7 @@ function toDashboardPath(path: string) {
 }
 
 async function gotoDashboard(page: Page, path: string) {
-  await page.goto(toDashboardPath(path))
+  await page.goto(toDashboardPath(scopeProjectPath(path)))
   await waitForDashboardHydration(page)
 }
 
@@ -101,11 +132,11 @@ async function getTranslateX(track: Locator) {
   })
 }
 
-test('desktop dashboard sidebar does not overlap', async ({ page }, testInfo) => {
+test('@smoke desktop dashboard sidebar does not overlap', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
   await gotoDashboard(page, '/')
-  await expect(page.getByRole('complementary', { name: 'Dashboard navigation' })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: 'Dashboard navigation' })).toBeVisible()
   await expect(page.getByRole('button', { name: /Zelavis Runtime/ })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Settings' })).toBeVisible()
 
@@ -113,7 +144,7 @@ test('desktop dashboard sidebar does not overlap', async ({ page }, testInfo) =>
   await expect(appHeader.getByRole('link', { name: 'GitHub' })).toHaveCount(0)
   await expect(appHeader.getByRole('button', { name: /Theme mode/ })).toHaveCount(0)
 
-  const nav = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const nav = page.getByRole('navigation', { name: 'Dashboard navigation' })
   const rootSlide = nav.locator('.swiper-slide-active').first()
   const links = rootSlide
     .getByRole('list')
@@ -167,7 +198,7 @@ test('mobile dashboard captures a stable stacked header', async ({ page }, testI
 
   await gotoDashboard(page, '/database')
   await expect(page.getByRole('button', { name: 'Toggle Sidebar' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Core Database' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Database' })).toBeVisible()
 
   const pageOverflow = await page.evaluate(
     () => document.documentElement.scrollWidth - window.innerWidth,
@@ -184,7 +215,7 @@ test('mobile dashboard captures a stable stacked header', async ({ page }, testI
   })
 })
 
-test('mounted dev server can serve the dashboard from /zelavis/', async ({
+test('@smoke mounted dev server can serve the dashboard from /zelavis/', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
@@ -193,18 +224,18 @@ test('mounted dev server can serve the dashboard from /zelavis/', async ({
   await gotoDashboard(page, '/settings')
 
   await expect(page).toHaveURL(/\/zelavis\/settings$/)
-  await expect(page.getByRole('heading', { name: 'Runtime Settings' })).toBeVisible()
+  await expect(page.getByText('Configuration', { exact: true })).toBeVisible()
   await expect(page.locator('html[data-zelavis-hydrated="true"]')).toBeVisible()
 })
 
-test('database route restores the database sidebar panel', async ({ page }, testInfo) => {
+test('@smoke database route restores the database sidebar panel', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
   await gotoDashboard(page, '/database')
 
-  await expect(page.getByRole('heading', { name: 'Core Database' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Database' })).toBeVisible()
   const activeSlide = page
-    .getByRole('complementary', { name: 'Dashboard navigation' })
+    .getByRole('navigation', { name: 'Dashboard navigation' })
     .locator('.swiper-slide-active')
     .first()
 
@@ -220,7 +251,7 @@ test('storage lives under the core slide for advanced runtime management', async
 
   await gotoDashboard(page, '/storage')
 
-  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
   const activeSlide = sidebar.locator('.swiper-slide-active').first()
 
   await expect(activeSlide.getByRole('button', { name: 'Core' })).toBeVisible()
@@ -240,7 +271,7 @@ test('users is a top-level item on the first sidebar slide', async ({
 
   await gotoDashboard(page, '/users')
 
-  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
   const rootSlide = sidebar.locator('.swiper-slide-active').first()
 
   await expect(rootSlide.getByRole('link', { name: 'Users', exact: true })).toBeVisible()
@@ -255,7 +286,7 @@ test('content route restores the content types sidebar panel', async ({
 
   await gotoDashboard(page, '/content')
 
-  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
   const activeSlide = sidebar.locator('.swiper-slide-active').first()
 
   await expect(activeSlide.getByRole('button', { name: 'Content Types', exact: true })).toBeVisible()
@@ -356,7 +387,7 @@ test('content type sidebar parent opens entries view', async ({
 
   await gotoDashboard(page, '/content')
 
-  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
   await sidebar.getByRole('button', { name: 'Blog Posts', exact: true }).click()
 
   await expect(page).toHaveURL(/\/content\/blog-posts(?:\?sidebar=Content%2FBlog%2520Posts)?$/)
@@ -370,7 +401,7 @@ test('database slide lists logical tables and system tables', async ({
 
   await gotoDashboard(page, '/database')
 
-  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
   const tablesSlide = sidebar.locator('.swiper-slide-active').first()
 
   await expect(tablesSlide.getByRole('button', { name: 'Database', exact: true })).toBeVisible()
@@ -384,14 +415,14 @@ test('database slide lists logical tables and system tables', async ({
   await expect(page.getByRole('heading', { name: 'Core Database' })).toBeVisible()
 })
 
-test('database direct system table routes restore the matching sidebar slide', async ({
+test('@smoke database direct system table routes restore the matching sidebar slide', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
   await gotoDashboard(page, '/database?systemTable=zv_events')
 
-  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
   const activeSlide = sidebar.locator('.swiper-slide-active').first()
 
   await expect(activeSlide.getByRole('link', { name: 'zv_events', exact: true })).toBeVisible()
@@ -687,7 +718,7 @@ test('database table creation revalidates sidebar tables', async ({
 
   await expect(page).toHaveURL(/databaseTable=invoices/)
 
-  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
   const activeSlide = sidebar.locator('.swiper-slide-active').first()
 
   await expect(activeSlide.getByRole('link', { name: 'invoices', exact: true })).toBeVisible()
@@ -713,7 +744,7 @@ test('media gallery is a top-level item on the first sidebar slide', async ({
 
   await gotoDashboard(page, '/media')
 
-  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
   const rootSlide = sidebar.locator('.swiper-slide-active').first()
 
   await expect(rootSlide.getByRole('link', { name: 'Media Gallery', exact: true })).toBeVisible()
@@ -727,7 +758,7 @@ test('navigation can leave media gallery after visiting it', async ({
 
   await gotoDashboard(page, '/media')
 
-  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
   await sidebar.getByRole('link', { name: 'Users', exact: true }).click()
 
   await expect(page).toHaveURL(/\/users$/)
@@ -742,14 +773,14 @@ test('marketplace is a top-level item on the first sidebar slide', async ({
 
   await gotoDashboard(page, '/marketplace')
 
-  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
   const rootSlide = sidebar.locator('.swiper-slide-active').first()
 
   await expect(rootSlide.getByRole('link', { name: 'Marketplace', exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Marketplace' })).toBeVisible()
 })
 
-test('marketplace shows promoted official services with install actions', async ({
+test('@smoke marketplace shows promoted official services with install actions', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
@@ -769,7 +800,7 @@ test('marketplace does not expose ecommerce in extensions before install', async
 
   await gotoDashboard(page, '/')
 
-  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
   await expect(sidebar.getByRole('button', { name: 'Extensions', exact: true })).toBeVisible()
   await expect(sidebar.getByRole('button', { name: 'Ecommerce', exact: true })).toHaveCount(0)
 })
@@ -800,13 +831,13 @@ test('sidebar category rows drill down into sliding panels', async ({
 
   await page.getByRole('button', { name: 'Database', exact: true }).click()
   await expect(
-    page.getByRole('complementary', { name: 'Dashboard navigation' }).locator('.swiper-slide-active'),
+    page.getByRole('navigation', { name: 'Dashboard navigation' }).locator('.swiper-slide-active'),
   ).toContainText('Database')
 
   await page.getByRole('button', { name: 'Database' }).click()
   await expect(
     page
-      .getByRole('complementary', { name: 'Dashboard navigation' })
+      .getByRole('navigation', { name: 'Dashboard navigation' })
       .getByRole('button', { name: 'Backend', exact: true }),
   ).toBeVisible()
 })
@@ -818,7 +849,7 @@ test('sidebar back works on route-owned panels without changing content', async 
 
   await gotoDashboard(page, '/settings')
 
-  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
   const activeSlide = sidebar.locator('.swiper-slide-active').first()
 
   await expect(activeSlide.getByRole('link', { name: 'Runtime', exact: true })).toBeVisible()
@@ -828,7 +859,7 @@ test('sidebar back works on route-owned panels without changing content', async 
     name: 'Overview',
     exact: true,
   })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Runtime Settings' })).toBeVisible()
+  await expect(page.getByText('Configuration', { exact: true })).toBeVisible()
 })
 
 test('sidebar shows a single platform label on the root panel', async ({
@@ -838,7 +869,7 @@ test('sidebar shows a single platform label on the root panel', async ({
 
   await gotoDashboard(page, '/')
 
-  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
   await expect(sidebar.getByText('Platform', { exact: true })).toHaveCount(1)
   await expect(
     sidebar.locator('.swiper-slide-active').getByText('Platform', { exact: true }),
@@ -851,7 +882,7 @@ test('sidebar panels animate between slides', async ({ page }, testInfo) => {
 
   await gotoDashboard(page, '/')
 
-  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
   const viewport = sidebar.locator('.swiper')
   const track = sidebar.locator('.swiper-wrapper')
   const viewportWidth = await viewport.evaluate((element) => element.clientWidth)
@@ -884,7 +915,7 @@ test('sidebar back to platform returns the page to overview', async ({
 
   await gotoDashboard(page, '/')
 
-  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
   let activeSlide = sidebar.locator('.swiper-slide-active').first()
 
   await activeSlide.getByRole('button', { name: 'Backend', exact: true }).click()
@@ -913,7 +944,7 @@ test('sidebar panel state survives refresh through the router', async ({
   test.skip(testInfo.project.name !== 'desktop')
 
   await gotoDashboard(page, '/')
-  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
 
   await sidebar.getByRole('button', { name: 'Extensions', exact: true }).click()
 
@@ -937,7 +968,7 @@ test('sidebar route panels restore from the current route on refresh', async ({
   await page.reload()
   await waitForDashboardHydration(page)
 
-  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
   const activeSlide = sidebar.locator('.swiper-slide-active').first()
 
   await expect(activeSlide.getByRole('button', { name: 'Database', exact: true })).toBeVisible()
@@ -953,7 +984,7 @@ test('sidebar has one internal link per dashboard route', async ({
   await gotoDashboard(page, '/')
 
   const internalHrefs = await page
-    .getByRole('complementary', { name: 'Dashboard navigation' })
+    .getByRole('navigation', { name: 'Dashboard navigation' })
     .locator('a[href^="/"]')
     .evaluateAll((links) =>
       links.map((link) => {
@@ -972,7 +1003,7 @@ test('desktop sidebar collapses to a rail and expands content', async ({
 
   await gotoDashboard(page, '/')
 
-  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
   const sidebarState = page.locator('[data-slot="sidebar"]').first()
   const header = page.locator('body > div header').first()
   const expandedSidebar = await sidebar.boundingBox()
@@ -999,7 +1030,7 @@ test('services are reachable from the settings area', async ({
 
   await gotoDashboard(page, '/settings')
 
-  const sidebar = page.getByRole('complementary', { name: 'Dashboard navigation' })
+  const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
   await expect(sidebar.getByRole('link', { name: 'Services', exact: true })).toBeVisible()
   await page
     .locator('[data-slot="card"]')
@@ -1010,12 +1041,12 @@ test('services are reachable from the settings area', async ({
   await expect(page).toHaveURL(/\/services$/)
 })
 
-test('settings shows read-only root path controls', async ({ page }, testInfo) => {
+test('@smoke settings shows read-only root path controls', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
   await gotoDashboard(page, '/settings')
 
-  await expect(page.getByRole('heading', { name: 'Runtime Settings' })).toBeVisible()
+  await expect(page.getByText('Configuration', { exact: true })).toBeVisible()
   await expect(page.getByLabel('Path')).toHaveValue('/zelavis')
   await expect(
     page.getByText(
@@ -1191,11 +1222,12 @@ test('sidebar popovers use neutral shadcn hover states in dark mode', async ({
   })
 })
 
-test('footer shows the runtime config source', async ({ page }, testInfo) => {
+test('@smoke overview shows the scoped runtime config source', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
   await gotoDashboard(page, '/')
 
-  await expect(page.locator('footer')).toContainText('/zelavis/api/v1')
-  await expect(page.locator('footer')).toContainText(/embedded|endpoint|fallback/)
+  await expect(
+    page.getByText(/\/runtime\/projects\/dashboard-e2e\/proxy\/zelavis\/api\/v1/).first(),
+  ).toBeVisible()
 })
