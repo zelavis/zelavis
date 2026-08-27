@@ -35,7 +35,7 @@
     "url": "https://github.com/zelavis/zelavis/issues"
   },
   "dependencies": {
-    "@paypal/paypal-server-sdk": "^2.4.0",
+    "@paypal/paypal-server-sdk": "^2.5.0",
     "@zelavis/ecommerce": "workspace:*"
   },
   "peerDependencies": {

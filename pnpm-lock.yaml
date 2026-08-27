@@ -494,8 +494,8 @@ importers:
   plugins/ecommerce/plugins/paypal:
     dependencies:
       '@paypal/paypal-server-sdk':
-        specifier: ^2.4.0
-        version: 2.4.0
+        specifier: ^2.5.0
+        version: 2.5.0
       '@zelavis/ecommerce':
         specifier: workspace:*
         version: link:../..
@@ -560,8 +560,8 @@ packages:
     resolution: {integrity: sha512-PQmSU32ndxtDddMCjbkNY/sVvDwQAsHUGKrdG5aGVE7iw/qvB2Tm2zyCarOB5TlDr4OB+/tuLCVhji0icx6MHg==}
     engines: {node: '>=14.15.0 || >=16.0.0'}
 
-  '@apimatic/core@0.10.29':
-    resolution: {integrity: sha512-QhORiq0QbjlDMrw8ZZsAeG2DzE6QgGz5ukD5w2MOWE/3iIWnUDEROjmc2SfhyiGsE3GoEJ8cyhMMdjlOioP6ww==}
+  '@apimatic/core@0.10.30':
+    resolution: {integrity: sha512-MqODm1YwuW5yK7gkVtqiRQBgoAfjsTSNYTYJP4cg/JDaF8RokpiupSEDuUW6Xdo3fl/4tGCzphtAlKSeLUWKVA==}
     engines: {node: '>=14.15.0 || >=16.0.0'}
 
   '@apimatic/file-wrapper@0.3.9':
@@ -2152,8 +2152,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@paypal/paypal-server-sdk@2.4.0':
-    resolution: {integrity: sha512-/DMnAaraDHZwpanwdxuyf8D1Qmfx/x6P8sm0NxyrVG7jFi8n/vBrmYYGkY++5Lhz7FOTdE/YB8lb+X3zro+MOw==}
+  '@paypal/paypal-server-sdk@2.5.0':
+    resolution: {integrity: sha512-smJXZx7Euj6f886BszgMyy8dhWWVCI0++QDPn+I5ugcYwNmhzR+vvWr5CuW1Z4+KPh44hSOzhlXnNEjWnugEtg==}
     engines: {node: '>=14.17.0'}
 
   '@playwright/test@1.62.1':
@@ -7846,7 +7846,7 @@ snapshots:
       '@apimatic/json-bigint': 1.2.0
       tslib: 2.8.1
 
-  '@apimatic/core@0.10.29':
+  '@apimatic/core@0.10.30':
     dependencies:
       '@apimatic/convert-to-stream': 0.1.9
       '@apimatic/core-interfaces': 0.2.14
@@ -9629,13 +9629,14 @@ snapshots:
   '@pagefind/windows-x64@1.5.2':
     optional: true
 
-  '@paypal/paypal-server-sdk@2.4.0':
+  '@paypal/paypal-server-sdk@2.5.0':
     dependencies:
       '@apimatic/authentication-adapters': 0.5.14
       '@apimatic/axios-client-adapter': 0.3.21
-      '@apimatic/core': 0.10.29
+      '@apimatic/core': 0.10.30
       '@apimatic/oauth-adapters': 0.4.18
       '@apimatic/schema': 0.7.21
+      tslib: 2.8.1
     transitivePeerDependencies:
       - debug
       - supports-color
