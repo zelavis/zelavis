@@ -77,6 +77,14 @@ jobs:
           cat /tmp/zelavis-runtime.log
           exit 1
 
+      - name: Create isolated dashboard test project
+        run: |
+          curl --fail --show-error \
+            --request POST \
+            --header "content-type: application/json" \
+            --data '{"id":"dashboard-e2e","name":"Zelavis Runtime","start":true}' \
+            http://127.0.0.1:3000/zelavis/api/v1/runtime/projects
+
       - name: Run mounted desktop dashboard e2e
         run: pnpm ci:ui
 
