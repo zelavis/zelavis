@@ -67,12 +67,6 @@ export type DashboardNavSearch = {
   domainAction?: "add" | "buy" | "transfer";
   resourceView?: "processes" | "storage" | "limits";
   workloadView?: "functions" | "jobs" | "schedules" | "webhooks";
-  systemTable?:
-    | "zv_collections"
-    | "zv_events"
-    | "zv_schemas"
-    | "zv_time_series_checkpoints"
-    | "zv_time_series_points";
   databaseTable?: string;
   new?: string;
   sidebar?: string;
@@ -685,9 +679,9 @@ function getServiceMenuIcon(title: string, serviceName?: string): LucideIcon {
   }
 
   switch (serviceName ?? title.toLowerCase()) {
-    case "@zelavis/core":
+    case "zelavis/platform":
       return Fingerprint;
-    case "@zelavis/marketplace":
+    case "zelavis/marketplace":
       return Boxes;
     case "@zelavis/auth":
       return Fingerprint;
@@ -843,7 +837,7 @@ export const extensionServiceNavItems =
 
 const defaultRuntimeServices: readonly RuntimeService[] = [
   {
-    name: "@zelavis/core",
+    name: "zelavis/platform",
     core: true,
     apiPath: "/api/v1/runtime",
     menu: {
@@ -939,7 +933,7 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
     },
   },
   {
-    name: "@zelavis/marketplace",
+    name: "zelavis/marketplace",
     core: true,
     apiPath: "/api/v1/marketplace",
     menu: {
@@ -983,7 +977,7 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
       surface: "core",
       panelLabel: "Database",
       dynamicItems: {
-        path: "/database/menu/tables",
+        path: "/database/menu/tables?tenantId=zelavis-app",
         emptyTitle: "No tables yet",
       },
       items: [
@@ -993,44 +987,6 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
           pageLabel: "Database",
           fixed: true,
           fixedOrder: 1,
-        },
-        {
-          title: "System Tables",
-          path: "/database",
-          search: { systemTable: "zv_collections" },
-          panelLabel: "System Tables",
-          items: [
-            {
-              title: "zv_collections",
-              path: "/database",
-              pageLabel: "Database",
-              search: { systemTable: "zv_collections" },
-            },
-            {
-              title: "zv_events",
-              path: "/database",
-              pageLabel: "Database",
-              search: { systemTable: "zv_events" },
-            },
-            {
-              title: "zv_schemas",
-              path: "/database",
-              pageLabel: "Database",
-              search: { systemTable: "zv_schemas" },
-            },
-            {
-              title: "zv_time_series_checkpoints",
-              path: "/database",
-              pageLabel: "Database",
-              search: { systemTable: "zv_time_series_checkpoints" },
-            },
-            {
-              title: "zv_time_series_points",
-              path: "/database",
-              pageLabel: "Database",
-              search: { systemTable: "zv_time_series_points" },
-            },
-          ],
         },
       ],
     },

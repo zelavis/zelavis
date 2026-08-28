@@ -1,9 +1,9 @@
-import type { AuthApi } from "@zelavis/app/auth";
+import type { AuthApi } from "../app/auth/index.js";
 import type {
   CreateDatabaseOptions,
   DatabaseApi,
   DatabaseJsonObject,
-} from "@zelavis/app/db";
+} from "../app/db/index.js";
 
 export type {
   AuthApi,
@@ -16,7 +16,7 @@ export {
   AuthNotFoundError,
   AuthValidationError,
   authService,
-} from "@zelavis/app/auth";
+} from "../app/auth/index.js";
 export {
   createDatabase,
   DatabaseConflictError,
@@ -24,21 +24,21 @@ export {
   DatabaseRevisionMismatchError,
   DatabaseValidationError,
   defineDatabaseService,
-} from "@zelavis/app/db";
+} from "../app/db/index.js";
 export type {
   CollectionField,
   CollectionFieldEntry,
   CollectionSchema,
   CollectionSchemaSummary,
-} from "@zelavis/app/db/schema";
+} from "../app/db/schema/index.js";
 
 export type ZelavisSdkSurfaceTarget = "fetch" | "browser" | "node";
 export type ZelavisSdkRuntimeName = "node" | "bun" | "deno";
 export type ZelavisSdkServiceName =
-  | "@zelavis/app/auth"
-  | "@zelavis/app/db"
-  | "@zelavis/app/workloads"
-  | "@zelavis/server"
+  | "zelavis/app/auth"
+  | "zelavis/app/db"
+  | "zelavis/app/workloads"
+  | "zelavis/runtime"
   | "@zelavis/ui";
 
 export interface ZelavisSdkSurfaceManifest {
@@ -128,12 +128,12 @@ export const fetchSdkSurface: ZelavisSdkSurfaceManifest = {
     contracts: true,
     fetchClient: true,
     localDatabaseCore: true,
-    services: ["@zelavis/app/auth", "@zelavis/app/db"],
+    services: ["zelavis/app/auth", "zelavis/app/db"],
   },
   excludes: {
     ui: true,
     runtimes: ["node", "bun", "deno"],
-    services: ["@zelavis/app/workloads", "@zelavis/server", "@zelavis/ui"],
+    services: ["zelavis/app/workloads", "zelavis/runtime", "@zelavis/ui"],
   },
 };
 

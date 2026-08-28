@@ -7,11 +7,9 @@ const docsRoot = "website/src/content/docs";
 const targets = [
   docsRoot,
   "packages/zelavis/README.md",
+  "packages/zelavis/ARCHITECTURE.md",
+  "packages/zelavis/TODO.md",
   "packages/zelavis/product-services/zelavis-ui/README.md",
-  "packages/server/README.md",
-  "packages/app/README.md",
-  "packages/zelavis/product-services/zelavis-core/README.md",
-  "packages/zelavis/product-services/zelavis-marketplace/README.md",
 ];
 
 const stalePatterns = [
@@ -44,7 +42,7 @@ const stalePatterns = [
   {
     pattern: /core `@zelavis\/server` service/i,
     message:
-      "Docs assign Zelavis product authority to the reusable @zelavis/server package.",
+      "Docs assign Zelavis product authority to the reusable zelavis/core package.",
   },
 ];
 

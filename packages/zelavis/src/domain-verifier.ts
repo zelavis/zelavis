@@ -33,7 +33,7 @@
  * Node 18+, Bun, and future Deno support.
  */
 
-import type { ZelavisRuntimeService, ZelavisServerRoute } from "@zelavis/server";
+import type { ZelavisRuntimeService, ZelavisServerRoute } from "./core/index.js";
 import type { DomainBinding, DomainBindingStore } from "./domain-binding.js";
 
 const DEFAULT_DNS_CHALLENGE_PREFIX = "_zelavis-challenge";

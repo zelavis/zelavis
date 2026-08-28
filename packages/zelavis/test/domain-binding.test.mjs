@@ -6,13 +6,14 @@ import {
   createInMemoryBundleStore,
   createInMemoryDomainBindingStore,
   createKeyValueDomainBindingStore,
+  deleteProjectDomainBindings,
   defineService,
   generateVerificationToken,
   listAuthorizedHostsForService,
   revokeDomainBindingVerification,
   verifyDomainBindingManually,
 } from "../dist/index.js";
-import { zelavisServer } from "@zelavis/server";
+import { createServiceRuntime } from "../dist/core/index.js";
 
 const utf8 = (text) => new TextEncoder().encode(text);
 
@@ -126,6 +127,31 @@ test("in-memory store delete returns true/false based on whether anything was re
   assert.equal(await store.delete("ACME.COM"), true);
   assert.equal(await store.delete("acme.com"), false);
   assert.equal(await store.get("acme.com"), undefined);
+});
+
+test("Project domain cleanup removes only bindings owned by that Project", async () => {
+  const store = createInMemoryDomainBindingStore();
+  await addDomainBinding(store, {
+    host: "alpha.example.com",
+    projectId: "alpha",
+  });
+  await addDomainBinding(store, {
+    host: "alpha-service.example.com",
+    projectId: "alpha",
+    serviceName: "@example/storefront",
+  });
+  await addDomainBinding(store, {
+    host: "beta.example.com",
+    projectId: "beta",
+  });
+  await addDomainBinding(store, { host: "platform.example.com" });
+
+  assert.equal(await deleteProjectDomainBindings(store, "alpha"), 2);
+  assert.deepEqual(
+    (await store.list()).map((binding) => binding.host),
+    ["beta.example.com", "platform.example.com"],
+  );
+  assert.equal(await deleteProjectDomainBindings(store, "alpha"), 0);
 });
 
 test("in-memory store accepts a seed at construction", async () => {
@@ -441,7 +467,7 @@ test("synthesizeServiceAppService uses verified bindings for workspace-service a
     },
   );
 
-  const runtime = await zelavisServer({ services });
+  const runtime = await createServiceRuntime({ services });
 
   // Verified host: serves the SPA shell
   const allowed = await runtime.fetch(
@@ -492,7 +518,7 @@ test("system services bypass domain bindings entirely", async () => {
     { bundleStore },
   );
 
-  const runtime = await zelavisServer({ services });
+  const runtime = await createServiceRuntime({ services });
 
   const response = await runtime.fetch(
     new Request("http://tool.example.com/"),

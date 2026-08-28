@@ -21,7 +21,7 @@ Then open:
 
 - `index.ts` starts a Bun server with `Bun.serve()` and configures `zelavisBun()`
 - `zelavisBun()` provides the Bun SQLite driver and local file storage defaults
-- data is stored in `.zelavis/zelavis.sqlite` relative to this example unless `ZELAVIS_DATA_DIR` is set
+- each Zelavis App stores its logical database across SQLite shard files below `.zelavis/data/primary/shards` in its Project directory
 
 ## Why this exists
 

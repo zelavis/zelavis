@@ -2,7 +2,7 @@
   "name": "zelavis",
   "version": "1.0.1-alpha.2",
   "private": false,
-  "description": "Self-hostable Zelavis Platform OS runtime and control plane.",
+  "description": "Open, self-hostable App Platform and embeddable backend framework.",
   "license": "MIT",
   "author": "Ivan Jeremic",
   "type": "module",
@@ -16,9 +16,69 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    },
+    "./runtime": {
+      "types": "./dist/core/runtime/index.d.ts",
+      "import": "./dist/core/runtime/index.js"
+    },
+    "./fabric": {
+      "types": "./dist/core/fabric/index.d.ts",
+      "import": "./dist/core/fabric/index.js"
+    },
+    "./workload": {
+      "types": "./dist/core/workload/index.d.ts",
+      "import": "./dist/core/workload/index.js"
+    },
+    "./artifact": {
+      "types": "./dist/core/artifact/index.d.ts",
+      "import": "./dist/core/artifact/index.js"
+    },
+    "./provider": {
+      "types": "./dist/core/provider/index.d.ts",
+      "import": "./dist/core/provider/index.js"
+    },
     "./service": {
       "types": "./dist/service.d.ts",
       "import": "./dist/service.js"
+    },
+    "./app": {
+      "types": "./dist/app/index.d.ts",
+      "import": "./dist/app/index.js"
+    },
+    "./app/auth": {
+      "types": "./dist/app/auth/index.d.ts",
+      "import": "./dist/app/auth/index.js"
+    },
+    "./app/db": {
+      "types": "./dist/app/db/index.d.ts",
+      "import": "./dist/app/db/index.js"
+    },
+    "./app/db/adapter-core": {
+      "types": "./dist/app/db/adapter-core/index.d.ts",
+      "import": "./dist/app/db/adapter-core/index.js"
+    },
+    "./app/db/schema": {
+      "types": "./dist/app/db/schema/index.d.ts",
+      "import": "./dist/app/db/schema/index.js"
+    },
+    "./app/db/topology": {
+      "types": "./dist/app/db/topology/index.d.ts",
+      "import": "./dist/app/db/topology/index.js"
+    },
+    "./app/db/adapters/node-sqlite": {
+      "types": "./dist/app/db/adapters/node-sqlite.d.ts",
+      "import": "./dist/app/db/adapters/node-sqlite.js"
+    },
+    "./app/db/adapters/bun-sqlite": {
+      "types": "./dist/app/db/adapters/bun-sqlite.d.ts",
+      "import": "./dist/app/db/adapters/bun-sqlite.js"
+    },
+    "./app/workloads": {
+      "types": "./dist/app/workloads/index.d.ts",
+      "import": "./dist/app/workloads/index.js"
     },
     "./adapters": {
       "types": "./dist/adapters/index.d.ts",
@@ -63,12 +123,12 @@
   },
   "scripts": {
     "clean": "node scripts/clean-dist.mjs",
-    "build": "pnpm run clean && pnpm --filter @zelavis/server build && pnpm --filter @zelavis/app build && pnpm --filter @zelavis/core build && pnpm --filter @zelavis/marketplace build && pnpm --filter @zelavis/app-db-node-sqlite build && pnpm --filter @zelavis/app-db-bun-sqlite build && pnpm --filter @zelavis/ui build && pnpm --filter @zelavis/cli build && tsc -p tsconfig.json",
-    "build:runtime": "pnpm run clean && pnpm --filter @zelavis/server build && pnpm --filter @zelavis/app build && pnpm --filter @zelavis/core build && pnpm --filter @zelavis/marketplace build && pnpm --filter @zelavis/app-db-node-sqlite build && pnpm --filter @zelavis/app-db-bun-sqlite build && pnpm --filter @zelavis/ui build:plugin && pnpm --filter @zelavis/cli build && tsc -p tsconfig.json",
+    "build": "pnpm run clean && pnpm --filter @zelavis/ui build && pnpm --filter @zelavis/cli build && tsc -p tsconfig.json",
+    "build:runtime": "pnpm run clean && pnpm --filter @zelavis/ui build:plugin && pnpm --filter @zelavis/cli build && tsc -p tsconfig.json",
     "build:sdk": "pnpm run build:sdk:browser && pnpm run build:sdk:node",
-    "build:sdk:browser": "pnpm --filter @zelavis/app build && tsc -p tsconfig.sdk.browser.json",
-    "build:sdk:node": "pnpm --filter @zelavis/app build && tsc -p tsconfig.sdk.node.json",
-    "typecheck": "pnpm --filter @zelavis/server build && pnpm --filter @zelavis/app build && pnpm --filter @zelavis/core build && pnpm --filter @zelavis/marketplace build && pnpm --filter @zelavis/app-db-node-sqlite build && pnpm --filter @zelavis/app-db-bun-sqlite build && pnpm --filter @zelavis/ui build:plugin && pnpm --filter @zelavis/cli build && tsc -p tsconfig.json --noEmit",
+    "build:sdk:browser": "tsc -p tsconfig.sdk.browser.json",
+    "build:sdk:node": "tsc -p tsconfig.sdk.node.json",
+    "typecheck": "pnpm --filter @zelavis/ui build:plugin && pnpm --filter @zelavis/cli build && tsc -p tsconfig.json --noEmit",
     "test": "pnpm run build && pnpm --filter @zelavis/ecommerce build && node --test test/*.test.mjs"
   },
   "files": [
@@ -88,15 +148,9 @@
     "url": "https://github.com/zelavis/zelavis/issues"
   },
   "dependencies": {
-    "@zelavis/app": "workspace:*",
     "@zelavis/cli": "workspace:*",
-    "@zelavis/core": "workspace:*",
-    "@zelavis/marketplace": "workspace:*",
-    "@zelavis/server": "workspace:*",
     "@zelavis/ui": "workspace:*",
     "better-sqlite3": "^12.10.0",
-    "@zelavis/app-db-node-sqlite": "workspace:*",
-    "@zelavis/app-db-bun-sqlite": "workspace:*",
     "effect": "4.0.0-rc.111"
   },
   "devDependencies": {

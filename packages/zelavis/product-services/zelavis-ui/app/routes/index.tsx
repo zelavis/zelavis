@@ -146,10 +146,10 @@ function Overview() {
         />
         <StatCard
           label="Database"
-          value={databaseHealth?.driver ?? 'checking'}
+          value={databaseHealth?.nodeId ?? 'checking'}
           detail={
             databaseHealth
-              ? `documents ${databaseHealth.capabilities.documents ? 'on' : 'off'}, SQL ${databaseHealth.capabilities.sql ? 'on' : 'off'}`
+              ? `documents ${databaseHealth.capabilities.documents ? 'on' : 'off'}, tenant routing ${databaseHealth.capabilities.tenantRouting ? 'on' : 'off'}`
               : 'waiting for /database/health'
           }
           icon={Database}
@@ -208,7 +208,7 @@ function Overview() {
               {
                 label: 'Database health',
                 detail: databaseHealth
-                  ? `${databaseHealth.status} · ${databaseHealth.driver}`
+                  ? `${databaseHealth.status} · ${databaseHealth.nodeId}`
                   : '/database/health',
                 time: databaseHealth ? 'ready' : 'offline',
               },

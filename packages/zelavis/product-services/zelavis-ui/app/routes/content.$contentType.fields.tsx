@@ -68,6 +68,7 @@ import {
   getActiveRuntimeConfig,
   listDatabaseSchemaVersions,
   updateDashboardSettings,
+  ZELAVIS_APP_ADMIN_TENANT_ID,
 } from "#/lib/runtime-api";
 import { toDashboardPath, toProjectPath } from "#/lib/routing";
 import { parseAsStringLiteral, useTypedSearchParams } from "#/lib/use-typed-search-params";
@@ -882,6 +883,7 @@ function TypeSettingsPanel(props: {
       const activeSchema =
         sourceSchemas.find((schema) => schema.active) ?? sourceSchemas.at(-1);
       const created = await createDatabaseCollection(props.runtime, {
+        tenantId: ZELAVIS_APP_ADMIN_TENANT_ID,
         name: duplicateName.trim(),
         surface: "content-studio",
         metadata: {

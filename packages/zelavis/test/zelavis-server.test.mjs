@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
-import { createDatabase } from "@zelavis/app/db";
+import { createDatabase } from "../dist/app/db/index.js";
 import {
   createInMemoryBundleStore,
   defineService,
@@ -77,9 +77,9 @@ test("zelavis exposes fetch handlers without requiring a mount adapter", async (
     payload.services.map((service) => service.name),
     [
       "@zelavis/ui",
-      "@zelavis/core",
-      "@zelavis/marketplace",
-      "@zelavis/server-fabric",
+      "zelavis/platform",
+      "zelavis/marketplace",
+      "zelavis/fabric",
       "@zelavis/db",
       "@zelavis/auth",
       "@zelavis/website",
@@ -94,14 +94,14 @@ test("zelavis includes core services by default", async () => {
   const routes = runtime.routes;
 
   assert.equal(runtime.services["@zelavis/ui"].name, "@zelavis/ui");
-  assert.equal(runtime.services["@zelavis/core"].name, "@zelavis/core");
+  assert.equal(runtime.services["zelavis/platform"].name, "zelavis/platform");
   assert.equal(
-    runtime.services["@zelavis/marketplace"].name,
-    "@zelavis/marketplace",
+    runtime.services["zelavis/marketplace"].name,
+    "zelavis/marketplace",
   );
   assert.equal(
-    runtime.services["@zelavis/server-fabric"].name,
-    "@zelavis/server-fabric",
+    runtime.services["zelavis/fabric"].name,
+    "zelavis/fabric",
   );
   assert.equal(runtime.services["@zelavis/auth"].name, "@zelavis/auth");
   assert.equal(runtime.services["@zelavis/db"].name, "@zelavis/db");
@@ -225,9 +225,9 @@ test("zelavis includes core services by default", async () => {
     configResponse.body.services.map((service) => service.name),
     [
       "@zelavis/ui",
-      "@zelavis/core",
-      "@zelavis/marketplace",
-      "@zelavis/server-fabric",
+      "zelavis/platform",
+      "zelavis/marketplace",
+      "zelavis/fabric",
       "@zelavis/db",
       "@zelavis/auth",
       "@zelavis/website",
@@ -1206,9 +1206,9 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
   });
 
   assert.deepEqual(Object.keys(runtime.services), [
-    "@zelavis/core",
-    "@zelavis/marketplace",
-    "@zelavis/server-fabric",
+    "zelavis/platform",
+    "zelavis/marketplace",
+    "zelavis/fabric",
   ]);
   assert.deepEqual(
     runtime.routes.map((route) => route.route.id),
@@ -1245,6 +1245,7 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "fabric.nodes.get",
       "fabric.project-placements.list",
       "fabric.project-placements.get",
+      "fabric.project-placements.plan",
       "fabric.migrations.list",
     ],
   );
@@ -1606,8 +1607,8 @@ test("zelavis rejects invalid persisted dashboard settings on read", async () =>
 
 test("zelavis rejects invalid persisted website pages on read", async () => {
   const database = await createDatabase();
-  await database.documents.createCollection({ name: "zelavis_system" });
-  await database.documents.insert({
+  await database.forTenant("zelavis-platform").documents.createCollection({ name: "zelavis_system" });
+  await database.forTenant("zelavis-platform").documents.insert({
     collection: "zelavis_system",
     id: "website.pages",
     data: {

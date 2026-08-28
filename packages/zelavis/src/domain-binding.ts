@@ -113,6 +113,24 @@ export interface DomainBindingStore {
   ): Promise<readonly DomainBinding[]>;
 }
 
+export async function deleteProjectDomainBindings(
+  store: DomainBindingStore,
+  projectId: string,
+): Promise<number> {
+  const normalizedProjectId = projectId.trim();
+  if (!normalizedProjectId) {
+    throw new TypeError("Project id is required to delete domain bindings.");
+  }
+  const bindings = await store.list({ projectId: normalizedProjectId });
+  let deleted = 0;
+  for (const binding of bindings) {
+    if (await store.delete(binding.host)) {
+      deleted += 1;
+    }
+  }
+  return deleted;
+}
+
 const RANDOM_TOKEN_BYTES = 32;
 
 /**

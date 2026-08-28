@@ -4,15 +4,15 @@
 
 It owns the long-running control plane, dashboard composition, System Store,
 service lifecycle, official product services, and server/project orchestration.
-Lower-level packages such as `@zelavis/server`, `@zelavis/app/db`, and
-`@zelavis/app/auth` remain independently useful primitives.
+Lower-level packages such as `zelavis/core`, `zelavis/app/db`, and
+`zelavis/app/auth` remain independently useful primitives.
 
-`@zelavis/server` owns reusable Fabric, workload, Agent, service, routing, and
-access primitives. The bundled `@zelavis/core` service grants those primitives
+`zelavis/core` owns reusable Fabric, workload, Agent, service, routing, and
+access primitives. The bundled `zelavis/platform` service grants those primitives
 Platform authority and owns the Server dashboard surface. The bundled
-`@zelavis/marketplace` and `@zelavis/ui` services add the product Marketplace
+`zelavis/marketplace` and `@zelavis/ui` services add the product Marketplace
 and dashboard. This assembly, plus official Project recipes such as
-`@zelavis/app`, is what makes the reusable server framework the Zelavis
+`zelavis/app`, is what makes the reusable server framework the Zelavis
 Platform OS.
 
 The Platform OS creates projects from services with `kind: "app"`. With the
@@ -25,11 +25,13 @@ Platform records use a separate System Store. Node and Bun local adapters
 default to `.zelavis/system/zelavis.sqlite`; project data remains in the project
 database and is never exposed through that store.
 
-The Platform does not mount `@zelavis/app/db` as a global application database by
+The Platform does not mount `zelavis/app/db` as a global application database by
 default. Node process projects live under `.zelavis/projects/<projectId>`; each
-has an app database at `.zelavis/zelavis.sqlite` and private runtime metadata at
-`.zelavis/runtime/zelavis.sqlite` relative to its project directory. There is
-no implicit `default` project.
+has one logical App database routed across physical SQLite shards below
+`.zelavis/data/primary/shards` and private topology/runtime metadata at
+`.zelavis/runtime/zelavis.sqlite` relative to its project directory. The
+official local topology starts with 1024 virtual ranges grouped into four
+physical shards on one Node. There is no implicit `default` project.
 
 Project lifecycle endpoints are available under
 `/zelavis/api/v1/runtime/projects`. The dashboard uses these same endpoints to
@@ -45,7 +47,7 @@ tools. Applications can replace it through
 `/zelavis/api/v1/runtime/assistant`.
 
 Only the Platform OS mounts `@zelavis/ui`. A Zelavis App project process is headless:
-it serves its application APIs plus `@zelavis/server` runtime metadata, but no
+it serves its application APIs plus `zelavis/core` runtime metadata, but no
 dashboard shell or dashboard assets. The Platform dashboard uses the project
 proxy to read that metadata and render the Zelavis App services' own menu declarations.
 
@@ -88,12 +90,19 @@ zelavis services list
 See the public installation guide for APT, direct `.deb`, archive, and quick
 installer workflows.
 
+Local Project recovery is data-safe across the pre-release App Data Fabric
+rewrite. When a Project still has the retired single-file App database, Zelavis
+replays its event source of truth through the persisted Tenant shard topology,
+records durable migration completion, and leaves the original SQLite file in
+place as a recovery artifact. Startup stops instead of guessing if both the old
+and new layouts already contain unrelated data.
+
 ## Entry point preference
 
 Use the package in this order:
 
 1. `new Zelavis(...)` for application/runtime code
-2. scoped packages like `@zelavis/server` when you are building primitives, tests, or custom infrastructure
+2. scoped packages like `zelavis/core` when you are building primitives, tests, or custom infrastructure
 
 The class is the safe batteries-included API. The lower-level `zelavis(...)` function exists for internal runtime composition and is not the public application convention.
 
@@ -128,7 +137,7 @@ Use scoped packages when building lower-level primitives, adapters, services, or
 
 ```ts
 import { defineService } from "zelavis";
-import { authService } from "@zelavis/app/auth";
+import { authService } from "zelavis/app/auth";
 ```
 
 Services are the public extension unit. A service can be a dashboard extension,
@@ -218,14 +227,16 @@ That split is intentional:
 Application code can use the core services through the runtime instance:
 
 ```ts
-await zv.db.documents.createCollection({ name: "posts" });
+const tenantDb = zv.db.forTenant("tenant_acme");
 
-const doc = await zv.db.documents.insert({
+await tenantDb.documents.createCollection({ name: "posts" });
+
+const doc = await tenantDb.documents.insert({
   collection: "posts",
   data: { title: "Hello", published: false },
 });
 
-await zv.db.documents.update({
+await tenantDb.documents.update({
   collection: "posts",
   id: doc.id,
   data: { published: true },
@@ -398,6 +409,13 @@ driver with thousands or millions of projects must add paginated discovery,
 durable reconciliation queues, leases or fencing, placement, and per-node rate
 limits rather than using the local in-memory child-process map as a scheduler.
 
+Deleting a Project is also reconciled lifecycle work. Zelavis first persists a
+deletion tombstone, stops the runtime, removes Project-owned Assistant threads,
+domain bindings and bundle assets, then destroys the runtime directory and
+finally removes the Project record. A failed step leaves the Project visible as
+pending deletion; retrying deletion or restarting the Platform resumes from the
+last durably completed cleanup participant.
+
 ## SDK bundle surfaces
 
 The official SDK is a bundle surface of Zelavis itself, not a separate client
@@ -433,8 +451,8 @@ const client = createBrowserZelavisClient({
 const config = await client.runtime.config();
 ```
 
-The SDK also re-exports the runtime-neutral `@zelavis/app/db` and
-`@zelavis/app/auth` core APIs. Today that enables in-memory local development.
+The SDK also re-exports the runtime-neutral `zelavis/app/db` and
+`zelavis/app/auth` core APIs. Today that enables in-memory local development.
 Future browser storage adapters such as IndexedDB and SQLite WASM should attach
 to the same database driver boundary instead of creating a separate browser DB
 model.
@@ -594,10 +612,11 @@ For local Zelavis development, use the `pnpm dev` workflow. It starts the
 runtime and UI dev server together and wires dashboard requests to the live UI
 build.
 
-`pnpm dev` builds the product services under `packages/zelavis/product-services` and
-registers the direct `@zelavis/app` dependency as the official native Project
-recipe. `@zelavis/app` lives at `packages/app`; it is not copied into the
-Platform service directory.
+`pnpm dev` builds the unified package and product services under
+`packages/zelavis/product-services`. The official native Project recipe lives
+in this package under `src/app` and is exported as `zelavis/app`. Each created
+Project locks its exact recipe/runtime version so parent Platform upgrades do
+not silently upgrade child Apps.
 
 The dashboard, project registry, Platform settings, and service registry state
 persist through the separate System Store. Zelavis App capabilities run inside

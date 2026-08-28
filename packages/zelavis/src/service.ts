@@ -10,7 +10,7 @@ import {
   type ZelavisServiceRegistryModuleEntry,
   type ZelavisServiceRegistryStateEntry,
   type ZelavisServiceSetupContext,
-} from "@zelavis/server";
+} from "./core/index.js";
 import type { BundleStore } from "./bundle-store.js";
 import type { DomainBindingStore } from "./domain-binding.js";
 import { synthesizeServiceAppService } from "./service-app.js";
@@ -21,7 +21,7 @@ export {
   defineServiceCatalogEntry,
   defineService,
   isChildServiceAllowed,
-} from "@zelavis/server";
+} from "./core/index.js";
 export type {
   ZelavisServiceAppDefinition,
   ZelavisServiceAppDomainPolicy,
@@ -54,7 +54,7 @@ export type {
   ZelavisServiceSetupPlatformContext,
   ZelavisServiceSetupResult,
   ZelavisServiceV1Definition,
-} from "@zelavis/server";
+} from "./core/index.js";
 export function createServiceRegistry<TContext = unknown>(
   entries: readonly ZelavisServiceRegistryEntry<TContext>[],
 ): readonly Readonly<ZelavisServiceRegistryEntry<TContext>>[] {

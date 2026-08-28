@@ -1,13 +1,13 @@
-import { zelavisApp } from "@zelavis/app";
+import { zelavisApp } from "./app/index.js";
 import type {
   ZelavisServiceRegistryEntry,
   ZelavisServiceSetupContext,
-} from "@zelavis/server";
+} from "./core/index.js";
 
 export const officialProjectRecipes = Object.freeze([
   Object.freeze({
     service: zelavisApp,
-    specifier: "@zelavis/app",
+    specifier: "zelavis/app",
     status: "available",
     source: "official",
     order: 0,

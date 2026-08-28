@@ -18,6 +18,7 @@ import {
   listDatabaseSchemaVersions,
   listStorageFiles,
   updateDatabaseDocument,
+  ZELAVIS_APP_ADMIN_TENANT_ID,
 } from "#/lib/runtime-api";
 import { toProjectPath } from "#/lib/routing";
 import { cn } from "#/lib/utils";
@@ -33,7 +34,11 @@ export async function clientLoader({ params, request }: Route.ClientLoaderArgs) 
   const runtime = await getActiveRuntimeConfig(request);
   const [schemas, entry, media] = await Promise.all([
     listDatabaseSchemaVersions(runtime, params.contentType),
-    getDatabaseDocument(runtime, { collection: params.contentType, id: params.entryId }),
+    getDatabaseDocument(runtime, {
+      tenantId: ZELAVIS_APP_ADMIN_TENANT_ID,
+      collection: params.contentType,
+      id: params.entryId,
+    }),
     listStorageFiles(runtime).catch(() => ({ files: [], references: [] })),
   ]);
   return { schemas, entry, media, contentType: params.contentType, entryId: params.entryId };
@@ -150,6 +155,7 @@ function ContentEntryEditorRoute() {
     setError(undefined);
     try {
       await updateDatabaseDocument(runtime, {
+        tenantId: ZELAVIS_APP_ADMIN_TENANT_ID,
         collection: contentType,
         id: entryId,
         data: updates,

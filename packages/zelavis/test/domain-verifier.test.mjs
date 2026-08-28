@@ -8,7 +8,7 @@ import {
   verifyDomainBindingViaHttp,
   zelavis,
 } from "../dist/index.js";
-import { zelavisServer } from "@zelavis/server";
+import { createServiceRuntime } from "../dist/core/index.js";
 
 // ---------- DNS-TXT verifier ----------
 
@@ -255,7 +255,7 @@ test("createDomainChallengeService serves the binding token to host-matched chal
   const binding = await addDomainBinding(store, { host: "acme.com" });
 
   const service = createDomainChallengeService(store);
-  const runtime = await zelavisServer({ services: [service] });
+  const runtime = await createServiceRuntime({ services: [service] });
 
   const response = await runtime.fetch(
     new Request(
@@ -269,7 +269,7 @@ test("createDomainChallengeService serves the binding token to host-matched chal
 test("createDomainChallengeService returns 404 for unknown hosts", async () => {
   const store = createInMemoryDomainBindingStore();
   const service = createDomainChallengeService(store);
-  const runtime = await zelavisServer({ services: [service] });
+  const runtime = await createServiceRuntime({ services: [service] });
 
   const response = await runtime.fetch(
     new Request(
@@ -283,7 +283,7 @@ test("createDomainChallengeService returns 404 when the token doesn't match the 
   const store = createInMemoryDomainBindingStore();
   await addDomainBinding(store, { host: "acme.com" });
   const service = createDomainChallengeService(store);
-  const runtime = await zelavisServer({ services: [service] });
+  const runtime = await createServiceRuntime({ services: [service] });
 
   const response = await runtime.fetch(
     new Request(
@@ -302,7 +302,7 @@ test("createDomainChallengeService serves unverified bindings (verification happ
   // Note: NOT verified
 
   const service = createDomainChallengeService(store);
-  const runtime = await zelavisServer({ services: [service] });
+  const runtime = await createServiceRuntime({ services: [service] });
 
   const response = await runtime.fetch(
     new Request(
@@ -320,7 +320,7 @@ test("createDomainChallengeService honors a custom challengePath", async () => {
   const service = createDomainChallengeService(store, {
     challengePath: "/custom/challenge",
   });
-  const runtime = await zelavisServer({ services: [service] });
+  const runtime = await createServiceRuntime({ services: [service] });
 
   const response = await runtime.fetch(
     new Request(`http://acme.com/custom/challenge/${binding.verificationToken}`),

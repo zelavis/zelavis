@@ -240,8 +240,6 @@ test('@smoke database route restores the database sidebar panel', async ({ page 
     .first()
 
   await expect(activeSlide.getByRole('button', { name: 'Database', exact: true })).toBeVisible()
-  await expect(activeSlide.getByRole('button', { name: 'System Tables', exact: true })).toBeVisible()
-  await expect(activeSlide.getByRole('link', { name: 'zv_collections', exact: true })).toBeHidden()
 })
 
 test('storage lives under the core slide for advanced runtime management', async ({
@@ -394,7 +392,7 @@ test('content type sidebar parent opens entries view', async ({
   await expect(page.getByText('No entries yet')).toBeVisible()
 })
 
-test('database slide lists logical tables and system tables', async ({
+test('database slide lists logical tables', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
@@ -406,28 +404,7 @@ test('database slide lists logical tables and system tables', async ({
 
   await expect(tablesSlide.getByRole('button', { name: 'Database', exact: true })).toBeVisible()
 
-  await gotoDashboard(page, '/database?systemTable=zv_events')
-
-  const systemTablesSlide = sidebar.locator('.swiper-slide-active').first()
-
-  await expect(systemTablesSlide.getByRole('button', { name: 'System Tables', exact: true })).toBeVisible()
-  await expect(systemTablesSlide.getByRole('link', { name: 'zv_events', exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Core Database' })).toBeVisible()
-})
-
-test('@smoke database direct system table routes restore the matching sidebar slide', async ({
-  page,
-}, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop')
-
-  await gotoDashboard(page, '/database?systemTable=zv_events')
-
-  const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
-  const activeSlide = sidebar.locator('.swiper-slide-active').first()
-
-  await expect(activeSlide.getByRole('link', { name: 'zv_events', exact: true })).toBeVisible()
-  await expect(activeSlide.getByRole('button', { name: 'System Tables', exact: true })).toBeVisible()
-  await expect(page).toHaveURL(/systemTable=zv_events/)
 })
 
 test('content studio creates a new type and opens the field builder', async ({
@@ -647,24 +624,6 @@ test('database table creation revalidates sidebar tables', async ({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({ collections }),
-      })
-      return
-    }
-
-    if (pathname === '/zelavis/api/v1/database/sql/system/zv_collections' && method === 'GET') {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          table: 'zv_collections',
-          rows: collections.map((collection) => ({
-            tenant_id: collection.tenantId,
-            name: collection.name,
-            created_at: collection.createdAt,
-            document_count: collection.documentCount,
-            metadata_json: JSON.stringify(collection.metadata),
-          })),
-        }),
       })
       return
     }
@@ -972,8 +931,6 @@ test('sidebar route panels restore from the current route on refresh', async ({
   const activeSlide = sidebar.locator('.swiper-slide-active').first()
 
   await expect(activeSlide.getByRole('button', { name: 'Database', exact: true })).toBeVisible()
-  await expect(activeSlide.getByRole('button', { name: 'System Tables', exact: true })).toBeVisible()
-  await expect(activeSlide.getByRole('link', { name: 'zv_collections', exact: true })).toBeHidden()
 })
 
 test('sidebar has one internal link per dashboard route', async ({

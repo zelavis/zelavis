@@ -29,11 +29,10 @@ The main platform building blocks are:
 Today, the most important packages are:
 
 - [packages/zelavis](packages/zelavis)
-- [packages/server](packages/server)
-- [packages/zelavis/product-services/zelavis-core](packages/zelavis/product-services/zelavis-core)
-- [packages/zelavis/product-services/zelavis-marketplace](packages/zelavis/product-services/zelavis-marketplace)
-- [packages/app](packages/app)
 - [packages/zelavis/product-services/zelavis-ui](packages/zelavis/product-services/zelavis-ui)
+
+The reusable runtime/Fabric, built-in App stack, and trusted Platform services
+all live in focused folders and public subpaths of `packages/zelavis`.
 
 The ecommerce package is still useful, but it should be treated as an optional domain layer on top of the core platform.
 
@@ -41,7 +40,7 @@ The ecommerce package is still useful, but it should be treated as an optional d
 
 - Keep changes small and focused.
 - Prefer explicit contracts over hidden magic.
-- Keep core packages framework-agnostic unless they are explicitly adapters.
+- Keep the core implementation framework-agnostic unless code is explicitly an adapter.
 - Favor composition, plugins, and adapters over tight coupling.
 - Avoid heavy dependencies unless clearly justified.
 - Be clear about what exists today versus what is only planned.
@@ -50,8 +49,8 @@ The ecommerce package is still useful, but it should be treated as an optional d
 
 - `packages/*` contains core platform workspace packages.
 - `plugins/*` contains official user-installable Zelavis plugins.
-- `packages/*/adapters/*` contains framework or external runtime adapters.
-- `packages/*/plugins/*` contains package-local capability/provider packages.
+- `packages/zelavis/adapters/*` contains optional framework, database, or external runtime adapters.
+- `packages/zelavis/plugins/*` contains package-local capability/provider packages.
 - `examples/*` contains runnable example workspace packages.
 - `website/src/content/docs/` contains the public documentation source of truth.
 
@@ -98,15 +97,14 @@ pnpm --filter zelavis test
 
 The UI package has extra rules:
 
-- It uses TanStack Start, TanStack Router, shadcn/ui, and Tailwind CSS.
-- Stay on the current Radix-based shadcn approach unless a migration is explicitly requested.
-- `packages/zelavis/product-services/zelavis-ui/src/routeTree.gen.ts` is generated and should not be hand-edited.
+- It uses React Router v7 in SPA mode, shadcn/ui, and Tailwind CSS v4.
+- Generated route types under `.react-router/types/` must not be hand-edited.
 - The sidebar uses a slide-based navigation model.
 - The `Community` section belongs inside the first sidebar slide.
 
 ## Runtime-specific notes
 
-- The main public runtime API is `zelavis()`.
+- The main public runtime API is `new Zelavis(...)`.
 - The default dashboard root path is `/zelavis`.
 - The runtime supports dashboard dev-server mode through `coreServices.dashboard.devServerUrl` or `ZELAVIS_UI_DEV_SERVER`.
 

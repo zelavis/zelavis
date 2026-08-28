@@ -83,7 +83,7 @@ describe("dashboard navigation ownership", () => {
   it("does not copy trusted non-extension menus into Extensions", () => {
     const services = [
       {
-        name: "@zelavis/app",
+        name: "zelavis/app",
         kind: "app",
         status: "installed",
         source: "official",
@@ -189,7 +189,7 @@ describe("dashboard navigation ownership", () => {
   it("allows core services to declare platform management navigation", () => {
     const nav = buildProjectManagementNavItems([
       {
-        name: "@zelavis/core",
+        name: "zelavis/platform",
         core: true,
         apiPath: "/api/v1/runtime",
         menu: {
@@ -488,26 +488,6 @@ describe("dashboard navigation ownership", () => {
               pageLabel: "Database",
               search: { databaseTable: "fruits" },
             },
-            {
-              title: "System Tables",
-              path: "/database",
-              search: { systemTable: "zv_collections" },
-              panelLabel: "System Tables",
-              items: [
-                {
-                  title: "zv_collections",
-                  path: "/database",
-                  pageLabel: "Database",
-                  search: { systemTable: "zv_collections" },
-                },
-                {
-                  title: "zv_events",
-                  path: "/database",
-                  pageLabel: "Database",
-                  search: { systemTable: "zv_events" },
-                },
-              ],
-            },
           ],
         },
       },
@@ -556,13 +536,7 @@ describe("dashboard navigation ownership", () => {
       "Create Table",
       "audit_log",
       "fruits",
-      "System Tables",
     ]);
-    expect(findNavItem(database?.items ?? [], "System Tables")).toMatchObject({
-      url: "/projects/project-a/database",
-      landingUrl: "/projects/project-a/database",
-      search: { systemTable: "zv_collections" },
-    });
     expect(findNavItem(database?.items ?? [], "Create Table")).toMatchObject({
       url: "/projects/project-a/database/new",
       fixed: true,
@@ -588,7 +562,6 @@ describe("dashboard navigation ownership", () => {
         databaseTable: "audit_log",
       },
     });
-    expect(findNavItem(database?.items ?? [], "zv_collections")).toBeDefined();
   });
 
   it("gives workload parent slides canonical route targets", () => {

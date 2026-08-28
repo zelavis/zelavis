@@ -6,7 +6,21 @@ import test from "node:test";
 import { zelavisEcommerceService } from "../../../plugins/ecommerce/dist/index.js";
 
 test("zelavis package exports runtime APIs and local host adapters", async () => {
+  const packageMetadata = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  );
   const runtime = await import("zelavis");
+  const core = await import("zelavis/core");
+  const serviceRuntime = await import("zelavis/runtime");
+  const fabric = await import("zelavis/fabric");
+  const workload = await import("zelavis/workload");
+  const artifact = await import("zelavis/artifact");
+  const provider = await import("zelavis/provider");
+  const app = await import("zelavis/app");
+  const appAuth = await import("zelavis/app/auth");
+  const appDatabase = await import("zelavis/app/db");
+  const appWorkloads = await import("zelavis/app/workloads");
+  const nodeSqlite = await import("zelavis/app/db/adapters/node-sqlite");
   const adapters = await import("zelavis/adapters");
   const nodeAdapter = await import("zelavis/adapters/node");
   const bunAdapter = await import("zelavis/adapters/bun");
@@ -20,6 +34,7 @@ test("zelavis package exports runtime APIs and local host adapters", async () =>
 
   assert.equal(typeof runtime.zelavis, "function");
   assert.equal(typeof runtime.Zelavis, "function");
+  assert.equal(runtime.ZELAVIS_VERSION, packageMetadata.version);
   assert.equal(typeof runtime.defineAdapter, "function");
   assert.equal(typeof runtime.defineService, "function");
   assert.equal(typeof runtime.createServiceRegistry, "function");
@@ -32,7 +47,22 @@ test("zelavis package exports runtime APIs and local host adapters", async () =>
   assert.equal(typeof runtime.createFileReference, "function");
   assert.equal(typeof runtime.createS3CompatibleFileStorage, "function");
   assert.equal(typeof runtime.resolveS3CacheControlPreset, "function");
-  assert.equal("zelavisServer" in runtime, false);
+  assert.equal("createServiceRuntime" in runtime, false);
+
+  // The former server/Fabric and App packages are focused Zelavis subpaths.
+  assert.equal(typeof core.defineService, "function");
+  assert.equal(typeof serviceRuntime.createServiceRuntime, "function");
+  assert.equal(typeof fabric.createFabricService, "function");
+  assert.equal(typeof fabric.planFabricProjectPlacements, "function");
+  assert.equal(typeof workload, "object");
+  assert.equal(typeof artifact.defineRuntimeArtifact, "function");
+  assert.equal(typeof provider.defineProvider, "function");
+  assert.equal(typeof app.zelavisAppService, "function");
+  assert.equal(app.zelavisApp.version, runtime.ZELAVIS_VERSION);
+  assert.equal(typeof appAuth.createAuth, "function");
+  assert.equal(typeof appDatabase.createDatabase, "function");
+  assert.equal(typeof appWorkloads.workloadsService, "function");
+  assert.equal(typeof nodeSqlite.createBetterSqlite3Database, "function");
 
   // Local runtime adapters via the barrel
   assert.equal(typeof adapters.zelavisNode, "function");
@@ -127,13 +157,14 @@ test("Zelavis exposes default core APIs", async () => {
   const { Zelavis } = await import("zelavis");
 
   const zelavis = new Zelavis();
+  const appDatabase = zelavis.db.forTenant("zelavis-app");
 
-  await zelavis.db.documents.createCollection({ name: "posts" });
-  const doc = await zelavis.db.documents.insert({
+  await appDatabase.documents.createCollection({ name: "posts" });
+  const doc = await appDatabase.documents.insert({
     collection: "posts",
     data: { title: "Hello", published: false },
   });
-  const found = await zelavis.db.documents.findById({
+  const found = await appDatabase.documents.findById({
     collection: "posts",
     id: doc.id,
   });
@@ -142,10 +173,10 @@ test("Zelavis exposes default core APIs", async () => {
   const database = await zelavis.resolveDatabaseApi();
   const runtime = await zelavis.runtime();
   assert.equal(
-    database.documents,
-    runtime.services["@zelavis/db"].service.documents,
+    database.forTenant("zelavis-app").documents,
+    runtime.services["@zelavis/db"].service.forTenant("zelavis-app").documents,
   );
-  assert.equal(zelavis.db.context.defaultTenantId, "default");
+  assert.equal(zelavis.db.context.nodeId, "local");
   assert.equal(typeof zelavis.auth.accounts.create, "function");
 });
 
@@ -222,7 +253,7 @@ test("Zelavis applies adapter resolve output as platform resources, metadata, an
 test("Zelavis platform resources back dashboard settings, website pages, storage service, and ecommerce persistence", async () => {
   const { Zelavis, defineAdapter, zelavis: createZelavis } =
     await import("zelavis");
-  const { createDatabase } = await import("@zelavis/app/db");
+  const { createDatabase } = await import("../dist/app/db/index.js");
 
   const kv = new Map();
   const files = new Map();

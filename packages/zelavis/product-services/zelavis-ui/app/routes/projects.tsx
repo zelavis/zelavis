@@ -51,7 +51,7 @@ const projectSearchSchema = {
   q: parseAsString.withDefault(""),
   new: parseAsString.withDefault(""),
   name: parseAsString.withDefault(""),
-  app: parseAsString.withDefault("@zelavis/app"),
+  app: parseAsString.withDefault("zelavis/app"),
 } as const;
 
 function formatUpdatedAt(value: string) {

@@ -12,6 +12,7 @@ import {
   insertDatabaseDocument,
   queryDatabaseDocuments,
   updateDatabaseDocument,
+  ZELAVIS_APP_ADMIN_TENANT_ID,
   type DatabaseDocument,
 } from "#/lib/runtime-api";
 import { toProjectPath } from "#/lib/routing";
@@ -27,7 +28,11 @@ export const handle = {
 export async function clientLoader({ params, request }: Route.ClientLoaderArgs) {
   const runtime = await getActiveRuntimeConfig(request);
   const contentType = params.contentType;
-  const entries = await queryDatabaseDocuments(runtime, contentType);
+  const entries = await queryDatabaseDocuments(
+    runtime,
+    contentType,
+    ZELAVIS_APP_ADMIN_TENANT_ID,
+  );
   return { entries, contentType };
 }
 
@@ -60,6 +65,7 @@ function ContentTypeEntriesRoute() {
     setError(undefined);
     try {
       const created = await insertDatabaseDocument(runtime, {
+        tenantId: ZELAVIS_APP_ADMIN_TENANT_ID,
         collection: contentType,
         data: createStarterContentEntry(),
       });
@@ -92,6 +98,7 @@ function ContentTypeEntriesRoute() {
     setError(undefined);
     try {
       await updateDatabaseDocument(runtime, {
+        tenantId: ZELAVIS_APP_ADMIN_TENANT_ID,
         collection: entry.collection,
         id: entry.id,
         data: {
@@ -126,6 +133,7 @@ function ContentTypeEntriesRoute() {
     setError(undefined);
     try {
       const created = await insertDatabaseDocument(runtime, {
+        tenantId: ZELAVIS_APP_ADMIN_TENANT_ID,
         collection: entry.collection,
         data: {
           ...data,

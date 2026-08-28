@@ -20,12 +20,12 @@ SQLite at:
 ```
 
 The System Store is not a user project database. It must never appear as a
-table in a project's Database screen or be exposed through `@zelavis/app/db`
+table in a project's Database screen or be exposed through `zelavis/app/db`
 document APIs.
 
 The Platform process does not mount an app-facing database service by default.
 In repository development through `pnpm dev`, its System Store lives at
-`examples/nodejs/.zelavis/system/zelavis.sqlite`.
+`packages/zelavis/.zelavis/system/zelavis.sqlite`.
 
 ## App Services
 
@@ -35,22 +35,20 @@ files, provisioning hooks, and the app-facing runtime services it wants to
 mount inside the created project.
 
 The published `zelavis` Platform product is assembled from trusted product
-services in:
+services in `packages/zelavis/src/platform` plus its dashboard service in:
 
 ```text
 packages/zelavis/product-services
 ```
 
-That directory currently contains `@zelavis/core`, `@zelavis/marketplace`, and
-`@zelavis/ui`. It belongs to the `zelavis` product package; it is not the home
-of every service that can run on the generic server engine.
+The product-specific `zelavis/platform` and `zelavis/marketplace` service
+identities are internal definitions, while `@zelavis/ui` remains a focused
+dashboard package. None is a second backend framework.
 
-The official native Project recipe is the independently published
-`@zelavis/app` package at `packages/app`. It is still a real `kind: "app"`
-service: its root service composes application database, application auth, and
-workloads. The `zelavis` package registers it directly as an official recipe
-dependency. Future WordPress, Drupal, static-site, or other Project recipes
-should use the same service shape without moving into `product-services`.
+The official native Project recipe is the `zelavis/app` subpath implemented at
+`packages/zelavis/src/app`. It is a real `kind: "app"` service whose root
+composes application database, auth, and workloads. Future WordPress, Drupal,
+static-site, or other Project recipes should use the same service shape.
 
 The current runtime exposes available app services through:
 
@@ -67,6 +65,15 @@ Creating a project locks the selected app service into:
 The Node process driver then starts a headless project runtime with that app
 service installed.
 
+The lock includes the exact Zelavis App recipe/runtime version and is preserved
+when the parent Platform updates. The local Node driver currently executes the
+parent installation and cannot yet run an older artifact independently; the
+stored lock is ready for drivers that can materialize exact versions.
+
+In the future, a Project may become a delegated Project Platform or **Project
+Cell** and manage nested Apps inside its allocation. The root Platform still
+places and moves the whole cell and retains physical Node/provider authority.
+
 ## Zelavis App
 
 Zelavis App is a project stack, not the Platform OS. The current Node host runs
@@ -75,14 +82,17 @@ production driver can replace this boundary with a rootless OCI container or
 stronger isolation.
 
 For the Node process driver, each project lives below
-`.zelavis/projects/<project-id>`. Its application database is
-`.zelavis/zelavis.sqlite`; private runtime metadata is stored separately in
-`.zelavis/runtime/zelavis.sqlite` inside that project directory.
+`.zelavis/projects/<project-id>`. Its logical application database routes
+stable virtual shard ranges across physical SQLite files in
+`.zelavis/data/primary/shards`; private topology and runtime metadata is stored
+separately in `.zelavis/runtime/zelavis.sqlite` inside that project directory.
+All shard placements begin on the same Node and can later move without changing
+the App-facing database API.
 
 There is one dashboard application, mounted by the Platform OS from
 `@zelavis/ui`. App project runtimes are headless and do not serve their own
 dashboard bundle. They expose runtime metadata, APIs, and service menus through
-the shared `@zelavis/server` engine under Project-scoped authority; the Platform
+the shared `zelavis/core` engine under Project-scoped authority; the Platform
 dashboard reads those endpoints through the Project Gateway and renders the
 selected project's navigation. App services must
 not be executed directly inside the Platform process because that would share
@@ -103,7 +113,7 @@ DELETE /zelavis/api/v1/runtime/projects/:projectId
 Implemented now:
 
 - `kind: "app"` services in the service contract
-- a shipped official `@zelavis/app` service
+- a shipped official `zelavis/app` service
 - trusted Core, Marketplace, and UI product services
 - direct local Node/Bun registration of official Project recipes
 - a separate Platform System Store contract
@@ -122,4 +132,4 @@ Current limitations:
 - resource limits and rootless OCI/container orchestration are not implemented
 
 Do not move existing project data into the System Store and do not use
-`@zelavis/app/db` as a fallback for Platform OS records.
+`zelavis/app/db` as a fallback for Platform OS records.

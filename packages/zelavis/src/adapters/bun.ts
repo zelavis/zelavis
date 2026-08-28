@@ -4,7 +4,11 @@ import {
   type ZelavisOptions,
   type ZelavisResolvedPlatformOptions,
 } from "../index.js";
+import {
+  createShardedDatabaseDriver,
+} from "../app/db/topology/index.js";
 import { createBunSqliteSystemStore } from "./_bun-sqlite-system-store.js";
+import { resolveLocalDatabaseTopology } from "./_database-topology-store.js";
 import { createLocalFileStorage, createMemoryKeyValueStore } from "./_shared.js";
 import {
   normalizeDataDirectory,
@@ -13,12 +17,15 @@ import {
   type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
 import { officialProjectRecipes } from "../project-recipes.js";
+import { migrateLegacyAppDatabase } from "./_legacy-app-database-migration.js";
 
 export interface BunAdapterDatabaseOptions {
-  filename?: string;
+  directory?: string;
+  logicalDatabaseId?: string;
+  virtualShardCount?: number;
+  physicalShardCount?: number;
   readonly?: boolean;
   create?: boolean;
-  defaultTenantId?: string;
 }
 
 export interface BunAdapterFileStorageOptions {
@@ -64,25 +71,6 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
             workloads: false,
           };
 
-      if (databaseOptions !== false) {
-        const { createBunSqliteDatabaseDriver } = await import(
-          "@zelavis/app-db-bun-sqlite"
-        );
-        nextCoreServices.database = {
-          defaultTenantId: databaseOptions.defaultTenantId,
-          driver: createBunSqliteDatabaseDriver({
-            filename: databaseOptions.filename
-              ? resolve(databaseOptions.filename)
-              : join(dataDirectory, "zelavis.sqlite"),
-            readonly: databaseOptions.readonly,
-            create: databaseOptions.create,
-            defaultTenantId: databaseOptions.defaultTenantId,
-          }),
-        };
-      }
-
-      const serviceOptions = options.services === false ? undefined : options.services;
-      const serviceDirectory = join(dataDirectory, "services");
       const systemStoreOptions =
         options.systemStore === false ? undefined : options.systemStore;
       const systemStoreFilename = systemStoreOptions?.filename
@@ -96,6 +84,63 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
         options.systemStore === false
           ? undefined
           : await createBunSqliteSystemStore({ filename: systemStoreFilename });
+
+      if (databaseOptions !== false) {
+        const { createBunSqliteDatabaseDriver } = await import(
+          "../app/db/adapters/bun-sqlite.js"
+        );
+        const topology = await resolveLocalDatabaseTopology({
+          systemStore,
+          logicalDatabaseId: databaseOptions.logicalDatabaseId,
+          nodeId: "local",
+          engine: "sqlite",
+          virtualShardCount: databaseOptions.virtualShardCount,
+          physicalShardCount: databaseOptions.physicalShardCount,
+        });
+        const shardDirectory = databaseOptions.directory
+          ? resolve(databaseOptions.directory)
+          : join(dataDirectory, "data", "primary", "shards");
+        const physicalDrivers = new Map(
+          topology.desired.physicalShards.map((shard) => [
+            shard.id,
+            createBunSqliteDatabaseDriver({
+              filename: join(shardDirectory, `${shard.id}.sqlite`),
+              readonly: databaseOptions.readonly,
+              create: databaseOptions.create,
+            }),
+          ]),
+        );
+        const shardedDriver = createShardedDatabaseDriver({
+          topology,
+          physicalDrivers,
+        });
+        if (
+          isProjectRuntime &&
+          databaseOptions.directory === undefined &&
+          !databaseOptions.readonly
+        ) {
+          await migrateLegacyAppDatabase({
+            legacyFilename: join(dataDirectory, "zelavis.sqlite"),
+            systemStore,
+            targetDriver: shardedDriver,
+            physicalDrivers,
+            openLegacyDriver: (filename) =>
+              createBunSqliteDatabaseDriver({
+                filename,
+                create: false,
+                readwrite: true,
+              }),
+            tenantAliases: { default: "zelavis-app" },
+          });
+        }
+        nextCoreServices.database = {
+          nodeId: "local",
+          driver: shardedDriver,
+        };
+      }
+
+      const serviceOptions = options.services === false ? undefined : options.services;
+      const serviceDirectory = join(dataDirectory, "services");
       const fileStorage =
         options.files === false
           ? undefined
