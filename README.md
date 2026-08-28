@@ -415,3 +415,9 @@ The repository currently uses protected `main`, repository-level auto-merge, pri
 
 Maintainers publishing packages should follow the [release workflow](CONTRIBUTING.md#release-workflow) in CONTRIBUTING.md.
 If you use `NPM_TOKEN`, set it in your local shell or CI secret store. Do not commit tokens to this repository.
+
+## Security
+
+If you discover a security vulnerability in Zelavis, please report it responsibly rather than opening a public issue.
+
+Email **security@zelavis.com** with details, and we'll acknowledge your report, investigate promptly, and keep you posted as we work toward a fix. Once resolved, we're happy to credit you in the release notes with your permission.
