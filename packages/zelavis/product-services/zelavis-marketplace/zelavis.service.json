@@ -1,6 +1,0 @@
-{
-  "name": "@zelavis/marketplace",
-  "version": "1.0.1-alpha.2",
-  "kind": "core",
-  "entry": "index.js"
-}

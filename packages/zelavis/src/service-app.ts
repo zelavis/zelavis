@@ -28,7 +28,7 @@ import type {
   ZelavisRouteResponse,
   ZelavisServerRoute,
   ZelavisRuntimeService,
-} from "@zelavis/server";
+} from "./core/index.js";
 
 const DEFAULT_BUNDLE = "dist";
 const DEFAULT_INDEX_HTML = "index.html";

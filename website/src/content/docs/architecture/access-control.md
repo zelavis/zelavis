@@ -10,7 +10,7 @@ for usability, but endpoint access is enforced by the server contract.
 
 ## Core Shape
 
-The base model lives in `@zelavis/server`:
+The base model lives in `zelavis/core`:
 
 - a `ZelavisPrincipal` represents the caller
 - roles describe broad identity shape such as owner, operator, reseller, or customer
@@ -46,13 +46,13 @@ Example route requirement:
 }
 ```
 
-## Why This Is Not Only `@zelavis/app/auth`
+## Why This Is Not Only `zelavis/app/auth`
 
-`@zelavis/app/auth` owns authentication building blocks: accounts, credentials,
+`zelavis/app/auth` owns authentication building blocks: accounts, credentials,
 sessions, and pluggable auth methods such as email/password, username/password,
 passkeys, OAuth, SSO, API keys, or service-token providers.
 
-`@zelavis/server` owns the lower-level authorization contract because every
+`zelavis/core` owns the lower-level authorization contract because every
 runtime service needs a way to declare and enforce access requirements without
 depending on one authentication method.
 
@@ -83,8 +83,8 @@ create customers, subscriptions, packages, and grants that feed the same core
 principal model.
 
 Access itself is contributed through the normal service menu API by the
-product-specific `@zelavis/core` service. It is implemented with the reusable
-access contracts from `@zelavis/server`. Its menu uses the `platform` surface, which is
+product-specific `zelavis/platform` service. It is implemented with the reusable
+access contracts from `zelavis/core`. Its menu uses the `platform` surface, which is
 reserved for bundled or statically trusted system services that belong in the
 global `/zelavis` management shell. Runtime-installed marketplace plugins still
 mount under Extensions.

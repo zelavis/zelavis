@@ -13,6 +13,7 @@ import {
   createDatabaseSchema,
   getResolvedDashboardPreferences,
   updateDashboardSettings,
+  ZELAVIS_APP_ADMIN_TENANT_ID,
 } from "#/lib/runtime-api";
 import { toProjectPath } from "#/lib/routing";
 import { cn } from "#/lib/utils";
@@ -47,6 +48,7 @@ function NewContentTypeRoute() {
     setError(undefined);
     try {
       const collection = await createDatabaseCollection(runtime, {
+        tenantId: ZELAVIS_APP_ADMIN_TENANT_ID,
         name: normalizedName,
         surface: "content-studio",
         metadata: {

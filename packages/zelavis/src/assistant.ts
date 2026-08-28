@@ -42,6 +42,7 @@ export interface ZelavisAssistantManager {
   readonly responder: string;
   list(projectId?: string): Promise<readonly ZelavisAssistantThread[]>;
   get(id: string): Promise<ZelavisAssistantThread | undefined>;
+  deleteProjectThreads(projectId: string): Promise<number>;
   create(input?: {
     title?: string;
     projectId?: string;
@@ -132,6 +133,24 @@ export function createAssistantManager(options: {
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
     },
     get: read,
+    async deleteProjectThreads(projectId) {
+      const normalizedProjectId = normalizeOptionalText(projectId);
+      if (!normalizedProjectId) {
+        throw new ZelavisAssistantValidationError("Project id is required.");
+      }
+      const records = await store.list(ASSISTANT_THREADS_NAMESPACE);
+      let deleted = 0;
+      for (const record of records) {
+        const thread = parseStoredThread(record.value);
+        if (
+          thread.projectId === normalizedProjectId &&
+          await store.delete(ASSISTANT_THREADS_NAMESPACE, record.key)
+        ) {
+          deleted += 1;
+        }
+      }
+      return deleted;
+    },
     async create(input = {}) {
       const timestamp = new Date().toISOString();
       return write({

@@ -32,9 +32,9 @@ test("normalizeRuntimeProject recovers a missing app lock for project cards", ()
   } as RuntimeProject);
 
   expect(project.app).toEqual({
-    name: "@zelavis/app",
+    name: "zelavis/app",
     title: "Zelavis App",
-    specifier: "@zelavis/app",
+    specifier: "zelavis/app",
   });
 });
 

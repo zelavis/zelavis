@@ -71,6 +71,13 @@ export interface BundleStore {
     scope: BundleScope,
     prefix?: string,
   ): Promise<readonly string[]>;
+
+  /**
+   * Remove every bundle asset owned by a Project. Must be idempotent.
+   * A Platform configured with a Project runtime refuses to complete Project
+   * deletion when its BundleStore does not implement this capability.
+   */
+  deleteProject?(projectId: string): Promise<number>;
 }
 
 export interface CreateSharedBundleStoreOptions {
@@ -121,6 +128,7 @@ export function createSharedBundleStore(
   options: CreateSharedBundleStoreOptions,
 ): BundleStore {
   const { storage, prefix, systemKey } = options;
+  const storagePrefix = prefix ?? "apps";
 
   if (!storage || typeof storage.get !== "function") {
     throw new TypeError(
@@ -160,6 +168,27 @@ export function createSharedBundleStore(
         systemKey,
       }).length;
       return entries.map((entry) => entry.path.slice(prefixLen));
+    },
+    async deleteProject(projectId) {
+      const normalizedProjectId = projectId.trim();
+      if (!normalizedProjectId) {
+        throw new TypeError("Project id is required to delete bundle assets.");
+      }
+      if (typeof storage.list !== "function") {
+        throw new Error(
+          "Shared bundle storage cannot delete Project assets because its file storage does not support listing.",
+        );
+      }
+      const entries = await storage.list(
+        `${storagePrefix}/${normalizedProjectId}/`,
+      );
+      let deleted = 0;
+      for (const entry of entries) {
+        if (await storage.delete(entry.path)) {
+          deleted += 1;
+        }
+      }
+      return deleted;
     },
   };
 }

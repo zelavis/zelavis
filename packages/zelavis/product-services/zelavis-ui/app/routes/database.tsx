@@ -18,9 +18,9 @@ import {
   getActiveRuntimeConfig,
   insertDatabaseDocument,
   queryDatabaseDocuments,
-  queryDatabaseSystemTable,
+  ZELAVIS_APP_ADMIN_TENANT_ID,
 } from "#/lib/runtime-api";
-import { parseAsString, parseAsStringLiteral, useTypedSearchParams } from "#/lib/use-typed-search-params";
+import { parseAsString, useTypedSearchParams } from "#/lib/use-typed-search-params";
 import type { clientLoader as rootClientLoader } from '../root';
 import { cn } from "#/lib/utils";
 import { getDatabaseSidebarTrail } from "#/lib/database-route-state";
@@ -34,14 +34,15 @@ export async function clientLoader({ request }: import("./+types/database").Rout
   const runtime = await getActiveRuntimeConfig(request);
   const url = new URL(request.url);
   const databaseTable = url.searchParams.get('databaseTable') || undefined;
-  const systemTable = url.searchParams.get('systemTable') || undefined;
+  const tableRows = databaseTable
+    ? await queryDatabaseDocuments(
+        runtime,
+        databaseTable,
+        ZELAVIS_APP_ADMIN_TENANT_ID,
+      ).catch(() => [])
+    : [];
 
-  const [systemRows, tableRows] = await Promise.all([
-    systemTable ? queryDatabaseSystemTable(runtime, systemTable as Parameters<typeof queryDatabaseSystemTable>[1], { limit: 100 }).catch(() => []) : Promise.resolve([]),
-    databaseTable ? queryDatabaseDocuments(runtime, databaseTable).catch(() => []) : Promise.resolve([]),
-  ]);
-
-  return { systemRows, tableRows };
+  return { tableRows };
 }
 
 type DatabaseGridRow = {
@@ -50,13 +51,6 @@ type DatabaseGridRow = {
   updatedAt?: string;
   data: Record<string, unknown>;
 };
-
-type DatabaseSystemTableName =
-  | "zv_collections"
-  | "zv_events"
-  | "zv_schemas"
-  | "zv_time_series_checkpoints"
-  | "zv_time_series_points";
 
 type DatabaseGridSorting = {
   id: string;
@@ -76,29 +70,6 @@ type SavedDatabaseView = {
 
 const DATABASE_GRID_VIEWS_STORAGE_KEY = "zelavis:database-grid-views";
 const ACTIONS_COLUMN = "__zelavis_actions";
-const DATABASE_SYSTEM_TABLES = [
-  "zv_collections",
-  "zv_events",
-  "zv_schemas",
-  "zv_time_series_checkpoints",
-  "zv_time_series_points",
-] as const satisfies readonly DatabaseSystemTableName[];
-const DEFAULT_SYSTEM_TABLE: DatabaseSystemTableName = "zv_collections";
-
-function readSystemTableName(value: unknown): DatabaseSystemTableName {
-  return typeof value === "string" &&
-    DATABASE_SYSTEM_TABLES.includes(value as DatabaseSystemTableName)
-    ? (value as DatabaseSystemTableName)
-    : DEFAULT_SYSTEM_TABLE;
-}
-
-function isSystemTableName(value: unknown): value is DatabaseSystemTableName {
-  return (
-    typeof value === "string" &&
-    DATABASE_SYSTEM_TABLES.includes(value as DatabaseSystemTableName)
-  );
-}
-
 function parseSavedDatabaseViews(value: unknown): SavedDatabaseView[] {
   if (!Array.isArray(value)) {
     return [];
@@ -850,7 +821,6 @@ function DatabaseDataGrid(props: {
 
 const databaseSchema = {
   databaseTable: parseAsString,
-  systemTable: parseAsStringLiteral(DATABASE_SYSTEM_TABLES),
   inspectedId: parseAsString,
   view: parseAsString,
   sidebar: parseAsString,
@@ -859,38 +829,19 @@ const databaseSchema = {
 function DatabaseRoute() {
   const [search, setParams] = useTypedSearchParams(databaseSchema);
   const revalidator = useRevalidator();
-  const { systemRows: systemRowsData, tableRows: tableRowsData } = useLoaderData<typeof clientLoader>();
+  const { tableRows: tableRowsData } = useLoaderData<typeof clientLoader>();
   const { runtime: config } = useRouteLoaderData<typeof rootClientLoader>('root')!;
   const [createError, setCreateError] = useState<string>();
   const [createPending, setCreatePending] = useState(false);
   const selectedRowId = search.inspectedId;
   const setSelectedRowId = (id: string | undefined) => setParams({ inspectedId: id ?? null });
   const selectedDatabaseTable = search.databaseTable || undefined;
-  const selectedSystemTable = selectedDatabaseTable ? undefined : search.systemTable;
-  const selectedTarget = selectedDatabaseTable ?? selectedSystemTable;
+  const selectedTarget = selectedDatabaseTable;
   const activeViewName = search.view;
   const desiredSidebar = getDatabaseSidebarTrail({
     databaseTable: selectedDatabaseTable,
-    systemTable: selectedSystemTable,
   });
-  const systemRowsResource = { data: systemRowsData, loading: false, error: undefined as Error | undefined };
   const tableRowsResource = { data: tableRowsData, loading: false, error: undefined as Error | undefined };
-
-  const systemRows = useMemo(
-    () =>
-      (systemRowsResource.data ?? []).map((row, index) => ({
-        id:
-          typeof row.sequence === "number"
-            ? String(row.sequence)
-            : typeof row.id === "string"
-              ? row.id
-              : typeof row.name === "string"
-                ? row.name
-                : `${selectedSystemTable ?? "row"}:${index}`,
-        data: row,
-      })),
-    [selectedSystemTable, systemRowsResource.data],
-  );
   const tableRows = useMemo(
     () =>
       (tableRowsResource.data ?? []).map((record) => ({
@@ -901,26 +852,12 @@ function DatabaseRoute() {
       })),
     [tableRowsResource.data],
   );
-  const activeRows = selectedDatabaseTable
-    ? tableRows
-    : selectedSystemTable
-      ? systemRows
-      : [];
-  const activeResource = selectedDatabaseTable
-    ? tableRowsResource
-    : selectedSystemTable
-      ? systemRowsResource
-      : undefined;
-  const activeKind = selectedDatabaseTable
-    ? "Collection table"
-    : selectedSystemTable
-      ? "System table"
-      : "Database";
+  const activeRows = selectedDatabaseTable ? tableRows : [];
+  const activeResource = selectedDatabaseTable ? tableRowsResource : undefined;
+  const activeKind = selectedDatabaseTable ? "Collection table" : "Database";
   const emptyDescription = selectedDatabaseTable
     ? `The collection table ${selectedDatabaseTable} has no rows yet.`
-    : selectedSystemTable
-      ? `The system table ${selectedSystemTable} is empty or unavailable.`
-      : "Select a collection table or open System Tables from the sidebar.";
+    : "Select a collection table from the sidebar.";
   const rowColumns = useMemo(() => {
     const keys = new Set<string>();
     for (const row of activeRows) {
@@ -944,6 +881,7 @@ function DatabaseRoute() {
     setCreateError(undefined);
     try {
       const createdRow = await insertDatabaseDocument(config, {
+        tenantId: ZELAVIS_APP_ADMIN_TENANT_ID,
         collection: selectedDatabaseTable,
         id: input.id,
         data: input.data,
@@ -989,9 +927,7 @@ function DatabaseRoute() {
             <span className="rounded-md border bg-muted/20 px-2 py-1">
               {selectedDatabaseTable
                 ? "Raw rows"
-                : selectedSystemTable
-                  ? "SQL read-only"
-                  : "Table overview"}
+                : "Table overview"}
             </span>
           </div>
         </div>
@@ -1003,25 +939,12 @@ function DatabaseRoute() {
           />
         ) : activeResource?.error ? (
           <ResourceNotice
-            title={
-              selectedDatabaseTable
-                ? "Could not read this collection table"
-                : "Could not read this system table"
-            }
+            title="Could not read this collection table"
             description={
               activeResource.error instanceof Error
                 ? activeResource.error.message
                 : String(activeResource.error)
             }
-          />
-        ) : activeRows.length === 0 && !selectedDatabaseTable ? (
-          <ResourceNotice
-            title={
-              selectedDatabaseTable
-                ? "No rows in this collection table"
-                : "No rows in this system table"
-            }
-            description={emptyDescription}
           />
         ) : (
           <DatabaseDataGrid
@@ -1042,9 +965,7 @@ function DatabaseRoute() {
             }}
             onActivateSavedViewTarget={(target, viewName) => {
               setParams({
-                ...(isSystemTableName(target)
-                  ? { systemTable: target, databaseTable: null }
-                  : { databaseTable: target, systemTable: null }),
+                databaseTable: target,
                 view: viewName ?? search.view ?? null,
               });
             }}

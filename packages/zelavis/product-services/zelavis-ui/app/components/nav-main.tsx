@@ -375,9 +375,6 @@ export function NavMain({
     ...(isProjectRootRoute
       ? []
       : (getDashboardSidebarTrailFromMatches(matches) ?? [])),
-    ...(isProjectRootRoute || !locationSearch.systemTable
-      ? []
-      : ["System Tables"]),
     ...(isProjectRootRoute
       ? []
       : (workloadViewPanelTitle(locationSearch.workloadView) ?? [])),

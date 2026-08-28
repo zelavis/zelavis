@@ -11,9 +11,3 @@ test("collection tables stay on the database sidebar panel", () => {
     "Backend/Database",
   );
 });
-
-test("explicit system tables restore the system tables sidebar panel", () => {
-  expect(getDatabaseSidebarTrail({ systemTable: "zv_collections" })).toBe(
-    "Backend/Database/System Tables",
-  );
-});

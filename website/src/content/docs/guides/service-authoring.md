@@ -15,8 +15,8 @@ For core packages, the service definition should live in a named file near the t
 
 Examples:
 
-- [packages/app/src/auth/auth-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/app/src/auth/auth-service.ts)
-- [packages/app/src/db/database-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/app/src/db/database-service.ts)
+- [packages/zelavis/src/app/auth/auth-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/zelavis/src/app/auth/auth-service.ts)
+- [packages/zelavis/src/app/db/database-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/zelavis/src/app/db/database-service.ts)
 
 For service packages, the service definition should also live in a named file near the top of the package source.
 
@@ -24,7 +24,7 @@ Examples:
 
 - [plugins/ecommerce/src/ecommerce-service.ts](/Users/ivanjeremicx/Projects/zelavis/plugins/ecommerce/src/ecommerce-service.ts)
 - [plugins/ecommerce/plugins/stripe/src/stripe-service.ts](/Users/ivanjeremicx/Projects/zelavis/plugins/ecommerce/plugins/stripe/src/stripe-service.ts)
-- [packages/app/plugins/email-password/src/email-password-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/app/plugins/email-password/src/email-password-service.ts)
+- [packages/zelavis/plugins/email-password/src/email-password-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/zelavis/plugins/email-password/src/email-password-service.ts)
 
 Avoid hiding the real definition under paths like:
 
@@ -61,7 +61,7 @@ Core services, runtime services, marketplace services, and child services use th
 The package-level definition file should expose a factory that returns the service shape:
 
 ```ts
-import { defineService } from "@zelavis/server";
+import { defineService } from "zelavis/core";
 import type { AuthApi } from "./core/types.js";
 
 export function defineAuthService(auth: AuthApi): AuthServiceDefinition {
@@ -437,4 +437,4 @@ Avoid names that make the entrypoint harder to spot:
 
 - [Service Model](../architecture/service-model.md)
 - [Advanced Runtime Composition](./advanced-runtime-composition.md)
-- [@zelavis/server](../packages/server.md)
+- [zelavis/core](../packages/zelavis/src/core.md)

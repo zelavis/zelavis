@@ -1,7 +1,8 @@
 ---
 title: zelavis
 ---
-`zelavis` is the high-level runtime package for the Zelavis App Platform.
+`zelavis` is the framework and App Platform: the one official package for the
+reusable backend engine, built-in App stack, and self-hosted Platform OS.
 
 Use it when you want the default platform building blocks wired together through one runtime entry point.
 
@@ -36,7 +37,7 @@ Treat this as the normal public API.
 Prefer these layers in order:
 
 1. `new Zelavis(...)` for application/runtime work
-2. scoped packages like `@zelavis/server` for primitive-level infrastructure
+2. focused subpaths like `zelavis/core` for primitive-level infrastructure
 
 The lower-level `zelavis()` function still exists, but it now intentionally owns the internal runtime controls such as:
 
@@ -58,7 +59,7 @@ project dashboard proxies API operations to the selected runtime.
 
 The Platform process is the only process that mounts `@zelavis/ui`. Zelavis App
 project processes remain headless and expose service metadata through
-`@zelavis/server`. The selected app service composes Database, Auth, Workloads,
+`zelavis/core`. The selected app service composes Database, Auth, Workloads,
 and plugins, and each service contributes menu metadata through the shared
 service API.
 
@@ -88,12 +89,20 @@ separate processes, databases, files, logs, and failure domains for trusted
 projects. It does not claim secure multi-tenant sandboxing. Future OCI and
 microVM drivers implement the same project-runtime contract.
 
+Each Project locks its exact Zelavis App recipe/runtime version. Parent
+Platform upgrades preserve that lock; immutable artifact execution will make
+side-by-side old and new versions operational. A future Project Cell may also
+manage nested Apps within a delegated allocation while the root Platform moves
+the cell as one placement group.
+
 Development application code can access the mounted Zelavis App service APIs through the runtime instance:
 
 ```ts
-await zv.db.documents.createCollection({ name: "posts" });
+const tenantDb = zv.db.forTenant("tenant_acme");
 
-const doc = await zv.db.documents.insert({
+await tenantDb.documents.createCollection({ name: "posts" });
+
+const doc = await tenantDb.documents.insert({
   collection: "posts",
   data: { title: "Hello" },
 });
@@ -108,9 +117,9 @@ const account = await zv.auth.accounts.create({
 
 Use scoped packages directly when you need lower-level control over primitives, adapters, or tests:
 
-- `@zelavis/server`
-- `@zelavis/app/db`
-- `@zelavis/app/auth`
+- `zelavis/core`
+- `zelavis/app/db`
+- `zelavis/app/auth`
 
 The lower-level `zelavis()` function still exists for internal runtime composition, but the main public application-facing entry point is the `Zelavis` class plus a runtime adapter.
 
@@ -157,8 +166,8 @@ const client = createBrowserZelavisClient({
 const settings = await client.runtime.settings();
 ```
 
-The SDK surface also exposes runtime-neutral `@zelavis/app/db` and
-`@zelavis/app/auth` APIs. Browser database adapters such as IndexedDB or SQLite
+The SDK surface also exposes runtime-neutral `zelavis/app/db` and
+`zelavis/app/auth` APIs. Browser database adapters such as IndexedDB or SQLite
 WASM should plug into the same database driver boundary later, so local-first
 browser apps and server runtimes share the same document/event model.
 
@@ -173,7 +182,7 @@ pnpm build:sdk:node
 ## Related docs
 
 - [First Runtime](../getting-started/first-runtime.md)
-- [@zelavis/server](./server.md)
+- [zelavis/core](./server.md)
 - [Endpoint-Backed Capabilities](../architecture/endpoint-backed-capabilities.md)
 - [@zelavis/db](./database.md)
 - [@zelavis/auth](./auth.md)

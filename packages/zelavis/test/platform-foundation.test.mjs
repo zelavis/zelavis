@@ -6,11 +6,35 @@ import test from "node:test";
 
 import {
   Zelavis,
+  ZelavisProjectDeletionError,
   createAssistantManager,
   createMemorySystemStore,
   createProjectManager,
 } from "../dist/index.js";
 import { nodeAdapter } from "../dist/adapters/node.js";
+import { formatProjectProcessExitError } from "../dist/adapters/_node-project-runtime.js";
+
+test("project process failures include the useful stderr cause", () => {
+  assert.equal(
+    formatProjectProcessExitError({
+      code: 1,
+      signal: null,
+      logs: [
+        {
+          timestamp: "2026-08-28T10:04:42.694Z",
+          stream: "stderr",
+          message: "Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'missing-app'",
+        },
+        {
+          timestamp: "2026-08-28T10:04:42.694Z",
+          stream: "stderr",
+          message: "    at moduleResolve (node:internal/modules/esm/resolve:873:18)",
+        },
+      ],
+    }),
+    "Project process exited with code 1. Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'missing-app' See project logs for full output.",
+  );
+});
 
 test("System Store keeps platform records outside project database APIs", async () => {
   const store = createMemorySystemStore();
@@ -120,7 +144,7 @@ test("Node adapter registers shipped app services and persists Platform Store SQ
     const first = await firstAdapter.resolve({});
     const systemStore = first.resources?.systemStore;
     const appService = first.serviceRegistry?.catalog?.find(
-      (entry) => entry.service.name === "@zelavis/app",
+      (entry) => entry.service.name === "zelavis/app",
     );
 
     assert.ok(systemStore);
@@ -147,30 +171,31 @@ test("Node adapter registers shipped app services and persists Platform Store SQ
     const body = await response.json();
 
     assert.equal(response.status, 200);
-    assert.equal(body.appServices[0].name, "@zelavis/app");
+    assert.equal(body.appServices[0].name, "zelavis/app");
     assert.equal(body.appServices[0].source, "official");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
 
-test("Project manager repairs legacy blueprint project records before start", async () => {
+test("Project manager preserves an older Zelavis App release lock when the Platform is newer", async () => {
   const store = createMemorySystemStore();
   const prepared = new Set();
   const appService = {
     service: {
-      name: "@zelavis/app",
+      name: "zelavis/app",
       kind: "app",
       version: "1.0.1-alpha.2",
       marketplace: { title: "Zelavis App" },
     },
-    specifier: "@zelavis/app",
+    specifier: "zelavis/app",
     status: "installed",
     source: "official",
   };
   const runtime = {
     name: "test-runtime",
     capabilities: () => ({
+      independentRuntimeVersion: true,
       movable: false,
       liveMigration: false,
       secureIsolation: false,
@@ -187,9 +212,10 @@ test("Project manager repairs legacy blueprint project records before start", as
       description: "Test runtime",
     }),
     async prepare(project, app) {
-      assert.equal(project.id, "legacy");
-      assert.equal(app.name, "@zelavis/app");
-      assert.equal(app.specifier, "@zelavis/app");
+      assert.equal(project.id, "older-app");
+      assert.equal(app.name, "zelavis/app");
+      assert.equal(app.specifier, "zelavis/app");
+      assert.equal(app.version, "0.9.0");
       prepared.add(project.id);
     },
     async start(project) {
@@ -213,13 +239,15 @@ test("Project manager repairs legacy blueprint project records before start", as
     async close() {},
   };
 
-  await store.set("projects", "legacy", {
-    id: "legacy",
-    name: "Legacy",
+  await store.set("projects", "older-app", {
+    id: "older-app",
+    name: "Older App",
     kind: "zelavis",
-    blueprint: {
-      id: "zelavis/app",
-      version: "1.0.1-alpha.2",
+    app: {
+      name: "zelavis/app",
+      title: "Zelavis App",
+      version: "0.9.0",
+      specifier: "zelavis/app",
     },
     desiredState: "stopped",
     runtime: {
@@ -236,13 +264,98 @@ test("Project manager repairs legacy blueprint project records before start", as
     appServices: [appService],
     runtime,
   });
-  const project = await manager.start("legacy");
-  const stored = (await store.get("projects", "legacy")).value;
+  const project = await manager.start("older-app");
+  const stored = (await store.get("projects", "older-app")).value;
 
   assert.equal(project.runtime.status, "running");
-  assert.equal(stored.app.name, "@zelavis/app");
-  assert.equal(stored.app.specifier, "@zelavis/app");
-  assert.equal("blueprint" in stored, false);
+  assert.equal(stored.app.name, "zelavis/app");
+  assert.equal(stored.app.specifier, "zelavis/app");
+  assert.equal(stored.app.version, "0.9.0");
+});
+
+test("Project manager repairs the retired official App package lock without changing its version", async () => {
+  const store = createMemorySystemStore();
+  let preparedApp;
+  const appService = {
+    service: {
+      name: "zelavis/app",
+      kind: "app",
+      version: "1.0.1-alpha.2",
+      marketplace: { title: "Zelavis App" },
+    },
+    specifier: "zelavis/app",
+    status: "installed",
+    source: "official",
+  };
+  const runtime = {
+    name: "repair-runtime",
+    capabilities: () => ({
+      independentRuntimeVersion: false,
+      movable: false,
+      liveMigration: false,
+      secureIsolation: false,
+      resourceLimits: false,
+      persistentFilesystem: true,
+      statelessRuntimeReplicas: false,
+      managedStorage: true,
+      managedDatabase: true,
+      databaseReplication: false,
+      tenantPlacement: false,
+      databaseSharding: false,
+      runtimeOwnership: "platform-process",
+      survivesControlPlaneRestart: false,
+      description: "Repair test runtime",
+    }),
+    async prepare(_project, app) {
+      preparedApp = app;
+    },
+    async start() {
+      return { status: "running", url: "http://127.0.0.1:49152" };
+    },
+    async stop() {
+      return { status: "stopped" };
+    },
+    async status() {
+      return { status: "stopped" };
+    },
+    async logs() {
+      return [];
+    },
+    async destroy() {},
+    async close() {},
+  };
+
+  await store.set("projects", "legacy-app", {
+    id: "legacy-app",
+    name: "Legacy App",
+    kind: "zelavis",
+    app: {
+      name: "@zelavis/app",
+      title: "Zelavis App",
+      version: "0.9.0",
+      specifier: "@zelavis/app",
+    },
+    desiredState: "stopped",
+    runtime: { driver: "repair-runtime", status: "failed" },
+    createdAt: "2026-08-23T08:15:14.633Z",
+    updatedAt: "2026-08-23T08:15:14.633Z",
+  });
+
+  const manager = await createProjectManager({
+    store,
+    appServices: [appService],
+    runtime,
+  });
+  const project = await manager.start("legacy-app");
+
+  assert.deepEqual(project.app, {
+    name: "zelavis/app",
+    title: "Zelavis App",
+    version: "0.9.0",
+    specifier: "zelavis/app",
+  });
+  assert.deepEqual(preparedApp, project.app);
+  assert.deepEqual((await store.get("projects", "legacy-app")).value.app, project.app);
 });
 
 test("Project startup reconciliation is bounded and closes through the runtime driver", async () => {
@@ -254,12 +367,12 @@ test("Project startup reconciliation is bounded and closes through the runtime d
   let closeCalls = 0;
   const appService = {
     service: {
-      name: "@zelavis/app",
+      name: "zelavis/app",
       kind: "app",
       version: "1.0.1-alpha.2",
       marketplace: { title: "Zelavis App" },
     },
-    specifier: "@zelavis/app",
+    specifier: "zelavis/app",
     status: "installed",
     source: "official",
   };
@@ -267,6 +380,7 @@ test("Project startup reconciliation is bounded and closes through the runtime d
     name: "bounded-runtime",
     startupConcurrency: 1,
     capabilities: () => ({
+      independentRuntimeVersion: false,
       movable: false,
       liveMigration: false,
       secureIsolation: false,
@@ -318,10 +432,10 @@ test("Project startup reconciliation is bounded and closes through the runtime d
       name: id,
       kind: "zelavis",
       app: {
-        name: "@zelavis/app",
+        name: "zelavis/app",
         title: "Zelavis App",
         version: "1.0.1-alpha.2",
-        specifier: "@zelavis/app",
+        specifier: "zelavis/app",
       },
       desiredState: "running",
       runtime: { driver: runtime.name, status: "stopped" },
@@ -344,6 +458,123 @@ test("Project startup reconciliation is bounded and closes through the runtime d
   assert.equal(closeCalls, 1);
 });
 
+test("Project deletion persists progress and resumes unfinished cleanup after restart", async () => {
+  const store = createMemorySystemStore();
+  const cleanupCalls = [];
+  let failCleanup = true;
+  let destroyCalls = 0;
+  const appService = {
+    service: {
+      name: "zelavis/app",
+      kind: "app",
+      version: "1.0.1-alpha.2",
+      marketplace: { title: "Zelavis App" },
+    },
+    specifier: "zelavis/app",
+    status: "installed",
+    source: "official",
+  };
+  const runtime = {
+    name: "deletion-runtime",
+    startupConcurrency: 1,
+    capabilities: () => ({
+      independentRuntimeVersion: false,
+      movable: false,
+      liveMigration: false,
+      secureIsolation: false,
+      resourceLimits: false,
+      persistentFilesystem: true,
+      statelessRuntimeReplicas: false,
+      managedStorage: true,
+      managedDatabase: true,
+      databaseReplication: false,
+      tenantPlacement: false,
+      databaseSharding: false,
+      runtimeOwnership: "platform-process",
+      survivesControlPlaneRestart: false,
+      description: "Deletion test runtime",
+    }),
+    async prepare() {},
+    async start() {
+      return { status: "running", url: "http://127.0.0.1:49152" };
+    },
+    async stop() {
+      return { status: "stopped", stoppedAt: new Date().toISOString() };
+    },
+    async status() {
+      return { status: "stopped" };
+    },
+    async logs() {
+      return [];
+    },
+    async destroy() {
+      destroyCalls += 1;
+    },
+    async close() {},
+  };
+  const cleanupParticipants = [
+    {
+      id: "first-resource",
+      async cleanup() {
+        cleanupCalls.push("first-resource");
+      },
+    },
+    {
+      id: "flaky-resource",
+      async cleanup() {
+        cleanupCalls.push("flaky-resource");
+        if (failCleanup) {
+          failCleanup = false;
+          throw new Error("temporary cleanup outage");
+        }
+      },
+    },
+  ];
+
+  const first = await createProjectManager({
+    store,
+    appServices: [appService],
+    runtime,
+    cleanupParticipants,
+  });
+  await first.create({ id: "delete-me", name: "Delete Me", start: false });
+  await assert.rejects(
+    first.remove("delete-me"),
+    (error) =>
+      error instanceof ZelavisProjectDeletionError &&
+      error.participantId === "flaky-resource",
+  );
+
+  const tombstone = (await store.get("projects", "delete-me")).value;
+  assert.equal(tombstone.deletion.status, "failed");
+  assert.equal(tombstone.deletion.currentParticipant, "flaky-resource");
+  assert.deepEqual(tombstone.deletion.completedParticipants, ["first-resource"]);
+  assert.deepEqual(tombstone.deletion.participants, [
+    "first-resource",
+    "flaky-resource",
+    "runtime-data",
+  ]);
+  await assert.rejects(first.start("delete-me"), /pending deletion/);
+  await first.close();
+
+  const resumed = await createProjectManager({
+    store,
+    appServices: [appService],
+    runtime,
+    cleanupParticipants,
+  });
+  await resumed.reconcile();
+
+  assert.equal(await store.get("projects", "delete-me"), undefined);
+  assert.deepEqual(cleanupCalls, [
+    "first-resource",
+    "flaky-resource",
+    "flaky-resource",
+  ]);
+  assert.equal(destroyCalls, 1);
+  await resumed.close();
+});
+
 test("Node adapter creates independently persisted Zelavis App runtimes", async () => {
   const directory = await mkdtemp(join(tmpdir(), "zelavis-projects-"));
   const zv = new Zelavis({
@@ -363,12 +594,12 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
       const response = await runtimeRequest("/projects", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id, name, appServiceName: "@zelavis/app" }),
+        body: JSON.stringify({ id, name, appServiceName: "zelavis/app" }),
       });
       const body = await response.json();
 
       assert.equal(response.status, 201, JSON.stringify(body));
-      assert.equal(body.project.app.name, "@zelavis/app");
+      assert.equal(body.project.app.name, "zelavis/app");
       assert.equal(body.project.runtime.status, "running");
       assert.match(body.project.runtime.url, /^http:\/\/127\.0\.0\.1:\d+$/);
       projectRuntimeUrls.set(id, body.project.runtime.url);
@@ -438,19 +669,23 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
       {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: "alpha_only", surface: "database" }),
+        body: JSON.stringify({
+          tenantId: "zelavis-app",
+          name: "alpha_only",
+          surface: "database",
+        }),
       },
     );
     assert.equal(createCollection.status, 201, await createCollection.text());
 
     const alphaCollections = await (
       await runtimeRequest(
-        "/projects/alpha/proxy/zelavis/api/v1/database/documents/collections",
+        "/projects/alpha/proxy/zelavis/api/v1/database/documents/collections?tenantId=zelavis-app",
       )
     ).json();
     const betaCollections = await (
       await runtimeRequest(
-        "/projects/beta/proxy/zelavis/api/v1/database/documents/collections",
+        "/projects/beta/proxy/zelavis/api/v1/database/documents/collections?tenantId=zelavis-app",
       )
     ).json();
     assert.ok(
@@ -463,11 +698,45 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
         (collection) => collection.name === "alpha_only",
       ),
     );
+    const dataRestartResponse = await runtimeRequest("/projects/alpha/restart", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(dataRestartResponse.status, 200);
+    const collectionsAfterRestart = await (
+      await runtimeRequest(
+        "/projects/alpha/proxy/zelavis/api/v1/database/documents/collections?tenantId=zelavis-app",
+      )
+    ).json();
+    assert.ok(
+      collectionsAfterRestart.collections.some(
+        (collection) => collection.name === "alpha_only",
+      ),
+    );
     await assert.rejects(access(join(directory, "zelavis.sqlite")), {
       code: "ENOENT",
     });
-    await access(
-      join(directory, "projects", "alpha", ".zelavis", "zelavis.sqlite"),
+    await assert.rejects(
+      access(join(directory, "projects", "alpha", ".zelavis", "zelavis.sqlite")),
+      { code: "ENOENT" },
+    );
+    await Promise.all(
+      ["pshard-0001", "pshard-0002", "pshard-0003", "pshard-0004"].map(
+        (shardId) =>
+          access(
+            join(
+              directory,
+              "projects",
+              "alpha",
+              ".zelavis",
+              "data",
+              "primary",
+              "shards",
+              `${shardId}.sqlite`,
+            ),
+          ),
+      ),
     );
     await access(
       join(
@@ -520,6 +789,25 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
     assert.equal(fabricBody.placement.databaseNodeId, "local");
     assert.equal(fabricBody.placement.generation, 1);
 
+    const assistantThreadResponse = await zv.fetch(
+      new Request(
+        "http://localhost/zelavis/api/v1/runtime/assistant/threads",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ projectId: "alpha" }),
+        },
+      ),
+    );
+    assert.equal(assistantThreadResponse.status, 201);
+    const files = zv.platform.resources.files;
+    assert.ok(files);
+    await files.put({
+      path: "apps/alpha/@example/demo/dist/index.js",
+      body: "console.log('alpha')",
+      contentType: "text/javascript; charset=utf-8",
+    });
+
     const deleteResponse = await runtimeRequest("/projects/alpha", {
       method: "DELETE",
     });
@@ -529,6 +817,17 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
     await assert.rejects(access(join(directory, "projects", "alpha")), {
       code: "ENOENT",
     });
+    await assert.rejects(access(join(directory, "files", "apps", "alpha")), {
+      code: "ENOENT",
+    });
+    const assistantThreadsAfterDelete = await (
+      await zv.fetch(
+        new Request(
+          "http://localhost/zelavis/api/v1/runtime/assistant/threads?projectId=alpha",
+        ),
+      )
+    ).json();
+    assert.deepEqual(assistantThreadsAfterDelete.threads, []);
 
     const afterDeleteResponse = await runtimeRequest("/projects");
     const afterDeleteBody = await afterDeleteResponse.json();

@@ -7,7 +7,7 @@ import {
   buildBundleStorageKey,
   defineService,
 } from "../dist/index.js";
-import { zelavisServer } from "@zelavis/server";
+import { createServiceRuntime } from "../dist/core/index.js";
 
 const utf8 = (text) => new TextEncoder().encode(text);
 
@@ -113,6 +113,40 @@ test("createSharedBundleStore reads through the underlying ZelavisFileStorage", 
   assert.match(new TextDecoder().decode(asset.body), /kanban/);
 });
 
+test("createSharedBundleStore deletes only assets owned by one Project", async () => {
+  const stored = new Map([
+    ["apps/alpha/@example/kanban/dist/index.html", utf8("alpha")],
+    ["apps/alpha/@example/kanban/dist/assets/main.js", utf8("alpha-js")],
+    ["apps/beta/@example/kanban/dist/index.html", utf8("beta")],
+    ["apps/system/@zelavis/ui/dist/index.html", utf8("platform")],
+  ]);
+  const fakeStorage = {
+    async get(path) {
+      const body = stored.get(path);
+      return body ? { path, body } : undefined;
+    },
+    async put() {
+      throw new Error("not used");
+    },
+    async delete(path) {
+      return stored.delete(path);
+    },
+    async list(prefix) {
+      return [...stored.keys()]
+        .filter((path) => path.startsWith(prefix ?? ""))
+        .map((path) => ({ path }));
+    },
+  };
+
+  const store = createSharedBundleStore({ storage: fakeStorage });
+  assert.equal(await store.deleteProject("alpha"), 2);
+  assert.deepEqual([...stored.keys()].sort(), [
+    "apps/beta/@example/kanban/dist/index.html",
+    "apps/system/@zelavis/ui/dist/index.html",
+  ]);
+  assert.equal(await store.deleteProject("alpha"), 0);
+});
+
 // ---------- Activation synthesizes asset-serving routes ----------
 
 test("activateServiceRegistry synthesizes an app service for system services", async () => {
@@ -198,7 +232,7 @@ test("workspace-scoped services are remounted under /apps/<name> regardless of d
   );
 });
 
-// ---------- End-to-end through zelavisServer + dispatcher ----------
+// ---------- End-to-end through createServiceRuntime + dispatcher ----------
 
 test("a synthesized SPA service serves the index for unmatched sub-paths", async () => {
   const service = defineService({
@@ -241,7 +275,7 @@ test("a synthesized SPA service serves the index for unmatched sub-paths", async
     { bundleStore },
   );
 
-  const runtime = await zelavisServer({ services });
+  const runtime = await createServiceRuntime({ services });
 
   const indexResponse = await runtime.fetch(
     new Request("http://localhost/kanban"),
@@ -315,7 +349,7 @@ test("MPA mode resolves directory-style requests to .html and index.html, no SPA
     { bundleStore },
   );
 
-  const runtime = await zelavisServer({ services });
+  const runtime = await createServiceRuntime({ services });
 
   const aboutResponse = await runtime.fetch(
     new Request("http://localhost/marketing/about"),
@@ -375,7 +409,7 @@ test("app.devUrl short-circuits asset serving with a 307 redirect", async () => 
     { bundleStore },
   );
 
-  const runtime = await zelavisServer({ services });
+  const runtime = await createServiceRuntime({ services });
 
   // Root request → trailing-slash form to keep dev-server router happy.
   const rootResponse = await runtime.fetch(
@@ -440,7 +474,7 @@ test("app.devUrl can include its own base path that prefixes the relative path",
     { bundleStore: createInMemoryBundleStore(new Map()) },
   );
 
-  const runtime = await zelavisServer({ services });
+  const runtime = await createServiceRuntime({ services });
 
   const rootResponse = await runtime.fetch(
     new Request("http://localhost/zelavis", { redirect: "manual" }),
@@ -496,7 +530,7 @@ test("app.devUrl can leave reserved paths on the runtime", async () => {
     { bundleStore: createInMemoryBundleStore(new Map()) },
   );
 
-  const runtime = await zelavisServer({ services });
+  const runtime = await createServiceRuntime({ services });
 
   const appResponse = await runtime.fetch(
     new Request("http://localhost/zelavis/projects/a", {
@@ -563,7 +597,7 @@ test("app.devUrl bypasses bundle store and shell.render entirely", async () => {
     { bundleStore },
   );
 
-  const runtime = await zelavisServer({ services });
+  const runtime = await createServiceRuntime({ services });
 
   await runtime.fetch(
     new Request("http://localhost/dual", { redirect: "manual" }),
@@ -625,7 +659,7 @@ test("shell.render is called for index requests and SPA-fallback misses", async 
     { bundleStore },
   );
 
-  const runtime = await zelavisServer({ services });
+  const runtime = await createServiceRuntime({ services });
 
   // Root request — shell.render fires with empty path.
   const rootResponse = await runtime.fetch(new Request("http://localhost/app"));
@@ -700,7 +734,7 @@ test("shell.render can return non-200 for paths it wants to reject", async () =>
     { bundleStore: createInMemoryBundleStore(new Map()) },
   );
 
-  const runtime = await zelavisServer({ services });
+  const runtime = await createServiceRuntime({ services });
 
   const apiResponse = await runtime.fetch(
     new Request("http://localhost/gated/api/v1/whatever"),
@@ -752,7 +786,7 @@ test("system app routes are host-agnostic by default", async () => {
     { bundleStore },
   );
 
-  const runtime = await zelavisServer({ services });
+  const runtime = await createServiceRuntime({ services });
 
   const matched = await runtime.fetch(
     new Request("http://acme.example.com/"),

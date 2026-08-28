@@ -28,6 +28,7 @@ import {
   getResolvedDashboardPreferences,
   listDatabaseSchemaVersions,
   updateDashboardSettings,
+  ZELAVIS_APP_ADMIN_TENANT_ID,
 } from "#/lib/runtime-api";
 import { matchesProjectPath, toDashboardPath, toProjectPath } from "#/lib/routing";
 import { cn } from "#/lib/utils";
@@ -191,6 +192,7 @@ function Content() {
         sourceSchemas.find((schema) => schema.active) ?? sourceSchemas.at(-1);
 
       const created = await createDatabaseCollection(runtime, {
+        tenantId: ZELAVIS_APP_ADMIN_TENANT_ID,
         name: nextName,
         surface: "content-studio",
         metadata: {

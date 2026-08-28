@@ -50,11 +50,12 @@ Use the database schema helpers when the field is meant to store a file referenc
 
 ```ts
 import { Zelavis } from "zelavis";
-import { imageFileSchema } from "@zelavis/app/db";
+import { imageFileSchema } from "zelavis/app/db";
 
 const zv = new Zelavis();
+const tenantDb = zv.db.forTenant("tenant_acme");
 
-await zv.db.documents.createCollection({ name: "posts" });
+await tenantDb.documents.createCollection({ name: "posts" });
 await zv.db.schemas.register({
   collection: "posts",
   version: 1,
@@ -86,7 +87,7 @@ Other helpers are available too:
 After copying the reference JSON from the storage panel, insert it directly into a document:
 
 ```ts
-await zv.db.documents.insert({
+await tenantDb.documents.insert({
   collection: "posts",
   data: {
     title: "Spring launch",

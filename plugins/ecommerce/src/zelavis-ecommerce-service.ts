@@ -2,7 +2,7 @@ import {
   createJsonErrorResponse,
   createMappedJsonErrorResponse,
   type ZelavisServerErrorStatusRule,
-} from "@zelavis/server";
+} from "zelavis/core";
 import {
   defineService,
   type ZelavisServiceDefinition,
@@ -15,7 +15,7 @@ import type {
   Order,
   Product,
 } from "./domain/entities.js";
-import type { DatabaseApi } from "@zelavis/app/db";
+import type { DatabaseApi } from "zelavis/app/db";
 import type { CreateCouponInput } from "./services/coupon-service.js";
 import type { CreateCustomerInput } from "./services/customer-service.js";
 import type { CreateOrderInput } from "./services/order-service.js";
@@ -121,9 +121,9 @@ function isDatabaseApi(value: unknown): value is DatabaseApi {
   return Boolean(
     value &&
       typeof value === "object" &&
-      "documents" in value &&
+      "forTenant" in value &&
       "schemas" in value &&
-      "events" in value,
+      "capabilities" in value,
   );
 }
 
@@ -378,7 +378,9 @@ export const zelavisEcommerceService = defineService<ZelavisServiceSetupContext>
     const commerce = await createEcommerce({
       services: paymentServices,
       repositories: isDatabaseApi(context.core.database)
-        ? createDatabaseEcommerceRepositories(context.core.database)
+        ? createDatabaseEcommerceRepositories(context.core.database, {
+            tenantId: `service:${context.service.name}`,
+          })
         : undefined,
     });
 

@@ -28,13 +28,13 @@ const app = projectRecord.app;
 if (
   !app ||
   typeof app.name !== "string" ||
+  typeof app.version !== "string" ||
   typeof app.specifier !== "string"
 ) {
-  throw new Error("Project runner requires a locked app service.");
+  throw new Error("Project runner requires an exactly versioned app service lock.");
 }
 const lockedAppName = app.name;
-const lockedAppVersion =
-  typeof app.version === "string" ? app.version : undefined;
+const lockedAppVersion = app.version;
 const lockedAppSpecifier = app.specifier;
 
 const projectNodeAdapter = nodeAdapter({
@@ -56,7 +56,7 @@ const zv = new Zelavis({
             {
               service: {
                 name: lockedAppName,
-                ...(lockedAppVersion ? { version: lockedAppVersion } : {}),
+                version: lockedAppVersion,
                 kind: "app",
                 scope: "system",
               },

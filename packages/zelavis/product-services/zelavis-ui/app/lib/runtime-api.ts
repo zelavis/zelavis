@@ -307,7 +307,7 @@ export interface FabricSnapshot {
 }
 
 function appTitleFromName(name: string): string {
-  if (name === "@zelavis/app") {
+  if (name === "zelavis/app") {
     return "Zelavis App";
   }
 
@@ -324,7 +324,7 @@ export function normalizeRuntimeProject(project: RuntimeProject): RuntimeProject
     typeof storedApp?.name === "string" && storedApp.name.length > 0
       ? storedApp.name
       : project.kind === "zelavis"
-        ? "@zelavis/app"
+        ? "zelavis/app"
         : project.kind || "app";
   const appTitle =
     typeof storedApp?.title === "string" && storedApp.title.length > 0
@@ -553,10 +553,11 @@ declare global {
 
 export interface DatabaseHealth {
   status: string;
-  driver: string;
   capabilities: Record<string, boolean>;
-  defaultTenantId: string;
+  nodeId: string;
 }
+
+export const ZELAVIS_APP_ADMIN_TENANT_ID = "zelavis-app";
 
 export type DatabaseCollectionSurface = "content-studio" | "database";
 
@@ -584,16 +585,6 @@ export interface DatabaseSchemaCollectionSummary {
   collection: string;
   activeVersion: number | null;
   versions: number[];
-}
-
-export interface DatabaseSystemTableSummary {
-  name:
-    | "zv_collections"
-    | "zv_events"
-    | "zv_schemas"
-    | "zv_time_series_checkpoints"
-    | "zv_time_series_points";
-  physicalName: string;
 }
 
 export interface CollectionFieldEntry {
@@ -690,7 +681,7 @@ const fallbackConfig: RuntimeConfig = {
   },
   services: [
     {
-      name: "@zelavis/core",
+      name: "zelavis/platform",
       core: true,
       apiPath: "/api/v1/runtime",
       menu: {
@@ -786,7 +777,7 @@ const fallbackConfig: RuntimeConfig = {
       },
     },
     {
-      name: "@zelavis/marketplace",
+      name: "zelavis/marketplace",
       core: true,
       apiPath: "/api/v1/marketplace",
       menu: {
@@ -832,7 +823,7 @@ const fallbackConfig: RuntimeConfig = {
         surface: "core",
         panelLabel: "Database",
         dynamicItems: {
-          path: "/database/menu/tables",
+          path: "/database/menu/tables?tenantId=zelavis-app",
           emptyTitle: "No tables yet",
         },
         items: [
@@ -842,44 +833,6 @@ const fallbackConfig: RuntimeConfig = {
             pageLabel: "Database",
             fixed: true,
             fixedOrder: 1,
-          },
-            {
-              title: "System Tables",
-              path: "/database",
-              search: { systemTable: "zv_collections" },
-              panelLabel: "System Tables",
-            items: [
-              {
-                title: "zv_collections",
-                path: "/database",
-                pageLabel: "Database",
-                search: { systemTable: "zv_collections" },
-              },
-              {
-                title: "zv_events",
-                path: "/database",
-                pageLabel: "Database",
-                search: { systemTable: "zv_events" },
-              },
-              {
-                title: "zv_schemas",
-                path: "/database",
-                pageLabel: "Database",
-                search: { systemTable: "zv_schemas" },
-              },
-              {
-                title: "zv_time_series_checkpoints",
-                path: "/database",
-                pageLabel: "Database",
-                search: { systemTable: "zv_time_series_checkpoints" },
-              },
-              {
-                title: "zv_time_series_points",
-                path: "/database",
-                pageLabel: "Database",
-                search: { systemTable: "zv_time_series_points" },
-              },
-            ],
           },
         ],
       },
@@ -2073,67 +2026,15 @@ export async function listAuthAccounts(config: RuntimeConfig) {
   return readJson<AuthAccount[]>(`${config.api.basePath}/auth/accounts`);
 }
 
-export async function listDatabaseCollections(config: RuntimeConfig) {
+export async function listDatabaseCollections(
+  config: RuntimeConfig,
+  tenantId: string,
+) {
   const cacheBuster = Date.now().toString(36);
   const result = await readJson<{ collections: DatabaseCollection[] }>(
-    `${config.api.basePath}/database/documents/collections?refresh=${cacheBuster}`,
+    `${config.api.basePath}/database/documents/collections?tenantId=${encodeURIComponent(tenantId)}&refresh=${cacheBuster}`,
   );
-
-  const collectionsByKey = new Map(
-    result.collections.map((collection) => [
-      `${collection.tenantId}:${collection.name}`,
-      collection,
-    ]),
-  );
-
-  try {
-    const systemResult = await readJson<{
-      rows: Array<{
-        tenant_id?: unknown;
-        name?: unknown;
-        created_at?: unknown;
-        document_count?: unknown;
-        surface?: unknown;
-        metadata_json?: unknown;
-      }>;
-    }>(
-      `${config.api.basePath}/database/sql/system/zv_collections?limit=500&refresh=${cacheBuster}`,
-    );
-
-    for (const row of systemResult.rows) {
-      if (typeof row.name !== "string") {
-        continue;
-      }
-
-      const tenantId =
-        typeof row.tenant_id === "string" ? row.tenant_id : "default";
-      const metadata =
-        typeof row.metadata_json === "string" && row.metadata_json.length > 0
-          ? (JSON.parse(row.metadata_json) as Record<string, unknown> | null)
-          : undefined;
-      const surface =
-        row.surface === "content-studio" || row.surface === "database"
-          ? row.surface
-          : undefined;
-
-      collectionsByKey.set(`${tenantId}:${row.name}`, {
-        name: row.name,
-        tenantId,
-        createdAt:
-          typeof row.created_at === "string"
-            ? row.created_at
-            : new Date().toISOString(),
-        documentCount:
-          typeof row.document_count === "number" ? row.document_count : 0,
-        surface,
-        metadata: metadata ?? undefined,
-      });
-    }
-  } catch {
-    // Drivers without SQL support can still use the document collection endpoint.
-  }
-
-  return [...collectionsByKey.values()].sort((left, right) =>
+  return result.collections.sort((left, right) =>
     left.name.localeCompare(right.name),
   );
 }
@@ -2144,7 +2045,7 @@ export async function createDatabaseCollection(
     name: string;
     surface?: DatabaseCollectionSurface;
     metadata?: Record<string, unknown>;
-    tenantId?: string;
+    tenantId: string;
   },
 ) {
   const collection = await readJson<DatabaseCollection>(
@@ -2236,6 +2137,7 @@ export async function queryDatabaseTimeSeriesRange(
     end?: number | string;
     limit?: number;
     order?: "asc" | "desc";
+    tenantId: string;
   },
 ) {
   const result = await readJson<{ points: DatabaseTimeSeriesPoint[] }>(
@@ -2247,6 +2149,7 @@ export async function queryDatabaseTimeSeriesRange(
         end: input.end,
         limit: input.limit,
         order: input.order,
+        tenantId: input.tenantId,
       }),
     },
   );
@@ -2261,6 +2164,7 @@ export async function queryDatabaseTimeSeriesAggregate(
     op: DatabaseTimeSeriesAggregateOperation;
     start?: number | string;
     end?: number | string;
+    tenantId: string;
   },
 ) {
   const result = await readJson<{ value: number }>(
@@ -2271,6 +2175,7 @@ export async function queryDatabaseTimeSeriesAggregate(
         op: input.op,
         start: input.start,
         end: input.end,
+        tenantId: input.tenantId,
       }),
     },
   );
@@ -2281,6 +2186,7 @@ export async function queryDatabaseTimeSeriesAggregate(
 export async function queryDatabaseDocuments(
   config: RuntimeConfig,
   collection: string,
+  tenantId: string,
 ) {
   const result = await readJson<{ documents: DatabaseDocument[] }>(
     `${config.api.basePath}/database/documents/${encodeURIComponent(collection)}/query`,
@@ -2288,6 +2194,7 @@ export async function queryDatabaseDocuments(
       method: "POST",
       body: JSON.stringify({
         limit: 25,
+        tenantId,
       }),
     },
   );
@@ -2295,43 +2202,16 @@ export async function queryDatabaseDocuments(
   return result.documents;
 }
 
-export async function listDatabaseSystemTables(config: RuntimeConfig) {
-  const result = await readJson<{ tables: DatabaseSystemTableSummary[] }>(
-    `${config.api.basePath}/database/sql/system/tables`,
-  );
-
-  return result.tables;
-}
-
-export async function queryDatabaseSystemTable(
-  config: RuntimeConfig,
-  table: DatabaseSystemTableSummary["name"],
-  options?: { limit?: number },
-) {
-  const params = new URLSearchParams();
-  if (typeof options?.limit === "number") {
-    params.set("limit", String(options.limit));
-  }
-
-  const suffix = params.size > 0 ? `?${params.toString()}` : "";
-  const result = await readJson<{
-    table: DatabaseSystemTableSummary["name"];
-    rows: Record<string, unknown>[];
-  }>(`${config.api.basePath}/database/sql/system/${encodeURIComponent(table)}${suffix}`);
-
-  return result.rows;
-}
-
 export async function getDatabaseDocument(
   config: RuntimeConfig,
   input: {
     collection: string;
     id: string;
-    tenantId?: string;
+    tenantId: string;
   },
 ) {
   return readJson<DatabaseDocument>(
-    `${config.api.basePath}/database/documents/${encodeURIComponent(input.collection)}/${encodeURIComponent(input.id)}${input.tenantId ? `?tenantId=${encodeURIComponent(input.tenantId)}` : ""}`,
+    `${config.api.basePath}/database/documents/${encodeURIComponent(input.collection)}/${encodeURIComponent(input.id)}?tenantId=${encodeURIComponent(input.tenantId)}`,
   );
 }
 
@@ -2341,7 +2221,7 @@ export async function insertDatabaseDocument(
     collection: string;
     data: Record<string, unknown>;
     id?: string;
-    tenantId?: string;
+    tenantId: string;
   },
 ) {
   return readJson<DatabaseDocument>(
@@ -2351,7 +2231,7 @@ export async function insertDatabaseDocument(
       body: JSON.stringify({
         data: input.data,
         id: input.id || undefined,
-        tenantId: input.tenantId || undefined,
+        tenantId: input.tenantId,
       }),
     },
   );
@@ -2364,7 +2244,7 @@ export async function updateDatabaseDocument(
     id: string;
     data: Record<string, unknown>;
     mode?: "merge" | "replace";
-    tenantId?: string;
+    tenantId: string;
   },
 ) {
   return readJson<DatabaseDocument>(
@@ -2374,7 +2254,7 @@ export async function updateDatabaseDocument(
       body: JSON.stringify({
         data: input.data,
         mode: input.mode ?? "merge",
-        tenantId: input.tenantId || undefined,
+        tenantId: input.tenantId,
       }),
     },
   );
@@ -2385,11 +2265,11 @@ export async function deleteDatabaseDocument(
   input: {
     collection: string;
     id: string;
-    tenantId?: string;
+    tenantId: string;
   },
 ) {
   return readJson<{ deleted: boolean }>(
-    `${config.api.basePath}/database/documents/${encodeURIComponent(input.collection)}/${encodeURIComponent(input.id)}${input.tenantId ? `?tenantId=${encodeURIComponent(input.tenantId)}` : ""}`,
+    `${config.api.basePath}/database/documents/${encodeURIComponent(input.collection)}/${encodeURIComponent(input.id)}?tenantId=${encodeURIComponent(input.tenantId)}`,
     {
       method: "DELETE",
     },
@@ -2397,10 +2277,12 @@ export async function deleteDatabaseDocument(
 }
 
 export async function seedDemoDatabase(config: RuntimeConfig) {
-  const collections = await listDatabaseCollections(config);
+  const tenantId = ZELAVIS_APP_ADMIN_TENANT_ID;
+  const collections = await listDatabaseCollections(config, tenantId);
   if (!collections.some((collection) => collection.name === "products")) {
     await createDatabaseCollection(config, {
       name: "products",
+      tenantId,
       metadata: {
         seededBy: "zelavis-dashboard",
       },
@@ -2410,6 +2292,7 @@ export async function seedDemoDatabase(config: RuntimeConfig) {
   const timestamp = Date.now();
   await insertDatabaseDocument(config, {
     collection: "products",
+    tenantId,
     id: `starter-product-${timestamp}`,
     data: {
       name: "Starter Product",
@@ -2422,6 +2305,7 @@ export async function seedDemoDatabase(config: RuntimeConfig) {
 
   await insertDatabaseDocument(config, {
     collection: "products",
+    tenantId,
     id: `service-plan-${timestamp}`,
     data: {
       name: "Service Plan",

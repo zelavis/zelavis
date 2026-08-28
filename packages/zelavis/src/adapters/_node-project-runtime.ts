@@ -67,6 +67,31 @@ function positiveInteger(value: number | undefined, fallback: number): number {
   return Math.max(1, Math.floor(value));
 }
 
+export function formatProjectProcessExitError(input: {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  logs: readonly ZelavisProjectLogEntry[];
+}): string {
+  const base = `Project process exited${
+    input.code !== null ? ` with code ${input.code}` : ""
+  }${input.signal ? ` after ${input.signal}` : ""}.`;
+  const diagnostic = [...input.logs]
+    .reverse()
+    .find(
+      (entry) =>
+        entry.stream === "stderr" &&
+        /(?:error|exception|cannot|failed|not found)/i.test(entry.message) &&
+        !/^\s*at\s/.test(entry.message),
+    )?.message.trim();
+  if (!diagnostic) {
+    return base;
+  }
+  const summary = diagnostic.length > 600
+    ? `${diagnostic.slice(0, 597)}...`
+    : diagnostic;
+  return `${base} ${summary} See project logs for full output.`;
+}
+
 async function runWithConcurrency<TValue>(
   values: readonly TValue[],
   concurrency: number,
@@ -154,6 +179,7 @@ export function createNodeProcessProjectRuntime(
   }
 
   const capabilities = {
+    independentRuntimeVersion: false,
     movable: false,
     liveMigration: false,
     secureIsolation: false,
@@ -306,7 +332,11 @@ export function createNodeProcessProjectRuntime(
             state.snapshot = {
               status: "failed",
               stoppedAt,
-              error: `Project process exited${code !== null ? ` with code ${code}` : ""}${signal ? ` after ${signal}` : ""}.`,
+              error: formatProjectProcessExitError({
+                code,
+                signal,
+                logs: state.logs,
+              }),
             };
           }
           appendLog(state, "system", state.snapshot.error ?? "Project stopped.");

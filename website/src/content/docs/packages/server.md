@@ -1,7 +1,8 @@
 ---
-title: "@zelavis/server"
+title: "zelavis/core"
 ---
-`@zelavis/server` defines the shared server service contract and Web-first runtime surface used across Zelavis packages.
+`zelavis/core` is a public subpath of the unified `zelavis` package. It defines
+the shared server service contract and Web-first runtime surface.
 
 ## Current role
 
@@ -13,8 +14,8 @@ exposes Web-standard handlers plus a standalone Node HTTP adapter.
 - packages export services as plain `ZelavisRuntimeService` object literals
 - core packages should expose one obvious top-level service-definition file so package authors can find the service entrypoint without hunting through nested folders
 - services can compose nested services
-- `zelavisServer(...)` resolves routes once and exposes reusable runtime handlers
-- `@zelavis/server/adapters/node` adapts the resolved runtime to a standalone Node HTTP server
+- `createServiceRuntime(...)` resolves routes once and exposes reusable runtime handlers
+- `zelavis/runtimes/node` adapts the resolved runtime to a standalone Node HTTP server
 
 ## Runtime surfaces
 
@@ -24,7 +25,7 @@ Current runtime surfaces include:
 - `plain({ ... })`
 - `dispatch(request)`
 
-The high-level runtime also uses `@zelavis/server` for runtime introspection,
+The high-level runtime also uses `zelavis/core` for runtime introspection,
 service-registry operations, service menu discovery, and service-owned page
 documents. This metadata remains available in headless project runtimes, so the
 single Platform `@zelavis/ui` dashboard can render a selected project's menus
@@ -34,7 +35,7 @@ without that project serving another dashboard application.
 
 Fabric is the server-owned scaling subsystem for node inventory, project
 placement, routing, balancing, migration, recovery, and future replication
-coordination. It lives inside `@zelavis/server`, not as a separate package.
+coordination. It lives inside `zelavis/core`, not as a separate package.
 
 The Platform OS exposes its current read capabilities under
 `/zelavis/api/v1/fabric/*`. The dashboard reaches them from the regular Server
@@ -42,7 +43,7 @@ area rather than through a standalone Fabric service menu item.
 
 ## Access Model
 
-`@zelavis/server` defines the shared access-control vocabulary for Zelavis
+`zelavis/core` defines the shared access-control vocabulary for Zelavis
 capabilities. A runtime can resolve a `ZelavisPrincipal` for a request, and a
 service route can declare `access` requirements such as required roles,
 permissions, and a scope.
@@ -84,7 +85,7 @@ layer.
 
 ## Why it matters
 
-This package is the transport boundary that keeps domain packages mountable without baking framework logic into each package.
+This subpath is the transport boundary that keeps domain packages mountable without baking framework logic into each package.
 
 It is also the boundary that keeps dashboard behavior automatable. If the dashboard can perform a platform action, the same action should be exposed through a service endpoint so the CLI, AI agents, scripts, plugins, and external admin tools can call it too.
 

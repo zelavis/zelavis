@@ -98,7 +98,7 @@ test("defineService validates required service fields", () => {
         name: "@zelavis/ecommerce-stripe",
         extends: "",
       }),
-    /scoped package-style name/,
+    /Zelavis built-in name|scoped package name/,
   );
 
   assert.throws(
@@ -128,7 +128,7 @@ test("defineService validates required service fields", () => {
       defineService({
         name: "stripe",
       }),
-    /scoped package-style name/,
+    /Zelavis built-in name|scoped package name/,
   );
 
   assert.throws(
@@ -137,7 +137,7 @@ test("defineService validates required service fields", () => {
         name: "@zelavis/ecommerce",
         childServices: ["stripe"],
       }),
-    /scoped package-style name/,
+    /Zelavis built-in name|scoped package name/,
   );
 });
 

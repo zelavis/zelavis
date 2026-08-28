@@ -113,9 +113,6 @@ importers:
 
   examples/plugin-basic:
     dependencies:
-      '@zelavis/app':
-        specifier: workspace:*
-        version: link:../../packages/app
       zelavis:
         specifier: workspace:*
         version: link:../../packages/zelavis
@@ -134,110 +131,7 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/app:
-    dependencies:
-      '@zelavis/server':
-        specifier: workspace:*
-        version: link:../server
-      effect:
-        specifier: 4.0.0-rc.111
-        version: 4.0.0-rc.111
-    devDependencies:
-      '@types/node':
-        specifier: ^25.9.3
-        version: 25.9.5
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
-  packages/app/adapters/bun-sqlite:
-    dependencies:
-      '@zelavis/app':
-        specifier: workspace:*
-        version: link:../..
-    devDependencies:
-      '@types/node':
-        specifier: ^25.9.3
-        version: 25.9.5
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
-  packages/app/adapters/libsql:
-    dependencies:
-      '@libsql/client':
-        specifier: ^0.17.4
-        version: 0.17.4
-      '@zelavis/app':
-        specifier: workspace:*
-        version: link:../..
-    devDependencies:
-      '@types/node':
-        specifier: ^25.9.3
-        version: 25.9.5
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
-  packages/app/adapters/node-sqlite:
-    dependencies:
-      '@zelavis/app':
-        specifier: workspace:*
-        version: link:../..
-      better-sqlite3:
-        specifier: ^12.11.1
-        version: 12.11.1
-    devDependencies:
-      '@types/better-sqlite3':
-        specifier: ^7.6.13
-        version: 7.6.13
-      '@types/node':
-        specifier: ^25.9.3
-        version: 25.9.5
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
-  packages/app/plugins/email-password:
-    dependencies:
-      '@zelavis/app':
-        specifier: workspace:*
-        version: link:../..
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      zelavis:
-        specifier: workspace:*
-        version: link:../../../zelavis
-
-  packages/app/plugins/username-password:
-    dependencies:
-      '@zelavis/app':
-        specifier: workspace:*
-        version: link:../..
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      zelavis:
-        specifier: workspace:*
-        version: link:../../../zelavis
-
   packages/cli:
-    devDependencies:
-      '@types/node':
-        specifier: ^25.9.3
-        version: 25.9.5
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
-  packages/server:
-    dependencies:
-      effect:
-        specifier: 4.0.0-rc.111
-        version: 4.0.0-rc.111
     devDependencies:
       '@types/node':
         specifier: ^25.9.3
@@ -248,27 +142,9 @@ importers:
 
   packages/zelavis:
     dependencies:
-      '@zelavis/app':
-        specifier: workspace:*
-        version: link:../app
-      '@zelavis/app-db-bun-sqlite':
-        specifier: workspace:*
-        version: link:../app/adapters/bun-sqlite
-      '@zelavis/app-db-node-sqlite':
-        specifier: workspace:*
-        version: link:../app/adapters/node-sqlite
       '@zelavis/cli':
         specifier: workspace:*
         version: link:../cli
-      '@zelavis/core':
-        specifier: workspace:*
-        version: link:product-services/zelavis-core
-      '@zelavis/marketplace':
-        specifier: workspace:*
-        version: link:product-services/zelavis-marketplace
-      '@zelavis/server':
-        specifier: workspace:*
-        version: link:../server
       '@zelavis/ui':
         specifier: workspace:*
         version: link:product-services/zelavis-ui
@@ -289,11 +165,14 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/zelavis/product-services/zelavis-core:
+  packages/zelavis/adapters/libsql:
     dependencies:
-      '@zelavis/server':
+      '@libsql/client':
+        specifier: ^0.17.4
+        version: 0.17.4
+      zelavis:
         specifier: workspace:*
-        version: link:../../../server
+        version: link:../..
     devDependencies:
       '@types/node':
         specifier: ^25.9.3
@@ -302,24 +181,29 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/zelavis/product-services/zelavis-marketplace:
-    dependencies:
-      '@zelavis/server':
-        specifier: workspace:*
-        version: link:../../../server
+  packages/zelavis/plugins/email-password:
     devDependencies:
-      '@types/node':
-        specifier: ^25.9.3
-        version: 25.9.5
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
+      zelavis:
+        specifier: workspace:*
+        version: link:../..
+
+  packages/zelavis/plugins/username-password:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      zelavis:
+        specifier: workspace:*
+        version: link:../..
 
   packages/zelavis/product-services/zelavis-ui:
     dependencies:
       '@assistant-ui/core':
-        specifier: 0.3.14
-        version: 0.3.14(@assistant-ui/store@0.3.10(@assistant-ui/tap@0.9.14(@types/react@19.2.18)(react@19.2.5))(@types/react@19.2.18)(react@19.2.5))(@assistant-ui/tap@0.9.14(@types/react@19.2.18)(react@19.2.5))(@types/react@19.2.18)(assistant-cloud@0.1.41)(react@19.2.5)(zustand@5.0.15(@types/react@19.2.18)(immer@11.1.15)(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5)))
+        specifier: 0.3.15
+        version: 0.3.15(@assistant-ui/store@0.3.10(@assistant-ui/tap@0.9.14(@types/react@19.2.18)(react@19.2.5))(@types/react@19.2.18)(react@19.2.5))(@assistant-ui/tap@0.9.14(@types/react@19.2.18)(react@19.2.5))(@types/react@19.2.18)(assistant-cloud@0.1.41)(react@19.2.5)(zustand@5.0.15(@types/react@19.2.18)(immer@11.1.15)(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5)))
       '@assistant-ui/react':
         specifier: 0.15.16
         version: 0.15.16(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(immer@11.1.15)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5))
@@ -360,8 +244,8 @@ importers:
         specifier: ^0.46.0
         version: 0.46.0(typescript@5.9.3)
       '@lexical/link':
-        specifier: ^0.49.0
-        version: 0.49.0(typescript@5.9.3)
+        specifier: ^0.46.0
+        version: 0.46.0(typescript@5.9.3)
       '@lexical/list':
         specifier: ^0.46.0
         version: 0.46.0(typescript@5.9.3)
@@ -393,7 +277,7 @@ importers:
         specifier: ^8.6.0
         version: 8.6.0(react@19.2.5)
       isbot:
-        specifier: ^5
+        specifier: ^5.2.1
         version: 5.2.1
       lexical:
         specifier: ^0.46.0
@@ -474,12 +358,6 @@ importers:
 
   plugins/ecommerce:
     dependencies:
-      '@zelavis/app':
-        specifier: workspace:*
-        version: link:../../packages/app
-      '@zelavis/server':
-        specifier: workspace:*
-        version: link:../../packages/server
       effect:
         specifier: 4.0.0-rc.111
         version: 4.0.0-rc.111
@@ -604,25 +482,6 @@ packages:
 
   '@asamuzakjp/nwsapi@2.3.9':
     resolution: {integrity: sha512-n8GuYSrI9bF7FFZ/SjhwevlHc8xaVlb/7HmHelnc/PZXBD2ZR49NnN9sMMuDdEGPeeRQ5d0hqlSlEpgCX3Wl0Q==}
-
-  '@assistant-ui/core@0.3.14':
-    resolution: {integrity: sha512-UtjUZLUyCjB0ymv4YXtmNtUIyzznUnpNVFntY9wSvvHG7k25HzffCrpi4jiuW0814Zhf/ejouXZja+RuMWLseA==}
-    peerDependencies:
-      '@assistant-ui/store': ^0.3.0
-      '@assistant-ui/tap': ^0.9.0
-      '@types/react': '*'
-      assistant-cloud: ^0.1.31
-      react: 19.2.5
-      zustand: ^5.0.11
-    peerDependenciesMeta:
-      '@types/react':
-        optional: true
-      assistant-cloud:
-        optional: true
-      react:
-        optional: true
-      zustand:
-        optional: true
 
   '@assistant-ui/core@0.3.15':
     resolution: {integrity: sha512-pCeVhMmzK4xFbahtRtvjlGXDxycsvl1plgiD0M5ZyABm+QxINGnBO5GEz1hqDHQVjKlCIJDNj15PlFSkuFnidA==}
@@ -1758,14 +1617,6 @@ packages:
       typescript:
         optional: true
 
-  '@lexical/extension@0.49.0':
-    resolution: {integrity: sha512-Wv0VsuqxorbxHCK4ms1PwAu6cXIGNLtflq66auF+zwxOtBprkSFV8VzzzdKLOYD2admP0VK6EqVCeGXFK1GggA==}
-    peerDependencies:
-      typescript: '>=5.2'
-    peerDependenciesMeta:
-      typescript:
-        optional: true
-
   '@lexical/hashtag@0.46.0':
     resolution: {integrity: sha512-6XiL5/KXyCxR+oD7fWjJL3enqsrkn4hgjEa13wAQrBZ5W+avFl/9Cd5bkwcXS+jPjmhk47+zYj76l6uuiFoMoQ==}
     peerDependencies:
@@ -1790,14 +1641,6 @@ packages:
       typescript:
         optional: true
 
-  '@lexical/html@0.49.0':
-    resolution: {integrity: sha512-NQqAydKzRjQl7Jx+bTTyC2iuz5uhuDaQX0SSPrdfgaFDCPjqQEejcBkCt1QXnu1CkbVHutZKVGVzljx40Y6y+Q==}
-    peerDependencies:
-      typescript: '>=5.2'
-    peerDependenciesMeta:
-      typescript:
-        optional: true
-
   '@lexical/internal@0.46.0':
     resolution: {integrity: sha512-OV1ePAAnVVd0K+Bq5SX7vOKE/LqJLYcDM4HD4zVCisbgVaznE+pTj/nDB2uWTidwf8o7QhPR65VhEi+KkUtyEw==}
     peerDependencies:
@@ -1806,24 +1649,8 @@ packages:
       typescript:
         optional: true
 
-  '@lexical/internal@0.49.0':
-    resolution: {integrity: sha512-s+XjPC7Qb39A/Xx9ahcz1s69CPix4ultaqyW+MDG0AXYW2quDr7m0USqReKIAiuoLIWtGN5HW8BwV2Y6t4qr6Q==}
-    peerDependencies:
-      typescript: '>=5.2'
-    peerDependenciesMeta:
-      typescript:
-        optional: true
-
   '@lexical/link@0.46.0':
     resolution: {integrity: sha512-MdGiAOAmqnZKtfaQxKFZv18SC+1zJIOfqB7bR43va/rp4M3u1cVniquUCTALub40WEWTuJgT2XvfSlpKm7FuXA==}
-    peerDependencies:
-      typescript: '>=5.2'
-    peerDependenciesMeta:
-      typescript:
-        optional: true
-
-  '@lexical/link@0.49.0':
-    resolution: {integrity: sha512-CsZVu1OfnPOn6IKWVO5DbmKwIuicGtgWSzrZMdMB8w6yPoMgFyPWeVulhPE7LNz2FhaQCWv+lVVYVAiJrUzJsg==}
     peerDependencies:
       typescript: '>=5.2'
     peerDependenciesMeta:
@@ -1899,14 +1726,6 @@ packages:
       typescript:
         optional: true
 
-  '@lexical/selection@0.49.0':
-    resolution: {integrity: sha512-08Vd1+VoC6YnztWOFWVsqF/Hxw5EP8qeL1c7t3+rVCV8revLzXxdQw+vbPX3tgM4fmjOBDUXk6Ws1+rTtsqjcQ==}
-    peerDependencies:
-      typescript: '>=5.2'
-    peerDependenciesMeta:
-      typescript:
-        optional: true
-
   '@lexical/table@0.46.0':
     resolution: {integrity: sha512-azgbCn+CxyGF2wVFB5Rmcx3wFKR9WKiGvJUUh8YDnMxL9LMWESfFy36XbedR140xUq0QoYTw8ZxBGMHE4ZiIIg==}
     peerDependencies:
@@ -1925,14 +1744,6 @@ packages:
 
   '@lexical/utils@0.46.0':
     resolution: {integrity: sha512-s8XQDoBr1wyPKGqy3qyDeHvi+vMgOiszzcRdHvTd6AqWpXxw2MsDQzMdF3Nr56QHahcOYxMOcv+r7r2nnCcgCA==}
-    peerDependencies:
-      typescript: '>=5.2'
-    peerDependenciesMeta:
-      typescript:
-        optional: true
-
-  '@lexical/utils@0.49.0':
-    resolution: {integrity: sha512-Jaa6DERBqxiFOFa49VPRV1WOb7mzRbMZ5U+v+RFagjzTmBhfxDmEkbQQ9nYTU3n3DPfdT8Hkyffextmw04etXg==}
     peerDependencies:
       typescript: '>=5.2'
     peerDependenciesMeta:
@@ -2236,9 +2047,6 @@ packages:
 
   '@preact/signals-core@1.14.2':
     resolution: {integrity: sha512-RZHdBj9ZF4n40Rp4jS052EHHjBWf96P9oNdXPfhQTovCuWY9iQn3Gq+gOTJSgBO9A/JBuPfMOWsSX/lIU9Pc/A==}
-
-  '@preact/signals-core@1.14.4':
-    resolution: {integrity: sha512-HNB6HYeYKhQbJ1aKl+YRjrS4+QWHLKX6qKoUsfS/m0vqzsVaEBiZiaKbG/e+NKk2ch5ALQr/ihWaMHxiCuuWHA==}
 
   '@radix-ui/number@1.1.3':
     resolution: {integrity: sha512-Road2bidD0uu/1BGDOWNdPI06g0lIRy6IF9GZcIrDK2KGItfor8IQwQa+yM2ERgHM1MmHxaxpTzk0/Jp42lNfA==}
@@ -3842,17 +3650,6 @@ packages:
   assistant-cloud@0.1.41:
     resolution: {integrity: sha512-lrH9USOoNaAWAAbujeHa/PEiWoqNQHjIPIAeeA3y3GUXOdlmTjIyR/7GbEZBKbHhm1Lyt7aAYKvdxHFkhuEbJw==}
 
-  assistant-stream@0.3.38:
-    resolution: {integrity: sha512-WASh+97pCN1+Q0pRS8m1fZ56eqWYmDucGs5uLTfsb/Iel69K+GAIntVDn2HTaaOBDyAGs2QBizT7d7lcUcllvA==}
-    peerDependencies:
-      ioredis: ^5.10.1 || ^6.0.0
-      redis: ^5.12.1
-    peerDependenciesMeta:
-      ioredis:
-        optional: true
-      redis:
-        optional: true
-
   assistant-stream@0.3.39:
     resolution: {integrity: sha512-Ad28saCwQxqaB69w4WNaS3uW5OW5BgTYnzTfbgFnz1CPXZjcWFsMrHhcJUpR4+lfYPTNal0oHEb47VUZH4Zz1g==}
     peerDependencies:
@@ -3956,10 +3753,6 @@ packages:
 
   better-sqlite3@12.10.0:
     resolution: {integrity: sha512-CyzaZRQKyHkB2ZInfTTl2nvT33EbDpjkLEbE8/Zck3Ll6O0qqvuGdrJ45HgtH+HykRg88ITY3AdreBGN70aBSQ==}
-    engines: {node: 20.x || 22.x || 23.x || 24.x || 25.x || 26.x}
-
-  better-sqlite3@12.11.1:
-    resolution: {integrity: sha512-dq9AtApgg5PGFtBzPFSBl3HZQjHok5gaQCM6zh2Yk0aSmDCs1CbnVI8/HgASQkNKsWFpseIO9beg5xxpYhbIfA==}
     engines: {node: 20.x || 22.x || 23.x || 24.x || 25.x || 26.x}
 
   bidi-js@1.0.3:
@@ -5660,14 +5453,6 @@ packages:
 
   lexical@0.46.0:
     resolution: {integrity: sha512-oaE7OLY/FuqGKC7ihaqLJvgn/NvvRveryKBBgOwrSe+UIpBmc9IvyXf6hVcvew9M3Vc0XavHWe/ZAL7qc5DzMw==}
-    peerDependencies:
-      typescript: '>=5.2'
-    peerDependenciesMeta:
-      typescript:
-        optional: true
-
-  lexical@0.49.0:
-    resolution: {integrity: sha512-9V1ZIzGpJEd8rIN+nN7veL4fW4fFWbS66Un4JNqSZB4D5t9euzN9+3+jEXy83FjNjNy0MiiUI3+DQaGCLYko0w==}
     peerDependencies:
       typescript: '>=5.2'
     peerDependenciesMeta:
@@ -8126,21 +7911,6 @@ snapshots:
 
   '@asamuzakjp/nwsapi@2.3.9': {}
 
-  '@assistant-ui/core@0.3.14(@assistant-ui/store@0.3.10(@assistant-ui/tap@0.9.14(@types/react@19.2.18)(react@19.2.5))(@types/react@19.2.18)(react@19.2.5))(@assistant-ui/tap@0.9.14(@types/react@19.2.18)(react@19.2.5))(@types/react@19.2.18)(assistant-cloud@0.1.41)(react@19.2.5)(zustand@5.0.15(@types/react@19.2.18)(immer@11.1.15)(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5)))':
-    dependencies:
-      '@assistant-ui/store': 0.3.10(@assistant-ui/tap@0.9.14(@types/react@19.2.18)(react@19.2.5))(@types/react@19.2.18)(react@19.2.5)
-      '@assistant-ui/tap': 0.9.14(@types/react@19.2.18)(react@19.2.5)
-      assistant-stream: 0.3.38
-      nanoid: 3.3.18
-    optionalDependencies:
-      '@types/react': 19.2.18
-      assistant-cloud: 0.1.41
-      react: 19.2.5
-      zustand: 5.0.15(@types/react@19.2.18)(immer@11.1.15)(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5))
-    transitivePeerDependencies:
-      - ioredis
-      - redis
-
   '@assistant-ui/core@0.3.15(@assistant-ui/store@0.3.10(@assistant-ui/tap@0.9.14(@types/react@19.2.18)(react@19.2.5))(@types/react@19.2.18)(react@19.2.5))(@assistant-ui/tap@0.9.14(@types/react@19.2.18)(react@19.2.5))(@types/react@19.2.18)(assistant-cloud@0.1.41)(react@19.2.5)(zustand@5.0.15(@types/react@19.2.18)(immer@11.1.15)(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5)))':
     dependencies:
       '@assistant-ui/store': 0.3.10(@assistant-ui/tap@0.9.14(@types/react@19.2.18)(react@19.2.5))(@types/react@19.2.18)(react@19.2.5)
@@ -9397,15 +9167,6 @@ snapshots:
     optionalDependencies:
       typescript: 5.9.3
 
-  '@lexical/extension@0.49.0(typescript@5.9.3)':
-    dependencies:
-      '@lexical/internal': 0.49.0(typescript@5.9.3)
-      '@lexical/utils': 0.49.0(typescript@5.9.3)
-      '@preact/signals-core': 1.14.4
-      lexical: 0.49.0(typescript@5.9.3)
-    optionalDependencies:
-      typescript: 5.9.3
-
   '@lexical/hashtag@0.46.0(typescript@5.9.3)':
     dependencies:
       '@lexical/text': 0.46.0(typescript@5.9.3)
@@ -9432,21 +9193,7 @@ snapshots:
     optionalDependencies:
       typescript: 5.9.3
 
-  '@lexical/html@0.49.0(typescript@5.9.3)':
-    dependencies:
-      '@lexical/extension': 0.49.0(typescript@5.9.3)
-      '@lexical/internal': 0.49.0(typescript@5.9.3)
-      '@lexical/selection': 0.49.0(typescript@5.9.3)
-      '@lexical/utils': 0.49.0(typescript@5.9.3)
-      lexical: 0.49.0(typescript@5.9.3)
-    optionalDependencies:
-      typescript: 5.9.3
-
   '@lexical/internal@0.46.0(typescript@5.9.3)':
-    optionalDependencies:
-      typescript: 5.9.3
-
-  '@lexical/internal@0.49.0(typescript@5.9.3)':
     optionalDependencies:
       typescript: 5.9.3
 
@@ -9457,16 +9204,6 @@ snapshots:
       '@lexical/internal': 0.46.0(typescript@5.9.3)
       '@lexical/utils': 0.46.0(typescript@5.9.3)
       lexical: 0.46.0(typescript@5.9.3)
-    optionalDependencies:
-      typescript: 5.9.3
-
-  '@lexical/link@0.49.0(typescript@5.9.3)':
-    dependencies:
-      '@lexical/extension': 0.49.0(typescript@5.9.3)
-      '@lexical/html': 0.49.0(typescript@5.9.3)
-      '@lexical/internal': 0.49.0(typescript@5.9.3)
-      '@lexical/utils': 0.49.0(typescript@5.9.3)
-      lexical: 0.49.0(typescript@5.9.3)
     optionalDependencies:
       typescript: 5.9.3
 
@@ -9564,13 +9301,6 @@ snapshots:
     optionalDependencies:
       typescript: 5.9.3
 
-  '@lexical/selection@0.49.0(typescript@5.9.3)':
-    dependencies:
-      '@lexical/internal': 0.49.0(typescript@5.9.3)
-      lexical: 0.49.0(typescript@5.9.3)
-    optionalDependencies:
-      typescript: 5.9.3
-
   '@lexical/table@0.46.0(typescript@5.9.3)':
     dependencies:
       '@lexical/clipboard': 0.46.0(typescript@5.9.3)
@@ -9594,14 +9324,6 @@ snapshots:
       '@lexical/internal': 0.46.0(typescript@5.9.3)
       '@lexical/selection': 0.46.0(typescript@5.9.3)
       lexical: 0.46.0(typescript@5.9.3)
-    optionalDependencies:
-      typescript: 5.9.3
-
-  '@lexical/utils@0.49.0(typescript@5.9.3)':
-    dependencies:
-      '@lexical/internal': 0.49.0(typescript@5.9.3)
-      '@lexical/selection': 0.49.0(typescript@5.9.3)
-      lexical: 0.49.0(typescript@5.9.3)
     optionalDependencies:
       typescript: 5.9.3
 
@@ -9942,8 +9664,6 @@ snapshots:
       playwright: 1.62.1
 
   '@preact/signals-core@1.14.2': {}
-
-  '@preact/signals-core@1.14.4': {}
 
   '@radix-ui/number@1.1.3': {}
 
@@ -11526,12 +11246,6 @@ snapshots:
       - ioredis
       - redis
 
-  assistant-stream@0.3.38:
-    dependencies:
-      '@standard-schema/spec': 1.1.0
-      nanoid: 3.3.18
-      secure-json-parse: 4.1.0
-
   assistant-stream@0.3.39:
     dependencies:
       '@standard-schema/spec': 1.1.0
@@ -11708,11 +11422,6 @@ snapshots:
       is-windows: 1.0.2
 
   better-sqlite3@12.10.0:
-    dependencies:
-      bindings: 1.5.0
-      prebuild-install: 7.1.3
-
-  better-sqlite3@12.11.1:
     dependencies:
       bindings: 1.5.0
       prebuild-install: 7.1.3
@@ -13720,12 +13429,6 @@ snapshots:
   lexical@0.46.0(typescript@5.9.3):
     dependencies:
       '@lexical/internal': 0.46.0(typescript@5.9.3)
-    optionalDependencies:
-      typescript: 5.9.3
-
-  lexical@0.49.0(typescript@5.9.3):
-    dependencies:
-      '@lexical/internal': 0.49.0(typescript@5.9.3)
     optionalDependencies:
       typescript: 5.9.3
 

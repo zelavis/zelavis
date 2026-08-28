@@ -6,7 +6,7 @@ import {
   type AuthServiceOptions,
   type AuthProviderService,
   type AuthApi,
-} from "@zelavis/app/auth";
+} from "./app/auth/index.js";
 import {
   createDatabase,
   defineDatabaseService,
@@ -17,11 +17,11 @@ import {
   type DatabaseApi,
   type DatabaseJsonObject,
   DatabaseNotFoundError,
-} from "@zelavis/app/db";
+} from "./app/db/index.js";
 import {
   createFabricService,
   createMappedJsonErrorResponse,
-  zelavisServer as mountZelavisServer,
+  createServiceRuntime as mountZelavisServer,
   type FabricApi,
   type FabricPlacementState,
   type FabricProjectPlacement,
@@ -36,18 +36,19 @@ import {
   type ZelavisServerRoute,
   type ZelavisServerRuntime,
   type ZelavisRuntimeService,
-} from "@zelavis/server";
+} from "./core/index.js";
 import {
   createZelavisDashboardBundleStore,
   createZelavisDashboardService,
   defaultZelavisDashboardClientRoutes,
 } from "@zelavis/ui/service";
-import { createZelavisCoreService } from "@zelavis/core";
-import { marketplaceService } from "@zelavis/marketplace";
+import { createZelavisCoreService } from "./platform/core-service.js";
+import { marketplaceService } from "./platform/marketplace-service.js";
 import {
   workloadsService,
   type WorkloadsServiceOptions,
-} from "@zelavis/app/workloads";
+} from "./app/workloads/index.js";
+export { ZELAVIS_VERSION } from "./version.js";
 import {
   activateServiceRegistry,
   applyServiceRegistryState,
@@ -73,7 +74,10 @@ export * from "./domain-binding.js";
 export * from "./domain-verifier.js";
 import { createSharedBundleStore, type BundleStore } from "./bundle-store.js";
 import type { TlsProvider } from "./tls.js";
-import type { DomainBindingStore } from "./domain-binding.js";
+import {
+  deleteProjectDomainBindings,
+  type DomainBindingStore,
+} from "./domain-binding.js";
 import {
   createProjectManager,
   ZelavisProjectConflictError,
@@ -105,14 +109,14 @@ export type {
   CreateDatabaseOptions,
   DatabaseApi,
   DatabaseJsonObject,
-} from "@zelavis/app/db";
+} from "./app/db/index.js";
 export {
   type ZelavisAnyRuntimeServiceInput,
   type ZelavisServerErrorHandler,
   type ZelavisServerRoute,
   type ZelavisServerRuntime,
   type ZelavisRuntimeService,
-} from "@zelavis/server";
+} from "./core/index.js";
 
 export type ZelavisAuthCoreServiceOptions = boolean | AuthServiceOptions;
 
@@ -721,6 +725,7 @@ export interface ZelavisOptions {
 }
 
 export interface ZelavisWebsiteDatabaseStoreOptions {
+  tenantId: string;
   collection?: string;
   documentId?: string;
 }
@@ -733,6 +738,7 @@ export function defineAdapter(
 
 const DEFAULT_WEBSITE_STATE_COLLECTION = "zelavis_system";
 const DEFAULT_WEBSITE_PAGES_DOCUMENT_ID = "website.pages";
+const PLATFORM_WEBSITE_TENANT_ID = "zelavis-platform";
 const DEFAULT_PLATFORM_DASHBOARD_SETTINGS_KEY =
   "zelavis/dashboard-settings.json";
 const DEFAULT_PLATFORM_WEBSITE_PAGES_PATH = "zelavis/website-pages.json";
@@ -743,11 +749,11 @@ const SYSTEM_STORE_SERVICES_NAMESPACE = "services";
 const SYSTEM_STORE_SERVICE_REGISTRY_KEY = "registry";
 const STORAGE_CHECKSUM_METADATA_KEY = "checksum-sha256";
 const RESERVED_CORE_SERVICE_NAMES = new Set([
-  "@zelavis/app",
+  "zelavis/app",
   "@zelavis/auth",
-  "@zelavis/core",
-  "@zelavis/marketplace",
-  "@zelavis/server-fabric",
+  "zelavis/platform",
+  "zelavis/marketplace",
+  "zelavis/fabric",
   "@zelavis/ui",
   "@zelavis/ui:app",
   "@zelavis/db",
@@ -1112,14 +1118,16 @@ function createMemoryServiceRegistryStore(
 
 async function ensureDatabaseCollection(
   database: DatabaseApi,
+  tenantId: string,
   name: string,
 ): Promise<void> {
-  if (await database.documents.collectionExists({ name })) {
+  const documents = database.forTenant(tenantId).documents;
+  if (await documents.collectionExists({ name })) {
     return;
   }
 
   try {
-    await database.documents.createCollection({
+    await documents.createCollection({
       name,
       metadata: {
         internal: true,
@@ -1127,7 +1135,7 @@ async function ensureDatabaseCollection(
       },
     });
   } catch (error) {
-    if (await database.documents.collectionExists({ name })) {
+    if (await documents.collectionExists({ name })) {
       return;
     }
 
@@ -1341,8 +1349,8 @@ async function readDatabaseDocument(
   database: DatabaseApi,
   options: Required<ZelavisWebsiteDatabaseStoreOptions>,
 ) {
-  await ensureDatabaseCollection(database, options.collection);
-  return database.documents.findById({
+  await ensureDatabaseCollection(database, options.tenantId, options.collection);
+  return database.forTenant(options.tenantId).documents.findById({
     collection: options.collection,
     id: options.documentId,
   });
@@ -1362,14 +1370,15 @@ async function writeDatabaseDocument(
   options: Required<ZelavisWebsiteDatabaseStoreOptions>,
   data: DatabaseJsonObject,
 ): Promise<void> {
-  await ensureDatabaseCollection(database, options.collection);
-  const current = await database.documents.findById({
+  await ensureDatabaseCollection(database, options.tenantId, options.collection);
+  const documents = database.forTenant(options.tenantId).documents;
+  const current = await documents.findById({
     collection: options.collection,
     id: options.documentId,
   });
 
   if (current) {
-    await database.documents.update({
+    await documents.update({
       collection: options.collection,
       id: options.documentId,
       data,
@@ -1378,7 +1387,7 @@ async function writeDatabaseDocument(
     return;
   }
 
-  await database.documents.insert({
+  await documents.insert({
     collection: options.collection,
     id: options.documentId,
     data,
@@ -1387,9 +1396,10 @@ async function writeDatabaseDocument(
 
 export function createDatabaseWebsitePagesStore(
   database: DatabaseApi,
-  options: ZelavisWebsiteDatabaseStoreOptions = {},
+  options: ZelavisWebsiteDatabaseStoreOptions,
 ): ZelavisWebsitePagesStore {
   const documentOptions = {
+    tenantId: options.tenantId,
     collection: options.collection ?? DEFAULT_WEBSITE_STATE_COLLECTION,
     documentId: options.documentId ?? DEFAULT_WEBSITE_PAGES_DOCUMENT_ID,
   };
@@ -2208,8 +2218,7 @@ function isDatabaseApi(value: unknown): value is DatabaseApi {
   return Boolean(
     value &&
     typeof value === "object" &&
-    "documents" in value &&
-    "driver" in value &&
+    "forTenant" in value &&
     "capabilities" in value,
   );
 }
@@ -2529,9 +2538,9 @@ async function resolveRuntimeManagementCore(
         kind: service.kind,
         core:
           service.name === "@zelavis/ui" ||
-          service.name === "@zelavis/core" ||
-          service.name === "@zelavis/marketplace" ||
-          service.name === "@zelavis/server-fabric" ||
+          service.name === "zelavis/platform" ||
+          service.name === "zelavis/marketplace" ||
+          service.name === "zelavis/fabric" ||
           service.name === "@zelavis/auth" ||
           service.name === "@zelavis/db" ||
           service.name === "@zelavis/storage" ||
@@ -4133,7 +4142,9 @@ export async function zelavis(
         apiPrefix,
         apiVersion,
         pagesStore: resolvedDatabaseApi
-          ? createDatabaseWebsitePagesStore(resolvedDatabaseApi)
+          ? createDatabaseWebsitePagesStore(resolvedDatabaseApi, {
+              tenantId: PLATFORM_WEBSITE_TENANT_ID,
+            })
           : undefined,
       });
   const storageService = await resolveStorageCoreService(options.coreServices?.storage, {
@@ -4144,12 +4155,49 @@ export async function zelavis(
   const workloadsCoreService = hasAppService
       ? undefined
       : await resolveWorkloadsCoreService(options.coreServices?.workloads);
+  const deletionAssistant = systemStore
+    ? createAssistantManager({ store: systemStore })
+    : undefined;
   const projects =
     systemStore && options.projectRuntime
       ? await createProjectManager({
           appServices: serviceRegistry,
           store: systemStore,
           runtime: options.projectRuntime,
+          cleanupParticipants: [
+            ...(deletionAssistant
+              ? [{
+                  id: "assistant-threads",
+                  cleanup: (project: Readonly<ZelavisProjectRecord>) =>
+                    deletionAssistant.deleteProjectThreads(project.id).then(
+                      () => undefined,
+                    ),
+                }]
+              : []),
+            ...(options.domainBindings
+              ? [{
+                  id: "domain-bindings",
+                  cleanup: (project: Readonly<ZelavisProjectRecord>) =>
+                    deleteProjectDomainBindings(
+                      options.domainBindings!,
+                      project.id,
+                    ).then(() => undefined),
+                }]
+              : []),
+            ...(options.bundleStore
+              ? [{
+                  id: "bundle-assets",
+                  cleanup: async (project: Readonly<ZelavisProjectRecord>) => {
+                    if (!options.bundleStore?.deleteProject) {
+                      throw new Error(
+                        "The configured BundleStore cannot delete Project-owned assets.",
+                      );
+                    }
+                    await options.bundleStore.deleteProject(project.id);
+                  },
+                }]
+              : []),
+          ],
         })
       : undefined;
   const fabricCoreService = resolveFabricCoreService(
@@ -4399,6 +4447,28 @@ function createRuntimeServiceApiProxy<TService>(
 
       if (property === Symbol.toStringTag) {
         return "ZelavisRuntimeServiceApi";
+      }
+
+      if (path.length === 0 && property === "forTenant") {
+        return (tenantId: string) =>
+          createRuntimeServiceApiProxy(
+            async () => {
+              const service = await resolve();
+              const method = (service as Record<string, unknown>).forTenant;
+              if (typeof method !== "function") {
+                throw new TypeError("Zelavis service member `forTenant` is not callable.");
+              }
+              return method.call(service, tenantId) as TService;
+            },
+            () => {
+              const service = resolved();
+              if (!service) return undefined;
+              const method = (service as Record<string, unknown>).forTenant;
+              return typeof method === "function"
+                ? (method.call(service, tenantId) as TService)
+                : undefined;
+            },
+          );
       }
 
       const current = resolved();

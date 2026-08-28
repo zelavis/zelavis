@@ -19,6 +19,7 @@ import {
   insertDatabaseDocument,
   listStorageFiles,
   uploadStorageFile,
+  ZELAVIS_APP_ADMIN_TENANT_ID,
 } from "#/lib/runtime-api";
 import { parseAsString, useTypedSearchParams } from "#/lib/use-typed-search-params";
 import type { clientLoader as rootClientLoader } from '../root';
@@ -206,6 +207,7 @@ function StorageRoute() {
     try {
       try {
         await createDatabaseCollection(config, {
+          tenantId: ZELAVIS_APP_ADMIN_TENANT_ID,
           name: "storage_assets",
           metadata: {
             createdBy: "zelavis-dashboard",
@@ -225,6 +227,7 @@ function StorageRoute() {
         reference.path;
 
       const document = await insertDatabaseDocument(config, {
+        tenantId: ZELAVIS_APP_ADMIN_TENANT_ID,
         collection: "storage_assets",
         data: {
           title,

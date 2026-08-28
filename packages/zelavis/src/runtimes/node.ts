@@ -1,5 +1,5 @@
 import type { Server } from "node:http";
-import { nodeAdapter as bindNodeRuntime } from "@zelavis/server/adapters/node";
+import { createNodeHttpServer } from "../core/runtime/node-http.js";
 import type { Zelavis } from "../index.js";
 
 export const node = true;
@@ -10,7 +10,7 @@ export interface CloseNodeServerOptions {
 
 export async function createNodeServer(zelavis: Zelavis): Promise<Server> {
   const runtime = await zelavis.runtime();
-  return bindNodeRuntime(runtime);
+  return createNodeHttpServer(runtime);
 }
 
 export async function closeNodeServer(

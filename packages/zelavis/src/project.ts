@@ -1,4 +1,4 @@
-import type { ZelavisProjectDriverCapabilities } from "@zelavis/server";
+import type { ZelavisProjectDriverCapabilities } from "./core/index.js";
 import type {
   ZelavisServiceDefinition,
   ZelavisServiceRegistryEntry,
@@ -26,12 +26,23 @@ export interface ZelavisProjectRuntimeState {
   error?: string;
 }
 
+export interface ZelavisProjectDeletionState {
+  status: "running" | "failed";
+  startedAt: string;
+  updatedAt: string;
+  participants: readonly string[];
+  completedParticipants: readonly string[];
+  currentParticipant?: string;
+  error?: string;
+}
+
 export type ZelavisProjectKind = string;
 
 export interface ZelavisProjectApp {
   name: string;
   title: string;
-  version?: string;
+  /** Exact recipe/runtime version. Platform upgrades must never rewrite this lock. */
+  version: string;
   specifier: string;
 }
 
@@ -46,8 +57,15 @@ export interface ZelavisProjectRecord extends ZelavisProjectDescriptor {
   capabilities: ZelavisProjectDriverCapabilities;
   desiredState: "running" | "stopped";
   runtime: ZelavisProjectRuntimeState;
+  deletion?: ZelavisProjectDeletionState;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ZelavisProjectCleanupParticipant {
+  /** Stable durable identifier. Renaming it changes persisted resume state. */
+  readonly id: string;
+  cleanup(project: Readonly<ZelavisProjectRecord>): Promise<void>;
 }
 
 export interface ZelavisProjectRuntimeSnapshot {
@@ -126,9 +144,34 @@ export class ZelavisProjectNotFoundError extends Error {
   }
 }
 
+export class ZelavisProjectDeletionError extends Error {
+  readonly projectId: string;
+  readonly participantId: string;
+
+  constructor(input: {
+    projectId: string;
+    participantId: string;
+    cause: unknown;
+  }) {
+    const causeMessage =
+      input.cause instanceof Error ? input.cause.message : String(input.cause);
+    super(
+      `Project "${input.projectId}" deletion failed during "${input.participantId}": ${causeMessage}`,
+      { cause: input.cause },
+    );
+    this.name = "ZelavisProjectDeletionError";
+    this.projectId = input.projectId;
+    this.participantId = input.participantId;
+  }
+}
+
 const PROJECTS_NAMESPACE = "projects";
-const DEFAULT_APP_SERVICE_NAME = "@zelavis/app";
+const DEFAULT_APP_SERVICE_NAME = "zelavis/app";
 const DEFAULT_STARTUP_CONCURRENCY = 1;
+const RUNTIME_DATA_CLEANUP_PARTICIPANT = "runtime-data";
+const RETIRED_OFFICIAL_APP_LOCKS = new Map([
+  ["@zelavis/app", DEFAULT_APP_SERVICE_NAME],
+]);
 
 function normalizeConcurrency(value: number | undefined): number {
   if (value === undefined || !Number.isFinite(value)) {
@@ -186,6 +229,55 @@ function normalizeProjectName(value: string): string {
   return normalized;
 }
 
+function normalizeCleanupParticipantId(value: string): string {
+  const normalized = value.trim();
+  if (!/^[a-z][a-z0-9-]*$/.test(normalized)) {
+    throw new ZelavisProjectValidationError(
+      "Project cleanup participant IDs must use lowercase letters, numbers, and hyphens.",
+    );
+  }
+  return normalized;
+}
+
+function readStoredDeletionState(
+  rawProject: Record<string, unknown>,
+): ZelavisProjectDeletionState | undefined {
+  const raw = rawProject.deletion;
+  if (raw === undefined) return undefined;
+  if (!isObjectRecord(raw)) {
+    throw new ZelavisProjectValidationError(
+      "Stored project deletion state is invalid.",
+    );
+  }
+  if (
+    (raw.status !== "running" && raw.status !== "failed") ||
+    typeof raw.startedAt !== "string" ||
+    typeof raw.updatedAt !== "string" ||
+    !Array.isArray(raw.participants) ||
+    !raw.participants.every((value) => typeof value === "string") ||
+    !Array.isArray(raw.completedParticipants) ||
+    !raw.completedParticipants.every((value) => typeof value === "string") ||
+    (raw.currentParticipant !== undefined &&
+      typeof raw.currentParticipant !== "string") ||
+    (raw.error !== undefined && typeof raw.error !== "string")
+  ) {
+    throw new ZelavisProjectValidationError(
+      "Stored project deletion state is invalid.",
+    );
+  }
+  return {
+    status: raw.status,
+    startedAt: raw.startedAt,
+    updatedAt: raw.updatedAt,
+    participants: [...raw.participants],
+    completedParticipants: [...raw.completedParticipants],
+    ...(raw.currentParticipant
+      ? { currentParticipant: raw.currentParticipant }
+      : {}),
+    ...(raw.error ? { error: raw.error } : {}),
+  };
+}
+
 function toStoreValue(project: ZelavisProjectRecord): ZelavisSystemStoreValue {
   return JSON.parse(JSON.stringify(project)) as ZelavisSystemStoreValue;
 }
@@ -217,7 +309,7 @@ function applySnapshot(
 }
 
 function projectKindFromAppService(serviceName: string): ZelavisProjectKind {
-  if (serviceName === "@zelavis/app") {
+  if (serviceName === "zelavis/app") {
     return "zelavis";
   }
 
@@ -239,11 +331,42 @@ function appTitleFromService(
 function appLockFromRegistryEntry(
   entry: Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>,
 ): ZelavisProjectApp {
+  if (!entry.service.version) {
+    throw new ZelavisProjectValidationError(
+      `App service "${entry.service.name}" must declare an exact version.`,
+    );
+  }
+
   return {
     name: entry.service.name,
     title: appTitleFromService(entry.service),
-    ...(entry.service.version ? { version: entry.service.version } : {}),
+    version: entry.service.version,
     specifier: entry.specifier ?? entry.service.name,
+  };
+}
+
+function readStoredAppLock(rawProject: Record<string, unknown>): ZelavisProjectApp {
+  const rawApp = rawProject.app;
+  if (!isObjectRecord(rawApp)) {
+    throw new ZelavisProjectValidationError(
+      "Stored project record is missing its app release lock.",
+    );
+  }
+
+  const fields = ["name", "title", "version", "specifier"] as const;
+  for (const field of fields) {
+    if (typeof rawApp[field] !== "string" || rawApp[field].trim().length === 0) {
+      throw new ZelavisProjectValidationError(
+        `Stored project app release ${field} must be a non-empty string.`,
+      );
+    }
+  }
+
+  return {
+    name: rawApp.name as string,
+    title: rawApp.title as string,
+    version: rawApp.version as string,
+    specifier: rawApp.specifier as string,
   };
 }
 
@@ -251,12 +374,34 @@ export async function createProjectManager(options: {
   store: ZelavisSystemStore;
   appServices: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[];
   runtime: ZelavisProjectRuntimeDriver;
+  cleanupParticipants?: readonly ZelavisProjectCleanupParticipant[];
 }): Promise<ZelavisProjectManager> {
   const { store, appServices, runtime } = options;
   const startupConcurrency = normalizeConcurrency(runtime.startupConcurrency);
   let closing = false;
   let reconciliationPromise: Promise<void> | undefined;
   let closePromise: Promise<void> | undefined;
+  const deletionPromises = new Map<string, Promise<boolean>>();
+  const cleanupParticipants = [
+    ...(options.cleanupParticipants ?? []),
+    {
+      id: RUNTIME_DATA_CLEANUP_PARTICIPANT,
+      cleanup: (project: Readonly<ZelavisProjectRecord>) =>
+        runtime.destroy(project.id),
+    },
+  ].map((participant) => ({
+    ...participant,
+    id: normalizeCleanupParticipantId(participant.id),
+  }));
+  const cleanupParticipantIds = new Set<string>();
+  for (const participant of cleanupParticipants) {
+    if (cleanupParticipantIds.has(participant.id)) {
+      throw new ZelavisProjectValidationError(
+        `Duplicate Project cleanup participant "${participant.id}".`,
+      );
+    }
+    cleanupParticipantIds.add(participant.id);
+  }
 
   const appServiceMap = new Map(
     appServices
@@ -264,55 +409,28 @@ export async function createProjectManager(options: {
       .map((entry) => [entry.service.name, entry]),
   );
 
-  function resolveAppLock(rawProject: Record<string, unknown>): {
-    app: ZelavisProjectApp;
-    repaired: boolean;
-  } {
-    const rawApp = rawProject.app;
-    const rawBlueprint = rawProject.blueprint;
-    const appName =
-      isObjectRecord(rawApp) && typeof rawApp.name === "string" && rawApp.name
-        ? rawApp.name
-        : isObjectRecord(rawBlueprint) && rawBlueprint.id === "zelavis/app"
-          ? DEFAULT_APP_SERVICE_NAME
-        : rawProject.kind === "zelavis"
-          ? DEFAULT_APP_SERVICE_NAME
-          : undefined;
-
-    if (!appName) {
-      throw new ZelavisProjectValidationError(
-        "Stored project record is missing its app service lock.",
-      );
-    }
-
-    const appService = appServiceMap.get(appName);
-    if (!appService) {
-      throw new ZelavisProjectValidationError(
-        `App service "${appName}" was not found.`,
-      );
-    }
-
-    const app = appLockFromRegistryEntry(appService);
-    if (
-      isObjectRecord(rawApp) &&
-      rawApp.name === app.name &&
-      rawApp.title === app.title &&
-      rawApp.version === app.version &&
-      rawApp.specifier === app.specifier
-    ) {
-      return { app, repaired: false };
-    }
-
-    return { app, repaired: true };
-  }
-
   function normalizeStoredProject(value: ZelavisSystemStoreValue): {
     project: ZelavisProjectRecord;
     repaired: boolean;
   } {
     const rawProject = parseStoredProject(value);
     const rawRecord = rawProject as unknown as Record<string, unknown>;
-    const { app, repaired: repairedApp } = resolveAppLock(rawRecord);
+    const storedApp = readStoredAppLock(rawRecord);
+    const deletion = readStoredDeletionState(rawRecord);
+    const replacementName =
+      RETIRED_OFFICIAL_APP_LOCKS.get(storedApp.name) ??
+      RETIRED_OFFICIAL_APP_LOCKS.get(storedApp.specifier);
+    const replacement = replacementName
+      ? appServiceMap.get(replacementName)
+      : undefined;
+    const app = replacement
+      ? {
+          ...storedApp,
+          name: replacement.service.name,
+          title: appTitleFromService(replacement.service),
+          specifier: replacement.specifier ?? replacement.service.name,
+        }
+      : storedApp;
     const descriptor: ZelavisProjectDescriptor = {
       id: rawProject.id,
       name: rawProject.name,
@@ -331,6 +449,7 @@ export async function createProjectManager(options: {
               driver: runtime.name,
               status: "stopped",
             },
+      ...(deletion ? { deletion } : {}),
       createdAt: rawProject.createdAt,
       updatedAt: rawProject.updatedAt,
     };
@@ -338,11 +457,10 @@ export async function createProjectManager(options: {
     return {
       project,
       repaired:
-        repairedApp ||
+        JSON.stringify(storedApp) !== JSON.stringify(app) ||
         rawProject.kind !== project.kind ||
         JSON.stringify(rawRecord.capabilities) !==
           JSON.stringify(capabilities) ||
-        "blueprint" in rawRecord ||
         rawProject.runtime !== project.runtime,
     };
   }
@@ -373,8 +491,19 @@ export async function createProjectManager(options: {
     return project;
   }
 
+  function assertProjectIsOperable(
+    project: ZelavisProjectRecord,
+    operation: string,
+  ): void {
+    if (project.deletion) {
+      throw new ZelavisProjectConflictError(
+        `Project "${project.id}" is pending deletion and cannot be ${operation}. Retry deletion instead.`,
+      );
+    }
+  }
+
   async function refresh(project: ZelavisProjectRecord): Promise<ZelavisProjectRecord> {
-    if (project.runtime.status === "provisioning") {
+    if (project.runtime.status === "provisioning" || project.deletion) {
       return project;
     }
 
@@ -384,6 +513,152 @@ export async function createProjectManager(options: {
       snapshot.url === project.runtime.url &&
       snapshot.error === project.runtime.error;
     return unchanged ? project : write(applySnapshot(project, snapshot));
+  }
+
+  async function deleteProject(id: string): Promise<boolean> {
+    const existingProject = await read(id);
+    if (!existingProject) {
+      return false;
+    }
+    let project: ZelavisProjectRecord = existingProject;
+
+    const startedAt = project.deletion?.startedAt ?? new Date().toISOString();
+    const completedParticipants = new Set(
+      project.deletion?.completedParticipants ?? [],
+    );
+    const plannedParticipants = [
+      ...new Set([
+        ...(project.deletion?.participants ?? []).filter(
+          (id) => id !== RUNTIME_DATA_CLEANUP_PARTICIPANT,
+        ),
+        ...cleanupParticipants
+          .map((participant) => participant.id)
+          .filter((id) => id !== RUNTIME_DATA_CLEANUP_PARTICIPANT),
+      ]),
+      RUNTIME_DATA_CLEANUP_PARTICIPANT,
+    ];
+    let participantId = "runtime-stop";
+
+    project = await write({
+      ...project,
+      desiredState: "stopped",
+      runtime: {
+        driver: runtime.name,
+        status: "stopping",
+      },
+      deletion: {
+        status: "running",
+        startedAt,
+        updatedAt: new Date().toISOString(),
+        participants: plannedParticipants,
+        completedParticipants: [...completedParticipants],
+        currentParticipant: participantId,
+      },
+      updatedAt: new Date().toISOString(),
+    });
+
+    try {
+      const stopped = await runtime.stop(project.id);
+      project = await write({
+        ...applySnapshot(project, stopped),
+        deletion: {
+          status: "running",
+          startedAt,
+          updatedAt: new Date().toISOString(),
+          participants: plannedParticipants,
+          completedParticipants: [...completedParticipants],
+        },
+      });
+
+      for (const plannedId of plannedParticipants) {
+        if (
+          !completedParticipants.has(plannedId) &&
+          !cleanupParticipantIds.has(plannedId)
+        ) {
+          participantId = plannedId;
+          throw new Error(
+            `Required Project cleanup participant "${plannedId}" is unavailable.`,
+          );
+        }
+      }
+
+      for (const participant of cleanupParticipants) {
+        if (completedParticipants.has(participant.id)) {
+          continue;
+        }
+        participantId = participant.id;
+        project = await write({
+          ...project,
+          deletion: {
+            status: "running",
+            startedAt,
+            updatedAt: new Date().toISOString(),
+            participants: plannedParticipants,
+            completedParticipants: [...completedParticipants],
+            currentParticipant: participant.id,
+          },
+          updatedAt: new Date().toISOString(),
+        });
+        await participant.cleanup(project);
+        completedParticipants.add(participant.id);
+        project = await write({
+          ...project,
+          deletion: {
+            status: "running",
+            startedAt,
+            updatedAt: new Date().toISOString(),
+            participants: plannedParticipants,
+            completedParticipants: [...completedParticipants],
+          },
+          updatedAt: new Date().toISOString(),
+        });
+      }
+
+      participantId = "project-record";
+      const deleted = await store.delete(PROJECTS_NAMESPACE, project.id);
+      if (!deleted && (await read(project.id))) {
+        throw new Error("The Platform System Store did not delete the Project record.");
+      }
+      return true;
+    } catch (error) {
+      const failedAt = new Date().toISOString();
+      const failureSnapshot = await runtime.status(project.id).catch(() => ({
+        status: project.runtime.status === "stopping"
+          ? ("failed" as const)
+          : project.runtime.status,
+        ...(project.runtime.url ? { url: project.runtime.url } : {}),
+        ...(project.runtime.startedAt
+          ? { startedAt: project.runtime.startedAt }
+          : {}),
+        ...(project.runtime.stoppedAt
+          ? { stoppedAt: project.runtime.stoppedAt }
+          : {}),
+      }));
+      const failedProject: ZelavisProjectRecord = {
+        ...project,
+        desiredState: "stopped",
+        runtime: {
+          driver: runtime.name,
+          ...failureSnapshot,
+        },
+        deletion: {
+          status: "failed",
+          startedAt,
+          updatedAt: failedAt,
+          participants: plannedParticipants,
+          completedParticipants: [...completedParticipants],
+          currentParticipant: participantId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        updatedAt: failedAt,
+      };
+      await write(failedProject).catch(() => undefined);
+      throw new ZelavisProjectDeletionError({
+        projectId: project.id,
+        participantId,
+        cause: error,
+      });
+    }
   }
 
   const manager: ZelavisProjectManager = {
@@ -468,6 +743,7 @@ export async function createProjectManager(options: {
     },
     async start(id) {
       let project = await requireProject(id);
+      assertProjectIsOperable(project, "started");
       project = await write({
         ...project,
         desiredState: "running",
@@ -504,6 +780,7 @@ export async function createProjectManager(options: {
     },
     async restart(id) {
       let project = await requireProject(id);
+      assertProjectIsOperable(project, "restarted");
       project = await write({
         ...project,
         desiredState: "running",
@@ -539,13 +816,14 @@ export async function createProjectManager(options: {
       return runtime.logs(normalizeProjectId(id));
     },
     async remove(id) {
-      const project = await read(id);
-      if (!project) {
-        return false;
-      }
-      await runtime.stop(project.id);
-      await runtime.destroy(project.id);
-      return store.delete(PROJECTS_NAMESPACE, project.id);
+      const projectId = normalizeProjectId(id);
+      const current = deletionPromises.get(projectId);
+      if (current) return current;
+      const deletion = deleteProject(projectId).finally(() => {
+        deletionPromises.delete(projectId);
+      });
+      deletionPromises.set(projectId, deletion);
+      return deletion;
     },
     reconcile() {
       reconciliationPromise ??= (async () => {
@@ -561,6 +839,10 @@ export async function createProjectManager(options: {
             const { project, repaired } = normalizeStoredProject(record.value);
             if (repaired) {
               await write(project);
+            }
+            if (project.deletion) {
+              await manager.remove(project.id).catch(() => undefined);
+              return;
             }
             if (project.desiredState !== "running") {
               return;

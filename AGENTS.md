@@ -14,7 +14,7 @@ Zelavis is a unified, self-hostable App Platform. It replaces — and combines �
 | Workers / Functions platforms | Project-scoped workloads: functions, jobs, schedules, and webhooks hosted by the long-running Zelavis runtime |
 | Claude / Codex chat | AI chat area built into the dashboard for interacting with Zelavis and building via AI |
 
-The difference from Firebase/Supabase is depth and ownership: Zelavis is fully self-hostable, runtime-neutral, and built to scale beyond a single database engine. The database layer is the deepest differentiator — `@zelavis/app/db` extends SQL with a Document DB model (event-sourced, tenant-aware, per-collection tables) while keeping the storage engine swappable (SQLite, libSQL, and future engines). Tenant placement, replication, failover, and eventual sharding are roadmap goals; the event log is the natural replication stream and `tenant_id` is the natural shard key. That is the same role Vitess plays for MySQL, but Zelavis is not coupled to any single SQL engine. Replicas do not imply multiple writable owners; multi-writer consistency requires a separate explicit data specification.
+The difference from Firebase/Supabase is depth and ownership: Zelavis is fully self-hostable, runtime-neutral, and built to scale beyond a single database engine. The database layer is the deepest differentiator — `zelavis/app/db` extends SQL with a Document DB model (event-sourced, tenant-aware, per-collection tables) while keeping the storage engine swappable (SQLite, libSQL, and future engines). Official Zelavis Apps are locally physically sharded from creation: one logical App database routes stable virtual shard ranges across several SQLite files even when every placement is on one Node. Tenant placement, replication, failover, shard movement, and exceptional Tenant subdivision build on that same topology instead of introducing a second distributed architecture later. The event log is the natural replication stream and `tenant_id` is the normal first partition key. That is the same role Vitess plays for MySQL, but Zelavis is not coupled to any single SQL engine. Replicas do not imply multiple writable owners; multi-writer consistency requires a separate explicit data specification.
 
 Zelavis should be able to host websites itself on user-controlled infrastructure. Managed deployment providers may be optional targets through plugins, but they are not the default hosting model and must not replace native Zelavis website hosting.
 
@@ -27,16 +27,10 @@ Dashboard/product structure:
 - `/zelavis/projects/:projectId/marketplace` is project-local for Zelavis plugins and services.
 - `/zelavis/server/*` owns server-level concerns such as domains, backups, and logs.
 
-Core platform work currently centers on:
-
-- `zelavis`
-- `@zelavis/server`
-- `@zelavis/core`
-- `@zelavis/marketplace`
-- `@zelavis/app/db`
-- `@zelavis/app/auth`
-- `@zelavis/ui`
-- `@zelavis/app/workloads`
+Core platform work centers on the unified `zelavis` package and its public
+subpaths: `zelavis/core`, `zelavis/runtime`, `zelavis/fabric`, `zelavis/app`,
+`zelavis/app/db`, `zelavis/app/auth`, and `zelavis/app/workloads`. The dashboard
+remains the focused `@zelavis/ui` package bundled by `zelavis`.
 
 The repo still contains domain packages such as `@zelavis/ecommerce`, but they are optional layers on top of the platform primitives, not the main product definition.
 
@@ -68,41 +62,45 @@ current automatically.
 
 ## Platform And App Service Boundary
 
-- **Zelavis Platform OS** is the `zelavis` package: the long-running control
-  plane, dashboard, project registry, server management, system access model,
-  System Store, service registry, and lifecycle orchestration.
+- **Zelavis Platform OS** is the `zelavis` package: the official framework and
+  App Platform distribution, long-running control plane, dashboard, project
+  registry, server management, System Store, service registry, and lifecycle
+  orchestration.
 - **Zelavis App** is the official Firebase/Supabase-style project stack made
   from app-facing database, auth, storage, and workload services. It is a
   `kind: "app"` service and production boilerplate, not the Platform OS itself.
-- **App services** are versioned Project recipes and runtime entrypoints.
-  `packages/app` is the independently published official Zelavis App recipe;
-  the `zelavis` package registers it as a direct dependency instead of copying
-  it into the Platform service directory. App services own menu metadata and
-  may contribute static and dynamic menus through the service menu API.
+- **App services** are versioned Project recipes and runtime entrypoints. The
+  official recipe lives inside the same package at `zelavis/app`. Every Project
+  locks its exact recipe/runtime version, so a newer parent Platform can keep
+  running older Zelavis Apps without silently rewriting them. App services own
+  menu metadata and may contribute static and dynamic menus through the service
+  menu API.
 - **System Services** are trusted Platform OS capabilities. Do not call every
   bundled project service a core service.
 - **System Store** is Platform OS persistence. Local adapters default to
-  `.zelavis/system/zelavis.sqlite`. It must stay separate from `@zelavis/app/db`
+  `.zelavis/system/zelavis.sqlite`. It must stay separate from `zelavis/app/db`
   project databases and must never appear in a project's Database UI.
-- The Platform process does not mount an app-facing `@zelavis/app/db` service by
-  default. Each Zelavis App project owns its database at
-  `.zelavis/projects/<projectId>/.zelavis/zelavis.sqlite` and its private
-  runtime metadata at
+- The Platform process does not mount an app-facing `zelavis/app/db` service by
+  default. Each Zelavis App project owns its logical database below
+  `.zelavis/projects/<projectId>/.zelavis/data`; the official recipe maps its
+  virtual shard ranges across several physical SQLite shard files even on one
+  Node. Project-private topology and runtime metadata stays separate at
   `.zelavis/projects/<projectId>/.zelavis/runtime/zelavis.sqlite`.
 - Project routes and grants always require a real project ID. Never introduce
   an implicit `default` project or fall back from a project API request to the
   Platform runtime.
-- `@zelavis/server` is the reusable server and workload-runtime foundation for
-  both the privileged Platform and scoped Zelavis Apps. Hosting business logic
-  stays in the Platform layer; App business logic stays inside the Project.
-  Scope and explicit capabilities determine authority.
-- `@zelavis/core` is the product-specific Platform control-plane service. It
-  owns the Platform runtime service identity and global Server dashboard menu.
-  `@zelavis/marketplace` owns the global Marketplace contribution, and
-  `@zelavis/ui` owns dashboard delivery. These bundled product services are
-  what assemble `@zelavis/server` primitives into Zelavis.
+- `zelavis/core`, `zelavis/runtime`, `zelavis/fabric`, `zelavis/workload`,
+  `zelavis/artifact`, and `zelavis/provider` are public subpaths of the one
+  package. Their implementation lives under `packages/zelavis/src/core` and is
+  the reusable, product-neutral foundation for both the privileged Platform and
+  scoped Zelavis Apps. Hosting business logic stays in the Platform layer; App
+  business logic stays inside the Project.
+- Trusted product-specific control-plane and Marketplace services live under
+  `packages/zelavis/src/platform`; `@zelavis/ui` owns dashboard delivery. These
+  internal services assemble the public core primitives into the Zelavis
+  product and are not separate public framework brands.
 
-`@zelavis/server` owns the generic service definition, loading, composition,
+`zelavis/core` owns the generic service definition, loading, composition,
 endpoint, and contribution transport contracts. Product services may define
 namespaced extension points on top of that mechanism. Only statically trusted
 product/core services may introduce a new extension-point schema or privileged
@@ -110,23 +108,37 @@ manifest capability; ordinary services and marketplace extensions may
 contribute values to an allowed extension point after validation.
 
 Dashboard menu semantics belong to `@zelavis/ui`: it defines what a menu
-contribution means and renders it. `@zelavis/server` may carry runtime-neutral
+contribution means and renders it. `zelavis/core` may carry runtime-neutral
 menu/contribution wire data so headless Project runtimes do not need to bundle
 the dashboard. Do not let services add arbitrary top-level keys to
 `zelavis.service.json`; use a stable namespaced contribution map when the
 generic extension-point mechanism is introduced.
 
-The Platform OS can create multiple Zelavis App projects from the official
-`@zelavis/app` Project recipe. The default Node adapter prepares each project under
-`.zelavis/projects/<id>`,
-locks the exact app service version, and runs it in a separate Node process. This
-is operational isolation for trusted project code, not a hostile-code security
-sandbox. Project lifecycle code must stay behind the runtime-driver contract so
-rootless OCI containers and stronger isolation can replace it later.
+The Platform OS can create multiple Zelavis App Projects from the official
+`zelavis/app` Project recipe. The default Node adapter prepares each Project
+under `.zelavis/projects/<id>`, locks the exact Zelavis App recipe/runtime
+version, and runs it in a separate Node process. A parent Platform update must
+never rewrite that lock. The current local Node driver still executes the
+parent-installed code and therefore does not yet advertise independent-version
+execution; artifact materialization must make the version lock operational.
+This is operational isolation for trusted Project code, not a hostile-code
+security sandbox. Project lifecycle code must stay behind the runtime-driver
+contract so rootless OCI containers and stronger isolation can replace it later.
 Do not run app project services directly inside the Platform process; the
 Platform dashboard must communicate with project runtimes through the Project
 Gateway boundary. The current proxy route is the first local implementation of
 that boundary.
+
+Project deletion is a durable Platform lifecycle operation, not a direct
+filesystem shortcut. Persist a deletion tombstone before cleanup, stop the
+runtime, run stable idempotent cleanup participants, remove runtime/project data
+last, and delete the Project registry record only after every participant has
+completed. Failed deletion remains visible and retryable, and reconciliation
+must resume it after restart without rerunning durably completed participants.
+Any new Platform resource keyed by Project identity must register a cleanup
+participant; deleting a Project must not leave Assistant threads, domain
+bindings, bundle assets, project-private databases, logs, locks, or runtime
+metadata behind.
 
 The canonical hierarchy is: Platform scales Projects, Projects scale Tenants,
 and exceptional Tenants may eventually scale Shards. Project is the universal
@@ -142,6 +154,15 @@ physical nodes, Project allocation, placement, routing, generation/fencing,
 and fleet policy. A Zelavis App may reuse workload primitives only within its
 Project authority and granted resource envelope. A child knows its parent but
 never becomes its parent.
+
+A future Project may be promoted into a **delegated Project Platform**, also
+called a Project Cell. It may use the same Zelavis engine to manage multiple
+nested Apps or Projects within its allocation, but it remains scoped by the
+parent. The parent Fabric places and moves the whole cell, including its nested
+workloads, as one isolation and placement group. Promotion must not implicitly
+grant root provider credentials, physical Node authority, or an unconstrained
+resource envelope. This is a prepared architecture direction, not current
+operational nested scheduling.
 
 Fabric decides globally and authenticated Zelavis Agents execute locally.
 Runtime drivers such as Node process, Bun, OCI, VM, or dedicated host are Agent
@@ -164,10 +185,53 @@ provisioning as separate capabilities. A placement is authoritative; a runtime
 URL is only an Agent-reported route target. Replicas do not imply multiple
 writable owners. Provider adapters supply capacity but never define Zelavis.
 
+Every official `zelavis/app` Project uses the App Data Fabric topology from
+creation. A single-node App still routes Tenant data through a versioned
+partition map containing many virtual shard ranges and several physical SQLite
+shards; the placements merely happen to share one Node. `zelavis/app/db` may
+support a one-shard topology as an embeddable low-level instance, but the
+official App recipe must not bypass the topology router or expose a physical
+driver as its application API. Scaling out changes shard placement, replicas,
+or range grouping rather than introducing sharding for the first time.
+
+The App Data Fabric owns Tenant partitioning and logical data semantics inside
+the Project envelope. The root Platform Fabric remains the only physical Node
+and placement authority. Ordinary Tenant operations are shard-local and may be
+atomic there; cross-shard operations require an explicit distributed workflow,
+projection, scatter/gather contract, or compensation. Event cursors and
+projection checkpoints must be shard-aware and must not treat one physical
+SQLite autoincrement sequence as a logical global order. Only the current
+writer generation may accept a write, including when stale and current
+placements are colocated on one Node.
+
+Breaking pre-release API changes do not require compatibility aliases, but
+persisted Project data must remain recoverable. The local App adapter performs
+a one-time, durably marked migration from the retired single-file App database
+into the shard topology, leaves the source file untouched as a recovery
+artifact, and refuses ambiguous merges when both layouts contain unrelated
+data. Retired official package locks may be canonicalized as a data migration;
+do not reintroduce the retired package or public import alias.
+
+The public logical database boundary is `db.forTenant(tenantId)`. Documents,
+events, and time-series reads live on that Tenant handle; schema, projection,
+and time-series definitions remain logical database concerns. Do not restore
+implicit Tenant fields, `DatabaseApi.driver`, or logical `db.sql` aliases.
+Event continuation uses opaque `DatabaseEvent.cursor` values and
+`events.read({ after })`; physical positions stay inside drivers and topology
+routing.
+
+Fabric replica policy must remain topology-independent. Plan the same Project
+replicas whether one or many worker Nodes are available: colocate eligible
+replicas on one Node when necessary and spread them when capacity appears,
+without switching runtime-driver modes. Spare Node capacity does not create
+demand by itself. Scale only from explicit fixed intent or Project-level load,
+within declared capability and resource limits. Projects whose runtime driver
+does not advertise stateless runtime replicas remain single-replica.
+
 There is exactly one Zelavis dashboard application: `@zelavis/ui`, mounted by
 the Platform OS. Isolated Zelavis App project runtimes must not mount or serve
 another dashboard bundle. They expose capabilities, runtime metadata, and service menus
-through `@zelavis/server`; the Platform dashboard proxies those endpoints and
+through `zelavis/core`; the Platform dashboard proxies those endpoints and
 renders the selected project's navigation under `/zelavis/projects/:projectId`.
 
 ## Effect Version & Vendored Source (@repos/effect)
@@ -196,7 +260,7 @@ renders the selected project's navigation under `/zelavis/projects/:projectId`.
 
 ## Database Architecture Rules
 
-`@zelavis/app/db` is a document-first database core backed by SQL-capable
+`zelavis/app/db` is a document-first database core backed by SQL-capable
 drivers. Its event log is the source of truth for writes and the natural future
 replication stream.
 
@@ -229,9 +293,10 @@ through `createCollection`, are not accessed through `documents.*`, and are not
 part of the collection event pipeline. Names beginning with `zv_` are reserved
 for Zelavis internals and must be rejected as collection names.
 
-The dashboard may use UI route state such as `systemTable` for system-table
-views, but that is not a physical table-name convention. Physical internal
-tables use the `zv_*` prefix.
+Dashboard system views must be logical, shard-aware capabilities exposed by
+`zelavis/app/db`; they must never select a physical shard's internal table or
+raw SQL endpoint. Until those logical views exist, keep physical `zv_*` tables
+out of the dashboard entirely.
 
 ## Open Protocols And Embeddable Core
 
@@ -351,7 +416,7 @@ dashboard, `core` is the project Backend slide, `extensions` is the project
 Extensions slide, and `settings` is the project Settings slide. Runtime-installed
 marketplace services are still constrained to Extensions; privileged surfaces
 are for bundled or statically trusted system services. The Access area is a core
-`@zelavis/server` menu contribution, not a hardcoded sidebar exception.
+`zelavis/core` menu contribution, not a hardcoded sidebar exception.
 
 Dashboard menu items may include `fixed: true` and `fixedOrder` for pinned
 actions such as "Add Function". A nested slide may control inherited fixed
@@ -367,11 +432,11 @@ Zelavis uses one core principal, permission, and scoped-grant model across the
 owner console, project dashboards, future customer/reseller/operator views,
 service accounts, CLI calls, scripts, plugins, and AI agents.
 
-The base authorization contract belongs in `@zelavis/server`, because every
+The base authorization contract belongs in `zelavis/core`, because every
 runtime service route needs to declare and enforce access requirements
 independently of the authentication method that produced the caller.
 
-`@zelavis/app/auth` owns authentication primitives: accounts, credentials, sessions,
+`zelavis/app/auth` owns authentication primitives: accounts, credentials, sessions,
 and pluggable auth methods such as email/password, passkeys, OAuth, SSO, API
 keys, and service-token providers. It resolves identities into principals; the
 server contract enforces route access.
@@ -386,17 +451,28 @@ those grants, while endpoints remain the authority layer.
 
 - `packages/*` contains core platform workspace packages.
 - `plugins/*` contains official user-installable Zelavis plugins.
-- `packages/zelavis` is the Platform OS package and ships trusted product services under `packages/zelavis/product-services`.
-- `packages/server` is the independently reusable `@zelavis/server` framework. It owns service and endpoint contracts, Web routing, access enforcement primitives, and generic Fabric/workload/Agent/runtime-driver machinery. It does not own Zelavis product menus or Platform authority.
-- `packages/app` is the independently published `@zelavis/app` Project recipe and native App runtime stack. It consumes `@zelavis/server`; never restore a private App copy of the server contracts or dispatcher.
-- `packages/zelavis/product-services/zelavis-core` is the product-specific Platform control-plane service and Server menu owner.
-- `packages/zelavis/product-services/zelavis-marketplace` is the global Marketplace service and menu owner.
-- `packages/app/src/db` contains the document-first database core and server-facing database service.
-- `packages/app/src/auth` contains the low-level auth core and auth method plugins.
-- `packages/app/src/workloads` contains project-scoped workloads.
+- `packages/zelavis` is the unified framework and Platform OS package. Do not
+  recreate the retired pre-consolidation server, App, core-service, or
+  Marketplace package boundaries.
+- `packages/zelavis/src/core` owns reusable service and endpoint contracts, Web
+  routing, access enforcement, runtime lifecycle, and generic
+  Fabric/workload/Agent/runtime-driver machinery. It is exported through
+  focused `zelavis/*` subpaths and does not own product menus or root authority.
+- `packages/zelavis/TODO.md` is the maintained implementation roadmap. Update
+  its Done, Prepared, Next, and Later sections when a core, App-versioning, or
+  Fabric capability changes state; never mark an exported contract as
+  operational behavior before its implementation exists.
+- `packages/zelavis/src/app` owns the official `zelavis/app` Project recipe,
+  document-first database, auth primitives, and Project-scoped workloads. It
+  consumes the same core implementation and must never grow private server
+  contracts or a private dispatcher.
+- `packages/zelavis/src/platform` owns trusted product-specific control-plane
+  and Marketplace services.
 - `packages/zelavis/product-services/zelavis-ui` contains the admin/dashboard UI used by the runtime package.
-- `packages/*/adapters/*` contains framework or external-system adapters.
-- `packages/*/plugins/*` contains package-local capability/provider plugins for core services.
+- `packages/zelavis/adapters/*` contains optional framework, runtime, database,
+  or external-system adapters distributed with the package workspace.
+- `packages/zelavis/plugins/*` contains package-local optional capability and
+  provider plugins.
 - `examples/*` contains runnable example workspace packages.
 - `website/` contains the public Astro Starlight documentation site (`website/src/content/docs/`).
 - `distribution/` owns release staging, archives, Debian packages, signed APT
@@ -425,9 +501,9 @@ Each package should remain independently useful and focused.
 - In repository development through `pnpm dev`, runtime state lives below
   `packages/zelavis/.zelavis`: the Platform System Store is under `system/` and
   isolated project directories are under `projects/<projectId>/`.
-- `pnpm dev` builds the direct `@zelavis/app` Project recipe dependency and the
-  bundled Platform services, then starts both the long-running runtime and
-  React Router dashboard dev server.
+- `pnpm dev` builds the unified `zelavis` runtime and bundled Platform services,
+  then starts both the long-running runtime and React Router dashboard dev
+  server.
 - That dev flow starts:
   - the Zelavis runtime on `http://127.0.0.1:3000`
   - the UI dev server on `http://127.0.0.1:3001`
@@ -449,7 +525,7 @@ Use these boundaries consistently:
 - `adapters` for framework bindings and external runtime adapters such as Express, Hono, or Node-specific mounting
 - `plugins` for optional domain/provider capabilities such as auth methods or payment providers
 
-First-party core plugins such as `@zelavis/app/workloads` may be enabled by default
+First-party core plugins such as `zelavis/app/workloads` may be enabled by default
 by the high-level runtime while staying package-separated. Workloads are
 project-scoped capabilities owned by the long-running Zelavis server. Provider
 plugins may later sync or deploy workloads to Cloudflare, Vercel, Netlify, or

@@ -3,10 +3,11 @@ import {
   readdir,
   readFile,
   rm,
+  rmdir,
   stat,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import type {
   ZelavisFileStorage,
   ZelavisFileStorageEntry,
@@ -138,6 +139,26 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
 
   function resolveMetadataPath(path: string): string {
     return `${resolvePath(path)}${STORAGE_METADATA_SUFFIX}`;
+  }
+
+  async function pruneEmptyParents(path: string): Promise<void> {
+    let current = dirname(resolvePath(path));
+    while (current !== rootPath && current.startsWith(`${rootPath}${sep}`)) {
+      try {
+        await rmdir(current);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") {
+          current = dirname(current);
+          continue;
+        }
+        if (code === "ENOTEMPTY" || code === "EEXIST") {
+          return;
+        }
+        throw error;
+      }
+      current = dirname(current);
+    }
   }
 
   async function readStoredMetadata(path: string): Promise<{
@@ -300,6 +321,7 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
             }
           }),
         ]);
+        await pruneEmptyParents(path);
         return true;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") {

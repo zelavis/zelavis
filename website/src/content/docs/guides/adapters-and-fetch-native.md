@@ -71,7 +71,7 @@ Fetch-native hosts can call `zv.fetch(request)` directly.
 
 Browser support means SDK/client code, not running the Platform OS in a browser.
 Use `zelavis/sdk/browser` for a browser-safe fetch client and portable
-`@zelavis/app/db` / `@zelavis/app/auth` contracts without importing the
+`zelavis/app/db` / `zelavis/app/auth` contracts without importing the
 dashboard, runtime host utilities, or local server adapters.
 
 ```ts

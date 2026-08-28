@@ -25,6 +25,7 @@ import {
   listProjects,
   rejectNavigationRuntime,
   resolveRuntimeDynamicMenus,
+  ZELAVIS_APP_ADMIN_TENANT_ID,
 } from "#/lib/runtime-api";
 import type { Route } from "./+types/root";
 import type { RuntimeDashboardAccess } from "#/lib/runtime-api";
@@ -165,7 +166,9 @@ export async function clientLoader({ request }: Route.ClientLoaderArgs) {
   const hasDatabaseService = hasRuntimeService(runtime, "@zelavis/db");
   const [settings, databaseCollections, schemaCollections] = await Promise.all([
     getDashboardSettings(runtime),
-    hasDatabaseService ? listDatabaseCollections(runtime) : [],
+    hasDatabaseService
+      ? listDatabaseCollections(runtime, ZELAVIS_APP_ADMIN_TENANT_ID)
+      : [],
     hasDatabaseService ? listDatabaseSchemaCollections(runtime) : [],
   ]);
 
@@ -187,6 +190,20 @@ export async function clientLoader({ request }: Route.ClientLoaderArgs) {
 
 clientLoader.hydrate = true as const;
 
+export function HydrateFallback() {
+  return (
+    <main className="grid h-svh place-items-center bg-background text-foreground">
+      <div role="status" className="grid place-items-center gap-3">
+        <span
+          aria-hidden="true"
+          className="size-6 animate-spin rounded-full border-2 border-muted border-t-primary"
+        />
+        <span className="sr-only">Loading Zelavis dashboard</span>
+      </div>
+    </main>
+  );
+}
+
 export function shouldRevalidate() {
   return true;
 }
@@ -201,7 +218,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Meta />
         <Links />
       </head>
-      <body className="h-svh overflow-hidden font-sans antialiased [overflow-wrap:anywhere] selection:bg-accent">
+      <body
+        suppressHydrationWarning
+        className="h-svh overflow-hidden font-sans antialiased [overflow-wrap:anywhere] selection:bg-accent"
+      >
         <DirectionProvider direction={DEFAULT_DIRECTION}>
           {children}
         </DirectionProvider>

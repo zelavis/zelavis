@@ -1,5 +1,8 @@
 import { join, resolve } from "node:path";
-import { createBetterSqlite3DatabaseDriver } from "@zelavis/app-db-node-sqlite";
+import { createBetterSqlite3DatabaseDriver } from "../app/db/adapters/node-sqlite.js";
+import {
+  createShardedDatabaseDriver,
+} from "../app/db/topology/index.js";
 import {
   defineAdapter,
   type ZelavisOptions,
@@ -7,6 +10,7 @@ import {
   type ZelavisResolvedPlatformOptions,
 } from "../index.js";
 import { createLocalSqliteSystemStore } from "./_sqlite-system-store.js";
+import { resolveLocalDatabaseTopology } from "./_database-topology-store.js";
 import {
   createNodeProcessProjectRuntime,
   type NodeProcessProjectRuntimeOptions,
@@ -22,12 +26,15 @@ import {
   type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
 import { officialProjectRecipes } from "../project-recipes.js";
+import { migrateLegacyAppDatabase } from "./_legacy-app-database-migration.js";
 
 export interface NodeAdapterDatabaseOptions {
-  filename?: string;
+  directory?: string;
+  logicalDatabaseId?: string;
+  virtualShardCount?: number;
+  physicalShardCount?: number;
   readonly?: boolean;
   fileMustExist?: boolean;
-  defaultTenantId?: string;
   pragma?: readonly string[];
 }
 
@@ -84,23 +91,6 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
             workloads: false,
           };
 
-      if (databaseOptions !== false) {
-        nextCoreServices.database = {
-          defaultTenantId: databaseOptions.defaultTenantId,
-          driver: createBetterSqlite3DatabaseDriver({
-            filename: databaseOptions.filename
-              ? resolve(databaseOptions.filename)
-              : join(dataDirectory, "zelavis.sqlite"),
-            readonly: databaseOptions.readonly,
-            fileMustExist: databaseOptions.fileMustExist,
-            defaultTenantId: databaseOptions.defaultTenantId,
-            pragma: databaseOptions.pragma,
-          }),
-        };
-      }
-
-      const serviceOptions = options.services === false ? undefined : options.services;
-      const serviceDirectory = join(dataDirectory, "services");
       const systemStoreOptions =
         options.systemStore === false ? undefined : options.systemStore;
       const systemStoreFilename = systemStoreOptions?.filename
@@ -114,6 +104,60 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         options.systemStore === false
           ? undefined
           : createLocalSqliteSystemStore({ filename: systemStoreFilename });
+
+      if (databaseOptions !== false) {
+        const topology = await resolveLocalDatabaseTopology({
+          systemStore,
+          logicalDatabaseId: databaseOptions.logicalDatabaseId,
+          nodeId: "local",
+          engine: "sqlite",
+          virtualShardCount: databaseOptions.virtualShardCount,
+          physicalShardCount: databaseOptions.physicalShardCount,
+        });
+        const shardDirectory = databaseOptions.directory
+          ? resolve(databaseOptions.directory)
+          : join(dataDirectory, "data", "primary", "shards");
+        const physicalDrivers = new Map(
+          topology.desired.physicalShards.map((shard) => [
+            shard.id,
+            createBetterSqlite3DatabaseDriver({
+              filename: join(shardDirectory, `${shard.id}.sqlite`),
+              readonly: databaseOptions.readonly,
+              fileMustExist: databaseOptions.fileMustExist,
+              pragma: databaseOptions.pragma,
+            }),
+          ]),
+        );
+        const shardedDriver = createShardedDatabaseDriver({
+          topology,
+          physicalDrivers,
+        });
+        if (
+          isProjectRuntime &&
+          databaseOptions.directory === undefined &&
+          !databaseOptions.readonly
+        ) {
+          await migrateLegacyAppDatabase({
+            legacyFilename: join(dataDirectory, "zelavis.sqlite"),
+            systemStore,
+            targetDriver: shardedDriver,
+            physicalDrivers,
+            openLegacyDriver: (filename) =>
+              createBetterSqlite3DatabaseDriver({
+                filename,
+                fileMustExist: true,
+              }),
+            tenantAliases: { default: "zelavis-app" },
+          });
+        }
+        nextCoreServices.database = {
+          nodeId: "local",
+          driver: shardedDriver,
+        };
+      }
+
+      const serviceOptions = options.services === false ? undefined : options.services;
+      const serviceDirectory = join(dataDirectory, "services");
       const normalizedProjectOptions =
         options.projects === false ? undefined : options.projects;
       const projectsEnabled =
