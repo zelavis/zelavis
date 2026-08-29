@@ -818,10 +818,11 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
     );
     assert.equal(listBody.projects.length, 2);
 
-    const fabricResponse = await zv.fetch(
-      new Request("http://localhost/zelavis/api/v1/fabric/placements/projects/beta"),
-    );
-    const fabricBody = await fabricResponse.json();
+    const fabricResponse = await zv.plain({
+      url: "/zelavis/api/v1/fabric/placements/projects/beta",
+      principal: { id: "owner", type: "system", permissions: ["fabric.view"] },
+    });
+    const fabricBody = fabricResponse.body;
     assert.equal(fabricResponse.status, 200);
     assert.deepEqual(fabricBody.placement.identity, {
       scopeId: "local-platform",

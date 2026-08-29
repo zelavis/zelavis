@@ -2,7 +2,7 @@ import { zelavisApp } from "./app/index.js";
 import type {
   ZelavisServiceRegistryEntry,
   ZelavisServiceSetupContext,
-} from "./core/index.js";
+} from "./service.js";
 
 export const officialProjectRecipes = Object.freeze([
   Object.freeze({

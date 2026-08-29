@@ -11,5 +11,6 @@ export * from "./services/account-service.js";
 export * from "./services/authentication-service.js";
 export * from "./services/credential-service.js";
 export * from "./services/session-service.js";
+export * from "./services/security-service.js";
 export * from "./storage/in-memory.js";
 export * from "./storage/database.js";

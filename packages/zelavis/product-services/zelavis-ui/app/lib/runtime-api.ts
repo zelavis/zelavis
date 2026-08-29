@@ -617,6 +617,18 @@ export interface DatabaseDocument {
   schemaVersion: number;
 }
 
+export type DatabaseSystemViewName =
+  | "collections"
+  | "events"
+  | "schemas"
+  | "projections"
+  | "time-series";
+
+export interface DatabaseSystemViewRow {
+  id: string;
+  data: Record<string, unknown>;
+}
+
 export interface DatabaseSchemaCollectionSummary {
   collection: string;
   activeVersion: number | null;
@@ -2121,6 +2133,17 @@ export async function listDatabaseCollections(
   return result.collections.sort((left, right) =>
     left.name.localeCompare(right.name),
   );
+}
+
+export async function queryDatabaseSystemView(
+  config: RuntimeConfig,
+  view: DatabaseSystemViewName,
+  tenantId: string,
+) {
+  const result = await readJson<{ rows: DatabaseSystemViewRow[] }>(
+    `${config.api.basePath}/database/maintenance/system/views/${encodeURIComponent(view)}?tenantId=${encodeURIComponent(tenantId)}&limit=500`,
+  );
+  return result.rows;
 }
 
 export async function createDatabaseCollection(

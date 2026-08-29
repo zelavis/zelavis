@@ -248,7 +248,11 @@ export interface ZelavisRuntimeService<TService = unknown> {
   name: string;
   kind?: string;
   basePath?: string;
-  api: Record<string, readonly ZelavisServerRoute<TService>[]>;
+  /**
+   * Versioned HTTP routes. Optional: provider plugins register through a
+   * domain contract and mount no routes of their own.
+   */
+  api?: Record<string, readonly ZelavisServerRoute<TService>[]>;
   service: TService;
   menu?: ZelavisRuntimeServiceMenuDefinition;
   menus?: readonly ZelavisRuntimeServiceMenuDefinition[];

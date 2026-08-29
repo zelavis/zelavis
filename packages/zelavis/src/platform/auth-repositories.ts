@@ -1,7 +1,13 @@
 import type {
   Account,
   AccountRepository,
+  AuthAttemptState,
+  AuthAttemptRepository,
+  AuthAuthorizationFlow,
+  AuthAuthorizationFlowRepository,
   AuthRepositories,
+  AuthSecurityEvent,
+  AuthSecurityEventRepository,
   Credential,
   CredentialRepository,
   Session,
@@ -13,7 +19,7 @@ const NAMESPACE = "zelavis.platform.auth";
 
 type StoredEntity = Record<string, ZelavisSystemStoreValue>;
 
-function storeValue(entity: Account | Credential | Session): StoredEntity {
+function storeValue(entity: unknown): StoredEntity {
   return JSON.parse(JSON.stringify(entity)) as StoredEntity;
 }
 
@@ -25,6 +31,39 @@ function revive<T extends Account | Credential | Session>(value: ZelavisSystemSt
     updatedAt: new Date(entity.updatedAt),
     ...("expiresAt" in entity ? { expiresAt: new Date(entity.expiresAt as string) } : {}),
   } as T;
+}
+
+function reviveAttempt(value: ZelavisSystemStoreValue): AuthAttemptState {
+  const state = value as unknown as Omit<AuthAttemptState, "failures" | "blockedUntil" | "updatedAt"> & {
+    failures: string[];
+    blockedUntil?: string;
+    updatedAt: string;
+  };
+  return {
+    ...state,
+    failures: state.failures.map((failure) => new Date(failure)),
+    blockedUntil: state.blockedUntil ? new Date(state.blockedUntil) : undefined,
+    updatedAt: new Date(state.updatedAt),
+  };
+}
+
+function reviveSecurityEvent(value: ZelavisSystemStoreValue): AuthSecurityEvent {
+  const event = value as unknown as Omit<AuthSecurityEvent, "occurredAt"> & {
+    occurredAt: string;
+  };
+  return { ...event, occurredAt: new Date(event.occurredAt) };
+}
+
+function reviveAuthorizationFlow(value: ZelavisSystemStoreValue): AuthAuthorizationFlow {
+  const flow = value as unknown as Omit<
+    AuthAuthorizationFlow,
+    "createdAt" | "expiresAt"
+  > & { createdAt: string; expiresAt: string };
+  return {
+    ...flow,
+    createdAt: new Date(flow.createdAt),
+    expiresAt: new Date(flow.expiresAt),
+  };
 }
 
 export function createPlatformAuthRepositories(store: ZelavisSystemStore): AuthRepositories {
@@ -76,5 +115,87 @@ export function createPlatformAuthRepositories(store: ZelavisSystemStore): AuthR
     },
     update: (session) => set("session", session),
   };
-  return { accounts, credentials, sessions };
+  const attempts: AuthAttemptRepository = {
+    async findByKeyHash(keyHash) {
+      const record = await store.get(NAMESPACE, `attempt:${keyHash}`);
+      return record ? reviveAttempt(record.value) : null;
+    },
+    async mutate(keyHash, mutation) {
+      const key = `attempt:${keyHash}`;
+      for (let retry = 0; retry < 100; retry += 1) {
+        const record = await store.get(NAMESPACE, key);
+        const next = mutation(record ? reviveAttempt(record.value) : null);
+        if (!record) {
+          if (!next) return null;
+          const created = await store.setIfAbsent(
+            NAMESPACE,
+            key,
+            storeValue(next as unknown as Session),
+          );
+          if (created.created) return next;
+          continue;
+        }
+        if (!next) {
+          if (await store.compareAndDelete(NAMESPACE, key, record.updatedAt)) {
+            return null;
+          }
+          continue;
+        }
+        const updated = await store.compareAndSet(
+          NAMESPACE,
+          key,
+          record.updatedAt,
+          storeValue(next as unknown as Session),
+        );
+        if (updated) return next;
+      }
+      throw new Error("Auth attempt update did not converge after 100 retries.");
+    },
+  };
+  const authorizationFlows: AuthAuthorizationFlowRepository = {
+    async findByStateHash(stateHash) {
+      const record = await store.get(NAMESPACE, `authorization-flow:${stateHash}`);
+      return record ? reviveAuthorizationFlow(record.value) : null;
+    },
+    async mutate(stateHash, mutation) {
+      const key = `authorization-flow:${stateHash}`;
+      for (let retry = 0; retry < 100; retry += 1) {
+        const record = await store.get(NAMESPACE, key);
+        const next = mutation(record ? reviveAuthorizationFlow(record.value) : null);
+        if (!record) {
+          if (!next) return null;
+          const created = await store.setIfAbsent(NAMESPACE, key, storeValue(next));
+          if (created.created) return next;
+          continue;
+        }
+        if (!next) {
+          if (await store.compareAndDelete(NAMESPACE, key, record.updatedAt)) return null;
+          continue;
+        }
+        if (await store.compareAndSet(NAMESPACE, key, record.updatedAt, storeValue(next))) {
+          return next;
+        }
+      }
+      throw new Error("Authorization flow update did not converge after 100 retries.");
+    },
+  };
+  const securityEvents: AuthSecurityEventRepository = {
+    async append(event) {
+      await store.set(NAMESPACE, `security-event:${event.occurredAt.toISOString()}:${event.id}`, storeValue(event as unknown as Session));
+      return event;
+    },
+    async list() {
+      return (await store.list(NAMESPACE))
+        .filter((record) => record.key.startsWith("security-event:"))
+        .map((record) => reviveSecurityEvent(record.value));
+    },
+  };
+  return {
+    accounts,
+    credentials,
+    sessions,
+    attempts,
+    authorizationFlows,
+    securityEvents,
+  };
 }

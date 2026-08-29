@@ -4,6 +4,10 @@
   "author": "Ivan Jeremic",
   "license": "MIT",
   "type": "module",
+  "exports": "./dist/index.js",
+  "zelavis": {
+    "kind": "plugin"
+  },
   "scripts": {
     "build": "pnpm exec tsc -p tsconfig.json",
     "package": "pnpm run build && node scripts/build-package.mjs",

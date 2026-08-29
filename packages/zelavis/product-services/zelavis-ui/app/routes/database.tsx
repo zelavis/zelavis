@@ -18,6 +18,8 @@ import {
   getActiveRuntimeConfig,
   insertDatabaseDocument,
   queryDatabaseDocuments,
+  queryDatabaseSystemView,
+  type DatabaseSystemViewName,
   ZELAVIS_APP_ADMIN_TENANT_ID,
 } from "#/lib/runtime-api";
 import { parseAsString, useTypedSearchParams } from "#/lib/use-typed-search-params";
@@ -34,12 +36,30 @@ export async function clientLoader({ request }: import("./+types/database").Rout
   const runtime = await getActiveRuntimeConfig(request);
   const url = new URL(request.url);
   const databaseTable = url.searchParams.get('databaseTable') || undefined;
-  const tableRows = databaseTable
-    ? await queryDatabaseDocuments(
-        runtime,
-        databaseTable,
-        ZELAVIS_APP_ADMIN_TENANT_ID,
-      ).catch(() => [])
+  const databaseSystemView = url.searchParams.get('databaseSystemView') as
+    | DatabaseSystemViewName
+    | null;
+  const tableRows: DatabaseGridRow[] = databaseSystemView
+    ? (
+        await queryDatabaseSystemView(
+          runtime,
+          databaseSystemView,
+          ZELAVIS_APP_ADMIN_TENANT_ID,
+        ).catch(() => [])
+      ).map((row) => ({ id: row.id, data: row.data }))
+    : databaseTable
+    ? (
+        await queryDatabaseDocuments(
+          runtime,
+          databaseTable,
+          ZELAVIS_APP_ADMIN_TENANT_ID,
+        ).catch(() => [])
+      ).map((document) => ({
+        id: document.id,
+        version: document.version,
+        updatedAt: document.updatedAt,
+        data: document.data,
+      }))
     : [];
 
   return { tableRows };
@@ -821,6 +841,7 @@ function DatabaseDataGrid(props: {
 
 const databaseSchema = {
   databaseTable: parseAsString,
+  databaseSystemView: parseAsString,
   inspectedId: parseAsString,
   view: parseAsString,
   sidebar: parseAsString,
@@ -836,26 +857,27 @@ function DatabaseRoute() {
   const selectedRowId = search.inspectedId;
   const setSelectedRowId = (id: string | undefined) => setParams({ inspectedId: id ?? null });
   const selectedDatabaseTable = search.databaseTable || undefined;
-  const selectedTarget = selectedDatabaseTable;
+  const selectedDatabaseSystemView = search.databaseSystemView as
+    | DatabaseSystemViewName
+    | undefined;
+  const selectedTarget = selectedDatabaseTable ?? selectedDatabaseSystemView;
   const activeViewName = search.view;
   const desiredSidebar = getDatabaseSidebarTrail({
     databaseTable: selectedDatabaseTable,
   });
   const tableRowsResource = { data: tableRowsData, loading: false, error: undefined as Error | undefined };
   const tableRows = useMemo(
-    () =>
-      (tableRowsResource.data ?? []).map((record) => ({
-        id: record.id,
-        version: record.version,
-        updatedAt: record.updatedAt,
-        data: record.data,
-      })),
+    () => tableRowsResource.data ?? [],
     [tableRowsResource.data],
   );
-  const activeRows = selectedDatabaseTable ? tableRows : [];
-  const activeResource = selectedDatabaseTable ? tableRowsResource : undefined;
-  const activeKind = selectedDatabaseTable ? "Collection table" : "Database";
-  const emptyDescription = selectedDatabaseTable
+  const activeRows = selectedTarget ? tableRows : [];
+  const activeResource = selectedTarget ? tableRowsResource : undefined;
+  const activeKind = selectedDatabaseSystemView
+    ? "Logical system view"
+    : selectedDatabaseTable
+      ? "Collection table"
+      : "Database";
+  const emptyDescription = selectedTarget
     ? `The collection table ${selectedDatabaseTable} has no rows yet.`
     : "Select a collection table from the sidebar.";
   const rowColumns = useMemo(() => {
@@ -966,6 +988,7 @@ function DatabaseRoute() {
             onActivateSavedViewTarget={(target, viewName) => {
               setParams({
                 databaseTable: target,
+                databaseSystemView: null,
                 view: viewName ?? search.view ?? null,
               });
             }}

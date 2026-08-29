@@ -3,6 +3,7 @@ export * from "./contracts/driver.js";
 export * from "./contracts/documents.js";
 export * from "./contracts/events.js";
 export * from "./contracts/json.js";
+export * from "./contracts/maintenance.js";
 export * from "./contracts/sql.js";
 export * from "./core/create-database.js";
 export * from "./core/define-database-driver.js";

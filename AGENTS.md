@@ -563,8 +563,8 @@ When creating a new core package, service package, or plugin package:
      - `src/ecommerce-plugin.ts`
      - `src/stripe-plugin.ts`
 2. Keep `src/index.ts` small and make it re-export the named definition file.
-3. Use plain `ZelavisService` object literals for mounted runtime services.
-4. Use `defineService(...)` for user-facing services and package-local service contracts.
+3. Use plain `ZelavisRuntimeService` object literals for mounted runtime services.
+4. Use `package.json` manifest (`"zelavis": { "kind": "plugin" }`) and the official Zelavis SDK (`zelavis.menu.create`, `zelavis.routes.create`, etc.) for plugins. `defineService` is removed.
 5. Keep orchestration helpers only when they add real behavior.
    - good: `authService(...)` because it creates Auth and registers explicit auth-method plugins
    - bad: pass-through aliases that only rename another function

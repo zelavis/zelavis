@@ -1,25 +1,62 @@
 import {
-  defineService,
-  type ZelavisAnyRuntimeServiceInput,
-  type ZelavisRuntimeService,
-  type ZelavisServiceDefinition,
-  type ZelavisServiceLoadOptions,
-  type ZelavisServiceMenuDefinition,
-  type ZelavisServiceRegistryEntry,
-  type ZelavisServiceRegistryModuleEntry,
-  type ZelavisServiceRegistryStateEntry,
-  type ZelavisServiceSetupContext,
-} from "./core/index.js";
+  validatePluginPackageManifest,
+  resolvePackageExportsEntry,
+  type ZelavisPackageManifest,
+} from "./core/service/manifest.js";
+import {
+  createPluginExecutionContext,
+  activePluginStorage,
+  type PluginExecutionContext,
+} from "./core/service/context.js";
+import type {
+  ZelavisAnyRuntimeServiceInput,
+  ZelavisRuntimeService,
+  ZelavisRuntimeServiceMenuDefinition,
+} from "./core/runtime/contracts.js";
 import type { BundleStore } from "./bundle-store.js";
 import type { DomainBindingStore } from "./domain-binding.js";
 import { synthesizeServiceAppService } from "./service-app.js";
+import type {
+  ZelavisServiceAppDefinition,
+  ZelavisServiceAppDomainPolicy,
+  ZelavisServiceAppMode,
+  ZelavisServiceAppShellDefinition,
+  ZelavisServiceAppShellRenderContext,
+  ZelavisServiceAppShellResult,
+  ZelavisServiceCapability,
+  ZelavisServiceCatalogCompatibility,
+  ZelavisServiceCatalogEntry,
+  ZelavisServiceCatalogLinks,
+  ZelavisServiceCatalogReviewStatus,
+  ZelavisServiceCatalogSource,
+  ZelavisServiceKind,
+  ZelavisServiceMarketplaceMetadata,
+  ZelavisServiceMenuDefinition,
+  ZelavisServiceMenuPageDefinition,
+  ZelavisServiceScope,
+} from "./core/service/definition.js";
 
 export {
-  ZELAVIS_SERVICE_V1,
   defineServiceCatalog,
   defineServiceCatalogEntry,
-  defineService,
 } from "./core/index.js";
+export {
+  validatePluginPackageManifest,
+  resolvePackageExportsEntry,
+} from "./core/service/manifest.js";
+export {
+  createPluginExecutionContext,
+  activePluginStorage,
+} from "./core/service/context.js";
+export type {
+  ZelavisPackageManifest,
+  ZelavisManifestConfig,
+} from "./core/service/manifest.js";
+export type {
+  PluginExecutionContext,
+  ZelavisCommandDefinition,
+} from "./core/service/context.js";
+
 export type {
   ZelavisServiceAppDefinition,
   ZelavisServiceAppDomainPolicy,
@@ -28,31 +65,131 @@ export type {
   ZelavisServiceAppShellRenderContext,
   ZelavisServiceAppShellResult,
   ZelavisServiceCapability,
-  ZelavisServiceContractVersion,
   ZelavisServiceCatalogCompatibility,
   ZelavisServiceCatalogEntry,
   ZelavisServiceCatalogLinks,
   ZelavisServiceCatalogReviewStatus,
   ZelavisServiceCatalogSource,
-  ZelavisServiceDefinition,
   ZelavisServiceKind,
-  ZelavisServiceLoadOptions,
   ZelavisServiceMarketplaceMetadata,
   ZelavisServiceMenuDefinition,
   ZelavisServiceMenuPageDefinition,
-  ZelavisServiceModule,
-  ZelavisServiceRegistryEntry,
-  ZelavisServiceRegistryModuleEntry,
-  ZelavisServiceRegistryStateEntry,
-  ZelavisServiceRegistryStore,
   ZelavisServiceScope,
-  ZelavisServiceSetupApiContext,
-  ZelavisServiceSetupContext,
-  ZelavisServiceSetupCoreContext,
-  ZelavisServiceSetupPlatformContext,
-  ZelavisServiceSetupResult,
-  ZelavisServiceV1Definition,
-} from "./core/index.js";
+};
+
+export interface ZelavisServiceRegistryEntry<TContext = unknown> {
+  service: ZelavisRuntimeService<any> & {
+    scope?: ZelavisServiceScope;
+    version?: string;
+    app?: ZelavisServiceAppDefinition;
+    marketplace?: ZelavisServiceMarketplaceMetadata;
+    capabilities?: readonly ZelavisServiceCapability[];
+    runtimeServices?: readonly ZelavisAnyRuntimeServiceInput[];
+    setup?: (
+      context: TContext,
+    ) =>
+      | void
+      | { runtimeServices?: readonly ZelavisAnyRuntimeServiceInput[] }
+      | Promise<void | { runtimeServices?: readonly ZelavisAnyRuntimeServiceInput[] }>;
+  };
+  specifier?: string;
+  status: "installed" | "available";
+  source?: "official" | "community";
+  order?: number;
+  manifest?: ZelavisPackageManifest;
+}
+
+export interface ZelavisServiceRegistryModuleEntry {
+  specifier: string;
+  status?: "installed" | "available";
+  source?: "official" | "community";
+  order?: number;
+  manifest?: ZelavisPackageManifest;
+}
+
+export interface ZelavisServiceRegistryStateEntry {
+  name: string;
+  specifier?: string;
+  status?: "installed" | "available";
+  source?: "official" | "community";
+  order?: number;
+}
+
+export interface ZelavisServiceRegistryStore {
+  read:
+    | (() =>
+        | Promise<readonly ZelavisServiceRegistryStateEntry[] | undefined>
+        | readonly ZelavisServiceRegistryStateEntry[]
+        | undefined)
+    | (() => Promise<readonly ZelavisServiceRegistryStateEntry[] | undefined>);
+  write: (
+    entries: readonly ZelavisServiceRegistryStateEntry[],
+  ) =>
+    | Promise<readonly ZelavisServiceRegistryStateEntry[]>
+    | readonly ZelavisServiceRegistryStateEntry[];
+}
+
+export interface ZelavisServiceLoadOptions {
+  importer?: (specifier: string) => Promise<unknown>;
+  manifest?: ZelavisPackageManifest;
+  manifestResolver?: ZelavisServiceManifestResolver;
+}
+
+/**
+ * Resolves a package manifest for a service specifier.
+ *
+ * The runtime core never scans a filesystem for plugins. Hosts that can do so
+ * (the Node adapter, developer tooling) install a resolver explicitly.
+ */
+export type ZelavisServiceManifestResolver = (
+  specifier: string,
+) => Promise<ZelavisPackageManifest | undefined>;
+
+let installedManifestResolver: ZelavisServiceManifestResolver | undefined;
+
+export function setServiceManifestResolver(
+  resolver: ZelavisServiceManifestResolver | undefined,
+): void {
+  installedManifestResolver = resolver;
+}
+
+export function getServiceManifestResolver():
+  | ZelavisServiceManifestResolver
+  | undefined {
+  return installedManifestResolver;
+}
+
+export interface ZelavisServiceSetupApiContext {
+  prefix: string;
+  version: string;
+  basePath: string;
+}
+
+export interface ZelavisServiceSetupPlatformContext {
+  presets: readonly string[];
+  resources: {
+    keyValueStore: boolean;
+    fileStorage: boolean;
+  };
+  metadata: Readonly<Record<string, unknown>>;
+}
+
+export interface ZelavisServiceSetupCoreContext {
+  database?: unknown;
+}
+
+export interface ZelavisServiceSetupContext {
+  service: Readonly<ZelavisRuntimeService<any>>;
+  registry: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[];
+  rootPath: string;
+  api: ZelavisServiceSetupApiContext;
+  platform: ZelavisServiceSetupPlatformContext;
+  core: ZelavisServiceSetupCoreContext;
+  runtimeServices: readonly ZelavisAnyRuntimeServiceInput[];
+  addService: (service: ZelavisAnyRuntimeServiceInput) => void;
+  addServices: (services: readonly ZelavisAnyRuntimeServiceInput[]) => void;
+}
+
 export function createServiceRegistry<TContext = unknown>(
   entries: readonly ZelavisServiceRegistryEntry<TContext>[],
 ): readonly Readonly<ZelavisServiceRegistryEntry<TContext>>[] {
@@ -64,7 +201,10 @@ export function createServiceRegistry<TContext = unknown>(
         throw new TypeError("A service registry entry object is required.");
       }
 
-      const service = defineService(entry.service);
+      const service = entry.service;
+      if (!service || typeof service !== "object" || !("name" in service) || typeof service.name !== "string" || !service.name.trim()) {
+        throw new TypeError("Service registry entry must have a service with a string name.");
+      }
 
       if (seen.has(service.name)) {
         throw new TypeError(
@@ -101,7 +241,7 @@ export function createServiceRegistry<TContext = unknown>(
 
       return Object.freeze({
         ...entry,
-        service,
+        service: Object.freeze({ ...service }),
       });
     }),
   );
@@ -109,21 +249,48 @@ export function createServiceRegistry<TContext = unknown>(
 
 export function resolveServiceModule<TContext = unknown>(
   module: unknown,
-): Readonly<ZelavisServiceDefinition<TContext>> {
+  manifest?: ZelavisPackageManifest,
+): Readonly<ZelavisServiceRegistryEntry<TContext>["service"]> {
   if (!module || typeof module !== "object") {
     throw new TypeError("A service module object is required.");
   }
 
-  if ("name" in module) {
-    return defineService(module as ZelavisServiceDefinition<TContext>);
+  const raw = module as Record<string, unknown>;
+
+  if ("name" in raw && typeof raw.name === "string") {
+    return Object.freeze({
+      name: raw.name,
+      basePath: typeof raw.basePath === "string" ? raw.basePath : undefined,
+      api: (raw.api as Record<string, any>) ?? {},
+      service: raw.service ?? raw,
+      menu: raw.menu as any,
+      menus: raw.menus as any,
+      services: raw.services as any,
+      authenticators: raw.authenticators as any,
+      kind: (raw.kind as string) ?? manifest?.zelavis?.kind,
+      version: (raw.version as string) ?? manifest?.version,
+      app: raw.app as any,
+      setup: typeof raw.setup === "function" ? (raw.setup as any) : undefined,
+      runtimeServices: raw.runtimeServices as any,
+    }) as any;
   }
 
-  if ("service" in module && module.service !== undefined) {
-    return defineService(module.service as ZelavisServiceDefinition<TContext>);
+  if ("service" in raw && raw.service !== undefined) {
+    return resolveServiceModule(raw.service, manifest);
   }
 
-  if ("default" in module && module.default !== undefined) {
-    return defineService(module.default as ZelavisServiceDefinition<TContext>);
+  if ("default" in raw && raw.default !== undefined) {
+    return resolveServiceModule(raw.default, manifest);
+  }
+
+  if (manifest) {
+    return Object.freeze({
+      name: manifest.name,
+      kind: manifest.zelavis?.kind,
+      version: manifest.version,
+      api: {},
+      service: raw,
+    }) as any;
   }
 
   throw new TypeError(
@@ -131,19 +298,89 @@ export function resolveServiceModule<TContext = unknown>(
   );
 }
 
+export async function loadPluginPackage(options: {
+  manifest: unknown;
+  importer?: (entry: string) => Promise<unknown>;
+}): Promise<Readonly<ZelavisRuntimeService<any>>> {
+  const manifest = validatePluginPackageManifest(options.manifest);
+  const entrypoint = resolvePackageExportsEntry(manifest.exports);
+  const context = createPluginExecutionContext(manifest);
+
+  const importer =
+    options.importer ??
+    ((specifier: string) => import(specifier));
+
+  const moduleResult = await activePluginStorage.run(context, async () => {
+    return importer(entrypoint);
+  });
+
+  const resolvedService = (
+    moduleResult && typeof moduleResult === "object" && "name" in moduleResult
+      ? moduleResult
+      : (moduleResult as any)?.default && typeof (moduleResult as any).default === "object" && "name" in (moduleResult as any).default
+        ? (moduleResult as any).default
+        : undefined
+  ) as ZelavisRuntimeService<any> | undefined;
+
+  const runtimeService: ZelavisRuntimeService<any> = {
+    name: manifest.name,
+    kind: manifest.zelavis?.kind ?? "plugin",
+    basePath: resolvedService?.basePath,
+    api: {
+      v1: [
+        ...(resolvedService?.api?.v1 ?? []),
+        ...context.routes,
+      ],
+    },
+    menu: context.menus[0] ?? resolvedService?.menu,
+    menus: context.menus.length > 0 ? context.menus : resolvedService?.menus,
+    services: [
+      ...(resolvedService?.services ?? []),
+      ...context.services,
+    ],
+    authenticators: [
+      ...(resolvedService?.authenticators ?? []),
+      ...context.authenticators,
+    ],
+    service: resolvedService?.service ?? moduleResult,
+  };
+
+  return Object.freeze(runtimeService);
+}
+
 export async function loadService<TContext = unknown>(
   specifier: string,
   options: ZelavisServiceLoadOptions = {},
-): Promise<Readonly<ZelavisServiceDefinition<TContext>>> {
+): Promise<Readonly<ZelavisServiceRegistryEntry<TContext>["service"]>> {
   if (!specifier || typeof specifier !== "string") {
     throw new TypeError("A service module specifier string is required.");
+  }
+
+  if (options.manifest) {
+    return loadPluginPackage({
+      manifest: options.manifest,
+      importer: options.importer,
+    }) as any;
+  }
+
+  // The core never touches a filesystem. A host that can resolve a manifest
+  // for this specifier installs a resolver explicitly.
+  const resolver = options.manifestResolver ?? installedManifestResolver;
+  const manifest = resolver ? await resolver(specifier) : undefined;
+
+  if (manifest) {
+    return loadPluginPackage({
+      manifest,
+      importer: options.importer,
+    }) as any;
   }
 
   const importer =
     options.importer ??
     ((moduleSpecifier: string) => import(moduleSpecifier));
 
-  return resolveServiceModule<TContext>(await importer(specifier));
+  const mod = await importer(specifier);
+  return resolveServiceModule<TContext>(mod);
 }
 
 export async function loadServiceRegistry<TContext = unknown>(
@@ -162,11 +399,17 @@ export async function loadServiceRegistry<TContext = unknown>(
         );
       }
 
+      const service = await loadService<TContext>(entry.specifier, {
+        ...options,
+        manifest: entry.manifest ?? options.manifest,
+      });
+
       return {
-        service: await loadService<TContext>(entry.specifier, options),
+        service,
         specifier: entry.specifier,
         status: entry.status ?? "installed",
         source: entry.source,
+        manifest: entry.manifest,
         ...(entry.order !== undefined ? { order: entry.order } : {}),
       };
     }),
@@ -233,31 +476,9 @@ export function applyServiceRegistryState<TContext = unknown>(
 }
 
 export interface ActivateServiceRegistryOptions {
-  /**
-   * Bundle store the service-app synthesizer reads from. When omitted,
-   * services that declare an `app` field are still mounted but their
-   * synthesized routes fall back to a 404 — i.e. the host has not
-   * configured static-asset serving. Provide a store (typically a
-   * {@link createSharedBundleStore} backed by `platform.resources.files`)
-   * for the routes to actually serve content.
-   */
   bundleStore?: BundleStore;
-  /**
-   * Project ownership context for synthesized app services. The
-   * `BundleStore` uses this to key into per-tenant asset namespaces. For
-   * system-host activation (no multi-tenancy), leave undefined.
-   */
   projectId?: string;
-  /**
-   * Domain-binding store. When set, extension-scoped service apps get
-   * host-bound routing only for verified bindings owned by their
-   * project or service. System services are unaffected.
-   */
   domainBindings?: DomainBindingStore;
-  /**
-   * Service names that extension-scoped services may not provide through
-   * runtimeServices. Static system services can still compose them.
-   */
   reservedRuntimeServiceNames?: readonly string[];
 }
 
@@ -295,7 +516,7 @@ export async function activateServiceRegistry<
     activatedServices.push(...services);
   };
   const assertCanAddRuntimeService = (
-    owner: Readonly<ZelavisServiceDefinition<TContext>>,
+    owner: Readonly<ZelavisServiceRegistryEntry<TContext>["service"]>,
     service: ZelavisAnyRuntimeServiceInput,
   ) => {
     if (owner.scope === "system" || !options.reservedRuntimeServiceNames) {
@@ -312,7 +533,7 @@ export async function activateServiceRegistry<
       );
     }
   };
-  const shouldMountService = (service: ZelavisServiceDefinition<TContext>) =>
+  const shouldMountService = (service: ZelavisServiceRegistryEntry<TContext>["service"]) =>
     service.basePath !== undefined ||
     service.service !== undefined ||
     Boolean(service.authenticators?.length) ||
@@ -327,16 +548,9 @@ export async function activateServiceRegistry<
       addService(entry.service as unknown as ZelavisAnyRuntimeServiceInput);
     }
 
-    // Synthesize an asset-serving service for services that declare an
-    // `app`. The synthesizer decides the effective mount internally
-    // based on (scope, verified hosts): system services keep their
-    // declared mount; extension services with verified host bindings
-    // serve their declared mount restricted to those hosts; extension
-    // services without verified hosts get the path-namespaced
-    // `/apps/<service-name>` mount on the shared host.
     if (entry.service.app && options.bundleStore) {
       const appService = await synthesizeServiceAppService({
-        service: entry.service as Readonly<ZelavisServiceDefinition<unknown>>,
+        service: entry.service as any,
         bundleStore: options.bundleStore,
         projectId: options.projectId,
         domainBindings: options.domainBindings,
@@ -366,10 +580,8 @@ export async function activateServiceRegistry<
 
     const result = await entry.service.setup({
       ...(context as TContext),
-      service: entry.service as Readonly<ZelavisServiceDefinition<ZelavisServiceSetupContext>>,
-      registry: registry as readonly Readonly<
-        ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>
-      >[],
+      service: entry.service as any,
+      registry: registry as any,
       runtimeServices: activatedServices,
       addService: addEntryService,
       addServices: addEntryServices,

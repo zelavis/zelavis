@@ -5,6 +5,7 @@ import {
 } from "../app/db/topology/index.js";
 import {
   defineAdapter,
+  setServiceManifestResolver,
   type ZelavisOptions,
   type ZelavisServicePackageInstaller,
   type ZelavisResolvedPlatformOptions,
@@ -25,10 +26,15 @@ import {
   normalizeDataDirectory,
   createLocalRuntimeServicePackageInstaller,
   createLocalRuntimeServiceImporter,
+  createLocalRuntimeServiceManifestResolver,
   type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
 import { officialProjectRecipes } from "../project-recipes.js";
 import { migrateLegacyAppDatabase } from "./_legacy-app-database-migration.js";
+export {
+  createNodeFileArtifactStore,
+  type NodeFileArtifactStoreOptions,
+} from "./_node-artifact-store.js";
 
 export interface NodeAdapterDatabaseOptions {
   directory?: string;
@@ -76,6 +82,10 @@ export const createNodeServiceImporter = createLocalRuntimeServiceImporter;
 
 export function nodeAdapter(options: NodeAdapterOptions = {}) {
   let projectRuntime: ReturnType<typeof createNodeProcessProjectRuntime> | undefined;
+
+  // The runtime core does not scan filesystems; the Node host supplies the
+  // manifest resolver that reads a service's adjacent package.json.
+  setServiceManifestResolver(createLocalRuntimeServiceManifestResolver());
 
   return defineAdapter({
     name: "node",

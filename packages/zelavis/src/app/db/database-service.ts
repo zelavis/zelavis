@@ -14,6 +14,11 @@ import type {
   DatabaseTimeSeriesAggregateOperation,
   DatabaseTimeSeriesRangeInput,
 } from "./contracts/api.js";
+import type { DatabaseEventCursor } from "./contracts/events.js";
+import type {
+  DatabaseSystemViewName,
+  DatabaseTenantBackupV1,
+} from "./contracts/maintenance.js";
 import {
   DatabaseEventIdempotencyConflictError,
 } from "./contracts/events.js";
@@ -73,6 +78,13 @@ function readSort(value: unknown): DatabaseDocumentSort[] {
 
 function readNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function readQueryNumber(value: string | null): number | undefined {
+  if (value === null) return undefined;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) throw new TypeError("Expected an integer.");
+  return parsed;
 }
 
 function readOptionalTimeSeriesBoundary(
@@ -205,7 +217,8 @@ export function defineDatabaseService(
 
             return {
               body: {
-                items: collections
+                items: [
+                  ...collections
                   .sort((left, right) => left.name.localeCompare(right.name))
                   .map((collection) => ({
                     title: collection.name,
@@ -213,6 +226,13 @@ export function defineDatabaseService(
                     pageLabel: "Database",
                     search: { databaseTable: collection.name },
                   })),
+                  ...service.systemViews.list().map((view) => ({
+                    title: `System · ${view.title}`,
+                    path: "/database",
+                    pageLabel: "Database",
+                    search: { databaseSystemView: view.name },
+                  })),
+                ],
               },
             };
           },
@@ -243,7 +263,86 @@ export function defineDatabaseService(
       defineDatabaseDocumentsService(database),
       defineDatabaseSchemasService(database),
       defineDatabaseTimeSeriesService(database),
+      defineDatabaseMaintenanceService(database),
     ],
+  };
+}
+
+export function defineDatabaseMaintenanceService(
+  database: DatabaseApi,
+): ZelavisRuntimeService<DatabaseApi> {
+  return {
+    name: "maintenance",
+    basePath: "maintenance",
+    service: database,
+    api: {
+      v1: [
+        {
+          id: "database.system-views.list",
+          method: "GET",
+          path: "/system/views",
+          access: { permissions: ["database.inspect"] },
+          handler: ({ service }) => ({ body: { views: service.systemViews.list() } }),
+        },
+        {
+          id: "database.system-views.query",
+          method: "GET",
+          path: "/system/views/:view",
+          access: { permissions: ["database.inspect"] },
+          handler: async ({ service, params, query }) => {
+            try {
+              return {
+                body: await service.systemViews.query({
+                  name: params.view as DatabaseSystemViewName,
+                  tenantId: readTenantId(query.get("tenantId")),
+                  limit: readQueryNumber(query.get("limit")),
+                  after: query.get("after") as DatabaseEventCursor | null ?? undefined,
+                }),
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "database.backups.export",
+          method: "POST",
+          path: "/backups/export",
+          access: { permissions: ["database.backup"] },
+          handler: async ({ service, body }) => {
+            try {
+              const input = readBodyObject(body);
+              return {
+                body: await service.backups.exportTenant(readTenantId(input.tenantId)),
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "database.backups.restore",
+          method: "POST",
+          path: "/backups/restore",
+          access: { permissions: ["database.restore"] },
+          handler: async ({ service, body }) => {
+            try {
+              const input = readBodyObject(body);
+              if (!input.backup || typeof input.backup !== "object" || Array.isArray(input.backup)) {
+                throw new TypeError("A database backup object is required.");
+              }
+              return {
+                body: await service.backups.restoreTenant(
+                  input.backup as unknown as DatabaseTenantBackupV1,
+                ),
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+      ],
+    },
   };
 }
 

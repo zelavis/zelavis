@@ -15,3 +15,8 @@ const secretHash = await hashPassword("a long password with 15+ characters");
 Store `secretHash` in a `username-password` credential. Clients authenticate
 through the Auth endpoint with provider name `username-password`; successful
 authentication returns a revocable opaque session token.
+
+An optional `recovery.deliver` callback enables provider-owned account
+recovery. Zelavis stores only an expiring token hash, returns the same generic
+accepted response for known and unknown usernames, and revokes the account's
+sessions after a successful password reset.

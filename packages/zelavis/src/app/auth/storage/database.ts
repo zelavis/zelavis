@@ -1,34 +1,56 @@
 import type { DatabaseApi, DatabaseJsonObject, TenantDatabaseApi } from "../../db/index.js";
 import type {
   AccountRepository,
+  AuthAttemptRepository,
+  AuthAuthorizationFlowRepository,
   AuthRepositories,
+  AuthSecurityEventRepository,
   CredentialRepository,
   SessionRepository,
 } from "../contracts/repositories.js";
-import type { Account, Credential, Session } from "../domain/entities.js";
+import type {
+  Account,
+  AuthAttemptState,
+  AuthAuthorizationFlow,
+  AuthSecurityEvent,
+  Credential,
+  Session,
+} from "../domain/entities.js";
+import {
+  DatabaseConflictError,
+  DatabaseRevisionMismatchError,
+} from "../../db/index.js";
 
-type AuthEntity = Account | Credential | Session;
+type AuthEntity =
+  | Account
+  | Credential
+  | Session
+  | AuthSecurityEvent
+  | (AuthAuthorizationFlow & { id: string })
+  | (AuthAttemptState & { id: string });
 
 function serialize(entity: AuthEntity): DatabaseJsonObject {
+  const updatedAt = "updatedAt" in entity
+    ? entity.updatedAt
+    : "occurredAt" in entity
+      ? entity.occurredAt
+      : entity.createdAt;
   return {
     entity: JSON.stringify(entity),
-    updatedAt: entity.updatedAt.toISOString(),
+    updatedAt: updatedAt.toISOString(),
   };
 }
 
 function deserialize<T extends AuthEntity>(data: DatabaseJsonObject): T {
   if (typeof data.entity !== "string") throw new TypeError("Stored Auth entity is invalid.");
-  const entity = JSON.parse(data.entity) as T & {
-    createdAt: string;
-    updatedAt: string;
-    expiresAt?: string;
-  };
-  return {
-    ...entity,
-    createdAt: new Date(entity.createdAt),
-    updatedAt: new Date(entity.updatedAt),
-    ...(typeof entity.expiresAt === "string" ? { expiresAt: new Date(entity.expiresAt) } : {}),
-  } as T;
+  const entity = JSON.parse(data.entity) as Record<string, unknown>;
+  for (const field of ["createdAt", "updatedAt", "expiresAt", "blockedUntil", "occurredAt"]) {
+    if (typeof entity[field] === "string") entity[field] = new Date(entity[field] as string);
+  }
+  if (Array.isArray(entity.failures)) {
+    entity.failures = entity.failures.map((failure) => new Date(failure as string));
+  }
+  return entity as unknown as T;
 }
 
 class AuthDocumentStore {
@@ -84,6 +106,53 @@ class AuthDocumentStore {
     await this.ensure(collection);
     return this.database.documents.delete({ collection, id });
   }
+
+  async mutate<T extends AuthEntity>(
+    collection: string,
+    id: string,
+    mutation: (current: T | null) => T | null,
+  ): Promise<T | null> {
+    await this.ensure(collection);
+    for (let retry = 0; retry < 100; retry += 1) {
+      const document = await this.database.documents.findById({ collection, id });
+      const current = document ? deserialize<T>(document.data) : null;
+      const next = mutation(current);
+      try {
+        if (!document) {
+          if (!next) return null;
+          await this.database.documents.insert({
+            collection,
+            id,
+            data: serialize(next),
+          });
+          return next;
+        }
+        if (!next) {
+          await this.database.documents.delete({
+            collection,
+            id,
+            expectedVersion: document.version,
+          });
+          return null;
+        }
+        await this.database.documents.update({
+          collection,
+          id,
+          data: serialize(next),
+          mode: "replace",
+          expectedVersion: document.version,
+        });
+        return next;
+      } catch (error) {
+        if (
+          error instanceof DatabaseRevisionMismatchError ||
+          error instanceof DatabaseConflictError
+        ) continue;
+        throw error;
+      }
+    }
+    throw new Error("Auth attempt update did not converge after 100 retries.");
+  }
 }
 
 export function createDatabaseAuthRepositories(
@@ -120,5 +189,45 @@ export function createDatabaseAuthRepositories(
     async findByTokenHash(tokenHash) { return (await store.list<Session>("auth_sessions")).find((item) => item.tokenHash === tokenHash) ?? null; },
     async listByAccountId(accountId) { return (await store.list<Session>("auth_sessions")).filter((item) => item.accountId === accountId); },
   };
-  return { accounts, credentials, sessions };
+  const attempts: AuthAttemptRepository = {
+    findByKeyHash: (keyHash) =>
+      store.get<AuthAttemptState & { id: string }>("auth_attempts", keyHash),
+    mutate: (keyHash, mutation) =>
+      store.mutate<AuthAttemptState & { id: string }>(
+        "auth_attempts",
+        keyHash,
+        (current) => {
+          const next = mutation(current);
+          return next ? { ...next, id: keyHash } : null;
+        },
+      ),
+  };
+  const authorizationFlows: AuthAuthorizationFlowRepository = {
+    findByStateHash: (stateHash) =>
+      store.get<AuthAuthorizationFlow & { id: string }>(
+        "auth_authorization_flows",
+        stateHash,
+      ),
+    mutate: (stateHash, mutation) =>
+      store.mutate<AuthAuthorizationFlow & { id: string }>(
+        "auth_authorization_flows",
+        stateHash,
+        (current) => {
+          const next = mutation(current);
+          return next ? { ...next, id: stateHash } : null;
+        },
+      ),
+  };
+  const securityEvents: AuthSecurityEventRepository = {
+    append: (event) => store.set<AuthSecurityEvent>("auth_security_events", event),
+    list: () => store.list<AuthSecurityEvent>("auth_security_events"),
+  };
+  return {
+    accounts,
+    credentials,
+    sessions,
+    attempts,
+    authorizationFlows,
+    securityEvents,
+  };
 }

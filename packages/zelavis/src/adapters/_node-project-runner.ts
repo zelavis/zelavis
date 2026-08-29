@@ -96,6 +96,8 @@ const zv = new Zelavis({
                 version: lockedAppVersion,
                 kind: "app",
                 scope: "system",
+                api: {},
+                service: {},
               },
               specifier: lockedAppSpecifier,
               status: "installed",

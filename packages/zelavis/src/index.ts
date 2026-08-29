@@ -106,9 +106,6 @@ import { createDomainChallengeService } from "./domain-verifier.js";
 import { synthesizeServiceAppService } from "./service-app.js";
 import { createPlatformAuthRepositories } from "./platform/auth-repositories.js";
 import { createPlatformAuthBootstrap } from "./platform/auth-bootstrap.js";
-import type {
-  ZelavisServiceDefinition,
-} from "./service.js";
 export * from "./storage/s3.js";
 
 export type {
@@ -2292,7 +2289,7 @@ async function resolveAuthCoreService(
     definition: {
       ...(configured.definition ?? {}),
       authority: "platform",
-      bootstrap: createPlatformAuthBootstrap(auth),
+      bootstrap: createPlatformAuthBootstrap(auth, { store: systemStore }),
       bootstrapToken,
       sessionCookie: configured.definition?.sessionCookie === false
         ? false
@@ -2779,6 +2776,7 @@ async function resolveRuntimeManagementCore(
         {
           id: "runtime.service-page-asset.read",
           method: "GET",
+          access: { authenticated: true },
           path: joinPathParts(
             context.apiPrefix,
             context.apiVersion,
@@ -3110,6 +3108,7 @@ async function resolveWebsiteCoreService(
         {
           id: "website.pages.create",
           method: "POST",
+          access: { permissions: ["project.website.manage"] },
           path: joinPathParts(
             context.rootPath,
             context.apiPrefix,
@@ -3281,6 +3280,7 @@ async function resolveStorageCoreService(
           id: "storage.files.list",
           method: "GET",
           path: "/files",
+          access: { permissions: ["storage.read"] },
           handler: async ({ query }) => {
             try {
               const prefix = query.get("prefix") ?? undefined;
@@ -3374,6 +3374,7 @@ async function resolveStorageCoreService(
           id: "storage.files.write",
           method: "PUT",
           path: "/files/*path",
+          access: { permissions: ["storage.write"] },
           handler: async ({ params, request, requestHeaders }) => {
             try {
               const path = params.path ?? "";
@@ -3436,6 +3437,7 @@ async function resolveStorageCoreService(
           id: "storage.files.delete",
           method: "DELETE",
           path: "/files/*path",
+          access: { permissions: ["storage.write"] },
           handler: async ({ params }) => {
             try {
               const path = params.path ?? "";
@@ -4058,7 +4060,7 @@ async function synthesizeDashboardAppService(
   };
 
   const appService = await synthesizeServiceAppService({
-    service: dashboardService as unknown as Readonly<ZelavisServiceDefinition<unknown>>,
+    service: dashboardService as any,
     bundleStore,
     effectiveMount: "/",
   });

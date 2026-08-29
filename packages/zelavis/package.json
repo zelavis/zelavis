@@ -129,7 +129,7 @@
     "build:sdk:browser": "tsc -p tsconfig.sdk.browser.json",
     "build:sdk:node": "tsc -p tsconfig.sdk.node.json",
     "typecheck": "pnpm --filter @zelavis/ui build:plugin && pnpm --filter @zelavis/cli build && tsc -p tsconfig.json --noEmit",
-    "test": "pnpm run build && pnpm --filter @zelavis/ecommerce build && node --test test/*.test.mjs"
+    "test": "pnpm run build && pnpm --filter @zelavis/ecommerce build && pnpm --filter @zelavis/app-auth-oidc build && node --test test/*.test.mjs"
   },
   "files": [
     "dist",

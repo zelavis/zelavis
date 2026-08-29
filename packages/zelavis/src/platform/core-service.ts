@@ -1,5 +1,4 @@
 import {
-  defineService,
   type ZelavisRuntimeService,
   type ZelavisServerRoute,
   type ZelavisServiceMenuDefinition,
@@ -106,11 +105,11 @@ export interface ZelavisCoreServiceOptions<TService> {
 export function createZelavisCoreService<TService>(
   options: ZelavisCoreServiceOptions<TService>,
 ): ZelavisRuntimeService<TService> {
-  return defineService<unknown, TService>({
+  return Object.freeze({
     name: "zelavis/platform",
     version: ZELAVIS_VERSION,
     kind: "core",
-    capabilities: ["api:routes", "dashboard:menu", "platform:control-plane"],
+    capabilities: Object.freeze(["api:routes", "dashboard:menu", "platform:control-plane"]),
     basePath: "/runtime",
     menu: zelavisCoreMenu,
     service: options.service,

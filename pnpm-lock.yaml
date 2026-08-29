@@ -354,6 +354,10 @@ importers:
         version: link:../../packages/zelavis
 
   plugins/auth-oidc:
+    dependencies:
+      jose:
+        specifier: ^6.2.10
+        version: 6.2.10
     devDependencies:
       typescript:
         specifier: ^5.9.0

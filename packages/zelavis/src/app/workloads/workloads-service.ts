@@ -623,6 +623,7 @@ export function workloadsService(
           id: "workloads.menu",
           method: "GET",
           path: "/menu/:section",
+          access: { permissions: ["workloads.view"] },
           handler: route(async ({ params, query }) => {
             const type = readTypeFromPlural(params.section);
             const projectId = readProjectId(query);
@@ -640,6 +641,7 @@ export function workloadsService(
           id: "workloads.list",
           method: "GET",
           path: "/",
+          access: { permissions: ["workloads.view"] },
           handler: route(async ({ query }) => ({
             workloads: await store.list({
               projectId: readProjectId(query),
@@ -651,6 +653,7 @@ export function workloadsService(
           id: "workloads.create",
           method: "POST",
           path: "/",
+          access: { permissions: ["workloads.manage"] },
           handler: async ({ body }) => {
             try {
               return {
@@ -666,6 +669,7 @@ export function workloadsService(
           id: "workloads.read",
           method: "GET",
           path: "/:id",
+          access: { permissions: ["workloads.view"] },
           handler: route(async ({ params }) => {
             const workload = await store.read(params.id);
             if (!workload) {
@@ -678,6 +682,7 @@ export function workloadsService(
           id: "workloads.update",
           method: "PUT",
           path: "/:id",
+          access: { permissions: ["workloads.manage"] },
           handler: route(async ({ params, body }) =>
             updateWorkload(store, params.id, body),
           ),
@@ -686,6 +691,7 @@ export function workloadsService(
           id: "workloads.run",
           method: "POST",
           path: "/:id/run",
+          access: { permissions: ["workloads.manage"] },
           handler: route(async ({ params }) => {
             const workload = await store.read(params.id);
             if (!workload) {
@@ -701,6 +707,7 @@ export function workloadsService(
           id: "workloads.logs",
           method: "GET",
           path: "/logs",
+          access: { permissions: ["workloads.logs.read"] },
           handler: route(async ({ query }) => ({
             logs: await store.logs({
               projectId: readProjectId(query),

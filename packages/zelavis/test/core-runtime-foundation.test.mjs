@@ -1,16 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 import {
   ZELAVIS_PROVIDER_V1,
   ZELAVIS_RUNTIME_ARTIFACT_V1,
+  ZELAVIS_RUNTIME_BUILD_PROFILE_V1,
+  artifactStoreCapability,
+  capacityProviderCapability,
+  createArtifactDigest,
+  createMemoryArtifactStore,
   defineCompatibilityDate,
   defineProvider,
+  defineRuntimeBuildProfile,
   defineRuntimeArtifact,
   defineServerPlugin,
   getProviderCapability,
   createServiceRuntime,
 } from "../dist/core/index.js";
+import { createNodeFileArtifactStore } from "../dist/adapters/node.js";
 
 test("compatibility dates are validated and exposed by the runtime", async () => {
   assert.equal(defineCompatibilityDate("2026-08-27"), "2026-08-27");
@@ -182,21 +192,142 @@ test("portable runtime artifact manifests validate deterministic bundle paths", 
   );
 });
 
+test("Node ArtifactStore persists immutable digest-verified objects", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "zelavis-artifacts-"));
+  try {
+    const body = new TextEncoder().encode("immutable runtime artifact");
+    const digest = await createArtifactDigest(body);
+    const first = createNodeFileArtifactStore({ directory });
+    await first.put({
+      digest,
+      body,
+      contentType: "application/octet-stream",
+      metadata: { runtime: "node" },
+    });
+
+    const reopened = createNodeFileArtifactStore({ directory });
+    assert.equal(await reopened.has(digest), true);
+    assert.deepEqual(await reopened.get(digest), {
+      digest,
+      body,
+      contentType: "application/octet-stream",
+      metadata: { runtime: "node" },
+    });
+
+    await reopened.put({ digest, body, metadata: { runtime: "changed" } });
+    assert.deepEqual((await reopened.get(digest)).metadata, { runtime: "node" });
+    await assert.rejects(
+      reopened.put({ digest, body: new TextEncoder().encode("different") }),
+      /digest mismatch/,
+    );
+
+    const hex = digest.slice("sha256:".length);
+    const storedPath = join(directory, "sha256", hex.slice(0, 2), `${hex}.artifact`);
+    assert.equal((await readFile(storedPath, "utf8")), "immutable runtime artifact");
+    await writeFile(storedPath, "corrupt");
+    await assert.rejects(reopened.get(digest), /is corrupt/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("runtime build profiles select engines without provider assumptions", () => {
+  const profile = defineRuntimeBuildProfile({
+    formatVersion: ZELAVIS_RUNTIME_BUILD_PROFILE_V1,
+    runtime: "node",
+    entrypoint: "server/index.js",
+    compatibilityDate: "2026-08-27",
+    conditions: ["production", "node", "production"],
+  });
+
+  assert.deepEqual(profile.conditions, ["node", "production"]);
+  assert.equal(Object.isFrozen(profile), true);
+  assert.throws(
+    () => defineRuntimeBuildProfile({
+      formatVersion: ZELAVIS_RUNTIME_BUILD_PROFILE_V1,
+      runtime: "node",
+      entrypoint: "/absolute.js",
+    }),
+    /bundle-relative/,
+  );
+});
+
+test("ArtifactStore verifies immutable content-addressed objects", async () => {
+  const store = createMemoryArtifactStore();
+  const body = new TextEncoder().encode("immutable runtime");
+  const digest = await createArtifactDigest(body);
+  const capability = artifactStoreCapability(store);
+
+  await store.put({ digest, body, contentType: "application/octet-stream" });
+  body[0] = 0;
+  const stored = await store.get(digest);
+
+  assert.equal(capability.kind, "artifacts");
+  assert.equal(await store.has(digest), true);
+  assert.equal(new TextDecoder().decode(stored.body), "immutable runtime");
+  stored.body[0] = 0;
+  assert.equal(
+    new TextDecoder().decode((await store.get(digest)).body),
+    "immutable runtime",
+  );
+  await assert.rejects(
+    store.put({ digest, body: new TextEncoder().encode("different") }),
+    /digest mismatch/,
+  );
+});
+
+test("runtime artifact manifests validate digests and signature metadata", async () => {
+  const entryDigest = await createArtifactDigest("entry");
+  const manifestDigest = await createArtifactDigest("bundle");
+  const manifest = defineRuntimeArtifact({
+    formatVersion: ZELAVIS_RUNTIME_ARTIFACT_V1,
+    name: "signed-app",
+    runtime: "bun",
+    entrypoint: "index.js",
+    files: ["index.js"],
+    digest: manifestDigest,
+    fileDigests: { "index.js": entryDigest },
+    signature: { algorithm: "ed25519", keyId: "release-1", value: "signature" },
+  });
+
+  assert.equal(manifest.digest, manifestDigest);
+  assert.equal(Object.isFrozen(manifest.fileDigests), true);
+  assert.throws(
+    () => defineRuntimeArtifact({
+      formatVersion: ZELAVIS_RUNTIME_ARTIFACT_V1,
+      name: "incomplete",
+      runtime: "node",
+      entrypoint: "index.js",
+      files: ["index.js", "other.js"],
+      fileDigests: { "index.js": entryDigest },
+    }),
+    /exactly every declared file/,
+  );
+});
+
 test("provider definitions negotiate narrow capabilities", async () => {
-  const capacity = {
-    provision: async () => ({ nodeId: "node-a" }),
+  const capacityApi = {
+    list: async () => [],
+    get: async () => undefined,
+    provision: async (input) => ({
+      id: `node-${input.requestId}`,
+      provider: "example-cloud",
+      state: "provisioning",
+    }),
+    release: async () => undefined,
   };
+  const capacity = capacityProviderCapability(capacityApi);
   const provider = defineProvider({
     contractVersion: ZELAVIS_PROVIDER_V1,
     name: "example-cloud",
     compatibilityDate: "2026-08-27",
     capabilities: [
-      { kind: "capacity", api: capacity },
+      capacity,
       { kind: "dns", api: { zones: true } },
     ],
   });
 
-  assert.equal(getProviderCapability(provider, "capacity"), capacity);
+  assert.equal(getProviderCapability(provider, "capacity"), capacityApi);
   assert.equal(getProviderCapability(provider, "backups"), undefined);
   assert.throws(
     () =>
@@ -210,6 +341,37 @@ test("provider definitions negotiate narrow capabilities", async () => {
       }),
     /more than once/,
   );
+});
+
+test("capacity providers provision Nodes without accepting Project placement", async () => {
+  const provisioned = [];
+  const capability = capacityProviderCapability({
+    async list() { return provisioned; },
+    async get(nodeId) { return provisioned.find((node) => node.id === nodeId); },
+    async provision(input) {
+      const node = {
+        id: `node-${input.requestId}`,
+        provider: "local-lab",
+        state: "ready",
+        resources: input.resources,
+      };
+      provisioned.push(node);
+      return node;
+    },
+    async release(nodeId) {
+      const index = provisioned.findIndex((node) => node.id === nodeId);
+      if (index >= 0) provisioned.splice(index, 1);
+    },
+  });
+
+  const node = await capability.api.provision({
+    requestId: "request-1",
+    platformId: "platform-a",
+    resources: { cpuCores: 4 },
+  });
+  assert.equal(node.id, "node-request-1");
+  assert.equal("projectId" in node, false);
+  assert.equal((await capability.api.list()).length, 1);
 });
 
 test("new framework contracts are available through narrow package subpaths", async () => {

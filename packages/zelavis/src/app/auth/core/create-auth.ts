@@ -3,6 +3,7 @@ import { AccountService } from "../services/account-service.js";
 import { AuthenticationService } from "../services/authentication-service.js";
 import { CredentialService } from "../services/credential-service.js";
 import { SessionService } from "../services/session-service.js";
+import { AuthSecurityService } from "../services/security-service.js";
 import { createInMemoryAuthRepositories } from "../storage/in-memory.js";
 import type { AuthApi, AuthMethodPlugin } from "./types.js";
 import { createSessionAuthenticator } from "./session-authenticator.js";
@@ -13,6 +14,11 @@ export interface CreateAuthOptions {
   projectId?: string;
   sessionCookieName?: string | false;
   repositories?: Partial<AuthRepositories>;
+  security?: {
+    maxAttempts?: number;
+    windowMs?: number;
+    blockMs?: number;
+  };
 }
 
 export async function createAuth(options: CreateAuthOptions = {}): Promise<AuthApi> {
@@ -24,6 +30,12 @@ export async function createAuth(options: CreateAuthOptions = {}): Promise<AuthA
     accounts,
     credentials,
     sessions,
+    authorizationFlows: repositories.authorizationFlows,
+  });
+  const security = new AuthSecurityService({
+    attempts: repositories.attempts,
+    events: repositories.securityEvents,
+    ...options.security,
   });
 
   const api: AuthApi = {
@@ -36,6 +48,7 @@ export async function createAuth(options: CreateAuthOptions = {}): Promise<AuthA
     credentials,
     sessions,
     authentication,
+    security,
     requestAuthenticator: createSessionAuthenticator({
       accounts,
       sessions,

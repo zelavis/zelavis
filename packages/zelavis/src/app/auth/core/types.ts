@@ -3,6 +3,7 @@ import type { AccountService } from "../services/account-service.js";
 import type { AuthenticationService } from "../services/authentication-service.js";
 import type { CredentialService } from "../services/credential-service.js";
 import type { SessionService } from "../services/session-service.js";
+import type { AuthSecurityService } from "../services/security-service.js";
 import type { ZelavisRequestAuthenticator } from "../../../core/index.js";
 import type { Account, IssuedSession } from "../domain/entities.js";
 import type { CredentialEnrollmentInput } from "../contracts/credential-provider.js";
@@ -24,6 +25,7 @@ export interface AuthApi {
   credentials: CredentialService;
   sessions: SessionService;
   authentication: AuthenticationService;
+  security: AuthSecurityService;
   requestAuthenticator: ZelavisRequestAuthenticator;
 }
 

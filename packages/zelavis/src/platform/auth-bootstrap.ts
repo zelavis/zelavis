@@ -6,8 +6,23 @@ import {
   type AuthBootstrapInput,
   type AuthBootstrapResult,
 } from "../app/auth/index.js";
+import type {
+  ZelavisSystemStore,
+  ZelavisSystemStoreRecord,
+  ZelavisSystemStoreValue,
+} from "../system-store.js";
 
 const BOOTSTRAP_STATE_KEY = "zelavis.platform.bootstrapState";
+const BOOTSTRAP_CLAIM_NAMESPACE = "zelavis.platform.auth.bootstrap";
+const BOOTSTRAP_CLAIM_KEY = "first-owner";
+const BOOTSTRAP_CLAIM_LEASE_MS = 5 * 60 * 1_000;
+
+interface BootstrapClaim {
+  claimId: string;
+  status: "pending" | "complete" | "failed";
+  createdAt: string;
+  updatedAt: string;
+}
 
 function isPendingBootstrapAccount(account: Account): boolean {
   return account.metadata?.[BOOTSTRAP_STATE_KEY] === "pending";
@@ -33,6 +48,7 @@ function normalizeOptional(value: unknown): string | undefined {
 
 export function createPlatformAuthBootstrap(
   auth: AuthApi,
+  options: { store?: ZelavisSystemStore } = {},
 ): AuthBootstrapCapability {
   let operationTail: Promise<void> = Promise.resolve();
 
@@ -62,6 +78,77 @@ export function createPlatformAuthBootstrap(
       () => undefined,
     );
     return result;
+  }
+
+  function claimValue(claim: BootstrapClaim): ZelavisSystemStoreValue {
+    return claim as unknown as ZelavisSystemStoreValue;
+  }
+
+  function readClaim(record: ZelavisSystemStoreRecord): BootstrapClaim | undefined {
+    const value = record.value;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const claim = value as unknown as BootstrapClaim;
+    return typeof claim.claimId === "string" &&
+      (claim.status === "pending" || claim.status === "complete" || claim.status === "failed") &&
+      typeof claim.createdAt === "string" &&
+      typeof claim.updatedAt === "string"
+      ? claim
+      : undefined;
+  }
+
+  async function acquireClaim(): Promise<ZelavisSystemStoreRecord | undefined> {
+    if (!options.store) return undefined;
+    const now = new Date();
+    const claim: BootstrapClaim = {
+      claimId: requireCrypto().randomUUID(),
+      status: "pending",
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+    const created = await options.store.setIfAbsent(
+      BOOTSTRAP_CLAIM_NAMESPACE,
+      BOOTSTRAP_CLAIM_KEY,
+      claimValue(claim),
+    );
+    if (created.created) return created.record;
+
+    const existing = readClaim(created.record);
+    if (!existing || existing.status === "complete") {
+      throw new AuthValidationError("Platform owner bootstrap is already complete.");
+    }
+    const leaseAge = now.getTime() - new Date(existing.updatedAt).getTime();
+    if (existing.status === "pending" && leaseAge < BOOTSTRAP_CLAIM_LEASE_MS) {
+      throw new AuthValidationError("Platform owner bootstrap is already in progress.");
+    }
+    const replaced = await options.store.compareAndSet(
+      BOOTSTRAP_CLAIM_NAMESPACE,
+      BOOTSTRAP_CLAIM_KEY,
+      created.record.updatedAt,
+      claimValue(claim),
+    );
+    if (!replaced) {
+      throw new AuthValidationError("Platform owner bootstrap is already in progress.");
+    }
+    return replaced;
+  }
+
+  async function finishClaim(
+    record: ZelavisSystemStoreRecord | undefined,
+    status: "complete" | "failed",
+  ): Promise<void> {
+    if (!options.store || !record) return;
+    const current = readClaim(record);
+    if (!current) return;
+    await options.store.compareAndSet(
+      BOOTSTRAP_CLAIM_NAMESPACE,
+      BOOTSTRAP_CLAIM_KEY,
+      record.updatedAt,
+      claimValue({
+        ...current,
+        status,
+        updatedAt: new Date().toISOString(),
+      }),
+    );
   }
 
   return {
@@ -124,7 +211,7 @@ export function createPlatformAuthBootstrap(
           );
         }
 
-        await cleanPendingAccounts();
+        const claim = await acquireClaim();
         const crypto = requireCrypto();
         const accountId = `account_${crypto.randomUUID()}`;
         const credentialId = `credential_${crypto.randomUUID()}`;
@@ -132,6 +219,7 @@ export function createPlatformAuthBootstrap(
         let sessionId: string | undefined;
 
         try {
+          await cleanPendingAccounts();
           account = await auth.accounts.create({
             id: accountId,
             email,
@@ -161,11 +249,13 @@ export function createPlatformAuthBootstrap(
             metadata: { provider: input.provider, bootstrap: true },
           });
           sessionId = session.session.id;
+          await finishClaim(claim, "complete");
           return { account, session };
         } catch (error) {
           if (sessionId) await auth.repositories.sessions.delete(sessionId);
           await auth.repositories.credentials.delete(credentialId);
           if (account) await auth.repositories.accounts.delete(accountId);
+          await finishClaim(claim, "failed");
           throw error;
         }
       });

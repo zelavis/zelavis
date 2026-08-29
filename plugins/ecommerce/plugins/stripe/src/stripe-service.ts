@@ -10,7 +10,6 @@ import {
   type RefundPaymentInput,
   type SubscriptionInterval,
 } from "@zelavis/ecommerce";
-import { defineService } from "zelavis/service";
 import Stripe from "stripe";
 
 const DEFAULT_APP_INFO = {
@@ -438,10 +437,10 @@ export function createStripePaymentProvider(options: StripeServiceOptions = {}):
 }
 
 export function stripeService(options: StripeServiceOptions = {}) {
-  return defineService<EcommerceApi>({
+  return Object.freeze({
     name: "@zelavis/ecommerce-stripe",
     kind: "provider",
-    capabilities: ["provider:payments"],
+    capabilities: Object.freeze(["provider:payments"]),
     service: {
       name: "stripe",
       register(api: EcommerceApi) {

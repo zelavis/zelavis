@@ -57,6 +57,20 @@ export class CredentialService {
     return this.repository.findByProviderIdentifier(provider, identifier);
   }
 
+  async findById(id: string): Promise<Credential | null> {
+    return this.repository.findById(id);
+  }
+
+  async update(credential: Credential): Promise<Credential> {
+    if (!credential.id || !credential.accountId || !credential.provider || !credential.identifier) {
+      throw new AuthValidationError("Credential updates require a complete credential.");
+    }
+    return this.repository.update({
+      ...credential,
+      updatedAt: new Date(),
+    });
+  }
+
   async listByAccountId(accountId: string): Promise<Credential[]> {
     return this.repository.listByAccountId(accountId);
   }

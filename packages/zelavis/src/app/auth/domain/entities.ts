@@ -42,3 +42,34 @@ export interface Credential {
   createdAt: Date;
   updatedAt: Date;
 }
+
+export interface AuthAttemptState {
+  keyHash: string;
+  failures: readonly Date[];
+  blockedUntil?: Date;
+  updatedAt: Date;
+}
+
+export interface AuthAuthorizationFlow {
+  stateHash: string;
+  provider: string;
+  mode: "login" | "link";
+  accountId?: string;
+  redirectUri: string;
+  codeVerifier: string;
+  nonce: string;
+  createdAt: Date;
+  expiresAt: Date;
+}
+
+export interface AuthSecurityEvent {
+  id: string;
+  type: "authentication.succeeded" | "authentication.failed" | "authentication.blocked";
+  outcome: "success" | "failure" | "blocked";
+  provider: string;
+  /** Hash of the provider and normalized identifier; raw identifiers are not stored. */
+  subjectHash: string;
+  accountId?: string;
+  metadata?: Record<string, unknown>;
+  occurredAt: Date;
+}

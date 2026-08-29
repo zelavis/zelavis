@@ -1,3 +1,4 @@
+export { ecommercePlugin, default } from "./ecommerce-plugin.js";
 export * from "./core/create-ecommerce.js";
 export * from "./core/types.js";
 export * from "./contracts/payment-provider.js";
@@ -11,4 +12,3 @@ export * from "./services/customer-service.js";
 export * from "./services/order-service.js";
 export * from "./services/payment-service.js";
 export * from "./services/product-service.js";
-export * from "./zelavis-ecommerce-service.js";

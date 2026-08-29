@@ -189,7 +189,7 @@ export class DocumentService implements DatabaseDocumentsApi {
           collection: resolved.collection,
           documentId: resolved.id,
           type: "document.upserted",
-          expectedRevision: current.version,
+          expectedRevision: resolved.expectedVersion ?? current.version,
           schemaVersion,
           payload: {
             data: nextData,
@@ -230,7 +230,7 @@ export class DocumentService implements DatabaseDocumentsApi {
           collection: resolved.collection,
           documentId: resolved.id,
           type: "document.deleted",
-          expectedRevision: current.version,
+          expectedRevision: resolved.expectedVersion ?? current.version,
           schemaVersion: current.schemaVersion,
           payload: {
             deleted: true,

@@ -6,8 +6,10 @@
   "license": "MIT",
   "author": "Ivan Jeremic",
   "type": "module",
-  "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "zelavis": {
+    "kind": "plugin"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

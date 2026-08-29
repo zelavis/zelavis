@@ -1,4 +1,5 @@
 import type {
+  ZelavisAccessRequirement,
   ZelavisRuntimeService,
   ZelavisServerRoute,
 } from "../runtime/contracts.js";
@@ -194,6 +195,12 @@ export interface FabricServiceOptions {
   readonly localNode?: FabricNode;
   readonly inventory?: FabricInventorySource;
   readonly features?: Partial<FabricFeatures>;
+  readonly access?: {
+    /** Set to false only for an intentionally public embedded inventory. */
+    readonly view?: ZelavisAccessRequirement | false;
+    /** Set to false only for an intentionally public embedded planner. */
+    readonly manage?: ZelavisAccessRequirement | false;
+  };
 }
 
 export interface FabricApi {
@@ -689,12 +696,21 @@ function readPlacementRequests(
     : undefined;
 }
 
-function createFabricRoutes(): readonly ZelavisServerRoute<FabricApi>[] {
+function createFabricRoutes(
+  options: FabricServiceOptions,
+): readonly ZelavisServerRoute<FabricApi>[] {
+  const viewAccess = options.access?.view === false
+    ? undefined
+    : options.access?.view ?? { permissions: ["fabric.view"] };
+  const manageAccess = options.access?.manage === false
+    ? undefined
+    : options.access?.manage ?? { permissions: ["fabric.manage"] };
   return [
     {
       id: "fabric.snapshot",
       method: "GET",
       path: "/snapshot",
+      access: viewAccess,
       handler: async ({ service }) => ({
         status: 200,
         body: await service.snapshot(),
@@ -721,6 +737,7 @@ function createFabricRoutes(): readonly ZelavisServerRoute<FabricApi>[] {
       id: "fabric.nodes.list",
       method: "GET",
       path: "/nodes",
+      access: viewAccess,
       handler: async ({ service }) => ({
         status: 200,
         body: { nodes: await service.listNodes() },
@@ -730,6 +747,7 @@ function createFabricRoutes(): readonly ZelavisServerRoute<FabricApi>[] {
       id: "fabric.nodes.get",
       method: "GET",
       path: "/nodes/:nodeId",
+      access: viewAccess,
       handler: async ({ service, params }) => {
         const node = await service.getNode(params.nodeId ?? "");
         return node
@@ -741,6 +759,7 @@ function createFabricRoutes(): readonly ZelavisServerRoute<FabricApi>[] {
       id: "fabric.project-placements.list",
       method: "GET",
       path: "/placements/projects",
+      access: viewAccess,
       handler: async ({ service }) => ({
         status: 200,
         body: { placements: await service.listProjectPlacements() },
@@ -750,6 +769,7 @@ function createFabricRoutes(): readonly ZelavisServerRoute<FabricApi>[] {
       id: "fabric.project-placements.get",
       method: "GET",
       path: "/placements/projects/:projectId",
+      access: viewAccess,
       handler: async ({ service, params }) => {
         const placement = await service.getProjectPlacement(
           params.projectId ?? "",
@@ -766,6 +786,7 @@ function createFabricRoutes(): readonly ZelavisServerRoute<FabricApi>[] {
       id: "fabric.project-placements.plan",
       method: "POST",
       path: "/placements/projects/plan",
+      access: manageAccess,
       handler: async ({ service, body }) => {
         const requests = readPlacementRequests(body);
         return requests
@@ -785,6 +806,7 @@ function createFabricRoutes(): readonly ZelavisServerRoute<FabricApi>[] {
       id: "fabric.migrations.list",
       method: "GET",
       path: "/migrations",
+      access: viewAccess,
       handler: async ({ service }) => ({
         status: 200,
         body: { migrations: await service.listMigrations() },
@@ -802,7 +824,7 @@ export function createFabricService(
     basePath: "/fabric",
     service: createFabricApi(options),
     api: {
-      v1: createFabricRoutes(),
+      v1: createFabricRoutes(options),
     },
   };
 }

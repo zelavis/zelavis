@@ -104,4 +104,23 @@ export class SessionService {
   async listByAccountId(accountId: string): Promise<Session[]> {
     return this.repository.listByAccountId(accountId);
   }
+
+  async revokeAll(
+    accountId: string,
+    options: { exceptSessionId?: string } = {},
+  ): Promise<Session[]> {
+    const sessions = await this.repository.listByAccountId(accountId);
+    const revoked: Session[] = [];
+    for (const session of sessions) {
+      if (
+        session.status !== "active" ||
+        session.id === options.exceptSessionId
+      ) {
+        continue;
+      }
+      const updated = await this.revoke(session.id);
+      if (updated) revoked.push(updated);
+    }
+    return revoked;
+  }
 }

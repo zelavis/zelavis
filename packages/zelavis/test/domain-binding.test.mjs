@@ -7,7 +7,6 @@ import {
   createInMemoryDomainBindingStore,
   createKeyValueDomainBindingStore,
   deleteProjectDomainBindings,
-  defineService,
   generateVerificationToken,
   listAuthorizedHostsForService,
   revokeDomainBindingVerification,
@@ -429,7 +428,7 @@ test("synthesizeServiceAppService uses verified bindings for workspace-service a
     serviceName: "@example/kanban",
   });
 
-  const service = defineService({
+  const service = {
     name: "@example/kanban",
     scope: "extension",
     app: {
@@ -437,7 +436,7 @@ test("synthesizeServiceAppService uses verified bindings for workspace-service a
       bundle: "dist",
       domainPolicy: "optional",
     },
-  });
+  };
 
   const bundleStore = createInMemoryBundleStore(
     new Map([
@@ -485,14 +484,14 @@ test("synthesizeServiceAppService uses verified bindings for workspace-service a
 test("system services bypass domain bindings entirely", async () => {
   // Even with no binding store configured, a system service still routes
   // host-agnostically — operator-deployed code is trusted.
-  const service = defineService({
+  const service = {
     name: "@example/system-tool",
     scope: "system",
     app: {
       mount: "/",
       bundle: "dist",
     },
-  });
+  };
 
   const bundleStore = createInMemoryBundleStore(
     new Map([
@@ -528,7 +527,7 @@ test("system services bypass domain bindings entirely", async () => {
 });
 
 test("workspace apps with required domain policy do not synthesize without verified hosts", async () => {
-  const service = defineService({
+  const service = {
     name: "@example/public-site",
     scope: "extension",
     app: {
@@ -536,7 +535,7 @@ test("workspace apps with required domain policy do not synthesize without verif
       bundle: "dist",
       domainPolicy: "required",
     },
-  });
+  };
 
   const { services } = await activateServiceRegistry(
     [{ service, status: "installed" }],

@@ -11,10 +11,10 @@ import {
   type DatabaseApi,
 } from "./db/index.js";
 import {
-  defineService,
   type ZelavisAnyRuntimeServiceInput,
-  type ZelavisServiceSetupContext,
+  type ZelavisRuntimeService,
 } from "../core/index.js";
+import type { ZelavisServiceSetupContext } from "../service.js";
 import {
   workloadsService,
   type WorkloadsServiceOptions,
@@ -66,12 +66,13 @@ async function resolveDatabase(
 }
 
 export function zelavisAppService(options: ZelavisAppServiceOptions = {}) {
-  return defineService<ZelavisServiceSetupContext>({
+  return Object.freeze({
     name: "zelavis/app",
     version: ZELAVIS_VERSION,
     kind: "app",
-    capabilities: ["app:project", "dashboard:menu", "api:routes"],
+    capabilities: Object.freeze(["app:project", "dashboard:menu", "api:routes"]),
     service: Object.freeze({}),
+    api: {},
     marketplace: {
       title: "Zelavis App",
       summary:
@@ -84,13 +85,13 @@ export function zelavisAppService(options: ZelavisAppServiceOptions = {}) {
       path: "/",
       pageLabel: "Project",
       sectionLabel: "Overview",
-      surface: "root",
+      surface: "root" as const,
       access: {
         permissions: ["project.view"],
-        scope: { type: "project", projectIdParam: "projectId" },
+        scope: { type: "project" as const, projectIdParam: "projectId" },
       },
     },
-    async setup(context) {
+    async setup(context: ZelavisServiceSetupContext) {
       const runtimeServices: ZelavisAnyRuntimeServiceInput[] = [];
       const database = await resolveDatabase(context, options.database);
       runtimeServices.push(defineDatabaseService(database));

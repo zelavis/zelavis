@@ -4,6 +4,18 @@ import type {
   DatabaseApi,
   DatabaseJsonObject,
 } from "../app/db/index.js";
+import {
+  requireActivePluginContext,
+  getActivePluginContext,
+  type PluginExecutionContext,
+  type ZelavisCommandDefinition,
+} from "../core/service/context.js";
+import type {
+  ZelavisRuntimeServiceMenuDefinition,
+  ZelavisServerRoute,
+  ZelavisAnyRuntimeServiceInput,
+} from "../core/runtime/contracts.js";
+import type { ZelavisServiceMenuDefinition } from "../core/service/definition.js";
 
 export type {
   AuthApi,
@@ -229,6 +241,89 @@ export class ZelavisClientHttpError extends Error {
     this.response = response;
   }
 }
+
+export interface ZelavisMenuApi {
+  create(
+    menu: ZelavisServiceMenuDefinition | ZelavisRuntimeServiceMenuDefinition,
+  ): ZelavisServiceMenuDefinition | ZelavisRuntimeServiceMenuDefinition;
+}
+
+export interface ZelavisRoutesApi {
+  create(
+    routes: ZelavisServerRoute | readonly ZelavisServerRoute[],
+  ): readonly ZelavisServerRoute[];
+}
+
+export interface ZelavisCommandsApi {
+  register(command: ZelavisCommandDefinition): ZelavisCommandDefinition;
+}
+
+export interface ZelavisEventsApi {
+  on(
+    event: string,
+    handler: (...args: unknown[]) => void | Promise<void>,
+  ): () => void;
+}
+
+export interface ZelavisPluginServicesApi {
+  add(service: ZelavisAnyRuntimeServiceInput): void;
+}
+
+export interface ZelavisSdk {
+  readonly menu: ZelavisMenuApi;
+  readonly routes: ZelavisRoutesApi;
+  readonly commands: ZelavisCommandsApi;
+  readonly events: ZelavisEventsApi;
+  readonly services: ZelavisPluginServicesApi;
+  readonly context: () => PluginExecutionContext | undefined;
+  createClient(options: ZelavisClientOptions): ZelavisClient;
+}
+
+export const zelavis: ZelavisSdk = {
+  menu: {
+    create(menu) {
+      const context = requireActivePluginContext("zelavis.menu.create");
+      context.menus.push(menu);
+      return menu;
+    },
+  },
+  routes: {
+    create(routes) {
+      const context = requireActivePluginContext("zelavis.routes.create");
+      const list = Array.isArray(routes) ? routes : [routes];
+      context.routes.push(...list);
+      return list;
+    },
+  },
+  commands: {
+    register(command) {
+      const context = requireActivePluginContext("zelavis.commands.register");
+      context.commands.set(command.name, command);
+      return command;
+    },
+  },
+  events: {
+    on(event, handler) {
+      const context = requireActivePluginContext("zelavis.events.on");
+      const entry = { event, handler };
+      context.events.push(entry);
+      return () => {
+        const index = context.events.indexOf(entry);
+        if (index >= 0) context.events.splice(index, 1);
+      };
+    },
+  },
+  services: {
+    add(service) {
+      const context = requireActivePluginContext("zelavis.services.add");
+      context.services.push(service);
+    },
+  },
+  context: () => getActivePluginContext(),
+  createClient: createZelavisClient,
+};
+
+export default zelavis;
 
 function normalizeRootPath(path: string): string {
   const trimmed = path.trim();

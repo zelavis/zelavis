@@ -5,6 +5,7 @@ import {
   copyFile,
   mkdir,
   readFile,
+  readdir,
   rename,
   rm,
   writeFile,
@@ -168,6 +169,52 @@ async function main() {
   );
   await chmod(join(options.output, "bin", "zelavis"), 0o755);
   await chmod(join(options.output, "install.sh"), 0o755);
+
+  const { createArtifactDigest, createRuntimeArtifactManifestDigest, defineRuntimeArtifact } =
+    await import("../../packages/zelavis/dist/core/artifact/index.js");
+  async function stagedFiles(directory, prefix = "") {
+    const files = [];
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (path === "runtime-artifact.json") continue;
+      if (entry.isDirectory()) {
+        files.push(...await stagedFiles(join(directory, entry.name), path));
+      } else if (entry.isFile()) {
+        files.push(path);
+      }
+    }
+    return files.sort();
+  }
+  const files = await stagedFiles(options.output);
+  const fileDigests = Object.fromEntries(
+    await Promise.all(files.map(async (path) => [
+      path,
+      await createArtifactDigest(await readFile(join(options.output, path))),
+    ])),
+  );
+  const runtimeArtifactInput = {
+    formatVersion: "ZELAVIS_RUNTIME_ARTIFACT_V1",
+    name: `zelavis-${releaseTarget.platform}-${releaseTarget.architecture}`,
+    version: packageManifest.version,
+    runtime: "node",
+    entrypoint: "bin/zelavis",
+    files,
+    fileDigests,
+    compatibilityDate: packageManifest.zelavis?.compatibilityDate,
+    metadata: {
+      platform: releaseTarget.platform,
+      architecture: releaseTarget.architecture,
+      nodeVersion: releaseConfig.nodeVersion,
+    },
+  };
+  const runtimeArtifact = defineRuntimeArtifact({
+    ...runtimeArtifactInput,
+    digest: await createRuntimeArtifactManifestDigest(runtimeArtifactInput),
+  });
+  await writeFile(
+    join(options.output, "runtime-artifact.json"),
+    `${JSON.stringify(runtimeArtifact, null, 2)}\n`,
+  );
 
   console.log(
     `Staged Zelavis ${packageManifest.version} for ${releaseTarget.platform}-${releaseTarget.architecture} with Node ${releaseConfig.nodeVersion}: ${options.output}`,

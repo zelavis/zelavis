@@ -1,9 +1,8 @@
 import {
   createMappedJsonErrorResponse,
   type ZelavisServerErrorStatusRule,
-  defineService,
-  type ZelavisServiceDefinition,
   type ZelavisRuntimeService,
+  type ZelavisServerRoute,
 } from "../../core/index.js";
 import type { AuthApi, AuthMethodPlugin } from "./core/types.js";
 import type { AuthBootstrapCapability } from "./core/types.js";
@@ -13,6 +12,7 @@ import {
   AuthDomainError,
   AuthInvalidCredentialsError,
   AuthNotFoundError,
+  AuthRateLimitError,
   AuthValidationError,
 } from "./core/errors.js";
 
@@ -20,6 +20,10 @@ const authErrorRules: readonly ZelavisServerErrorStatusRule[] = [
   {
     matches: (error) => error instanceof AuthInvalidCredentialsError,
     status: 401,
+  },
+  {
+    matches: (error) => error instanceof AuthRateLimitError,
+    status: 429,
   },
   {
     matches: (error) => error instanceof AuthNotFoundError,
@@ -46,7 +50,10 @@ function publicSession<T extends { tokenHash: string }>(session: T) {
 }
 
 export type AuthServiceDefinition = Readonly<
-  ZelavisRuntimeService<AuthApi> & ZelavisServiceDefinition<AuthApi, AuthApi>
+  ZelavisRuntimeService<AuthApi> & {
+    kind?: string;
+    capabilities?: readonly string[];
+  }
 >;
 
 export interface AuthSessionCookieOptions {
@@ -135,20 +142,7 @@ export function defineAuthService(
     ? undefined
     : options.sessionCookie;
   const bootstrapToken = validateBootstrapToken(options.bootstrapToken);
-  return defineService<AuthApi, AuthApi>({
-    name: "@zelavis/auth",
-    kind: "plugin",
-    capabilities: ["api:routes", "dashboard:menu"],
-    authenticators: [auth.requestAuthenticator],
-    basePath: "/auth",
-    menu: {
-      title: "Auth",
-      path: "/auth",
-      surface: "core",
-    },
-    service: auth,
-    api: {
-      v1: [
+  const routes: readonly ZelavisServerRoute<AuthApi>[] = [
         {
           id: "auth.accounts.list",
           method: "GET",
@@ -247,6 +241,157 @@ export function defineAuthService(
           }),
         },
         {
+          id: "auth.recovery.providers.list",
+          method: "GET",
+          path: "/recovery/providers",
+          handler: ({ service }) => ({
+            status: 200,
+            body: service.authentication.listRecoveryProviders(),
+          }),
+        },
+        {
+          id: "auth.authorizationCode.providers.list",
+          method: "GET",
+          path: "/oauth/providers",
+          handler: ({ service }) => ({
+            status: 200,
+            body: service.authentication.listAuthorizationCodeProviders(),
+          }),
+        },
+        {
+          id: "auth.authorizationCode.start",
+          method: "POST",
+          path: "/oauth/:provider/start",
+          handler: async ({ service, params }) => {
+            try {
+              return {
+                status: 200,
+                body: await service.authentication.beginAuthorizationCode(
+                  params.provider,
+                ),
+              };
+            } catch (error) {
+              return authErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "auth.authorizationCode.link.start",
+          method: "POST",
+          path: "/oauth/:provider/link/start",
+          access: { authenticated: true },
+          handler: async ({ service, params, principal }) => {
+            try {
+              return {
+                status: 200,
+                body: await service.authentication.beginAuthorizationCode(
+                  params.provider,
+                  { mode: "link", accountId: principal!.id },
+                ),
+              };
+            } catch (error) {
+              return authErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "auth.authorizationCode.callback",
+          method: "GET",
+          path: "/oauth/:provider/callback",
+          handler: async ({ service, params, query, request }) => {
+            try {
+              const providerError = query.get("error");
+              if (providerError) {
+                throw new AuthValidationError(
+                  `Authorization provider returned ${providerError}.`,
+                );
+              }
+              const result = await service.authentication.completeAuthorizationCode(
+                params.provider,
+                {
+                  state: query.get("state") ?? "",
+                  code: query.get("code") ?? "",
+                },
+              );
+              const sessionCookie =
+                cookieOptions && result.session && request
+                  ? sessionCookieHeader(
+                      result.session.token,
+                      result.session.session.expiresAt,
+                      request,
+                      cookieOptions,
+                    )
+                  : undefined;
+              return {
+                status: 200,
+                headers: sessionCookie
+                  ? ({ "set-cookie": sessionCookie } as Record<string, string>)
+                  : undefined,
+                body: {
+                  ...result,
+                  session: result.session
+                    ? {
+                        token: result.session.token,
+                        session: publicSession(result.session.session),
+                      }
+                    : undefined,
+                },
+              };
+            } catch (error) {
+              return authErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "auth.recovery.begin",
+          method: "POST",
+          path: "/recovery/:provider",
+          spec: {
+            operationId: "beginCredentialRecovery",
+            summary: "Begin provider-owned credential recovery",
+            tags: ["auth"],
+            responses: { 202: { description: "Recovery request accepted" } },
+          },
+          handler: async ({ service, params, body }) => {
+            try {
+              return {
+                status: 202,
+                body: await service.authentication.beginRecovery(
+                  params.provider,
+                  body as Parameters<AuthApi["authentication"]["beginRecovery"]>[1],
+                ),
+              };
+            } catch (error) {
+              return authErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "auth.recovery.complete",
+          method: "POST",
+          path: "/recovery/:provider/complete",
+          spec: {
+            operationId: "completeCredentialRecovery",
+            summary: "Complete provider-owned credential recovery",
+            tags: ["auth"],
+            responses: {
+              204: { description: "Credential recovered" },
+              400: { description: "Invalid or expired recovery" },
+            },
+          },
+          handler: async ({ service, params, body }) => {
+            try {
+              await service.authentication.completeRecovery(
+                params.provider,
+                body as Parameters<AuthApi["authentication"]["completeRecovery"]>[1],
+              );
+              return { status: 204 };
+            } catch (error) {
+              return authErrorResponse(error, 400);
+            }
+          },
+        },
+        {
           id: "auth.authenticate",
           method: "POST",
           path: "/authenticate/:provider",
@@ -267,12 +412,21 @@ export function defineAuthService(
             },
           },
           handler: async ({ service, params, body, request }) => {
+            let attempt;
             try {
+              attempt = await service.security.beginAuthentication(
+                params.provider,
+                body,
+              );
               const result = await service.authentication.authenticate(
                 params.provider,
                 body as Parameters<
                   AuthApi["authentication"]["authenticate"]
                 >[1],
+              );
+              await service.security.authenticationSucceeded(
+                attempt,
+                result.account.id,
               );
               const sessionCookie = result.session && cookieOptions
                 ? browserSessionCookieHeader(
@@ -285,7 +439,7 @@ export function defineAuthService(
               return {
                 status: 200,
                 headers: sessionCookie
-                  ? { "set-cookie": sessionCookie }
+                  ? ({ "set-cookie": sessionCookie } as Record<string, string>)
                   : undefined,
                 body: result.session
                   ? {
@@ -298,9 +452,36 @@ export function defineAuthService(
                   : result,
               };
             } catch (error) {
+              if (attempt && !(error instanceof AuthRateLimitError)) {
+                await service.security.authenticationFailed(attempt);
+              }
+              if (error instanceof AuthRateLimitError) {
+                return {
+                  ...authErrorResponse(error, 429),
+                  headers: {
+                    "retry-after": String(error.retryAfterSeconds),
+                  } as Record<string, string>,
+                };
+              }
               return authErrorResponse(error, 404);
             }
           },
+        },
+        {
+          id: "auth.securityEvents.list",
+          method: "GET",
+          path: "/security/events",
+          access: { permissions: [managePermission] },
+          spec: {
+            operationId: "listAuthSecurityEvents",
+            summary: "List authentication security events",
+            tags: ["auth", "security"],
+            responses: { 200: { description: "Authentication security events" } },
+          },
+          handler: async ({ service }) => ({
+            status: 200,
+            body: { events: await service.security.listEvents() },
+          }),
         },
         {
           id: "auth.sessions.listByAccountId",
@@ -337,6 +518,93 @@ export function defineAuthService(
             },
           },
           handler: ({ principal }) => ({ status: 200, body: { principal } }),
+        },
+        {
+          id: "auth.sessions.listCurrentAccount",
+          method: "GET",
+          path: "/sessions",
+          access: { authenticated: true },
+          spec: {
+            operationId: "listCurrentAccountSessions",
+            summary: "List devices and sessions for the current account",
+            tags: ["auth"],
+            responses: { 200: { description: "Current account sessions" } },
+          },
+          handler: async ({ service, principal }) => ({
+            status: 200,
+            body: {
+              sessions: (
+                await service.sessions.listByAccountId(principal!.id)
+              ).map(publicSession),
+              currentSessionId: principal?.metadata?.sessionId,
+            },
+          }),
+        },
+        {
+          id: "auth.sessions.revokeCurrentAccountSession",
+          method: "DELETE",
+          path: "/sessions/:sessionId",
+          access: { authenticated: true },
+          spec: {
+            operationId: "revokeCurrentAccountSession",
+            summary: "Revoke one device session owned by the current account",
+            tags: ["auth"],
+            responses: {
+              204: { description: "Session revoked" },
+              404: { description: "Session not found" },
+            },
+          },
+          handler: async ({ service, principal, params }) => {
+            const session = await service.sessions.findById(params.sessionId);
+            if (!session || session.accountId !== principal!.id) {
+              return { status: 404, body: { error: "Session not found" } };
+            }
+            await service.sessions.revoke(session.id);
+            return { status: 204 };
+          },
+        },
+        {
+          id: "auth.sessions.revokeManagedSession",
+          method: "DELETE",
+          path: "/accounts/:accountId/sessions/:sessionId",
+          access: { permissions: [managePermission] },
+          spec: {
+            operationId: "revokeManagedAccountSession",
+            summary: "Revoke one session for a managed account",
+            tags: ["auth"],
+            responses: {
+              204: { description: "Session revoked" },
+              404: { description: "Session not found" },
+            },
+          },
+          handler: async ({ service, params }) => {
+            const session = await service.sessions.findById(params.sessionId);
+            if (!session || session.accountId !== params.accountId) {
+              return { status: 404, body: { error: "Session not found" } };
+            }
+            await service.sessions.revoke(session.id);
+            return { status: 204 };
+          },
+        },
+        {
+          id: "auth.sessions.revokeManagedAccountSessions",
+          method: "DELETE",
+          path: "/accounts/:accountId/sessions",
+          access: { permissions: [managePermission] },
+          spec: {
+            operationId: "revokeManagedAccountSessions",
+            summary: "Revoke every active session for a managed account",
+            tags: ["auth"],
+            responses: { 200: { description: "Sessions revoked" } },
+          },
+          handler: async ({ service, params }) => ({
+            status: 200,
+            body: {
+              revoked: (
+                await service.sessions.revokeAll(params.accountId)
+              ).map(publicSession),
+            },
+          }),
         },
         {
           id: "auth.session.rotateCurrent",
@@ -508,7 +776,22 @@ export function defineAuthService(
               },
             ]
           : []),
-      ],
+  ];
+
+  return Object.freeze({
+    name: "@zelavis/auth",
+    kind: "core",
+    capabilities: Object.freeze(["api:routes", "dashboard:menu"]),
+    authenticators: [auth.requestAuthenticator],
+    basePath: "/auth",
+    menu: Object.freeze({
+      title: "Auth",
+      path: "/auth",
+      surface: "core" as const,
+    }),
+    service: auth,
+    api: {
+      v1: routes,
     },
   });
 }

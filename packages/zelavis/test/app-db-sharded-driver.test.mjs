@@ -111,3 +111,48 @@ test("sharded driver applies logical schemas to every physical shard", async () 
     assert.equal((await physical.schemas?.list())?.[0]?.active, true);
   }
 });
+
+test("sharded driver keeps time-series materialization Tenant-routed", async () => {
+  const { topology, physicalDrivers, driver } = createShardedMemoryDatabase();
+  const database = await createDatabase({ driver });
+  await database.projections.register({
+    name: "timeseries.metrics",
+    source: { collections: ["metrics"], eventTypes: ["document.upserted"] },
+  });
+  await database.timeseries.define({
+    name: "metrics",
+    projection: "timeseries.metrics",
+    source: { collections: ["metrics"], eventTypes: ["document.upserted"] },
+    map(event) {
+      return event.type === "document.upserted"
+        ? { timestamp: event.payload.data.timestamp, value: event.payload.data.value }
+        : null;
+    },
+  });
+
+  const tenants = [];
+  const shards = new Set();
+  for (let index = 0; index < 10_000 && shards.size < 4; index += 1) {
+    const tenantId = `metrics-tenant-${index}`;
+    const route = routeDatabaseTenant(topology, { tenantId });
+    if (!shards.has(route.physicalShardId)) {
+      shards.add(route.physicalShardId);
+      tenants.push({ tenantId, route });
+    }
+  }
+
+  for (const [index, { tenantId }] of tenants.entries()) {
+    await database.forTenant(tenantId).documents.createCollection({ name: "metrics" });
+    await database.forTenant(tenantId).documents.insert({
+      collection: "metrics",
+      id: `metric-${index}`,
+      data: { timestamp: "2026-01-01T00:00:00.000Z", value: index + 1 },
+    });
+    assert.equal(
+      await database.forTenant(tenantId).timeseries.get("metrics").aggregate({ op: "sum" }),
+      index + 1,
+    );
+  }
+
+  assert.equal(new Set(tenants.map(({ route }) => route.physicalShardId)).size, 4);
+});

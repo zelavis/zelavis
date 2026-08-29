@@ -1,6 +1,7 @@
 import { join, resolve } from "node:path";
 import {
   defineAdapter,
+  setServiceManifestResolver,
   type ZelavisOptions,
   type ZelavisResolvedPlatformOptions,
   type ZelavisServiceRegistryEntry,
@@ -16,6 +17,7 @@ import {
   normalizeDataDirectory,
   createLocalRuntimeServicePackageInstaller,
   createLocalRuntimeServiceImporter,
+  createLocalRuntimeServiceManifestResolver,
   type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
 import { officialProjectRecipes } from "../project-recipes.js";
@@ -57,6 +59,10 @@ export interface BunAdapterOptions {
 }
 
 export function bunAdapter(options: BunAdapterOptions = {}) {
+  // The runtime core does not scan filesystems; the Bun host supplies the
+  // manifest resolver that reads a service's adjacent package.json.
+  setServiceManifestResolver(createLocalRuntimeServiceManifestResolver());
+
   return defineAdapter({
     name: "bun",
     async resolve(

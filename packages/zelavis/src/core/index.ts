@@ -12,5 +12,7 @@ export * from "./artifact/index.js";
 export * from "./provider/index.js";
 export * from "./workload/index.js";
 export * from "./service/definition.js";
+export * from "./service/manifest.js";
+export * from "./service/context.js";
 export * from "./fabric/index.js";
 export * from "./runtime/openapi.js";

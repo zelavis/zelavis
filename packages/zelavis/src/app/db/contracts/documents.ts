@@ -94,11 +94,15 @@ export interface UpdateDocumentInput<
   id: string;
   data: Partial<TData>;
   mode?: "merge" | "replace";
+  /** Optional optimistic-concurrency guard for repository-style callers. */
+  expectedVersion?: number;
 }
 
 export interface DeleteDocumentInput {
   collection: string;
   id: string;
+  /** Optional optimistic-concurrency guard for repository-style callers. */
+  expectedVersion?: number;
 }
 
 export const DATABASE_COLLECTION_NAME_PATTERN =

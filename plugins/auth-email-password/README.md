@@ -16,3 +16,9 @@ credential without knowing how that provider hashes secrets. Email identifiers
 are normalized to trimmed lowercase values, PBKDF2 hashes are stored instead of
 plaintext passwords, and successful authentication returns a revocable opaque
 session token.
+
+Optional recovery stays provider-owned. Configure `recovery.deliver` to send
+the generated one-time token through the deployment's email provider. Zelavis
+stores only its expiring hash, returns the same accepted response for known and
+unknown accounts, replaces the password through the provider completion
+endpoint, and revokes the account's active sessions.

@@ -34,7 +34,7 @@ import type {
 export interface BundleScope {
   /** Project owner of this bundle. Undefined for system-scope services. */
   projectId?: string;
-  /** Service name as declared in `defineService({ name })`. */
+  /** Service name as declared in package.json `name`. */
   serviceName: string;
   /** Bundle identifier as declared in `app.bundle`. Defaults to `"dist"`. */
   bundle: string;

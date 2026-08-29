@@ -32,6 +32,7 @@ before editing.
 - Do not create parent/child service graphs. Provider plugins are ordinary
   installed services discovered by capability and validated against an explicit
   public registration contract; never use `childServices` or service `extends`.
+- Plugins and services are configured via `package.json` manifests (`"zelavis": { "kind": "plugin" }`, `"type": "module"`, `"exports"`). Plugin code uses the official Zelavis SDK (`zelavis.menu.create`, `zelavis.routes.create`, etc.); `defineService` is completely removed.
 - Keep the built-in Zelavis App stack in `packages/zelavis/src/app`, exported
   through `zelavis/app`, `zelavis/app/auth`, `zelavis/app/db`, and
   `zelavis/app/workloads`. It reuses the core implementation; never create an

@@ -14,6 +14,49 @@ export interface CancelSubscriptionOptions {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * Payment and Recurring Subscription Service
+ *
+ * Architecture & Recurring Subscription Lifecycle Notes:
+ * --------------------------------------------------------
+ * Subscriptions allow customers to be billed on a recurring cadence (day, week, month, year).
+ *
+ * Learned patterns from recurring subscription prototypes (e.g., Stripe & PayPal integrations):
+ *
+ * 1. Customer & Provider Identity Binding:
+ *    - A local Zelavis customer (`customerId`) maps to an external provider customer entity
+ *      (`providerCustomerReference`, e.g., Stripe's `cus_123` or PayPal's `payer_id`).
+ *    - Reusing existing provider customer references prevents duplicate customer profiles
+ *      in payment gateways.
+ *
+ * 2. Plan vs. Dynamic Ad-Hoc Recurring Items:
+ *    - Pre-defined plans: `providerPlanReference` specifies an existing price/plan in the provider
+ *      (e.g., Stripe Price `price_xxx`, PayPal Plan `P-xxx`).
+ *    - Dynamic plans: If no plan reference is provided, the provider adapter creates or resolves
+ *      a product/price dynamically using `amount`, `currency`, `interval`, and `intervalCount`.
+ *
+ * 3. Scheduling, Intervals, and Trials:
+ *    - Standard intervals: "day", "week", "month", "year".
+ *    - Interval count: Multiplier for the interval (e.g. interval="month", intervalCount=3 for quarterly).
+ *    - Trial periods: `trialPeriodDays` shifts the billing start date forward.
+ *
+ * 4. Idempotency & Tracking:
+ *    - `referenceId` provides an external tracking token (e.g., client order/subscription key)
+ *      which is passed as idempotency key or metadata to avoid duplicate subscriptions.
+ *
+ * 5. Lifecycle Status Transitions:
+ *    - "pending": Subscription created, waiting for approval, first payment, or trial start.
+ *    - "active": In good standing; recurring renewals succeeding.
+ *    - "past_due": Renewal payment failed; merchant/gateway in retry/dunning cycle.
+ *    - "cancelled": Terminated by customer or merchant (either immediately or at period end).
+ *    - "expired": Ended after reaching maximum billing cycles or completion.
+ *    - "failed": Permanent failure to establish or authorize subscription.
+ *
+ * 6. Webhooks & Event Reconciliation (Future Platform Event Integration):
+ *    - Providers notify Zelavis of renewals via webhooks (e.g., `invoice.paid`, `invoice.payment_failed`,
+ *      `customer.subscription.deleted` in Stripe; `PAYMENT.SALE.COMPLETED`, `BILLING.SUBSCRIPTION.CANCELLED` in PayPal).
+ *    - Each renewal generates a new `PaymentAttempt` linked to the subscription, updating `currentPeriodEnd`.
+ */
 export class PaymentService {
   private readonly providers = new Map<string, PaymentProvider>();
 

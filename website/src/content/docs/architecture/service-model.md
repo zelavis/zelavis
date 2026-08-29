@@ -124,93 +124,95 @@ Service pages are served as full HTML documents and mounted by the dashboard ins
 
 A good current TypeScript direction is:
 
+- use `package.json` as the service manifest and configuration surface (`"zelavis": { "kind": "plugin" }`, `"type": "module"`, `"exports"`)
+- use the official Zelavis SDK (`import { zelavis } from "zelavis/sdk"`) for plugin code: `zelavis.menu.create(...)`, `zelavis.routes.create(...)`, `zelavis.commands.register(...)`, `zelavis.events.on(...)`
 - use plain `ZelavisRuntimeService` object literals for the internal runtime contract
-- expose one shared public service builder: `defineService(...)`
-- version that contract explicitly with `ZELAVIS_SERVICE_V1`
-- let service definitions carry declarative dashboard metadata such as `menu: { ... }` so services are not locked to one dashboard implementation detail
+- let plugins carry declarative dashboard metadata through `zelavis.menu.create({ ... })` so plugins are not locked to one dashboard implementation detail
 - let provider plugins expose the public contract associated with a declared capability
 
-That builder should be about developer ergonomics and metadata, not about replacing the internal service contract.
+## Suggested plugin shape
 
-## Suggested service shape
+Plugins are standard npm packages configured via `package.json`:
 
-The current DX direction should lean declarative:
+```json
+{
+  "name": "@zelavis/ecommerce",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": "./dist/index.js",
+  "zelavis": {
+    "kind": "plugin"
+  }
+}
+```
+
+Plugin code uses the official Zelavis SDK:
 
 ```ts
-import { defineService, ZELAVIS_SERVICE_V1 } from "zelavis";
+import { zelavis } from "zelavis/sdk";
 
-defineService({
-  name: "@zelavis/ecommerce",
-  contractVersion: ZELAVIS_SERVICE_V1,
-  menu: {
-    title: "Ecommerce",
-    path: "/commerce",
-    page: {
-      id: "dashboard",
-      title: "Commerce",
-      render() {
-        return {
-          html: "<!doctype html><html><body>Commerce</body></html>",
-        };
+zelavis.menu.create({
+  title: "Ecommerce",
+  path: "/commerce",
+  page: {
+    id: "dashboard",
+    title: "Commerce",
+    file: "dashboard.html",
+  },
+  items: [
+    {
+      title: "Orders",
+      path: "/commerce/orders",
+      page: {
+        id: "orders",
+        title: "Orders",
+        file: "orders.html",
       },
     },
-    items: [
-      {
-        title: "Orders",
-        path: "/commerce/orders",
-        page: {
-          id: "orders",
-          title: "Orders",
-          render() {
-            return "<!doctype html><html><body>Orders</body></html>";
-          },
+    {
+      title: "More",
+      items: [
+        {
+          title: "Customers",
+          path: "/commerce/customers",
         },
-      },
-      {
-        title: "More",
-        items: [
-          {
-            title: "Customers",
-            path: "/commerce/customers",
-          },
-        ],
-      },
-    ],
-  },
-  setup(service) {
-    // register services, routes, providers, and service capabilities
-  },
+      ],
+    },
+  ],
+});
+
+zelavis.routes.create({
+  id: "commerce.products.list",
+  method: "GET",
+  path: "/products",
+  handler: async () => ({ status: 200, body: [] }),
 });
 ```
 
-Provider plugins use the same builder and expose an explicit registration object:
+Provider plugins declare provider capabilities in their manifest and expose an explicit registration object:
 
 ```ts
-import { defineService } from "zelavis/service";
 import type { EcommerceApi } from "@zelavis/ecommerce";
+import type { ZelavisRuntimeService } from "zelavis";
 
-defineService({
+export const stripePlugin: ZelavisRuntimeService = {
   name: "@zelavis/ecommerce-stripe",
   kind: "provider",
   capabilities: ["provider:payments"],
-  marketplace: {
-    title: "Stripe",
-    categories: ["payments"],
-  },
   service: {
     name: "stripe",
     register(api: EcommerceApi) {
       api.payments.registerProvider("stripe", provider);
     },
   },
-});
+};
 ```
 
 Installed provider plugins are discovered by capability. The domain validates the plugin's public registration contract; it does not receive hidden children or require a package-name allow-list change for each compatible provider.
 
 Important point:
 
-- the `menu` object is service-owned metadata
+- the `menu` object is service-owned metadata registered via `zelavis.menu.create(...)`
 - `menu.page` is the content contract for service-owned dashboard pages
 - Zelavis decides how to render that metadata in the current dashboard shell
 - if the dashboard changes later, the service contract can stay stable while Zelavis adapts the rendering layer
@@ -220,17 +222,17 @@ Important point:
 Services can also ship full web apps. The app contract should stay small:
 
 ```ts
-import { defineService } from "zelavis";
-
-export default defineService({
+export default {
   name: "@acme/storefront",
+  kind: "web-app",
+  capabilities: ["web:app", "api:routes"],
   app: {
     mount: "/",
     mode: "spa",
     bundle: "dist",
     domainPolicy: "optional",
   },
-});
+};
 ```
 
 The important design rule is that services do **not** declare concrete hostnames.

@@ -18,11 +18,34 @@ an exported type is never mistaken for an operational distributed feature.
 - [x] Idempotent `runtime.close()` for server-plugin shutdown.
 - [x] Strict `YYYY-MM-DD` compatibility-date validation and runtime exposure.
 - [x] Versioned, validated portable runtime artifact manifest contract.
+- [x] Provider-neutral deterministic runtime build profiles select Node, Bun,
+  or future Deno without embedding deployment-provider assumptions.
+- [x] Runtime artifacts carry validated SHA-256 object/file digests and optional
+  signature metadata, with a Web-standard digest helper.
+- [x] `ArtifactStore` is the first concrete provider capability, with immutable
+  content-addressed retrieval semantics and an in-memory embeddable adapter.
+- [x] Portable Ed25519 `signRuntimeArtifact`/`verifyRuntimeArtifactSignature`
+  cover artifact signing over a canonical unsigned manifest, and the staged
+  distribution tree emits a digest-complete `runtime-artifact.json` for every
+  release target.
+- [x] The Node adapter provides a persistent local `ArtifactStore` with
+  content-derived paths, immutable first-write behavior, restart-safe metadata,
+  read-time corruption detection, and no Project placement authority.
+- [x] Provider-neutral capacity contracts provision and release Nodes through
+  idempotent requests while keeping Project allocation and placement in Fabric.
 - [x] Versioned provider definition and narrow capability negotiation contract.
 - [x] Runtime-neutral workload identity, authority, resource, capability, and
   placement contracts.
 - [x] Fabric snapshot and read-only inventory endpoints for the current
   single-node implementation.
+- [x] Fabric inventory and placement-planning endpoints enforce distinct
+  `fabric.view` and `fabric.manage` permissions by default; intentionally
+  public embedded Fabric services require an explicit access opt-out.
+- [x] The current privileged project/control route audit covers service-page
+  assets, Website mutation, Storage list/mutation, Workloads management/logs,
+  Project Gateway, Fabric, Auth administration, Assistant, services, and
+  settings. Public website delivery, direct file delivery, health, Auth entry,
+  and workload HTTP invocation remain explicit public data-plane routes.
 - [x] Deterministic Project replica planning across one or many Nodes with
   capability gates, fixed/pressure-driven replica policy, driver and label
   constraints, topology spreading, and explicit resource-budget enforcement.
@@ -38,6 +61,14 @@ an exported type is never mistaken for an operational distributed feature.
 - [x] The composite sharded database driver routes tenant-scoped documents,
   events, projections, and time series while applying logical schema changes
   across the bounded physical shard set.
+- [x] Multi-shard regression coverage proves collection materialization,
+  shard-bound opaque events, replicated logical schemas, built-in projections,
+  and Tenant-routed time-series state across every default physical shard.
+- [x] Logical database system views expose collections, events, schemas,
+  projections, and time-series definitions without exposing physical shard
+  drivers or `zv_*` tables. The dashboard renders those views read-only, and
+  permission-gated Tenant backup/restore preserves exact schemas, event
+  identity, revisions, and timestamps idempotently across shard routing.
 - [x] The logical `DatabaseApi` binds ordinary access through
   `db.forTenant(tenantId)`, keeps physical drivers and raw SQL out of the App
   API, requires Tenant identity at HTTP boundaries, and exposes versioned
@@ -63,6 +94,26 @@ an exported type is never mistaken for an operational distributed feature.
   Auth persists through the System Store, App Auth persists through its Tenant
   database boundary, password hashing uses Web Crypto PBKDF2, and optional
   Basic, JWT, and remote-JWKS verifiers are available.
+- [x] Session/device administration is endpoint-backed: accounts can list and
+  revoke their own sessions, administrators can revoke one or all account
+  sessions, and token hashes are never returned.
+- [x] Authentication attempts have bounded window/block policies, durable
+  Platform/App repository state, atomic cross-process/database mutation,
+  privacy-safe security events, `429` retry guidance, and a permission-gated
+  audit endpoint.
+- [x] The System Store exposes atomic create-if-absent, compare-and-set, and
+  compare-and-delete operations with strictly advancing CAS timestamps;
+  first-owner bootstrap uses them for a durable leased claim that prevents
+  competing Platform writers from creating multiple owners.
+- [x] Credential recovery is provider-owned and endpoint-backed with generic
+  start responses, explicit completion, and account-session revocation. The
+  built-in email/username password plugins support expiring hashed one-time
+  tokens through an operator-supplied delivery callback.
+- [x] Provider-neutral Authorization Code login and explicit account linking
+  are App Auth workflows with persisted one-time state, S256 PKCE, state/nonce
+  binding, session issuance, and no implicit email linking. The OIDC plugin
+  builds the standards-based authorization/token requests and verifies ID
+  tokens through issuer, audience, algorithm, signature, JWKS, and nonce.
 - [x] Platform first-owner bootstrap is guarded by an operator-supplied
   high-entropy one-time token and provider-owned credential enrollment. The
   dashboard performs real login/logout, `/runtime/access` returns the session
@@ -74,31 +125,34 @@ an exported type is never mistaken for an operational distributed feature.
   `childServices`/`extends` graph. Auth and payment providers are ordinary
   workspace plugins discovered by capability and registered through explicit
   domain contracts.
+- [x] Plugins and services declare themselves through a validated `package.json`
+  manifest (`"zelavis": { "kind": ... }`, ESM `type`/`exports`, no legacy
+  `main`). `defineService` is removed; only the unrelated marketplace helpers
+  `defineServiceCatalogEntry`/`defineServiceCatalog` remain.
+- [x] Plugin code uses the official `zelavis/sdk` surface — `zelavis.menu`,
+  `zelavis.routes`, `zelavis.commands`, `zelavis.events`, and
+  `zelavis.services` — bound to an explicit plugin execution context that
+  throws a descriptive error when called outside `loadPluginPackage`.
+- [x] Route definitions carry typed operation specs and the runtime generates a
+  valid OpenAPI 3.1 document for every mounted service, served from
+  `/zelavis/api/v1/runtime/openapi.json`.
+- [x] The runtime core stays filesystem-free: plugin manifest resolution is an
+  injected `ZelavisServiceManifestResolver` that the local Node/Bun adapters
+  install, and `api` is optional so `kind: "provider"` plugins can register
+  through a domain contract without mounting routes.
 
 ## Prepared, Not Operational Yet
-
-- [ ] Core principal enforcement, persistent account/credential/session
-  repositories, first-owner bootstrap, dashboard login/logout, session
-  rotation, and same-origin cookie issuance/mutation protection are operational.
-  Distributed attempt throttling, security/audit events, recovery methods,
-  session/device administration, a durable bootstrap claim for any future
-  multi-writer control plane, and a complete permission audit of every
-  privileged control-plane endpoint remain required before exposing Zelavis
-  publicly.
-- [ ] The OIDC plugin validates bearer JWTs through issuer, audience,
-  algorithm, signature, and JWKS checks. Interactive OAuth/OIDC Authorization
-  Code with PKCE, state/nonce validation, callbacks, consent, and account
-  linking remain endpoint-backed App Auth workflows; bearer verification alone
-  is not an interactive login implementation.
 
 - [ ] Compatibility dates are carried by runtimes, artifacts, and providers,
   but no behavior gates have been introduced yet. Add gates only when behavior
   must change incompatibly.
-- [ ] Artifact manifests describe deterministic bundle contents, but
-  `zelavis/core` does not yet build, hash, sign, upload, or install them.
+- [ ] Artifact manifests, digests, and signing primitives exist and the staged
+  release tree is digested, but no release is signed with a real key yet, there
+  is no remote store, and immutable Project runtimes are not installed from
+  artifacts.
 - [ ] Provider definitions advertise capability APIs, but capability-specific
-  contracts such as capacity, DNS, networking, artifacts, secrets, backups,
-  and telemetry still need to be specified independently.
+  contracts other than artifacts and capacity—DNS, networking, secrets, backups,
+  and telemetry—still need to be specified independently.
 - [ ] Lifecycle hooks are in-process framework hooks. Durable deployment and
   Agent events must come from persisted Fabric operations, not process hooks.
 - [ ] Workloads are discoverable through service endpoints, but durable queues,
@@ -119,31 +173,16 @@ an exported type is never mistaken for an operational distributed feature.
 
 ## Next
 
-- [ ] Add bounded and distributed authentication attempt throttling, durable
-  security/audit events, recovery methods, session/device administration, and
-  a durable first-owner bootstrap claim before multiple control-plane writers
-  are allowed; complete the permission audit for every privileged Platform,
-  Fabric, Agent, Gateway, Marketplace, storage, and provider endpoint.
-- [ ] Implement provider-neutral OAuth/OIDC Authorization Code with PKCE,
-  state/nonce-bound callback state, and explicit account-linking APIs as an
-  App Auth plugin workflow.
-
-- [ ] Make schemas, collection materialization, events, projections, time
-  series, dashboard system views, backup, and restore operate correctly across
-  the local physical shards.
 - [ ] Prove local shard movement, split/merge, generation fencing, crash-safe
   cutover, and resumable durable operation state before remote data placement.
-- [ ] Define a deterministic build-profile contract that selects the Node,
-  Bun, or future Deno runtime without introducing provider assumptions.
-- [ ] Add artifact digests and optional signature metadata, then connect the
-  manifest to the common staged release/distribution tree.
+- [ ] Wire a release signing key into the staged distribution build so
+  published runtime artifacts carry a verified signature, not only complete
+  file digests.
 - [ ] Materialize each Project's exact Zelavis App version as an immutable
   runtime artifact and have capable drivers execute that artifact independently
   of the parent Platform installation.
-- [ ] Define `ArtifactStore` as the first concrete provider capability because
-  both local and remote Agents need immutable artifact retrieval.
-- [ ] Define capacity provisioning separately from placement. Providers create
-  or release Nodes; Fabric alone decides Project placement.
+- [ ] Add remote `ArtifactStore` adapters for Agent retrieval and immutable
+  Project runtime installation.
 - [ ] Split universal Project descriptors from Project recipes and add the
   Project-driver registry described in `ARCHITECTURE.md`.
 - [ ] Persist Platform identity, allocations, placements, and generations in
@@ -152,8 +191,9 @@ an exported type is never mistaken for an operational distributed feature.
   contract before adding remote Agents or other isolation drivers.
 - [ ] Make the Gateway resolve authoritative placement plus Agent-reported
   healthy targets.
-- [ ] Enforce real principal permissions on every Project, Agent, Gateway, and
-  Fabric control endpoint.
+- [ ] Require real principal permissions on every Agent and provider control
+  endpoint when those endpoints are introduced, and extend the route-audit
+  tests with them.
 - [ ] Add provider implementations as optional adapters or plugins rather than
   dependencies of the core implementation.
 

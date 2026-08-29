@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { zelavisEcommerceService } from "../../../plugins/ecommerce/dist/index.js";
+import { ecommercePlugin } from "../../../plugins/ecommerce/dist/index.js";
 
 const PLATFORM_OWNER_CONTEXT = {
   principal: { id: "test-owner", type: "user", roles: ["owner"], permissions: ["*"] },
@@ -40,9 +40,9 @@ test("zelavis package exports runtime APIs and local host adapters", async () =>
   assert.equal(typeof runtime.Zelavis, "function");
   assert.equal(runtime.ZELAVIS_VERSION, packageMetadata.version);
   assert.equal(typeof runtime.defineAdapter, "function");
-  assert.equal(typeof runtime.defineService, "function");
+  assert.equal(typeof runtime.validatePluginPackageManifest, "function");
   assert.equal(typeof runtime.createServiceRegistry, "function");
-  assert.equal(runtime.ZELAVIS_SERVICE_V1, "ZELAVIS_SERVICE_V1");
+  assert.equal(typeof sdk.zelavis, "object");
   assert.equal(typeof runtime.loadService, "function");
   assert.equal(typeof runtime.loadServiceRegistry, "function");
   assert.equal(typeof runtime.resolveServiceModule, "function");
@@ -54,7 +54,7 @@ test("zelavis package exports runtime APIs and local host adapters", async () =>
   assert.equal("createServiceRuntime" in runtime, false);
 
   // The former server/Fabric and App packages are focused Zelavis subpaths.
-  assert.equal(typeof core.defineService, "function");
+  assert.equal(typeof core.validatePluginPackageManifest, "function");
   assert.equal(typeof serviceRuntime.createServiceRuntime, "function");
   assert.equal(typeof fabric.createFabricService, "function");
   assert.equal(typeof fabric.planFabricProjectPlacements, "function");
@@ -324,7 +324,7 @@ test("Zelavis platform resources back dashboard settings, website pages, storage
         serviceRegistry: {
           catalog: [
             {
-              service: zelavisEcommerceService,
+              service: ecommercePlugin,
               status: "installed",
               source: "official",
               order: 0,
@@ -462,7 +462,7 @@ test("Zelavis platform resources back dashboard settings, website pages, storage
     serviceRegistry: {
       catalog: [
         {
-          service: zelavisEcommerceService,
+          service: ecommercePlugin,
           status: "installed",
           source: "official",
           order: 0,
@@ -510,7 +510,7 @@ test("Zelavis platform resources back dashboard settings, website pages, storage
     serviceRegistry: {
       catalog: [
         {
-          service: zelavisEcommerceService,
+          service: ecommercePlugin,
           status: "installed",
           source: "official",
           order: 0,
@@ -569,6 +569,7 @@ test("Zelavis platform resources back dashboard settings, website pages, storage
         title: "Home",
       }),
     }),
+    PLATFORM_OWNER_CONTEXT,
   );
 
   assert.equal(createPageResponse.status, 201);
@@ -583,6 +584,7 @@ test("Zelavis platform resources back dashboard settings, website pages, storage
       },
       body: "hello world",
     }),
+    PLATFORM_OWNER_CONTEXT,
   );
 
   assert.equal(uploadResponse.status, 200);
@@ -595,6 +597,7 @@ test("Zelavis platform resources back dashboard settings, website pages, storage
 
   const listResponse = await zelavis.fetch(
     new Request("http://localhost/zelavis/api/v1/storage/files?prefix=uploads/"),
+    PLATFORM_OWNER_CONTEXT,
   );
   assert.equal(listResponse.status, 200);
   const listed = await listResponse.json();
@@ -626,16 +629,17 @@ test("Zelavis platform resources back dashboard settings, website pages, storage
     new Request("http://localhost/zelavis/api/v1/storage/files/uploads/hello.txt", {
       method: "DELETE",
     }),
+    PLATFORM_OWNER_CONTEXT,
   );
   assert.equal(deleteResponse.status, 200);
   assert.equal(files.has("uploads/hello.txt"), false);
 });
 
 test("Zelavis rejects installed services that try to register reserved core service names", async () => {
-  const { Zelavis, defineAdapter, defineService, createServiceRegistry } =
+  const { Zelavis, defineAdapter, createServiceRegistry } =
     await import("zelavis");
 
-  const forbiddenService = defineService({
+  const forbiddenService = {
     name: "@example/evil-auth-service",
     runtimeServices: [
       {
@@ -646,7 +650,7 @@ test("Zelavis rejects installed services that try to register reserved core serv
         },
       },
     ],
-  });
+  };
 
   const zelavis = new Zelavis({
     adapter: defineAdapter({

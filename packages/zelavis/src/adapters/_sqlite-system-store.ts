@@ -46,6 +46,20 @@ export function createLocalSqliteSystemStore(
   const deleteStatement = database.prepare(
     "DELETE FROM zelavis_system_records WHERE namespace = ? AND record_key = ?",
   );
+  const createStatement = database.prepare(`
+    INSERT OR IGNORE INTO zelavis_system_records
+      (namespace, record_key, value_json, updated_at)
+    VALUES (?, ?, ?, ?)
+  `);
+  const compareAndSetStatement = database.prepare(`
+    UPDATE zelavis_system_records
+    SET value_json = ?, updated_at = ?
+    WHERE namespace = ? AND record_key = ? AND updated_at = ?
+  `);
+  const compareAndDeleteStatement = database.prepare(`
+    DELETE FROM zelavis_system_records
+    WHERE namespace = ? AND record_key = ? AND updated_at = ?
+  `);
 
   function toRecord(row: unknown): ZelavisSystemStoreRecord {
     const value = row as {
@@ -71,6 +85,38 @@ export function createLocalSqliteSystemStore(
       const updatedAt = new Date().toISOString();
       writeStatement.run(namespace, key, JSON.stringify(value), updatedAt);
       return { namespace, key, value, updatedAt };
+    },
+    setIfAbsent(namespace, key, value) {
+      const updatedAt = new Date().toISOString();
+      const created = createStatement.run(
+        namespace,
+        key,
+        JSON.stringify(value),
+        updatedAt,
+      ).changes > 0;
+      const row = readStatement.get(namespace, key);
+      if (!row) throw new Error("System Store failed to read an atomic create.");
+      return { created, record: toRecord(row) };
+    },
+    compareAndSet(namespace, key, expectedUpdatedAt, value) {
+      const updatedAt = new Date(
+        Math.max(Date.now(), Date.parse(expectedUpdatedAt) + 1),
+      ).toISOString();
+      const changed = compareAndSetStatement.run(
+        JSON.stringify(value),
+        updatedAt,
+        namespace,
+        key,
+        expectedUpdatedAt,
+      ).changes > 0;
+      return changed ? { namespace, key, value, updatedAt } : undefined;
+    },
+    compareAndDelete(namespace, key, expectedUpdatedAt) {
+      return compareAndDeleteStatement.run(
+        namespace,
+        key,
+        expectedUpdatedAt,
+      ).changes > 0;
     },
     delete(namespace, key) {
       return deleteStatement.run(namespace, key).changes > 0;
