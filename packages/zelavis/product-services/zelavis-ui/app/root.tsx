@@ -33,6 +33,23 @@ import type { Route } from "./+types/root";
 import "@glideapps/glide-data-grid/dist/index.css";
 import "./styles.css";
 
+/**
+ * Removes the router basename from a browser pathname so the result can be
+ * handed to `navigate()`, which applies the basename itself.
+ */
+function stripRouterBasename(pathname: string): string {
+  const basename = import.meta.env.BASE_URL.replace(/\/+$/, "");
+  if (!basename || basename === "") {
+    return pathname;
+  }
+  if (pathname === basename) {
+    return "/";
+  }
+  return pathname.startsWith(`${basename}/`)
+    ? pathname.slice(basename.length)
+    : pathname;
+}
+
 const THEME_INIT_SCRIPT = `(function(){try{var stored=window.localStorage.getItem('theme');var mode=(stored==='light'||stored==='dark'||stored==='auto')?stored:'auto';var prefersDark=window.matchMedia('(prefers-color-scheme: dark)').matches;var resolved=mode==='auto'?(prefersDark?'dark':'light'):mode;var root=document.documentElement;root.classList.remove('light','dark');root.classList.add(resolved);if(mode==='auto'){root.removeAttribute('data-theme')}else{root.setAttribute('data-theme',mode)}root.style.colorScheme=resolved;}catch(e){}})();`;
 const DEFAULT_DIRECTION = "ltr";
 
@@ -84,8 +101,15 @@ export async function clientLoader({ request }: Route.ClientLoaderArgs) {
     access = await getDashboardAccess(controlRuntime);
   } catch (error) {
     if (error instanceof RuntimeApiError && error.status === 401) {
-      const returnTo = `${requestUrl.pathname}${requestUrl.search}`;
-      throw redirect(`/login?returnTo=${encodeURIComponent(returnTo)}`);
+      // `requestUrl.pathname` is the browser path and includes the router
+      // basename, but the login form resolves `returnTo` through `navigate()`,
+      // which prepends the basename itself. Store a router-relative path so a
+      // mounted dashboard does not redirect to `/zelavis/zelavis/`.
+      throw redirect(
+        `/login?returnTo=${encodeURIComponent(
+          `${stripRouterBasename(requestUrl.pathname)}${requestUrl.search}`,
+        )}`,
+      );
     }
     throw error;
   }

@@ -9,6 +9,28 @@ const zelavisUiBasePath = normalizeBasePath(
   process.env.ZELAVIS_UI_BASE_PATH ?? "/",
 );
 
+/**
+ * Dev proxy to the Zelavis runtime.
+ *
+ * `changeOrigin` only rewrites `Host`, so the browser's `Origin` header
+ * (the dev server, e.g. http://127.0.0.1:3001) would still reach a runtime
+ * serving a different origin (e.g. http://127.0.0.1:3000). The runtime issues
+ * session cookies only to same-origin requests and would silently drop every
+ * `set-cookie`, leaving login apparently successful but unauthenticated.
+ *
+ * The request genuinely is same-origin from the browser's point of view — the
+ * proxy is transparent — so forward the runtime's own origin.
+ */
+const runtimeProxy = {
+  target: zelavisDevServer,
+  changeOrigin: true,
+  configure: (proxy: { on: (event: string, handler: (...args: any[]) => void) => void }) => {
+    proxy.on("proxyReq", (proxyReq: { setHeader: (name: string, value: string) => void }) => {
+      proxyReq.setHeader("origin", new URL(zelavisDevServer).origin);
+    });
+  },
+};
+
 function normalizeBasePath(path: string): string {
   if (!path || path === "/") {
     return "/";
@@ -63,14 +85,10 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: zelavisDevServer,
-        changeOrigin: true,
+        ...runtimeProxy,
         rewrite: (path) => path.replace(/^\/api/, "/zelavis/api"),
       },
-      "/zelavis/api": {
-        target: zelavisDevServer,
-        changeOrigin: true,
-      },
+      "/zelavis/api": runtimeProxy,
     },
   },
 });
