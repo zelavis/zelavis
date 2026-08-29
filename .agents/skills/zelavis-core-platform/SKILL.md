@@ -12,7 +12,8 @@ Use this skill for changes in:
 - `packages/zelavis/src/platform`
 - `packages/zelavis/product-services/*`
 - `packages/zelavis/adapters/*`
-- `packages/zelavis/plugins/*`
+- `plugins/*` when an official optional provider or capability plugin consumes
+  the unified package's public contracts
 
 Start by reading `AGENTS.md` and the relevant `packages/zelavis` documentation
 before editing.
@@ -28,6 +29,9 @@ before editing.
   the contracts and implementations exported through `zelavis/core`,
   `zelavis/runtime`, `zelavis/fabric`, `zelavis/workload`,
   `zelavis/artifact`, and `zelavis/provider`.
+- Do not create parent/child service graphs. Provider plugins are ordinary
+  installed services discovered by capability and validated against an explicit
+  public registration contract; never use `childServices` or service `extends`.
 - Keep the built-in Zelavis App stack in `packages/zelavis/src/app`, exported
   through `zelavis/app`, `zelavis/app/auth`, `zelavis/app/db`, and
   `zelavis/app/workloads`. It reuses the core implementation; never create an
@@ -90,7 +94,14 @@ before editing.
   `.agents/references/*` resource so skill-loaded agents stay current.
 - For `zelavis/app/db`, preserve the event-sourced per-collection-table model.
   Do not reintroduce a shared `documents` table, write directly to registered
-  collection tables, or bury `surface` in metadata.
+  collection tables (including indirectly through raw SQL triggers), or bury
+  `surface` in metadata.
+- Serialize unrelated top-level transactions in synchronous SQLite adapters;
+  a shared `inTransaction` boolean must never make concurrent callers join one
+  transaction. Keep physical uniqueness constraints behind event revisions.
+- Treat every component of a bundle storage key as an authority boundary.
+  Validate Project/system ownership, service identity, bundle identity, prefix,
+  and asset paths before composition; filesystem root containment is not enough.
 - Treat local physical sharding as the official `zelavis/app` default, not a
   future multi-node migration. A new official App routes stable virtual shard
   ranges across several SQLite files even when all placements share one Node.

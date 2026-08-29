@@ -77,6 +77,18 @@ reverse proxy and TLS in front of it before exposing a production installation
 to the internet. Platform data defaults to `/var/lib/zelavis` for packaged
 installs.
 
+Before the first owner is created, configure a one-time bootstrap token with at
+least 32 characters. For an npm-managed process, for example:
+
+```bash
+export ZELAVIS_BOOTSTRAP_TOKEN="replace-with-a-random-token-at-least-32-characters-long"
+zelavis serve
+```
+
+Open the dashboard, create the first owner with that token, then remove the
+bootstrap token from the service environment and restart Zelavis. The bootstrap
+endpoint permanently refuses to create another owner once an account exists.
+
 The first release matrix targets Linux and macOS on `x64` and `arm64` for
 archives, plus Debian/Ubuntu on `amd64` and `arm64` for APT and `.deb` packages.
 Windows packages and other Linux package repositories are not implemented yet.

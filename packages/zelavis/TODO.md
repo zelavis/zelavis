@@ -50,8 +50,46 @@ an exported type is never mistaken for an operational distributed feature.
   the runtime, removes Assistant threads, domain bindings, bundle assets, and
   runtime/project data through idempotent participants, and deletes the Project
   record only after every participant succeeds.
+- [x] Local SQLite App writes serialize competing top-level transactions and
+  enforce unique collection/document stream revisions; raw SQL collection
+  protection handles comments and CTEs and rejects statement batches.
+- [x] Shared bundle storage validates every Project, service, bundle, prefix,
+  and asset-path component, while local file storage separately enforces root
+  containment.
+- [x] Project Auth administration is permission-gated and the local Project
+  Gateway supplies scoped Platform principal context to isolated runtimes.
+- [x] Native-Web request authenticators compose with core principal resolution;
+  opaque hashed sessions support Bearer and HttpOnly-cookie transport, Platform
+  Auth persists through the System Store, App Auth persists through its Tenant
+  database boundary, password hashing uses Web Crypto PBKDF2, and optional
+  Basic, JWT, and remote-JWKS verifiers are available.
+- [x] Platform first-owner bootstrap is guarded by an operator-supplied
+  high-entropy one-time token and provider-owned credential enrollment. The
+  dashboard performs real login/logout, `/runtime/access` returns the session
+  principal instead of a demo identity, session rotation is endpoint-backed,
+  only matching-origin browser requests receive session cookies, cookie
+  mutations require a same-origin `Origin`, and critical Project, Assistant,
+  service-mutation, and settings-mutation endpoints declare core permissions.
+- [x] Retired the package-local auth plugin folder and the generic
+  `childServices`/`extends` graph. Auth and payment providers are ordinary
+  workspace plugins discovered by capability and registered through explicit
+  domain contracts.
 
 ## Prepared, Not Operational Yet
+
+- [ ] Core principal enforcement, persistent account/credential/session
+  repositories, first-owner bootstrap, dashboard login/logout, session
+  rotation, and same-origin cookie issuance/mutation protection are operational.
+  Distributed attempt throttling, security/audit events, recovery methods,
+  session/device administration, a durable bootstrap claim for any future
+  multi-writer control plane, and a complete permission audit of every
+  privileged control-plane endpoint remain required before exposing Zelavis
+  publicly.
+- [ ] The OIDC plugin validates bearer JWTs through issuer, audience,
+  algorithm, signature, and JWKS checks. Interactive OAuth/OIDC Authorization
+  Code with PKCE, state/nonce validation, callbacks, consent, and account
+  linking remain endpoint-backed App Auth workflows; bearer verification alone
+  is not an interactive login implementation.
 
 - [ ] Compatibility dates are carried by runtimes, artifacts, and providers,
   but no behavior gates have been introduced yet. Add gates only when behavior
@@ -80,6 +118,15 @@ an exported type is never mistaken for an operational distributed feature.
   local move/split/merge operations are not yet durable state machines.
 
 ## Next
+
+- [ ] Add bounded and distributed authentication attempt throttling, durable
+  security/audit events, recovery methods, session/device administration, and
+  a durable first-owner bootstrap claim before multiple control-plane writers
+  are allowed; complete the permission audit for every privileged Platform,
+  Fabric, Agent, Gateway, Marketplace, storage, and provider endpoint.
+- [ ] Implement provider-neutral OAuth/OIDC Authorization Code with PKCE,
+  state/nonce-bound callback state, and explicit account-linking APIs as an
+  App Auth plugin workflow.
 
 - [ ] Make schemas, collection materialization, events, projections, time
   series, dashboard system views, backup, and restore operate correctly across

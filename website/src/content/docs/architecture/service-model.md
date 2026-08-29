@@ -25,12 +25,12 @@ Sometimes yes, but not always in the same way.
 - Installable dashboard/runtime features may expose one or more runtime-mounted
   services as part of activation.
 
-That lower-level provider layer uses parent/child service metadata.
+That lower-level provider layer uses named capabilities and explicit public registration contracts.
 
 Current example:
 
 - `zelavis-ecommerce` is a top-level project Marketplace/runtime service
-- payment providers such as Stripe or PayPal are child services allowed by `zelavis-ecommerce.childServices`
+- payment providers such as Stripe or PayPal are ordinary `provider:payments` plugins
 
 So the safe model is:
 
@@ -128,7 +128,7 @@ A good current TypeScript direction is:
 - expose one shared public service builder: `defineService(...)`
 - version that contract explicitly with `ZELAVIS_SERVICE_V1`
 - let service definitions carry declarative dashboard metadata such as `menu: { ... }` so services are not locked to one dashboard implementation detail
-- let child services declare `extends: "parent-service-name"` instead of inventing package-local service builders
+- let provider plugins expose the public contract associated with a declared capability
 
 That builder should be about developer ergonomics and metadata, not about replacing the internal service contract.
 
@@ -142,7 +142,6 @@ import { defineService, ZELAVIS_SERVICE_V1 } from "zelavis";
 defineService({
   name: "@zelavis/ecommerce",
   contractVersion: ZELAVIS_SERVICE_V1,
-  childServices: ["@zelavis/ecommerce-stripe", "@zelavis/ecommerce-paypal"],
   menu: {
     title: "Ecommerce",
     path: "/commerce",
@@ -184,28 +183,30 @@ defineService({
 });
 ```
 
-Child services use the same builder but target a parent service:
+Provider plugins use the same builder and expose an explicit registration object:
 
 ```ts
 import { defineService } from "zelavis/service";
 import type { EcommerceApi } from "@zelavis/ecommerce";
 
-defineService<EcommerceApi>({
+defineService({
   name: "@zelavis/ecommerce-stripe",
-  extends: "@zelavis/ecommerce",
+  kind: "provider",
+  capabilities: ["provider:payments"],
   marketplace: {
     title: "Stripe",
     categories: ["payments"],
   },
-  setup(api) {
-    api.payments.registerProvider("@zelavis/ecommerce-stripe", provider);
+  service: {
+    name: "stripe",
+    register(api: EcommerceApi) {
+      api.payments.registerProvider("stripe", provider);
+    },
   },
 });
 ```
 
-Installed child services are collected for their parent. They do not activate as independent top-level Extensions services.
-
-Parent services own their child allow-list through `childServices`. For ecommerce payments, Stripe and PayPal are allowed by the official ecommerce package. A future `XYZ Payments` child service would need the parent service to add it to that list before activation. If a child service has `marketplace.categories`, those categories apply to the parent service's child marketplace.
+Installed provider plugins are discovered by capability. The domain validates the plugin's public registration contract; it does not receive hidden children or require a package-name allow-list change for each compatible provider.
 
 Important point:
 
@@ -312,8 +313,8 @@ The current runtime direction now reflects that split with:
 - `applyServiceRegistryState(...)`
 - `activateServiceRegistry(...)`
 - runtime service registry stores for memory, database, key/value, and file storage
-- parent-owned `childServices` allow-lists for child services
-- service setup context carrying only standard data such as root path, API paths, platform summary, and collected services
+- capability-discovered provider contracts for Auth, payments, and future extension points
+- service setup context carrying only standard data such as root path, API paths, platform summary, and registry state
 - a service activation controller with declared runtime capabilities:
   - `strategy`: `runtime-graph` or `external`
   - `supportsRuntimeInstall`

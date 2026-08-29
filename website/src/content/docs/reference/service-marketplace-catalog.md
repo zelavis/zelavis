@@ -41,10 +41,9 @@ export const marketplaceCatalog = defineServiceCatalog([
     package: "@zelavis/ecommerce-stripe",
     publisher: "zelavis",
     source: "official",
-    extends: "@zelavis/ecommerce",
     compatibility: {
       zelavis: "^1.0.0",
-      parentService: "^1.0.0",
+      service: "^1.0.0",
     },
     tags: ["payments"],
   },
@@ -61,8 +60,8 @@ export const marketplaceCatalog = defineServiceCatalog([
 - `version`: optional published package version.
 - `reviewStatus`: `official`, `reviewed`, `unreviewed`, or `blocked`.
 - `verified`: whether the publisher/package has been verified by the Marketplace.
-- `extends`: parent service name for child services. When present, Marketplace metadata applies to that parent service's child Marketplace instead of the global Marketplace.
-- `compatibility`: version ranges for Zelavis, the service package, or the parent service.
+- `compatibility.service`: version range for the public capability contract the plugin consumes.
+- `compatibility`: version ranges for Zelavis and consumed public service contracts.
 - `links`: homepage, repository, documentation, or issue tracker URLs.
 - `license`: package license label.
 - `tags`: searchable Marketplace tags.

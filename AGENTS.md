@@ -107,6 +107,13 @@ product/core services may introduce a new extension-point schema or privileged
 manifest capability; ordinary services and marketplace extensions may
 contribute values to an allowed extension point after validation.
 
+Do not reintroduce `childServices`, service `extends`, parent-maintained plugin
+name allow-lists, or hidden child setup contexts. Auth methods, payment
+providers, and similar integrations are ordinary installed plugins discovered
+by a declared capability and validated against the owning domain's explicit
+public registration contract. Plugins may also expose their own endpoint-backed
+capabilities as normal services.
+
 Dashboard menu semantics belong to `@zelavis/ui`: it defines what a menu
 contribution means and renders it. `zelavis/core` may carry runtime-neutral
 menu/contribution wire data so headless Project runtimes do not need to bundle
@@ -281,10 +288,20 @@ Key rules:
   declares `tenantRouting: true`; `tenant_id` is the intended shard key.
 - SQLite-compatible adapters such as better-sqlite3, Bun SQLite, and libSQL
   should inherit shared behavior through `createSqliteCompatibleDriver`.
+- Async SQLite gateway transactions must serialize unrelated top-level callers.
+  Never treat a process-global `inTransaction` flag as proof that a concurrent
+  caller is nested inside the current transaction. Event stream revisions must
+  also have a physical uniqueness invariant as a final corruption barrier.
 - `sql.execute()` must protect registered collection tables from direct DML/DDL
-  writes and point callers to the documents API. `sql.query()` may read them.
+  writes and indirect trigger-based writes, and point callers to the documents
+  API. `sql.query()` may read them.
 - Do not expose `sql.execute()` through an endpoint unless collection-table
   write protection is preserved.
+
+Bundle storage keys are authority boundaries. Validate the Project/system
+owner, service identity, bundle identifier, storage prefix, and relative asset
+path independently before composing a key. Filesystem root containment alone
+does not prevent one Project from traversing into another Project's namespace.
 
 System tables are not document collections. Tables such as `zv_collections`,
 `zv_events`, `zv_schemas`, `zv_time_series_checkpoints`, and
@@ -471,8 +488,10 @@ those grants, while endpoints remain the authority layer.
 - `packages/zelavis/product-services/zelavis-ui` contains the admin/dashboard UI used by the runtime package.
 - `packages/zelavis/adapters/*` contains optional framework, runtime, database,
   or external-system adapters distributed with the package workspace.
-- `packages/zelavis/plugins/*` contains package-local optional capability and
-  provider plugins.
+- `plugins/*` contains official optional capability and provider plugins,
+  including Auth methods. Do not place plugin packages inside
+  `packages/zelavis`; the unified package exports contracts and built-in App
+  services, not installable plugin package source.
 - `examples/*` contains runnable example workspace packages.
 - `website/` contains the public Astro Starlight documentation site (`website/src/content/docs/`).
 - `distribution/` owns release staging, archives, Debian packages, signed APT
@@ -547,7 +566,7 @@ When creating a new core package, service package, or plugin package:
 3. Use plain `ZelavisService` object literals for mounted runtime services.
 4. Use `defineService(...)` for user-facing services and package-local service contracts.
 5. Keep orchestration helpers only when they add real behavior.
-   - good: `authService(...)` because it creates auth and applies service plugins
+   - good: `authService(...)` because it creates Auth and registers explicit auth-method plugins
    - bad: pass-through aliases that only rename another function
 6. Update the package README so it points directly to the named definition file.
 7. Add or update tests around the real definition entrypoint, not only convenience wrappers.

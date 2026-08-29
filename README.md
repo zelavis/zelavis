@@ -165,9 +165,9 @@ Database adapters:
 
 Auth plugins:
 
-- [packages/zelavis/plugins/email-password](packages/zelavis/plugins/email-password)
+- [plugins/auth-email-password](plugins/auth-email-password)
   An email/password auth provider service for `zelavis/app/auth`.
-- [packages/zelavis/plugins/username-password](packages/zelavis/plugins/username-password)
+- [plugins/auth-username-password](plugins/auth-username-password)
   A username/password auth provider service for `zelavis/app/auth`.
 
 Official domain plugins:
@@ -301,19 +301,34 @@ const zv = new Zelavis({
 });
 ```
 
-Configure the built-in auth service through `coreServices.auth`, including auth provider services and repositories:
+Authentication methods remain external plugins. A Node installation can add
+the official email/password plugin to its explicit adapter catalog while the
+Platform keeps account, credential, and session authority:
 
 ```ts
+import { emailPasswordService } from "@zelavis/app-auth-email-password";
+import { Zelavis } from "zelavis";
+import { nodeAdapter } from "zelavis/adapters/node";
+
 const zv = new Zelavis({
-  coreServices: {
-    auth: {
-      authOptions: {
-        services: [emailPasswordService({ verifyPasswordHash })],
-      },
+  bootstrap: { token: process.env.ZELAVIS_BOOTSTRAP_TOKEN! },
+  adapter: nodeAdapter({
+    services: {
+      catalog: [{
+        service: emailPasswordService(),
+        specifier: "@zelavis/app-auth-email-password",
+        status: "installed",
+        source: "official",
+      }],
     },
-  },
+  }),
 });
 ```
+
+The bootstrap token must contain at least 32 characters. It is needed only to
+claim the first owner and is not a login credential. The dashboard performs
+bootstrap, login, rotation, and logout through the same versioned Auth
+endpoints available to SDKs and scripts.
 
 Current database architecture includes:
 

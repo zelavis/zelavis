@@ -38,6 +38,25 @@ Project lifecycle endpoints are available under
 create, list, start, and stop projects, and project dashboard API traffic is
 proxied to the selected project's runtime.
 
+The local Project Gateway also supplies the scoped Platform principal used by
+trusted dashboard administration routes. Direct calls to a child runtime do
+not inherit Platform authority, and Auth account, credential, and session
+administration requires the `project.users.manage` permission.
+
+Fresh Platform installations require an explicit one-time bootstrap token
+before the first owner can be created. Configure it with
+`ZELAVIS_BOOTSTRAP_TOKEN` or `new Zelavis({ bootstrap: { token } })`, and install
+an auth plugin that supports credential enrollment. The dashboard then uses
+the normal `/zelavis/api/v1/auth/*` endpoints for bootstrap, login, session
+rotation, and logout; `/runtime/access` never fabricates a demo owner.
+
+SQLite-compatible App drivers serialize top-level write transactions and
+enforce unique event-stream revisions. Raw `sql.execute()` accepts one
+statement and refuses direct or trigger-mediated mutation of registered
+collection tables, including mutations hidden behind comments or CTEs. Shared bundle storage
+validates every scope component before composing its key so a service bundle
+cannot traverse into another Project's namespace.
+
 The Platform OS also owns Assistant threads. `createAssistantManager(...)`
 stores project-scoped conversations in the System Store and delegates replies
 to a `ZelavisAssistantResponder`. The default `zelavis-local-router` provides a
@@ -158,7 +177,6 @@ const ecommerce = defineService({
   name: "@zelavis/ecommerce",
   kind: "plugin",
   capabilities: ["api:routes", "dashboard:menu"],
-  childServices: ["@zelavis/ecommerce-stripe", "@zelavis/ecommerce-paypal"],
   menu: {
     title: "Ecommerce",
     path: "/commerce",

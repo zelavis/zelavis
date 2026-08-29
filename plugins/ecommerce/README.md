@@ -37,10 +37,10 @@ import { defineService } from "zelavis/service";
 - `createEcommerce(...)`
   - the low-level commerce API for direct programmatic use
   - defaults to in-memory repositories unless you provide your own repositories
-- child payment provider services
+- payment provider plugins
   - use the normal Zelavis `defineService(...)` contract
-  - declare `extends: "@zelavis/ecommerce"`
-  - receive the ecommerce API in setup when the parent ecommerce service activates
+  - declare `provider:payments`
+  - expose an explicit registration object consumed through the Ecommerce API
 
 ## Layering
 
@@ -55,34 +55,35 @@ The top-level ecommerce service uses it:
 ```ts
 export const zelavisEcommerceService = defineService({
   name: "@zelavis/ecommerce",
-  childServices: ["@zelavis/ecommerce-stripe", "@zelavis/ecommerce-paypal"],
 });
 ```
 
-Payment providers use the same builder, but declare that they extend ecommerce:
+Payment providers use the same builder and declare their capability:
 
 ```ts
 export const stripeService = defineService({
   name: "@zelavis/ecommerce-stripe",
-  extends: "@zelavis/ecommerce",
+  kind: "provider",
+  capabilities: ["provider:payments"],
   marketplace: {
     title: "Stripe",
     categories: ["payments"],
   },
-  setup(api) {
-    api.payments.registerProvider("@zelavis/ecommerce-stripe", provider);
+  service: {
+    name: "stripe",
+    register(api) {
+      api.payments.registerProvider("stripe", provider);
+    },
   },
 });
 ```
 
-That means `@zelavis/ecommerce` is both:
+That means `@zelavis/ecommerce` remains:
 
 - the official Zelavis ecommerce service package
-- the home for its child provider service system
+- the owner of the public payment-provider registration contract
 
-The provider layer extends the ecommerce domain API. It is installed through the same service registry, but it activates through its parent service rather than as an independent top-level Extensions service.
-
-The official ecommerce package accepts Stripe and PayPal through `childServices`. Other payment providers should be added to that allow-list by the parent service package before they activate.
+The provider layer integrates through the Ecommerce API. Installed providers are discovered by `provider:payments`; adding a compatible provider does not require editing an allow-list in Ecommerce.
 
 ## Persistence
 

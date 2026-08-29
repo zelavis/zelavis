@@ -34,27 +34,25 @@ services/example/
 - `index.ts`
   - re-exports the package surface
 
-## Child services
+## Provider plugins
 
-An official service package may expose child services.
+An official service package may define a public provider registration contract.
 
 `@zelavis/ecommerce` is the current example:
 
 - top-level Zelavis service:
   - `zelavisEcommerceService`
-- child payment provider services:
+- payment provider plugins:
   - use the normal `defineService(...)` builder
-  - declare `extends: "@zelavis/ecommerce"`
+  - declare `provider:payments`
 
-That child service metadata is for extending the ecommerce domain itself, such as payment providers. A child service can be installed through the same registry, but it activates through its parent service instead of appearing as an independent top-level Extensions service.
-
-Parent services declare accepted children with `childServices`. `zelavis-ecommerce` currently allows the official Stripe and PayPal child services. Child service `marketplace.categories` are interpreted inside the parent service's child marketplace.
+The Ecommerce service discovers installed providers by capability and invokes their explicit registration object. It does not receive hidden children or maintain a package-name allow-list.
 
 ## Rule of thumb
 
 - use `defineService(...)` for top-level Zelavis services
-- use `defineService(...)` with `extends` for child services
-- let parent services own child-service allow-lists until the marketplace review model is mature
+- use provider capabilities plus explicit public registration contracts
+- let Marketplace trust and permissions decide which plugins may install
 - keep official service source in this repo, and keep community service source in author-owned repositories
 - describe community services through Marketplace catalog metadata instead of importing their source into the monorepo
 

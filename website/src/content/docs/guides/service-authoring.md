@@ -24,7 +24,7 @@ Examples:
 
 - [plugins/ecommerce/src/ecommerce-service.ts](/Users/ivanjeremicx/Projects/zelavis/plugins/ecommerce/src/ecommerce-service.ts)
 - [plugins/ecommerce/plugins/stripe/src/stripe-service.ts](/Users/ivanjeremicx/Projects/zelavis/plugins/ecommerce/plugins/stripe/src/stripe-service.ts)
-- [packages/zelavis/plugins/email-password/src/email-password-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/zelavis/plugins/email-password/src/email-password-service.ts)
+- `plugins/auth-email-password/src/email-password-service.ts`
 
 Avoid hiding the real definition under paths like:
 
@@ -56,7 +56,7 @@ That gives package authors one obvious place to open first, while keeping import
 
 ## Rule 3: Use `defineService(...)` for service definitions
 
-Core services, runtime services, marketplace services, and child services use the same `defineService(...)` builder.
+Core services, runtime services, marketplace services, and provider plugins use the same `defineService(...)` builder.
 
 The package-level definition file should expose a factory that returns the service shape:
 
@@ -68,7 +68,6 @@ export function defineAuthService(auth: AuthApi): AuthServiceDefinition {
   return defineService({
     name: "@zelavis/auth",
     kind: "plugin",
-    childServices: ["@zelavis/auth-email-password"],
     basePath: "/auth",
     api: {
       v1: [
@@ -95,11 +94,11 @@ It is the package's concrete service-definition entrypoint:
 - sets the service name
 - sets base path and menu metadata
 - defines routes
-- composes nested services when needed
+- contributes explicit capabilities when needed
 
-## Rule 4: Use `defineService(...)` for top-level and child services
+## Rule 4: Use ordinary capability plugins
 
-For runtime, marketplace, and child services, use the high-level Zelavis `defineService(...)`.
+For runtime, marketplace, and provider services, use the high-level Zelavis `defineService(...)`.
 
 A package-level service definition file should look like this:
 
@@ -108,15 +107,19 @@ import { defineService } from "zelavis/service";
 import type { EcommerceApi } from "@zelavis/ecommerce";
 
 export function stripeService() {
-  return defineService<EcommerceApi>({
+  return defineService({
     name: "@zelavis/ecommerce-stripe",
-    extends: "@zelavis/ecommerce",
+    kind: "provider",
+    capabilities: ["provider:payments"],
     marketplace: {
       title: "Stripe",
       categories: ["payments"],
     },
-    setup(api) {
-      // register provider behavior
+    service: {
+      name: "stripe",
+      register(api: EcommerceApi) {
+        // register provider behavior through the public Ecommerce API
+      },
     },
   });
 }
@@ -124,7 +127,7 @@ export function stripeService() {
 
 The named file should show the real service options and setup behavior immediately.
 
-Official marketplace/runtime services use the same builder without `extends`:
+Official marketplace/runtime services use the same builder:
 
 ```ts
 import { defineService, ZELAVIS_SERVICE_V1 } from "zelavis";
@@ -132,14 +135,13 @@ import { defineService, ZELAVIS_SERVICE_V1 } from "zelavis";
 export const zelavisEcommerceService = defineService({
   name: "@zelavis/ecommerce",
   contractVersion: ZELAVIS_SERVICE_V1,
-  childServices: ["@zelavis/ecommerce-stripe", "@zelavis/ecommerce-paypal"],
   setup(context) {
     // register runtime-mounted services and service metadata
   },
 });
 ```
 
-Child services declare `extends` metadata. They are installed through the same registry, but the parent service decides how to consume them and must allow them through `childServices`. Zelavis does not run child services as independent top-level Extensions services.
+Provider plugins declare a capability such as `provider:auth` or `provider:payments` and expose the corresponding public registration contract as their service value. The owning domain discovers installed providers by capability. There is no hidden parent/child service graph or parent-maintained name allow-list.
 
 ## Rule 5: Make capabilities endpoint-backed
 
@@ -248,7 +250,9 @@ Important details:
   `extensions`, and `settings` render in project dashboards. Runtime-installed
   services are forced under Extensions.
 - `setup(context)` may register runtime services through `context.addService(...)`, `context.addServices(...)`, or by returning `{ runtimeServices }`.
-- Child services use `extends` and are passed to their parent service; they do not get their own Extensions menu area.
+- Provider plugins are ordinary installed services. They declare a namespaced
+  provider capability and expose that domain's explicit registration contract;
+  the owning auth, payments, or future domain discovers and registers them.
 
 Example fixed action plus dynamic section:
 
