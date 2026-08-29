@@ -3,6 +3,10 @@ name: CI
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   PNPM_CONFIG_MINIMUM_RELEASE_AGE: "0"
+  # Ephemeral CI-only credentials for the dashboard e2e Platform owner.
+  ZELAVIS_BOOTSTRAP_TOKEN: "ci-e2e-bootstrap-token-0123456789"
+  ZELAVIS_E2E_OWNER_EMAIL: "ci@example.com"
+  ZELAVIS_E2E_OWNER_PASSWORD: "ci-e2e-Passw0rd!"
 
 on:
   push:
@@ -61,7 +65,9 @@ jobs:
         run: pnpm --filter @zelavis/ui exec playwright install --with-deps chromium
 
       - name: Build runtime packages for e2e
-        run: pnpm --filter zelavis build:runtime
+        run: |
+          pnpm --filter zelavis build:runtime
+          pnpm --filter @zelavis/app-auth-email-password build
 
       - name: Start example runtime server
         run: |
@@ -77,11 +83,23 @@ jobs:
           cat /tmp/zelavis-runtime.log
           exit 1
 
+      # Privileged control-plane endpoints require a real principal, so the
+      # e2e run claims the first owner and uses its session.
+      - name: Bootstrap the Platform owner
+        run: |
+          curl --fail --show-error --silent \
+            --request POST \
+            --header "content-type: application/json" \
+            --data "{\"bootstrapToken\":\"$ZELAVIS_BOOTSTRAP_TOKEN\",\"provider\":\"email-password\",\"account\":{\"email\":\"ci@example.com\",\"displayName\":\"Zelavis E2E\"},\"credential\":{\"identifier\":\"ci@example.com\",\"password\":\"$ZELAVIS_E2E_OWNER_PASSWORD\"}}" \
+            http://127.0.0.1:3000/zelavis/api/v1/auth/bootstrap > /tmp/zelavis-owner.json
+          echo "ZELAVIS_E2E_SESSION_TOKEN=$(node -p "require('/tmp/zelavis-owner.json').session.token")" >> "$GITHUB_ENV"
+
       - name: Create isolated dashboard test project
         run: |
           curl --fail --show-error \
             --request POST \
             --header "content-type: application/json" \
+            --header "authorization: Bearer $ZELAVIS_E2E_SESSION_TOKEN" \
             --data '{"id":"dashboard-e2e","name":"Zelavis Runtime","start":true}' \
             http://127.0.0.1:3000/zelavis/api/v1/runtime/projects
 

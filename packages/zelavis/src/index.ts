@@ -1979,6 +1979,19 @@ async function loadStoredServiceRegistryModules(
   return resolvedEntries;
 }
 
+/**
+ * Resolves configured catalog entries.
+ *
+ * A specifier is authoritative when it resolves: callers such as the project
+ * runner deliberately pass a metadata-only placeholder alongside the specifier
+ * and rely on the loaded module for the real menu, setup, and runtime services.
+ *
+ * When the specifier cannot be resolved from this package the entry's own
+ * service instance is used instead. A host application registering a plugin it
+ * depends on (`services.catalog`) names that package by specifier for registry
+ * identity, but the package is installed for the application, not for
+ * `zelavis`, so importing it from here would fail.
+ */
 async function loadConfiguredServiceRegistryModules(
   entries: readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[],
   importer?: ZelavisServiceLoadOptions["importer"],
@@ -1991,17 +2004,26 @@ async function loadConfiguredServiceRegistryModules(
       continue;
     }
 
-    const [loaded] = await loadServiceRegistry<ZelavisServiceSetupContext>(
-      [
-        {
-          specifier: entry.specifier,
-          status: entry.status,
-          source: entry.source,
-          ...(entry.order !== undefined ? { order: entry.order } : {}),
-        },
-      ],
-      { importer },
-    );
+    let loaded: Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>> | undefined;
+    try {
+      [loaded] = await loadServiceRegistry<ZelavisServiceSetupContext>(
+        [
+          {
+            specifier: entry.specifier,
+            status: entry.status,
+            source: entry.source,
+            ...(entry.order !== undefined ? { order: entry.order } : {}),
+          },
+        ],
+        { importer },
+      );
+    } catch {
+      // The specifier is not resolvable from `zelavis`; the caller supplied the
+      // live service instance, so register that instead.
+      resolved.push(...createServiceRegistry([entry]));
+      continue;
+    }
+
     resolved.push(
       entry.service.scope === undefined
         ? loaded
