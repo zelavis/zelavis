@@ -12,7 +12,11 @@ silently dropped. Login returned 200 and the dashboard stayed unauthenticated.
 The dev proxy now forwards the runtime's own origin, which is what the browser
 actually sees.
 
-`returnTo` is now router-relative. It was built from the browser pathname,
-which includes the router basename, and then resolved through `navigate()`,
-which prepends the basename again — sending a mounted dashboard to
-`/zelavis/zelavis/` after sign-in.
+`returnTo` is now router-relative and sanitized where it is consumed. It was
+built from the browser pathname, which includes the router basename, then
+resolved through `navigate()`, which prepends the basename again — sending a
+mounted dashboard to `/zelavis/zelavis/` after sign-in, and accumulating one
+extra level per failed attempt. Every leading repetition of the basename is now
+stripped, so an already-nested URL collapses back to a usable route instead of
+growing. `returnTo` is untrusted URL input, so protocol-relative and absolute
+destinations are rejected rather than followed.
