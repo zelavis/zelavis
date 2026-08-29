@@ -13,7 +13,6 @@ function createMatch(id: string, handle?: DashboardRouteHandle): UIMatch {
     id,
     pathname: "/zelavis",
     params: {},
-    data: undefined,
     loaderData: undefined,
     handle,
   };
