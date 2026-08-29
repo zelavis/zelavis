@@ -1,6 +1,8 @@
-import type { ZelavisProjectDriverCapabilities } from "./core/index.js";
 import type {
-  ZelavisServiceDefinition,
+  ZelavisProjectDriverCapabilities,
+  ZelavisRuntimeService,
+} from "./core/index.js";
+import type {
   ZelavisServiceRegistryEntry,
   ZelavisServiceSetupContext,
 } from "./service.js";
@@ -323,7 +325,7 @@ function projectKindFromAppService(serviceName: string): ZelavisProjectKind {
 }
 
 function appTitleFromService(
-  service: Readonly<ZelavisServiceDefinition<ZelavisServiceSetupContext>>,
+  service: Readonly<ZelavisRuntimeService<any> & { marketplace?: { title?: string } }>,
 ) {
   return service.marketplace?.title ?? service.menu?.title ?? service.name;
 }

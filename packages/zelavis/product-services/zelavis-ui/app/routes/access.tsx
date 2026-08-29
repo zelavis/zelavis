@@ -1,4 +1,4 @@
-import { Link, useRouteLoaderData } from "react-router";
+import { useRouteLoaderData } from "react-router";
 import {
   Fingerprint,
   KeyRound,
@@ -13,7 +13,6 @@ import {
   StatCard,
   StatusBadge,
 } from "#/components/DashboardPage";
-import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import type { RuntimeDashboardAccess } from "#/lib/runtime-api";
 import type { clientLoader as rootClientLoader } from "../root";
@@ -90,27 +89,11 @@ export default function AccessRoute() {
       </section>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between gap-3">
+        <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <ShieldCheck className="size-4" />
-            Demo access modes
+            Authenticated access
           </CardTitle>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              nativeButton={false}
-              render={<Link to="/server/access?as=owner" />}
-            >
-              Owner
-            </Button>
-            <Button
-              variant="outline"
-              nativeButton={false}
-              render={<Link to="/server/access?as=customer" />}
-            >
-              Customer
-            </Button>
-          </div>
         </CardHeader>
         <CardContent className="p-0">
           <DataRow
@@ -180,8 +163,8 @@ export default function AccessRoute() {
       </section>
 
       <ResourceNotice
-        title="First foundation, not final user management"
-        description="This screen proves the core principal and grant model in the dashboard. Real user creation, role editing, customer accounts, reseller boundaries, and Hosting Provider billing links should come next as endpoint-backed capabilities."
+        title="One access model"
+        description="This screen reflects the principal authenticated by the Platform. User creation, role editing, customer accounts, reseller boundaries, and Hosting Provider billing links remain endpoint-backed workflows to add next."
       />
     </section>
   );

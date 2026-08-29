@@ -1,8 +1,11 @@
 import { join, resolve } from "node:path";
 import {
   defineAdapter,
+  setServiceManifestResolver,
   type ZelavisOptions,
   type ZelavisResolvedPlatformOptions,
+  type ZelavisServiceRegistryEntry,
+  type ZelavisServiceSetupContext,
 } from "../index.js";
 import {
   createShardedDatabaseDriver,
@@ -14,6 +17,7 @@ import {
   normalizeDataDirectory,
   createLocalRuntimeServicePackageInstaller,
   createLocalRuntimeServiceImporter,
+  createLocalRuntimeServiceManifestResolver,
   type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
 import { officialProjectRecipes } from "../project-recipes.js";
@@ -36,7 +40,9 @@ export interface BunAdapterKeyValueOptions {
   kind?: "memory";
 }
 
-export type BunAdapterServiceOptions = LocalRuntimeServiceOptions;
+export type BunAdapterServiceOptions = LocalRuntimeServiceOptions & {
+  catalog?: readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[];
+};
 
 export interface BunAdapterSystemStoreOptions {
   filename?: string;
@@ -53,6 +59,10 @@ export interface BunAdapterOptions {
 }
 
 export function bunAdapter(options: BunAdapterOptions = {}) {
+  // The runtime core does not scan filesystems; the Bun host supplies the
+  // manifest resolver that reads a service's adjacent package.json.
+  setServiceManifestResolver(createLocalRuntimeServiceManifestResolver());
+
   return defineAdapter({
     name: "bun",
     async resolve(
@@ -156,7 +166,12 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
           options.services === false
             ? undefined
             : {
-                catalog: isProjectRuntime ? [] : officialProjectRecipes,
+                catalog: isProjectRuntime
+                  ? []
+                  : [
+                      ...officialProjectRecipes,
+                      ...(serviceOptions?.catalog ?? []),
+                    ],
                 importer: createLocalRuntimeServiceImporter({
                   directory: serviceDirectory,
                   ...(serviceOptions ?? {}),

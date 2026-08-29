@@ -83,6 +83,49 @@ test("bun:sqlite driver supports persistent tenant-aware document CRUD", async (
   }
 });
 
+test("bun:sqlite serializes competing writes to one event stream", async () => {
+  const temp = createTempDatabasePath();
+  try {
+    const database = await createBunSqliteDatabase({ filename: temp.filename });
+    const tenant = database.forTenant("default");
+    await tenant.documents.createCollection({ name: "products" });
+    await tenant.documents.insert({
+      collection: "products",
+      id: "product_1",
+      data: { name: "Initial" },
+    });
+    const results = await Promise.allSettled([
+      tenant.events.append({
+        collection: "products",
+        documentId: "product_1",
+        type: "document.upserted",
+        expectedRevision: 1,
+        payload: { data: { name: "First" } },
+      }),
+      tenant.events.append({
+        collection: "products",
+        documentId: "product_1",
+        type: "document.upserted",
+        expectedRevision: 1,
+        payload: { data: { name: "Second" } },
+      }),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected");
+    expect(rejected?.status).toBe("rejected");
+    if (rejected?.status === "rejected") {
+      expect(rejected.reason).toBeInstanceOf(DatabaseRevisionMismatchError);
+    }
+    const events = await tenant.events.read({
+      collection: "products",
+      documentId: "product_1",
+    });
+    expect(events.map((event) => event.revision)).toEqual([1, 2]);
+  } finally {
+    rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
 test("Bun project adapter recovers a legacy App database into Tenant shards", async () => {
   const directory = mkdtempSync(join(tmpdir(), "zelavis-bun-legacy-db-"));
 

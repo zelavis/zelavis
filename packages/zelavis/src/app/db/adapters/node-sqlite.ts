@@ -76,7 +76,7 @@ function mapRow(row: Record<string, unknown>): Record<string, unknown> {
  * never opens nested transactions.
  */
 function createGateway(database: BetterSqlite3Database): SqliteGateway {
-  let inTransaction = false;
+  let transactionTail: Promise<void> = Promise.resolve();
 
   const gateway: SqliteGateway = {
     async all<T = Record<string, unknown>>(
@@ -121,27 +121,26 @@ function createGateway(database: BetterSqlite3Database): SqliteGateway {
     },
 
     async transaction<T>(fn: (tx: SqliteGateway) => Promise<T>): Promise<T> {
-      if (inTransaction) {
-        // Already inside an outer transaction — just run the body sequentially.
-        return fn(gateway);
-      }
-
-      inTransaction = true;
-      database.exec("BEGIN");
-      try {
-        const result = await fn(gateway);
-        database.exec("COMMIT");
-        return result;
-      } catch (error) {
+      const run = transactionTail.then(async () => {
+        database.exec("BEGIN");
         try {
-          database.exec("ROLLBACK");
-        } catch {
-          // Ignore rollback failures; surface the original error.
+          const result = await fn(gateway);
+          database.exec("COMMIT");
+          return result;
+        } catch (error) {
+          try {
+            database.exec("ROLLBACK");
+          } catch {
+            // Ignore rollback failures; surface the original error.
+          }
+          throw error;
         }
-        throw error;
-      } finally {
-        inTransaction = false;
-      }
+      });
+      transactionTail = run.then(
+        () => undefined,
+        () => undefined,
+      );
+      return run;
     },
   };
 

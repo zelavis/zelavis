@@ -1,18 +1,18 @@
 ---
 title: Official Service Packages
 ---
-Official Zelavis service packages live under `services/*`.
+Official Zelavis service packages live under `plugins/*`.
 
-These packages are first-party marketplace/runtime services written by the Zelavis team. They use the top-level `defineService(...)` contract from `zelavis/service`.
+These packages are first-party marketplace/runtime services written by the Zelavis team. They are configured via modern `package.json` manifests (`"type": "module"`, `"exports"`, and `"zelavis": { "kind": "plugin" }`) and use the official Zelavis SDK or export `ZelavisRuntimeService` instances.
 
 ## What makes them different
 
-An official service package is a top-level Zelavis service:
+An official service package is a top-level Zelavis plugin:
 
 - installable through the Zelavis service system
 - visible in the dashboard/service registry
 - able to mount runtime services and API routes
-- packaged as a normal monorepo package
+- packaged as a normal modern ESM package
 
 Example:
 
@@ -20,41 +20,43 @@ Example:
 
 ## Recommended structure
 
-Use one obvious named file for the top-level service definition:
+Use standard `package.json` manifests and put definitions in named files under `src/`:
 
 ```text
-services/example/
+plugins/example/
+  package.json
   src/
     index.ts
     zelavis-example-service.ts
 ```
 
+- `package.json`
+  - contains `"type": "module"`, `"exports"`, and `"zelavis": { "kind": "plugin" }`
 - `zelavis-example-service.ts`
-  - contains the real `defineService(...)` call
+  - contains the runtime service definition or uses `import { zelavis } from "zelavis/sdk"`
 - `index.ts`
   - re-exports the package surface
 
-## Child services
+## Provider plugins
 
-An official service package may expose child services.
+An official service package may define a public provider registration contract.
 
 `@zelavis/ecommerce` is the current example:
 
-- top-level Zelavis service:
-  - `zelavisEcommerceService`
-- child payment provider services:
-  - use the normal `defineService(...)` builder
-  - declare `extends: "@zelavis/ecommerce"`
+- top-level Zelavis plugin:
+  - `ecommercePlugin`
+- payment provider plugins:
+  - declared as provider plugins (`"zelavis": { "kind": "plugin" }`)
+  - declare `provider:payments` capability
 
-That child service metadata is for extending the ecommerce domain itself, such as payment providers. A child service can be installed through the same registry, but it activates through its parent service instead of appearing as an independent top-level Extensions service.
-
-Parent services declare accepted children with `childServices`. `zelavis-ecommerce` currently allows the official Stripe and PayPal child services. Child service `marketplace.categories` are interpreted inside the parent service's child marketplace.
+The Ecommerce service discovers installed providers by capability and invokes their explicit registration object. It does not receive hidden children or maintain a package-name allow-list.
 
 ## Rule of thumb
 
-- use `defineService(...)` for top-level Zelavis services
-- use `defineService(...)` with `extends` for child services
-- let parent services own child-service allow-lists until the marketplace review model is mature
+- configure plugins in `package.json` (`"zelavis": { "kind": "plugin" }`)
+- use the official SDK (`import { zelavis } from "zelavis/sdk"`) for plugin code
+- use provider capabilities plus explicit public registration contracts
+- let Marketplace trust and permissions decide which plugins may install
 - keep official service source in this repo, and keep community service source in author-owned repositories
 - describe community services through Marketplace catalog metadata instead of importing their source into the monorepo
 

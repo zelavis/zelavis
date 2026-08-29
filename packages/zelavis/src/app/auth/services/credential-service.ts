@@ -31,15 +31,23 @@ export class CredentialService {
       );
     }
 
-    if (!input.identifier) {
+    const identifier = input.provider === "email-password"
+      ? input.identifier?.trim().toLowerCase()
+      : input.identifier?.trim();
+    if (!identifier) {
       throw new AuthValidationError(
         "Credential creation requires an identifier.",
       );
     }
 
+    if (await this.repository.findByProviderIdentifier(input.provider, identifier)) {
+      throw new AuthValidationError("That provider identifier is already registered.");
+    }
+
     const now = new Date();
     return this.repository.create({
       ...input,
+      identifier,
       createdAt: now,
       updatedAt: now,
     });
@@ -47,6 +55,20 @@ export class CredentialService {
 
   async findByProviderIdentifier(provider: string, identifier: string): Promise<Credential | null> {
     return this.repository.findByProviderIdentifier(provider, identifier);
+  }
+
+  async findById(id: string): Promise<Credential | null> {
+    return this.repository.findById(id);
+  }
+
+  async update(credential: Credential): Promise<Credential> {
+    if (!credential.id || !credential.accountId || !credential.provider || !credential.identifier) {
+      throw new AuthValidationError("Credential updates require a complete credential.");
+    }
+    return this.repository.update({
+      ...credential,
+      updatedAt: new Date(),
+    });
   }
 
   async listByAccountId(accountId: string): Promise<Credential[]> {

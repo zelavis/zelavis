@@ -394,6 +394,7 @@ export function createInMemoryDatabaseDriver(): DatabaseDriver {
       meta: {
         name: event.collection,
         tenantId: event.tenantId,
+        surface: event.payload.surface,
         createdAt: new Date(event.timestamp),
         documentCount: 0,
         metadata: event.payload.metadata
@@ -564,6 +565,69 @@ export function createInMemoryDatabaseDriver(): DatabaseDriver {
         );
       }
 
+      return cloneEvent(event);
+    },
+
+    async restore<TPayload extends DatabaseEventPayload>(input: TenantScoped<
+      DatabaseAppendEventInput<TPayload>
+    > & {
+      eventId: string;
+      revision: number;
+      timestamp: string;
+    }) {
+      const existing = events.find((event) => event.eventId === input.eventId) as
+        | DatabaseEvent<TPayload>
+        | undefined;
+      if (existing) {
+        if (
+          existing.tenantId === input.tenantId &&
+          existing.nodeId === (input.nodeId ?? "local") &&
+          existing.revision === input.revision &&
+          existing.timestamp === input.timestamp &&
+          existing.idempotencyKey === input.idempotencyKey &&
+          matchesIdempotentAppend(existing, {
+            ...input,
+            expectedRevision: input.revision - 1,
+          })
+        ) {
+          return cloneEvent(existing);
+        }
+        throw new DatabaseConflictError(
+          `Restored event "${input.eventId}" already exists with different data.`,
+        );
+      }
+
+      const appendInput = {
+        ...input,
+        expectedRevision: input.revision - 1,
+      };
+      const preflight = preflightAppend(appendInput);
+      if (!preflight.ok) throw toAppendError(preflight.error);
+
+      const event: DatabaseEvent<TPayload> = {
+        cursor: encodeDatabaseEventCursor(++sequence),
+        eventId: input.eventId,
+        idempotencyKey: input.idempotencyKey,
+        nodeId: input.nodeId ?? "local",
+        tenantId: input.tenantId,
+        collection: input.collection,
+        documentId: input.documentId,
+        type: input.type,
+        revision: input.revision,
+        timestamp: input.timestamp,
+        schemaVersion: input.schemaVersion ?? 1,
+        payload: JSON.parse(JSON.stringify(input.payload)) as TPayload,
+      };
+
+      applyEvent(event);
+      revisions.set(preflight.value.revisionKey, event.revision);
+      events.push(event);
+      if (input.idempotencyKey) {
+        eventsByIdempotencyKey.set(
+          idempotencyKey(input.tenantId, input.idempotencyKey),
+          event,
+        );
+      }
       return cloneEvent(event);
     },
 

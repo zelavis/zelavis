@@ -5,9 +5,12 @@ import {
 } from "../app/db/topology/index.js";
 import {
   defineAdapter,
+  setServiceManifestResolver,
   type ZelavisOptions,
   type ZelavisServicePackageInstaller,
   type ZelavisResolvedPlatformOptions,
+  type ZelavisServiceRegistryEntry,
+  type ZelavisServiceSetupContext,
 } from "../index.js";
 import { createLocalSqliteSystemStore } from "./_sqlite-system-store.js";
 import { resolveLocalDatabaseTopology } from "./_database-topology-store.js";
@@ -23,10 +26,15 @@ import {
   normalizeDataDirectory,
   createLocalRuntimeServicePackageInstaller,
   createLocalRuntimeServiceImporter,
+  createLocalRuntimeServiceManifestResolver,
   type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
 import { officialProjectRecipes } from "../project-recipes.js";
 import { migrateLegacyAppDatabase } from "./_legacy-app-database-migration.js";
+export {
+  createNodeFileArtifactStore,
+  type NodeFileArtifactStoreOptions,
+} from "./_node-artifact-store.js";
 
 export interface NodeAdapterDatabaseOptions {
   directory?: string;
@@ -38,7 +46,9 @@ export interface NodeAdapterDatabaseOptions {
   pragma?: readonly string[];
 }
 
-export type NodeAdapterServiceOptions = LocalRuntimeServiceOptions;
+export type NodeAdapterServiceOptions = LocalRuntimeServiceOptions & {
+  catalog?: readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[];
+};
 
 export interface NodeAdapterSystemStoreOptions {
   filename?: string;
@@ -72,6 +82,10 @@ export const createNodeServiceImporter = createLocalRuntimeServiceImporter;
 
 export function nodeAdapter(options: NodeAdapterOptions = {}) {
   let projectRuntime: ReturnType<typeof createNodeProcessProjectRuntime> | undefined;
+
+  // The runtime core does not scan filesystems; the Node host supplies the
+  // manifest resolver that reads a service's adjacent package.json.
+  setServiceManifestResolver(createLocalRuntimeServiceManifestResolver());
 
   return defineAdapter({
     name: "node",
@@ -199,7 +213,12 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           options.services === false
             ? undefined
             : {
-                catalog: isProjectRuntime ? [] : officialProjectRecipes,
+                catalog: isProjectRuntime
+                  ? []
+                  : [
+                      ...officialProjectRecipes,
+                      ...(serviceOptions?.catalog ?? []),
+                    ],
                 importer: createLocalRuntimeServiceImporter({
                   directory: serviceDirectory,
                   ...(serviceOptions ?? {}),

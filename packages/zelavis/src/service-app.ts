@@ -22,7 +22,6 @@ import {
 import type {
   ZelavisServiceAppDefinition,
   ZelavisServiceAppShellDefinition,
-  ZelavisServiceDefinition,
 } from "./service.js";
 import type {
   ZelavisRouteResponse,
@@ -362,7 +361,12 @@ export interface SynthesizeServiceAppOptions {
    * The service whose `app` field should be turned into a service. If the
    * service has no `app`, returns `undefined`.
    */
-  service: Readonly<ZelavisServiceDefinition<unknown>>;
+  service: Readonly<
+    ZelavisRuntimeService<unknown> & {
+      scope?: string;
+      app?: ZelavisServiceAppDefinition;
+    }
+  >;
   /** Bundle store the synthesized handlers will read from. */
   bundleStore: BundleStore;
   /**
@@ -500,7 +504,12 @@ export async function synthesizeServiceAppService(
  * whatever mount they declared.
  */
 export function resolveEffectiveMount(
-  service: Readonly<ZelavisServiceDefinition<unknown>>,
+  service: Readonly<
+    ZelavisRuntimeService<unknown> & {
+      scope?: string;
+      app?: ZelavisServiceAppDefinition;
+    }
+  >,
 ): string {
   const declared = service.app?.mount ?? DEFAULT_MOUNT;
   if (service.scope === "system") {

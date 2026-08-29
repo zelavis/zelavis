@@ -8,7 +8,7 @@ import type { EcommerceService } from "../ecommerce-service.js";
 
 export interface EcommerceContext {
   config: Record<string, unknown>;
-  childServices: readonly EcommerceService[];
+  providers: readonly EcommerceService[];
 }
 
 export interface EcommerceApi {

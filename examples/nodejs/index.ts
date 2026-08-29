@@ -1,6 +1,7 @@
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
 import { closeNodeServer, createNodeServer } from "zelavis/runtimes/node";
+import { emailPasswordService } from "@zelavis/app-auth-email-password";
 
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
@@ -8,6 +9,17 @@ async function main(): Promise<void> {
   const zv = new Zelavis({
     adapter: nodeAdapter({
       dataDirectory: process.env.ZELAVIS_DATA_DIR,
+      services: {
+        catalog: [
+          {
+            service: emailPasswordService(),
+            specifier: "@zelavis/app-auth-email-password",
+            status: "installed",
+            source: "official",
+            order: 10,
+          },
+        ],
+      },
     }),
     onError: ({ error }) => ({
       status: 400,

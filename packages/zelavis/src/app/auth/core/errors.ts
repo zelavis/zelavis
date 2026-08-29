@@ -18,3 +18,20 @@ export class AuthNotFoundError extends AuthDomainError {
     this.name = "AuthNotFoundError";
   }
 }
+
+export class AuthInvalidCredentialsError extends AuthDomainError {
+  constructor() {
+    super("Invalid credentials.");
+    this.name = "AuthInvalidCredentialsError";
+  }
+}
+
+export class AuthRateLimitError extends AuthDomainError {
+  readonly retryAfterSeconds: number;
+
+  constructor(retryAfterSeconds: number) {
+    super("Too many authentication attempts. Try again later.");
+    this.name = "AuthRateLimitError";
+    this.retryAfterSeconds = Math.max(1, Math.ceil(retryAfterSeconds));
+  }
+}

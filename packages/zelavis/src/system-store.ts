@@ -26,6 +26,27 @@ export interface ZelavisSystemStore {
     key: string,
     value: ZelavisSystemStoreValue,
   ): Promise<ZelavisSystemStoreRecord> | ZelavisSystemStoreRecord;
+  setIfAbsent(
+    namespace: string,
+    key: string,
+    value: ZelavisSystemStoreValue,
+  ):
+    | Promise<{ created: boolean; record: ZelavisSystemStoreRecord }>
+    | { created: boolean; record: ZelavisSystemStoreRecord };
+  compareAndSet(
+    namespace: string,
+    key: string,
+    expectedUpdatedAt: string,
+    value: ZelavisSystemStoreValue,
+  ):
+    | Promise<ZelavisSystemStoreRecord | undefined>
+    | ZelavisSystemStoreRecord
+    | undefined;
+  compareAndDelete(
+    namespace: string,
+    key: string,
+    expectedUpdatedAt: string,
+  ): Promise<boolean> | boolean;
   delete(namespace: string, key: string): Promise<boolean> | boolean;
   list(
     namespace: string,
@@ -55,6 +76,13 @@ function cloneRecord(record: ZelavisSystemStoreRecord): ZelavisSystemStoreRecord
   };
 }
 
+function timestampAfter(previous: string): string {
+  const previousTime = Date.parse(previous);
+  return new Date(
+    Math.max(Date.now(), Number.isFinite(previousTime) ? previousTime + 1 : 0),
+  ).toISOString();
+}
+
 export function createMemorySystemStore(): ZelavisSystemStore {
   const records = new Map<string, ZelavisSystemStoreRecord>();
   const recordId = (namespace: string, key: string) => `${namespace}\u0000${key}`;
@@ -72,14 +100,55 @@ export function createMemorySystemStore(): ZelavisSystemStore {
     set(namespace, key, value) {
       const normalizedNamespace = normalizePart(namespace, "namespace");
       const normalizedKey = normalizePart(key, "key");
+      const existing = records.get(recordId(normalizedNamespace, normalizedKey));
+      const record: ZelavisSystemStoreRecord = {
+        namespace: normalizedNamespace,
+        key: normalizedKey,
+        value: cloneValue(value),
+        updatedAt: existing
+          ? timestampAfter(existing.updatedAt)
+          : new Date().toISOString(),
+      };
+      records.set(recordId(normalizedNamespace, normalizedKey), record);
+      return cloneRecord(record);
+    },
+    setIfAbsent(namespace, key, value) {
+      const normalizedNamespace = normalizePart(namespace, "namespace");
+      const normalizedKey = normalizePart(key, "key");
+      const id = recordId(normalizedNamespace, normalizedKey);
+      const existing = records.get(id);
+      if (existing) return { created: false, record: cloneRecord(existing) };
       const record: ZelavisSystemStoreRecord = {
         namespace: normalizedNamespace,
         key: normalizedKey,
         value: cloneValue(value),
         updatedAt: new Date().toISOString(),
       };
-      records.set(recordId(normalizedNamespace, normalizedKey), record);
+      records.set(id, record);
+      return { created: true, record: cloneRecord(record) };
+    },
+    compareAndSet(namespace, key, expectedUpdatedAt, value) {
+      const normalizedNamespace = normalizePart(namespace, "namespace");
+      const normalizedKey = normalizePart(key, "key");
+      const id = recordId(normalizedNamespace, normalizedKey);
+      const existing = records.get(id);
+      if (!existing || existing.updatedAt !== expectedUpdatedAt) return undefined;
+      const record: ZelavisSystemStoreRecord = {
+        namespace: normalizedNamespace,
+        key: normalizedKey,
+        value: cloneValue(value),
+        updatedAt: timestampAfter(existing.updatedAt),
+      };
+      records.set(id, record);
       return cloneRecord(record);
+    },
+    compareAndDelete(namespace, key, expectedUpdatedAt) {
+      const normalizedNamespace = normalizePart(namespace, "namespace");
+      const normalizedKey = normalizePart(key, "key");
+      const id = recordId(normalizedNamespace, normalizedKey);
+      const existing = records.get(id);
+      if (!existing || existing.updatedAt !== expectedUpdatedAt) return false;
+      return records.delete(id);
     },
     delete(namespace, key) {
       return records.delete(

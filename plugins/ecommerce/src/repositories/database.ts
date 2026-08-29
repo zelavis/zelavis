@@ -112,8 +112,9 @@ class DatabaseRepositorySupport {
     if (!(await this.database.documents.collectionExists({ name }))) {
       await this.database.documents.createCollection({
         name,
+        surface: "database",
         metadata: {
-          surface: "ecommerce-service",
+          plugin: "@zelavis/ecommerce",
         },
       });
     }

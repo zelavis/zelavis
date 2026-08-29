@@ -1,6 +1,7 @@
 import {
   authService,
-  type AuthProviderService,
+  createDatabaseAuthRepositories,
+  type AuthMethodPlugin,
   type AuthServiceOptions,
 } from "./auth/index.js";
 import {
@@ -10,10 +11,10 @@ import {
   type DatabaseApi,
 } from "./db/index.js";
 import {
-  defineService,
   type ZelavisAnyRuntimeServiceInput,
-  type ZelavisServiceSetupContext,
+  type ZelavisRuntimeService,
 } from "../core/index.js";
+import type { ZelavisServiceSetupContext } from "../service.js";
 import {
   workloadsService,
   type WorkloadsServiceOptions,
@@ -35,13 +36,17 @@ function isDatabaseApi(value: unknown): value is DatabaseApi {
   );
 }
 
-function collectAuthProviderServices(
-  children: readonly Readonly<{ name: string; setup?: unknown }>[],
-): readonly AuthProviderService[] {
+function collectAuthMethodPlugins(
+  context: ZelavisServiceSetupContext,
+): readonly AuthMethodPlugin[] {
   return Object.freeze(
-    children
-      .filter((service) => typeof service.setup === "function")
-      .map((service) => service as unknown as AuthProviderService),
+    context.registry
+      .filter((entry) =>
+        entry.status === "installed" &&
+        entry.service.capabilities?.includes("provider:auth") &&
+        typeof (entry.service.service as AuthMethodPlugin | undefined)?.register === "function",
+      )
+      .map((entry) => entry.service.service as AuthMethodPlugin),
   );
 }
 
@@ -61,12 +66,13 @@ async function resolveDatabase(
 }
 
 export function zelavisAppService(options: ZelavisAppServiceOptions = {}) {
-  return defineService<ZelavisServiceSetupContext>({
+  return Object.freeze({
     name: "zelavis/app",
     version: ZELAVIS_VERSION,
     kind: "app",
-    capabilities: ["app:project", "dashboard:menu", "api:routes"],
+    capabilities: Object.freeze(["app:project", "dashboard:menu", "api:routes"]),
     service: Object.freeze({}),
+    api: {},
     marketplace: {
       title: "Zelavis App",
       summary:
@@ -79,13 +85,13 @@ export function zelavisAppService(options: ZelavisAppServiceOptions = {}) {
       path: "/",
       pageLabel: "Project",
       sectionLabel: "Overview",
-      surface: "root",
+      surface: "root" as const,
       access: {
         permissions: ["project.view"],
-        scope: { type: "project", projectIdParam: "projectId" },
+        scope: { type: "project" as const, projectIdParam: "projectId" },
       },
     },
-    async setup(context) {
+    async setup(context: ZelavisServiceSetupContext) {
       const runtimeServices: ZelavisAnyRuntimeServiceInput[] = [];
       const database = await resolveDatabase(context, options.database);
       runtimeServices.push(defineDatabaseService(database));
@@ -93,17 +99,23 @@ export function zelavisAppService(options: ZelavisAppServiceOptions = {}) {
       if (options.auth !== false) {
         const authOptions =
           options.auth === undefined ? {} : options.auth;
-        const childServices = context.children.map((service) => service.name);
         runtimeServices.push(
           authService({
             ...authOptions,
-            services: [
-              ...(authOptions.services ?? []),
-              ...collectAuthProviderServices(context.children),
-            ],
-            childServices: [
-              ...(authOptions.childServices ?? []),
-              ...childServices,
+            authOptions: {
+              ...(authOptions.authOptions ?? {}),
+              projectId:
+                typeof context.platform.metadata.projectId === "string"
+                  ? context.platform.metadata.projectId
+                  : authOptions.authOptions?.projectId,
+              repositories: {
+                ...createDatabaseAuthRepositories(database),
+                ...(authOptions.authOptions?.repositories ?? {}),
+              },
+            },
+            methods: [
+              ...(authOptions.methods ?? []),
+              ...collectAuthMethodPlugins(context),
             ],
           }),
         );

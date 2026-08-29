@@ -129,7 +129,7 @@
     "build:sdk:browser": "tsc -p tsconfig.sdk.browser.json",
     "build:sdk:node": "tsc -p tsconfig.sdk.node.json",
     "typecheck": "pnpm --filter @zelavis/ui build:plugin && pnpm --filter @zelavis/cli build && tsc -p tsconfig.json --noEmit",
-    "test": "pnpm run build && pnpm --filter @zelavis/ecommerce build && node --test test/*.test.mjs"
+    "test": "pnpm run build && pnpm --filter @zelavis/ecommerce build && pnpm --filter @zelavis/app-auth-oidc build && node --test test/*.test.mjs"
   },
   "files": [
     "dist",
@@ -151,7 +151,8 @@
     "@zelavis/cli": "workspace:*",
     "@zelavis/ui": "workspace:*",
     "better-sqlite3": "^12.10.0",
-    "effect": "4.0.0-rc.111"
+    "effect": "4.0.0-rc.111",
+    "jose": "^6.2.10"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

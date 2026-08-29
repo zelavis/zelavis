@@ -16,6 +16,8 @@ import {
 import { resolveMountedEndpoints } from "./resolve-endpoints.js";
 import { defineCompatibilityDate } from "./compatibility.js";
 import { createServerLifecycle } from "./lifecycle.js";
+import { composeRequestAuthenticators } from "./authentication.js";
+import type { ZelavisRequestAuthenticator } from "./authentication.js";
 
 async function resolveServiceInput<TService = unknown>(
   input: ZelavisRuntimeServiceInput<TService>,
@@ -52,6 +54,15 @@ function toServiceMap<TService = unknown>(
   }
 
   return result;
+}
+
+function collectAuthenticators(
+  services: readonly ZelavisRuntimeService<any>[],
+): ZelavisRequestAuthenticator[] {
+  return services.flatMap((service) => [
+    ...(service.authenticators ?? []),
+    ...collectAuthenticators((service.services ?? []) as readonly ZelavisRuntimeService<any>[]),
+  ]);
 }
 
 async function runFinalizers(
@@ -108,6 +119,13 @@ export async function createServiceRuntime<TService = unknown>(
       pathOverrides: options.pathOverrides,
     });
     const serviceMap = toServiceMap(services);
+    const serviceAuthenticators = collectAuthenticators(services) as ZelavisRequestAuthenticator<TService>[];
+    const resolvePrincipal = composeRequestAuthenticators<TService>([
+      ...(options.resolvePrincipal
+        ? [{ name: "host", authenticate: options.resolvePrincipal }]
+        : []),
+      ...serviceAuthenticators,
+    ]);
     const baseDispatch = createZelavisDispatcher(resolvedRoutes, {
       authorize: options.authorize,
       onError: async ({ error, request, executionContext, resolvedRoute }) => {
@@ -131,7 +149,7 @@ export async function createServiceRuntime<TService = unknown>(
           }
         );
       },
-      resolvePrincipal: options.resolvePrincipal,
+      resolvePrincipal,
     }) as ZelavisServerDispatchHandler<TService>;
     const dispatch: ZelavisServerDispatchHandler<TService> = async (
       request,

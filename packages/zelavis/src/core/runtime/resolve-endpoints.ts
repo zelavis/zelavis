@@ -58,7 +58,7 @@ export function resolveMountedEndpoints<TContext = unknown>(
   const version = options.version ?? "v1";
 
   function visitService(service: ZelavisRuntimeService<TContext>, prefix: string | undefined): void {
-    const routes = service.api[version];
+    const routes = service.api?.[version];
     const servicePrefix = options.servicePrefixes?.[service.name] ?? service.basePath ?? service.name;
     const nextPrefix = joinPathParts(prefix, servicePrefix, "/");
 

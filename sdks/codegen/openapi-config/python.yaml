@@ -1,0 +1,11 @@
+# OpenAPI Generator config for Zelavis Python SDK
+generatorName: python
+inputSpec: sdks/openapi/zelavis-api.json
+outputDir: sdks/python
+
+additionalProperties:
+  packageName: zelavis
+  projectName: zelavis
+  packageVersion: 0.1.0
+  library: asyncio
+  generateSourceCodeOnly: true

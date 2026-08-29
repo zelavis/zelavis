@@ -25,12 +25,12 @@ Sometimes yes, but not always in the same way.
 - Installable dashboard/runtime features may expose one or more runtime-mounted
   services as part of activation.
 
-That lower-level provider layer uses parent/child service metadata.
+That lower-level provider layer uses named capabilities and explicit public registration contracts.
 
 Current example:
 
 - `zelavis-ecommerce` is a top-level project Marketplace/runtime service
-- payment providers such as Stripe or PayPal are child services allowed by `zelavis-ecommerce.childServices`
+- payment providers such as Stripe or PayPal are ordinary `provider:payments` plugins
 
 So the safe model is:
 
@@ -124,92 +124,95 @@ Service pages are served as full HTML documents and mounted by the dashboard ins
 
 A good current TypeScript direction is:
 
+- use `package.json` as the service manifest and configuration surface (`"zelavis": { "kind": "plugin" }`, `"type": "module"`, `"exports"`)
+- use the official Zelavis SDK (`import { zelavis } from "zelavis/sdk"`) for plugin code: `zelavis.menu.create(...)`, `zelavis.routes.create(...)`, `zelavis.commands.register(...)`, `zelavis.events.on(...)`
 - use plain `ZelavisRuntimeService` object literals for the internal runtime contract
-- expose one shared public service builder: `defineService(...)`
-- version that contract explicitly with `ZELAVIS_SERVICE_V1`
-- let service definitions carry declarative dashboard metadata such as `menu: { ... }` so services are not locked to one dashboard implementation detail
-- let child services declare `extends: "parent-service-name"` instead of inventing package-local service builders
+- let plugins carry declarative dashboard metadata through `zelavis.menu.create({ ... })` so plugins are not locked to one dashboard implementation detail
+- let provider plugins expose the public contract associated with a declared capability
 
-That builder should be about developer ergonomics and metadata, not about replacing the internal service contract.
+## Suggested plugin shape
 
-## Suggested service shape
+Plugins are standard npm packages configured via `package.json`:
 
-The current DX direction should lean declarative:
+```json
+{
+  "name": "@zelavis/ecommerce",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": "./dist/index.js",
+  "zelavis": {
+    "kind": "plugin"
+  }
+}
+```
+
+Plugin code uses the official Zelavis SDK:
 
 ```ts
-import { defineService, ZELAVIS_SERVICE_V1 } from "zelavis";
+import { zelavis } from "zelavis/sdk";
 
-defineService({
-  name: "@zelavis/ecommerce",
-  contractVersion: ZELAVIS_SERVICE_V1,
-  childServices: ["@zelavis/ecommerce-stripe", "@zelavis/ecommerce-paypal"],
-  menu: {
-    title: "Ecommerce",
-    path: "/commerce",
-    page: {
-      id: "dashboard",
-      title: "Commerce",
-      render() {
-        return {
-          html: "<!doctype html><html><body>Commerce</body></html>",
-        };
+zelavis.menu.create({
+  title: "Ecommerce",
+  path: "/commerce",
+  page: {
+    id: "dashboard",
+    title: "Commerce",
+    file: "dashboard.html",
+  },
+  items: [
+    {
+      title: "Orders",
+      path: "/commerce/orders",
+      page: {
+        id: "orders",
+        title: "Orders",
+        file: "orders.html",
       },
     },
-    items: [
-      {
-        title: "Orders",
-        path: "/commerce/orders",
-        page: {
-          id: "orders",
-          title: "Orders",
-          render() {
-            return "<!doctype html><html><body>Orders</body></html>";
-          },
+    {
+      title: "More",
+      items: [
+        {
+          title: "Customers",
+          path: "/commerce/customers",
         },
-      },
-      {
-        title: "More",
-        items: [
-          {
-            title: "Customers",
-            path: "/commerce/customers",
-          },
-        ],
-      },
-    ],
-  },
-  setup(service) {
-    // register services, routes, providers, and service capabilities
-  },
+      ],
+    },
+  ],
+});
+
+zelavis.routes.create({
+  id: "commerce.products.list",
+  method: "GET",
+  path: "/products",
+  handler: async () => ({ status: 200, body: [] }),
 });
 ```
 
-Child services use the same builder but target a parent service:
+Provider plugins declare provider capabilities in their manifest and expose an explicit registration object:
 
 ```ts
-import { defineService } from "zelavis/service";
 import type { EcommerceApi } from "@zelavis/ecommerce";
+import type { ZelavisRuntimeService } from "zelavis";
 
-defineService<EcommerceApi>({
+export const stripePlugin: ZelavisRuntimeService = {
   name: "@zelavis/ecommerce-stripe",
-  extends: "@zelavis/ecommerce",
-  marketplace: {
-    title: "Stripe",
-    categories: ["payments"],
+  kind: "provider",
+  capabilities: ["provider:payments"],
+  service: {
+    name: "stripe",
+    register(api: EcommerceApi) {
+      api.payments.registerProvider("stripe", provider);
+    },
   },
-  setup(api) {
-    api.payments.registerProvider("@zelavis/ecommerce-stripe", provider);
-  },
-});
+};
 ```
 
-Installed child services are collected for their parent. They do not activate as independent top-level Extensions services.
-
-Parent services own their child allow-list through `childServices`. For ecommerce payments, Stripe and PayPal are allowed by the official ecommerce package. A future `XYZ Payments` child service would need the parent service to add it to that list before activation. If a child service has `marketplace.categories`, those categories apply to the parent service's child marketplace.
+Installed provider plugins are discovered by capability. The domain validates the plugin's public registration contract; it does not receive hidden children or require a package-name allow-list change for each compatible provider.
 
 Important point:
 
-- the `menu` object is service-owned metadata
+- the `menu` object is service-owned metadata registered via `zelavis.menu.create(...)`
 - `menu.page` is the content contract for service-owned dashboard pages
 - Zelavis decides how to render that metadata in the current dashboard shell
 - if the dashboard changes later, the service contract can stay stable while Zelavis adapts the rendering layer
@@ -219,17 +222,17 @@ Important point:
 Services can also ship full web apps. The app contract should stay small:
 
 ```ts
-import { defineService } from "zelavis";
-
-export default defineService({
+export default {
   name: "@acme/storefront",
+  kind: "web-app",
+  capabilities: ["web:app", "api:routes"],
   app: {
     mount: "/",
     mode: "spa",
     bundle: "dist",
     domainPolicy: "optional",
   },
-});
+};
 ```
 
 The important design rule is that services do **not** declare concrete hostnames.
@@ -312,8 +315,8 @@ The current runtime direction now reflects that split with:
 - `applyServiceRegistryState(...)`
 - `activateServiceRegistry(...)`
 - runtime service registry stores for memory, database, key/value, and file storage
-- parent-owned `childServices` allow-lists for child services
-- service setup context carrying only standard data such as root path, API paths, platform summary, and collected services
+- capability-discovered provider contracts for Auth, payments, and future extension points
+- service setup context carrying only standard data such as root path, API paths, platform summary, and registry state
 - a service activation controller with declared runtime capabilities:
   - `strategy`: `runtime-graph` or `external`
   - `supportsRuntimeInstall`

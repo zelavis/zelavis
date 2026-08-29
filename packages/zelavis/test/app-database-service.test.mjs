@@ -15,7 +15,8 @@ test("databaseService exposes database routes through the existing service contr
   assert.equal(runtime.services["@zelavis/db"].services[0].name, "documents");
   assert.equal(runtime.services["@zelavis/db"].services[1].name, "schemas");
   assert.equal(runtime.services["@zelavis/db"].services[2].name, "timeseries");
-  assert.equal(runtime.routes.length, 17);
+  assert.equal(runtime.services["@zelavis/db"].services[3].name, "maintenance");
+  assert.equal(runtime.routes.length, 21);
   assert.deepEqual(
     runtime.routes.map((route) => route.fullPath),
     [
@@ -36,6 +37,10 @@ test("databaseService exposes database routes through the existing service contr
       "/api/database/timeseries/series",
       "/api/database/timeseries/:series/range",
       "/api/database/timeseries/:series/aggregate",
+      "/api/database/maintenance/system/views",
+      "/api/database/maintenance/system/views/:view",
+      "/api/database/maintenance/backups/export",
+      "/api/database/maintenance/backups/restore",
     ],
   );
 });
@@ -67,8 +72,114 @@ test("databaseService exposes database table rows through the service menu endpo
         pageLabel: "Database",
         search: { databaseTable: "products" },
       },
+      {
+        title: "System · Collections",
+        path: "/database",
+        pageLabel: "Database",
+        search: { databaseSystemView: "collections" },
+      },
+      {
+        title: "System · Events",
+        path: "/database",
+        pageLabel: "Database",
+        search: { databaseSystemView: "events" },
+      },
+      {
+        title: "System · Schemas",
+        path: "/database",
+        pageLabel: "Database",
+        search: { databaseSystemView: "schemas" },
+      },
+      {
+        title: "System · Projections",
+        path: "/database",
+        pageLabel: "Database",
+        search: { databaseSystemView: "projections" },
+      },
+      {
+        title: "System · Time series",
+        path: "/database",
+        pageLabel: "Database",
+        search: { databaseSystemView: "time-series" },
+      },
     ],
   });
+});
+
+test("database maintenance exposes logical system views without physical tables", async () => {
+  const database = await createDatabase();
+  await database.forTenant("default").documents.createCollection({ name: "products" });
+  await database.forTenant("default").documents.insert({
+    collection: "products",
+    id: "product-1",
+    data: { name: "Coffee" },
+  });
+
+  const collections = await database.systemViews.query({
+    name: "collections",
+    tenantId: "default",
+  });
+  const events = await database.systemViews.query({
+    name: "events",
+    tenantId: "default",
+  });
+
+  assert.deepEqual(collections.rows.map((row) => row.id), ["products"]);
+  assert.deepEqual(events.rows.map((row) => row.data.type), [
+    "collection.created",
+    "document.upserted",
+  ]);
+  assert.equal(JSON.stringify({ collections, events }).includes("zv_events"), false);
+});
+
+test("database tenant backups restore exact logical events idempotently", async () => {
+  const source = await createDatabase();
+  await source.schemas.save({
+    collection: "products",
+    version: 1,
+    activate: true,
+    fields: [
+      { name: "name", field: { _tag: "TextField", label: "Name", required: true } },
+    ],
+  });
+  await source.forTenant("default").documents.createCollection({ name: "products" });
+  await source.forTenant("default").documents.insert({
+    collection: "products",
+    id: "product-1",
+    data: { name: "Coffee" },
+  });
+
+  const backup = await source.backups.exportTenant("default");
+  const restored = await createDatabase();
+  assert.deepEqual(await restored.backups.restoreTenant(backup), {
+    tenantId: "default",
+    schemas: 1,
+    events: 2,
+  });
+  await restored.backups.restoreTenant(backup);
+
+  assert.deepEqual(
+    await restored.forTenant("default").documents.findById({
+      collection: "products",
+      id: "product-1",
+    }),
+    await source.forTenant("default").documents.findById({
+      collection: "products",
+      id: "product-1",
+    }),
+  );
+  assert.deepEqual(
+    (await restored.forTenant("default").events.read()).map((event) => ({
+      eventId: event.eventId,
+      revision: event.revision,
+      timestamp: event.timestamp,
+    })),
+    backup.events.map((event) => ({
+      eventId: event.eventId,
+      revision: event.revision,
+      timestamp: event.timestamp,
+    })),
+  );
 });
 
 test("databaseService returns API errors for duplicate collections", async () => {

@@ -1,10 +1,11 @@
 import {
   authService as createAuthService,
+  createAuth,
   AuthDomainError,
   AuthNotFoundError,
   AuthValidationError,
   type AuthServiceOptions,
-  type AuthProviderService,
+  type AuthMethodPlugin,
   type AuthApi,
 } from "./app/auth/index.js";
 import {
@@ -22,6 +23,8 @@ import {
   createFabricService,
   createMappedJsonErrorResponse,
   createServiceRuntime as mountZelavisServer,
+  generateOpenApiSpec,
+  resolveMountedEndpoints,
   type FabricApi,
   type FabricPlacementState,
   type FabricProjectPlacement,
@@ -35,6 +38,7 @@ import {
   type ZelavisServerPlainHandler,
   type ZelavisServerRoute,
   type ZelavisServerRuntime,
+  type ZelavisPrincipalResolver,
   type ZelavisRuntimeService,
 } from "./core/index.js";
 import {
@@ -100,9 +104,8 @@ import {
 } from "./system-store.js";
 import { createDomainChallengeService } from "./domain-verifier.js";
 import { synthesizeServiceAppService } from "./service-app.js";
-import type {
-  ZelavisServiceDefinition,
-} from "./service.js";
+import { createPlatformAuthRepositories } from "./platform/auth-repositories.js";
+import { createPlatformAuthBootstrap } from "./platform/auth-bootstrap.js";
 export * from "./storage/s3.js";
 
 export type {
@@ -520,6 +523,8 @@ export interface ZelavisServerOptions {
   servicePrefixes?: Record<string, string>;
   pathOverrides?: Record<string, string>;
   onError?: ZelavisServerErrorHandler;
+  /** Internal host authority bridge used by adapters and low-level composition. */
+  resolvePrincipal?: ZelavisPrincipalResolver;
   /**
    * Backing store for service `app` bundles. When omitted, the runtime
    * tries to wrap `platform.resources.files` in a default
@@ -542,6 +547,10 @@ export interface ZelavisServerOptions {
   systemStore?: ZelavisSystemStore;
   projectRuntime?: ZelavisProjectRuntimeDriver;
   assistant?: false | ZelavisAssistantResponder;
+  bootstrap?: {
+    /** One-time secret required to claim the first Platform owner account. */
+    token: string;
+  };
 }
 
 interface ZelavisRuntimeCompositionOptions extends ZelavisServerOptions {
@@ -722,6 +731,10 @@ export interface ZelavisOptions {
   assistant?: false | ZelavisAssistantResponder;
   onError?: ZelavisServerErrorHandler;
   adapter?: ZelavisAdapter;
+  bootstrap?: {
+    /** One-time secret required to claim the first Platform owner account. */
+    token: string;
+  };
 }
 
 export interface ZelavisWebsiteDatabaseStoreOptions {
@@ -1966,6 +1979,19 @@ async function loadStoredServiceRegistryModules(
   return resolvedEntries;
 }
 
+/**
+ * Resolves configured catalog entries.
+ *
+ * A specifier is authoritative when it resolves: callers such as the project
+ * runner deliberately pass a metadata-only placeholder alongside the specifier
+ * and rely on the loaded module for the real menu, setup, and runtime services.
+ *
+ * When the specifier cannot be resolved from this package the entry's own
+ * service instance is used instead. A host application registering a plugin it
+ * depends on (`services.catalog`) names that package by specifier for registry
+ * identity, but the package is installed for the application, not for
+ * `zelavis`, so importing it from here would fail.
+ */
 async function loadConfiguredServiceRegistryModules(
   entries: readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[],
   importer?: ZelavisServiceLoadOptions["importer"],
@@ -1978,17 +2004,26 @@ async function loadConfiguredServiceRegistryModules(
       continue;
     }
 
-    const [loaded] = await loadServiceRegistry<ZelavisServiceSetupContext>(
-      [
-        {
-          specifier: entry.specifier,
-          status: entry.status,
-          source: entry.source,
-          ...(entry.order !== undefined ? { order: entry.order } : {}),
-        },
-      ],
-      { importer },
-    );
+    let loaded: Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>> | undefined;
+    try {
+      [loaded] = await loadServiceRegistry<ZelavisServiceSetupContext>(
+        [
+          {
+            specifier: entry.specifier,
+            status: entry.status,
+            source: entry.source,
+            ...(entry.order !== undefined ? { order: entry.order } : {}),
+          },
+        ],
+        { importer },
+      );
+    } catch {
+      // The specifier is not resolvable from `zelavis`; the caller supplied the
+      // live service instance, so register that instead.
+      resolved.push(...createServiceRegistry([entry]));
+      continue;
+    }
+
     resolved.push(
       entry.service.scope === undefined
         ? loaded
@@ -2244,7 +2279,10 @@ async function resolveDatabaseCoreService(
 
 async function resolveAuthCoreService(
   option: ZelavisAuthCoreServiceOptions | undefined,
-  services: readonly AuthProviderService[] = [],
+  methods: readonly AuthMethodPlugin[] = [],
+  systemStore?: ZelavisSystemStore,
+  rootPath = "/zelavis",
+  bootstrapToken?: string,
 ): Promise<ZelavisRuntimeService<any> | undefined> {
   const authOption = option ?? true;
 
@@ -2252,36 +2290,51 @@ async function resolveAuthCoreService(
     return undefined;
   }
 
-  const allowedChildServices =
-    authOption === true ? [] : [...(authOption.childServices ?? [])];
-  const allowedServiceNames = new Set(allowedChildServices);
-  const childServices = services.filter((service) =>
-    allowedServiceNames.has(service.name),
-  );
+  const configured = authOption === true ? {} : authOption;
+  const auth = configured.auth ?? await createAuth({
+    ...(configured.authOptions ?? {}),
+    repositories: {
+      ...(systemStore ? createPlatformAuthRepositories(systemStore) : {}),
+      ...(configured.authOptions?.repositories ?? {}),
+    },
+    methods: [
+      ...(configured.authOptions?.methods ?? []),
+      ...(configured.methods ?? []),
+      ...methods,
+    ],
+  });
 
-  return createAuthService(
-    authOption === true
-      ? { services: childServices, childServices: allowedChildServices }
-      : {
-          ...authOption,
-          services: [...(authOption.services ?? []), ...childServices],
-          childServices: allowedChildServices,
-        },
-  );
+  return createAuthService({
+    ...configured,
+    auth,
+    methods: [],
+    definition: {
+      ...(configured.definition ?? {}),
+      authority: "platform",
+      bootstrap: createPlatformAuthBootstrap(auth, { store: systemStore }),
+      bootstrapToken,
+      sessionCookie: configured.definition?.sessionCookie === false
+        ? false
+        : {
+            path: rootPath,
+            ...(configured.definition?.sessionCookie ?? {}),
+          },
+    },
+  });
 }
 
-function collectAuthProviderServices(
+function collectAuthMethodPlugins(
   registry: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
-): readonly AuthProviderService[] {
+): readonly AuthMethodPlugin[] {
   return Object.freeze(
     registry
       .filter(
         (entry) =>
           entry.status === "installed" &&
-          entry.service.extends === "@zelavis/auth" &&
-          typeof entry.service.setup === "function",
+          entry.service.capabilities?.includes("provider:auth") &&
+          typeof (entry.service.service as AuthMethodPlugin | undefined)?.register === "function",
       )
-      .map((entry) => entry.service as unknown as AuthProviderService),
+      .map((entry) => entry.service.service as AuthMethodPlugin),
   );
 }
 
@@ -2300,35 +2353,18 @@ type DashboardSerializedServiceMenuDefinition = Omit<
   items?: readonly DashboardSerializedServiceMenuDefinition[];
 };
 
-function createDashboardAccess(mode: string | null | undefined) {
-  if (mode === "customer") {
-    return {
-      mode: "customer",
-      label: "Customer",
-      principal: {
-        id: "customer_demo",
-        type: "user",
-        roles: ["customer"],
-        grants: [
-          {
-            permission: "projects.list",
-            scope: { type: "system" },
-          },
-        ],
-      },
-      projects: [],
-    };
-  }
-
+function createDashboardAccess(principal: NonNullable<ZelavisServerExecutionContext["principal"]>) {
+  const mode = principal.roles?.includes("owner")
+    ? "owner"
+    : principal.roles?.includes("operator")
+      ? "operator"
+      : principal.roles?.includes("reseller")
+        ? "reseller"
+        : "customer";
   return {
-    mode: "owner",
-    label: "Owner",
-    principal: {
-      id: "owner_demo",
-      type: "user",
-      roles: ["owner"],
-      permissions: ["*"],
-    },
+    mode,
+    label: mode[0].toUpperCase() + mode.slice(1),
+    principal,
   };
 }
 
@@ -2716,6 +2752,7 @@ async function resolveRuntimeManagementCore(
         {
           id: "runtime.services.create",
           method: "POST",
+          access: { permissions: ["system.services.manage"] },
           path: joinPathParts(
             context.apiPrefix,
             context.apiVersion,
@@ -2761,6 +2798,7 @@ async function resolveRuntimeManagementCore(
         {
           id: "runtime.service-page-asset.read",
           method: "GET",
+          access: { authenticated: true },
           path: joinPathParts(
             context.apiPrefix,
             context.apiVersion,
@@ -2794,6 +2832,7 @@ async function resolveRuntimeManagementCore(
         {
           id: "runtime.services.update",
           method: "PATCH",
+          access: { permissions: ["system.services.manage"] },
           path: joinPathParts(
             context.apiPrefix,
             context.apiVersion,
@@ -2918,6 +2957,7 @@ async function resolveRuntimeManagementCore(
         {
           id: "runtime.settings.update",
           method: "PATCH",
+          access: { permissions: ["system.settings.manage"] },
           path: joinPathParts(
             context.apiPrefix,
             context.apiVersion,
@@ -2935,6 +2975,32 @@ async function resolveRuntimeManagementCore(
             } catch (error) {
               return zelavisErrorResponse(error, 400);
             }
+          },
+        },
+        {
+          id: "runtime.openapi",
+          method: "GET",
+          path: joinPathParts(
+            context.apiPrefix,
+            context.apiVersion,
+            "runtime/openapi.json",
+          ),
+          handler: () => {
+            const services = context.getServices();
+            const resolved = resolveMountedEndpoints(services, {
+              prefix: context.apiPrefix,
+              version: context.apiVersion,
+            });
+            return {
+              status: 200,
+              headers: { "content-type": "application/json" },
+              body: generateOpenApiSpec(resolved, {
+                title: "Zelavis API",
+                version: context.apiVersion,
+                description:
+                  "Auto-generated OpenAPI specification for this Zelavis instance.",
+              }),
+            };
           },
         },
       ];
@@ -3064,6 +3130,7 @@ async function resolveWebsiteCoreService(
         {
           id: "website.pages.create",
           method: "POST",
+          access: { permissions: ["project.website.manage"] },
           path: joinPathParts(
             context.rootPath,
             context.apiPrefix,
@@ -3235,6 +3302,7 @@ async function resolveStorageCoreService(
           id: "storage.files.list",
           method: "GET",
           path: "/files",
+          access: { permissions: ["storage.read"] },
           handler: async ({ query }) => {
             try {
               const prefix = query.get("prefix") ?? undefined;
@@ -3328,6 +3396,7 @@ async function resolveStorageCoreService(
           id: "storage.files.write",
           method: "PUT",
           path: "/files/*path",
+          access: { permissions: ["storage.write"] },
           handler: async ({ params, request, requestHeaders }) => {
             try {
               const path = params.path ?? "";
@@ -3390,6 +3459,7 @@ async function resolveStorageCoreService(
           id: "storage.files.delete",
           method: "DELETE",
           path: "/files/*path",
+          access: { permissions: ["storage.write"] },
           handler: async ({ params }) => {
             try {
               const path = params.path ?? "";
@@ -3580,15 +3650,19 @@ async function resolvePlatformCoreService(
           id: "runtime.access",
           method: "GET",
           path: "/access",
-          handler: ({ query }: { query: URLSearchParams }) => ({
-            status: 200,
-            body: createDashboardAccess(query.get("as")),
-          }),
+          access: { authenticated: true },
+          handler: ({ principal }) => principal
+            ? {
+                status: 200,
+                body: createDashboardAccess(principal),
+              }
+            : { status: 401, body: { error: "Authentication required" } },
         },
         {
           id: "runtime.app-services.list",
           method: "GET",
           path: "/app-services",
+          access: { authenticated: true },
           handler: () => ({
             status: 200,
             body: {
@@ -3614,6 +3688,7 @@ async function resolvePlatformCoreService(
           id: "runtime.assistant.threads.list",
           method: "GET",
           path: "/assistant/threads",
+          access: { permissions: ["assistant.use"] },
           handler: async ({ query }: { query: URLSearchParams }) =>
             assistant
               ? {
@@ -3632,6 +3707,7 @@ async function resolvePlatformCoreService(
           id: "runtime.assistant.threads.create",
           method: "POST",
           path: "/assistant/threads",
+          access: { permissions: ["assistant.use"] },
           handler: async ({ body }: { body: unknown }) => {
             if (!assistant) {
               return { status: 503, body: { error: "Assistant requires the Platform System Store." } };
@@ -3658,6 +3734,7 @@ async function resolvePlatformCoreService(
           id: "runtime.assistant.threads.get",
           method: "GET",
           path: "/assistant/threads/:threadId",
+          access: { permissions: ["assistant.use"] },
           handler: async ({ params }: { params: Record<string, string> }) => {
             if (!assistant) {
               return { status: 503, body: { error: "Assistant requires the Platform System Store." } };
@@ -3679,6 +3756,7 @@ async function resolvePlatformCoreService(
           id: "runtime.assistant.messages.create",
           method: "POST",
           path: "/assistant/threads/:threadId/messages",
+          access: { permissions: ["assistant.use"] },
           handler: async ({
             body,
             params,
@@ -3707,6 +3785,7 @@ async function resolvePlatformCoreService(
           id: "runtime.projects.list",
           method: "GET",
           path: "/projects",
+          access: { permissions: ["projects.list"] },
           handler: async () =>
             projects
               ? {
@@ -3722,6 +3801,7 @@ async function resolvePlatformCoreService(
           id: "runtime.projects.create",
           method: "POST",
           path: "/projects",
+          access: { permissions: ["projects.create"] },
           handler: async ({ body }: { body: unknown }) => {
             if (!projects) {
               return unavailableProjectsResponse();
@@ -3746,6 +3826,10 @@ async function resolvePlatformCoreService(
           id: "runtime.projects.get",
           method: "GET",
           path: "/projects/:projectId",
+          access: {
+            permissions: ["project.view"],
+            scope: { type: "project", projectIdParam: "projectId" },
+          },
           handler: async ({ params }: { params: Record<string, string> }) => {
             if (!projects) {
               return unavailableProjectsResponse();
@@ -3767,6 +3851,10 @@ async function resolvePlatformCoreService(
           id: "runtime.projects.start",
           method: "POST",
           path: "/projects/:projectId/start",
+          access: {
+            permissions: ["project.runtime.manage"],
+            scope: { type: "project", projectIdParam: "projectId" },
+          },
           handler: async ({ params }: { params: Record<string, string> }) => {
             if (!projects) {
               return unavailableProjectsResponse();
@@ -3785,6 +3873,10 @@ async function resolvePlatformCoreService(
           id: "runtime.projects.stop",
           method: "POST",
           path: "/projects/:projectId/stop",
+          access: {
+            permissions: ["project.runtime.manage"],
+            scope: { type: "project", projectIdParam: "projectId" },
+          },
           handler: async ({ params }: { params: Record<string, string> }) => {
             if (!projects) {
               return unavailableProjectsResponse();
@@ -3803,6 +3895,10 @@ async function resolvePlatformCoreService(
           id: "runtime.projects.restart",
           method: "POST",
           path: "/projects/:projectId/restart",
+          access: {
+            permissions: ["project.runtime.manage"],
+            scope: { type: "project", projectIdParam: "projectId" },
+          },
           handler: async ({ params }: { params: Record<string, string> }) => {
             if (!projects) {
               return unavailableProjectsResponse();
@@ -3821,6 +3917,10 @@ async function resolvePlatformCoreService(
           id: "runtime.projects.logs",
           method: "GET",
           path: "/projects/:projectId/logs",
+          access: {
+            permissions: ["project.logs.read"],
+            scope: { type: "project", projectIdParam: "projectId" },
+          },
           handler: async ({ params }: { params: Record<string, string> }) => {
             if (!projects) {
               return unavailableProjectsResponse();
@@ -3840,6 +3940,10 @@ async function resolvePlatformCoreService(
             id: `runtime.projects.proxy.${method.toLowerCase()}`,
             method,
             path: "/projects/:projectId/proxy/*path",
+            access: {
+              permissions: ["project.view"],
+              scope: { type: "project" as const, projectIdParam: "projectId" },
+            },
             handler: async ({
               params,
               query,
@@ -3941,6 +4045,10 @@ async function resolvePlatformCoreService(
           id: "runtime.projects.remove",
           method: "DELETE",
           path: "/projects/:projectId",
+          access: {
+            permissions: ["project.delete"],
+            scope: { type: "project", projectIdParam: "projectId" },
+          },
           handler: async ({ params }: { params: Record<string, string> }) => {
             if (!projects) {
               return unavailableProjectsResponse();
@@ -3974,7 +4082,7 @@ async function synthesizeDashboardAppService(
   };
 
   const appService = await synthesizeServiceAppService({
-    service: dashboardService as unknown as Readonly<ZelavisServiceDefinition<unknown>>,
+    service: dashboardService as any,
     bundleStore,
     effectiveMount: "/",
   });
@@ -4109,7 +4217,10 @@ export async function zelavis(
       ? undefined
       : await resolveAuthCoreService(
         options.coreServices?.auth,
-        collectAuthProviderServices(serviceRegistry),
+        collectAuthMethodPlugins(serviceRegistry),
+        systemStore,
+        rootPath,
+        options.bootstrap?.token ?? readOptionalProcessEnv("ZELAVIS_BOOTSTRAP_TOKEN"),
       );
   const activatedServices = await activateServiceRegistry(
     serviceRegistry,
@@ -4331,6 +4442,7 @@ function assertNoInternalConstructorOptions(
     "pathOverrides",
     "servicePackageInstaller",
     "serviceActivation",
+    "resolvePrincipal",
   ].filter((key) => raw[key] !== undefined);
 
   if (forbiddenKeys.length === 0) {

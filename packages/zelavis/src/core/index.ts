@@ -1,4 +1,7 @@
 export * from "./runtime/contracts.js";
+export * from "./runtime/authentication.js";
+export * from "./runtime/basic-authentication.js";
+export * from "./runtime/jwt-authentication.js";
 export * from "./runtime/compatibility.js";
 export * from "./runtime/lifecycle.js";
 export * from "./runtime/http-errors.js";
@@ -9,4 +12,7 @@ export * from "./artifact/index.js";
 export * from "./provider/index.js";
 export * from "./workload/index.js";
 export * from "./service/definition.js";
+export * from "./service/manifest.js";
+export * from "./service/context.js";
 export * from "./fabric/index.js";
+export * from "./runtime/openapi.js";

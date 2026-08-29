@@ -66,6 +66,36 @@ That separation keeps the core extensible:
 
 All of those callers still pass through the same route access checks.
 
+## Native Request Authentication
+
+The runtime composes `ZelavisRequestAuthenticator` implementations directly on
+the standard Web `Request` boundary. No router framework owns authentication.
+
+- opaque App sessions use 256-bit random `zvs_` tokens and persist only a
+  SHA-256 token digest
+- App accounts, credentials, and sessions persist through the App's
+  tenant-routed database boundary
+- Platform accounts, credentials, and sessions persist separately in the
+  System Store
+- session credentials may arrive through `Authorization: Bearer` or an
+  HttpOnly, SameSite cookie that is Secure on HTTPS deployments
+- scripts receive the issued bearer token directly; a response sets the
+  session cookie only for a request carrying a matching same-origin `Origin`
+- cookie-authenticated mutations require a matching same-origin `Origin`
+- first-owner bootstrap requires an operator-configured high-entropy token and
+  a credential-enrollment provider; the token is never a normal login method
+- optional Basic, JWT, and remote-JWKS authenticators resolve into the same
+  principal model
+- invalid credentials produce a `401` and the appropriate
+  `WWW-Authenticate` challenge
+
+Password methods are ordinary `provider:auth` plugins under `plugins/`, not
+code embedded in the unified package. The shared Web Crypto password primitive
+uses salted PBKDF2-HMAC-SHA-256. The OIDC plugin validates bearer tokens through
+issuer, audience, algorithm, and JWKS checks; interactive authorization-code
+login and provider-specific account linking remain endpoint workflows to add
+on top of that verifier.
+
 ## Dashboard Views
 
 The same `/zelavis` shell can render different views depending on the current
@@ -89,18 +119,19 @@ reserved for bundled or statically trusted system services that belong in the
 global `/zelavis` management shell. Runtime-installed marketplace plugins still
 mount under Extensions.
 
-## Current Demo Mode
+## Platform Bootstrap And Login
 
-The dashboard currently has a development/demo switch so the shape can be
-tested before real login flows are wired:
+`GET /zelavis/api/v1/auth/bootstrap` reports whether the installation still
+needs its first owner and which installed auth providers support credential
+enrollment. `POST /zelavis/api/v1/auth/bootstrap` is disabled unless the
+operator configured `ZELAVIS_BOOTSTRAP_TOKEN` or `bootstrap.token`; successful
+bootstrap consumes an installed provider's enrollment contract and issues the
+first owner session.
 
-- `/zelavis` shows the owner-shaped console
-- `/zelavis?as=owner` also shows the owner-shaped console
-- `/zelavis?as=customer` shows a customer-shaped console
-
-Customer mode is intentionally limited. It shows only the projects and
-project-local menus granted to the demo customer. This is not production
-authentication; it is a visible proof of the authorization shape.
+The dashboard login screen calls the same versioned Auth endpoints as other
+clients. `/zelavis/api/v1/runtime/access` requires authentication and returns
+the real session principal. There is no demo-owner fallback or query-string
+identity switch.
 
 ## Rule For Services
 

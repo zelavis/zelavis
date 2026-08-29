@@ -1,24 +1,29 @@
-import { defineService } from "../core/index.js";
+import type { ZelavisRuntimeService } from "../core/index.js";
 import { ZELAVIS_VERSION } from "../version.js";
 
-export const marketplaceService = defineService({
+export const marketplaceService: ZelavisRuntimeService<Record<string, never>> & {
+  version?: string;
+  kind?: string;
+  capabilities?: readonly string[];
+} = Object.freeze({
   name: "zelavis/marketplace",
   version: ZELAVIS_VERSION,
   kind: "core",
-  capabilities: ["dashboard:menu", "marketplace:services"],
+  capabilities: Object.freeze(["dashboard:menu", "marketplace:services"]),
   basePath: "/marketplace",
-  menu: {
+  api: {},
+  menu: Object.freeze({
     title: "Marketplace",
     path: "/marketplace",
     pageLabel: "Marketplace",
     sectionLabel: "Explore",
     order: 30,
-    surface: "platform",
+    surface: "platform" as const,
     access: {
       permissions: ["marketplace.view"],
-      scope: { type: "system" },
+      scope: { type: "system" as const },
     },
-  },
+  }),
   service: Object.freeze({}),
 });
 

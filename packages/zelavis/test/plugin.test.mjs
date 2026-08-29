@@ -5,185 +5,205 @@ import {
   applyServiceRegistryState,
   defineServiceCatalog,
   defineServiceCatalogEntry,
-  defineService,
   createServiceRegistry,
+  loadPluginPackage,
   loadService,
   loadServiceRegistry,
   removeServiceFromRegistry,
   resolveServiceModule,
   serializeServiceRegistryState,
-  isChildServiceAllowed,
-  ZELAVIS_SERVICE_V1,
+  validatePluginPackageManifest,
+  resolvePackageExportsEntry,
 } from "../dist/index.js";
+import { zelavis } from "../dist/sdk/fetch.js";
 
-test("defineService normalizes service metadata for developer-facing extensions", () => {
-  const runtimeService = {
-    name: "commerce",
-    service: {},
-    api: {
-      v1: [],
+// ---------- Section 14: Exact Plugin Manifest Validation Messages ----------
+
+test("validatePluginPackageManifest rejects missing zelavis.kind with exact message", () => {
+  assert.throws(
+    () =>
+      validatePluginPackageManifest({
+        name: "@example/foo",
+        version: "1.0.0",
+        type: "module",
+        exports: "./dist/index.js",
+      }),
+    (error) => {
+      assert.equal(
+        error.message,
+        'Invalid Zelavis service "@example/foo":\nmissing "zelavis.kind" in package.json.',
+      );
+      return true;
     },
-  };
+  );
+});
 
-  const service = defineService({
-    name: "@zelavis/ecommerce",
+test("validatePluginPackageManifest rejects non-module plugins with exact message", () => {
+  assert.throws(
+    () =>
+      validatePluginPackageManifest({
+        name: "@example/foo",
+        version: "1.0.0",
+        exports: "./dist/index.js",
+        zelavis: { kind: "plugin" },
+      }),
+    (error) => {
+      assert.equal(
+        error.message,
+        'Invalid Zelavis plugin "@example/foo":\npackage.json must contain "type": "module".',
+      );
+      return true;
+    },
+  );
+});
+
+test("validatePluginPackageManifest rejects plugins missing exports with exact message", () => {
+  assert.throws(
+    () =>
+      validatePluginPackageManifest({
+        name: "@example/foo",
+        version: "1.0.0",
+        type: "module",
+        zelavis: { kind: "plugin" },
+      }),
+    (error) => {
+      assert.equal(
+        error.message,
+        'Invalid Zelavis plugin "@example/foo":\npackage.json must define "exports".',
+      );
+      return true;
+    },
+  );
+});
+
+test("validatePluginPackageManifest rejects legacy main in plugins with exact message", () => {
+  assert.throws(
+    () =>
+      validatePluginPackageManifest({
+        name: "@example/foo",
+        version: "1.0.0",
+        type: "module",
+        main: "./dist/index.js",
+        exports: "./dist/index.js",
+        zelavis: { kind: "plugin" },
+      }),
+    (error) => {
+      assert.equal(
+        error.message,
+        'Invalid Zelavis plugin "@example/foo":\n"main" is not supported for Zelavis plugins.\nUse the modern "exports" field instead.',
+      );
+      return true;
+    },
+  );
+});
+
+test("validatePluginPackageManifest accepts valid modern plugin package.json", () => {
+  const manifest = validatePluginPackageManifest({
+    name: "@example/foo",
     version: "1.0.0",
-    childServices: ["@zelavis/ecommerce-stripe"],
-    menu: {
-      title: "Ecommerce",
-      path: "/commerce",
-      pageLabel: "Commerce",
+    type: "module",
+    exports: "./dist/index.js",
+    zelavis: { kind: "plugin" },
+  });
+
+  assert.equal(manifest.name, "@example/foo");
+  assert.equal(manifest.zelavis?.kind, "plugin");
+});
+
+test("resolvePackageExportsEntry resolves string and conditional exports", () => {
+  assert.equal(resolvePackageExportsEntry("./dist/index.js"), "./dist/index.js");
+  assert.equal(
+    resolvePackageExportsEntry({ ".": "./dist/index.js" }),
+    "./dist/index.js",
+  );
+  assert.equal(
+    resolvePackageExportsEntry({ ".": { import: "./dist/index.js" } }),
+    "./dist/index.js",
+  );
+  assert.equal(
+    resolvePackageExportsEntry({ import: "./dist/index.js" }),
+    "./dist/index.js",
+  );
+});
+
+// ---------- Official Zelavis JS/TS SDK as Plugin API ----------
+
+test("zelavis SDK throws descriptive error when called outside active plugin context", () => {
+  assert.throws(
+    () => zelavis.menu.create({ title: "Test", path: "/test" }),
+    /zelavis\.menu\.create can only be called within an active Zelavis plugin execution context\./,
+  );
+
+  assert.throws(
+    () =>
+      zelavis.routes.create({
+        id: "test",
+        method: "GET",
+        path: "/test",
+        handler: () => ({ status: 200 }),
+      }),
+    /zelavis\.routes\.create can only be called within an active Zelavis plugin execution context\./,
+  );
+
+  assert.throws(
+    () =>
+      zelavis.commands.register({
+        name: "test-cmd",
+        handler: () => "ok",
+      }),
+    /zelavis\.commands\.register can only be called within an active Zelavis plugin execution context\./,
+  );
+
+  assert.throws(
+    () => zelavis.events.on("test-event", () => {}),
+    /zelavis\.events\.on can only be called within an active Zelavis plugin execution context\./,
+  );
+});
+
+test("loadPluginPackage executes plugin and attributes menus, routes, and commands", async () => {
+  const manifest = {
+    name: "@example/my-plugin",
+    version: "1.2.0",
+    type: "module",
+    exports: "./index.js",
+    zelavis: { kind: "plugin" },
+  };
+
+  const loadedService = await loadPluginPackage({
+    manifest,
+    importer: async () => {
+      // Inside plugin module evaluation:
+      zelavis.menu.create({
+        title: "My Plugin",
+        path: "/my-plugin",
+      });
+
+      zelavis.routes.create({
+        id: "my-plugin.ping",
+        method: "GET",
+        path: "/ping",
+        handler: () => ({ status: 200, body: { pong: true } }),
+      });
+
+      zelavis.commands.register({
+        name: "my-plugin.greet",
+        handler: (name) => `Hello, ${name}!`,
+      });
+
+      return { exportedValue: 42 };
     },
-    runtimeServices: [runtimeService],
   });
 
-  assert.equal(service.name, "@zelavis/ecommerce");
-  assert.equal(service.contractVersion, ZELAVIS_SERVICE_V1);
-  assert.equal(service.menu.title, "Ecommerce");
-  assert.equal(service.menu.path, "/commerce");
-  assert.deepEqual(service.childServices, ["@zelavis/ecommerce-stripe"]);
-  assert.equal(service.runtimeServices.length, 1);
-  assert.ok(Object.isFrozen(service));
-  assert.ok(Object.isFrozen(service.menu));
-  assert.ok(Object.isFrozen(service.runtimeServices));
-  assert.ok(Object.isFrozen(service.childServices));
+  assert.equal(loadedService.name, "@example/my-plugin");
+  assert.equal(loadedService.kind, "plugin");
+  assert.equal(loadedService.menu?.title, "My Plugin");
+  assert.equal(loadedService.menu?.path, "/my-plugin");
+  assert.equal(loadedService.api?.v1?.length, 1);
+  assert.equal(loadedService.api?.v1?.[0]?.id, "my-plugin.ping");
+  assert.equal(loadedService.service?.exportedValue, 42);
 });
 
-test("defineService validates required service fields", () => {
-  assert.throws(
-    () =>
-      defineService({
-        name: "",
-      }),
-    /string name/,
-  );
-
-  assert.throws(
-    () =>
-      defineService({
-        name: "@example/broken-service",
-        menu: {
-          title: "Broken",
-          path: 123,
-        },
-      }),
-    /path must be a string/,
-  );
-
-  assert.throws(
-    () =>
-      defineService({
-        name: "@example/future-service",
-        contractVersion: "ZELAVIS_SERVICE_V2",
-      }),
-    /Unsupported service contract version/,
-  );
-
-  // surface is now allowed in definitions — the activation layer strips it
-  // for workspace-scoped services at runtime, so no throw at define-time.
-  assert.doesNotThrow(() =>
-    defineService({
-      name: "@example/surface-service",
-      menu: {
-        title: "Surface",
-        path: "/surface",
-        surface: "root",
-      },
-    }),
-  );
-
-  assert.throws(
-    () =>
-      defineService({
-        name: "@zelavis/ecommerce-stripe",
-        extends: "",
-      }),
-    /Zelavis built-in name|scoped package name/,
-  );
-
-  assert.throws(
-    () =>
-      defineService({
-        name: "@zelavis/ecommerce-stripe",
-        extends: "@zelavis/ecommerce",
-        menu: {
-          title: "Stripe",
-          path: "/stripe",
-        },
-      }),
-    /Child services cannot declare top-level dashboard menu metadata/,
-  );
-
-  assert.throws(
-    () =>
-      defineService({
-        name: "@zelavis/ecommerce",
-        childServices: ["@zelavis/ecommerce-stripe", "@zelavis/ecommerce-stripe"],
-      }),
-    /Duplicate: @zelavis\/ecommerce-stripe/,
-  );
-
-  assert.throws(
-    () =>
-      defineService({
-        name: "stripe",
-      }),
-    /Zelavis built-in name|scoped package name/,
-  );
-
-  assert.throws(
-    () =>
-      defineService({
-        name: "@zelavis/ecommerce",
-        childServices: ["stripe"],
-      }),
-    /Zelavis built-in name|scoped package name/,
-  );
-});
-
-test("defineService supports child service extension metadata", () => {
-  const service = defineService({
-    name: "@zelavis/ecommerce-stripe",
-    extends: "@zelavis/ecommerce",
-  });
-
-  assert.equal(service.extends, "@zelavis/ecommerce");
-});
-
-test("isChildServiceAllowed applies parent child service allow-list", () => {
-  const parent = {
-    service: defineService({
-      name: "@zelavis/ecommerce",
-      childServices: ["@zelavis/ecommerce-stripe"],
-    }),
-    status: "installed",
-  };
-  const stripe = {
-    service: defineService({
-      name: "@zelavis/ecommerce-stripe",
-      extends: "@zelavis/ecommerce",
-    }),
-    status: "installed",
-  };
-  const xyz = {
-    service: defineService({
-      name: "@example/xyz-payments",
-      extends: "@zelavis/ecommerce",
-    }),
-    status: "installed",
-  };
-  const shipping = {
-    service: defineService({
-      name: "@example/ship-fast",
-      extends: "@zelavis/ecommerce",
-    }),
-    status: "installed",
-  };
-
-  assert.equal(isChildServiceAllowed(parent, stripe), true);
-  assert.equal(isChildServiceAllowed(parent, xyz), false);
-  assert.equal(isChildServiceAllowed(parent, shipping), false);
-});
+// ---------- Service Catalog & Registry ----------
 
 test("defineServiceCatalogEntry normalizes marketplace metadata", () => {
   const entry = defineServiceCatalogEntry({
@@ -191,7 +211,6 @@ test("defineServiceCatalogEntry normalizes marketplace metadata", () => {
     package: "@zelavis/ecommerce-stripe",
     publisher: "zelavis",
     source: "official",
-    extends: "@zelavis/ecommerce",
     compatibility: {
       zelavis: "^1.0.0",
       parentService: "^1.0.0",
@@ -204,7 +223,6 @@ test("defineServiceCatalogEntry normalizes marketplace metadata", () => {
 
   assert.equal(entry.reviewStatus, "official");
   assert.equal(entry.verified, true);
-  assert.equal(entry.extends, "@zelavis/ecommerce");
   assert.equal(entry.compatibility.zelavis, "^1.0.0");
   assert.equal(entry.links.repository, "https://github.com/zelavis/zelavis");
   assert.deepEqual(entry.tags, ["payments", "@zelavis/ecommerce-stripe"]);
@@ -224,18 +242,6 @@ test("defineServiceCatalog validates marketplace entries", () => {
         source: "unknown",
       }),
     /source must be "official" or "community"/,
-  );
-
-  assert.throws(
-    () =>
-      defineServiceCatalogEntry({
-        name: "@example/broken",
-        package: "@example/broken",
-        publisher: "example",
-        source: "community",
-        reviewStatus: "mystery",
-      }),
-    /reviewStatus must be "official", "reviewed", "unreviewed", or "blocked"/,
   );
 
   assert.throws(
@@ -284,30 +290,6 @@ test("createServiceRegistry normalizes service registry entries", () => {
   assert.ok(Object.isFrozen(registry));
 });
 
-test("defineService allows nested menu groups without a fake path", () => {
-  const service = defineService({
-    name: "@zelavis/ecommerce",
-    menu: {
-      title: "Ecommerce",
-      path: "/commerce",
-      items: [
-        {
-          title: "More",
-          items: [
-            {
-              title: "Customers",
-              path: "/commerce/customers",
-            },
-          ],
-        },
-      ],
-    },
-  });
-
-  assert.equal(service.menu.items[0].title, "More");
-  assert.equal(service.menu.items[0].path, undefined);
-});
-
 test("resolveServiceModule accepts named or default ESM exports", () => {
   const named = resolveServiceModule({
     service: {
@@ -332,362 +314,191 @@ test("resolveServiceModule accepts named or default ESM exports", () => {
   assert.equal(byDefault.name, "@example/default-service");
 });
 
-test("loadService uses the provided ESM importer", async () => {
-  const service = await loadService("virtual:ecommerce", {
-    importer: async (specifier) => ({
-      service: {
-        name: specifier.endsWith("ecommerce")
-          ? "@zelavis/ecommerce"
-          : "@example/unknown",
-        menu: {
-          title: "Ecommerce",
-          path: "/commerce",
-        },
-      },
-    }),
-  });
-
-  assert.equal(service.name, "@zelavis/ecommerce");
-  assert.equal(service.menu.path, "/commerce");
-});
-
-test("loadServiceRegistry normalizes imported service modules", async () => {
-  const registry = await loadServiceRegistry(
-    [
-      {
-        specifier: "virtual:ecommerce",
-        source: "official",
-      },
-      {
-        specifier: "virtual:analytics",
-        status: "available",
-        source: "community",
-      },
-    ],
-    {
-      importer: async (specifier) => ({
-        default: {
-          name: specifier.endsWith("ecommerce")
-            ? "@zelavis/ecommerce"
-            : "@example/analytics",
-          menu: {
-            title: specifier.endsWith("ecommerce") ? "Ecommerce" : "Analytics",
-            path: specifier.endsWith("ecommerce")
-              ? "/commerce"
-              : "/analytics",
-          },
-        },
-      }),
-    },
-  );
-
-  assert.equal(registry.length, 2);
-  assert.equal(registry[0].status, "installed");
-  assert.equal(registry[1].status, "available");
-  assert.equal(registry[1].service.name, "@example/analytics");
-});
-
-test("removeServiceFromRegistry removes entries without mutating the original registry", () => {
+test("removeServiceFromRegistry removes entries by name", () => {
   const registry = createServiceRegistry([
     {
-      service: {
-        name: "@zelavis/ecommerce",
-        menu: {
-          title: "Ecommerce",
-          path: "/commerce",
-        },
-      },
+      service: { name: "@example/one" },
       status: "installed",
-      source: "official",
     },
     {
-      service: {
-        name: "@example/analytics",
-        menu: {
-          title: "Analytics",
-          path: "/analytics",
-        },
-      },
+      service: { name: "@example/two" },
       status: "available",
-      source: "community",
     },
   ]);
 
-  const nextRegistry = removeServiceFromRegistry(registry, "@zelavis/ecommerce");
-
-  assert.equal(registry.length, 2);
-  assert.equal(nextRegistry.length, 1);
-  assert.equal(nextRegistry[0].service.name, "@example/analytics");
+  const filtered = removeServiceFromRegistry(registry, "@example/one");
+  assert.equal(filtered.length, 1);
+  assert.equal(filtered[0].service.name, "@example/two");
 });
 
-test("applyServiceRegistryState overlays stored install state and order", () => {
+test("serializeServiceRegistryState captures persistent configuration", () => {
   const registry = createServiceRegistry([
     {
-      service: {
-        name: "@zelavis/ecommerce",
-      },
-      status: "available",
-      source: "official",
-    },
-    {
-      service: {
-        name: "@example/analytics",
-      },
-      status: "available",
+      service: { name: "@example/installed" },
+      specifier: "@example/installed",
+      status: "installed",
       source: "community",
+      order: 10,
     },
   ]);
 
-  const nextRegistry = applyServiceRegistryState(registry, [
+  const state = serializeServiceRegistryState(registry);
+  assert.deepEqual(state, [
     {
-      name: "@example/analytics",
-      status: "installed",
-      order: 1,
-    },
-    {
-      name: "@zelavis/ecommerce",
-      status: "installed",
-      order: 0,
-    },
-  ]);
-
-  assert.equal(nextRegistry[0].status, "installed");
-  assert.equal(nextRegistry[0].order, 0);
-  assert.equal(nextRegistry[1].status, "installed");
-  assert.deepEqual(serializeServiceRegistryState(nextRegistry), [
-    {
-      name: "@zelavis/ecommerce",
-      status: "installed",
-      source: "official",
-      order: 0,
-    },
-    {
-      name: "@example/analytics",
+      name: "@example/installed",
+      specifier: "@example/installed",
       status: "installed",
       source: "community",
-      order: 1,
+      order: 10,
     },
   ]);
 });
 
-test("activateServiceRegistry runs installed services in order and collects services", async () => {
-  const activationOrder = [];
-  const firstService = {
-    name: "first-service",
-    service: {},
-    api: { v1: [] },
+test("applyServiceRegistryState restores persisted status and order", () => {
+  const registry = createServiceRegistry([
+    {
+      service: { name: "@example/service" },
+      status: "available",
+      source: "community",
+      order: 10,
+    },
+  ]);
+
+  const applied = applyServiceRegistryState(registry, [
+    {
+      name: "@example/service",
+      status: "installed",
+      order: 5,
+    },
+  ]);
+
+  assert.equal(applied[0].status, "installed");
+  assert.equal(applied[0].order, 5);
+});
+
+test("activateServiceRegistry mounts installed services in order", async () => {
+  const first = {
+    name: "@example/first",
+    api: {
+      v1: [
+        {
+          id: "first.ping",
+          method: "GET",
+          path: "/first",
+          handler: () => ({ status: 200 }),
+        },
+      ],
+    },
   };
-  const secondService = {
-    name: "second-service",
-    service: {},
-    api: { v1: [] },
+
+  const second = {
+    name: "@example/second",
+    api: {
+      v1: [
+        {
+          id: "second.ping",
+          method: "GET",
+          path: "/second",
+          handler: () => ({ status: 200 }),
+        },
+      ],
+    },
   };
 
   const registry = createServiceRegistry([
     {
-      service: defineService({
-        name: "@example/second",
-        setup(context) {
-          activationOrder.push(context.service.name);
-          context.addService(secondService);
-        },
-      }),
+      service: second,
       status: "installed",
-      order: 2,
+      order: 20,
     },
     {
-      service: defineService({
-        name: "@example/first",
-        runtimeServices: [firstService],
-        setup(context) {
-          activationOrder.push(context.service.name);
-        },
-      }),
+      service: first,
       status: "installed",
-      order: 0,
-    },
-    {
-      service: defineService({
-        name: "@example/available-only",
-      }),
-      status: "available",
+      order: 10,
     },
   ]);
 
   const activated = await activateServiceRegistry(registry, {
-    rootPath: "/zelavis",
-    api: {
-      prefix: "/api",
-      version: "v1",
-      basePath: "/zelavis/api/v1",
-    },
+    rootPath: "",
+    api: { prefix: "/api", version: "v1", basePath: "/api/v1" },
+    platform: { presets: [], resources: { keyValueStore: true, fileStorage: true }, metadata: {} },
     core: {},
-    platform: {
-      presets: ["node"],
-      resources: {
-        keyValueStore: false,
-        fileStorage: true,
-      },
-      metadata: {
-        runtime: "test",
-      },
-    },
   });
 
-  assert.deepEqual(activationOrder, ["@example/first", "@example/second"]);
-  assert.deepEqual(
-    activated.services.map((service) => service.name),
-    ["first-service", "second-service"],
+  assert.equal(activated.services.length, 2);
+  assert.equal(activated.services[0].name, "@example/first");
+  assert.equal(activated.services[1].name, "@example/second");
+});
+
+// ---------- Core stays filesystem-free; hosts supply manifest resolution ----------
+
+test("the runtime core never resolves plugin manifests from a filesystem", async () => {
+  const { mkdtemp, writeFile, mkdir } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const {
+    setServiceManifestResolver,
+    getServiceManifestResolver,
+  } = await import("../dist/index.js");
+  const { createLocalRuntimeServiceManifestResolver } = await import(
+    "../dist/adapters/_local-runtime.js"
   );
+
+  const directory = await mkdtemp(join(tmpdir(), "zelavis-plugin-"));
+  await mkdir(join(directory, "src"), { recursive: true });
+  await writeFile(
+    join(directory, "package.json"),
+    JSON.stringify({
+      name: "@zelavis/manifest-boundary-fixture",
+      type: "module",
+      exports: "./index.js",
+      zelavis: { kind: "plugin" },
+    }),
+  );
+  await writeFile(
+    join(directory, "index.js"),
+    'import { zelavis } from "zelavis/sdk";\n' +
+      'zelavis.menu.create({ title: "Boundary", path: "/boundary" });\n',
+  );
+
+  const previous = getServiceManifestResolver();
+  try {
+    // With no resolver installed the core must not read package.json at all.
+    setServiceManifestResolver(undefined);
+    await assert.rejects(
+      loadService(directory, {
+        importer: () => {
+          throw new Error("filesystem-free core reached the importer");
+        },
+      }),
+      /filesystem-free core reached the importer/,
+    );
+
+    // A local host installs the resolver explicitly.
+    setServiceManifestResolver(createLocalRuntimeServiceManifestResolver());
+    const resolver = getServiceManifestResolver();
+    const manifest = await resolver(directory);
+    assert.equal(manifest.name, "@zelavis/manifest-boundary-fixture");
+    assert.equal(manifest.zelavis.kind, "plugin");
+
+    // Remote and data specifiers are never treated as filesystem paths.
+    assert.equal(await resolver("https://example.com/plugin.js"), undefined);
+  } finally {
+    setServiceManifestResolver(previous);
+  }
 });
 
-test("activateServiceRegistry gives child services to their parent without activating them directly", async () => {
-  const activationOrder = [];
-  let seenChildren = [];
+test("nodeAdapter installs the local manifest resolver into the core", async () => {
+  const { setServiceManifestResolver, getServiceManifestResolver } =
+    await import("../dist/index.js");
+  const { nodeAdapter } = await import("../dist/adapters/node.js");
 
-  const registry = createServiceRegistry([
-    {
-      service: defineService({
-        name: "@zelavis/ecommerce-stripe",
-        extends: "@zelavis/ecommerce",
-        setup() {
-          activationOrder.push("@zelavis/ecommerce-stripe");
-        },
-      }),
-      status: "installed",
-      order: 0,
-    },
-    {
-      service: defineService({
-        name: "@zelavis/ecommerce",
-        childServices: ["@zelavis/ecommerce-stripe"],
-        setup(context) {
-          activationOrder.push("@zelavis/ecommerce");
-          seenChildren = context.children;
-        },
-      }),
-      status: "installed",
-      order: 1,
-    },
-  ]);
-
-  await activateServiceRegistry(registry, {
-    rootPath: "/zelavis",
-    api: {
-      prefix: "/api",
-      version: "v1",
-      basePath: "/zelavis/api/v1",
-    },
-    core: {},
-    platform: {
-      presets: [],
-      resources: {
-        keyValueStore: false,
-        fileStorage: false,
-      },
-      metadata: {},
-    },
-  });
-
-  assert.deepEqual(activationOrder, ["@zelavis/ecommerce"]);
-  assert.equal(seenChildren.length, 1);
-  assert.equal(seenChildren[0].name, "@zelavis/ecommerce-stripe");
-  assert.equal(seenChildren[0].extends, "@zelavis/ecommerce");
-});
-
-test("activateServiceRegistry withholds child services not listed by the parent", async () => {
-  let seenChildren = [];
-
-  const registry = createServiceRegistry([
-    {
-      service: defineService({
-        name: "@example/xyz-payments",
-        extends: "@zelavis/ecommerce",
-        setup() {
-          throw new Error("Rejected child services should not activate.");
-        },
-      }),
-      status: "installed",
-      order: 0,
-    },
-    {
-      service: defineService({
-        name: "@zelavis/ecommerce",
-        childServices: ["@zelavis/ecommerce-stripe"],
-        setup(context) {
-          seenChildren = context.children;
-        },
-      }),
-      status: "installed",
-      order: 1,
-    },
-  ]);
-
-  await activateServiceRegistry(registry, {
-    rootPath: "/zelavis",
-    api: {
-      prefix: "/api",
-      version: "v1",
-      basePath: "/zelavis/api/v1",
-    },
-    core: {},
-    platform: {
-      presets: [],
-      resources: {
-        keyValueStore: false,
-        fileStorage: false,
-      },
-      metadata: {},
-    },
-  });
-
-  assert.deepEqual(seenChildren, []);
-});
-
-test("activateServiceRegistry exposes standard platform context to service setup", async () => {
-  let seenPlatform;
-
-  const registry = createServiceRegistry([
-    {
-      service: defineService({
-        name: "@example/platform-aware",
-        setup(context) {
-          seenPlatform = context.platform;
-        },
-      }),
-      status: "installed",
-      order: 0,
-    },
-  ]);
-
-  await activateServiceRegistry(registry, {
-    rootPath: "/zelavis",
-    api: {
-      prefix: "/api",
-      version: "v1",
-      basePath: "/zelavis/api/v1",
-    },
-    core: {},
-    platform: {
-      presets: ["node", "libsql"],
-      resources: {
-        keyValueStore: true,
-        fileStorage: false,
-      },
-      metadata: {
-        deployment: "self-hosted",
-      },
-    },
-  });
-
-  assert.deepEqual(seenPlatform, {
-    presets: ["node", "libsql"],
-    resources: {
-      keyValueStore: true,
-      fileStorage: false,
-    },
-    metadata: {
-      deployment: "self-hosted",
-    },
-  });
+  const previous = getServiceManifestResolver();
+  try {
+    setServiceManifestResolver(undefined);
+    nodeAdapter();
+    assert.equal(typeof getServiceManifestResolver(), "function");
+  } finally {
+    setServiceManifestResolver(previous);
+  }
 });

@@ -13,6 +13,9 @@
       "node_modules/@types"
     ],
     "paths": {
+      "@zelavis/app-auth-email-password": [
+        "plugins/auth-email-password/src/index.ts"
+      ],
       "@zelavis/ecommerce": [
         "plugins/ecommerce/src/index.ts"
       ],

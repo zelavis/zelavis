@@ -62,11 +62,12 @@ test("Fabric mounts a single-node core service with project placement inventory"
     services: [service],
   });
 
-  const response = await runtime.fetch(
-    new Request("http://localhost/zelavis/api/v1/fabric/snapshot"),
-  );
+  const response = await runtime.plain({
+    url: "/zelavis/api/v1/fabric/snapshot",
+    principal: { id: "operator", type: "system", permissions: ["fabric.view"] },
+  });
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), {
+  assert.deepEqual(response.body, {
     authority: {
       scope: "platform",
       scopeId: "local-platform",
@@ -133,19 +134,44 @@ test("Fabric returns 404 for unknown nodes and placements", async () => {
     services: [createFabricService()],
   });
 
+  const principal = { id: "operator", type: "system", permissions: ["fabric.view"] };
   const [node, placement] = await Promise.all([
-    runtime.fetch(
-      new Request("http://localhost/zelavis/api/v1/fabric/nodes/missing"),
-    ),
-    runtime.fetch(
-      new Request(
-        "http://localhost/zelavis/api/v1/fabric/placements/projects/missing",
-      ),
-    ),
+    runtime.plain({ url: "/zelavis/api/v1/fabric/nodes/missing", principal }),
+    runtime.plain({
+      url: "/zelavis/api/v1/fabric/placements/projects/missing",
+      principal,
+    }),
   ]);
 
   assert.equal(node.status, 404);
   assert.equal(placement.status, 404);
+});
+
+test("Fabric inventory and planning enforce distinct permissions", async () => {
+  const runtime = await createServiceRuntime({
+    prefix: "/zelavis/api/v1",
+    version: "v1",
+    services: [createFabricService()],
+  });
+  const anonymous = await runtime.plain({
+    url: "/zelavis/api/v1/fabric/snapshot",
+  });
+  const viewerPlan = await runtime.plain({
+    url: "/zelavis/api/v1/fabric/placements/projects/plan",
+    method: "POST",
+    principal: { id: "viewer", type: "system", permissions: ["fabric.view"] },
+    body: { requests: [] },
+  });
+  const managerPlan = await runtime.plain({
+    url: "/zelavis/api/v1/fabric/placements/projects/plan",
+    method: "POST",
+    principal: { id: "manager", type: "system", permissions: ["fabric.manage"] },
+    body: { requests: [] },
+  });
+
+  assert.equal(anonymous.status, 401);
+  assert.equal(viewerPlan.status, 403);
+  assert.equal(managerPlan.status, 200);
 });
 
 test("Fabric resolves a Project placement through the point inventory", async () => {
@@ -335,7 +361,7 @@ test("Fabric enforces runtime compatibility, labels, and explicit capacity", () 
   );
 });
 
-test("Fabric exposes read-only placement planning through its endpoint", async () => {
+test("Fabric exposes deterministic placement planning through its managed endpoint", async () => {
   const runtime = await createServiceRuntime({
     prefix: "/zelavis/api/v1",
     version: "v1",
@@ -351,34 +377,31 @@ test("Fabric exposes read-only placement planning through its endpoint", async (
     ],
   });
 
-  const response = await runtime.fetch(
-    new Request(
-      "http://localhost/zelavis/api/v1/fabric/placements/projects/plan",
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          requests: [
-            placementRequest("project-a", {
-              runtimeDriver: "node-process",
-            }),
-          ],
+  const principal = {
+    id: "manager",
+    type: "system",
+    permissions: ["fabric.manage"],
+  };
+  const response = await runtime.plain({
+    url: "/zelavis/api/v1/fabric/placements/projects/plan",
+    method: "POST",
+    principal,
+    body: {
+      requests: [
+        placementRequest("project-a", {
+          runtimeDriver: "node-process",
         }),
-      },
-    ),
-  );
+      ],
+    },
+  });
   assert.equal(response.status, 200);
-  assert.equal((await response.json()).plan.replicas[0].runtimeNodeId, "node-a");
+  assert.equal(response.body.plan.replicas[0].runtimeNodeId, "node-a");
 
-  const invalid = await runtime.fetch(
-    new Request(
-      "http://localhost/zelavis/api/v1/fabric/placements/projects/plan",
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ requests: [{ projectKind: "zelavis" }] }),
-      },
-    ),
-  );
+  const invalid = await runtime.plain({
+    url: "/zelavis/api/v1/fabric/placements/projects/plan",
+    method: "POST",
+    principal,
+    body: { requests: [{ projectKind: "zelavis" }] },
+  });
   assert.equal(invalid.status, 400);
 });

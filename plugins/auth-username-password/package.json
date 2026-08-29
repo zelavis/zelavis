@@ -6,8 +6,10 @@
   "license": "MIT",
   "author": "Ivan Jeremic",
   "type": "module",
-  "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "zelavis": {
+    "kind": "plugin"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -28,9 +30,9 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/zelavis/zelavis.git",
-    "directory": "packages/zelavis/plugins/username-password"
+    "directory": "plugins/auth-username-password"
   },
-  "homepage": "https://github.com/zelavis/zelavis/tree/main/packages/zelavis/plugins/username-password#readme",
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/plugins/auth-username-password#readme",
   "bugs": {
     "url": "https://github.com/zelavis/zelavis/issues"
   },

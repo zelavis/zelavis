@@ -1,0 +1,9 @@
+# OpenAPI Generator config for Zelavis Rust SDK
+generatorName: rust
+inputSpec: sdks/openapi/zelavis-api.json
+outputDir: sdks/rust
+
+additionalProperties:
+  packageName: zelavis
+  packageVersion: 0.1.0
+  library: reqwest

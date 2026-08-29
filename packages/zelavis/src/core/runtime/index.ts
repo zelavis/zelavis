@@ -1,4 +1,7 @@
 export * from "./contracts.js";
+export * from "./authentication.js";
+export * from "./basic-authentication.js";
+export * from "./jwt-authentication.js";
 export * from "./compatibility.js";
 export * from "./lifecycle.js";
 export * from "./http-errors.js";

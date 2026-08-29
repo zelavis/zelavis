@@ -38,6 +38,36 @@ Project lifecycle endpoints are available under
 create, list, start, and stop projects, and project dashboard API traffic is
 proxied to the selected project's runtime.
 
+The local Project Gateway also supplies the scoped Platform principal used by
+trusted dashboard administration routes. Direct calls to a child runtime do
+not inherit Platform authority, and Auth account, credential, and session
+administration requires the `project.users.manage` permission.
+
+Fresh Platform installations require an explicit one-time bootstrap token
+before the first owner can be created. Configure it with
+`ZELAVIS_BOOTSTRAP_TOKEN` or `new Zelavis({ bootstrap: { token } })`, and install
+an auth plugin that supports credential enrollment. The dashboard then uses
+the normal `/zelavis/api/v1/auth/*` endpoints for bootstrap, login, session
+rotation, and logout; `/runtime/access` never fabricates a demo owner.
+
+The System Store atomically claims first-owner bootstrap, so competing Platform
+writers cannot create two owners. Authentication failures use bounded durable
+attempt state and privacy-safe security events; administrators can inspect the
+audit stream and revoke individual or all account sessions without exposing
+stored token hashes.
+
+Credential recovery is provider-owned and endpoint-backed under
+`/zelavis/api/v1/auth/recovery/*`. Password plugins can opt into expiring,
+hashed one-time recovery tokens with an operator-supplied delivery callback;
+successful recovery revokes the account's active sessions.
+
+SQLite-compatible App drivers serialize top-level write transactions and
+enforce unique event-stream revisions. Raw `sql.execute()` accepts one
+statement and refuses direct or trigger-mediated mutation of registered
+collection tables, including mutations hidden behind comments or CTEs. Shared bundle storage
+validates every scope component before composing its key so a service bundle
+cannot traverse into another Project's namespace.
+
 The Platform OS also owns Assistant threads. `createAssistantManager(...)`
 stores project-scoped conversations in the System Store and delegates replies
 to a `ZelavisAssistantResponder`. The default `zelavis-local-router` provides a
@@ -136,15 +166,31 @@ export function GET(request: Request) {
 Use scoped packages when building lower-level primitives, adapters, services, or tests that need direct package APIs:
 
 ```ts
-import { defineService } from "zelavis";
+import { zelavis } from "zelavis/sdk";
 import { authService } from "zelavis/app/auth";
 ```
 
-Services are the public extension unit. A service can be a dashboard extension,
-provider, hosted website/webapp, or a combination of those capabilities.
+Plugins are standard npm packages configured via `package.json` manifests (`"type": "module"`, `"exports"`, and `"zelavis": { "kind": "plugin" }`).
+Plugin code uses the official Zelavis SDK:
+
+```ts
+import { zelavis } from "zelavis/sdk";
+
+zelavis.menu.create({
+  title: "Ecommerce",
+  path: "/commerce",
+});
+
+zelavis.routes.create({
+  id: "commerce.products.list",
+  method: "GET",
+  path: "/products",
+  handler: async () => ({ status: 200, body: [] }),
+});
+```
 
 Service loading stays pure ESM. Zelavis exposes helpers such as
-`loadService(...)`, `loadServiceRegistry(...)`, `resolveServiceModule(...)`,
+`loadPluginPackage(...)`, `loadService(...)`, `loadServiceRegistry(...)`, `resolveServiceModule(...)`,
 and `removeServiceFromRegistry(...)` so install/load/remove flows stay inside
 standard JavaScript module semantics instead of Node-specific loaders.
 
@@ -152,18 +198,17 @@ For runtime composition, Zelavis supports a service registry option with real
 install state and activation order:
 
 ```ts
-import { createServiceRegistry, defineService, Zelavis } from "zelavis";
+import { createServiceRegistry, Zelavis } from "zelavis";
 
-const ecommerce = defineService({
+const ecommerce = {
   name: "@zelavis/ecommerce",
   kind: "plugin",
   capabilities: ["api:routes", "dashboard:menu"],
-  childServices: ["@zelavis/ecommerce-stripe", "@zelavis/ecommerce-paypal"],
   menu: {
     title: "Ecommerce",
     path: "/commerce",
   },
-});
+};
 
 const zv = new Zelavis({
   services: {
@@ -244,6 +289,18 @@ await tenantDb.documents.update({
 });
 ```
 
+Database administration stays logical too. `zv.db.systemViews` exposes
+collections, events, schemas, projections, and time-series definitions without
+revealing physical shard drivers or internal `zv_*` tables. `zv.db.backups`
+exports and restores a Tenant's schema and exact event history; the matching
+maintenance endpoints require `database.inspect`, `database.backup`, or
+`database.restore` permissions.
+
+Node hosts can persist content-addressed runtime objects with
+`createNodeFileArtifactStore({ directory })` from `zelavis/adapters/node`.
+Writes verify their SHA-256 key, existing objects remain immutable, and reads
+fail on on-disk corruption.
+
 By default, Zelavis owns one safe namespace:
 
 ```txt
@@ -305,9 +362,7 @@ state it needs.
 Services can also ship full web apps through the `app` field:
 
 ```ts
-import { defineService } from "zelavis";
-
-export default defineService({
+export default {
   name: "@acme/storefront",
   kind: "web-app",
   capabilities: ["web:app", "api:routes"],
@@ -534,15 +589,15 @@ Zelavis dashboard internals.
 That lets a custom service ship simple static dashboard pages:
 
 ```ts
-defineService({
-  name: "@acme/reports",
-  menu: {
-    title: "Reports",
-    path: "/reports",
-    page: {
-      id: "dashboard",
-      file: "dashboard.html",
-    },
+import { zelavis } from "zelavis/sdk";
+
+zelavis.menu.create({
+  title: "Reports",
+  path: "/reports",
+  page: {
+    id: "dashboard",
+    file: "dashboard.html",
+  },
     items: [
       {
         title: "Settings",

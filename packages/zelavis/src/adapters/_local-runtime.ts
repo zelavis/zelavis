@@ -13,9 +13,11 @@ import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { inflateRawSync } from "node:zlib";
 import { dirname, join, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type {
+  ZelavisPackageManifest,
   ZelavisServiceLoadOptions,
+  ZelavisServiceManifestResolver,
   ZelavisServicePackageInstaller,
 } from "../index.js";
 
@@ -383,5 +385,39 @@ export function createLocalRuntimeServiceImporter(
     }
 
     return import(specifier);
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Service manifest resolver (specifier → package.json)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves the `package.json` manifest that sits beside a local service
+ * specifier. This lives in the local-runtime adapter, not the runtime core,
+ * because filesystem plugin scanning is an explicit core non-goal.
+ */
+export function createLocalRuntimeServiceManifestResolver(): ZelavisServiceManifestResolver {
+  return async (specifier) => {
+    if (isRemoteSpecifier(specifier) || isDataSpecifier(specifier)) {
+      return undefined;
+    }
+
+    const candidatePath = specifier.startsWith("file://")
+      ? fileURLToPath(specifier)
+      : specifier;
+
+    try {
+      const entry = await stat(candidatePath);
+      const manifestPath = entry.isDirectory()
+        ? join(candidatePath, "package.json")
+        : join(dirname(candidatePath), "package.json");
+      return JSON.parse(
+        await readFile(manifestPath, "utf-8"),
+      ) as ZelavisPackageManifest;
+    } catch {
+      // Not a local filesystem path, or it has no adjacent package.json.
+      return undefined;
+    }
   };
 }

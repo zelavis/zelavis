@@ -21,7 +21,6 @@ import {
   type PaymentProvider,
   type RefundPaymentInput,
 } from "@zelavis/ecommerce";
-import { defineService } from "zelavis/service";
 
 const ZERO_DECIMAL_CURRENCIES = new Set([
   "BIF",
@@ -698,11 +697,15 @@ export function createPayPalPaymentProvider(
 }
 
 export function paypalService(options: PayPalServiceOptions = {}) {
-  return defineService<EcommerceApi>({
+  return Object.freeze({
     name: "@zelavis/ecommerce-paypal",
-    extends: "@zelavis/ecommerce",
-    setup(api) {
-      api.payments.registerProvider("paypal", createPayPalPaymentProvider(options));
+    kind: "provider",
+    capabilities: Object.freeze(["provider:payments"]),
+    service: {
+      name: "paypal",
+      register(api: EcommerceApi) {
+        api.payments.registerProvider("paypal", createPayPalPaymentProvider(options));
+      },
     },
   });
 }

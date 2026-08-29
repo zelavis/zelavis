@@ -19,6 +19,9 @@ import type {
 const STORAGE_METADATA_SUFFIX = ".zelavis-meta.json";
 
 function normalizeStoragePath(path: string): string {
+  if (path.includes("\0")) {
+    throw new Error("Storage path must not contain null bytes.");
+  }
   return path.replace(/^\/+/, "").replace(/\\/g, "/");
 }
 
@@ -134,7 +137,12 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
   const rootPath = resolve(rootDirectory);
 
   function resolvePath(path: string): string {
-    return join(rootPath, normalizeStoragePath(path));
+    const normalized = normalizeStoragePath(path);
+    const target = resolve(rootPath, normalized);
+    if (target !== rootPath && !target.startsWith(`${rootPath}${sep}`)) {
+      throw new Error(`Path escapes storage root: "${path}"`);
+    }
+    return target;
   }
 
   function resolveMetadataPath(path: string): string {

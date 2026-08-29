@@ -1,6 +1,7 @@
 export {
   createNodeServiceImporter,
   createNodeServicePackageInstaller,
+  createNodeFileArtifactStore,
   nodeAdapter,
   nodeAdapter as zelavisNode,
 } from "./node.js";
@@ -9,6 +10,7 @@ export type {
   NodeAdapterDatabaseOptions,
   NodeAdapterProjectOptions,
   NodeAdapterServiceOptions,
+  NodeFileArtifactStoreOptions,
 } from "./node.js";
 
 export { bunAdapter, bunAdapter as zelavisBun } from "./bun.js";

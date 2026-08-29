@@ -1,97 +1,70 @@
 # @zelavis/ecommerce
 
-Official Zelavis ecommerce package.
+Official Zelavis ecommerce plugin.
 
-This package is now the single home for Zelavis ecommerce:
+This package provides an end-to-end commerce capability for Zelavis applications and runtimes:
 
-- the official Zelavis runtime service `zelavisEcommerceService`
-- the low-level commerce domain API via `createEcommerce(...)`
-- child payment provider services
-- provider packages such as Stripe and PayPal
-
-There is no separate old ecommerce base package anymore.
+- the official Zelavis plugin `ecommercePlugin`
+- low-level commerce domain APIs via `createEcommerce(...)`
+- payment provider integrations (e.g. Stripe and PayPal) discovered through the `provider:payments` capability
+- recurring billing and subscription lifecycle management
 
 ## Main entrypoints
 
-- [services/ecommerce/src/zelavis-ecommerce-service.ts](/Users/ivanjeremicx/Projects/zelavis/services/ecommerce/src/zelavis-ecommerce-service.ts)
-- [services/ecommerce/src/core/create-ecommerce.ts](/Users/ivanjeremicx/Projects/zelavis/services/ecommerce/src/core/create-ecommerce.ts)
-- [services/ecommerce/src/ecommerce-service.ts](/Users/ivanjeremicx/Projects/zelavis/services/ecommerce/src/ecommerce-service.ts)
-- [services/ecommerce/src/repositories/database.ts](/Users/ivanjeremicx/Projects/zelavis/services/ecommerce/src/repositories/database.ts)
+- [`src/ecommerce-plugin.ts`](src/ecommerce-plugin.ts): canonical plugin definition (`kind: "plugin"`)
+- [`src/core/create-ecommerce.ts`](src/core/create-ecommerce.ts): low-level commerce engine factory
+- [`src/ecommerce-service.ts`](src/ecommerce-service.ts): domain service composition
+- [`src/repositories/database.ts`](src/repositories/database.ts): Zelavis Document DB persistence layer
 
 ## Usage
 
 ```ts
-import {
-  createEcommerce,
-  zelavisEcommerceService,
-} from "@zelavis/ecommerce";
-import { defineService } from "zelavis/service";
+import { createEcommerce, ecommercePlugin } from "@zelavis/ecommerce";
 ```
 
-## Included layers
+## Architecture & Layering
 
-- `zelavisEcommerceService`
-  - the official Zelavis project Marketplace/runtime service
-  - mounts `/zelavis/api/v1/commerce/*` routes
-  - appears in the dashboard/service system
-- `createEcommerce(...)`
-  - the low-level commerce API for direct programmatic use
-  - defaults to in-memory repositories unless you provide your own repositories
-- child payment provider services
-  - use the normal Zelavis `defineService(...)` contract
-  - declare `extends: "@zelavis/ecommerce"`
-  - receive the ecommerce API in setup when the parent ecommerce service activates
-
-## Layering
-
-There is one service builder:
+Plugins are configured in `package.json` manifests (`"zelavis": { "kind": "plugin" }`) and export frozen `ZelavisRuntimeService` instances or use the official Zelavis SDK:
 
 ```ts
-import { defineService } from "zelavis/service";
-```
+import type { ZelavisRuntimeService } from "zelavis";
 
-The top-level ecommerce service uses it:
-
-```ts
-export const zelavisEcommerceService = defineService({
+export const ecommercePlugin: ZelavisRuntimeService = Object.freeze({
   name: "@zelavis/ecommerce",
-  childServices: ["@zelavis/ecommerce-stripe", "@zelavis/ecommerce-paypal"],
+  kind: "plugin",
+  capabilities: ["api:routes", "dashboard:menu"],
+  // ...
 });
 ```
 
-Payment providers use the same builder, but declare that they extend ecommerce:
+### Payment Provider Discovery
+
+Payment providers (such as `@zelavis/ecommerce-stripe` or `@zelavis/ecommerce-paypal`) are standalone provider plugins. They register with Zelavis by declaring the `provider:payments` capability:
 
 ```ts
-export const stripeService = defineService({
+export const stripeService: ZelavisRuntimeService = Object.freeze({
   name: "@zelavis/ecommerce-stripe",
-  extends: "@zelavis/ecommerce",
-  marketplace: {
-    title: "Stripe",
-    categories: ["payments"],
-  },
-  setup(api) {
-    api.payments.registerProvider("@zelavis/ecommerce-stripe", provider);
+  kind: "provider",
+  capabilities: ["provider:payments"],
+  service: {
+    name: "stripe",
+    register(api) {
+      api.payments.registerProvider("stripe", provider);
+    },
   },
 });
 ```
 
-That means `@zelavis/ecommerce` is both:
-
-- the official Zelavis ecommerce service package
-- the home for its child provider service system
-
-The provider layer extends the ecommerce domain API. It is installed through the same service registry, but it activates through its parent service rather than as an independent top-level Extensions service.
-
-The official ecommerce package accepts Stripe and PayPal through `childServices`. Other payment providers should be added to that allow-list by the parent service package before they activate.
+Installed providers are discovered dynamically from `context.registry` by capability, without hardcoding provider allow-lists into the ecommerce core.
 
 ## Persistence
 
-The official runtime service persists through Zelavis primitives when they are available:
+The runtime plugin persists through native Zelavis Document DB primitives when available:
 
-- if Zelavis database core is enabled, `zelavisEcommerceService` stores commerce entities in Zelavis database collections
-- if no database core is enabled, the low-level `createEcommerce(...)` API falls back to in-memory repositories
+- When database services are configured, entities are persisted to dedicated tenant collections with `surface: "database"`.
+- Without a database, `createEcommerce(...)` falls back to in-memory repositories.
 
-The current database-backed collections are:
+Current collections:
 
 - `commerce_products`
 - `commerce_customers`
@@ -100,24 +73,38 @@ The current database-backed collections are:
 - `commerce_payment_attempts`
 - `commerce_subscriptions`
 
-## Runtime routes
+## Runtime Routes
 
-`zelavisEcommerceService` currently mounts:
+`ecommercePlugin` registers OpenAPI-documented routes under `/commerce` (accessed via `/zelavis/api/v1/commerce/*`):
 
-- `GET /zelavis/api/v1/commerce/health`
-- `GET /zelavis/api/v1/commerce/products`
-- `POST /zelavis/api/v1/commerce/products`
-- `GET /zelavis/api/v1/commerce/products/:id`
-- `GET /zelavis/api/v1/commerce/customers`
-- `POST /zelavis/api/v1/commerce/customers`
-- `GET /zelavis/api/v1/commerce/customers/:id`
-- `GET /zelavis/api/v1/commerce/coupons`
-- `POST /zelavis/api/v1/commerce/coupons`
-- `GET /zelavis/api/v1/commerce/coupons/:code`
-- `GET /zelavis/api/v1/commerce/orders`
-- `POST /zelavis/api/v1/commerce/orders`
-- `GET /zelavis/api/v1/commerce/orders/:id`
-- `GET /zelavis/api/v1/commerce/payments/providers`
-- `GET /zelavis/api/v1/commerce/payments/attempts`
-- `POST /zelavis/api/v1/commerce/orders/:id/payments`
-- `GET /zelavis/api/v1/commerce/subscriptions`
+### Products
+- `GET /health` — Service health & platform presets
+- `GET /products` — List all products
+- `POST /products` — Create product
+- `GET /products/:id` — Get product by ID
+
+### Customers
+- `GET /customers` — List customers
+- `POST /customers` — Create customer
+- `GET /customers/:id` — Get customer by ID
+
+### Coupons
+- `GET /coupons` — List coupons
+- `POST /coupons` — Create coupon
+- `GET /coupons/:code` — Get coupon by code
+
+### Orders
+- `GET /orders` — List orders
+- `POST /orders` — Create order
+- `GET /orders/:id` — Get order by ID
+
+### Payments
+- `GET /payments/providers` — List registered payment providers
+- `GET /payments/attempts` — List payment attempts
+- `POST /orders/:id/payments` — Initiate payment for an order
+
+### Subscriptions & Recurring Billing
+- `GET /subscriptions` — List active and historical subscriptions
+- `POST /subscriptions` — Create a recurring subscription (supports Stripe, PayPal, etc.)
+- `GET /subscriptions/:id` — Get subscription details
+- `POST /subscriptions/:id/cancel` — Cancel an active subscription

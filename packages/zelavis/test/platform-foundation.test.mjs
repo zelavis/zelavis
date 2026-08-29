@@ -12,7 +12,12 @@ import {
   createProjectManager,
 } from "../dist/index.js";
 import { nodeAdapter } from "../dist/adapters/node.js";
+import { createLocalFileStorage } from "../dist/adapters/_shared.js";
 import { formatProjectProcessExitError } from "../dist/adapters/_node-project-runtime.js";
+
+const PLATFORM_OWNER_CONTEXT = {
+  principal: { id: "test-owner", type: "user", roles: ["owner"], permissions: ["*"] },
+};
 
 test("project process failures include the useful stderr cause", () => {
   assert.equal(
@@ -34,6 +39,28 @@ test("project process failures include the useful stderr cause", () => {
     }),
     "Project process exited with code 1. Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'missing-app' See project logs for full output.",
   );
+});
+
+test("local file storage cannot escape its configured root", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "zelavis-files-"));
+  const storage = createLocalFileStorage(join(directory, "root"));
+  try {
+    await assert.rejects(
+      storage.put({ path: "../outside.txt", body: "forbidden" }),
+      /escapes storage root/,
+    );
+    await assert.rejects(
+      storage.get("assets/../../outside.txt"),
+      /escapes storage root/,
+    );
+    const stored = await storage.put({
+      path: "assets/file..min.js",
+      body: "allowed",
+    });
+    assert.equal(stored.path, "assets/file..min.js");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("System Store keeps platform records outside project database APIs", async () => {
@@ -78,6 +105,7 @@ test("Assistant capability is available through versioned runtime endpoints", as
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ projectId: "project-a" }),
     }),
+    PLATFORM_OWNER_CONTEXT,
   );
   const created = await createResponse.json();
 
@@ -91,6 +119,7 @@ test("Assistant capability is available through versioned runtime endpoints", as
         body: JSON.stringify({ content: "Show resources" }),
       },
     ),
+    PLATFORM_OWNER_CONTEXT,
   );
   const message = await messageResponse.json();
   assert.equal(messageResponse.status, 201);
@@ -100,6 +129,7 @@ test("Assistant capability is available through versioned runtime endpoints", as
     new Request(
       "http://localhost/zelavis/api/v1/runtime/assistant/threads?projectId=project-a",
     ),
+    PLATFORM_OWNER_CONTEXT,
   );
   const listed = await listResponse.json();
   assert.equal(listed.responder, "zelavis-local-router");
@@ -120,6 +150,7 @@ test("Zelavis accepts a custom Assistant responder at the public entrypoint", as
         headers: { "content-type": "application/json" },
         body: "{}",
       }),
+      PLATFORM_OWNER_CONTEXT,
     )
   ).json();
   const response = await zv.fetch(
@@ -131,6 +162,7 @@ test("Zelavis accepts a custom Assistant responder at the public entrypoint", as
         body: JSON.stringify({ content: "hello" }),
       },
     ),
+    PLATFORM_OWNER_CONTEXT,
   );
   const result = await response.json();
   assert.equal(result.assistantMessage.content, "Received: hello");
@@ -167,6 +199,7 @@ test("Node adapter registers shipped app services and persists Platform Store SQ
     const runtime = await zv.runtime();
     const response = await runtime.fetch(
       new Request("http://localhost/zelavis/api/v1/runtime/app-services"),
+      PLATFORM_OWNER_CONTEXT,
     );
     const body = await response.json();
 
@@ -583,6 +616,7 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
   const runtimeRequest = (path, init) =>
     zv.fetch(
       new Request(`http://localhost/zelavis/api/v1/runtime${path}`, init),
+      PLATFORM_OWNER_CONTEXT,
     );
   const projectRuntimeUrls = new Map();
 
@@ -624,6 +658,15 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
       )?.menu?.title,
       "Workloads",
     );
+
+    const proxiedAccounts = await runtimeRequest(
+      "/projects/alpha/proxy/zelavis/api/v1/auth/accounts",
+    );
+    assert.equal(proxiedAccounts.status, 200, await proxiedAccounts.text());
+    const directAccounts = await fetch(
+      `${projectRuntimeUrls.get("alpha")}/zelavis/api/v1/auth/accounts`,
+    );
+    assert.equal(directAccounts.status, 401);
 
     const childDashboardResponse = await fetch(`${projectRuntimeUrls.get("alpha")}/zelavis`);
     const childDashboardBody = await childDashboardResponse.text();
@@ -775,10 +818,11 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
     );
     assert.equal(listBody.projects.length, 2);
 
-    const fabricResponse = await zv.fetch(
-      new Request("http://localhost/zelavis/api/v1/fabric/placements/projects/beta"),
-    );
-    const fabricBody = await fabricResponse.json();
+    const fabricResponse = await zv.plain({
+      url: "/zelavis/api/v1/fabric/placements/projects/beta",
+      principal: { id: "owner", type: "system", permissions: ["fabric.view"] },
+    });
+    const fabricBody = fabricResponse.body;
     assert.equal(fabricResponse.status, 200);
     assert.deepEqual(fabricBody.placement.identity, {
       scopeId: "local-platform",
@@ -798,6 +842,7 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
           body: JSON.stringify({ projectId: "alpha" }),
         },
       ),
+      PLATFORM_OWNER_CONTEXT,
     );
     assert.equal(assistantThreadResponse.status, 201);
     const files = zv.platform.resources.files;
@@ -825,6 +870,7 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
         new Request(
           "http://localhost/zelavis/api/v1/runtime/assistant/threads?projectId=alpha",
         ),
+        PLATFORM_OWNER_CONTEXT,
       )
     ).json();
     assert.deepEqual(assistantThreadsAfterDelete.threads, []);

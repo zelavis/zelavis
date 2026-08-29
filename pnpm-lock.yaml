@@ -100,6 +100,9 @@ importers:
 
   examples/nodejs:
     dependencies:
+      '@zelavis/app-auth-email-password':
+        specifier: workspace:*
+        version: link:../../plugins/auth-email-password
       zelavis:
         specifier: workspace:*
         version: link:../../packages/zelavis
@@ -154,6 +157,9 @@ importers:
       effect:
         specifier: 4.0.0-rc.111
         version: 4.0.0-rc.111
+      jose:
+        specifier: ^6.2.10
+        version: 6.2.10
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.13
@@ -180,24 +186,6 @@ importers:
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
-
-  packages/zelavis/plugins/email-password:
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      zelavis:
-        specifier: workspace:*
-        version: link:../..
-
-  packages/zelavis/plugins/username-password:
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      zelavis:
-        specifier: workspace:*
-        version: link:../..
 
   packages/zelavis/product-services/zelavis-ui:
     dependencies:
@@ -355,6 +343,37 @@ importers:
       vitest:
         specifier: ^4.1.9
         version: 4.1.11(@types/node@25.9.5)(jsdom@28.1.0)(vite@8.2.2(@types/node@25.9.5)(esbuild@0.28.2)(jiti@2.7.0))
+
+  plugins/auth-email-password:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      zelavis:
+        specifier: workspace:*
+        version: link:../../packages/zelavis
+
+  plugins/auth-oidc:
+    dependencies:
+      jose:
+        specifier: ^6.2.10
+        version: 6.2.10
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      zelavis:
+        specifier: workspace:*
+        version: link:../../packages/zelavis
+
+  plugins/auth-username-password:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      zelavis:
+        specifier: workspace:*
+        version: link:../../packages/zelavis
 
   plugins/ecommerce:
     dependencies:

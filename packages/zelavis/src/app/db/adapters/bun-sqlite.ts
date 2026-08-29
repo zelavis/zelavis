@@ -96,7 +96,7 @@ function mapRow(row: Record<string, unknown>): Record<string, unknown> {
  * so the shared driver's async transaction contract composes naturally.
  */
 function createGateway(database: BunSqliteDatabase): SqliteGateway {
-  let inTransaction = false;
+  let transactionTail: Promise<void> = Promise.resolve();
 
   const gateway: SqliteGateway = {
     async all<T = Record<string, unknown>>(
@@ -141,26 +141,26 @@ function createGateway(database: BunSqliteDatabase): SqliteGateway {
     },
 
     async transaction<T>(fn: (tx: SqliteGateway) => Promise<T>): Promise<T> {
-      if (inTransaction) {
-        return fn(gateway);
-      }
-
-      inTransaction = true;
-      database.exec("BEGIN");
-      try {
-        const result = await fn(gateway);
-        database.exec("COMMIT");
-        return result;
-      } catch (error) {
+      const run = transactionTail.then(async () => {
+        database.exec("BEGIN");
         try {
-          database.exec("ROLLBACK");
-        } catch {
-          // Surface the original error if ROLLBACK fails.
+          const result = await fn(gateway);
+          database.exec("COMMIT");
+          return result;
+        } catch (error) {
+          try {
+            database.exec("ROLLBACK");
+          } catch {
+            // Surface the original error if ROLLBACK fails.
+          }
+          throw error;
         }
-        throw error;
-      } finally {
-        inTransaction = false;
-      }
+      });
+      transactionTail = run.then(
+        () => undefined,
+        () => undefined,
+      );
+      return run;
     },
   };
 

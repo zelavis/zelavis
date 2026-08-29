@@ -1,4 +1,4 @@
-export { default } from "./access.users";
+export { clientLoader, default } from "./access.users";
 
 export const handle = {
   pageLabel: "Users",

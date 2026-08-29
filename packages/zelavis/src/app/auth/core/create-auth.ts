@@ -3,13 +3,22 @@ import { AccountService } from "../services/account-service.js";
 import { AuthenticationService } from "../services/authentication-service.js";
 import { CredentialService } from "../services/credential-service.js";
 import { SessionService } from "../services/session-service.js";
+import { AuthSecurityService } from "../services/security-service.js";
 import { createInMemoryAuthRepositories } from "../storage/in-memory.js";
-import type { AuthApi, AuthProviderService } from "./types.js";
+import type { AuthApi, AuthMethodPlugin } from "./types.js";
+import { createSessionAuthenticator } from "./session-authenticator.js";
 
 export interface CreateAuthOptions {
   config?: Record<string, unknown>;
-  services?: readonly AuthProviderService[];
+  methods?: readonly AuthMethodPlugin[];
+  projectId?: string;
+  sessionCookieName?: string | false;
   repositories?: Partial<AuthRepositories>;
+  security?: {
+    maxAttempts?: number;
+    windowMs?: number;
+    blockMs?: number;
+  };
 }
 
 export async function createAuth(options: CreateAuthOptions = {}): Promise<AuthApi> {
@@ -21,22 +30,35 @@ export async function createAuth(options: CreateAuthOptions = {}): Promise<AuthA
     accounts,
     credentials,
     sessions,
+    authorizationFlows: repositories.authorizationFlows,
+  });
+  const security = new AuthSecurityService({
+    attempts: repositories.attempts,
+    events: repositories.securityEvents,
+    ...options.security,
   });
 
   const api: AuthApi = {
     context: {
       config: options.config ?? {},
-      childServices: Object.freeze([...(options.services ?? [])]),
+      methods: Object.freeze([...(options.methods ?? [])]),
     },
     repositories,
     accounts,
     credentials,
     sessions,
     authentication,
+    security,
+    requestAuthenticator: createSessionAuthenticator({
+      accounts,
+      sessions,
+      projectId: options.projectId,
+      cookieName: options.sessionCookieName,
+    }),
   };
 
-  for (const service of options.services ?? []) {
-    await service.setup?.(api);
+  for (const method of options.methods ?? []) {
+    await method.register(api);
   }
 
   return api;

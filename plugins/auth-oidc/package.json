@@ -1,0 +1,34 @@
+{
+  "name": "@zelavis/app-auth-oidc",
+  "version": "1.0.1-alpha.2",
+  "private": false,
+  "description": "OIDC/JWKS bearer authentication plugin for Zelavis.",
+  "license": "MIT",
+  "author": "Ivan Jeremic",
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "zelavis": {
+    "kind": "plugin"
+  },
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run typecheck"
+  },
+  "files": ["dist"],
+  "publishConfig": { "access": "public" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zelavis/zelavis.git",
+    "directory": "plugins/auth-oidc"
+  },
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/plugins/auth-oidc#readme",
+  "bugs": {
+    "url": "https://github.com/zelavis/zelavis/issues"
+  },
+  "peerDependencies": { "zelavis": ">=1.0.1-alpha.2" },
+  "dependencies": { "jose": "^6.2.10" },
+  "devDependencies": { "typescript": "^5.9.0", "zelavis": "workspace:*" },
+  "keywords": ["auth", "oauth", "oidc", "jwt", "jwks"]
+}

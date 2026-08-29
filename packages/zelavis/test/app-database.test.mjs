@@ -711,6 +711,20 @@ test("parseWriteTargetTable extracts table names from DML and DDL write statemen
   assert.equal(parseWriteTargetTable('DROP TABLE IF EXISTS "Fruits"'), "Fruits");
   assert.equal(parseWriteTargetTable('ALTER TABLE "Fruits" ADD COLUMN foo TEXT'), "Fruits");
 
+  // Comments and CTE column lists cannot hide the mutation target.
+  assert.equal(
+    parseWriteTargetTable(
+      '/* audit */ WITH cte(x) AS (SELECT 1) DELETE FROM "Fruits" WHERE tenant_id = ?',
+    ),
+    "Fruits",
+  );
+  assert.equal(
+    parseWriteTargetTable(
+      'WITH one(x) AS (SELECT 1), two(y) AS (SELECT x FROM one) UPDATE products SET name = ?',
+    ),
+    "products",
+  );
+
   // Leading whitespace and mixed case
   assert.equal(parseWriteTargetTable("  insert into Products values (?)"), "Products");
 
@@ -718,4 +732,5 @@ test("parseWriteTargetTable extracts table names from DML and DDL write statemen
   assert.equal(parseWriteTargetTable("SELECT * FROM products"), null);
   assert.equal(parseWriteTargetTable("CREATE TABLE products (id TEXT)"), null);
   assert.equal(parseWriteTargetTable("PRAGMA table_info(products)"), null);
+  assert.equal(parseWriteTargetTable("SELECT '; DELETE FROM products'"), null);
 });

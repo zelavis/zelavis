@@ -404,6 +404,40 @@ export interface RuntimeConfig {
   access?: RuntimeDashboardAccess;
 }
 
+export interface RuntimeAuthBootstrapStatus {
+  required: boolean;
+  providers: readonly string[];
+  enrollmentProviders: readonly string[];
+  available: boolean;
+  tokenRequired: boolean;
+}
+
+export interface RuntimeAuthSessionResult {
+  account: AuthAccount;
+  session: {
+    token: string;
+    session: {
+      id: string;
+      accountId: string;
+      status: "active" | "revoked" | "expired";
+      expiresAt: string;
+      createdAt: string;
+      updatedAt: string;
+    };
+  };
+}
+
+export class RuntimeApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly path: string,
+  ) {
+    super(message);
+    this.name = "RuntimeApiError";
+  }
+}
+
 export const DATABASE_COLLECTION_CREATED_EVENT =
   "zelavis:database-collection-created";
 
@@ -480,6 +514,8 @@ export interface AuthAccount {
   username?: string;
   displayName?: string;
   verified: boolean;
+  roles?: readonly string[];
+  permissions?: readonly string[];
   metadata?: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -579,6 +615,18 @@ export interface DatabaseDocument {
   updatedAt: string;
   version: number;
   schemaVersion: number;
+}
+
+export type DatabaseSystemViewName =
+  | "collections"
+  | "events"
+  | "schemas"
+  | "projections"
+  | "time-series";
+
+export interface DatabaseSystemViewRow {
+  id: string;
+  data: Record<string, unknown>;
 }
 
 export interface DatabaseSchemaCollectionSummary {
@@ -1152,7 +1200,7 @@ async function readJson<T>(path: string, init?: RequestInit): Promise<T> {
       // Keep the status-only fallback when the response is not JSON.
     }
 
-    throw new Error(`${message} (${path})`);
+    throw new RuntimeApiError(`${message} (${path})`, response.status, path);
   }
 
   return response.json() as Promise<T>;
@@ -1468,12 +1516,60 @@ export async function getActiveRuntimeConfig(
 
 export async function getDashboardAccess(
   config: RuntimeConfig,
-  mode?: string,
 ): Promise<RuntimeDashboardAccess> {
-  const suffix = mode ? `?as=${encodeURIComponent(mode)}` : "";
   return readJson<RuntimeDashboardAccess>(
-    `${config.api.basePath}/runtime/access${suffix}`,
+    `${config.api.basePath}/runtime/access`,
   );
+}
+
+export async function getAuthBootstrapStatus(
+  config: RuntimeConfig,
+): Promise<RuntimeAuthBootstrapStatus> {
+  return readJson<RuntimeAuthBootstrapStatus>(
+    `${config.api.basePath}/auth/bootstrap`,
+  );
+}
+
+export async function bootstrapPlatformOwner(
+  config: RuntimeConfig,
+  input: {
+    bootstrapToken: string;
+    provider: string;
+    account: { email?: string; username?: string; displayName?: string };
+    credential: { identifier: string; password: string };
+  },
+): Promise<RuntimeAuthSessionResult> {
+  return readJson<RuntimeAuthSessionResult>(
+    `${config.api.basePath}/auth/bootstrap`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+}
+
+export async function authenticatePlatform(
+  config: RuntimeConfig,
+  provider: string,
+  input: { identifier: string; password: string },
+): Promise<RuntimeAuthSessionResult> {
+  return readJson<RuntimeAuthSessionResult>(
+    `${config.api.basePath}/auth/authenticate/${encodeURIComponent(provider)}`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+}
+
+export async function logoutPlatform(config: RuntimeConfig): Promise<void> {
+  const response = await fetch(`${config.api.basePath}/auth/session`, {
+    method: "DELETE",
+    headers: {
+      accept: "application/json",
+    },
+  });
+  if (!response.ok && response.status !== 401) {
+    throw new RuntimeApiError(
+      `Logout failed: ${response.status}`,
+      response.status,
+      `${config.api.basePath}/auth/session`,
+    );
+  }
 }
 
 export async function listProjects(
@@ -2037,6 +2133,17 @@ export async function listDatabaseCollections(
   return result.collections.sort((left, right) =>
     left.name.localeCompare(right.name),
   );
+}
+
+export async function queryDatabaseSystemView(
+  config: RuntimeConfig,
+  view: DatabaseSystemViewName,
+  tenantId: string,
+) {
+  const result = await readJson<{ rows: DatabaseSystemViewRow[] }>(
+    `${config.api.basePath}/database/maintenance/system/views/${encodeURIComponent(view)}?tenantId=${encodeURIComponent(tenantId)}&limit=500`,
+  );
+  return result.rows;
 }
 
 export async function createDatabaseCollection(

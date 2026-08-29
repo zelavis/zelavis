@@ -6,11 +6,14 @@ import test from "node:test";
 import { createDatabase } from "../dist/app/db/index.js";
 import {
   createInMemoryBundleStore,
-  defineService,
   Zelavis,
   zelavis,
 } from "../dist/index.js";
-import { zelavisEcommerceService } from "../../../plugins/ecommerce/dist/index.js";
+import { ecommercePlugin } from "../../../plugins/ecommerce/dist/index.js";
+
+const PLATFORM_OWNER_CONTEXT = {
+  principal: { id: "test-owner", type: "user", roles: ["owner"], permissions: ["*"] },
+};
 
 function createStoredZip(files) {
   const encoder = new TextEncoder();
@@ -371,33 +374,75 @@ test("zelavis includes core services by default", async () => {
   assert.match(invalidRuntimeEngineResponse.body.error, /Runtime engine must be/);
 });
 
-test("auth provider child services extend the built-in auth service", async () => {
+test("privileged project control routes declare explicit access requirements", async () => {
+  const storage = {
+    async list() { return []; },
+    async get() { return undefined; },
+    async put(input) {
+      return { ...input, size: input.body.byteLength, updatedAt: new Date() };
+    },
+    async delete() { return true; },
+  };
   const runtime = await zelavis({
     coreServices: {
-      auth: {
-        childServices: ["@example/test-auth-provider"],
-      },
+      auth: false,
+      database: false,
+      dashboard: false,
+      website: true,
+      storage: { storage },
     },
+  });
+  const routes = new Map(runtime.routes.map((route) => [route.route.id, route.route]));
+  const permissions = {
+    "website.pages.create": "project.website.manage",
+    "storage.files.list": "storage.read",
+    "storage.files.write": "storage.write",
+    "storage.files.delete": "storage.write",
+    "workloads.menu": "workloads.view",
+    "workloads.list": "workloads.view",
+    "workloads.create": "workloads.manage",
+    "workloads.read": "workloads.view",
+    "workloads.update": "workloads.manage",
+    "workloads.run": "workloads.manage",
+    "workloads.logs": "workloads.logs.read",
+  };
+
+  for (const [id, permission] of Object.entries(permissions)) {
+    assert.deepEqual(routes.get(id)?.access, { permissions: [permission] }, id);
+  }
+  assert.deepEqual(routes.get("runtime.service-page-asset.read")?.access, {
+    authenticated: true,
+  });
+  assert.equal(routes.get("website.page.dynamic")?.access, undefined);
+  assert.equal(routes.get("storage.files.read")?.access, undefined);
+  for (const method of ["get", "post", "put", "patch", "delete"]) {
+    assert.equal(routes.get(`workloads.http.${method}`)?.access, undefined);
+  }
+
+  await runtime.close();
+});
+
+test("auth method plugins register through the public auth capability", async () => {
+  const runtime = await zelavis({
     serviceRegistry: {
       catalog: [
         {
-          service: defineService({
+          service: {
             name: "@example/test-auth-provider",
-            extends: "@zelavis/auth",
-            setup(api) {
-              api.authentication.registerProvider({
-                name: "@example/test-auth-provider",
-                async authenticate(input) {
-                  return {
-                    account: await api.accounts.create({
-                      id: String(input.accountId ?? "acc_test"),
-                      email: "test@example.com",
-                    }),
-                  };
-                },
-              });
+            kind: "provider",
+            capabilities: ["provider:auth"],
+            service: {
+              name: "test-auth",
+              register(api) {
+                api.authentication.registerProvider({
+                  name: "@example/test-auth-provider",
+                  async authenticate() {
+                    throw new Error("not used by this provider discovery test");
+                  },
+                });
+              },
             },
-          }),
+          },
           status: "installed",
         },
       ],
@@ -414,7 +459,7 @@ test("auth provider child services extend the built-in auth service", async () =
   assert.equal(
     runtime.routes.some((route) => route.route.id === "@example/test-auth-provider"),
     false,
-    "auth child services should not mount as top-level runtime routes",
+    "auth method plugins need no private top-level route",
   );
 });
 
@@ -450,7 +495,7 @@ test("service registry install state controls service activation on boot", async
     serviceRegistry: {
       catalog: [
         {
-          service: zelavisEcommerceService,
+          service: ecommercePlugin,
           status: "installed",
           source: "official",
           order: 0,
@@ -490,6 +535,7 @@ test("service registry install state controls service activation on boot", async
     new Request(
       "http://localhost/zelavis/api/v1/runtime/service-page-assets/%40zelavis%2Fecommerce/dashboard/dashboard.html",
     ),
+    PLATFORM_OWNER_CONTEXT,
   );
   const servicePage = await servicePageResponse.text();
 
@@ -523,6 +569,7 @@ test("dashboard service registry can register ESM service sources", async () => 
         specifier,
       }),
     }),
+    PLATFORM_OWNER_CONTEXT,
   );
   const created = await createResponse.json();
 
@@ -572,7 +619,7 @@ test("dashboard service registry can register ESM service sources", async () => 
 
 test("service dashboard pages can be static HTML files from service bundles", async () => {
   const encoder = new TextEncoder();
-  const service = defineService({
+  const service = {
     name: "@example/static-pages",
     menu: {
       title: "Static Pages",
@@ -583,7 +630,7 @@ test("service dashboard pages can be static HTML files from service bundles", as
         file: "settings.html",
       },
     },
-  });
+  };
   const bundleStore = createInMemoryBundleStore(
     new Map([
       [
@@ -631,6 +678,7 @@ test("service dashboard pages can be static HTML files from service bundles", as
     new Request(
       "http://localhost/zelavis/api/v1/runtime/service-page-assets/%40example%2Fstatic-pages/dist/settings.html",
     ),
+    PLATFORM_OWNER_CONTEXT,
   );
   const html = await response.text();
 
@@ -642,6 +690,7 @@ test("service dashboard pages can be static HTML files from service bundles", as
     new Request(
       "http://localhost/zelavis/api/v1/runtime/service-page-assets/%40example%2Fstatic-pages/dist/settings.js",
     ),
+    PLATFORM_OWNER_CONTEXT,
   );
   const script = await scriptResponse.text();
 
@@ -679,6 +728,7 @@ test("dashboard service upload derives metadata from the selected module", async
       method: "POST",
       body: form,
     }),
+    PLATFORM_OWNER_CONTEXT,
   );
   const created = await createResponse.json();
   const service = created.services.find(
@@ -742,6 +792,7 @@ test("Zelavis instance recomposes runtime after service activation", async () =>
         status: "installed",
       }),
     }),
+    PLATFORM_OWNER_CONTEXT,
   );
   const created = await createResponse.json();
 
@@ -839,6 +890,7 @@ test("node adapter resolves uploaded service paths through its service cache imp
           status: "installed",
         }),
       }),
+      PLATFORM_OWNER_CONTEXT,
     );
     const created = await createResponse.json();
 
@@ -940,6 +992,7 @@ test("node adapter installs uploaded ZIP service packages", async () => {
         method: "POST",
         body: form,
       }),
+      PLATFORM_OWNER_CONTEXT,
     );
     const created = await createResponse.json();
     const service = created.services.find(
@@ -1220,6 +1273,7 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "runtime.services.update",
       "runtime.settings.read",
       "runtime.settings.update",
+      "runtime.openapi",
       "runtime.access",
       "runtime.app-services.list",
       "runtime.assistant.threads.list",
@@ -1250,11 +1304,12 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
     ],
   );
 
-  const fabricResponse = await runtime.fetch(
-    new Request("http://localhost/zelavis/api/v1/fabric/snapshot"),
-  );
+  const fabricResponse = await runtime.plain({
+    url: "/zelavis/api/v1/fabric/snapshot",
+    principal: { id: "owner", type: "system", permissions: ["fabric.view"] },
+  });
   assert.equal(fabricResponse.status, 200);
-  assert.deepEqual(await fabricResponse.json(), {
+  assert.deepEqual(fabricResponse.body, {
     authority: {
       scope: "platform",
       scopeId: "local-platform",
@@ -1315,14 +1370,13 @@ test("zelavis uses a configured Fabric placement list for point lookups", async 
   });
 
   try {
-    const response = await runtime.fetch(
-      new Request(
-        "http://localhost/zelavis/api/v1/fabric/placements/projects/external-project",
-      ),
-    );
+    const response = await runtime.plain({
+      url: "/zelavis/api/v1/fabric/placements/projects/external-project",
+      principal: { id: "owner", type: "system", permissions: ["fabric.view"] },
+    });
 
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { placement });
+    assert.deepEqual(response.body, { placement });
   } finally {
     await runtime.close();
   }
@@ -1388,6 +1442,7 @@ test("zelavis can provide public website pages as a core service", async () => {
         description: "Public company page.",
       }),
     }),
+    PLATFORM_OWNER_CONTEXT,
   );
   assert.equal(createPageResponse.status, 201);
   const createdPage = await createPageResponse.json();
@@ -1407,6 +1462,7 @@ test("zelavis can provide public website pages as a core service", async () => {
         description: "Public pages can now be served by Zelavis.",
       }),
     }),
+    PLATFORM_OWNER_CONTEXT,
   );
   assert.equal(createHomeResponse.status, 201);
 
@@ -1423,6 +1479,7 @@ test("zelavis can provide public website pages as a core service", async () => {
         description: "Docs will be mounted here later.",
       }),
     }),
+    PLATFORM_OWNER_CONTEXT,
   );
   assert.equal(createDocsResponse.status, 201);
 
@@ -1437,6 +1494,7 @@ test("zelavis can provide public website pages as a core service", async () => {
         path: "/docs",
       }),
     }),
+    PLATFORM_OWNER_CONTEXT,
   );
   assert.equal(duplicateDocsResponse.status, 409);
 
@@ -1485,6 +1543,7 @@ test("zelavis keeps public routes inactive until the home page exists", async ()
         description: "Public company page.",
       }),
     }),
+    PLATFORM_OWNER_CONTEXT,
   );
   assert.equal(createAboutResponse.status, 201);
 
@@ -1528,6 +1587,7 @@ test("zelavis persists dashboard settings and website pages through the database
         description: "Persisted through the shared database layer.",
       }),
     }),
+    PLATFORM_OWNER_CONTEXT,
   );
   assert.equal(createPageResponse.status, 201);
 
@@ -1549,6 +1609,7 @@ test("zelavis persists dashboard settings and website pages through the database
         description: "Seeded through the shared database layer.",
       }),
     }),
+    PLATFORM_OWNER_CONTEXT,
   );
   assert.equal(createHomePageResponse.status, 201);
 

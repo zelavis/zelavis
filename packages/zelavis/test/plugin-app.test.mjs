@@ -5,61 +5,51 @@ import {
   createInMemoryBundleStore,
   createSharedBundleStore,
   buildBundleStorageKey,
-  defineService,
 } from "../dist/index.js";
-import { createServiceRuntime } from "../dist/core/index.js";
+import {
+  createServiceRuntime,
+  validateServiceApp,
+  freezeServiceApp,
+} from "../dist/core/index.js";
 
 const utf8 = (text) => new TextEncoder().encode(text);
 
-// ---------- defineService / app validation ----------
+// ---------- validateServiceApp / app validation ----------
 
-test("defineService accepts an app field and freezes it", () => {
-  const service = defineService({
-    name: "@example/kanban",
-    app: {
-      mount: "/kanban",
-      bundle: "dist",
-      mode: "spa",
-      domainPolicy: "required",
-    },
-  });
+test("validateServiceApp accepts an app field and freezeServiceApp freezes it", () => {
+  const app = {
+    mount: "/kanban",
+    bundle: "dist",
+    mode: "spa",
+    domainPolicy: "required",
+  };
+  validateServiceApp(app);
+  const frozen = freezeServiceApp(app);
 
-  assert.equal(service.app?.mount, "/kanban");
-  assert.equal(service.app?.bundle, "dist");
-  assert.equal(service.app?.mode, "spa");
-  assert.equal(service.app?.domainPolicy, "required");
-  assert.equal(Object.isFrozen(service.app), true);
+  assert.equal(frozen.mount, "/kanban");
+  assert.equal(frozen.bundle, "dist");
+  assert.equal(frozen.mode, "spa");
+  assert.equal(frozen.domainPolicy, "required");
+  assert.equal(Object.isFrozen(frozen), true);
 });
 
-test("defineService rejects an invalid app mode", () => {
+test("validateServiceApp rejects an invalid app mode", () => {
   assert.throws(
-    () =>
-      defineService({
-        name: "@example/bad-mode",
-        app: { mount: "/", mode: "ssr" },
-      }),
+    () => validateServiceApp({ mount: "/", mode: "ssr" }),
     /Service app mode must be "spa" or "mpa"/,
   );
 });
 
-test("defineService rejects an app mount without a leading slash", () => {
+test("validateServiceApp rejects an app mount without a leading slash", () => {
   assert.throws(
-    () =>
-      defineService({
-        name: "@example/no-leading-slash",
-        app: { mount: "no-slash" },
-      }),
-    /Service app mount must start with a leading slash/,
+    () => validateServiceApp({ mount: "no-slash" }),
+    /Service app mount must start with "\/"/,
   );
 });
 
-test("defineService rejects an invalid app domain policy", () => {
+test("validateServiceApp rejects an invalid app domain policy", () => {
   assert.throws(
-    () =>
-      defineService({
-        name: "@example/bad-domain-policy",
-        app: { domainPolicy: "never" },
-      }),
+    () => validateServiceApp({ domainPolicy: "never" }),
     /Service app domainPolicy must be "optional" or "required"/,
   );
 });
@@ -78,6 +68,56 @@ test("buildBundleStorageKey encodes scope identity into a deterministic path", (
     "index.html",
   );
   assert.equal(systemKey, "apps/system/@zelavis/ui/dist/index.html");
+
+  assert.equal(
+    buildBundleStorageKey(
+      { projectId: "ws_1", serviceName: "@example/kanban", bundle: "dist" },
+      "assets/file..min.js",
+    ),
+    "apps/ws_1/@example/kanban/dist/assets/file..min.js",
+  );
+  for (const scope of [
+    { projectId: "../beta", serviceName: "@example/kanban", bundle: "dist" },
+    { projectId: "alpha", serviceName: "@example/kanban", bundle: "../../beta" },
+    { projectId: "alpha", serviceName: "../../beta/app", bundle: "dist" },
+  ]) {
+    assert.throws(() => buildBundleStorageKey(scope, "index.html"), /Bundle/);
+  }
+  assert.throws(
+    () =>
+      buildBundleStorageKey(
+        { projectId: "alpha", serviceName: "@example/kanban", bundle: "dist" },
+        "../index.html",
+      ),
+    /Bundle asset path/,
+  );
+});
+
+test("bundle scope components cannot traverse into another Project", async () => {
+  const stored = new Map([
+    ["apps/beta/@good/app/dist/index.html", utf8("beta secret")],
+  ]);
+  const store = createSharedBundleStore({
+    storage: {
+      async get(path) {
+        const body = stored.get(path);
+        return body ? { path, body } : undefined;
+      },
+      async put() { throw new Error("not used"); },
+      async delete() { return false; },
+    },
+  });
+  await assert.rejects(
+    store.read(
+      {
+        projectId: "alpha",
+        serviceName: "@evil/app",
+        bundle: "../../../../apps/beta/@good/app/dist",
+      },
+      "index.html",
+    ),
+    /Bundle identifier/,
+  );
 });
 
 test("createSharedBundleStore reads through the underlying ZelavisFileStorage", async () => {
@@ -150,7 +190,7 @@ test("createSharedBundleStore deletes only assets owned by one Project", async (
 // ---------- Activation synthesizes asset-serving routes ----------
 
 test("activateServiceRegistry synthesizes an app service for system services", async () => {
-  const service = defineService({
+  const service = Object.freeze({
     name: "@example/kanban",
     scope: "system",
     app: { mount: "/kanban", bundle: "dist" },
@@ -197,7 +237,7 @@ test("activateServiceRegistry synthesizes an app service for system services", a
 });
 
 test("workspace-scoped services are remounted under /apps/<name> regardless of declared mount", async () => {
-  const service = defineService({
+  const service = Object.freeze({
     name: "@example/tenant-app",
     scope: "extension",
     app: { mount: "/zelavis", bundle: "dist" },
@@ -235,7 +275,7 @@ test("workspace-scoped services are remounted under /apps/<name> regardless of d
 // ---------- End-to-end through createServiceRuntime + dispatcher ----------
 
 test("a synthesized SPA service serves the index for unmatched sub-paths", async () => {
-  const service = defineService({
+  const service = Object.freeze({
     name: "@example/kanban",
     scope: "system",
     app: { mount: "/kanban", bundle: "dist", mode: "spa" },
@@ -302,7 +342,7 @@ test("a synthesized SPA service serves the index for unmatched sub-paths", async
 });
 
 test("MPA mode resolves directory-style requests to .html and index.html, no SPA fallback", async () => {
-  const service = defineService({
+  const service = Object.freeze({
     name: "@example/marketing",
     scope: "system",
     app: { mount: "/marketing", bundle: "dist", mode: "mpa" },
@@ -373,7 +413,7 @@ test("MPA mode resolves directory-style requests to .html and index.html, no SPA
 // ---------- app.devUrl ----------
 
 test("app.devUrl short-circuits asset serving with a 307 redirect", async () => {
-  const service = defineService({
+  const service = Object.freeze({
     name: "@example/vite-app",
     scope: "system",
     app: {
@@ -449,7 +489,7 @@ test("app.devUrl can include its own base path that prefixes the relative path",
   // Common when the dev server itself is mounted under a sub-path
   // (e.g. `react-router dev --base /zelavis`) and zelavis needs to
   // redirect into that base.
-  const service = defineService({
+  const service = Object.freeze({
     name: "@example/rr-app",
     scope: "system",
     app: {
@@ -498,7 +538,7 @@ test("app.devUrl can include its own base path that prefixes the relative path",
 });
 
 test("app.devUrl can leave reserved paths on the runtime", async () => {
-  const service = defineService({
+  const service = Object.freeze({
     name: "@example/rr-app",
     scope: "system",
     app: {
@@ -566,7 +606,7 @@ test("app.devUrl bypasses bundle store and shell.render entirely", async () => {
     },
   };
 
-  const service = defineService({
+  const service = Object.freeze({
     name: "@example/dual-mode",
     scope: "system",
     app: {
@@ -612,7 +652,7 @@ test("app.devUrl bypasses bundle store and shell.render entirely", async () => {
 
 test("shell.render is called for index requests and SPA-fallback misses", async () => {
   const calls = [];
-  const service = defineService({
+  const service = Object.freeze({
     name: "@example/shellful",
     scope: "system",
     app: {
@@ -694,7 +734,7 @@ test("shell.render is called for index requests and SPA-fallback misses", async 
 });
 
 test("shell.render can return non-200 for paths it wants to reject", async () => {
-  const service = defineService({
+  const service = Object.freeze({
     name: "@example/gated",
     scope: "system",
     app: {
@@ -750,7 +790,7 @@ test("shell.render can return non-200 for paths it wants to reject", async () =>
 });
 
 test("system app routes are host-agnostic by default", async () => {
-  const service = defineService({
+  const service = Object.freeze({
     name: "@example/tenant",
     scope: "system",
     app: {

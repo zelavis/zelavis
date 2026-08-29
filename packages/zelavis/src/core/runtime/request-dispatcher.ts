@@ -14,6 +14,10 @@ import type {
   ZelavisServerMountOptions,
   ZelavisServerPlainHandler,
 } from "./contracts.js";
+import {
+  formatAuthenticationChallenge,
+  ZelavisAuthenticationError,
+} from "./authentication.js";
 
 const BODYLESS_RESPONSE_STATUSES = new Set([101, 103, 204, 205, 304]);
 
@@ -172,9 +176,14 @@ function notFoundResponse(): ZelavisRouteResponse {
   };
 }
 
-function unauthorizedResponse(): ZelavisRouteResponse {
+function unauthorizedResponse(
+  challenge?: ZelavisAuthenticationError["challenge"],
+): ZelavisRouteResponse {
   return {
     status: 401,
+    headers: challenge
+      ? { "www-authenticate": formatAuthenticationChallenge(challenge) }
+      : undefined,
     body: {
       error: "Unauthorized",
     },
@@ -188,6 +197,27 @@ function forbiddenResponse(reason?: string): ZelavisRouteResponse {
       error: reason ?? "Forbidden",
     },
   };
+}
+
+const SAFE_REQUEST_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+function cookieMutationIsSameOrigin(
+  request: Request,
+  principal: ZelavisPrincipal | undefined,
+): boolean {
+  if (
+    SAFE_REQUEST_METHODS.has(request.method.toUpperCase()) ||
+    principal?.metadata?.authenticationTransport !== "cookie"
+  ) {
+    return true;
+  }
+  const origin = request.headers.get("origin");
+  if (!origin) return false;
+  try {
+    return new URL(origin).origin === new URL(request.url).origin;
+  } catch {
+    return false;
+  }
 }
 
 function canHaveBody(method: string): boolean {
@@ -584,14 +614,36 @@ async function checkRouteAccess<TService = unknown>(
       : [resolvedRoute.route.access]
     : [];
 
-  const principal =
-    context?.principal ??
-    (await options.resolvePrincipal?.({
-      request,
-      platform: context?.platform,
-      resolvedRoute,
-      params,
-    }));
+  let principal = context?.principal;
+  if (!principal) {
+    try {
+      principal = await options.resolvePrincipal?.({
+        request,
+        platform: context?.platform,
+        resolvedRoute,
+        params,
+      });
+    } catch (error) {
+      if (error instanceof ZelavisAuthenticationError) {
+        return {
+          allowed: false,
+          response: toResponse(unauthorizedResponse(error.challenge)),
+        };
+      }
+      throw error;
+    }
+  }
+
+  if (!cookieMutationIsSameOrigin(request, principal)) {
+    return {
+      allowed: false,
+      response: toResponse(
+        forbiddenResponse(
+          "Cookie-authenticated mutations require a matching Origin header.",
+        ),
+      ),
+    };
+  }
 
   for (const requirement of requirements) {
     const rawDecision =
