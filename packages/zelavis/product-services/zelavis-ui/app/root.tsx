@@ -29,6 +29,7 @@ import {
   RuntimeApiError,
   ZELAVIS_APP_ADMIN_TENANT_ID,
 } from "#/lib/runtime-api";
+import { stripRouterBasename } from "#/lib/router-basename";
 import type { Route } from "./+types/root";
 import "@glideapps/glide-data-grid/dist/index.css";
 import "./styles.css";
@@ -84,8 +85,15 @@ export async function clientLoader({ request }: Route.ClientLoaderArgs) {
     access = await getDashboardAccess(controlRuntime);
   } catch (error) {
     if (error instanceof RuntimeApiError && error.status === 401) {
-      const returnTo = `${requestUrl.pathname}${requestUrl.search}`;
-      throw redirect(`/login?returnTo=${encodeURIComponent(returnTo)}`);
+      // `requestUrl.pathname` is the browser path and includes the router
+      // basename, but the login form resolves `returnTo` through `navigate()`,
+      // which prepends the basename itself. Store a router-relative path so a
+      // mounted dashboard does not redirect to `/zelavis/zelavis/`.
+      throw redirect(
+        `/login?returnTo=${encodeURIComponent(
+          `${stripRouterBasename(requestUrl.pathname)}${requestUrl.search}`,
+        )}`,
+      );
     }
     throw error;
   }

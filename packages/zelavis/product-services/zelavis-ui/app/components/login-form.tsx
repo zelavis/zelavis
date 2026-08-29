@@ -10,6 +10,7 @@ import {
   CardTitle,
 } from "#/components/ui/card"
 import { Input } from "#/components/ui/input"
+import { resolveReturnTo } from "#/lib/router-basename"
 import { cn } from "#/lib/utils"
 import {
   authenticatePlatform,
@@ -59,10 +60,7 @@ export function LoginForm({
       ? "username-password"
       : providers?.[0]
   const usesUsername = provider === "username-password"
-  const returnTo = searchParams.get("returnTo")
-  const destination = returnTo?.startsWith("/") && !returnTo.startsWith("//")
-    ? returnTo
-    : "/"
+  const destination = resolveReturnTo(searchParams.get("returnTo"))
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
