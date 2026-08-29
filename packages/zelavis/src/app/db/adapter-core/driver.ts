@@ -154,23 +154,242 @@ function createCollectionLookupIndexStatement(collection: string): string {
     ON ${collectionTable(collection)} (tenant_id, updated_at, id)`;
 }
 
+interface SqlToken {
+  kind: "identifier" | "string" | "symbol";
+  value: string;
+}
+
+function tokenizeSql(statement: string): SqlToken[] {
+  const tokens: SqlToken[] = [];
+  let index = 0;
+  while (index < statement.length) {
+    const char = statement[index]!;
+    if (/\s/u.test(char)) {
+      index += 1;
+      continue;
+    }
+    if (char === "-" && statement[index + 1] === "-") {
+      index += 2;
+      while (index < statement.length && statement[index] !== "\n") index += 1;
+      continue;
+    }
+    if (char === "/" && statement[index + 1] === "*") {
+      index += 2;
+      while (
+        index < statement.length &&
+        !(statement[index] === "*" && statement[index + 1] === "/")
+      ) index += 1;
+      index = Math.min(statement.length, index + 2);
+      continue;
+    }
+    if (char === "'") {
+      index += 1;
+      while (index < statement.length) {
+        if (statement[index] === "'" && statement[index + 1] === "'") {
+          index += 2;
+        } else if (statement[index] === "'") {
+          index += 1;
+          break;
+        } else index += 1;
+      }
+      tokens.push({ kind: "string", value: "" });
+      continue;
+    }
+    if (char === '"' || char === "`" || char === "[") {
+      const close = char === "[" ? "]" : char;
+      let value = "";
+      index += 1;
+      while (index < statement.length) {
+        if (statement[index] === close && statement[index + 1] === close) {
+          value += close;
+          index += 2;
+        } else if (statement[index] === close) {
+          index += 1;
+          break;
+        } else {
+          value += statement[index];
+          index += 1;
+        }
+      }
+      tokens.push({ kind: "identifier", value });
+      continue;
+    }
+    if (/[A-Za-z_]/u.test(char)) {
+      let value = char;
+      index += 1;
+      while (
+        index < statement.length &&
+        /[A-Za-z0-9_$]/u.test(statement[index]!)
+      ) {
+        value += statement[index];
+        index += 1;
+      }
+      tokens.push({ kind: "identifier", value });
+      continue;
+    }
+    tokens.push({ kind: "symbol", value: char });
+    index += 1;
+  }
+  return tokens;
+}
+
+function sqlKeyword(token: SqlToken | undefined, keyword: string): boolean {
+  return token?.kind === "identifier" && token.value.toUpperCase() === keyword;
+}
+
+function skipBalanced(
+  tokens: readonly SqlToken[],
+  start: number,
+): number | null {
+  if (tokens[start]?.value !== "(") return null;
+  let depth = 0;
+  for (let index = start; index < tokens.length; index += 1) {
+    if (tokens[index]?.value === "(") depth += 1;
+    if (tokens[index]?.value === ")") {
+      depth -= 1;
+      if (depth === 0) return index + 1;
+    }
+  }
+  return null;
+}
+
+function skipCtePrefix(tokens: readonly SqlToken[]): number | null {
+  if (!sqlKeyword(tokens[0], "WITH")) return 0;
+  let index = sqlKeyword(tokens[1], "RECURSIVE") ? 2 : 1;
+  while (index < tokens.length) {
+    if (tokens[index]?.kind !== "identifier") return null;
+    index += 1;
+    if (tokens[index]?.value === "(") {
+      const afterColumns = skipBalanced(tokens, index);
+      if (afterColumns === null) return null;
+      index = afterColumns;
+    }
+    if (!sqlKeyword(tokens[index], "AS")) return null;
+    index += 1;
+    if (sqlKeyword(tokens[index], "NOT")) index += 1;
+    if (sqlKeyword(tokens[index], "MATERIALIZED")) index += 1;
+    const afterBody = skipBalanced(tokens, index);
+    if (afterBody === null) return null;
+    index = afterBody;
+    if (tokens[index]?.value !== ",") return index;
+    index += 1;
+  }
+  return null;
+}
+
+function readQualifiedIdentifier(
+  tokens: readonly SqlToken[],
+  index: number,
+): string | null {
+  if (tokens[index]?.kind !== "identifier") return null;
+  if (
+    tokens[index + 1]?.value === "." &&
+    tokens[index + 2]?.kind === "identifier"
+  ) {
+    return tokens[index + 2]!.value;
+  }
+  return tokens[index]!.value;
+}
+
+function parseSingleWriteTarget(tokens: readonly SqlToken[]): string | null {
+  let index = skipCtePrefix(tokens);
+  if (index === null) return null;
+  if (sqlKeyword(tokens[index], "INSERT")) {
+    index += 1;
+    if (sqlKeyword(tokens[index], "OR")) index += 2;
+    if (!sqlKeyword(tokens[index], "INTO")) return null;
+    return readQualifiedIdentifier(tokens, index + 1);
+  }
+  if (sqlKeyword(tokens[index], "REPLACE")) {
+    index += 1;
+    if (!sqlKeyword(tokens[index], "INTO")) return null;
+    return readQualifiedIdentifier(tokens, index + 1);
+  }
+  if (sqlKeyword(tokens[index], "UPDATE")) {
+    index += 1;
+    if (sqlKeyword(tokens[index], "OR")) index += 2;
+    return readQualifiedIdentifier(tokens, index);
+  }
+  if (
+    sqlKeyword(tokens[index], "DELETE") &&
+    sqlKeyword(tokens[index + 1], "FROM")
+  ) {
+    return readQualifiedIdentifier(tokens, index + 2);
+  }
+  if (
+    sqlKeyword(tokens[index], "DROP") &&
+    sqlKeyword(tokens[index + 1], "TABLE")
+  ) {
+    index += 2;
+    if (
+      sqlKeyword(tokens[index], "IF") &&
+      sqlKeyword(tokens[index + 1], "EXISTS")
+    ) index += 2;
+    return readQualifiedIdentifier(tokens, index);
+  }
+  if (
+    sqlKeyword(tokens[index], "ALTER") &&
+    sqlKeyword(tokens[index + 1], "TABLE")
+  ) {
+    return readQualifiedIdentifier(tokens, index + 2);
+  }
+  if (sqlKeyword(tokens[index], "CREATE")) {
+    index += 1;
+    if (
+      sqlKeyword(tokens[index], "TEMP") ||
+      sqlKeyword(tokens[index], "TEMPORARY")
+    ) index += 1;
+    if (sqlKeyword(tokens[index], "UNIQUE")) index += 1;
+    if (
+      !sqlKeyword(tokens[index], "INDEX") &&
+      !sqlKeyword(tokens[index], "TRIGGER")
+    ) return null;
+    const searchAfter = index;
+    const on = tokens.findIndex(
+      (token, tokenIndex) => tokenIndex > searchAfter && sqlKeyword(token, "ON"),
+    );
+    return on < 0 ? null : readQualifiedIdentifier(tokens, on + 1);
+  }
+  return null;
+}
+
+function definesSqlTrigger(tokens: readonly SqlToken[]): boolean {
+  let index = skipCtePrefix(tokens);
+  if (index === null || !sqlKeyword(tokens[index], "CREATE")) return false;
+  index += 1;
+  if (
+    sqlKeyword(tokens[index], "TEMP") ||
+    sqlKeyword(tokens[index], "TEMPORARY")
+  ) index += 1;
+  return sqlKeyword(tokens[index], "TRIGGER");
+}
+
+function splitSqlStatements(tokens: readonly SqlToken[]): SqlToken[][] {
+  const statements: SqlToken[][] = [];
+  let current: SqlToken[] = [];
+  for (const token of tokens) {
+    if (token.kind === "symbol" && token.value === ";") {
+      if (current.length > 0) statements.push(current);
+      current = [];
+    } else current.push(token);
+  }
+  if (current.length > 0) statements.push(current);
+  return statements;
+}
+
 /**
  * Extracts the target table name from a SQL write statement (DML + destructive
  * DDL). Returns null for read-only statements or unrecognised syntax.
  *
  * Handles both double-quoted identifiers ("My Table") and bare identifiers,
  * and optional schema prefixes (schema.table / "schema"."table").
+ *
+ * Also handles SQL comments and CTEs that could previously bypass an anchored
+ * regular expression. `sql.execute()` rejects statement batches separately.
  */
 export function parseWriteTargetTable(statement: string): string | null {
-  const match = statement
-    .trimStart()
-    .match(
-      /^(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE\s+(?:OR\s+\w+\s+)?|DELETE\s+FROM|DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?|ALTER\s+TABLE\s+)\s*(?:(?:"(?:[^"]|"")*"|[A-Za-z_][A-Za-z0-9_$]*)\s*\.\s*)?(?:"((?:[^"]|"")*)"|([A-Za-z_][A-Za-z0-9_$]*))/i,
-    );
-  if (!match) return null;
-  return match[1] !== undefined
-    ? match[1].replaceAll('""', '"')
-    : (match[2] ?? null);
+  const statements = splitSqlStatements(tokenizeSql(statement));
+  return statements.length === 0 ? null : parseSingleWriteTarget(statements[0]!);
 }
 
 
@@ -325,6 +544,7 @@ export function createSqliteCompatibleDriver(
   } satisfies DatabaseDriver["projections"];
 
   async function readLatestRevision(
+    gw: SqliteGateway,
     tenantId: string,
     collection: string,
     documentId: string | undefined,
@@ -339,7 +559,7 @@ export function createSqliteCompatibleDriver(
     const params = documentId
       ? [tenantId, collection, documentId]
       : [tenantId, collection];
-    const row = await gateway.get<{ revision: number }>(sql, params);
+    const row = await gw.get<{ revision: number }>(sql, params);
     return row?.revision ?? 0;
   }
 
@@ -430,8 +650,11 @@ export function createSqliteCompatibleDriver(
           }
         }
 
-        if (input.idempotencyKey) {
-          const existingRow = await gateway.get<EventRow>(
+        async function resolveIdempotentEvent(
+          gw: SqliteGateway,
+        ): Promise<DatabaseEvent<TPayload> | undefined> {
+          if (!input.idempotencyKey) return undefined;
+          const existingRow = await gw.get<EventRow>(
             `SELECT sequence, event_id, idempotency_key, node_id, tenant_id, collection_name, document_id, type, revision, timestamp, schema_version, payload_json
              FROM zv_events
              WHERE tenant_id = ? AND idempotency_key = ?
@@ -439,27 +662,29 @@ export function createSqliteCompatibleDriver(
             [input.tenantId, input.idempotencyKey],
           );
 
-          if (existingRow) {
-            const existing = toEvent<TPayload>(existingRow);
-            if (
-              matchesIdempotentAppend(existing, {
-                collection: input.collection,
-                documentId: input.documentId,
-                type: input.type,
-                expectedRevision: input.expectedRevision ?? undefined,
-                schemaVersion: input.schemaVersion,
-                payload: input.payload,
-              })
-            ) {
-              return existing;
-            }
+          if (!existingRow) return undefined;
+          const existing = toEvent<TPayload>(existingRow);
+          if (
+            matchesIdempotentAppend(existing, {
+              collection: input.collection,
+              documentId: input.documentId,
+              type: input.type,
+              expectedRevision: input.expectedRevision ?? undefined,
+              schemaVersion: input.schemaVersion,
+              payload: input.payload,
+            })
+          ) return existing;
 
-            throw new DatabaseEventIdempotencyConflictError({
-              tenantId: input.tenantId,
-              idempotencyKey: input.idempotencyKey,
-              eventId: existing.eventId,
-            });
-          }
+          throw new DatabaseEventIdempotencyConflictError({
+            tenantId: input.tenantId,
+            idempotencyKey: input.idempotencyKey,
+            eventId: existing.eventId,
+          });
+        }
+
+        const existingIdempotentEvent = await resolveIdempotentEvent(gateway);
+        if (existingIdempotentEvent) {
+          return existingIdempotentEvent;
         }
 
         const eventId = restored?.eventId ?? generateId("evt");
@@ -467,40 +692,51 @@ export function createSqliteCompatibleDriver(
         const timestamp = restored?.timestamp ?? new Date().toISOString();
         const schemaVersion = input.schemaVersion ?? 1;
         const payloadJson = JSON.stringify(input.payload);
-        const currentRevision = await readLatestRevision(
-          input.tenantId,
-          input.collection,
-          input.documentId,
-        );
-        const expectedRevision = input.expectedRevision ?? currentRevision;
-
-        if (input.type === "collection.created" && currentRevision > 0) {
-          throw new DatabaseConflictError(
-            `Collection "${input.collection}" already exists for tenant "${input.tenantId}".`,
-          );
-        }
-
-        if (
-          input.type === "document.upserted" &&
-          expectedRevision === 0 &&
-          currentRevision > 0
-        ) {
-          throw new DatabaseConflictError(
-            `Document "${input.documentId ?? ""}" already exists in collection "${input.collection}".`,
-          );
-        }
-
-        if (expectedRevision !== currentRevision) {
-          throw new DatabaseRevisionMismatchError(
-            `Revision mismatch for stream "${input.tenantId}:${input.collection}:${input.documentId ?? ""}". Expected ${expectedRevision}, found ${currentRevision}.`,
-          );
-        }
-
-        const nextRevision = restored?.revision ?? currentRevision + 1;
         const idempotencyKey = input.idempotencyKey ?? null;
 
+        // Helper: run the OCC checks that are common to all event types.
+        // Must be called inside a transaction so reads are serialized.
+        async function verifyRevision(tx: SqliteGateway) {
+          const currentRevision = await readLatestRevision(
+            tx,
+            input.tenantId,
+            input.collection,
+            input.documentId,
+          );
+          const expectedRevision = input.expectedRevision ?? currentRevision;
+
+          if (input.type === "collection.created" && currentRevision > 0) {
+            throw new DatabaseConflictError(
+              `Collection "${input.collection}" already exists for tenant "${input.tenantId}".`,
+            );
+          }
+
+          if (
+            input.type === "document.upserted" &&
+            expectedRevision === 0 &&
+            currentRevision > 0
+          ) {
+            throw new DatabaseConflictError(
+              `Document "${input.documentId ?? ""}" already exists in collection "${input.collection}".`,
+            );
+          }
+
+          if (expectedRevision !== currentRevision) {
+            throw new DatabaseRevisionMismatchError(
+              `Revision mismatch for stream "${input.tenantId}:${input.collection}:${input.documentId ?? ""}". Expected ${expectedRevision}, found ${currentRevision}.`,
+            );
+          }
+
+          return restored?.revision ?? currentRevision + 1;
+        }
+
         if (input.type === "collection.created") {
+          let concurrentIdempotentEvent: DatabaseEvent<TPayload> | undefined;
           await gateway.transaction(async (tx) => {
+            concurrentIdempotentEvent = await resolveIdempotentEvent(tx);
+            if (concurrentIdempotentEvent) return;
+            const nextRevision = await verifyRevision(tx);
+
             await insertEvent(tx, {
               eventId,
               idempotencyKey,
@@ -531,6 +767,8 @@ export function createSqliteCompatibleDriver(
             await tx.exec(createCollectionLookupIndexStatement(input.collection));
           });
 
+          if (concurrentIdempotentEvent) return concurrentIdempotentEvent;
+
           const sequence = await lookupEventSequence(eventId);
           return {
             cursor: encodeDatabaseEventCursor(sequence),
@@ -541,7 +779,7 @@ export function createSqliteCompatibleDriver(
             collection: input.collection,
             documentId: undefined,
             type: input.type,
-            revision: nextRevision,
+            revision: restored?.revision ?? 1,
             timestamp,
             schemaVersion,
             payload: cloneJson(input.payload as never),
@@ -555,28 +793,33 @@ export function createSqliteCompatibleDriver(
             );
           }
 
-          const collection = await gateway.get<{ name: string }>(
-            `SELECT name FROM zv_collections WHERE tenant_id = ? AND name = ? LIMIT 1`,
-            [input.tenantId, input.collection],
-          );
-          if (!collection) {
-            throw new DatabaseNotFoundError(
-              `Collection "${input.collection}" does not exist for tenant "${input.tenantId}".`,
-            );
-          }
-
           const payload = input.payload as { data: DatabaseJsonObject };
-          // Determine insert-vs-update outside the transaction so adapters
-          // with deferred writes still pick the correct branch; their
-          // reads-during-transaction would otherwise see stale state.
-          const existing = await gateway.get<{ id: string }>(
-            `SELECT id FROM ${collectionTable(input.collection)}
-             WHERE tenant_id = ? AND id = ?
-             LIMIT 1`,
-            [input.tenantId, input.documentId],
-          );
+          let resultRevision!: number;
+          let concurrentIdempotentEvent: DatabaseEvent<TPayload> | undefined;
 
           await gateway.transaction(async (tx) => {
+            concurrentIdempotentEvent = await resolveIdempotentEvent(tx);
+            if (concurrentIdempotentEvent) return;
+            const nextRevision = await verifyRevision(tx);
+            resultRevision = nextRevision;
+
+            const collection = await tx.get<{ name: string }>(
+              `SELECT name FROM zv_collections WHERE tenant_id = ? AND name = ? LIMIT 1`,
+              [input.tenantId, input.collection],
+            );
+            if (!collection) {
+              throw new DatabaseNotFoundError(
+                `Collection "${input.collection}" does not exist for tenant "${input.tenantId}".`,
+              );
+            }
+
+            const existing = await tx.get<{ id: string }>(
+              `SELECT id FROM ${collectionTable(input.collection)}
+               WHERE tenant_id = ? AND id = ?
+               LIMIT 1`,
+              [input.tenantId, input.documentId],
+            );
+
             await insertEvent(tx, {
               eventId,
               idempotencyKey,
@@ -629,6 +872,8 @@ export function createSqliteCompatibleDriver(
             }
           });
 
+          if (concurrentIdempotentEvent) return concurrentIdempotentEvent;
+
           const sequence = await lookupEventSequence(eventId);
           return {
             cursor: encodeDatabaseEventCursor(sequence),
@@ -639,7 +884,7 @@ export function createSqliteCompatibleDriver(
             collection: input.collection,
             documentId: input.documentId,
             type: input.type,
-            revision: nextRevision,
+            revision: resultRevision,
             timestamp,
             schemaVersion,
             payload: cloneJson(input.payload as never),
@@ -653,32 +898,37 @@ export function createSqliteCompatibleDriver(
           );
         }
 
-        // Pre-flight existence check — same reasoning as the upsert path:
-        // adapters with deferred writes can't observe `changes` count
-        // inside the transaction, so we verify before queuing.
-        const collection = await gateway.get<{ name: string }>(
-          `SELECT name FROM zv_collections WHERE tenant_id = ? AND name = ? LIMIT 1`,
-          [input.tenantId, input.collection],
-        );
-        if (!collection) {
-          throw new DatabaseNotFoundError(
-            `Collection "${input.collection}" does not exist for tenant "${input.tenantId}".`,
-          );
-        }
-
-        const targetDocument = await gateway.get<{ id: string }>(
-          `SELECT id FROM ${collectionTable(input.collection)}
-           WHERE tenant_id = ? AND id = ?
-           LIMIT 1`,
-          [input.tenantId, input.documentId],
-        );
-        if (!targetDocument) {
-          throw new DatabaseNotFoundError(
-            `Document "${input.documentId}" does not exist in collection "${input.collection}".`,
-          );
-        }
+        let deleteRevision!: number;
+        let concurrentIdempotentEvent: DatabaseEvent<TPayload> | undefined;
 
         await gateway.transaction(async (tx) => {
+          concurrentIdempotentEvent = await resolveIdempotentEvent(tx);
+          if (concurrentIdempotentEvent) return;
+          const nextRevision = await verifyRevision(tx);
+          deleteRevision = nextRevision;
+
+          const collection = await tx.get<{ name: string }>(
+            `SELECT name FROM zv_collections WHERE tenant_id = ? AND name = ? LIMIT 1`,
+            [input.tenantId, input.collection],
+          );
+          if (!collection) {
+            throw new DatabaseNotFoundError(
+              `Collection "${input.collection}" does not exist for tenant "${input.tenantId}".`,
+            );
+          }
+
+          const targetDocument = await tx.get<{ id: string }>(
+            `SELECT id FROM ${collectionTable(input.collection)}
+             WHERE tenant_id = ? AND id = ?
+             LIMIT 1`,
+            [input.tenantId, input.documentId],
+          );
+          if (!targetDocument) {
+            throw new DatabaseNotFoundError(
+              `Document "${input.documentId}" does not exist in collection "${input.collection}".`,
+            );
+          }
+
           await insertEvent(tx, {
             eventId,
             idempotencyKey,
@@ -704,6 +954,8 @@ export function createSqliteCompatibleDriver(
           );
         });
 
+        if (concurrentIdempotentEvent) return concurrentIdempotentEvent;
+
         const sequence = await lookupEventSequence(eventId);
         return {
           cursor: encodeDatabaseEventCursor(sequence),
@@ -714,7 +966,7 @@ export function createSqliteCompatibleDriver(
           collection: input.collection,
           documentId: input.documentId,
           type: input.type,
-          revision: nextRevision,
+          revision: deleteRevision,
           timestamp,
           schemaVersion,
           payload: cloneJson(input.payload as never),
@@ -1028,7 +1280,18 @@ export function createSqliteCompatibleDriver(
 
     async execute(input: SqlExecuteInput): Promise<SqlExecuteResult> {
       return withReady(async () => {
-        const targetTable = parseWriteTargetTable(input.statement);
+        const statements = splitSqlStatements(tokenizeSql(input.statement));
+        if (statements[0] && definesSqlTrigger(statements[0])) {
+          throw new DatabaseDomainError(
+            "SQL trigger definitions are not permitted through sql.execute(). Use Zelavis document projections and event workflows.",
+          );
+        }
+        if (statements.length !== 1) {
+          throw new DatabaseValidationError(
+            "sql.execute() accepts exactly one SQL statement.",
+          );
+        }
+        const targetTable = parseSingleWriteTarget(statements[0]!);
         if (targetTable !== null) {
           const collection = await gateway.get<{ name: string }>(
             `SELECT name FROM zv_collections WHERE name = ? LIMIT 1`,

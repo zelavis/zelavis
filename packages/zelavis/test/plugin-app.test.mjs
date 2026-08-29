@@ -78,6 +78,56 @@ test("buildBundleStorageKey encodes scope identity into a deterministic path", (
     "index.html",
   );
   assert.equal(systemKey, "apps/system/@zelavis/ui/dist/index.html");
+
+  assert.equal(
+    buildBundleStorageKey(
+      { projectId: "ws_1", serviceName: "@example/kanban", bundle: "dist" },
+      "assets/file..min.js",
+    ),
+    "apps/ws_1/@example/kanban/dist/assets/file..min.js",
+  );
+  for (const scope of [
+    { projectId: "../beta", serviceName: "@example/kanban", bundle: "dist" },
+    { projectId: "alpha", serviceName: "@example/kanban", bundle: "../../beta" },
+    { projectId: "alpha", serviceName: "../../beta/app", bundle: "dist" },
+  ]) {
+    assert.throws(() => buildBundleStorageKey(scope, "index.html"), /Bundle/);
+  }
+  assert.throws(
+    () =>
+      buildBundleStorageKey(
+        { projectId: "alpha", serviceName: "@example/kanban", bundle: "dist" },
+        "../index.html",
+      ),
+    /Bundle asset path/,
+  );
+});
+
+test("bundle scope components cannot traverse into another Project", async () => {
+  const stored = new Map([
+    ["apps/beta/@good/app/dist/index.html", utf8("beta secret")],
+  ]);
+  const store = createSharedBundleStore({
+    storage: {
+      async get(path) {
+        const body = stored.get(path);
+        return body ? { path, body } : undefined;
+      },
+      async put() { throw new Error("not used"); },
+      async delete() { return false; },
+    },
+  });
+  await assert.rejects(
+    store.read(
+      {
+        projectId: "alpha",
+        serviceName: "@evil/app",
+        bundle: "../../../../apps/beta/@good/app/dist",
+      },
+      "index.html",
+    ),
+    /Bundle identifier/,
+  );
 });
 
 test("createSharedBundleStore reads through the underlying ZelavisFileStorage", async () => {

@@ -282,6 +282,73 @@ test("better-sqlite3 database uses typed conflict and revision errors", async ()
   }
 });
 
+test("better-sqlite3 serializes competing writes to one event stream", async () => {
+  const temp = createTempDatabasePath();
+  try {
+    const database = await createBetterSqlite3Database({ filename: temp.filename });
+    const tenant = database.forTenant("default");
+    await tenant.documents.createCollection({ name: "products" });
+    await tenant.documents.insert({
+      collection: "products",
+      id: "product_1",
+      data: { name: "Initial" },
+    });
+
+    const results = await Promise.allSettled([
+      tenant.events.append({
+        collection: "products",
+        documentId: "product_1",
+        type: "document.upserted",
+        expectedRevision: 1,
+        payload: { data: { name: "First" } },
+      }),
+      tenant.events.append({
+        collection: "products",
+        documentId: "product_1",
+        type: "document.upserted",
+        expectedRevision: 1,
+        payload: { data: { name: "Second" } },
+      }),
+    ]);
+
+    assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+    const rejected = results.find((result) => result.status === "rejected");
+    assert.ok(rejected);
+    assert.ok(rejected.reason instanceof DatabaseRevisionMismatchError);
+    const events = await tenant.events.read({
+      collection: "products",
+      documentId: "product_1",
+    });
+    assert.deepEqual(events.map((event) => event.revision), [1, 2]);
+  } finally {
+    rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
+test("better-sqlite3 deduplicates concurrent idempotent appends", async () => {
+  const temp = createTempDatabasePath();
+  try {
+    const database = await createBetterSqlite3Database({ filename: temp.filename });
+    const tenant = database.forTenant("default");
+    const append = () =>
+      tenant.events.append({
+        collection: "products",
+        type: "collection.created",
+        expectedRevision: 0,
+        idempotencyKey: "create-products",
+        payload: { metadata: { source: "concurrent-test" } },
+      });
+    const [first, second] = await Promise.all([append(), append()]);
+    assert.equal(second.eventId, first.eventId);
+    assert.equal(
+      (await tenant.events.read({ collection: "products" })).length,
+      1,
+    );
+  } finally {
+    rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
 test("better-sqlite3 database persists time-series samples across reopen and rebuilds on definition version changes", async () => {
   const temp = createTempDatabasePath();
 
@@ -470,6 +537,40 @@ test("physical sql.execute() blocks direct writes to registered collection table
           parameters: ["x"],
         }),
       DatabaseDomainError,
+    );
+
+    // CTE column lists and comments cannot hide a protected write.
+    await assert.rejects(
+      () =>
+        driver.sql.execute({
+          statement:
+            '/* prefix */ WITH cte(x) AS (SELECT 1) DELETE FROM "fruits" WHERE tenant_id = ?',
+          parameters: ["default"],
+        }),
+      DatabaseDomainError,
+    );
+
+    // sql.execute is deliberately single-statement, so a harmless prefix
+    // cannot hide a later mutation even on gateways that accept batches.
+    await assert.rejects(
+      () =>
+        driver.sql.execute({
+          statement: "UPDATE zv_collections SET document_count = document_count; DELETE FROM fruits",
+        }),
+      /exactly one SQL statement/,
+    );
+
+    // A trigger on a raw table could otherwise mutate a collection indirectly.
+    await driver.sql.execute({
+      statement: "CREATE TABLE raw_imports (id TEXT)",
+    });
+    await assert.rejects(
+      () =>
+        driver.sql.execute({
+          statement:
+            'CREATE TEMP TRIGGER raw_import_cleanup AFTER INSERT ON raw_imports BEGIN DELETE FROM "fruits"; END',
+        }),
+      /trigger definitions are not permitted/i,
     );
 
     // Writes to system tables are still allowed (they are not registered user collections).

@@ -98,6 +98,51 @@ export interface CreateSharedBundleStoreOptions {
   systemKey?: string;
 }
 
+function normalizeBundleSegments(
+  value: string,
+  label: string,
+  options: { allowEmpty?: boolean; allowLeadingSlash?: boolean } = {},
+): string[] {
+  if (value.includes("\0") || value.includes("\\")) {
+    throw new TypeError(`${label} contains an invalid path character.`);
+  }
+  const normalized = options.allowLeadingSlash
+    ? value.replace(/^\/+/, "")
+    : value;
+  const segments = normalized.split("/");
+  if (options.allowEmpty && normalized === "") return [];
+  if (
+    segments.length === 0 ||
+    segments.some(
+      (segment) => segment === "" || segment === "." || segment === "..",
+    )
+  ) {
+    throw new TypeError(`${label} must be a safe relative path.`);
+  }
+  return segments;
+}
+
+function normalizeBundleOwner(value: string, label: string): string {
+  const segments = normalizeBundleSegments(value.trim(), label);
+  if (segments.length !== 1) {
+    throw new TypeError(`${label} must contain exactly one path segment.`);
+  }
+  return segments[0]!;
+}
+
+function normalizeServiceName(value: string): string {
+  const segments = normalizeBundleSegments(value.trim(), "Bundle service name");
+  if (
+    segments.length !== 2 ||
+    (!segments[0]!.startsWith("@") && segments[0] !== "zelavis")
+  ) {
+    throw new TypeError(
+      "Bundle service name must use an @scope/name or zelavis/name identity.",
+    );
+  }
+  return segments.join("/");
+}
+
 /**
  * Encode a bundle scope + asset path into a storage key.
  *
@@ -112,11 +157,22 @@ export function buildBundleStorageKey(
   assetPath: string,
   options: { prefix?: string; systemKey?: string } = {},
 ): string {
-  const prefix = options.prefix ?? "apps";
-  const systemKey = options.systemKey ?? "system";
-  const owner = scope.projectId ?? systemKey;
-  const normalizedAsset = assetPath.replace(/^\/+/, "");
-  return `${prefix}/${owner}/${scope.serviceName}/${scope.bundle}/${normalizedAsset}`;
+  const prefix = normalizeBundleSegments(
+    options.prefix ?? "apps",
+    "Bundle prefix",
+  ).join("/");
+  const systemKey = normalizeBundleOwner(
+    options.systemKey ?? "system",
+    "Bundle system key",
+  );
+  const owner = normalizeBundleOwner(scope.projectId ?? systemKey, "Bundle owner");
+  const serviceName = normalizeServiceName(scope.serviceName);
+  const bundle = normalizeBundleOwner(scope.bundle, "Bundle identifier");
+  const normalizedAsset = normalizeBundleSegments(assetPath, "Bundle asset path", {
+    allowEmpty: true,
+    allowLeadingSlash: true,
+  }).join("/");
+  return `${prefix}/${owner}/${serviceName}/${bundle}/${normalizedAsset}`;
 }
 
 /**
@@ -128,7 +184,10 @@ export function createSharedBundleStore(
   options: CreateSharedBundleStoreOptions,
 ): BundleStore {
   const { storage, prefix, systemKey } = options;
-  const storagePrefix = prefix ?? "apps";
+  const storagePrefix = normalizeBundleSegments(
+    prefix ?? "apps",
+    "Bundle prefix",
+  ).join("/");
 
   if (!storage || typeof storage.get !== "function") {
     throw new TypeError(
@@ -170,10 +229,7 @@ export function createSharedBundleStore(
       return entries.map((entry) => entry.path.slice(prefixLen));
     },
     async deleteProject(projectId) {
-      const normalizedProjectId = projectId.trim();
-      if (!normalizedProjectId) {
-        throw new TypeError("Project id is required to delete bundle assets.");
-      }
+      const normalizedProjectId = normalizeBundleOwner(projectId, "Project id");
       if (typeof storage.list !== "function") {
         throw new Error(
           "Shared bundle storage cannot delete Project assets because its file storage does not support listing.",
@@ -201,7 +257,7 @@ export function createInMemoryBundleStore(
   assets: ReadonlyMap<string, Uint8Array | { body: Uint8Array; contentType?: string; cacheControl?: string }>,
 ): BundleStore {
   const keyFor = (scope: BundleScope, path: string) =>
-    `${scope.projectId ?? "system"}/${scope.serviceName}/${scope.bundle}/${path.replace(/^\/+/, "")}`;
+    buildBundleStorageKey(scope, path, { prefix: "memory" }).slice("memory/".length);
 
   return {
     async read(scope, path) {

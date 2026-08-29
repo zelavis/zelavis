@@ -81,5 +81,10 @@ export const SCHEMA_STATEMENTS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS zv_events_tenant_idempotency_idx
     ON zv_events (tenant_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS zv_events_collection_revision_idx
+    ON zv_events (tenant_id, collection_name, revision)
+    WHERE document_id IS NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS zv_events_document_revision_idx
+    ON zv_events (tenant_id, collection_name, document_id, revision)
+    WHERE document_id IS NOT NULL`,
 ] as const;
-
