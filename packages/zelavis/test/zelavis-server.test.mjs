@@ -12,6 +12,10 @@ import {
 } from "../dist/index.js";
 import { zelavisEcommerceService } from "../../../plugins/ecommerce/dist/index.js";
 
+const PLATFORM_OWNER_CONTEXT = {
+  principal: { id: "test-owner", type: "user", roles: ["owner"], permissions: ["*"] },
+};
+
 function createStoredZip(files) {
   const encoder = new TextEncoder();
   const localParts = [];
@@ -371,31 +375,25 @@ test("zelavis includes core services by default", async () => {
   assert.match(invalidRuntimeEngineResponse.body.error, /Runtime engine must be/);
 });
 
-test("auth provider child services extend the built-in auth service", async () => {
+test("auth method plugins register through the public auth capability", async () => {
   const runtime = await zelavis({
-    coreServices: {
-      auth: {
-        childServices: ["@example/test-auth-provider"],
-      },
-    },
     serviceRegistry: {
       catalog: [
         {
           service: defineService({
             name: "@example/test-auth-provider",
-            extends: "@zelavis/auth",
-            setup(api) {
-              api.authentication.registerProvider({
-                name: "@example/test-auth-provider",
-                async authenticate(input) {
-                  return {
-                    account: await api.accounts.create({
-                      id: String(input.accountId ?? "acc_test"),
-                      email: "test@example.com",
-                    }),
-                  };
-                },
-              });
+            kind: "provider",
+            capabilities: ["provider:auth"],
+            service: {
+              name: "test-auth",
+              register(api) {
+                api.authentication.registerProvider({
+                  name: "@example/test-auth-provider",
+                  async authenticate() {
+                    throw new Error("not used by this provider discovery test");
+                  },
+                });
+              },
             },
           }),
           status: "installed",
@@ -414,7 +412,7 @@ test("auth provider child services extend the built-in auth service", async () =
   assert.equal(
     runtime.routes.some((route) => route.route.id === "@example/test-auth-provider"),
     false,
-    "auth child services should not mount as top-level runtime routes",
+    "auth method plugins need no private top-level route",
   );
 });
 
@@ -523,6 +521,7 @@ test("dashboard service registry can register ESM service sources", async () => 
         specifier,
       }),
     }),
+    PLATFORM_OWNER_CONTEXT,
   );
   const created = await createResponse.json();
 
@@ -679,6 +678,7 @@ test("dashboard service upload derives metadata from the selected module", async
       method: "POST",
       body: form,
     }),
+    PLATFORM_OWNER_CONTEXT,
   );
   const created = await createResponse.json();
   const service = created.services.find(
@@ -742,6 +742,7 @@ test("Zelavis instance recomposes runtime after service activation", async () =>
         status: "installed",
       }),
     }),
+    PLATFORM_OWNER_CONTEXT,
   );
   const created = await createResponse.json();
 
@@ -839,6 +840,7 @@ test("node adapter resolves uploaded service paths through its service cache imp
           status: "installed",
         }),
       }),
+      PLATFORM_OWNER_CONTEXT,
     );
     const created = await createResponse.json();
 
@@ -940,6 +942,7 @@ test("node adapter installs uploaded ZIP service packages", async () => {
         method: "POST",
         body: form,
       }),
+      PLATFORM_OWNER_CONTEXT,
     );
     const created = await createResponse.json();
     const service = created.services.find(
@@ -1220,6 +1223,7 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "runtime.services.update",
       "runtime.settings.read",
       "runtime.settings.update",
+      "runtime.openapi",
       "runtime.access",
       "runtime.app-services.list",
       "runtime.assistant.threads.list",

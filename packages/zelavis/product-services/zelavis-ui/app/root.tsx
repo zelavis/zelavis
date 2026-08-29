@@ -4,6 +4,7 @@ import {
   Links,
   Meta,
   Outlet,
+  redirect,
   Scripts,
   ScrollRestoration,
   useLoaderData,
@@ -25,10 +26,10 @@ import {
   listProjects,
   rejectNavigationRuntime,
   resolveRuntimeDynamicMenus,
+  RuntimeApiError,
   ZELAVIS_APP_ADMIN_TENANT_ID,
 } from "#/lib/runtime-api";
 import type { Route } from "./+types/root";
-import type { RuntimeDashboardAccess } from "#/lib/runtime-api";
 import "@glideapps/glide-data-grid/dist/index.css";
 import "./styles.css";
 
@@ -52,81 +53,44 @@ function hasRuntimeService(
   return runtime.services?.some((service) => service.name === serviceName) ?? false;
 }
 
-function resolveDemoDashboardAccess(requestUrl: string): RuntimeDashboardAccess {
-  const mode = new URL(requestUrl).searchParams.get("as");
-  const projectId = inferProjectIdFromRequestUrl(requestUrl);
-
-  if (mode === "customer") {
-    return {
-      mode: "customer",
-      label: "Customer",
-      principal: {
-        id: "customer_demo",
-        type: "user",
-        roles: ["customer"],
-        grants: [
-          {
-            permission: "projects.list",
-            scope: { type: "system" },
-          },
-          ...(projectId
-            ? ([
-                {
-                  permission: "project.view",
-                  scope: { type: "project", projectId },
-                },
-                {
-                  permission: "project.content.read",
-                  scope: { type: "project", projectId },
-                },
-                {
-                  permission: "project.website.manage",
-                  scope: { type: "project", projectId },
-                },
-              ] as const)
-            : []),
-        ],
-      },
-      projects: projectId
-        ? [
-            {
-              id: projectId,
-              permissions: [
-                "project.view",
-                "project.content.read",
-                "project.website.manage",
-              ],
-            },
-          ]
-        : [],
-    };
-  }
-
-  return {
-    mode: "owner",
-    label: "Owner",
-    principal: {
-      id: "owner_demo",
-      type: "user",
-      roles: ["owner"],
-      permissions: ["*"],
-    },
-  };
-}
-
 export async function clientLoader({ request }: Route.ClientLoaderArgs) {
   const projectId = inferProjectIdFromRequestUrl(request.url);
+  const requestUrl = new URL(request.url);
+  const isLoginRoute = /\/login\/?$/u.test(requestUrl.pathname);
 
   // Set up the deferred promise SYNCHRONOUSLY (before any await) so that
   // child loaders running in parallel can find and await it.
   beginNavigationRuntimeResolve(projectId);
 
   const controlRuntime = await getRuntimeConfig();
-  const accessMode = new URL(request.url).searchParams.get("as") ?? undefined;
-  const [access, projectResult, assistantResult] = await Promise.all([
-    getDashboardAccess(controlRuntime, accessMode).catch(() =>
-      resolveDemoDashboardAccess(request.url),
-    ),
+  if (isLoginRoute) {
+    commitNavigationRuntime(controlRuntime);
+    const settings = await getDashboardSettings(controlRuntime);
+    return {
+      controlRuntime,
+      runtime: controlRuntime,
+      settings,
+      databaseCollections: [],
+      schemaCollections: [],
+      projects: [],
+      projectRuntime: undefined,
+      assistantThreads: [],
+      assistantResponder: "unavailable",
+    };
+  }
+
+  let access: Awaited<ReturnType<typeof getDashboardAccess>>;
+  try {
+    access = await getDashboardAccess(controlRuntime);
+  } catch (error) {
+    if (error instanceof RuntimeApiError && error.status === 401) {
+      const returnTo = `${requestUrl.pathname}${requestUrl.search}`;
+      throw redirect(`/login?returnTo=${encodeURIComponent(returnTo)}`);
+    }
+    throw error;
+  }
+
+  const [projectResult, assistantResult] = await Promise.all([
     listProjects(controlRuntime).catch(() => ({ runtime: undefined, projects: [] })),
     listAssistantThreads(controlRuntime).catch(() => ({
       responder: "unavailable",

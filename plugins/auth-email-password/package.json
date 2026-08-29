@@ -28,9 +28,9 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/zelavis/zelavis.git",
-    "directory": "packages/zelavis/plugins/email-password"
+    "directory": "plugins/auth-email-password"
   },
-  "homepage": "https://github.com/zelavis/zelavis/tree/main/packages/zelavis/plugins/email-password#readme",
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/plugins/auth-email-password#readme",
   "bugs": {
     "url": "https://github.com/zelavis/zelavis/issues"
   },

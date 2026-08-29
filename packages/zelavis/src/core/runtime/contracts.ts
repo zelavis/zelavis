@@ -2,6 +2,7 @@ import type {
   ZelavisServerLifecycle,
   ZelavisServerPlugin,
 } from "./lifecycle.js";
+import type { ZelavisRequestAuthenticator } from "./authentication.js";
 
 export type ZelavisHttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export type ZelavisMenuFixedActionScope =
@@ -114,6 +115,61 @@ export interface ZelavisRouteResponse {
  */
 export type ZelavisRouteHostMatcher = string | readonly string[];
 
+/**
+ * JSON Schema-compatible parameter descriptor used by the OpenAPI spec
+ * generator to document path and query parameters.
+ */
+export interface ZelavisRouteParamSchema {
+  type: "string" | "number" | "integer" | "boolean";
+  required?: boolean;
+  description?: string;
+  enum?: readonly string[];
+}
+
+/**
+ * JSON Schema-compatible body descriptor for OpenAPI request/response bodies.
+ */
+export interface ZelavisRouteBodySchema {
+  description?: string;
+  required?: boolean;
+  /** JSON Schema object or `$ref` reference. */
+  schema: Record<string, unknown>;
+}
+
+/**
+ * Per-status-code response descriptor for OpenAPI generation.
+ */
+export interface ZelavisRouteResponseSchema {
+  description: string;
+  schema?: Record<string, unknown>;
+}
+
+/**
+ * Optional typed metadata attached to a route so the OpenAPI spec generator
+ * can produce a complete specification without inspecting handler internals.
+ *
+ * Routes without a `spec` field are omitted from the generated OpenAPI
+ * document.
+ */
+export interface ZelavisRouteSpec {
+  /** Unique operation ID used as the SDK method name, e.g. "insertDocument". */
+  operationId: string;
+  /** Short human-readable summary for docs. */
+  summary?: string;
+  /** Longer operation description (Markdown). */
+  description?: string;
+  /** Grouping tags, e.g. ["documents"]. */
+  tags?: readonly string[];
+  /** Path parameter schemas keyed by parameter name. */
+  pathParams?: Record<string, ZelavisRouteParamSchema>;
+  /** Query parameter schemas keyed by parameter name. */
+  queryParams?: Record<string, ZelavisRouteParamSchema>;
+  /** Request body schema. */
+  requestBody?: ZelavisRouteBodySchema;
+  /** Response schemas keyed by HTTP status code. */
+  responses?: Record<number, ZelavisRouteResponseSchema>;
+}
+
 export interface ZelavisServerRoute<TService = unknown> {
   id: string;
   method: ZelavisHttpMethod;
@@ -125,6 +181,8 @@ export interface ZelavisServerRoute<TService = unknown> {
   host?: ZelavisRouteHostMatcher;
   access?: ZelavisAccessRequirement | readonly ZelavisAccessRequirement[];
   meta?: Record<string, unknown>;
+  /** Typed schema metadata for OpenAPI generation and SDK codegen. */
+  spec?: ZelavisRouteSpec;
   handler: (
     context: ZelavisRouteContext<TService>,
   ) => Promise<ZelavisRouteResponse> | ZelavisRouteResponse;
@@ -195,6 +253,8 @@ export interface ZelavisRuntimeService<TService = unknown> {
   menu?: ZelavisRuntimeServiceMenuDefinition;
   menus?: readonly ZelavisRuntimeServiceMenuDefinition[];
   services?: readonly ZelavisAnyRuntimeServiceInput[];
+  /** Native-Web authentication mechanisms contributed by this service. */
+  authenticators?: readonly ZelavisRequestAuthenticator[];
 }
 
 export type ZelavisRuntimeServiceInput<TService = unknown> =

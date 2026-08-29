@@ -1,6 +1,7 @@
 import {
   authService,
-  type AuthProviderService,
+  createDatabaseAuthRepositories,
+  type AuthMethodPlugin,
   type AuthServiceOptions,
 } from "./auth/index.js";
 import {
@@ -35,13 +36,17 @@ function isDatabaseApi(value: unknown): value is DatabaseApi {
   );
 }
 
-function collectAuthProviderServices(
-  children: readonly Readonly<{ name: string; setup?: unknown }>[],
-): readonly AuthProviderService[] {
+function collectAuthMethodPlugins(
+  context: ZelavisServiceSetupContext,
+): readonly AuthMethodPlugin[] {
   return Object.freeze(
-    children
-      .filter((service) => typeof service.setup === "function")
-      .map((service) => service as unknown as AuthProviderService),
+    context.registry
+      .filter((entry) =>
+        entry.status === "installed" &&
+        entry.service.capabilities?.includes("provider:auth") &&
+        typeof (entry.service.service as AuthMethodPlugin | undefined)?.register === "function",
+      )
+      .map((entry) => entry.service.service as AuthMethodPlugin),
   );
 }
 
@@ -93,17 +98,23 @@ export function zelavisAppService(options: ZelavisAppServiceOptions = {}) {
       if (options.auth !== false) {
         const authOptions =
           options.auth === undefined ? {} : options.auth;
-        const childServices = context.children.map((service) => service.name);
         runtimeServices.push(
           authService({
             ...authOptions,
-            services: [
-              ...(authOptions.services ?? []),
-              ...collectAuthProviderServices(context.children),
-            ],
-            childServices: [
-              ...(authOptions.childServices ?? []),
-              ...childServices,
+            authOptions: {
+              ...(authOptions.authOptions ?? {}),
+              projectId:
+                typeof context.platform.metadata.projectId === "string"
+                  ? context.platform.metadata.projectId
+                  : authOptions.authOptions?.projectId,
+              repositories: {
+                ...createDatabaseAuthRepositories(database),
+                ...(authOptions.authOptions?.repositories ?? {}),
+              },
+            },
+            methods: [
+              ...(authOptions.methods ?? []),
+              ...collectAuthMethodPlugins(context),
             ],
           }),
         );

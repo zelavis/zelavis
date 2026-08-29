@@ -14,6 +14,10 @@ class InMemoryAccountRepository implements AccountRepository {
     return account;
   }
 
+  async delete(id: string): Promise<boolean> {
+    return this.items.delete(id);
+  }
+
   async findById(id: string): Promise<Account | null> {
     return this.items.get(id) ?? null;
   }
@@ -44,8 +48,16 @@ class InMemorySessionRepository implements SessionRepository {
     return session;
   }
 
+  async delete(id: string): Promise<boolean> {
+    return this.items.delete(id);
+  }
+
   async findById(id: string): Promise<Session | null> {
     return this.items.get(id) ?? null;
+  }
+
+  async findByTokenHash(tokenHash: string): Promise<Session | null> {
+    return Array.from(this.items.values()).find((session) => session.tokenHash === tokenHash) ?? null;
   }
 
   async listByAccountId(accountId: string): Promise<Session[]> {
@@ -64,6 +76,10 @@ class InMemoryCredentialRepository implements CredentialRepository {
   async create(credential: Credential): Promise<Credential> {
     this.items.set(credential.id, credential);
     return credential;
+  }
+
+  async delete(id: string): Promise<boolean> {
+    return this.items.delete(id);
   }
 
   async findById(id: string): Promise<Credential | null> {

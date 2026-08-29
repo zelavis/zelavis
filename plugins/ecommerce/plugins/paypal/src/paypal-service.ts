@@ -700,9 +700,13 @@ export function createPayPalPaymentProvider(
 export function paypalService(options: PayPalServiceOptions = {}) {
   return defineService<EcommerceApi>({
     name: "@zelavis/ecommerce-paypal",
-    extends: "@zelavis/ecommerce",
-    setup(api) {
-      api.payments.registerProvider("paypal", createPayPalPaymentProvider(options));
+    kind: "provider",
+    capabilities: ["provider:payments"],
+    service: {
+      name: "paypal",
+      register(api: EcommerceApi) {
+        api.payments.registerProvider("paypal", createPayPalPaymentProvider(options));
+      },
     },
   });
 }

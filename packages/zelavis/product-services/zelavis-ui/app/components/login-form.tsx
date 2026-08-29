@@ -1,5 +1,5 @@
 import * as React from "react"
-import { useNavigate } from "react-router"
+import { useNavigate, useSearchParams } from "react-router"
 
 import { Button } from "#/components/ui/button"
 import {
@@ -11,46 +11,148 @@ import {
 } from "#/components/ui/card"
 import { Input } from "#/components/ui/input"
 import { cn } from "#/lib/utils"
+import {
+  authenticatePlatform,
+  bootstrapPlatformOwner,
+  getAuthBootstrapStatus,
+  getRuntimeConfig,
+  type RuntimeAuthBootstrapStatus,
+} from "#/lib/runtime-api"
 
 export function LoginForm({
   className,
   ...props
 }: React.ComponentProps<"div">) {
   const navigate = useNavigate()
-  const [email, setEmail] = React.useState("")
+  const [searchParams] = useSearchParams()
+  const [status, setStatus] = React.useState<RuntimeAuthBootstrapStatus>()
+  const [identifier, setIdentifier] = React.useState("")
+  const [displayName, setDisplayName] = React.useState("")
+  const [bootstrapToken, setBootstrapToken] = React.useState("")
   const [password, setPassword] = React.useState("")
+  const [error, setError] = React.useState<string>()
+  const [submitting, setSubmitting] = React.useState(false)
 
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+  React.useEffect(() => {
+    let active = true
+    void getRuntimeConfig()
+      .then(getAuthBootstrapStatus)
+      .then((next) => {
+        if (active) setStatus(next)
+      })
+      .catch((cause) => {
+        if (active) {
+          setError(cause instanceof Error ? cause.message : String(cause))
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const providers = status?.required
+    ? status.enrollmentProviders
+    : status?.providers
+  const provider = providers?.includes("email-password")
+    ? "email-password"
+    : providers?.includes("username-password")
+      ? "username-password"
+      : providers?.[0]
+  const usesUsername = provider === "username-password"
+  const returnTo = searchParams.get("returnTo")
+  const destination = returnTo?.startsWith("/") && !returnTo.startsWith("//")
+    ? returnTo
+    : "/"
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    // For now, redirect to / projects overview on submit
-    navigate("/", { viewTransition: true })
+    if (!status || !provider) return
+    setSubmitting(true)
+    setError(undefined)
+    try {
+      const config = await getRuntimeConfig()
+      if (status.required) {
+        await bootstrapPlatformOwner(config, {
+          bootstrapToken,
+          provider,
+          account: {
+            ...(usesUsername
+              ? { username: identifier }
+              : { email: identifier }),
+            displayName,
+          },
+          credential: { identifier, password },
+        })
+      } else {
+        await authenticatePlatform(config, provider, { identifier, password })
+      }
+      navigate(destination, { replace: true, viewTransition: true })
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
       <Card>
         <CardHeader>
-          <CardTitle className="text-xl">Login to your account</CardTitle>
+          <CardTitle className="text-xl">
+            {status?.required ? "Create the first owner" : "Login to Zelavis"}
+          </CardTitle>
           <CardDescription>
-            Enter your email below to login to your account
+            {status?.required
+              ? "Bootstrap this installation with its first Platform owner."
+              : "Authenticate with an installed Zelavis auth provider."}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit}>
             <div className="flex flex-col gap-6">
+              {status?.required ? (
+                <>
+                  <div className="grid gap-2">
+                    <label htmlFor="bootstrapToken" className="text-sm font-medium leading-none">
+                      Bootstrap token
+                    </label>
+                    <Input
+                      id="bootstrapToken"
+                      type="password"
+                      value={bootstrapToken}
+                      onChange={(event) => setBootstrapToken(event.target.value)}
+                      autoComplete="off"
+                      minLength={32}
+                      required
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <label htmlFor="displayName" className="text-sm font-medium leading-none">
+                      Display name
+                    </label>
+                    <Input
+                      id="displayName"
+                      value={displayName}
+                      onChange={(event) => setDisplayName(event.target.value)}
+                      autoComplete="name"
+                    />
+                  </div>
+                </>
+              ) : null}
               <div className="grid gap-2">
                 <label
-                  htmlFor="email"
+                  htmlFor="identifier"
                   className="text-sm font-medium leading-none select-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                 >
-                  Email
+                  {usesUsername ? "Username" : "Email"}
                 </label>
                 <Input
-                  id="email"
-                  type="email"
-                  placeholder="m@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  id="identifier"
+                  type={usesUsername ? "text" : "email"}
+                  placeholder={usesUsername ? "owner" : "owner@example.com"}
+                  value={identifier}
+                  onChange={(event) => setIdentifier(event.target.value)}
+                  autoComplete="username"
                   required
                 />
               </div>
@@ -62,44 +164,52 @@ export function LoginForm({
                   >
                     Password
                   </label>
-                  <a
-                    href="#"
-                    onClick={(e) => e.preventDefault()}
-                    className="ml-auto inline-block text-sm text-muted-foreground underline-offset-4 hover:underline"
-                  >
-                    Forgot your password?
-                  </a>
                 </div>
                 <Input
                   id="password"
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  autoComplete={status?.required ? "new-password" : "current-password"}
+                  minLength={status?.required ? 15 : undefined}
                   required
                 />
               </div>
+              {error ? (
+                <p role="alert" className="text-sm text-destructive">
+                  {error}
+                </p>
+              ) : null}
+              {status && providers?.length === 0 ? (
+                <p role="alert" className="text-sm text-destructive">
+                  {status.required
+                    ? "No credential-enrollment auth provider is installed. Install the official email/password or username/password plugin in the Platform service catalog before bootstrapping."
+                    : "No interactive authentication provider is installed."}
+                </p>
+              ) : null}
+              {status?.required && !status.available ? (
+                <p role="alert" className="text-sm text-destructive">
+                  Bootstrap is disabled. Configure ZELAVIS_BOOTSTRAP_TOKEN or
+                  bootstrap.token and restart the Platform.
+                </p>
+              ) : null}
               <div className="flex flex-col gap-3">
-                <Button type="submit" className="w-full">
-                  Login
-                </Button>
                 <Button
-                  variant="outline"
-                  type="button"
+                  type="submit"
                   className="w-full"
-                  onClick={() => navigate("/", { viewTransition: true })}
+                  disabled={
+                    !status ||
+                    !provider ||
+                    submitting ||
+                    (status.required && (!status.available || bootstrapToken.length < 32))
+                  }
                 >
-                  Login with Google
+                  {submitting
+                    ? "Please wait…"
+                    : status?.required
+                      ? "Create owner"
+                      : "Login"}
                 </Button>
-              </div>
-              <div className="text-center text-sm text-muted-foreground">
-                Don&apos;t have an account?{" "}
-                <a
-                  href="#"
-                  onClick={(e) => e.preventDefault()}
-                  className="underline underline-offset-4 hover:text-foreground"
-                >
-                  Sign up
-                </a>
               </div>
             </div>
           </form>

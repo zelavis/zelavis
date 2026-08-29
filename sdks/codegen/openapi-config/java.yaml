@@ -1,0 +1,13 @@
+# OpenAPI Generator config for Zelavis Java SDK
+generatorName: java
+inputSpec: sdks/openapi/zelavis-api.json
+outputDir: sdks/java
+
+additionalProperties:
+  groupId: com.zelavis
+  artifactId: zelavis-sdk
+  artifactVersion: 0.1.0
+  library: native
+  useJakartaEe: true
+  dateLibrary: java8
+  openApiNullable: false

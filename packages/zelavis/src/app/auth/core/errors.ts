@@ -18,3 +18,10 @@ export class AuthNotFoundError extends AuthDomainError {
     this.name = "AuthNotFoundError";
   }
 }
+
+export class AuthInvalidCredentialsError extends AuthDomainError {
+  constructor() {
+    super("Invalid credentials.");
+    this.name = "AuthInvalidCredentialsError";
+  }
+}

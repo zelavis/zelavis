@@ -49,6 +49,43 @@ const zv = new Zelavis({
       const resolved = await projectNodeAdapter.resolve?.(options);
       return {
         ...(resolved ?? {}),
+        metadata: {
+          ...(resolved?.metadata ?? {}),
+          projectId,
+        },
+        resolvePrincipal: ({ request }) => {
+          const forwardedProjectId = request.headers.get(
+            "x-zelavis-project-id",
+          );
+          const scopeId = request.headers.get("x-zelavis-platform-scope-id");
+          const generation = request.headers.get(
+            "x-zelavis-placement-generation",
+          );
+          const runtimeNodeId = request.headers.get("x-zelavis-runtime-node-id");
+          if (
+            forwardedProjectId !== projectId ||
+            !scopeId ||
+            !generation ||
+            !runtimeNodeId
+          ) return undefined;
+          return {
+            id: `zelavis-platform:${scopeId}`,
+            type: "system",
+            permissions: ["*"],
+            grants: [
+              {
+                permission: "*",
+                scope: { type: "project", projectId },
+              },
+            ],
+            metadata: {
+              projectId,
+              placementGeneration: generation,
+              runtimeNodeId,
+              authority: "project-gateway",
+            },
+          };
+        },
         serviceRegistry: {
           ...(resolved?.serviceRegistry ?? {}),
           catalog: [

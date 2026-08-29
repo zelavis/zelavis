@@ -4,11 +4,14 @@ import { AuthenticationService } from "../services/authentication-service.js";
 import { CredentialService } from "../services/credential-service.js";
 import { SessionService } from "../services/session-service.js";
 import { createInMemoryAuthRepositories } from "../storage/in-memory.js";
-import type { AuthApi, AuthProviderService } from "./types.js";
+import type { AuthApi, AuthMethodPlugin } from "./types.js";
+import { createSessionAuthenticator } from "./session-authenticator.js";
 
 export interface CreateAuthOptions {
   config?: Record<string, unknown>;
-  services?: readonly AuthProviderService[];
+  methods?: readonly AuthMethodPlugin[];
+  projectId?: string;
+  sessionCookieName?: string | false;
   repositories?: Partial<AuthRepositories>;
 }
 
@@ -26,17 +29,23 @@ export async function createAuth(options: CreateAuthOptions = {}): Promise<AuthA
   const api: AuthApi = {
     context: {
       config: options.config ?? {},
-      childServices: Object.freeze([...(options.services ?? [])]),
+      methods: Object.freeze([...(options.methods ?? [])]),
     },
     repositories,
     accounts,
     credentials,
     sessions,
     authentication,
+    requestAuthenticator: createSessionAuthenticator({
+      accounts,
+      sessions,
+      projectId: options.projectId,
+      cookieName: options.sessionCookieName,
+    }),
   };
 
-  for (const service of options.services ?? []) {
-    await service.setup?.(api);
+  for (const method of options.methods ?? []) {
+    await method.register(api);
   }
 
   return api;

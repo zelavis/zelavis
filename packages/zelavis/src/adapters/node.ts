@@ -8,6 +8,8 @@ import {
   type ZelavisOptions,
   type ZelavisServicePackageInstaller,
   type ZelavisResolvedPlatformOptions,
+  type ZelavisServiceRegistryEntry,
+  type ZelavisServiceSetupContext,
 } from "../index.js";
 import { createLocalSqliteSystemStore } from "./_sqlite-system-store.js";
 import { resolveLocalDatabaseTopology } from "./_database-topology-store.js";
@@ -38,7 +40,9 @@ export interface NodeAdapterDatabaseOptions {
   pragma?: readonly string[];
 }
 
-export type NodeAdapterServiceOptions = LocalRuntimeServiceOptions;
+export type NodeAdapterServiceOptions = LocalRuntimeServiceOptions & {
+  catalog?: readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[];
+};
 
 export interface NodeAdapterSystemStoreOptions {
   filename?: string;
@@ -199,7 +203,12 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           options.services === false
             ? undefined
             : {
-                catalog: isProjectRuntime ? [] : officialProjectRecipes,
+                catalog: isProjectRuntime
+                  ? []
+                  : [
+                      ...officialProjectRecipes,
+                      ...(serviceOptions?.catalog ?? []),
+                    ],
                 importer: createLocalRuntimeServiceImporter({
                   directory: serviceDirectory,
                   ...(serviceOptions ?? {}),

@@ -28,7 +28,7 @@ export async function createEcommerce(options: CreateEcommerceOptions = {}): Pro
   const api: EcommerceApi = {
     context: {
       config: options.config ?? {},
-      childServices: Object.freeze([...(options.services ?? [])]),
+      providers: Object.freeze([...(options.services ?? [])]),
     },
     repositories,
     customers,
@@ -39,7 +39,7 @@ export async function createEcommerce(options: CreateEcommerceOptions = {}): Pro
   };
 
   for (const service of options.services ?? []) {
-    await service.setup?.(api);
+    await service.register(api);
   }
 
   return api;

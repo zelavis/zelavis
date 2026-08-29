@@ -374,31 +374,27 @@ function ProjectsRoute() {
                       variant="outline"
                       disabled={isPending}
                       onClick={() => changeProjectState(project, !isRunning)}
+                      aria-label={isRunning ? "Stop" : "Start"}
                     >
-                      {isRunning ? (
-                        <Pause className="size-4" />
-                      ) : (
-                        <Play className="size-4" />
-                      )}
-                      {isRunning ? "Stop" : "Start"}
+                      {isRunning ? <Pause className="size-4" /> : <Play className="size-4" />}
                     </Button>
                     <Button
                       type="button"
                       variant="outline"
                       disabled={isPending || project.runtime.status === "provisioning"}
                       onClick={() => handleRestartProject(project)}
+                      aria-label="Restart"
                     >
                       <RotateCw className="size-4" />
-                      Restart
                     </Button>
                     <Button
                       type="button"
                       variant="destructive"
                       disabled={isPending}
                       onClick={() => handleDeleteProject(project)}
+                      aria-label="Delete"
                     >
                       <Trash2 className="size-4" />
-                      Delete
                     </Button>
                     <AssistantButton
                       label={`Ask Assistant about ${project.name}`}

@@ -440,9 +440,13 @@ export function createStripePaymentProvider(options: StripeServiceOptions = {}):
 export function stripeService(options: StripeServiceOptions = {}) {
   return defineService<EcommerceApi>({
     name: "@zelavis/ecommerce-stripe",
-    extends: "@zelavis/ecommerce",
-    setup(api) {
-      api.payments.registerProvider("stripe", createStripePaymentProvider(options));
+    kind: "provider",
+    capabilities: ["provider:payments"],
+    service: {
+      name: "stripe",
+      register(api: EcommerceApi) {
+        api.payments.registerProvider("stripe", createStripePaymentProvider(options));
+      },
     },
   });
 }

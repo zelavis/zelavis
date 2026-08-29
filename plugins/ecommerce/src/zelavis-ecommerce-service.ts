@@ -131,8 +131,8 @@ function isEcommercePaymentService(
   service: Readonly<ZelavisServiceDefinition<any>>,
 ): service is EcommerceService {
   return (
-    service.extends === "@zelavis/ecommerce" &&
-    typeof service.setup === "function"
+    service.capabilities?.includes("provider:payments") === true &&
+    typeof (service.service as EcommerceService | undefined)?.register === "function"
   );
 }
 
@@ -312,7 +312,6 @@ export const zelavisEcommerceService = defineService<ZelavisServiceSetupContext>
   version: "0.1.0",
   kind: "plugin",
   capabilities: ["api:routes", "dashboard:menu"],
-  childServices: ["@zelavis/ecommerce-stripe", "@zelavis/ecommerce-paypal"],
   menu: {
     title: "Ecommerce",
     path: "/commerce",
@@ -372,9 +371,9 @@ export const zelavisEcommerceService = defineService<ZelavisServiceSetupContext>
     ],
   },
   async setup(context) {
-    const paymentServices = context.children.filter(
-      isEcommercePaymentService,
-    ) as readonly EcommerceService[];
+    const paymentServices = context.registry
+      .filter((entry) => entry.status === "installed" && isEcommercePaymentService(entry.service))
+      .map((entry) => entry.service.service as EcommerceService);
     const commerce = await createEcommerce({
       services: paymentServices,
       repositories: isDatabaseApi(context.core.database)
@@ -581,14 +580,11 @@ export const zelavisEcommerceService = defineService<ZelavisServiceSetupContext>
                   status: 200,
                   body: {
                     providers: service.payments.listProviders().map((name: string) => {
-                      const childService = service.context.childServices.find(
-                        (service: { name: string; extends?: string }) => service.name === name,
-                      );
-
                       return {
                         name,
-                        parentService: childService?.extends ?? "@zelavis/ecommerce",
-                        childService: true,
+                        plugin: service.context.providers.find(
+                          (provider: { name: string }) => provider.name === name,
+                        )?.name,
                       };
                     }),
                   },

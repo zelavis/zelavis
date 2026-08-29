@@ -12,7 +12,6 @@ import {
   removeServiceFromRegistry,
   resolveServiceModule,
   serializeServiceRegistryState,
-  isChildServiceAllowed,
   ZELAVIS_SERVICE_V1,
 } from "../dist/index.js";
 
@@ -28,7 +27,6 @@ test("defineService normalizes service metadata for developer-facing extensions"
   const service = defineService({
     name: "@zelavis/ecommerce",
     version: "1.0.0",
-    childServices: ["@zelavis/ecommerce-stripe"],
     menu: {
       title: "Ecommerce",
       path: "/commerce",
@@ -41,12 +39,10 @@ test("defineService normalizes service metadata for developer-facing extensions"
   assert.equal(service.contractVersion, ZELAVIS_SERVICE_V1);
   assert.equal(service.menu.title, "Ecommerce");
   assert.equal(service.menu.path, "/commerce");
-  assert.deepEqual(service.childServices, ["@zelavis/ecommerce-stripe"]);
   assert.equal(service.runtimeServices.length, 1);
   assert.ok(Object.isFrozen(service));
   assert.ok(Object.isFrozen(service.menu));
   assert.ok(Object.isFrozen(service.runtimeServices));
-  assert.ok(Object.isFrozen(service.childServices));
 });
 
 test("defineService validates required service fields", () => {
@@ -95,32 +91,19 @@ test("defineService validates required service fields", () => {
   assert.throws(
     () =>
       defineService({
-        name: "@zelavis/ecommerce-stripe",
-        extends: "",
+        name: "@example/invalid-authenticators",
+        authenticators: {},
       }),
-    /Zelavis built-in name|scoped package name/,
+    /authenticators must be provided as an array/,
   );
 
   assert.throws(
     () =>
       defineService({
-        name: "@zelavis/ecommerce-stripe",
-        extends: "@zelavis/ecommerce",
-        menu: {
-          title: "Stripe",
-          path: "/stripe",
-        },
+        name: "@example/invalid-authenticator",
+        authenticators: [{ name: "bearer" }],
       }),
-    /Child services cannot declare top-level dashboard menu metadata/,
-  );
-
-  assert.throws(
-    () =>
-      defineService({
-        name: "@zelavis/ecommerce",
-        childServices: ["@zelavis/ecommerce-stripe", "@zelavis/ecommerce-stripe"],
-      }),
-    /Duplicate: @zelavis\/ecommerce-stripe/,
+    /must include an authenticate function/,
   );
 
   assert.throws(
@@ -131,58 +114,6 @@ test("defineService validates required service fields", () => {
     /Zelavis built-in name|scoped package name/,
   );
 
-  assert.throws(
-    () =>
-      defineService({
-        name: "@zelavis/ecommerce",
-        childServices: ["stripe"],
-      }),
-    /Zelavis built-in name|scoped package name/,
-  );
-});
-
-test("defineService supports child service extension metadata", () => {
-  const service = defineService({
-    name: "@zelavis/ecommerce-stripe",
-    extends: "@zelavis/ecommerce",
-  });
-
-  assert.equal(service.extends, "@zelavis/ecommerce");
-});
-
-test("isChildServiceAllowed applies parent child service allow-list", () => {
-  const parent = {
-    service: defineService({
-      name: "@zelavis/ecommerce",
-      childServices: ["@zelavis/ecommerce-stripe"],
-    }),
-    status: "installed",
-  };
-  const stripe = {
-    service: defineService({
-      name: "@zelavis/ecommerce-stripe",
-      extends: "@zelavis/ecommerce",
-    }),
-    status: "installed",
-  };
-  const xyz = {
-    service: defineService({
-      name: "@example/xyz-payments",
-      extends: "@zelavis/ecommerce",
-    }),
-    status: "installed",
-  };
-  const shipping = {
-    service: defineService({
-      name: "@example/ship-fast",
-      extends: "@zelavis/ecommerce",
-    }),
-    status: "installed",
-  };
-
-  assert.equal(isChildServiceAllowed(parent, stripe), true);
-  assert.equal(isChildServiceAllowed(parent, xyz), false);
-  assert.equal(isChildServiceAllowed(parent, shipping), false);
 });
 
 test("defineServiceCatalogEntry normalizes marketplace metadata", () => {
@@ -191,7 +122,6 @@ test("defineServiceCatalogEntry normalizes marketplace metadata", () => {
     package: "@zelavis/ecommerce-stripe",
     publisher: "zelavis",
     source: "official",
-    extends: "@zelavis/ecommerce",
     compatibility: {
       zelavis: "^1.0.0",
       parentService: "^1.0.0",
@@ -204,7 +134,6 @@ test("defineServiceCatalogEntry normalizes marketplace metadata", () => {
 
   assert.equal(entry.reviewStatus, "official");
   assert.equal(entry.verified, true);
-  assert.equal(entry.extends, "@zelavis/ecommerce");
   assert.equal(entry.compatibility.zelavis, "^1.0.0");
   assert.equal(entry.links.repository, "https://github.com/zelavis/zelavis");
   assert.deepEqual(entry.tags, ["payments", "@zelavis/ecommerce-stripe"]);
@@ -539,109 +468,6 @@ test("activateServiceRegistry runs installed services in order and collects serv
     activated.services.map((service) => service.name),
     ["first-service", "second-service"],
   );
-});
-
-test("activateServiceRegistry gives child services to their parent without activating them directly", async () => {
-  const activationOrder = [];
-  let seenChildren = [];
-
-  const registry = createServiceRegistry([
-    {
-      service: defineService({
-        name: "@zelavis/ecommerce-stripe",
-        extends: "@zelavis/ecommerce",
-        setup() {
-          activationOrder.push("@zelavis/ecommerce-stripe");
-        },
-      }),
-      status: "installed",
-      order: 0,
-    },
-    {
-      service: defineService({
-        name: "@zelavis/ecommerce",
-        childServices: ["@zelavis/ecommerce-stripe"],
-        setup(context) {
-          activationOrder.push("@zelavis/ecommerce");
-          seenChildren = context.children;
-        },
-      }),
-      status: "installed",
-      order: 1,
-    },
-  ]);
-
-  await activateServiceRegistry(registry, {
-    rootPath: "/zelavis",
-    api: {
-      prefix: "/api",
-      version: "v1",
-      basePath: "/zelavis/api/v1",
-    },
-    core: {},
-    platform: {
-      presets: [],
-      resources: {
-        keyValueStore: false,
-        fileStorage: false,
-      },
-      metadata: {},
-    },
-  });
-
-  assert.deepEqual(activationOrder, ["@zelavis/ecommerce"]);
-  assert.equal(seenChildren.length, 1);
-  assert.equal(seenChildren[0].name, "@zelavis/ecommerce-stripe");
-  assert.equal(seenChildren[0].extends, "@zelavis/ecommerce");
-});
-
-test("activateServiceRegistry withholds child services not listed by the parent", async () => {
-  let seenChildren = [];
-
-  const registry = createServiceRegistry([
-    {
-      service: defineService({
-        name: "@example/xyz-payments",
-        extends: "@zelavis/ecommerce",
-        setup() {
-          throw new Error("Rejected child services should not activate.");
-        },
-      }),
-      status: "installed",
-      order: 0,
-    },
-    {
-      service: defineService({
-        name: "@zelavis/ecommerce",
-        childServices: ["@zelavis/ecommerce-stripe"],
-        setup(context) {
-          seenChildren = context.children;
-        },
-      }),
-      status: "installed",
-      order: 1,
-    },
-  ]);
-
-  await activateServiceRegistry(registry, {
-    rootPath: "/zelavis",
-    api: {
-      prefix: "/api",
-      version: "v1",
-      basePath: "/zelavis/api/v1",
-    },
-    core: {},
-    platform: {
-      presets: [],
-      resources: {
-        keyValueStore: false,
-        fileStorage: false,
-      },
-      metadata: {},
-    },
-  });
-
-  assert.deepEqual(seenChildren, []);
 });
 
 test("activateServiceRegistry exposes standard platform context to service setup", async () => {

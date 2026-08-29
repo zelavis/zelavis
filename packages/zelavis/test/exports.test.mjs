@@ -5,6 +5,10 @@ import { join } from "node:path";
 import test from "node:test";
 import { zelavisEcommerceService } from "../../../plugins/ecommerce/dist/index.js";
 
+const PLATFORM_OWNER_CONTEXT = {
+  principal: { id: "test-owner", type: "user", roles: ["owner"], permissions: ["*"] },
+};
+
 test("zelavis package exports runtime APIs and local host adapters", async () => {
   const packageMetadata = JSON.parse(
     await readFile(new URL("../package.json", import.meta.url), "utf8"),
@@ -548,6 +552,7 @@ test("Zelavis platform resources back dashboard settings, website pages, storage
         theme: "dark",
       }),
     }),
+    PLATFORM_OWNER_CONTEXT,
   );
 
   assert.equal(updateResponse.status, 200);

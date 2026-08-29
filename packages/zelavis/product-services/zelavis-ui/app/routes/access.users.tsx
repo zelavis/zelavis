@@ -1,4 +1,4 @@
-import { useRouteLoaderData } from "react-router";
+import { useLoaderData } from "react-router";
 import { KeyRound, UserRound, UsersRound } from "lucide-react";
 
 import {
@@ -8,39 +8,31 @@ import {
   StatusBadge,
 } from "#/components/DashboardPage";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
-import type { clientLoader as rootClientLoader } from "../root";
+import { getRuntimeConfig, listAuthAccounts } from "#/lib/runtime-api";
 
 export const handle = {
   pageLabel: "Users",
   sidebarTrail: ["Access"],
 } as const;
 
-const plannedUsers = [
-  {
-    id: "owner_demo",
-    label: "Owner demo",
-    role: "owner",
-    detail: "System-wide principal with wildcard permissions.",
-  },
-  {
-    id: "customer_demo",
-    label: "Customer demo",
-    role: "customer",
-    detail: "Project-scoped principal used by the current customer demo.",
-  },
-] as const;
+export async function clientLoader() {
+  const runtime = await getRuntimeConfig();
+  return { accounts: await listAuthAccounts(runtime) };
+}
 
 export default function AccessUsersRoute() {
-  const rootData = useRouteLoaderData<typeof rootClientLoader>("root");
-  const principal = rootData?.runtime.access?.principal;
+  const { accounts } = useLoaderData<typeof clientLoader>();
+  const ownerCount = accounts.filter((account) =>
+    account.roles?.includes("owner"),
+  ).length;
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-4">
       <section className="grid gap-4 md:grid-cols-3">
         <StatCard
           label="Current principal"
-          value={principal?.id ?? "none"}
-          detail="Real user listing will come from the core access/user endpoints."
+          value={accounts[0]?.id ?? "none"}
+          detail="Accounts are loaded from the permission-gated Platform Auth endpoint."
           icon={UserRound}
         />
         <StatCard
@@ -51,8 +43,8 @@ export default function AccessUsersRoute() {
         />
         <StatCard
           label="User levels"
-          value="4"
-          detail="Owner, operator, reseller, and customer are the initial product levels."
+          value={String(accounts.length)}
+          detail={`${ownerCount} owner account${ownerCount === 1 ? "" : "s"}.`}
           icon={UsersRound}
         />
       </section>
@@ -61,24 +53,31 @@ export default function AccessUsersRoute() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <UsersRound className="size-4" />
-            Demo users
+            Platform users
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          {plannedUsers.map((user) => (
+          {accounts.map((account) => (
             <DataRow
-              key={user.id}
-              label={user.label}
-              detail={user.detail}
-              meta={<StatusBadge state={user.role} />}
+              key={account.id}
+              label={account.displayName ?? account.email ?? account.username ?? account.id}
+              detail={account.email ?? account.username ?? account.id}
+              meta={<StatusBadge state={account.roles?.[0] ?? (account.verified ? "verified" : "unverified")} />}
             />
           ))}
+          {accounts.length === 0 ? (
+            <DataRow
+              label="No accounts"
+              detail="Bootstrap the first Platform owner to create the initial account."
+              meta={<StatusBadge state="pending" />}
+            />
+          ) : null}
         </CardContent>
       </Card>
 
       <ResourceNotice
         title="Next implementation target"
-        description="User creation, invites, sessions, API keys, and customer account links should be backed by access endpoints before becoming editable here."
+        description="User creation, invites, session administration, API keys, and customer account links should be backed by access endpoints before becoming editable here."
       />
     </section>
   );

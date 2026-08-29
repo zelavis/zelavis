@@ -1,0 +1,4 @@
+cat > sdks/python/.gitkeep << ''
+cat > sdks/java/.gitkeep << ''
+cat > sdks/csharp/.gitkeep << ''
+cat > sdks/rust/.gitkeep << ''

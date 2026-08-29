@@ -552,7 +552,7 @@ function buildUtilityPanel({
               },
             ],
           },
-          { title: "Logout", icon: LogOut, url: "/login" },
+          { title: "Logout", icon: LogOut, url: "/logout" },
         ],
       }
   }

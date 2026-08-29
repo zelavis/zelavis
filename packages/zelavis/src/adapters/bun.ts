@@ -3,6 +3,8 @@ import {
   defineAdapter,
   type ZelavisOptions,
   type ZelavisResolvedPlatformOptions,
+  type ZelavisServiceRegistryEntry,
+  type ZelavisServiceSetupContext,
 } from "../index.js";
 import {
   createShardedDatabaseDriver,
@@ -36,7 +38,9 @@ export interface BunAdapterKeyValueOptions {
   kind?: "memory";
 }
 
-export type BunAdapterServiceOptions = LocalRuntimeServiceOptions;
+export type BunAdapterServiceOptions = LocalRuntimeServiceOptions & {
+  catalog?: readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[];
+};
 
 export interface BunAdapterSystemStoreOptions {
   filename?: string;
@@ -156,7 +160,12 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
           options.services === false
             ? undefined
             : {
-                catalog: isProjectRuntime ? [] : officialProjectRecipes,
+                catalog: isProjectRuntime
+                  ? []
+                  : [
+                      ...officialProjectRecipes,
+                      ...(serviceOptions?.catalog ?? []),
+                    ],
                 importer: createLocalRuntimeServiceImporter({
                   directory: serviceDirectory,
                   ...(serviceOptions ?? {}),

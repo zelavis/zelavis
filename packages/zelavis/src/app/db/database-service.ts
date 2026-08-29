@@ -221,6 +221,14 @@ export function defineDatabaseService(
           id: "database.health",
           method: "GET",
           path: "/health",
+          spec: {
+            operationId: "healthCheck",
+            summary: "Database health check",
+            tags: ["database"],
+            responses: {
+              200: { description: "Health check response" },
+            },
+          },
           handler: ({ service }) => ({
             body: {
               status: "ok",
@@ -252,6 +260,18 @@ export function defineDatabaseDocumentsService(
           id: "database.collections.list",
           method: "GET",
           path: "/collections",
+          spec: {
+            operationId: "listCollections",
+            summary: "List collections",
+            tags: ["database"],
+            queryParams: {
+              tenantId: { type: "string", required: true, description: "Tenant ID" },
+            },
+            responses: {
+              200: { description: "List of collections" },
+              400: { description: "Bad request" },
+            },
+          },
           handler: async ({ service, query }) => {
             try {
               const tenantId = readTenantId(query.get("tenantId"));
@@ -271,6 +291,29 @@ export function defineDatabaseDocumentsService(
           id: "database.collections.create",
           method: "POST",
           path: "/collections",
+          spec: {
+            operationId: "createCollection",
+            summary: "Create a collection",
+            tags: ["database"],
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["name", "tenantId"],
+                properties: {
+                  name: { type: "string" },
+                  tenantId: { type: "string" },
+                  surface: { type: "string" },
+                  metadata: { type: "object", additionalProperties: true },
+                },
+              },
+            },
+            responses: {
+              201: { description: "Collection created" },
+              400: { description: "Bad request" },
+              409: { description: "Conflict" },
+            },
+          },
           handler: async ({ service, body }) => {
             const input = readBodyObject(body);
             const name = readString(input.name);
@@ -307,6 +350,31 @@ export function defineDatabaseDocumentsService(
           id: "database.documents.insert",
           method: "POST",
           path: "/:collection",
+          spec: {
+            operationId: "insertDocument",
+            summary: "Insert a document into a collection",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId", "data"],
+                properties: {
+                  tenantId: { type: "string", description: "Tenant ID" },
+                  id: { type: "string", description: "Optional document ID" },
+                  data: { type: "object", additionalProperties: true, description: "Document data" },
+                },
+              },
+            },
+            responses: {
+              201: { description: "Document created successfully" },
+              400: { description: "Validation error" },
+              409: { description: "Conflict or revision mismatch" },
+            },
+          },
           handler: async ({ service, params, body }) => {
             const input = readBodyObject(body);
             try {
@@ -328,6 +396,23 @@ export function defineDatabaseDocumentsService(
           id: "database.documents.get",
           method: "GET",
           path: "/:collection/:id",
+          spec: {
+            operationId: "getDocument",
+            summary: "Get document by ID",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+              id: { type: "string", required: true, description: "Document ID" },
+            },
+            queryParams: {
+              tenantId: { type: "string", required: true, description: "Tenant ID" },
+            },
+            responses: {
+              200: { description: "Document retrieved successfully" },
+              400: { description: "Validation error" },
+              404: { description: "Document not found" },
+            },
+          },
           handler: async ({ service, params, query }) => {
             let document;
             try {
@@ -356,6 +441,32 @@ export function defineDatabaseDocumentsService(
           id: "database.documents.query",
           method: "POST",
           path: "/:collection/query",
+          spec: {
+            operationId: "queryDocuments",
+            summary: "Query documents",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId"],
+                properties: {
+                  tenantId: { type: "string", description: "Tenant ID" },
+                  where: { type: "array", description: "Filters" },
+                  orderBy: { type: "array", description: "Sorts" },
+                  limit: { type: "number" },
+                  offset: { type: "number" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "Query results" },
+              404: { description: "Not found" },
+            },
+          },
           handler: async ({ service, params, body }) => {
             const input = readBodyObject(body);
             try {
@@ -380,6 +491,31 @@ export function defineDatabaseDocumentsService(
           id: "database.documents.update",
           method: "PATCH",
           path: "/:collection/:id",
+          spec: {
+            operationId: "updateDocument",
+            summary: "Update document",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+              id: { type: "string", required: true, description: "Document ID" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId", "data"],
+                properties: {
+                  tenantId: { type: "string", description: "Tenant ID" },
+                  data: { type: "object", additionalProperties: true, description: "Document data" },
+                  mode: { type: "string", description: "Update mode (merge or replace)" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "Document updated" },
+              404: { description: "Not found" },
+            },
+          },
           handler: async ({ service, params, body }) => {
             const input = readBodyObject(body);
             try {
@@ -401,6 +537,22 @@ export function defineDatabaseDocumentsService(
           id: "database.documents.delete",
           method: "DELETE",
           path: "/:collection/:id",
+          spec: {
+            operationId: "deleteDocument",
+            summary: "Delete document",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+              id: { type: "string", required: true, description: "Document ID" },
+            },
+            queryParams: {
+              tenantId: { type: "string", required: true, description: "Tenant ID" },
+            },
+            responses: {
+              200: { description: "Document deleted" },
+              400: { description: "Bad request" },
+            },
+          },
           handler: async ({ service, params, query }) => {
             try {
               const tenantId = readTenantId(query.get("tenantId"));
@@ -435,6 +587,14 @@ export function defineDatabaseSchemasService(
           id: "database.schemas.list",
           method: "GET",
           path: "/collections",
+          spec: {
+            operationId: "listSchemas",
+            summary: "List schema collections",
+            tags: ["schemas"],
+            responses: {
+              200: { description: "List of schemas" },
+            },
+          },
           handler: ({ service }) => ({
             body: {
               collections: service.schemas.listCollections(),
@@ -445,6 +605,17 @@ export function defineDatabaseSchemasService(
           id: "database.schemas.versions.list",
           method: "GET",
           path: "/:collection",
+          spec: {
+            operationId: "listSchemaVersions",
+            summary: "List schema versions for a collection",
+            tags: ["schemas"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+            },
+            responses: {
+              200: { description: "List of schema versions" },
+            },
+          },
           handler: ({ service, params }) => ({
             body: {
               collection: params.collection,
@@ -456,6 +627,30 @@ export function defineDatabaseSchemasService(
           id: "database.schemas.save",
           method: "POST",
           path: "/:collection",
+          spec: {
+            operationId: "saveSchema",
+            summary: "Save a schema",
+            tags: ["schemas"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["version", "fields"],
+                properties: {
+                  version: { type: "number" },
+                  activate: { type: "boolean" },
+                  fields: { type: "array" },
+                },
+              },
+            },
+            responses: {
+              201: { description: "Schema saved" },
+              400: { description: "Bad request" },
+            },
+          },
           handler: async ({ service, params, body }) => {
             const input = readBodyObject(body);
             try {
@@ -484,6 +679,28 @@ export function defineDatabaseSchemasService(
           id: "database.schemas.activate",
           method: "POST",
           path: "/:collection/activate",
+          spec: {
+            operationId: "activateSchema",
+            summary: "Activate a schema version",
+            tags: ["schemas"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["version"],
+                properties: {
+                  version: { type: "number" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "Schema activated" },
+              404: { description: "Not found" },
+            },
+          },
           handler: async ({ service, params, body }) => {
             const input = readBodyObject(body);
             try {
@@ -502,6 +719,28 @@ export function defineDatabaseSchemasService(
           id: "database.schemas.validate",
           method: "POST",
           path: "/:collection/validate",
+          spec: {
+            operationId: "validateData",
+            summary: "Validate data against schema",
+            tags: ["schemas"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["data"],
+                properties: {
+                  data: { type: "object", additionalProperties: true },
+                },
+              },
+            },
+            responses: {
+              200: { description: "Validation successful" },
+              400: { description: "Validation failed" },
+            },
+          },
           handler: ({ service, params, body }) => {
             const input = readBodyObject(body);
             try {
@@ -534,6 +773,14 @@ export function defineDatabaseTimeSeriesService(
           id: "database.timeseries.list",
           method: "GET",
           path: "/series",
+          spec: {
+            operationId: "listTimeSeries",
+            summary: "List time series",
+            tags: ["timeseries"],
+            responses: {
+              200: { description: "List of time series" },
+            },
+          },
           handler: async ({ service }) => ({
             body: {
               series: await service.timeseries.list(),
@@ -544,6 +791,32 @@ export function defineDatabaseTimeSeriesService(
           id: "database.timeseries.range",
           method: "POST",
           path: "/:series/range",
+          spec: {
+            operationId: "queryTimeSeriesRange",
+            summary: "Query time series range",
+            tags: ["timeseries"],
+            pathParams: {
+              series: { type: "string", required: true, description: "Series name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId"],
+                properties: {
+                  tenantId: { type: "string" },
+                  start: { type: "number" },
+                  end: { type: "number" },
+                  limit: { type: "number" },
+                  order: { type: "string" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "Time series points" },
+              404: { description: "Not found" },
+            },
+          },
           handler: async ({ service, params, body }) => {
             const input = readBodyObject(body);
 
@@ -570,6 +843,31 @@ export function defineDatabaseTimeSeriesService(
           id: "database.timeseries.aggregate",
           method: "POST",
           path: "/:series/aggregate",
+          spec: {
+            operationId: "aggregateTimeSeries",
+            summary: "Aggregate time series",
+            tags: ["timeseries"],
+            pathParams: {
+              series: { type: "string", required: true, description: "Series name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId", "op"],
+                properties: {
+                  tenantId: { type: "string" },
+                  op: { type: "string" },
+                  start: { type: "number" },
+                  end: { type: "number" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "Aggregated value" },
+              404: { description: "Not found" },
+            },
+          },
           handler: async ({ service, params, body }) => {
             const input = readBodyObject(body);
 

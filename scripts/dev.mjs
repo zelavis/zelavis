@@ -1,5 +1,6 @@
 import { execSync, spawn } from "node:child_process";
 import { resolve } from "node:path";
+import { randomBytes } from "node:crypto";
 import getPort, { portNumbers } from "get-port";
 
 const shell = process.platform === "win32";
@@ -137,7 +138,7 @@ async function main() {
 
   console.log("Preparing Zelavis runtime packages for dashboard dev...");
   runSetup(
-    "pnpm --filter @zelavis/ui build:plugin && pnpm --filter zelavis build:runtime",
+    "pnpm --filter @zelavis/ui build:plugin && pnpm --filter zelavis build:runtime && pnpm --filter @zelavis/app-auth-email-password build",
   );
 
   await recycleUnhealthyPreferredPort({
@@ -166,10 +167,13 @@ async function main() {
   const uiDashboardOrigin = new URL(uiBasePath, uiOrigin).toString();
   const uiDashboardRedirectOrigin = uiDashboardOrigin.replace(/\/+$/, "");
   const dataDirectory = resolve("packages/zelavis/.zelavis");
+  const bootstrapToken =
+    process.env.ZELAVIS_BOOTSTRAP_TOKEN ?? randomBytes(32).toString("base64url");
 
   console.log(`Starting Zelavis runtime on ${backendOrigin} ...`);
   console.log(`Starting UI dev server on ${uiDashboardOrigin} ...`);
   console.log(`Using Platform data directory ${dataDirectory} ...`);
+  console.log(`First-owner bootstrap token: ${bootstrapToken}`);
   console.log(
     `Dashboard requests to ${backendOrigin}/zelavis will redirect to ${uiDashboardOrigin}.`,
   );
@@ -209,6 +213,7 @@ async function main() {
     ),
     startProcess("node-runtime-example", "pnpm", ["--filter", "@zelavis/example-nodejs", "dev"], {
       PORT: String(backendPort),
+      ZELAVIS_BOOTSTRAP_TOKEN: bootstrapToken,
       ZELAVIS_DATA_DIR: dataDirectory,
       ZELAVIS_BLUEPRINTS_DIR: resolve("packages/zelavis/blueprints"),
       ZELAVIS_UI_DEV_SERVER: uiDashboardRedirectOrigin,

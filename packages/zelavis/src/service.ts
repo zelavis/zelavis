@@ -1,6 +1,5 @@
 import {
   defineService,
-  isChildServiceAllowed,
   type ZelavisAnyRuntimeServiceInput,
   type ZelavisRuntimeService,
   type ZelavisServiceDefinition,
@@ -20,7 +19,6 @@ export {
   defineServiceCatalog,
   defineServiceCatalogEntry,
   defineService,
-  isChildServiceAllowed,
 } from "./core/index.js";
 export type {
   ZelavisServiceAppDefinition,
@@ -317,17 +315,10 @@ export async function activateServiceRegistry<
   const shouldMountService = (service: ZelavisServiceDefinition<TContext>) =>
     service.basePath !== undefined ||
     service.service !== undefined ||
+    Boolean(service.authenticators?.length) ||
     Object.values(service.api ?? {}).some((routes) => routes.length > 0);
 
   for (const entry of installedServices) {
-    if (entry.service.extends) {
-      continue;
-    }
-
-    const children = installedServices
-      .filter((installed) => isChildServiceAllowed(entry, installed))
-      .map((installed) => installed.service);
-
     if (shouldMountService(entry.service)) {
       assertCanAddRuntimeService(
         entry.service,
@@ -379,7 +370,6 @@ export async function activateServiceRegistry<
       registry: registry as readonly Readonly<
         ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>
       >[],
-      children,
       runtimeServices: activatedServices,
       addService: addEntryService,
       addServices: addEntryServices,

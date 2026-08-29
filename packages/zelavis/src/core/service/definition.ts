@@ -236,17 +236,8 @@ export interface ZelavisServiceDefinition<
    * {@link ZelavisServiceAppDefinition}.
    */
   app?: ZelavisServiceAppDefinition;
-  /**
-   * Child services shown inside this service's nested marketplace instead of
-   * the main marketplace. These are service names, not module specifiers.
-   */
-  childServices?: readonly string[];
   runtimeServices?: readonly ZelavisAnyRuntimeServiceInput[];
-  /**
-   * Parent service name. Child services are hidden from the main marketplace
-   * and may attach only when the parent lists them in `childServices`.
-   */
-  extends?: string;
+  authenticators?: ZelavisRuntimeService<TService>["authenticators"];
   setup?: (
     context: TContext,
   ) =>
@@ -263,7 +254,8 @@ export type ZelavisServiceV1Definition<
 };
 
 export interface ZelavisServiceRegistryEntry<TContext = unknown> {
-  service: Readonly<ZelavisServiceDefinition<TContext>>;
+  /** A registry is intentionally heterogeneous across service API values. */
+  service: Readonly<ZelavisServiceDefinition<TContext, any>>;
   specifier?: string;
   status: "installed" | "available";
   source?: "official" | "community";
@@ -301,7 +293,6 @@ export interface ZelavisServiceCatalogEntry {
   version?: string;
   reviewStatus?: ZelavisServiceCatalogReviewStatus;
   verified?: boolean;
-  extends?: string;
   compatibility?: ZelavisServiceCatalogCompatibility;
   links?: ZelavisServiceCatalogLinks;
   license?: string;
@@ -378,7 +369,6 @@ export interface ZelavisServiceSetupContext {
   api: ZelavisServiceSetupApiContext;
   platform: ZelavisServiceSetupPlatformContext;
   core: ZelavisServiceSetupCoreContext;
-  children: readonly Readonly<ZelavisServiceDefinition>[];
   runtimeServices: readonly ZelavisAnyRuntimeServiceInput[];
   addService: (service: ZelavisAnyRuntimeServiceInput) => void;
   addServices: (services: readonly ZelavisAnyRuntimeServiceInput[]) => void;
@@ -659,30 +649,6 @@ function freezeMarketplaceMetadata(
   });
 }
 
-function freezeChildServices(
-  childServices: readonly string[],
-): readonly string[] {
-  if (!Array.isArray(childServices)) {
-    throw new TypeError("Service childServices must be provided as an array.");
-  }
-
-  const seen = new Set<string>();
-
-  for (const childService of childServices) {
-    validateScopedServiceName(childService, "Service childServices entry");
-
-    if (seen.has(childService)) {
-      throw new TypeError(
-        `Service childServices must use unique names. Duplicate: ${childService}`,
-      );
-    }
-
-    seen.add(childService);
-  }
-
-  return Object.freeze([...childServices]);
-}
-
 function validateServiceApp(app: ZelavisServiceAppDefinition): void {
   if (!app || typeof app !== "object") {
     throw new TypeError("Service app metadata must be an object.");
@@ -785,17 +751,6 @@ function freezeServiceApp(
   });
 }
 
-export function isChildServiceAllowed(
-  parent: Readonly<ZelavisServiceRegistryEntry<any>>,
-  child: Readonly<ZelavisServiceRegistryEntry<any>>,
-): boolean {
-  if (child.service.extends !== parent.service.name) {
-    return false;
-  }
-
-  return parent.service.childServices?.includes(child.service.name) ?? false;
-}
-
 export function defineServiceCatalogEntry(
   entry: ZelavisServiceCatalogEntry,
 ): Readonly<ZelavisServiceCatalogEntry> {
@@ -846,9 +801,6 @@ export function defineServiceCatalogEntry(
     );
   }
 
-  if (entry.extends !== undefined) {
-    validateScopedServiceName(entry.extends, "Service catalog entry extends");
-  }
 
   if (entry.compatibility !== undefined) {
     if (!entry.compatibility || typeof entry.compatibility !== "object") {
@@ -880,7 +832,6 @@ export function defineServiceCatalogEntry(
       entry.reviewStatus ??
       (entry.source === "official" ? "official" : "unreviewed"),
     verified: entry.verified ?? (entry.source === "official"),
-    extends: entry.extends,
     compatibility: entry.compatibility
       ? freezeCatalogCompatibility(entry.compatibility)
       : entry.compatibility,
@@ -1027,10 +978,6 @@ export function defineService<TContext = unknown, TService = unknown>(
     throw new TypeError("A service setup field must be a function.");
   }
 
-  if ("childServices" in definition && definition.childServices !== undefined) {
-    freezeChildServices(definition.childServices);
-  }
-
   if (
     "runtimeServices" in definition &&
     definition.runtimeServices !== undefined &&
@@ -1039,13 +986,37 @@ export function defineService<TContext = unknown, TService = unknown>(
     throw new TypeError("Service runtimeServices must be provided as an array.");
   }
 
-  if ("extends" in definition && definition.extends !== undefined) {
-    validateScopedServiceName(definition.extends, "Service extends");
-
-    if (definition.menu !== undefined || definition.menus !== undefined) {
+  if (
+    "authenticators" in definition &&
+    definition.authenticators !== undefined
+  ) {
+    if (!Array.isArray(definition.authenticators)) {
       throw new TypeError(
-        "Child services cannot declare top-level dashboard menu metadata.",
+        "Service authenticators must be provided as an array.",
       );
+    }
+
+    for (const [index, authenticator] of definition.authenticators.entries()) {
+      if (!authenticator || typeof authenticator !== "object") {
+        throw new TypeError(`Service authenticator ${index} must be an object.`);
+      }
+      if (
+        !("name" in authenticator) ||
+        typeof authenticator.name !== "string" ||
+        !authenticator.name.trim()
+      ) {
+        throw new TypeError(
+          `Service authenticator ${index} must include a non-empty string name.`,
+        );
+      }
+      if (
+        !("authenticate" in authenticator) ||
+        typeof authenticator.authenticate !== "function"
+      ) {
+        throw new TypeError(
+          `Service authenticator ${index} must include an authenticate function.`,
+        );
+      }
     }
   }
 
@@ -1078,6 +1049,9 @@ export function defineService<TContext = unknown, TService = unknown>(
     runtimeServices: definition.runtimeServices
       ? Object.freeze([...definition.runtimeServices])
       : definition.runtimeServices,
+    authenticators: definition.authenticators
+      ? Object.freeze([...definition.authenticators])
+      : definition.authenticators,
   } as ZelavisRuntimeService<TService> & ZelavisServiceDefinition<
     TContext,
     TService
@@ -1096,12 +1070,8 @@ export function defineService<TContext = unknown, TService = unknown>(
     marketplace: definition.marketplace
       ? freezeMarketplaceMetadata(definition.marketplace)
       : definition.marketplace,
-    childServices: definition.childServices
-      ? freezeChildServices(definition.childServices)
-      : definition.childServices,
     version: definition.version,
     app: definition.app ? freezeServiceApp(definition.app) : definition.app,
-    extends: definition.extends,
     setup: definition.setup,
   });
 }

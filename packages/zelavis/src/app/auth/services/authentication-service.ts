@@ -1,8 +1,10 @@
 import type {
   AuthenticationInput,
   AuthenticationResult,
+  CredentialEnrollmentInput,
   CredentialProvider,
   CredentialProviderApi,
+  PreparedCredential,
 } from "../contracts/credential-provider.js";
 import type { AccountService } from "./account-service.js";
 import type { CredentialService } from "./credential-service.js";
@@ -37,6 +39,30 @@ export class AuthenticationService {
 
   listProviders(): string[] {
     return Array.from(this.providers.keys());
+  }
+
+  listEnrollmentProviders(): string[] {
+    return Array.from(this.providers.values())
+      .filter((provider) => typeof provider.prepareCredential === "function")
+      .map((provider) => provider.name);
+  }
+
+  async prepareCredential(
+    providerName: string,
+    input: CredentialEnrollmentInput,
+  ): Promise<PreparedCredential> {
+    const provider = this.providers.get(providerName);
+    if (!provider) {
+      throw new AuthNotFoundError(
+        `Unknown authentication provider: ${providerName}`,
+      );
+    }
+    if (!provider.prepareCredential) {
+      throw new AuthValidationError(
+        `Authentication provider ${providerName} does not support credential enrollment.`,
+      );
+    }
+    return provider.prepareCredential(input);
   }
 
   async authenticate(providerName: string, input: AuthenticationInput): Promise<AuthenticationResult> {

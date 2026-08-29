@@ -31,15 +31,23 @@ export class CredentialService {
       );
     }
 
-    if (!input.identifier) {
+    const identifier = input.provider === "email-password"
+      ? input.identifier?.trim().toLowerCase()
+      : input.identifier?.trim();
+    if (!identifier) {
       throw new AuthValidationError(
         "Credential creation requires an identifier.",
       );
     }
 
+    if (await this.repository.findByProviderIdentifier(input.provider, identifier)) {
+      throw new AuthValidationError("That provider identifier is already registered.");
+    }
+
     const now = new Date();
     return this.repository.create({
       ...input,
+      identifier,
       createdAt: now,
       updatedAt: now,
     });

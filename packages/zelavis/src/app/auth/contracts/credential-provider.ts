@@ -1,4 +1,4 @@
-import type { Account, Credential, Session } from "../domain/entities.js";
+import type { Account, Credential, IssuedSession } from "../domain/entities.js";
 
 export interface AuthenticationInput {
   identifier: string;
@@ -9,7 +9,23 @@ export interface AuthenticationInput {
 export interface AuthenticationResult {
   account: Account;
   credential: Credential;
-  session?: Session;
+  session?: IssuedSession;
+}
+
+export interface CredentialEnrollmentInput {
+  identifier: string;
+  password?: string;
+  [key: string]: unknown;
+}
+
+export interface PreparedCredential {
+  identifier: string;
+  secretHash?: string;
+  metadata?: Record<string, unknown>;
+  accountIdentity?: {
+    email?: string;
+    username?: string;
+  };
 }
 
 export interface CredentialProviderApi {
@@ -22,11 +38,14 @@ export interface CredentialProviderApi {
     findByProviderIdentifier(provider: string, identifier: string): Promise<Credential | null>;
   };
   sessions: {
-    create(input: { accountId: string; expiresAt: Date; metadata?: Record<string, unknown> }): Promise<Session>;
+    create(input: { accountId: string; expiresAt: Date; metadata?: Record<string, unknown> }): Promise<IssuedSession>;
   };
 }
 
 export interface CredentialProvider {
   name: string;
+  prepareCredential?(
+    input: CredentialEnrollmentInput,
+  ): Promise<PreparedCredential>;
   authenticate(input: AuthenticationInput, api: CredentialProviderApi): Promise<AuthenticationResult>;
 }
