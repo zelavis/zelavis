@@ -4722,7 +4722,14 @@ export async function zelavis(
   });
   let closePromise: Promise<void> | undefined;
   const close = (): Promise<void> => {
-    closePromise ??= projects?.close() ?? Promise.resolve();
+    closePromise ??= (async () => {
+      await projects?.close();
+      // Release the local store handle too. Optional and idempotent, so custom
+      // and embeddable stores that do not implement it are unaffected; without
+      // it a repeatedly constructed embedded runtime retains database handles
+      // until the process exits.
+      await systemStore?.close?.();
+    })();
     return closePromise;
   };
 

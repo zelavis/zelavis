@@ -58,3 +58,19 @@ and constraint entries.
 Error-to-response mapping is centralized. Runtime composition repeated a
 parallel fallback that had already diverged, reporting an oversized body as
 `500` from one path and `413` from the other.
+
+The native Node HTTP host has an error boundary. Request conversion, runtime
+dispatch, and response streaming could all throw outside the dispatcher's own
+mapping, leaving the client with no response and the process with an unhandled
+rejection. Failures now answer `400` or `500`, or destroy the socket when
+headers are already sent, and the server declares explicit header, request,
+keep-alive, and header-count budgets. Requests also carry an abort signal so
+handlers can stop when the client goes away.
+
+Local state files are owner-only. The System Store database and its WAL
+sidecars are created `0600` inside a `0700` directory, and Project directories
+and `project.json` follow the same rule, so a permissive umask or shared
+service account no longer exposes Platform, Auth, and Project state to other
+local users. `ZelavisSystemStore` gains an optional, idempotent `close()` that
+Platform shutdown calls, so a repeatedly constructed embedded runtime no longer
+retains database handles until process exit.

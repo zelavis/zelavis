@@ -15,6 +15,8 @@ type BunStatement = {
 type BunDatabase = {
   exec(statement: string): void;
   query(statement: string): BunStatement;
+  /** Present on `bun:sqlite`; typed optional so a stub without it still fits. */
+  close?(): void;
 };
 
 export async function createBunSqliteSystemStore(options: {
@@ -86,6 +88,8 @@ export async function createBunSqliteSystemStore(options: {
     };
   }
 
+  let closed = false;
+
   return {
     get(namespace, key) {
       const row = readStatement.get(namespace, key);
@@ -133,6 +137,12 @@ export async function createBunSqliteSystemStore(options: {
     },
     list(namespace) {
       return listStatement.all(namespace).map(toRecord);
+    },
+    close() {
+      // Idempotent: shutdown paths may call this more than once.
+      if (closed) return;
+      closed = true;
+      database.close?.();
     },
   };
 }

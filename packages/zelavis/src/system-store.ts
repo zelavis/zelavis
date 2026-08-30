@@ -53,6 +53,14 @@ export interface ZelavisSystemStore {
   ):
     | Promise<readonly ZelavisSystemStoreRecord[]>
     | readonly ZelavisSystemStoreRecord[];
+  /**
+   * Releases resources the store holds, such as a local database handle.
+   *
+   * Optional and idempotent, so embeddable and custom stores stay valid without
+   * implementing it. Without this a repeatedly constructed embedded runtime
+   * retains SQLite handles until the process exits.
+   */
+  close?(): Promise<void> | void;
 }
 
 function normalizePart(value: string, label: string): string {

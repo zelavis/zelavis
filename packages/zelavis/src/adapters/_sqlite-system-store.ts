@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import {
   type ZelavisSystemStore,
@@ -11,12 +11,39 @@ export interface LocalSqliteSystemStoreOptions {
   filename: string;
 }
 
+/**
+ * Narrows a local state file to the owning user.
+ *
+ * Best-effort: `chmod` is meaningless on Windows and the file may not exist yet
+ * (SQLite creates WAL sidecars lazily), so failure is not fatal. A symlinked
+ * path is left alone rather than followed, since chmod would apply to whatever
+ * it points at.
+ */
+function restrictFilePermissions(path: string): void {
+  if (process.platform === "win32") return;
+  try {
+    if (statSync(path, { throwIfNoEntry: false })?.isFile() !== true) return;
+    chmodSync(path, 0o600);
+  } catch {
+    // Nothing to restrict, or the host does not support it.
+  }
+}
+
 export function createLocalSqliteSystemStore(
   options: LocalSqliteSystemStoreOptions,
 ): ZelavisSystemStore {
   const filename = resolve(options.filename);
-  mkdirSync(dirname(filename), { recursive: true });
+  // Platform, Auth, and Project state live here. On a host with a permissive
+  // umask, or a shared service account, process defaults would let other local
+  // users read it. Packaged deployments should still run under a dedicated
+  // service user; this is defence in depth, not a substitute.
+  mkdirSync(dirname(filename), { recursive: true, mode: 0o700 });
+  chmodSync(dirname(filename), 0o700);
   const database = new Database(filename);
+  restrictFilePermissions(filename);
+  // WAL keeps its own sidecar files, which hold the same data.
+  restrictFilePermissions(`${filename}-wal`);
+  restrictFilePermissions(`${filename}-shm`);
 
   database.pragma("journal_mode = WAL");
   database.pragma("foreign_keys = ON");
@@ -76,6 +103,8 @@ export function createLocalSqliteSystemStore(
     };
   }
 
+  let closed = false;
+
   return {
     get(namespace, key) {
       const row = readStatement.get(namespace, key);
@@ -96,7 +125,7 @@ export function createLocalSqliteSystemStore(
       ).changes > 0;
       const row = readStatement.get(namespace, key);
       if (!row) throw new Error("System Store failed to read an atomic create.");
-      return { created, record: toRecord(row) };
+  return { created, record: toRecord(row) };
     },
     compareAndSet(namespace, key, expectedUpdatedAt, value) {
       const updatedAt = new Date(
@@ -123,6 +152,12 @@ export function createLocalSqliteSystemStore(
     },
     list(namespace) {
       return listStatement.all(namespace).map(toRecord);
+    },
+    close() {
+      // Idempotent: shutdown paths may call this more than once.
+      if (closed) return;
+      closed = true;
+      database.close();
     },
   };
 }

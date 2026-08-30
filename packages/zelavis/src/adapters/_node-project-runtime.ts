@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -134,6 +134,16 @@ async function runWithConcurrency<TValue>(
  * configuration is passed explicitly by the driver, and scoped Project secrets
  * need their own delivery contract rather than ambient inheritance.
  */
+/** Narrows a local Project directory to the owning user. Best effort. */
+async function restrictDirectoryPermissions(path: string): Promise<void> {
+  if (process.platform === "win32") return;
+  try {
+    await chmod(path, 0o700);
+  } catch {
+    // The host does not support it, or the path vanished under us.
+  }
+}
+
 /** Largest partial stdout line retained while looking for a readiness event. */
 const MAX_CHILD_LINE_BYTES = 64 * 1024;
 
@@ -278,7 +288,12 @@ export function createNodeProcessProjectRuntime(
     async prepare(project, app) {
       const directory = projectDirectory(project.id);
       const dataDirectory = join(directory, ".zelavis");
-      await mkdir(dataDirectory, { recursive: true });
+      // Project data and the descriptor are owner-only: on a permissive umask
+      // or a shared service account they would otherwise be readable by other
+      // local users.
+      await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
+      await restrictDirectoryPermissions(directory);
+      await restrictDirectoryPermissions(dataDirectory);
       await writeFile(
         join(directory, "project.json"),
         `${JSON.stringify(
@@ -293,7 +308,7 @@ export function createNodeProcessProjectRuntime(
           null,
           2,
         )}\n`,
-        "utf8",
+        { encoding: "utf8", mode: 0o600 },
       );
     },
     async start(project) {

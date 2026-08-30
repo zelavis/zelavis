@@ -947,6 +947,7 @@ export function createRequestFromPlainInput(
     method,
     headers,
     body,
+    ...(input.signal ? { signal: input.signal } : {}),
   };
 
   if (body instanceof ReadableStream) {
