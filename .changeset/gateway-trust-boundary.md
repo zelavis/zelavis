@@ -74,3 +74,12 @@ service account no longer exposes Platform, Auth, and Project state to other
 local users. `ZelavisSystemStore` gains an optional, idempotent `close()` that
 Platform shutdown calls, so a repeatedly constructed embedded runtime no longer
 retains database handles until process exit.
+
+Fabric projections are accurate. Only a running Project maps to an `active`
+placement — `stopping` and `stopped` Projects were reported as active, and any
+future status would have been too, because the mapping defaulted to active
+rather than using an allow-list. A draining node now degrades the fleet summary
+instead of reporting `ready`. In fixed replica mode `replicas` is the default
+ceiling, so `{ mode: "fixed", replicas: 3 }` no longer silently resolves to a
+single replica when `maxReplicas` is omitted; an explicit `maxReplicas` still
+caps it.

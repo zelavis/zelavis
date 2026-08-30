@@ -3743,18 +3743,31 @@ async function resolveWorkloadsCoreService(
   return workloadsService(workloadsOption === true ? {} : workloadsOption);
 }
 
+/**
+ * Projects a Project runtime status onto a Fabric placement state.
+ *
+ * Deliberately an allow-list: only a running Project is `active`. The previous
+ * default-to-active mapping reported `stopping` and `stopped` Projects as
+ * active placements, and would have reported any future status the same way.
+ * Inventory accuracy matters more as the Gateway comes to rely on authoritative
+ * Fabric state for routing.
+ */
 function placementStateFromRuntimeStatus(
   status: string,
 ): FabricPlacementState {
-  if (status === "failed") {
-    return "unavailable";
+  switch (status) {
+    case "running":
+      return "active";
+    case "provisioning":
+    case "starting":
+      return "preparing";
+    case "failed":
+    case "stopping":
+    case "stopped":
+      return "unavailable";
+    default:
+      return "unavailable";
   }
-
-  if (status === "provisioning" || status === "starting") {
-    return "preparing";
-  }
-
-  return "active";
 }
 
 function resolveFabricCoreService(

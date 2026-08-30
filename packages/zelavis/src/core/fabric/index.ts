@@ -309,10 +309,19 @@ function desiredReplicaCount(request: FabricProjectPlacementRequest): number {
   }
 
   const min = positiveInteger(policy.minReplicas, 1);
-  const max = Math.max(min, positiveInteger(policy.maxReplicas, min));
   if (policy.mode === "fixed") {
-    return Math.min(max, Math.max(min, positiveInteger(policy.replicas, min)));
+    // In fixed mode `replicas` *is* the target, so it is also the default
+    // ceiling. Defaulting `max` to `min` silently resolved
+    // `{ mode: "fixed", replicas: 3 }` to a single replica whenever
+    // `maxReplicas` was omitted.
+    const fixed = Math.max(min, positiveInteger(policy.replicas, min));
+    // `maxReplicas` still caps the fixed target when it is supplied; it just
+    // defaults to the target instead of to `min`.
+    const ceiling = positiveInteger(policy.maxReplicas, fixed);
+    return Math.max(min, Math.min(fixed, ceiling));
   }
+
+  const max = Math.max(min, positiveInteger(policy.maxReplicas, min));
 
   const current = Math.min(
     max,
@@ -488,8 +497,14 @@ function fabricStatus(
     return "unavailable";
   }
 
+  // A draining node is not accepting work, so the fleet is not fully ready.
+  // Reporting `ready` while the only local node drains overstates readiness to
+  // anything that routes on this summary.
   return nodes.some(
-    (node) => node.status === "degraded" || node.status === "unavailable",
+    (node) =>
+      node.status === "degraded" ||
+      node.status === "unavailable" ||
+      node.status === "draining",
   )
     ? "degraded"
     : "ready";
