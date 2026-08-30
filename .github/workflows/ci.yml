@@ -3,10 +3,9 @@ name: CI
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   PNPM_CONFIG_MINIMUM_RELEASE_AGE: "0"
-  # Ephemeral CI-only credentials for the dashboard e2e Platform owner.
-  ZELAVIS_BOOTSTRAP_TOKEN: "ci-e2e-bootstrap-token-0123456789"
+  # Identifier for the dashboard e2e Platform owner. Its token and password are
+  # generated per run; see "Generate ephemeral e2e credentials".
   ZELAVIS_E2E_OWNER_EMAIL: "ci@example.com"
-  ZELAVIS_E2E_OWNER_PASSWORD: "ci-e2e-Passw0rd!"
 
 on:
   push:
@@ -68,6 +67,15 @@ jobs:
         run: |
           pnpm --filter zelavis build:runtime
           pnpm --filter @zelavis/app-auth-email-password build
+
+      # The e2e Platform is created empty and destroyed with the runner, so
+      # these are throwaway fixtures rather than credentials. Generating them
+      # per run keeps credential-shaped literals out of the repository and
+      # still works on pull requests from forks, which receive no secrets.
+      - name: Generate ephemeral e2e credentials
+        run: |
+          echo "ZELAVIS_BOOTSTRAP_TOKEN=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
+          echo "ZELAVIS_E2E_OWNER_PASSWORD=$(openssl rand -hex 12)" >> "$GITHUB_ENV"
 
       - name: Start example runtime server
         run: |
