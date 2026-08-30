@@ -8,6 +8,11 @@
     "outDir": "dist",
     "rootDir": "src",
     "strict": true,
+    // Enabled so dead helpers cannot accumulate. `noUnusedParameters` is
+    // deliberately not enabled: `ZelavisServerFetchHandler<TService>` carries a
+    // public generic that callers supply even though the declaration body does
+    // not reference it.
+    "noUnusedLocals": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true

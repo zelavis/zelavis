@@ -12,6 +12,8 @@ interface NodeLikeRequest extends IncomingMessage {
 interface ToNodeLikeWebRequestOptions {
   url?: string;
   baseUrl?: string;
+  /** Aborted when the client goes away, so handlers can stop early. */
+  signal?: AbortSignal;
 }
 
 function canHaveBody(method: string): boolean {
@@ -109,6 +111,7 @@ export async function toNodeLikeWebRequest(
     method,
     headers,
     body,
+    ...(options.signal ? { signal: options.signal } : {}),
     baseUrl:
       options.baseUrl ??
       `${getRequestProtocol(request)}://${request.headers.host ?? "localhost"}`,

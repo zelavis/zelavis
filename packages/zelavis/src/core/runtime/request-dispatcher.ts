@@ -158,7 +158,27 @@ function toHeaderRecord(
   return result;
 }
 
+/**
+ * Single mapping from a thrown value to a response.
+ *
+ * Exported so runtime composition reuses it instead of repeating a parallel
+ * fallback that silently diverges — an oversized body was reported as `500`
+ * from one path and `413` from the other.
+ */
+export function toDefaultErrorResponse(error: unknown): ZelavisRouteResponse {
+  return defaultErrorResponse(error);
+}
+
 function defaultErrorResponse(error: unknown): ZelavisRouteResponse {
+  // An oversized body is a client error with a safe, useful message, not an
+  // internal failure.
+  if (error instanceof ZelavisRequestBodyTooLargeError) {
+    return {
+      status: 413,
+      body: { error: error.message },
+    };
+  }
+
   return {
     status: 500,
     body: {
@@ -316,12 +336,96 @@ export function toResponseHeaderEntries(
   return Array.from(headers.entries());
 }
 
-async function parseRequestBody(request: Request): Promise<unknown> {
+/**
+ * Default ceiling on a buffered request body.
+ *
+ * Every body shape below is read fully into memory before a handler sees it, so
+ * without a ceiling a single request can exhaust the process. 8 MiB comfortably
+ * covers control-plane JSON and form posts; routes that legitimately need more
+ * should stream rather than raise this.
+ */
+export const ZELAVIS_DEFAULT_MAX_REQUEST_BODY_BYTES = 8 * 1024 * 1024;
+
+/** Thrown when a request body exceeds the configured budget. */
+export class ZelavisRequestBodyTooLargeError extends Error {
+  readonly limitBytes: number;
+  constructor(limitBytes: number) {
+    super(`Request body exceeds the ${limitBytes} byte limit.`);
+    this.name = "ZelavisRequestBodyTooLargeError";
+    this.limitBytes = limitBytes;
+  }
+}
+
+/**
+ * Reads a request body with an explicit byte ceiling.
+ *
+ * `Content-Length` is checked first as a cheap rejection, but it is only a
+ * claim: the stream is also measured as it is consumed so a lying or absent
+ * header cannot bypass the budget.
+ */
+async function readBoundedBody(
+  request: Request,
+  limitBytes: number,
+): Promise<Uint8Array<ArrayBuffer> | undefined> {
+  const declared = Number(request.headers.get("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > limitBytes) {
+    throw new ZelavisRequestBodyTooLargeError(limitBytes);
+  }
+
+  const body = request.body;
+  if (!body) {
+    const buffer = await request.arrayBuffer();
+    if (buffer.byteLength > limitBytes) {
+      throw new ZelavisRequestBodyTooLargeError(limitBytes);
+    }
+    return buffer.byteLength > 0
+      ? new Uint8Array(buffer as ArrayBuffer)
+      : undefined;
+  }
+
+  const chunks: Uint8Array<ArrayBufferLike>[] = [];
+  let total = 0;
+  const reader = body.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > limitBytes) {
+        throw new ZelavisRequestBodyTooLargeError(limitBytes);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (total === 0) return undefined;
+  const merged = new Uint8Array(new ArrayBuffer(total));
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return merged;
+}
+
+async function parseRequestBody(
+  request: Request,
+  limitBytes: number = ZELAVIS_DEFAULT_MAX_REQUEST_BODY_BYTES,
+): Promise<unknown> {
   if (!canHaveBody(request.method.toUpperCase())) {
     return undefined;
   }
 
-  const clone = request.clone();
+  // Measure the body once, then re-present it to the shape-specific parsers.
+  const raw = await readBoundedBody(request.clone(), limitBytes);
+  const clone = new Request(request.url, {
+    method: request.method,
+    headers: request.headers,
+    ...(raw ? { body: raw } : {}),
+  });
   const contentType = clone.headers.get("content-type")?.toLowerCase() ?? "";
 
   if (contentType.includes("application/json")) {
@@ -455,11 +559,22 @@ function hasRole(
   return principal?.roles?.includes(role) ?? false;
 }
 
+/**
+ * Compares a required scope identifier with a granted one.
+ *
+ * Fails closed on either side. An unresolved route parameter must not weaken
+ * the requirement, and a stored grant that omits its identifier must not match
+ * every Project or service of that type. An authority that legitimately spans
+ * all Projects is expressed as a top-level permission (or `"*"`), which is
+ * checked before grants are consulted.
+ */
 function matchScopeValue(
   required: string | undefined,
   granted: string | undefined,
 ): boolean {
-  return required === undefined || granted === undefined || required === granted;
+  return (
+    required !== undefined && granted !== undefined && required === granted
+  );
 }
 
 function resolveAccessScope(
@@ -832,6 +947,7 @@ export function createRequestFromPlainInput(
     method,
     headers,
     body,
+    ...(input.signal ? { signal: input.signal } : {}),
   };
 
   if (body instanceof ReadableStream) {

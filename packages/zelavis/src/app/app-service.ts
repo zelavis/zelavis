@@ -12,7 +12,6 @@ import {
 } from "./db/index.js";
 import {
   type ZelavisAnyRuntimeServiceInput,
-  type ZelavisRuntimeService,
 } from "../core/index.js";
 import type { ZelavisServiceSetupContext } from "../service.js";
 import {

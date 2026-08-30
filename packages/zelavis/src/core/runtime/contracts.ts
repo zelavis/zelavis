@@ -326,6 +326,8 @@ export interface ZelavisPlainRequest {
   request?: Request;
   principal?: ZelavisPrincipal;
   platform?: unknown;
+  /** Aborted when the caller goes away, so handlers can stop early. */
+  signal?: AbortSignal;
 }
 
 export interface ZelavisPlainResponse<TService = unknown> {

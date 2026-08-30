@@ -1,11 +1,16 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  createGatewayAuthorityNonce,
+  createGatewayAuthoritySecret,
+  signGatewayAuthority,
+  ZELAVIS_GATEWAY_AUTHORITY_TTL_MS,
+} from "../platform/gateway-authority.js";
 import type {
   ZelavisProjectLogEntry,
   ZelavisProjectApp,
-  ZelavisProjectRecord,
   ZelavisProjectRuntimeDriver,
   ZelavisProjectRuntimeSnapshot,
 } from "../project.js";
@@ -113,6 +118,67 @@ async function runWithConcurrency<TValue>(
   );
 }
 
+/**
+ * Environment variables a Project child process may inherit from the Platform.
+ *
+ * The local Node driver is operational isolation, not a security sandbox, and
+ * advertises `secureIsolation: false`. That honest limitation still does not
+ * require handing every Project the control plane's entire environment:
+ * inheriting `process.env` wholesale exposes the Platform bootstrap token,
+ * provider credentials, signing keys, database URLs, and unrelated service
+ * secrets to ordinary Project code.
+ *
+ * Only variables a Node process genuinely needs to run are forwarded. Project
+ * configuration is passed explicitly by the driver, and scoped Project secrets
+ * need their own delivery contract rather than ambient inheritance.
+ */
+/** Narrows a local Project directory to the owning user. Best effort. */
+async function restrictDirectoryPermissions(path: string): Promise<void> {
+  if (process.platform === "win32") return;
+  try {
+    await chmod(path, 0o700);
+  } catch {
+    // The host does not support it, or the path vanished under us.
+  }
+}
+
+/** Largest partial stdout line retained while looking for a readiness event. */
+const MAX_CHILD_LINE_BYTES = 64 * 1024;
+
+/** Largest single log message retained per Project. */
+const MAX_CHILD_LOG_MESSAGE_BYTES = 8 * 1024;
+
+const INHERITED_PROJECT_ENVIRONMENT = Object.freeze([
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "TEMP",
+  "TMP",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TZ",
+  "NODE_ENV",
+  "NODE_OPTIONS",
+  "NODE_EXTRA_CA_CERTS",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "SystemRoot",
+  "COMSPEC",
+  "PATHEXT",
+]);
+
+function projectProcessEnvironment(): Record<string, string> {
+  const environment: Record<string, string> = {};
+  for (const name of INHERITED_PROJECT_ENVIRONMENT) {
+    const value = process.env[name];
+    if (value !== undefined) {
+      environment[name] = value;
+    }
+  }
+  return environment;
+}
+
 export function createNodeProcessProjectRuntime(
   options: NodeProcessProjectRuntimeOptions,
 ): ZelavisProjectRuntimeDriver {
@@ -129,6 +195,14 @@ export function createNodeProcessProjectRuntime(
   const logLimit = options.logLimit ?? DEFAULT_LOG_LIMIT;
   const runnerPath = fileURLToPath(new URL("./_node-project-runner.js", import.meta.url));
   const processes = new Map<string, NodeProjectProcess>();
+  /**
+   * Per-runtime Gateway signing secrets.
+   *
+   * Held only in memory: the secret authenticates the Platform to one child
+   * process, so it must not reach the persisted Project record or the System
+   * Store, and it dies with the process that issued it.
+   */
+  const gatewaySecrets = new Map<string, string>();
   let closed = false;
   let closePromise: Promise<void> | undefined;
 
@@ -141,10 +215,18 @@ export function createNodeProcessProjectRuntime(
     stream: ZelavisProjectLogEntry["stream"],
     message: string,
   ) {
-    const normalized = message.trimEnd();
-    if (!normalized) {
+    const trimmed = message.trimEnd();
+    if (!trimmed) {
       return;
     }
+    // The log limit counts entries, so a single enormous line could still
+    // retain unbounded memory. Truncate explicitly rather than silently.
+    const normalized =
+      trimmed.length > MAX_CHILD_LOG_MESSAGE_BYTES
+        ? `${trimmed.slice(0, MAX_CHILD_LOG_MESSAGE_BYTES)}… (truncated ${
+            trimmed.length - MAX_CHILD_LOG_MESSAGE_BYTES
+          } bytes)`
+        : trimmed;
     state.logs.push({
       timestamp: new Date().toISOString(),
       stream,
@@ -204,7 +286,12 @@ export function createNodeProcessProjectRuntime(
     async prepare(project, app) {
       const directory = projectDirectory(project.id);
       const dataDirectory = join(directory, ".zelavis");
-      await mkdir(dataDirectory, { recursive: true });
+      // Project data and the descriptor are owner-only: on a permissive umask
+      // or a shared service account they would otherwise be readable by other
+      // local users.
+      await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
+      await restrictDirectoryPermissions(directory);
+      await restrictDirectoryPermissions(dataDirectory);
       await writeFile(
         join(directory, "project.json"),
         `${JSON.stringify(
@@ -219,7 +306,7 @@ export function createNodeProcessProjectRuntime(
           null,
           2,
         )}\n`,
-        "utf8",
+        { encoding: "utf8", mode: 0o600 },
       );
     },
     async start(project) {
@@ -253,11 +340,17 @@ export function createNodeProcessProjectRuntime(
       processes.set(project.id, state);
       appendLog(state, "system", `Starting ${project.name} with ${driver.name}.`);
 
+      // A fresh secret per start: a restarted runtime never accepts envelopes
+      // signed for its previous process.
+      const gatewaySecret = createGatewayAuthoritySecret();
+      gatewaySecrets.set(project.id, gatewaySecret);
+
       const child = spawn(process.execPath, [runnerPath], {
         cwd: directory,
         env: {
-          ...process.env,
+          ...projectProcessEnvironment(),
           PORT: "0",
+          ZELAVIS_PROJECT_GATEWAY_SECRET: gatewaySecret,
           ZELAVIS_PROJECT_ID: project.id,
           ZELAVIS_PROJECT_DATA_DIR: join(directory, ".zelavis"),
           ZELAVIS_UI_DEV_SERVER: "",
@@ -295,6 +388,17 @@ export function createNodeProcessProjectRuntime(
           stdoutBuffer += chunk.toString("utf8");
           const lines = stdoutBuffer.split("\n");
           stdoutBuffer = lines.pop() ?? "";
+          // A child that never emits a newline would otherwise grow this
+          // buffer without bound. Readiness events are small, so a partial
+          // line beyond the cap is not one and can be discarded.
+          if (stdoutBuffer.length > MAX_CHILD_LINE_BYTES) {
+            appendLog(
+              state,
+              "system",
+              `Discarded an over-long stdout line (> ${MAX_CHILD_LINE_BYTES} bytes).`,
+            );
+            stdoutBuffer = "";
+          }
           for (const line of lines) {
             try {
               const event = JSON.parse(line) as {
@@ -379,6 +483,7 @@ export function createNodeProcessProjectRuntime(
       appendLog(state, "system", "Stopping project.");
       state.child.kill("SIGTERM");
       await waitForExit(state.child, 5_000);
+      gatewaySecrets.delete(projectId);
       state.snapshot = stoppedSnapshot(state);
       return state.snapshot;
     },
@@ -388,9 +493,20 @@ export function createNodeProcessProjectRuntime(
     async logs(projectId) {
       return [...(processes.get(projectId)?.logs ?? [])];
     },
+    async signGatewayAuthority(projectId, claims) {
+      const secret = gatewaySecrets.get(projectId);
+      // No running child means nothing to authorize against.
+      if (!secret) return undefined;
+      return signGatewayAuthority(secret, {
+        ...claims,
+        nonce: createGatewayAuthorityNonce(),
+        expiresAt: Date.now() + ZELAVIS_GATEWAY_AUTHORITY_TTL_MS,
+      });
+    },
     async destroy(projectId) {
       await driver.stop(projectId);
       processes.delete(projectId);
+      gatewaySecrets.delete(projectId);
       await rm(projectDirectory(projectId), { recursive: true, force: true });
     },
     close() {

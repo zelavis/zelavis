@@ -3,10 +3,22 @@ import { resolve } from "node:path";
 import { defineAdapter, Zelavis } from "../index.js";
 import { closeNodeServer, createNodeServer } from "../runtimes/node.js";
 import { nodeAdapter } from "./node.js";
+import {
+  createGatewayNonceTracker,
+  verifyGatewayAuthority,
+  ZELAVIS_GATEWAY_AUTHORITY_HEADER,
+} from "../platform/gateway-authority.js";
 
 const projectId = process.env.ZELAVIS_PROJECT_ID?.trim();
 const dataDirectory = process.env.ZELAVIS_PROJECT_DATA_DIR?.trim();
 const port = Number(process.env.PORT ?? 0);
+/**
+ * Secret shared with the Platform process that started this runtime. Without
+ * it no Gateway authority is accepted at all, so an unauthenticated caller is
+ * simply anonymous rather than privileged.
+ */
+const gatewaySecret = process.env.ZELAVIS_PROJECT_GATEWAY_SECRET?.trim();
+const gatewayNonces = createGatewayNonceTracker();
 
 if (!projectId || !dataDirectory) {
   throw new Error("Project runner requires a project id and data directory.");
@@ -53,35 +65,36 @@ const zv = new Zelavis({
           ...(resolved?.metadata ?? {}),
           projectId,
         },
-        resolvePrincipal: ({ request }) => {
-          const forwardedProjectId = request.headers.get(
-            "x-zelavis-project-id",
+        resolvePrincipal: async ({ request }) => {
+          // The runtime listens on loopback, so any local process can send
+          // whatever headers it likes. Authority is only accepted as an
+          // envelope signed with the secret this process was started with.
+          if (!gatewaySecret) return undefined;
+
+          const token = request.headers.get(
+            ZELAVIS_GATEWAY_AUTHORITY_HEADER,
           );
-          const scopeId = request.headers.get("x-zelavis-platform-scope-id");
-          const generation = request.headers.get(
-            "x-zelavis-placement-generation",
-          );
-          const runtimeNodeId = request.headers.get("x-zelavis-runtime-node-id");
-          if (
-            forwardedProjectId !== projectId ||
-            !scopeId ||
-            !generation ||
-            !runtimeNodeId
-          ) return undefined;
+          if (!token) return undefined;
+
+          const claims = await verifyGatewayAuthority(gatewaySecret, token, {
+            audienceProjectId: projectId,
+            consumeNonce: gatewayNonces,
+          });
+          if (!claims) return undefined;
+
           return {
-            id: `zelavis-platform:${scopeId}`,
-            type: "system",
-            permissions: ["*"],
-            grants: [
-              {
-                permission: "*",
-                scope: { type: "project", projectId },
-              },
-            ],
+            id: claims.subject,
+            type: claims.subjectType as "user" | "system" | "service",
+            // The caller's own Project permissions, never a wildcard.
+            grants: claims.permissions.map((permission) => ({
+              permission,
+              scope: { type: "project" as const, projectId },
+            })),
             metadata: {
               projectId,
-              placementGeneration: generation,
-              runtimeNodeId,
+              placementGeneration: String(claims.generation),
+              runtimeNodeId: claims.runtimeNodeId,
+              platformScopeId: claims.scopeId,
               authority: "project-gateway",
             },
           };

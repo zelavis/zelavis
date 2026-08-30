@@ -30,7 +30,6 @@ import {
   type FabricProjectPlacement,
   type FabricServiceOptions,
   type ZelavisServerErrorStatusRule,
-  type ZelavisAnyRuntimeServiceInput,
   type ZelavisServerDispatchHandler,
   type ZelavisServerErrorHandler,
   type ZelavisServerExecutionContext,
@@ -38,6 +37,7 @@ import {
   type ZelavisServerPlainHandler,
   type ZelavisServerRoute,
   type ZelavisServerRuntime,
+  type ZelavisPrincipal,
   type ZelavisPrincipalResolver,
   type ZelavisRuntimeService,
 } from "./core/index.js";
@@ -47,6 +47,7 @@ import {
   defaultZelavisDashboardClientRoutes,
 } from "@zelavis/ui/service";
 import { createZelavisCoreService } from "./platform/core-service.js";
+import { ZELAVIS_GATEWAY_AUTHORITY_HEADER } from "./platform/gateway-authority.js";
 import { marketplaceService } from "./platform/marketplace-service.js";
 import {
   workloadsService,
@@ -507,6 +508,14 @@ export interface ZelavisServiceRegistryOptions {
   catalog?: readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[];
   store?: ZelavisServiceRegistryStore;
   importer?: ZelavisServiceLoadOptions["importer"];
+  /**
+   * Resolves a `package.json` manifest for a service specifier.
+   *
+   * Supplied per runtime by the host adapter rather than installed process
+   * globally, so two embedded runtimes in one process cannot affect each
+   * other's service loading.
+   */
+  manifestResolver?: ZelavisServiceLoadOptions["manifestResolver"];
 }
 
 export interface ZelavisServiceContextOptions {
@@ -775,6 +784,246 @@ const RESERVED_CORE_SERVICE_NAMES = new Set([
   "@zelavis/workloads",
   "zelavis-domain-challenge",
 ]);
+
+/**
+ * Builds the permission set forwarded into a Project runtime.
+ *
+ * The Gateway sends the caller's real authority instead of a wildcard, so the
+ * child enforces its own route requirements against the actual caller. A global
+ * `"*"` is not expanded into a downstream wildcard: concrete permissions are
+ * listed, keeping the envelope bounded and auditable.
+ *
+ * Inside a Project runtime the Project *is* the system, so a Project-scoped
+ * Platform permission maps onto the runtime's own `system.*` requirement.
+ * `system.services.manage` is deliberately excluded from that mapping: it
+ * installs and executes host code, so it is forwarded only when the caller
+ * holds it at Platform level rather than inferred from Project scope.
+ */
+function projectRuntimePermissions(
+  principal: ZelavisPrincipal | undefined,
+  projectId: string,
+): readonly string[] {
+  if (!principal) return [];
+
+  const granted = new Set<string>();
+  const global = principal.permissions ?? [];
+  const hasGlobalWildcard = global.includes("*");
+
+  const addProjectAuthority = (permission: string) => {
+    granted.add(permission);
+    const mapped = ZELAVIS_PROJECT_TO_RUNTIME_PERMISSION[permission];
+    if (mapped) granted.add(mapped);
+  };
+
+  for (const permission of global) {
+    if (permission === "*") continue;
+    addProjectAuthority(permission);
+  }
+
+  for (const grant of principal.grants ?? []) {
+    const scope = grant.scope;
+    const appliesToProject =
+      scope === undefined ||
+      (scope.type === "project" && scope.projectId === projectId);
+    if (!appliesToProject) continue;
+    if (grant.permission === "*") {
+      for (const permission of ZELAVIS_PROJECT_PERMISSIONS) {
+        addProjectAuthority(permission);
+      }
+      continue;
+    }
+    addProjectAuthority(grant.permission);
+  }
+
+  if (hasGlobalWildcard) {
+    for (const permission of ZELAVIS_PROJECT_PERMISSIONS) {
+      addProjectAuthority(permission);
+    }
+    // A Platform-wide wildcard does include host-code authority.
+    granted.add("system.services.manage");
+  }
+
+  return [...granted].sort();
+}
+
+/**
+ * How a Project-scoped Platform permission appears inside the Project runtime,
+ * where the Project is its own system.
+ */
+const ZELAVIS_PROJECT_TO_RUNTIME_PERMISSION: Readonly<Record<string, string>> =
+  Object.freeze({
+    "project.settings.manage": "system.settings.manage",
+    "project.users.manage": "system.users.manage",
+  });
+
+/**
+ * Project-scoped permissions a wildcard authority expands to.
+ *
+ * Listing them explicitly keeps a forwarded envelope bounded: a future
+ * permission is not silently granted to every Project runtime because someone
+ * held `"*"` on the Platform.
+ */
+const ZELAVIS_PROJECT_PERMISSIONS = Object.freeze([
+  "project.delete",
+  "project.logs.read",
+  "project.runtime.manage",
+  "project.settings.manage",
+  "project.users.manage",
+  "project.view",
+  "project.website.manage",
+]);
+
+/**
+ * Ceiling on a Gateway request or response body.
+ *
+ * Both directions are buffered in full today, so an unbounded body is a memory
+ * exhaustion primitive against the Platform. Streaming with backpressure is the
+ * real fix and is tracked in `TODO.md`; until then the budget is explicit.
+ */
+const ZELAVIS_GATEWAY_MAX_BODY_BYTES = 32 * 1024 * 1024;
+
+/** How long the Platform waits on a Project runtime before giving up. */
+const ZELAVIS_GATEWAY_TIMEOUT_MS = 30_000;
+
+/**
+ * Headers that must never be relayed in either direction.
+ *
+ * `connection` and friends are hop-by-hop and belong to the single connection
+ * they arrived on. `host` and `content-length` are recomputed by the outbound
+ * fetch.
+ */
+const GATEWAY_HOP_BY_HOP_HEADERS = Object.freeze([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "proxy-connection",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+  "host",
+  "content-length",
+]);
+
+/**
+ * Builds the outbound header set for a Project Gateway request.
+ *
+ * Two classes of header are stripped rather than forwarded:
+ *
+ * - **Platform credentials.** `cookie` and `authorization` authenticate the
+ *   caller to the *Platform*. Relaying them hands the Project runtime — which
+ *   is ordinary Project code, not a trusted peer — a usable Platform session.
+ * - **Client-supplied authority headers.** Every `x-zelavis-*` header is
+ *   removed before the Gateway sets its own, so a caller cannot smuggle in an
+ *   authority claim and have it survive alongside the Gateway's.
+ */
+function gatewayRequestHeaders(source: Headers): Headers {
+  const headers = new Headers(source);
+  for (const header of GATEWAY_HOP_BY_HOP_HEADERS) {
+    headers.delete(header);
+  }
+  headers.delete("cookie");
+  headers.delete("authorization");
+  for (const [name] of [...source]) {
+    if (name.toLowerCase().startsWith("x-zelavis-")) {
+      headers.delete(name);
+    }
+  }
+  return headers;
+}
+
+/**
+ * Builds the response header set returned from a Project Gateway request.
+ *
+ * `set-cookie` is dropped: the response is served from the Platform origin, so
+ * a Project runtime could otherwise overwrite the Platform session cookie or
+ * plant cookies scoped to the Platform. Project-scoped cookies need their own
+ * namespaced contract before they can be relayed.
+ */
+function gatewayResponseHeaders(source: Headers): Headers {
+  const headers = new Headers(source);
+  for (const header of GATEWAY_HOP_BY_HOP_HEADERS) {
+    headers.delete(header);
+  }
+  headers.delete("set-cookie");
+  return headers;
+}
+
+/**
+ * Resolves a Project Gateway wildcard path against a Project runtime URL.
+ *
+ * `new URL(reference, base)` performs URL *reference* resolution, so a
+ * caller-supplied value such as `https:/example.com/pwn` or `\\example.com/pwn`
+ * resolves to a different origin instead of a path beneath the runtime. The
+ * Gateway would then act as a confused deputy and issue the request — with
+ * whatever headers it attached — to a host the caller chose.
+ *
+ * The path is therefore treated as opaque path segments rather than a URL
+ * reference, and the result is asserted to stay on the runtime's own origin and
+ * beneath its base path.
+ *
+ * Returns `undefined` when the path cannot be represented safely.
+ */
+function resolveProxyTarget(
+  runtimeUrl: string,
+  wildcardPath: string,
+): URL | undefined {
+  let base: URL;
+  try {
+    base = new URL(`${runtimeUrl.replace(/\/+$/, "")}/`);
+  } catch {
+    return undefined;
+  }
+
+  // Control characters (CR/LF included) must never reach the outbound request.
+  if (/[\u0000-\u001f\u007f]/.test(wildcardPath)) {
+    return undefined;
+  }
+
+  const segments = wildcardPath.split("/").filter((segment) => segment !== "");
+  const safeSegments: string[] = [];
+  for (const segment of segments) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      // Malformed percent-encoding.
+      return undefined;
+    }
+
+    // Reject traversal and anything that could re-introduce a separator or a
+    // scheme once the segment is re-encoded.
+    if (
+      decoded === "." ||
+      decoded === ".." ||
+      decoded.includes("/") ||
+      decoded.includes("\\") ||
+      /[\u0000-\u001f\u007f]/.test(decoded)
+    ) {
+      return undefined;
+    }
+
+    safeSegments.push(encodeURIComponent(decoded));
+  }
+
+  const target = new URL(base.href);
+  target.pathname = `${base.pathname.replace(/\/+$/, "")}/${safeSegments.join("/")}`;
+
+  // Defence in depth: the construction above cannot change the origin, but
+  // assert it rather than assume it.
+  if (target.origin !== base.origin) {
+    return undefined;
+  }
+  if (
+    target.pathname !== base.pathname.replace(/\/+$/, "") &&
+    !target.pathname.startsWith(base.pathname)
+  ) {
+    return undefined;
+  }
+
+  return target;
+}
 
 function readOptionalProcessEnv(name: string): string | undefined {
   const runtimeProcess = (
@@ -1916,6 +2165,7 @@ const defaultDashboardServiceRegistry = createServiceRegistry<ZelavisServiceSetu
 async function loadStoredServiceRegistryModules(
   entries: readonly ZelavisServiceRegistryStateEntry[] | undefined,
   importer?: ZelavisServiceLoadOptions["importer"],
+  manifestResolver?: ZelavisServiceLoadOptions["manifestResolver"],
 ): Promise<readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[]> {
   const moduleEntries = (entries ?? [])
     .filter((entry) => entry.specifier)
@@ -1938,7 +2188,7 @@ async function loadStoredServiceRegistryModules(
     try {
       const loaded = await loadServiceRegistry<ZelavisServiceSetupContext>(
         [entry],
-        { importer },
+        { importer, ...(manifestResolver ? { manifestResolver } : {}) },
       );
 
       // Runtime-installed services are always extension-scoped regardless of
@@ -1995,6 +2245,7 @@ async function loadStoredServiceRegistryModules(
 async function loadConfiguredServiceRegistryModules(
   entries: readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[],
   importer?: ZelavisServiceLoadOptions["importer"],
+  manifestResolver?: ZelavisServiceLoadOptions["manifestResolver"],
 ): Promise<readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[]> {
   const resolved: Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[] = [];
 
@@ -2015,7 +2266,7 @@ async function loadConfiguredServiceRegistryModules(
             ...(entry.order !== undefined ? { order: entry.order } : {}),
           },
         ],
-        { importer },
+        { importer, ...(manifestResolver ? { manifestResolver } : {}) },
       );
     } catch {
       // The specifier is not resolvable from `zelavis`; the caller supplied the
@@ -2233,12 +2484,6 @@ function renderWebsitePage(page: ZelavisWebsitePage): string {
 </html>`;
 }
 
-function createWebsitePageRouteId(path: string): string {
-  const normalized = normalizePathPart(path);
-  return normalized
-    ? `website.page.${normalized.replaceAll("/", ".")}`
-    : "website.page.home";
-}
 
 function isReservedWebsitePath(path: string, rootPath: string): boolean {
   return (
@@ -2383,6 +2628,7 @@ async function resolveRuntimeManagementCore(
     >[];
     serviceRegistryStore: ZelavisServiceRegistryStore;
     serviceImporter?: ZelavisServiceLoadOptions["importer"];
+    serviceManifestResolver?: ZelavisServiceLoadOptions["manifestResolver"];
     servicePackageInstaller?: ZelavisServicePackageInstaller;
     serviceActivation?: ZelavisServiceActivationController;
     rootPath: string;
@@ -2422,6 +2668,7 @@ async function resolveRuntimeManagementCore(
     const storedServiceRegistry = await loadStoredServiceRegistryModules(
       storedEntries,
       context.serviceImporter,
+      context.serviceManifestResolver,
     );
 
     // Static services (passed directly to zelavis()) are system-scoped — they
@@ -3501,18 +3748,31 @@ async function resolveWorkloadsCoreService(
   return workloadsService(workloadsOption === true ? {} : workloadsOption);
 }
 
+/**
+ * Projects a Project runtime status onto a Fabric placement state.
+ *
+ * Deliberately an allow-list: only a running Project is `active`. The previous
+ * default-to-active mapping reported `stopping` and `stopped` Projects as
+ * active placements, and would have reported any future status the same way.
+ * Inventory accuracy matters more as the Gateway comes to rely on authoritative
+ * Fabric state for routing.
+ */
 function placementStateFromRuntimeStatus(
   status: string,
 ): FabricPlacementState {
-  if (status === "failed") {
-    return "unavailable";
+  switch (status) {
+    case "running":
+      return "active";
+    case "provisioning":
+    case "starting":
+      return "preparing";
+    case "failed":
+    case "stopping":
+    case "stopped":
+      return "unavailable";
+    default:
+      return "unavailable";
   }
-
-  if (status === "provisioning" || status === "starting") {
-    return "preparing";
-  }
-
-  return "active";
 }
 
 function resolveFabricCoreService(
@@ -3941,17 +4201,26 @@ async function resolvePlatformCoreService(
             method,
             path: "/projects/:projectId/proxy/*path",
             access: {
-              permissions: ["project.view"],
+              // A read of the Project runtime is `project.view`; anything that
+              // can change it requires runtime-management authority. Using
+              // `project.view` for every verb made read access a blanket
+              // mutation capability against the child.
+              permissions:
+                method === "GET"
+                  ? ["project.view"]
+                  : ["project.runtime.manage"],
               scope: { type: "project" as const, projectIdParam: "projectId" },
             },
             handler: async ({
               params,
               query,
               request,
+              principal,
             }: {
               params: Record<string, string>;
               query: URLSearchParams;
               request: Request;
+              principal?: ZelavisPrincipal;
             }) => {
               if (!projects) {
                 return unavailableProjectsResponse();
@@ -3996,44 +4265,102 @@ async function resolvePlatformCoreService(
                   };
                 }
 
-                const target = new URL(
-                  (params.path ?? "").replace(/^\/+/, ""),
-                  `${project.runtime.url.replace(/\/+$/, "")}/`,
+                const target = resolveProxyTarget(
+                  project.runtime.url,
+                  params.path ?? "",
                 );
+                if (!target) {
+                  return {
+                    status: 400,
+                    body: { error: "Invalid Project proxy path." },
+                  };
+                }
                 target.search = query.toString();
-                const headers = new Headers(request.headers);
-                headers.delete("host");
-                headers.delete("content-length");
-                headers.set(
-                  "x-zelavis-platform-scope-id",
-                  placement.identity.scopeId,
+                const headers = gatewayRequestHeaders(request.headers);
+                // The runtime listens on loopback, so plain headers cannot
+                // establish who the caller is. Authority is carried in a
+                // short-lived envelope signed with a per-runtime secret, and
+                // it carries the caller's own Project permissions rather than
+                // a wildcard, so proxying never amplifies authority.
+                const authority = await projects.signGatewayAuthority(
+                  project.id,
+                  {
+                    projectId: project.id,
+                    scopeId: placement.identity.scopeId,
+                    generation: placement.generation,
+                    runtimeNodeId: placement.runtimeNodeId,
+                    subject: principal?.id ?? "anonymous",
+                    subjectType: principal?.type ?? "anonymous",
+                    permissions: projectRuntimePermissions(
+                      principal,
+                      project.id,
+                    ),
+                  },
                 );
-                headers.set("x-zelavis-project-id", project.id);
-                headers.set(
-                  "x-zelavis-placement-generation",
-                  String(placement.generation),
-                );
-                headers.set(
-                  "x-zelavis-runtime-node-id",
-                  placement.runtimeNodeId,
-                );
+                if (authority) {
+                  headers.set(ZELAVIS_GATEWAY_AUTHORITY_HEADER, authority);
+                }
                 const body =
                   request.method === "GET" || request.method === "HEAD"
                     ? undefined
                     : await request.clone().arrayBuffer();
-                const response = await fetch(target, {
-                  method: request.method,
-                  headers,
-                  redirect: "manual",
-                  ...(body && body.byteLength > 0 ? { body } : {}),
-                });
-                const responseHeaders = new Headers(response.headers);
-                responseHeaders.delete("content-length");
-                responseHeaders.delete("transfer-encoding");
+                if (body && body.byteLength > ZELAVIS_GATEWAY_MAX_BODY_BYTES) {
+                  return {
+                    status: 413,
+                    body: {
+                      error: `Project Gateway bodies are limited to ${ZELAVIS_GATEWAY_MAX_BODY_BYTES} bytes.`,
+                    },
+                  };
+                }
+
+                // A child that never answers must not pin a Platform request
+                // open indefinitely, and a caller that goes away should release
+                // the downstream request with it.
+                const timeout = AbortSignal.timeout(
+                  ZELAVIS_GATEWAY_TIMEOUT_MS,
+                );
+                const abort = request.signal
+                  ? AbortSignal.any([request.signal, timeout])
+                  : timeout;
+
+                let response: Response;
+                try {
+                  response = await fetch(target, {
+                    method: request.method,
+                    headers,
+                    redirect: "manual",
+                    signal: abort,
+                    ...(body && body.byteLength > 0 ? { body } : {}),
+                  });
+                } catch (cause) {
+                  if (
+                    cause instanceof Error &&
+                    (cause.name === "TimeoutError" ||
+                      cause.name === "AbortError")
+                  ) {
+                    return {
+                      status: 504,
+                      body: {
+                        error: `Project "${project.id}" did not respond within ${ZELAVIS_GATEWAY_TIMEOUT_MS}ms.`,
+                      },
+                    };
+                  }
+                  throw cause;
+                }
+                const responseHeaders = gatewayResponseHeaders(response.headers);
+                const responseBody = await response.arrayBuffer();
+                if (responseBody.byteLength > ZELAVIS_GATEWAY_MAX_BODY_BYTES) {
+                  return {
+                    status: 502,
+                    body: {
+                      error: `Project "${project.id}" returned a response larger than ${ZELAVIS_GATEWAY_MAX_BODY_BYTES} bytes.`,
+                    },
+                  };
+                }
                 return {
                   status: response.status,
                   headers: responseHeaders,
-                  body: new Uint8Array(await response.arrayBuffer()),
+                  body: new Uint8Array(responseBody),
                 };
               } catch (error) {
                 return projectErrorResponse(error);
@@ -4179,6 +4506,7 @@ export async function zelavis(
       ? await loadConfiguredServiceRegistryModules(
           compositionOptions.serviceRegistry.catalog,
           compositionOptions.serviceRegistry.importer,
+          compositionOptions.serviceRegistry.manifestResolver,
         )
       : defaultDashboardServiceRegistry;
   const systemStore = options.systemStore ?? createMemorySystemStore();
@@ -4191,6 +4519,7 @@ export async function zelavis(
   const storedServiceRegistry = await loadStoredServiceRegistryModules(
     initialServiceRegistryState,
     compositionOptions.serviceRegistry?.importer,
+    compositionOptions.serviceRegistry?.manifestResolver,
   );
   const knownServiceNames = new Set(
     baseServiceRegistry.map((entry) => entry.service.name),
@@ -4330,6 +4659,8 @@ export async function zelavis(
       serviceRegistry,
       serviceRegistryStore,
       serviceImporter: compositionOptions.serviceRegistry?.importer,
+      serviceManifestResolver:
+        compositionOptions.serviceRegistry?.manifestResolver,
       servicePackageInstaller: options.servicePackageInstaller,
       serviceActivation: options.serviceActivation,
       rootPath,
@@ -4413,7 +4744,14 @@ export async function zelavis(
   });
   let closePromise: Promise<void> | undefined;
   const close = (): Promise<void> => {
-    closePromise ??= projects?.close() ?? Promise.resolve();
+    closePromise ??= (async () => {
+      await projects?.close();
+      // Release the local store handle too. Optional and idempotent, so custom
+      // and embeddable stores that do not implement it are unaffected; without
+      // it a repeatedly constructed embedded runtime retains database handles
+      // until the process exits.
+      await systemStore?.close?.();
+    })();
     return closePromise;
   };
 
@@ -4454,21 +4792,6 @@ function assertNoInternalConstructorOptions(
   );
 }
 
-function assertNoReservedServiceRuntimeServiceNames(
-  services: readonly ZelavisRuntimeService<any>[],
-): void {
-  const reserved = services
-    .map((service) => service.name)
-    .filter((name) => RESERVED_CORE_SERVICE_NAMES.has(name));
-
-  if (reserved.length === 0) {
-    return;
-  }
-
-  throw new TypeError(
-    `Services cannot register reserved core service names: ${reserved.join(", ")}.`,
-  );
-}
 
 function mergeMaybeRecord<TValue>(
   base: TValue | undefined,

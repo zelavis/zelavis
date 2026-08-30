@@ -309,10 +309,19 @@ function desiredReplicaCount(request: FabricProjectPlacementRequest): number {
   }
 
   const min = positiveInteger(policy.minReplicas, 1);
-  const max = Math.max(min, positiveInteger(policy.maxReplicas, min));
   if (policy.mode === "fixed") {
-    return Math.min(max, Math.max(min, positiveInteger(policy.replicas, min)));
+    // In fixed mode `replicas` *is* the target, so it is also the default
+    // ceiling. Defaulting `max` to `min` silently resolved
+    // `{ mode: "fixed", replicas: 3 }` to a single replica whenever
+    // `maxReplicas` was omitted.
+    const fixed = Math.max(min, positiveInteger(policy.replicas, min));
+    // `maxReplicas` still caps the fixed target when it is supplied; it just
+    // defaults to the target instead of to `min`.
+    const ceiling = positiveInteger(policy.maxReplicas, fixed);
+    return Math.max(min, Math.min(fixed, ceiling));
   }
+
+  const max = Math.max(min, positiveInteger(policy.maxReplicas, min));
 
   const current = Math.min(
     max,
@@ -488,8 +497,14 @@ function fabricStatus(
     return "unavailable";
   }
 
+  // A draining node is not accepting work, so the fleet is not fully ready.
+  // Reporting `ready` while the only local node drains overstates readiness to
+  // anything that routes on this summary.
   return nodes.some(
-    (node) => node.status === "degraded" || node.status === "unavailable",
+    (node) =>
+      node.status === "degraded" ||
+      node.status === "unavailable" ||
+      node.status === "draining",
   )
     ? "degraded"
     : "ready";
@@ -594,12 +609,6 @@ function isOptionalNonNegativeNumber(value: unknown): boolean {
   );
 }
 
-function isOptionalPositiveInteger(value: unknown): boolean {
-  return (
-    value === undefined ||
-    (typeof value === "number" && Number.isInteger(value) && value >= 1)
-  );
-}
 
 function isStringRecord(
   value: unknown,
@@ -626,9 +635,9 @@ function isPlacementRequest(
   if (
     !identity ||
     identity.type !== "project" ||
-    typeof identity.scopeId !== "string" ||
-    typeof identity.workloadId !== "string" ||
-    typeof request.projectKind !== "string" ||
+    !isBoundedIdentifier(identity.scopeId) ||
+    !isBoundedIdentifier(identity.workloadId) ||
+    !isBoundedIdentifier(request.projectKind) ||
     !capabilities ||
     typeof capabilities.statelessRuntimeReplicas !== "boolean"
   ) {
@@ -641,9 +650,9 @@ function isPlacementRequest(
     (!(["single", "fixed", "automatic"] as const).includes(
       policy.mode as FabricReplicaMode,
     ) ||
-      !isOptionalPositiveInteger(policy.replicas) ||
-      !isOptionalPositiveInteger(policy.minReplicas) ||
-      !isOptionalPositiveInteger(policy.maxReplicas) ||
+      !isBoundedReplicaCount(policy.replicas) ||
+      !isBoundedReplicaCount(policy.minReplicas) ||
+      !isBoundedReplicaCount(policy.maxReplicas) ||
       !isOptionalNormalizedNumber(policy.scaleOutCpuThreshold) ||
       !isOptionalNormalizedNumber(policy.scaleInCpuThreshold) ||
       !isOptionalNormalizedNumber(policy.scaleOutRequestThreshold) ||
@@ -676,11 +685,26 @@ function isPlacementRequest(
 
   return (
     (request.runtimeDriver === undefined ||
-      typeof request.runtimeDriver === "string") &&
+      isBoundedIdentifier(request.runtimeDriver)) &&
     (request.allowedNodeIds === undefined ||
       (Array.isArray(request.allowedNodeIds) &&
-        request.allowedNodeIds.every((nodeId) => typeof nodeId === "string"))) &&
-    (request.requiredLabels === undefined || isStringRecord(request.requiredLabels))
+        request.allowedNodeIds.length <= FABRIC_MAX_CONSTRAINT_ENTRIES &&
+        request.allowedNodeIds.every(isBoundedIdentifier))) &&
+    (request.requiredLabels === undefined ||
+      (isStringRecord(request.requiredLabels) &&
+        isBoundedLabelRecord(request.requiredLabels)))
+  );
+}
+
+function isBoundedLabelRecord(value: Record<string, string>): boolean {
+  const entries = Object.entries(value);
+  return (
+    entries.length <= FABRIC_MAX_CONSTRAINT_ENTRIES &&
+    entries.every(
+      ([key, entry]) =>
+        key.length <= FABRIC_MAX_IDENTIFIER_LENGTH &&
+        entry.length <= FABRIC_MAX_IDENTIFIER_LENGTH,
+    )
   );
 }
 
@@ -691,9 +715,42 @@ function readPlacementRequests(
     return undefined;
   }
   const requests = (body as Record<string, unknown>).requests;
-  return Array.isArray(requests) && requests.every(isPlacementRequest)
-    ? requests
-    : undefined;
+  if (!Array.isArray(requests)) return undefined;
+  // Planning is permission-gated, but a compromised operator credential or an
+  // accidental request must not be able to allocate an effectively unbounded
+  // amount of work.
+  if (requests.length > FABRIC_MAX_PLACEMENT_REQUESTS) return undefined;
+  return requests.every(isPlacementRequest) ? requests : undefined;
+}
+
+/** Largest batch the placement planner will accept in one request. */
+export const FABRIC_MAX_PLACEMENT_REQUESTS = 1_000;
+
+/** Largest replica count any policy may ask for. */
+export const FABRIC_MAX_REPLICAS = 1_000;
+
+/** Largest identifier or label string accepted in planning input. */
+export const FABRIC_MAX_IDENTIFIER_LENGTH = 512;
+
+/** Largest number of node ids or labels accepted on one request. */
+export const FABRIC_MAX_CONSTRAINT_ENTRIES = 256;
+
+function isBoundedIdentifier(value: unknown): boolean {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= FABRIC_MAX_IDENTIFIER_LENGTH
+  );
+}
+
+function isBoundedReplicaCount(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (typeof value === "number" &&
+      Number.isInteger(value) &&
+      value > 0 &&
+      value <= FABRIC_MAX_REPLICAS)
+  );
 }
 
 function createFabricRoutes(
