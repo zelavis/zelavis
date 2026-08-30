@@ -1,15 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
-
-// `resolveProxyTarget` is internal to the Platform composition, so the
-// regression corpus exercises it directly out of the built bundle.
-const source = readFileSync(new URL("../dist/index.js", import.meta.url), "utf8");
-const declaration = source.match(/function resolveProxyTarget[\s\S]*?\n}\n/);
-assert.ok(declaration, "resolveProxyTarget must exist in the built Platform bundle");
-const resolveProxyTarget = new Function(
-  `${declaration[0]}; return resolveProxyTarget;`,
-)();
+// The Gateway lives in its own module, so its internals are imported directly
+// rather than scraped out of the bundled Platform composition.
+import {
+  gatewayRequestHeaders,
+  gatewayResponseHeaders,
+  resolveProxyTarget,
+} from "../dist/platform/project-gateway.js";
 
 const RUNTIME_URL = "http://127.0.0.1:52706";
 
@@ -98,4 +95,56 @@ test("Gateway proxy neutralizes scheme-like paths onto the runtime origin", () =
   assert.equal(target.protocol, "http:");
   assert.equal(target.hostname, "127.0.0.1");
   assert.equal(target.port, "52706");
+});
+
+test("Platform credentials are never relayed into a Project runtime", () => {
+  const outbound = gatewayRequestHeaders(
+    new Headers({
+      cookie: "zelavis_session=zvs_platform_secret",
+      authorization: "Bearer zvs_platform_secret",
+      "content-type": "application/json",
+      "x-zelavis-authority": "forged-envelope",
+      "x-zelavis-project-id": "other-project",
+      connection: "keep-alive",
+      host: "platform.example",
+      "content-length": "42",
+      "x-request-id": "keep-me",
+    }),
+  );
+
+  for (const header of [
+    "cookie",
+    "authorization",
+    "x-zelavis-authority",
+    "x-zelavis-project-id",
+    "connection",
+    "host",
+    "content-length",
+  ]) {
+    assert.equal(
+      outbound.get(header),
+      null,
+      `${header} must not reach the Project runtime`,
+    );
+  }
+
+  // Ordinary headers still pass through.
+  assert.equal(outbound.get("content-type"), "application/json");
+  assert.equal(outbound.get("x-request-id"), "keep-me");
+});
+
+test("a Project cannot set cookies on the Platform origin", () => {
+  const inbound = gatewayResponseHeaders(
+    new Headers({
+      "set-cookie": "zelavis_session=attacker_controlled; Path=/",
+      "content-type": "text/html",
+      connection: "close",
+      "transfer-encoding": "chunked",
+    }),
+  );
+
+  assert.equal(inbound.get("set-cookie"), null);
+  assert.equal(inbound.get("connection"), null);
+  assert.equal(inbound.get("transfer-encoding"), null);
+  assert.equal(inbound.get("content-type"), "text/html");
 });
