@@ -25,6 +25,12 @@ export interface ZelavisServerErrorEvent<TService = unknown>
   extends ZelavisServerRequestEvent {
   readonly error: unknown;
   readonly resolvedRoute?: ZelavisResolvedRoute<TService>;
+  /**
+   * Identifier shared with the generic client response for this failure. Log it
+   * alongside the cause so an operator can join a support report to the real
+   * error without the message ever reaching the client.
+   */
+  readonly correlationId?: string;
 }
 
 export interface ZelavisServerCloseEvent {

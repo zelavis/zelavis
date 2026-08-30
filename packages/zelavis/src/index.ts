@@ -21,6 +21,7 @@ import {
 } from "./app/db/index.js";
 import {
   createFabricService,
+  createJsonErrorResponse,
   createMappedJsonErrorResponse,
   createServiceRuntime as mountZelavisServer,
   generateOpenApiSpec,
@@ -3883,10 +3884,7 @@ async function resolvePlatformCoreService(
           : error instanceof ZelavisProjectValidationError
             ? 400
             : 500;
-    return {
-      status,
-      body: { error: error instanceof Error ? error.message : String(error) },
-    };
+    return createJsonErrorResponse(status, error);
   }
 
   function assistantErrorResponse(error: unknown) {
@@ -3896,10 +3894,7 @@ async function resolvePlatformCoreService(
         : error instanceof ZelavisAssistantValidationError
           ? 400
           : 500;
-    return {
-      status,
-      body: { error: error instanceof Error ? error.message : String(error) },
-    };
+    return createJsonErrorResponse(status, error);
   }
 
   return createZelavisCoreService({

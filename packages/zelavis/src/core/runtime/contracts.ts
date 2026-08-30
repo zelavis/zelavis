@@ -280,6 +280,11 @@ export interface ZelavisServerErrorContext<TService = unknown> {
   request: Request;
   executionContext?: ZelavisServerExecutionContext;
   resolvedRoute: ZelavisResolvedRoute<TService>;
+  /**
+   * Identifier shared with the generic client response for this failure, so a
+   * structured log line can be joined to what the caller actually saw.
+   */
+  correlationId?: string;
 }
 
 export type ZelavisServerErrorHandler<TService = unknown> = (
