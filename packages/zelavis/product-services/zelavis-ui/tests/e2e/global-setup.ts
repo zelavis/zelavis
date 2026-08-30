@@ -16,8 +16,10 @@ const runtimeOrigin =
   process.env.ZELAVIS_E2E_RUNTIME_ORIGIN ?? "http://127.0.0.1:3000";
 const bootstrapToken = process.env.ZELAVIS_BOOTSTRAP_TOKEN;
 const ownerEmail = process.env.ZELAVIS_E2E_OWNER_EMAIL ?? "ci@example.com";
-const ownerPassword =
-  process.env.ZELAVIS_E2E_OWNER_PASSWORD ?? "ci-e2e-Passw0rd!";
+// Never defaulted: a checked-in password would be a credential-shaped literal,
+// and a wrong default would fail as "invalid credentials" rather than as the
+// configuration mistake it is.
+const ownerPassword = process.env.ZELAVIS_E2E_OWNER_PASSWORD;
 
 export const storageStatePath = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -40,6 +42,13 @@ function sessionCookieFrom(response: Response): string | undefined {
 }
 
 async function resolveSessionToken(): Promise<string> {
+  if (!ownerPassword) {
+    throw new Error(
+      "ZELAVIS_E2E_OWNER_PASSWORD is required to sign the dashboard e2e owner in. " +
+        "CI generates it per run; set it yourself to run these tests locally.",
+    );
+  }
+
   const status = await fetch(`${authBase}/bootstrap`).then((r) =>
     r.ok ? r.json() : undefined,
   );
