@@ -455,11 +455,22 @@ function hasRole(
   return principal?.roles?.includes(role) ?? false;
 }
 
+/**
+ * Compares a required scope identifier with a granted one.
+ *
+ * Fails closed on either side. An unresolved route parameter must not weaken
+ * the requirement, and a stored grant that omits its identifier must not match
+ * every Project or service of that type. An authority that legitimately spans
+ * all Projects is expressed as a top-level permission (or `"*"`), which is
+ * checked before grants are consulted.
+ */
 function matchScopeValue(
   required: string | undefined,
   granted: string | undefined,
 ): boolean {
-  return required === undefined || granted === undefined || required === granted;
+  return (
+    required !== undefined && granted !== undefined && required === granted
+  );
 }
 
 function resolveAccessScope(

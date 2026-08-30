@@ -776,6 +776,146 @@ const RESERVED_CORE_SERVICE_NAMES = new Set([
   "zelavis-domain-challenge",
 ]);
 
+/**
+ * Headers that must never be relayed in either direction.
+ *
+ * `connection` and friends are hop-by-hop and belong to the single connection
+ * they arrived on. `host` and `content-length` are recomputed by the outbound
+ * fetch.
+ */
+const GATEWAY_HOP_BY_HOP_HEADERS = Object.freeze([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "proxy-connection",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+  "host",
+  "content-length",
+]);
+
+/**
+ * Builds the outbound header set for a Project Gateway request.
+ *
+ * Two classes of header are stripped rather than forwarded:
+ *
+ * - **Platform credentials.** `cookie` and `authorization` authenticate the
+ *   caller to the *Platform*. Relaying them hands the Project runtime — which
+ *   is ordinary Project code, not a trusted peer — a usable Platform session.
+ * - **Client-supplied authority headers.** Every `x-zelavis-*` header is
+ *   removed before the Gateway sets its own, so a caller cannot smuggle in an
+ *   authority claim and have it survive alongside the Gateway's.
+ */
+function gatewayRequestHeaders(source: Headers): Headers {
+  const headers = new Headers(source);
+  for (const header of GATEWAY_HOP_BY_HOP_HEADERS) {
+    headers.delete(header);
+  }
+  headers.delete("cookie");
+  headers.delete("authorization");
+  for (const [name] of [...source]) {
+    if (name.toLowerCase().startsWith("x-zelavis-")) {
+      headers.delete(name);
+    }
+  }
+  return headers;
+}
+
+/**
+ * Builds the response header set returned from a Project Gateway request.
+ *
+ * `set-cookie` is dropped: the response is served from the Platform origin, so
+ * a Project runtime could otherwise overwrite the Platform session cookie or
+ * plant cookies scoped to the Platform. Project-scoped cookies need their own
+ * namespaced contract before they can be relayed.
+ */
+function gatewayResponseHeaders(source: Headers): Headers {
+  const headers = new Headers(source);
+  for (const header of GATEWAY_HOP_BY_HOP_HEADERS) {
+    headers.delete(header);
+  }
+  headers.delete("set-cookie");
+  return headers;
+}
+
+/**
+ * Resolves a Project Gateway wildcard path against a Project runtime URL.
+ *
+ * `new URL(reference, base)` performs URL *reference* resolution, so a
+ * caller-supplied value such as `https:/example.com/pwn` or `\\example.com/pwn`
+ * resolves to a different origin instead of a path beneath the runtime. The
+ * Gateway would then act as a confused deputy and issue the request — with
+ * whatever headers it attached — to a host the caller chose.
+ *
+ * The path is therefore treated as opaque path segments rather than a URL
+ * reference, and the result is asserted to stay on the runtime's own origin and
+ * beneath its base path.
+ *
+ * Returns `undefined` when the path cannot be represented safely.
+ */
+function resolveProxyTarget(
+  runtimeUrl: string,
+  wildcardPath: string,
+): URL | undefined {
+  let base: URL;
+  try {
+    base = new URL(`${runtimeUrl.replace(/\/+$/, "")}/`);
+  } catch {
+    return undefined;
+  }
+
+  // Control characters (CR/LF included) must never reach the outbound request.
+  if (/[\u0000-\u001f\u007f]/.test(wildcardPath)) {
+    return undefined;
+  }
+
+  const segments = wildcardPath.split("/").filter((segment) => segment !== "");
+  const safeSegments: string[] = [];
+  for (const segment of segments) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      // Malformed percent-encoding.
+      return undefined;
+    }
+
+    // Reject traversal and anything that could re-introduce a separator or a
+    // scheme once the segment is re-encoded.
+    if (
+      decoded === "." ||
+      decoded === ".." ||
+      decoded.includes("/") ||
+      decoded.includes("\\") ||
+      /[\u0000-\u001f\u007f]/.test(decoded)
+    ) {
+      return undefined;
+    }
+
+    safeSegments.push(encodeURIComponent(decoded));
+  }
+
+  const target = new URL(base.href);
+  target.pathname = `${base.pathname.replace(/\/+$/, "")}/${safeSegments.join("/")}`;
+
+  // Defence in depth: the construction above cannot change the origin, but
+  // assert it rather than assume it.
+  if (target.origin !== base.origin) {
+    return undefined;
+  }
+  if (
+    target.pathname !== base.pathname.replace(/\/+$/, "") &&
+    !target.pathname.startsWith(base.pathname)
+  ) {
+    return undefined;
+  }
+
+  return target;
+}
+
 function readOptionalProcessEnv(name: string): string | undefined {
   const runtimeProcess = (
     globalThis as typeof globalThis & {
@@ -3941,7 +4081,14 @@ async function resolvePlatformCoreService(
             method,
             path: "/projects/:projectId/proxy/*path",
             access: {
-              permissions: ["project.view"],
+              // A read of the Project runtime is `project.view`; anything that
+              // can change it requires runtime-management authority. Using
+              // `project.view` for every verb made read access a blanket
+              // mutation capability against the child.
+              permissions:
+                method === "GET"
+                  ? ["project.view"]
+                  : ["project.runtime.manage"],
               scope: { type: "project" as const, projectIdParam: "projectId" },
             },
             handler: async ({
@@ -3996,14 +4143,18 @@ async function resolvePlatformCoreService(
                   };
                 }
 
-                const target = new URL(
-                  (params.path ?? "").replace(/^\/+/, ""),
-                  `${project.runtime.url.replace(/\/+$/, "")}/`,
+                const target = resolveProxyTarget(
+                  project.runtime.url,
+                  params.path ?? "",
                 );
+                if (!target) {
+                  return {
+                    status: 400,
+                    body: { error: "Invalid Project proxy path." },
+                  };
+                }
                 target.search = query.toString();
-                const headers = new Headers(request.headers);
-                headers.delete("host");
-                headers.delete("content-length");
+                const headers = gatewayRequestHeaders(request.headers);
                 headers.set(
                   "x-zelavis-platform-scope-id",
                   placement.identity.scopeId,
@@ -4027,9 +4178,7 @@ async function resolvePlatformCoreService(
                   redirect: "manual",
                   ...(body && body.byteLength > 0 ? { body } : {}),
                 });
-                const responseHeaders = new Headers(response.headers);
-                responseHeaders.delete("content-length");
-                responseHeaders.delete("transfer-encoding");
+                const responseHeaders = gatewayResponseHeaders(response.headers);
                 return {
                   status: response.status,
                   headers: responseHeaders,

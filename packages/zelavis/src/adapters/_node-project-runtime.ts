@@ -113,6 +113,51 @@ async function runWithConcurrency<TValue>(
   );
 }
 
+/**
+ * Environment variables a Project child process may inherit from the Platform.
+ *
+ * The local Node driver is operational isolation, not a security sandbox, and
+ * advertises `secureIsolation: false`. That honest limitation still does not
+ * require handing every Project the control plane's entire environment:
+ * inheriting `process.env` wholesale exposes the Platform bootstrap token,
+ * provider credentials, signing keys, database URLs, and unrelated service
+ * secrets to ordinary Project code.
+ *
+ * Only variables a Node process genuinely needs to run are forwarded. Project
+ * configuration is passed explicitly by the driver, and scoped Project secrets
+ * need their own delivery contract rather than ambient inheritance.
+ */
+const INHERITED_PROJECT_ENVIRONMENT = Object.freeze([
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "TEMP",
+  "TMP",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TZ",
+  "NODE_ENV",
+  "NODE_OPTIONS",
+  "NODE_EXTRA_CA_CERTS",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "SystemRoot",
+  "COMSPEC",
+  "PATHEXT",
+]);
+
+function projectProcessEnvironment(): Record<string, string> {
+  const environment: Record<string, string> = {};
+  for (const name of INHERITED_PROJECT_ENVIRONMENT) {
+    const value = process.env[name];
+    if (value !== undefined) {
+      environment[name] = value;
+    }
+  }
+  return environment;
+}
+
 export function createNodeProcessProjectRuntime(
   options: NodeProcessProjectRuntimeOptions,
 ): ZelavisProjectRuntimeDriver {
@@ -256,7 +301,7 @@ export function createNodeProcessProjectRuntime(
       const child = spawn(process.execPath, [runnerPath], {
         cwd: directory,
         env: {
-          ...process.env,
+          ...projectProcessEnvironment(),
           PORT: "0",
           ZELAVIS_PROJECT_ID: project.id,
           ZELAVIS_PROJECT_DATA_DIR: join(directory, ".zelavis"),
