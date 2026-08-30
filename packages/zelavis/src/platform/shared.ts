@@ -38,7 +38,21 @@ export function normalizePathPart(part: string | undefined): string {
     return "";
   }
 
-  return trimmed.replace(/^\/+/, "").replace(/\/+$/, "");
+  return trimSlashes(trimmed);
+}
+
+/**
+ * Trims leading and trailing `/` by scanning.
+ *
+ * `/^\/+/` and `/\/+$/` backtrack quadratically on a long run of separators,
+ * and these values come from request paths.
+ */
+function trimSlashes(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value.charCodeAt(start) === 47) start += 1;
+  while (end > start && value.charCodeAt(end - 1) === 47) end -= 1;
+  return value.slice(start, end);
 }
 
 export function normalizePath(path: string | undefined, fallback: string): string {
