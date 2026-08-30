@@ -83,3 +83,17 @@ instead of reporting `ready`. In fixed replica mode `replicas` is the default
 ceiling, so `{ mode: "fixed", replicas: 3 }` no longer silently resolves to a
 single replica when `maxReplicas` is omitted; an explicit `maxReplicas` still
 caps it.
+
+Service source policy is explicit and opt-in. Remote loading defaulted to on,
+plaintext `http:` shared a flag with `https:`, and `data:` URLs and arbitrary
+filesystem paths were not gated at all. Each scheme is now enabled separately
+through `services.sources`, with everything off by default; code the Platform
+itself installed into its managed service directory is exempt, since it arrived
+through the permission-gated install path. Installing a service remains a
+code-execution-level action — the goal is to make that authority hard to
+misuse, not to imply plugins are sandboxed.
+
+Service package extraction is bounded: entry count, per-entry expansion, total
+expanded bytes, and compression ratio, with duplicate normalized paths and
+ZIP64 archives rejected rather than misread. Extraction uses a
+collision-resistant temporary directory instead of a timestamp.

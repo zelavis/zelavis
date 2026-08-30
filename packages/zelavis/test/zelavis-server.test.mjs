@@ -876,7 +876,12 @@ test("node adapter resolves uploaded service paths through its service cache imp
     );
 
     const app = new Zelavis({
-      adapter: nodeAdapter({ dataDirectory: tempDirectory }),
+      // Registering a service by absolute path executes code from outside the
+      // Platform's managed service directory, so the host must opt in.
+      adapter: nodeAdapter({
+        dataDirectory: tempDirectory,
+        services: { sources: { filesystem: true } },
+      }),
     });
 
     const createResponse = await app.fetch(
