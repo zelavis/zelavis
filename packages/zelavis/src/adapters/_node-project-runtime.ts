@@ -134,6 +134,12 @@ async function runWithConcurrency<TValue>(
  * configuration is passed explicitly by the driver, and scoped Project secrets
  * need their own delivery contract rather than ambient inheritance.
  */
+/** Largest partial stdout line retained while looking for a readiness event. */
+const MAX_CHILD_LINE_BYTES = 64 * 1024;
+
+/** Largest single log message retained per Project. */
+const MAX_CHILD_LOG_MESSAGE_BYTES = 8 * 1024;
+
 const INHERITED_PROJECT_ENVIRONMENT = Object.freeze([
   "PATH",
   "HOME",
@@ -201,10 +207,18 @@ export function createNodeProcessProjectRuntime(
     stream: ZelavisProjectLogEntry["stream"],
     message: string,
   ) {
-    const normalized = message.trimEnd();
-    if (!normalized) {
+    const trimmed = message.trimEnd();
+    if (!trimmed) {
       return;
     }
+    // The log limit counts entries, so a single enormous line could still
+    // retain unbounded memory. Truncate explicitly rather than silently.
+    const normalized =
+      trimmed.length > MAX_CHILD_LOG_MESSAGE_BYTES
+        ? `${trimmed.slice(0, MAX_CHILD_LOG_MESSAGE_BYTES)}… (truncated ${
+            trimmed.length - MAX_CHILD_LOG_MESSAGE_BYTES
+          } bytes)`
+        : trimmed;
     state.logs.push({
       timestamp: new Date().toISOString(),
       stream,
@@ -361,6 +375,17 @@ export function createNodeProcessProjectRuntime(
           stdoutBuffer += chunk.toString("utf8");
           const lines = stdoutBuffer.split("\n");
           stdoutBuffer = lines.pop() ?? "";
+          // A child that never emits a newline would otherwise grow this
+          // buffer without bound. Readiness events are small, so a partial
+          // line beyond the cap is not one and can be discarded.
+          if (stdoutBuffer.length > MAX_CHILD_LINE_BYTES) {
+            appendLog(
+              state,
+              "system",
+              `Discarded an over-long stdout line (> ${MAX_CHILD_LINE_BYTES} bytes).`,
+            );
+            stdoutBuffer = "";
+          }
           for (const line of lines) {
             try {
               const event = JSON.parse(line) as {

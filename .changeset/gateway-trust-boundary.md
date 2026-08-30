@@ -44,3 +44,17 @@ stop, restart, and delete run through a per-Project queue, so a stale write can
 no longer land after a newer one — previously a concurrent stop could write a
 Project record back after deletion had removed it. Stop also refuses a Project
 that is already being deleted.
+
+Resource budgets are explicit where input was previously unbounded. Request
+bodies are read with a byte ceiling and refused with `413` — `Content-Length`
+is checked first as a cheap rejection, but the stream is also measured so a
+lying or absent header cannot bypass the budget. Gateway request and response
+bodies are capped and the downstream request carries a timeout and the caller's
+abort signal. Child stdout no longer retains an unbounded partial line, and an
+over-long log message is truncated explicitly rather than retained whole.
+Fabric placement planning caps batch size, replica counts, identifier lengths,
+and constraint entries.
+
+Error-to-response mapping is centralized. Runtime composition repeated a
+parallel fallback that had already diverged, reporting an oversized body as
+`500` from one path and `413` from the other.

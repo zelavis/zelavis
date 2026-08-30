@@ -9,6 +9,7 @@ import type {
   ZelavisRuntimeService,
 } from "./contracts.js";
 import {
+  toDefaultErrorResponse,
   createZelavisDispatcher,
   createZelavisFetchHandler,
   createZelavisPlainHandler,
@@ -141,12 +142,7 @@ export async function createServiceRuntime<TService = unknown>(
             request,
             executionContext,
             resolvedRoute,
-          })) ?? {
-            status: 500,
-            body: {
-              error: error instanceof Error ? error.message : "Unknown error",
-            },
-          }
+          })) ?? toDefaultErrorResponse(error)
         );
       },
       resolvePrincipal,

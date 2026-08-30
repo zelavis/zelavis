@@ -867,6 +867,18 @@ const ZELAVIS_PROJECT_PERMISSIONS = Object.freeze([
 ]);
 
 /**
+ * Ceiling on a Gateway request or response body.
+ *
+ * Both directions are buffered in full today, so an unbounded body is a memory
+ * exhaustion primitive against the Platform. Streaming with backpressure is the
+ * real fix and is tracked in `TODO.md`; until then the budget is explicit.
+ */
+const ZELAVIS_GATEWAY_MAX_BODY_BYTES = 32 * 1024 * 1024;
+
+/** How long the Platform waits on a Project runtime before giving up. */
+const ZELAVIS_GATEWAY_TIMEOUT_MS = 30_000;
+
+/**
  * Headers that must never be relayed in either direction.
  *
  * `connection` and friends are hop-by-hop and belong to the single connection
@@ -4274,17 +4286,63 @@ async function resolvePlatformCoreService(
                   request.method === "GET" || request.method === "HEAD"
                     ? undefined
                     : await request.clone().arrayBuffer();
-                const response = await fetch(target, {
-                  method: request.method,
-                  headers,
-                  redirect: "manual",
-                  ...(body && body.byteLength > 0 ? { body } : {}),
-                });
+                if (body && body.byteLength > ZELAVIS_GATEWAY_MAX_BODY_BYTES) {
+                  return {
+                    status: 413,
+                    body: {
+                      error: `Project Gateway bodies are limited to ${ZELAVIS_GATEWAY_MAX_BODY_BYTES} bytes.`,
+                    },
+                  };
+                }
+
+                // A child that never answers must not pin a Platform request
+                // open indefinitely, and a caller that goes away should release
+                // the downstream request with it.
+                const timeout = AbortSignal.timeout(
+                  ZELAVIS_GATEWAY_TIMEOUT_MS,
+                );
+                const abort = request.signal
+                  ? AbortSignal.any([request.signal, timeout])
+                  : timeout;
+
+                let response: Response;
+                try {
+                  response = await fetch(target, {
+                    method: request.method,
+                    headers,
+                    redirect: "manual",
+                    signal: abort,
+                    ...(body && body.byteLength > 0 ? { body } : {}),
+                  });
+                } catch (cause) {
+                  if (
+                    cause instanceof Error &&
+                    (cause.name === "TimeoutError" ||
+                      cause.name === "AbortError")
+                  ) {
+                    return {
+                      status: 504,
+                      body: {
+                        error: `Project "${project.id}" did not respond within ${ZELAVIS_GATEWAY_TIMEOUT_MS}ms.`,
+                      },
+                    };
+                  }
+                  throw cause;
+                }
                 const responseHeaders = gatewayResponseHeaders(response.headers);
+                const responseBody = await response.arrayBuffer();
+                if (responseBody.byteLength > ZELAVIS_GATEWAY_MAX_BODY_BYTES) {
+                  return {
+                    status: 502,
+                    body: {
+                      error: `Project "${project.id}" returned a response larger than ${ZELAVIS_GATEWAY_MAX_BODY_BYTES} bytes.`,
+                    },
+                  };
+                }
                 return {
                   status: response.status,
                   headers: responseHeaders,
-                  body: new Uint8Array(await response.arrayBuffer()),
+                  body: new Uint8Array(responseBody),
                 };
               } catch (error) {
                 return projectErrorResponse(error);
