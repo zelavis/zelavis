@@ -36,3 +36,11 @@ Project children no longer inherit the Platform environment. Spawning with all
 of `process.env` exposed the bootstrap token, provider credentials, signing
 keys, and database URLs to Project code; only variables a Node process needs to
 run are forwarded now.
+
+Project lifecycle transitions are serialized. Creation used a read-then-write
+existence check, so two concurrent creates could both provision the same
+identifier; it now claims the identifier atomically with `setIfAbsent`. Start,
+stop, restart, and delete run through a per-Project queue, so a stale write can
+no longer land after a newer one — previously a concurrent stop could write a
+Project record back after deletion had removed it. Stop also refuses a Project
+that is already being deleted.

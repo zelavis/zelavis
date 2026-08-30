@@ -508,6 +508,43 @@ export async function createProjectManager(options: {
     return project;
   }
 
+  /**
+   * Serializes lifecycle transitions per Project.
+   *
+   * Start, stop, restart, and delete each read the record, mutate the child
+   * process, and write the result back. Interleaving two of them lets a stale
+   * write land after a newer one — starting a process during cleanup, or
+   * leaving the System Store disagreeing with the actual child.
+   *
+   * This orders operations within one Platform process. Coordinating multiple
+   * Platform writers additionally needs System Store compare-and-set on a
+   * transition generation, which is tracked in `TODO.md`.
+   */
+  const lifecycleQueues = new Map<string, Promise<unknown>>();
+
+  function withProjectLifecycle<T>(
+    projectId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = lifecycleQueues.get(projectId) ?? Promise.resolve();
+    // Run regardless of how the previous operation settled: one failure must
+    // not wedge the queue for this Project.
+    const result = previous.then(operation, operation);
+    const tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    lifecycleQueues.set(projectId, tail);
+    void tail.then(() => {
+      // Drop the entry only if nothing queued behind us, so the map does not
+      // grow without bound.
+      if (lifecycleQueues.get(projectId) === tail) {
+        lifecycleQueues.delete(projectId);
+      }
+    });
+    return result;
+  }
+
   async function write(project: ZelavisProjectRecord): Promise<ZelavisProjectRecord> {
     await store.set(PROJECTS_NAMESPACE, project.id, toStoreValue(project));
     return project;
@@ -717,9 +754,6 @@ export async function createProjectManager(options: {
     async create(input) {
       const name = normalizeProjectName(input.name);
       const id = normalizeProjectId(input.id ?? name);
-      if (await read(id)) {
-        throw new ZelavisProjectConflictError(`Project "${id}" already exists.`);
-      }
 
       const appServiceName = input.appServiceName?.trim() || DEFAULT_APP_SERVICE_NAME;
       const appService = appServiceMap.get(appServiceName);
@@ -747,7 +781,17 @@ export async function createProjectManager(options: {
         createdAt: now,
         updatedAt: now,
       };
-      await write(project);
+      // Claim the identifier atomically. A read-then-write check is a
+      // time-of-check/time-of-use race: two concurrent creates both observe an
+      // absent Project and both provision it.
+      const claim = await store.setIfAbsent(
+        PROJECTS_NAMESPACE,
+        id,
+        toStoreValue(project),
+      );
+      if (!claim.created) {
+        throw new ZelavisProjectConflictError(`Project "${id}" already exists.`);
+      }
 
       try {
         await runtime.prepare(project, app);
@@ -772,6 +816,7 @@ export async function createProjectManager(options: {
       }
     },
     async start(id) {
+      return withProjectLifecycle(normalizeProjectId(id), async () => {
       let project = await requireProject(id);
       assertProjectIsOperable(project, "started");
       project = await write({
@@ -797,9 +842,14 @@ export async function createProjectManager(options: {
         await write(failed);
         throw error;
       }
+      });
     },
     async stop(id) {
+      return withProjectLifecycle(normalizeProjectId(id), async () => {
       let project = await requireProject(id);
+      // Stopping a Project that is already being deleted would restart the
+      // cleanup lifecycle's work behind it.
+      assertProjectIsOperable(project, "stopped");
       project = await write({
         ...project,
         desiredState: "stopped",
@@ -807,8 +857,10 @@ export async function createProjectManager(options: {
         updatedAt: new Date().toISOString(),
       });
       return write(applySnapshot(project, await runtime.stop(project.id)));
+      });
     },
     async restart(id) {
+      return withProjectLifecycle(normalizeProjectId(id), async () => {
       let project = await requireProject(id);
       assertProjectIsOperable(project, "restarted");
       project = await write({
@@ -840,6 +892,7 @@ export async function createProjectManager(options: {
         await write(failed);
         throw error;
       }
+      });
     },
     async logs(id) {
       await requireProject(id);
@@ -853,9 +906,14 @@ export async function createProjectManager(options: {
     },
     async remove(id) {
       const projectId = normalizeProjectId(id);
+      // Deletion is deduplicated so repeated calls join one cleanup, and it
+      // shares the lifecycle queue so a concurrent start/stop cannot write the
+      // record back after cleanup removed it.
       const current = deletionPromises.get(projectId);
       if (current) return current;
-      const deletion = deleteProject(projectId).finally(() => {
+      const deletion = withProjectLifecycle(projectId, () =>
+        deleteProject(projectId),
+      ).finally(() => {
         deletionPromises.delete(projectId);
       });
       deletionPromises.set(projectId, deletion);
