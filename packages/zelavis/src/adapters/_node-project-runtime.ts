@@ -7,12 +7,10 @@ import {
   createGatewayAuthoritySecret,
   signGatewayAuthority,
   ZELAVIS_GATEWAY_AUTHORITY_TTL_MS,
-  type ZelavisGatewayAuthorityClaims,
 } from "../platform/gateway-authority.js";
 import type {
   ZelavisProjectLogEntry,
   ZelavisProjectApp,
-  ZelavisProjectRecord,
   ZelavisProjectRuntimeDriver,
   ZelavisProjectRuntimeSnapshot,
 } from "../project.js";

@@ -1,7 +1,6 @@
 import { join, resolve } from "node:path";
 import {
   defineAdapter,
-  setServiceManifestResolver,
   type ZelavisOptions,
   type ZelavisResolvedPlatformOptions,
   type ZelavisServiceRegistryEntry,
@@ -59,10 +58,6 @@ export interface BunAdapterOptions {
 }
 
 export function bunAdapter(options: BunAdapterOptions = {}) {
-  // The runtime core does not scan filesystems; the Bun host supplies the
-  // manifest resolver that reads a service's adjacent package.json.
-  setServiceManifestResolver(createLocalRuntimeServiceManifestResolver());
-
   return defineAdapter({
     name: "bun",
     async resolve(
@@ -176,6 +171,9 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
                   directory: serviceDirectory,
                   ...(serviceOptions ?? {}),
                 }),
+                // Supplied per runtime rather than installed process-globally,
+                // so two embedded runtimes cannot affect each other.
+                manifestResolver: createLocalRuntimeServiceManifestResolver(),
               },
         resources: {
           systemStore,

@@ -5,9 +5,7 @@ import {
 } from "../app/db/topology/index.js";
 import {
   defineAdapter,
-  setServiceManifestResolver,
   type ZelavisOptions,
-  type ZelavisServicePackageInstaller,
   type ZelavisResolvedPlatformOptions,
   type ZelavisServiceRegistryEntry,
   type ZelavisServiceSetupContext,
@@ -82,10 +80,6 @@ export const createNodeServiceImporter = createLocalRuntimeServiceImporter;
 
 export function nodeAdapter(options: NodeAdapterOptions = {}) {
   let projectRuntime: ReturnType<typeof createNodeProcessProjectRuntime> | undefined;
-
-  // The runtime core does not scan filesystems; the Node host supplies the
-  // manifest resolver that reads a service's adjacent package.json.
-  setServiceManifestResolver(createLocalRuntimeServiceManifestResolver());
 
   return defineAdapter({
     name: "node",
@@ -223,6 +217,9 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
                   directory: serviceDirectory,
                   ...(serviceOptions ?? {}),
                 }),
+                // Supplied per runtime rather than installed process-globally,
+                // so two embedded runtimes cannot affect each other.
+                manifestResolver: createLocalRuntimeServiceManifestResolver(),
               },
         resources: {
           systemStore,

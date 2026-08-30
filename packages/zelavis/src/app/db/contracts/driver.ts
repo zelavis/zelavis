@@ -1,5 +1,4 @@
 import type {
-  CreateCollectionInput,
   DatabaseCollection,
   DatabaseDocument,
   FindDocumentByIdInput,

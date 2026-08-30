@@ -30,7 +30,6 @@ import {
   type FabricProjectPlacement,
   type FabricServiceOptions,
   type ZelavisServerErrorStatusRule,
-  type ZelavisAnyRuntimeServiceInput,
   type ZelavisServerDispatchHandler,
   type ZelavisServerErrorHandler,
   type ZelavisServerExecutionContext,
@@ -509,6 +508,14 @@ export interface ZelavisServiceRegistryOptions {
   catalog?: readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[];
   store?: ZelavisServiceRegistryStore;
   importer?: ZelavisServiceLoadOptions["importer"];
+  /**
+   * Resolves a `package.json` manifest for a service specifier.
+   *
+   * Supplied per runtime by the host adapter rather than installed process
+   * globally, so two embedded runtimes in one process cannot affect each
+   * other's service loading.
+   */
+  manifestResolver?: ZelavisServiceLoadOptions["manifestResolver"];
 }
 
 export interface ZelavisServiceContextOptions {
@@ -2158,6 +2165,7 @@ const defaultDashboardServiceRegistry = createServiceRegistry<ZelavisServiceSetu
 async function loadStoredServiceRegistryModules(
   entries: readonly ZelavisServiceRegistryStateEntry[] | undefined,
   importer?: ZelavisServiceLoadOptions["importer"],
+  manifestResolver?: ZelavisServiceLoadOptions["manifestResolver"],
 ): Promise<readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[]> {
   const moduleEntries = (entries ?? [])
     .filter((entry) => entry.specifier)
@@ -2180,7 +2188,7 @@ async function loadStoredServiceRegistryModules(
     try {
       const loaded = await loadServiceRegistry<ZelavisServiceSetupContext>(
         [entry],
-        { importer },
+        { importer, ...(manifestResolver ? { manifestResolver } : {}) },
       );
 
       // Runtime-installed services are always extension-scoped regardless of
@@ -2237,6 +2245,7 @@ async function loadStoredServiceRegistryModules(
 async function loadConfiguredServiceRegistryModules(
   entries: readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[],
   importer?: ZelavisServiceLoadOptions["importer"],
+  manifestResolver?: ZelavisServiceLoadOptions["manifestResolver"],
 ): Promise<readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[]> {
   const resolved: Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[] = [];
 
@@ -2257,7 +2266,7 @@ async function loadConfiguredServiceRegistryModules(
             ...(entry.order !== undefined ? { order: entry.order } : {}),
           },
         ],
-        { importer },
+        { importer, ...(manifestResolver ? { manifestResolver } : {}) },
       );
     } catch {
       // The specifier is not resolvable from `zelavis`; the caller supplied the
@@ -2475,12 +2484,6 @@ function renderWebsitePage(page: ZelavisWebsitePage): string {
 </html>`;
 }
 
-function createWebsitePageRouteId(path: string): string {
-  const normalized = normalizePathPart(path);
-  return normalized
-    ? `website.page.${normalized.replaceAll("/", ".")}`
-    : "website.page.home";
-}
 
 function isReservedWebsitePath(path: string, rootPath: string): boolean {
   return (
@@ -2625,6 +2628,7 @@ async function resolveRuntimeManagementCore(
     >[];
     serviceRegistryStore: ZelavisServiceRegistryStore;
     serviceImporter?: ZelavisServiceLoadOptions["importer"];
+    serviceManifestResolver?: ZelavisServiceLoadOptions["manifestResolver"];
     servicePackageInstaller?: ZelavisServicePackageInstaller;
     serviceActivation?: ZelavisServiceActivationController;
     rootPath: string;
@@ -2664,6 +2668,7 @@ async function resolveRuntimeManagementCore(
     const storedServiceRegistry = await loadStoredServiceRegistryModules(
       storedEntries,
       context.serviceImporter,
+      context.serviceManifestResolver,
     );
 
     // Static services (passed directly to zelavis()) are system-scoped — they
@@ -4501,6 +4506,7 @@ export async function zelavis(
       ? await loadConfiguredServiceRegistryModules(
           compositionOptions.serviceRegistry.catalog,
           compositionOptions.serviceRegistry.importer,
+          compositionOptions.serviceRegistry.manifestResolver,
         )
       : defaultDashboardServiceRegistry;
   const systemStore = options.systemStore ?? createMemorySystemStore();
@@ -4513,6 +4519,7 @@ export async function zelavis(
   const storedServiceRegistry = await loadStoredServiceRegistryModules(
     initialServiceRegistryState,
     compositionOptions.serviceRegistry?.importer,
+    compositionOptions.serviceRegistry?.manifestResolver,
   );
   const knownServiceNames = new Set(
     baseServiceRegistry.map((entry) => entry.service.name),
@@ -4652,6 +4659,8 @@ export async function zelavis(
       serviceRegistry,
       serviceRegistryStore,
       serviceImporter: compositionOptions.serviceRegistry?.importer,
+      serviceManifestResolver:
+        compositionOptions.serviceRegistry?.manifestResolver,
       servicePackageInstaller: options.servicePackageInstaller,
       serviceActivation: options.serviceActivation,
       rootPath,
@@ -4783,21 +4792,6 @@ function assertNoInternalConstructorOptions(
   );
 }
 
-function assertNoReservedServiceRuntimeServiceNames(
-  services: readonly ZelavisRuntimeService<any>[],
-): void {
-  const reserved = services
-    .map((service) => service.name)
-    .filter((name) => RESERVED_CORE_SERVICE_NAMES.has(name));
-
-  if (reserved.length === 0) {
-    return;
-  }
-
-  throw new TypeError(
-    `Services cannot register reserved core service names: ${reserved.join(", ")}.`,
-  );
-}
 
 function mergeMaybeRecord<TValue>(
   base: TValue | undefined,

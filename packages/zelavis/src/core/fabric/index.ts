@@ -609,12 +609,6 @@ function isOptionalNonNegativeNumber(value: unknown): boolean {
   );
 }
 
-function isOptionalPositiveInteger(value: unknown): boolean {
-  return (
-    value === undefined ||
-    (typeof value === "number" && Number.isInteger(value) && value >= 1)
-  );
-}
 
 function isStringRecord(
   value: unknown,

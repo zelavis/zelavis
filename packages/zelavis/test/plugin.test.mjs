@@ -436,10 +436,6 @@ test("the runtime core never resolves plugin manifests from a filesystem", async
   const { mkdtemp, writeFile, mkdir } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
-  const {
-    setServiceManifestResolver,
-    getServiceManifestResolver,
-  } = await import("../dist/index.js");
   const { createLocalRuntimeServiceManifestResolver } = await import(
     "../dist/adapters/_local-runtime.js"
   );
@@ -455,50 +451,51 @@ test("the runtime core never resolves plugin manifests from a filesystem", async
       zelavis: { kind: "plugin" },
     }),
   );
-  await writeFile(
-    join(directory, "index.js"),
-    'import { zelavis } from "zelavis/sdk";\n' +
-      'zelavis.menu.create({ title: "Boundary", path: "/boundary" });\n',
+
+  // With no resolver supplied the core must not read package.json at all.
+  await assert.rejects(
+    loadService(directory, {
+      importer: () => {
+        throw new Error("filesystem-free core reached the importer");
+      },
+    }),
+    /filesystem-free core reached the importer/,
   );
 
-  const previous = getServiceManifestResolver();
-  try {
-    // With no resolver installed the core must not read package.json at all.
-    setServiceManifestResolver(undefined);
-    await assert.rejects(
-      loadService(directory, {
-        importer: () => {
-          throw new Error("filesystem-free core reached the importer");
-        },
-      }),
-      /filesystem-free core reached the importer/,
-    );
+  // A local host supplies the resolver explicitly, per call.
+  const resolver = createLocalRuntimeServiceManifestResolver();
+  const manifest = await resolver(directory);
+  assert.equal(manifest.name, "@zelavis/manifest-boundary-fixture");
+  assert.equal(manifest.zelavis.kind, "plugin");
 
-    // A local host installs the resolver explicitly.
-    setServiceManifestResolver(createLocalRuntimeServiceManifestResolver());
-    const resolver = getServiceManifestResolver();
-    const manifest = await resolver(directory);
-    assert.equal(manifest.name, "@zelavis/manifest-boundary-fixture");
-    assert.equal(manifest.zelavis.kind, "plugin");
-
-    // Remote and data specifiers are never treated as filesystem paths.
-    assert.equal(await resolver("https://example.com/plugin.js"), undefined);
-  } finally {
-    setServiceManifestResolver(previous);
-  }
+  // Remote and data specifiers are never treated as filesystem paths.
+  assert.equal(await resolver("https://example.com/plugin.js"), undefined);
+  assert.equal(await resolver("data:text/javascript,export default {}"), undefined);
 });
 
-test("nodeAdapter installs the local manifest resolver into the core", async () => {
-  const { setServiceManifestResolver, getServiceManifestResolver } =
-    await import("../dist/index.js");
+test("manifest resolution is per runtime, not process global", async () => {
   const { nodeAdapter } = await import("../dist/adapters/node.js");
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
 
-  const previous = getServiceManifestResolver();
-  try {
-    setServiceManifestResolver(undefined);
-    nodeAdapter();
-    assert.equal(typeof getServiceManifestResolver(), "function");
-  } finally {
-    setServiceManifestResolver(previous);
-  }
+  // Two adapters in one process must each carry their own resolver rather than
+  // installing one globally, where the second would silently affect the first.
+  const first = nodeAdapter({
+    dataDirectory: await mkdtemp(join(tmpdir(), "zelavis-resolver-a-")),
+  });
+  const second = nodeAdapter({
+    dataDirectory: await mkdtemp(join(tmpdir(), "zelavis-resolver-b-")),
+  });
+
+  const firstOptions = await first.resolve({});
+  const secondOptions = await second.resolve({});
+
+  assert.equal(typeof firstOptions.serviceRegistry?.manifestResolver, "function");
+  assert.equal(typeof secondOptions.serviceRegistry?.manifestResolver, "function");
+  assert.notEqual(
+    firstOptions.serviceRegistry.manifestResolver,
+    secondOptions.serviceRegistry.manifestResolver,
+    "each runtime must own its resolver",
+  );
 });

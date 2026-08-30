@@ -6,12 +6,10 @@ import {
 import {
   createPluginExecutionContext,
   activePluginStorage,
-  type PluginExecutionContext,
 } from "./core/service/context.js";
 import type {
   ZelavisAnyRuntimeServiceInput,
   ZelavisRuntimeService,
-  ZelavisRuntimeServiceMenuDefinition,
 } from "./core/runtime/contracts.js";
 import type { BundleStore } from "./bundle-store.js";
 import type { DomainBindingStore } from "./domain-binding.js";
@@ -145,19 +143,7 @@ export type ZelavisServiceManifestResolver = (
   specifier: string,
 ) => Promise<ZelavisPackageManifest | undefined>;
 
-let installedManifestResolver: ZelavisServiceManifestResolver | undefined;
 
-export function setServiceManifestResolver(
-  resolver: ZelavisServiceManifestResolver | undefined,
-): void {
-  installedManifestResolver = resolver;
-}
-
-export function getServiceManifestResolver():
-  | ZelavisServiceManifestResolver
-  | undefined {
-  return installedManifestResolver;
-}
 
 export interface ZelavisServiceSetupApiContext {
   prefix: string;
@@ -365,7 +351,7 @@ export async function loadService<TContext = unknown>(
 
   // The core never touches a filesystem. A host that can resolve a manifest
   // for this specifier installs a resolver explicitly.
-  const resolver = options.manifestResolver ?? installedManifestResolver;
+  const resolver = options.manifestResolver;
   const manifest = resolver ? await resolver(specifier) : undefined;
 
   if (manifest) {
@@ -511,9 +497,6 @@ export async function activateServiceRegistry<
 
   const addService = (service: ZelavisAnyRuntimeServiceInput) => {
     activatedServices.push(service);
-  };
-  const addServices = (services: readonly ZelavisAnyRuntimeServiceInput[]) => {
-    activatedServices.push(...services);
   };
   const assertCanAddRuntimeService = (
     owner: Readonly<ZelavisServiceRegistryEntry<TContext>["service"]>,

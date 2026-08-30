@@ -97,3 +97,13 @@ Service package extraction is bounded: entry count, per-entry expansion, total
 expanded bytes, and compression ratio, with duplicate normalized paths and
 ZIP64 archives rejected rather than misread. Extraction uses a
 collision-resistant temporary directory instead of a timestamp.
+
+Plugin manifest resolution is supplied per runtime instead of installed
+process-globally, so two embedded runtimes in one process no longer affect each
+other's service loading. The `setServiceManifestResolver` /
+`getServiceManifestResolver` globals are removed.
+
+Confirmed dead code is removed and `noUnusedLocals` is enabled so it cannot
+accumulate again. `noUnusedParameters` stays off deliberately:
+`ZelavisServerFetchHandler<TService>` carries a public generic that callers
+supply even though the declaration body does not reference it.

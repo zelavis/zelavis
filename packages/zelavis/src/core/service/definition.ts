@@ -1,12 +1,8 @@
 import {
-  type ZelavisAnyRuntimeServiceInput,
   type ZelavisMenuFixedActionScope,
-  type ZelavisServerRoute,
-  type ZelavisRuntimeService,
   type ZelavisRuntimeServiceMenuDefinition,
 } from "../runtime/contracts.js";
 
-const serviceNamePattern = /^(?:@[a-z0-9][a-z0-9._-]*\/|zelavis\/)[a-z0-9][a-z0-9._-]*$/;
 const menuFixedActionScopes = [
   "local",
   "inherit",
