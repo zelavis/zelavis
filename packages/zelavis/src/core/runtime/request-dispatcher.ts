@@ -1,3 +1,8 @@
+import {
+  createErrorCorrelationId,
+  genericErrorBody,
+  publicErrorMessage,
+} from "./error-policy.js";
 import type {
   ZelavisAccessDecision,
   ZelavisAccessRequirement,
@@ -165,11 +170,17 @@ function toHeaderRecord(
  * fallback that silently diverges — an oversized body was reported as `500`
  * from one path and `413` from the other.
  */
-export function toDefaultErrorResponse(error: unknown): ZelavisRouteResponse {
-  return defaultErrorResponse(error);
+export function toDefaultErrorResponse(
+  error: unknown,
+  correlationId?: string,
+): ZelavisRouteResponse {
+  return defaultErrorResponse(error, correlationId);
 }
 
-function defaultErrorResponse(error: unknown): ZelavisRouteResponse {
+function defaultErrorResponse(
+  error: unknown,
+  correlationId?: string,
+): ZelavisRouteResponse {
   // An oversized body is a client error with a safe, useful message, not an
   // internal failure.
   if (error instanceof ZelavisRequestBodyTooLargeError) {
@@ -179,11 +190,18 @@ function defaultErrorResponse(error: unknown): ZelavisRouteResponse {
     };
   }
 
+  const message = publicErrorMessage(error);
+  if (message !== undefined) {
+    return { status: 500, body: { error: message } };
+  }
+
+  // An unexpected failure: its message was written for whoever debugs it and
+  // routinely names filesystem paths, module specifiers, or SQL. The cause
+  // reaches structured logs through the error lifecycle event; the client gets
+  // the correlation id that joins them.
   return {
     status: 500,
-    body: {
-      error: error instanceof Error ? error.message : "Unknown error",
-    },
+    body: genericErrorBody(correlationId ?? createErrorCorrelationId()),
   };
 }
 

@@ -8,6 +8,7 @@ import type {
   ZelavisServerRuntime,
   ZelavisRuntimeService,
 } from "./contracts.js";
+import { createErrorCorrelationId } from "./error-policy.js";
 import {
   toDefaultErrorResponse,
   createZelavisDispatcher,
@@ -130,11 +131,15 @@ export async function createServiceRuntime<TService = unknown>(
     const baseDispatch = createZelavisDispatcher(resolvedRoutes, {
       authorize: options.authorize,
       onError: async ({ error, request, executionContext, resolvedRoute }) => {
+        // Generated before the event so the logged cause and the client's
+        // generic response carry the same id.
+        const correlationId = createErrorCorrelationId();
         await lifecycle.emit("error", {
           error,
           request,
           context: executionContext,
           resolvedRoute,
+          correlationId,
         });
         return (
           (await options.onError?.({
@@ -142,7 +147,8 @@ export async function createServiceRuntime<TService = unknown>(
             request,
             executionContext,
             resolvedRoute,
-          })) ?? toDefaultErrorResponse(error)
+            correlationId,
+          })) ?? toDefaultErrorResponse(error, correlationId)
         );
       },
       resolvePrincipal,

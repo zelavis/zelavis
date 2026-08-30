@@ -1,3 +1,4 @@
+import { createJsonErrorResponse } from "../../core/runtime/http-errors.js";
 import type {
   ZelavisRouteContext,
   ZelavisRuntimeService,
@@ -152,12 +153,9 @@ function readWorkloadType(value: unknown): WorkloadType {
 }
 
 function jsonError(error: unknown, status = 400) {
-  return {
-    status,
-    body: {
-      error: error instanceof Error ? error.message : String(error),
-    },
-  };
+  // Shared policy: 4xx keeps the caller-facing message, 5xx is genericized
+  // unless it is a typed domain error.
+  return createJsonErrorResponse(status, error);
 }
 
 function normalizeRoutePath(path: string | undefined) {

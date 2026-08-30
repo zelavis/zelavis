@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { defineAdapter, Zelavis } from "../index.js";
 import { closeNodeServer, createNodeServer } from "../runtimes/node.js";
+import { toDefaultErrorResponse } from "../core/runtime/request-dispatcher.js";
 import { nodeAdapter } from "./node.js";
 import {
   createGatewayNonceTracker,
@@ -121,10 +122,10 @@ const zv = new Zelavis({
       };
     },
   }),
-  onError: ({ error }) => ({
-    status: 400,
-    body: { error: error instanceof Error ? error.message : "Unknown error" },
-  }),
+  // Without this the child answers every failure as a 400 carrying the raw
+  // exception message, which bypasses the runtime's disclosure policy.
+  onError: ({ error, correlationId }) =>
+    toDefaultErrorResponse(error, correlationId),
 });
 const server = await createNodeServer(zv);
 
