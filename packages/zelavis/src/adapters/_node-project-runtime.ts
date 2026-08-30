@@ -2,6 +2,13 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  createGatewayAuthorityNonce,
+  createGatewayAuthoritySecret,
+  signGatewayAuthority,
+  ZELAVIS_GATEWAY_AUTHORITY_TTL_MS,
+  type ZelavisGatewayAuthorityClaims,
+} from "../platform/gateway-authority.js";
 import type {
   ZelavisProjectLogEntry,
   ZelavisProjectApp,
@@ -174,6 +181,14 @@ export function createNodeProcessProjectRuntime(
   const logLimit = options.logLimit ?? DEFAULT_LOG_LIMIT;
   const runnerPath = fileURLToPath(new URL("./_node-project-runner.js", import.meta.url));
   const processes = new Map<string, NodeProjectProcess>();
+  /**
+   * Per-runtime Gateway signing secrets.
+   *
+   * Held only in memory: the secret authenticates the Platform to one child
+   * process, so it must not reach the persisted Project record or the System
+   * Store, and it dies with the process that issued it.
+   */
+  const gatewaySecrets = new Map<string, string>();
   let closed = false;
   let closePromise: Promise<void> | undefined;
 
@@ -298,11 +313,17 @@ export function createNodeProcessProjectRuntime(
       processes.set(project.id, state);
       appendLog(state, "system", `Starting ${project.name} with ${driver.name}.`);
 
+      // A fresh secret per start: a restarted runtime never accepts envelopes
+      // signed for its previous process.
+      const gatewaySecret = createGatewayAuthoritySecret();
+      gatewaySecrets.set(project.id, gatewaySecret);
+
       const child = spawn(process.execPath, [runnerPath], {
         cwd: directory,
         env: {
           ...projectProcessEnvironment(),
           PORT: "0",
+          ZELAVIS_PROJECT_GATEWAY_SECRET: gatewaySecret,
           ZELAVIS_PROJECT_ID: project.id,
           ZELAVIS_PROJECT_DATA_DIR: join(directory, ".zelavis"),
           ZELAVIS_UI_DEV_SERVER: "",
@@ -424,6 +445,7 @@ export function createNodeProcessProjectRuntime(
       appendLog(state, "system", "Stopping project.");
       state.child.kill("SIGTERM");
       await waitForExit(state.child, 5_000);
+      gatewaySecrets.delete(projectId);
       state.snapshot = stoppedSnapshot(state);
       return state.snapshot;
     },
@@ -433,9 +455,20 @@ export function createNodeProcessProjectRuntime(
     async logs(projectId) {
       return [...(processes.get(projectId)?.logs ?? [])];
     },
+    async signGatewayAuthority(projectId, claims) {
+      const secret = gatewaySecrets.get(projectId);
+      // No running child means nothing to authorize against.
+      if (!secret) return undefined;
+      return signGatewayAuthority(secret, {
+        ...claims,
+        nonce: createGatewayAuthorityNonce(),
+        expiresAt: Date.now() + ZELAVIS_GATEWAY_AUTHORITY_TTL_MS,
+      });
+    },
     async destroy(projectId) {
       await driver.stop(projectId);
       processes.delete(projectId);
+      gatewaySecrets.delete(projectId);
       await rm(projectDirectory(projectId), { recursive: true, force: true });
     },
     close() {

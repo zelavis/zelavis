@@ -25,6 +25,13 @@ Scope matching fails closed. A stored grant that omitted its `projectId` or
 `serviceName` matched every Project or service of that type, and an unresolved
 route parameter weakened the requirement instead of denying it.
 
+Project runtimes no longer derive authority from unsigned headers. Four
+ordinary request headers produced a `permissions: ["*"]` system principal, and
+the runtime listens on loopback, so any local process could assert them.
+Authority is now a short-lived envelope signed with a per-runtime secret,
+verified for audience, expiry, and single use, and carrying the caller's own
+Project permissions rather than a wildcard.
+
 Project children no longer inherit the Platform environment. Spawning with all
 of `process.env` exposed the bootstrap token, provider credentials, signing
 keys, and database URLs to Project code; only variables a Node process needs to

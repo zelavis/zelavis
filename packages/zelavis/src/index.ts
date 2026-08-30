@@ -38,6 +38,7 @@ import {
   type ZelavisServerPlainHandler,
   type ZelavisServerRoute,
   type ZelavisServerRuntime,
+  type ZelavisPrincipal,
   type ZelavisPrincipalResolver,
   type ZelavisRuntimeService,
 } from "./core/index.js";
@@ -47,6 +48,7 @@ import {
   defaultZelavisDashboardClientRoutes,
 } from "@zelavis/ui/service";
 import { createZelavisCoreService } from "./platform/core-service.js";
+import { ZELAVIS_GATEWAY_AUTHORITY_HEADER } from "./platform/gateway-authority.js";
 import { marketplaceService } from "./platform/marketplace-service.js";
 import {
   workloadsService,
@@ -774,6 +776,94 @@ const RESERVED_CORE_SERVICE_NAMES = new Set([
   "@zelavis/website",
   "@zelavis/workloads",
   "zelavis-domain-challenge",
+]);
+
+/**
+ * Builds the permission set forwarded into a Project runtime.
+ *
+ * The Gateway sends the caller's real authority instead of a wildcard, so the
+ * child enforces its own route requirements against the actual caller. A global
+ * `"*"` is not expanded into a downstream wildcard: concrete permissions are
+ * listed, keeping the envelope bounded and auditable.
+ *
+ * Inside a Project runtime the Project *is* the system, so a Project-scoped
+ * Platform permission maps onto the runtime's own `system.*` requirement.
+ * `system.services.manage` is deliberately excluded from that mapping: it
+ * installs and executes host code, so it is forwarded only when the caller
+ * holds it at Platform level rather than inferred from Project scope.
+ */
+function projectRuntimePermissions(
+  principal: ZelavisPrincipal | undefined,
+  projectId: string,
+): readonly string[] {
+  if (!principal) return [];
+
+  const granted = new Set<string>();
+  const global = principal.permissions ?? [];
+  const hasGlobalWildcard = global.includes("*");
+
+  const addProjectAuthority = (permission: string) => {
+    granted.add(permission);
+    const mapped = ZELAVIS_PROJECT_TO_RUNTIME_PERMISSION[permission];
+    if (mapped) granted.add(mapped);
+  };
+
+  for (const permission of global) {
+    if (permission === "*") continue;
+    addProjectAuthority(permission);
+  }
+
+  for (const grant of principal.grants ?? []) {
+    const scope = grant.scope;
+    const appliesToProject =
+      scope === undefined ||
+      (scope.type === "project" && scope.projectId === projectId);
+    if (!appliesToProject) continue;
+    if (grant.permission === "*") {
+      for (const permission of ZELAVIS_PROJECT_PERMISSIONS) {
+        addProjectAuthority(permission);
+      }
+      continue;
+    }
+    addProjectAuthority(grant.permission);
+  }
+
+  if (hasGlobalWildcard) {
+    for (const permission of ZELAVIS_PROJECT_PERMISSIONS) {
+      addProjectAuthority(permission);
+    }
+    // A Platform-wide wildcard does include host-code authority.
+    granted.add("system.services.manage");
+  }
+
+  return [...granted].sort();
+}
+
+/**
+ * How a Project-scoped Platform permission appears inside the Project runtime,
+ * where the Project is its own system.
+ */
+const ZELAVIS_PROJECT_TO_RUNTIME_PERMISSION: Readonly<Record<string, string>> =
+  Object.freeze({
+    "project.settings.manage": "system.settings.manage",
+    "project.users.manage": "system.users.manage",
+  });
+
+/**
+ * Project-scoped permissions a wildcard authority expands to.
+ *
+ * Listing them explicitly keeps a forwarded envelope bounded: a future
+ * permission is not silently granted to every Project runtime because someone
+ * held `"*"` on the Platform.
+ */
+const ZELAVIS_PROJECT_PERMISSIONS = Object.freeze([
+  "project.delete",
+  "project.logs.read",
+  "project.runtime.manage",
+  "project.settings.manage",
+  "project.users.manage",
+  "project.view",
+  "project.website.manage",
 ]);
 
 /**
@@ -4095,10 +4185,12 @@ async function resolvePlatformCoreService(
               params,
               query,
               request,
+              principal,
             }: {
               params: Record<string, string>;
               query: URLSearchParams;
               request: Request;
+              principal?: ZelavisPrincipal;
             }) => {
               if (!projects) {
                 return unavailableProjectsResponse();
@@ -4155,19 +4247,29 @@ async function resolvePlatformCoreService(
                 }
                 target.search = query.toString();
                 const headers = gatewayRequestHeaders(request.headers);
-                headers.set(
-                  "x-zelavis-platform-scope-id",
-                  placement.identity.scopeId,
+                // The runtime listens on loopback, so plain headers cannot
+                // establish who the caller is. Authority is carried in a
+                // short-lived envelope signed with a per-runtime secret, and
+                // it carries the caller's own Project permissions rather than
+                // a wildcard, so proxying never amplifies authority.
+                const authority = await projects.signGatewayAuthority(
+                  project.id,
+                  {
+                    projectId: project.id,
+                    scopeId: placement.identity.scopeId,
+                    generation: placement.generation,
+                    runtimeNodeId: placement.runtimeNodeId,
+                    subject: principal?.id ?? "anonymous",
+                    subjectType: principal?.type ?? "anonymous",
+                    permissions: projectRuntimePermissions(
+                      principal,
+                      project.id,
+                    ),
+                  },
                 );
-                headers.set("x-zelavis-project-id", project.id);
-                headers.set(
-                  "x-zelavis-placement-generation",
-                  String(placement.generation),
-                );
-                headers.set(
-                  "x-zelavis-runtime-node-id",
-                  placement.runtimeNodeId,
-                );
+                if (authority) {
+                  headers.set(ZELAVIS_GATEWAY_AUTHORITY_HEADER, authority);
+                }
                 const body =
                   request.method === "GET" || request.method === "HEAD"
                     ? undefined

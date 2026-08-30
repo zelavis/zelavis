@@ -100,6 +100,29 @@ export interface ZelavisProjectRuntimeDriver {
   logs(projectId: string): Promise<readonly ZelavisProjectLogEntry[]>;
   destroy(projectId: string): Promise<void>;
   close(): Promise<void>;
+  /**
+   * Signs a Project Gateway authority envelope for a running runtime.
+   *
+   * Optional: a driver that cannot authenticate the Platform to its runtime
+   * simply omits this, and the Gateway then forwards no authority at all
+   * rather than an unauthenticated claim. Returns `undefined` when the Project
+   * is not running.
+   */
+  signGatewayAuthority?(
+    projectId: string,
+    claims: ZelavisProjectGatewayAuthorityInput,
+  ): Promise<string | undefined>;
+}
+
+/** Claims the Gateway supplies; the driver adds expiry and nonce when signing. */
+export interface ZelavisProjectGatewayAuthorityInput {
+  readonly projectId: string;
+  readonly scopeId: string;
+  readonly generation: number;
+  readonly runtimeNodeId: string;
+  readonly subject: string;
+  readonly subjectType: string;
+  readonly permissions: readonly string[];
 }
 
 export interface ZelavisProjectCreateInput {
@@ -121,6 +144,11 @@ export interface ZelavisProjectManager {
   restart(id: string): Promise<ZelavisProjectRecord>;
   logs(id: string): Promise<readonly ZelavisProjectLogEntry[]>;
   remove(id: string): Promise<boolean>;
+  /** See `ZelavisProjectRuntimeDriver.signGatewayAuthority`. */
+  signGatewayAuthority(
+    projectId: string,
+    claims: ZelavisProjectGatewayAuthorityInput,
+  ): Promise<string | undefined>;
   reconcile(): Promise<void>;
   close(): Promise<void>;
 }
@@ -816,6 +844,12 @@ export async function createProjectManager(options: {
     async logs(id) {
       await requireProject(id);
       return runtime.logs(normalizeProjectId(id));
+    },
+    async signGatewayAuthority(projectId, claims) {
+      return runtime.signGatewayAuthority?.(
+        normalizeProjectId(projectId),
+        claims,
+      );
     },
     async remove(id) {
       const projectId = normalizeProjectId(id);
