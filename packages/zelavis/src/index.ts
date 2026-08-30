@@ -38,7 +38,6 @@ import {
   type ZelavisServerPlainHandler,
   type ZelavisServerRoute,
   type ZelavisServerRuntime,
-  type ZelavisPrincipal,
   type ZelavisPrincipalResolver,
   type ZelavisRuntimeService,
 } from "./core/index.js";
@@ -48,7 +47,15 @@ import {
   defaultZelavisDashboardClientRoutes,
 } from "@zelavis/ui/service";
 import { createZelavisCoreService } from "./platform/core-service.js";
-import { ZELAVIS_GATEWAY_AUTHORITY_HEADER } from "./platform/gateway-authority.js";
+import { createProjectGatewayRoutes } from "./platform/project-gateway.js";
+import {
+  normalizePath,
+  normalizePathPart,
+  readBodyObject,
+  ZelavisConflictError,
+  ZelavisDomainError,
+  ZelavisValidationError,
+} from "./platform/shared.js";
 import { marketplaceService } from "./platform/marketplace-service.js";
 import {
   workloadsService,
@@ -123,6 +130,24 @@ export {
   type ZelavisRuntimeService,
 } from "./core/index.js";
 
+export type {
+  ZelavisWebsiteAction,
+  ZelavisWebsiteCard,
+  ZelavisWebsitePage,
+  ZelavisWebsitePagesStore,
+} from "./platform/website.js";
+import type {
+  ZelavisWebsitePage,
+  ZelavisWebsitePagesStore,
+} from "./platform/website.js";
+import {
+  isReservedWebsitePath,
+  normalizeWebsitePages,
+  parseStoredWebsitePages,
+  renderWebsitePage,
+  serializeWebsitePage,
+} from "./platform/website.js";
+
 export type ZelavisAuthCoreServiceOptions = boolean | AuthServiceOptions;
 
 export interface ZelavisDashboardCoreServiceOptions {
@@ -137,36 +162,6 @@ export type ZelavisDashboardCoreServiceInput =
   | boolean
   | ZelavisDashboardCoreServiceOptions;
 
-export interface ZelavisWebsiteAction {
-  label: string;
-  href: string;
-  variant?: "primary" | "secondary";
-}
-
-export interface ZelavisWebsiteCard {
-  title: string;
-  description: string;
-  href?: string;
-}
-
-export interface ZelavisWebsitePage {
-  path: string;
-  title: string;
-  kicker?: string;
-  headline?: string;
-  description?: string;
-  actions?: readonly ZelavisWebsiteAction[];
-  cards?: readonly ZelavisWebsiteCard[];
-}
-
-export interface ZelavisWebsitePagesStore {
-  read: () =>
-    | Promise<readonly ZelavisWebsitePage[]>
-    | readonly ZelavisWebsitePage[];
-  write: (
-    pages: readonly ZelavisWebsitePage[],
-  ) => Promise<readonly ZelavisWebsitePage[]> | readonly ZelavisWebsitePage[];
-}
 
 export interface ZelavisWebsiteCoreServiceOptions {
   pagesStore?: ZelavisWebsitePagesStore;
@@ -188,26 +183,6 @@ export type ZelavisWorkloadsCoreServiceInput =
   | boolean
   | WorkloadsServiceOptions;
 
-class ZelavisDomainError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ZelavisDomainError";
-  }
-}
-
-class ZelavisValidationError extends ZelavisDomainError {
-  constructor(message: string) {
-    super(message);
-    this.name = "ZelavisValidationError";
-  }
-}
-
-class ZelavisConflictError extends ZelavisDomainError {
-  constructor(message: string) {
-    super(message);
-    this.name = "ZelavisConflictError";
-  }
-}
 
 function parseStoredDashboardSettingsUpdate(
   input: Record<string, unknown>,
@@ -786,245 +761,6 @@ const RESERVED_CORE_SERVICE_NAMES = new Set([
   "zelavis-domain-challenge",
 ]);
 
-/**
- * Builds the permission set forwarded into a Project runtime.
- *
- * The Gateway sends the caller's real authority instead of a wildcard, so the
- * child enforces its own route requirements against the actual caller. A global
- * `"*"` is not expanded into a downstream wildcard: concrete permissions are
- * listed, keeping the envelope bounded and auditable.
- *
- * Inside a Project runtime the Project *is* the system, so a Project-scoped
- * Platform permission maps onto the runtime's own `system.*` requirement.
- * `system.services.manage` is deliberately excluded from that mapping: it
- * installs and executes host code, so it is forwarded only when the caller
- * holds it at Platform level rather than inferred from Project scope.
- */
-function projectRuntimePermissions(
-  principal: ZelavisPrincipal | undefined,
-  projectId: string,
-): readonly string[] {
-  if (!principal) return [];
-
-  const granted = new Set<string>();
-  const global = principal.permissions ?? [];
-  const hasGlobalWildcard = global.includes("*");
-
-  const addProjectAuthority = (permission: string) => {
-    granted.add(permission);
-    const mapped = ZELAVIS_PROJECT_TO_RUNTIME_PERMISSION[permission];
-    if (mapped) granted.add(mapped);
-  };
-
-  for (const permission of global) {
-    if (permission === "*") continue;
-    addProjectAuthority(permission);
-  }
-
-  for (const grant of principal.grants ?? []) {
-    const scope = grant.scope;
-    const appliesToProject =
-      scope === undefined ||
-      (scope.type === "project" && scope.projectId === projectId);
-    if (!appliesToProject) continue;
-    if (grant.permission === "*") {
-      for (const permission of ZELAVIS_PROJECT_PERMISSIONS) {
-        addProjectAuthority(permission);
-      }
-      continue;
-    }
-    addProjectAuthority(grant.permission);
-  }
-
-  if (hasGlobalWildcard) {
-    for (const permission of ZELAVIS_PROJECT_PERMISSIONS) {
-      addProjectAuthority(permission);
-    }
-    // A Platform-wide wildcard does include host-code authority.
-    granted.add("system.services.manage");
-  }
-
-  return [...granted].sort();
-}
-
-/**
- * How a Project-scoped Platform permission appears inside the Project runtime,
- * where the Project is its own system.
- */
-const ZELAVIS_PROJECT_TO_RUNTIME_PERMISSION: Readonly<Record<string, string>> =
-  Object.freeze({
-    "project.settings.manage": "system.settings.manage",
-    "project.users.manage": "system.users.manage",
-  });
-
-/**
- * Project-scoped permissions a wildcard authority expands to.
- *
- * Listing them explicitly keeps a forwarded envelope bounded: a future
- * permission is not silently granted to every Project runtime because someone
- * held `"*"` on the Platform.
- */
-const ZELAVIS_PROJECT_PERMISSIONS = Object.freeze([
-  "project.delete",
-  "project.logs.read",
-  "project.runtime.manage",
-  "project.settings.manage",
-  "project.users.manage",
-  "project.view",
-  "project.website.manage",
-]);
-
-/**
- * Ceiling on a Gateway request or response body.
- *
- * Both directions are buffered in full today, so an unbounded body is a memory
- * exhaustion primitive against the Platform. Streaming with backpressure is the
- * real fix and is tracked in `TODO.md`; until then the budget is explicit.
- */
-const ZELAVIS_GATEWAY_MAX_BODY_BYTES = 32 * 1024 * 1024;
-
-/** How long the Platform waits on a Project runtime before giving up. */
-const ZELAVIS_GATEWAY_TIMEOUT_MS = 30_000;
-
-/**
- * Headers that must never be relayed in either direction.
- *
- * `connection` and friends are hop-by-hop and belong to the single connection
- * they arrived on. `host` and `content-length` are recomputed by the outbound
- * fetch.
- */
-const GATEWAY_HOP_BY_HOP_HEADERS = Object.freeze([
-  "connection",
-  "keep-alive",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "proxy-connection",
-  "te",
-  "trailer",
-  "transfer-encoding",
-  "upgrade",
-  "host",
-  "content-length",
-]);
-
-/**
- * Builds the outbound header set for a Project Gateway request.
- *
- * Two classes of header are stripped rather than forwarded:
- *
- * - **Platform credentials.** `cookie` and `authorization` authenticate the
- *   caller to the *Platform*. Relaying them hands the Project runtime — which
- *   is ordinary Project code, not a trusted peer — a usable Platform session.
- * - **Client-supplied authority headers.** Every `x-zelavis-*` header is
- *   removed before the Gateway sets its own, so a caller cannot smuggle in an
- *   authority claim and have it survive alongside the Gateway's.
- */
-function gatewayRequestHeaders(source: Headers): Headers {
-  const headers = new Headers(source);
-  for (const header of GATEWAY_HOP_BY_HOP_HEADERS) {
-    headers.delete(header);
-  }
-  headers.delete("cookie");
-  headers.delete("authorization");
-  for (const [name] of [...source]) {
-    if (name.toLowerCase().startsWith("x-zelavis-")) {
-      headers.delete(name);
-    }
-  }
-  return headers;
-}
-
-/**
- * Builds the response header set returned from a Project Gateway request.
- *
- * `set-cookie` is dropped: the response is served from the Platform origin, so
- * a Project runtime could otherwise overwrite the Platform session cookie or
- * plant cookies scoped to the Platform. Project-scoped cookies need their own
- * namespaced contract before they can be relayed.
- */
-function gatewayResponseHeaders(source: Headers): Headers {
-  const headers = new Headers(source);
-  for (const header of GATEWAY_HOP_BY_HOP_HEADERS) {
-    headers.delete(header);
-  }
-  headers.delete("set-cookie");
-  return headers;
-}
-
-/**
- * Resolves a Project Gateway wildcard path against a Project runtime URL.
- *
- * `new URL(reference, base)` performs URL *reference* resolution, so a
- * caller-supplied value such as `https:/example.com/pwn` or `\\example.com/pwn`
- * resolves to a different origin instead of a path beneath the runtime. The
- * Gateway would then act as a confused deputy and issue the request — with
- * whatever headers it attached — to a host the caller chose.
- *
- * The path is therefore treated as opaque path segments rather than a URL
- * reference, and the result is asserted to stay on the runtime's own origin and
- * beneath its base path.
- *
- * Returns `undefined` when the path cannot be represented safely.
- */
-function resolveProxyTarget(
-  runtimeUrl: string,
-  wildcardPath: string,
-): URL | undefined {
-  let base: URL;
-  try {
-    base = new URL(`${runtimeUrl.replace(/\/+$/, "")}/`);
-  } catch {
-    return undefined;
-  }
-
-  // Control characters (CR/LF included) must never reach the outbound request.
-  if (/[\u0000-\u001f\u007f]/.test(wildcardPath)) {
-    return undefined;
-  }
-
-  const segments = wildcardPath.split("/").filter((segment) => segment !== "");
-  const safeSegments: string[] = [];
-  for (const segment of segments) {
-    let decoded: string;
-    try {
-      decoded = decodeURIComponent(segment);
-    } catch {
-      // Malformed percent-encoding.
-      return undefined;
-    }
-
-    // Reject traversal and anything that could re-introduce a separator or a
-    // scheme once the segment is re-encoded.
-    if (
-      decoded === "." ||
-      decoded === ".." ||
-      decoded.includes("/") ||
-      decoded.includes("\\") ||
-      /[\u0000-\u001f\u007f]/.test(decoded)
-    ) {
-      return undefined;
-    }
-
-    safeSegments.push(encodeURIComponent(decoded));
-  }
-
-  const target = new URL(base.href);
-  target.pathname = `${base.pathname.replace(/\/+$/, "")}/${safeSegments.join("/")}`;
-
-  // Defence in depth: the construction above cannot change the origin, but
-  // assert it rather than assume it.
-  if (target.origin !== base.origin) {
-    return undefined;
-  }
-  if (
-    target.pathname !== base.pathname.replace(/\/+$/, "") &&
-    !target.pathname.startsWith(base.pathname)
-  ) {
-    return undefined;
-  }
-
-  return target;
-}
 
 function readOptionalProcessEnv(name: string): string | undefined {
   const runtimeProcess = (
@@ -1041,36 +777,7 @@ function readOptionalProcessEnv(name: string): string | undefined {
   return runtimeProcess?.env?.[name];
 }
 
-function normalizePathPart(part: string | undefined): string {
-  if (!part) {
-    return "";
-  }
 
-  const trimmed = part.trim();
-  if (!trimmed || trimmed === "/") {
-    return "";
-  }
-
-  return trimmed.replace(/^\/+/, "").replace(/\/+$/, "");
-}
-
-function normalizePath(path: string | undefined, fallback: string): string {
-  if (path === undefined) {
-    return fallback;
-  }
-
-  const trimmed = path.trim();
-  if (!trimmed) {
-    return fallback;
-  }
-
-  if (trimmed === "/") {
-    return "/";
-  }
-
-  const normalized = normalizePathPart(trimmed);
-  return normalized ? `/${normalized}` : fallback;
-}
 
 function normalizeEditableRootPath(
   path: string | undefined,
@@ -1141,14 +848,6 @@ function guessServiceAssetContentType(path: string): string {
   );
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
 
 function normalizeExternalUrl(value: string | undefined): string | undefined {
   if (!value) {
@@ -1208,11 +907,6 @@ function toIsoDate(value: Date | undefined): string | undefined {
   return value ? value.toISOString() : undefined;
 }
 
-function readBodyObject(body: unknown): Record<string, unknown> {
-  return body && typeof body === "object" && !Array.isArray(body)
-    ? (body as Record<string, unknown>)
-    : {};
-}
 
 function toSystemStoreValue(value: unknown): ZelavisSystemStoreValue {
   return JSON.parse(JSON.stringify(value)) as ZelavisSystemStoreValue;
@@ -1404,208 +1098,6 @@ async function ensureDatabaseCollection(
 
     throw error;
   }
-}
-
-function normalizeStoredWebsiteAction(
-  value: unknown,
-): ZelavisWebsiteAction | undefined {
-  const input = readBodyObject(value);
-  const label = typeof input.label === "string" ? input.label.trim() : "";
-  const href = typeof input.href === "string" ? input.href.trim() : "";
-  const variant =
-    input.variant === "primary" || input.variant === "secondary"
-      ? input.variant
-      : undefined;
-
-  if (!label || !href) {
-    return undefined;
-  }
-
-  return {
-    label,
-    href,
-    ...(variant ? { variant } : {}),
-  };
-}
-
-function normalizeStoredWebsiteCard(
-  value: unknown,
-): ZelavisWebsiteCard | undefined {
-  const input = readBodyObject(value);
-  const title = typeof input.title === "string" ? input.title.trim() : "";
-  const description =
-    typeof input.description === "string" ? input.description.trim() : "";
-  const href =
-    typeof input.href === "string" && input.href.trim()
-      ? input.href.trim()
-      : undefined;
-
-  if (!title || !description) {
-    return undefined;
-  }
-
-  return {
-    title,
-    description,
-    ...(href ? { href } : {}),
-  };
-}
-
-function parseStoredWebsiteAction(value: unknown): ZelavisWebsiteAction {
-  const action = normalizeStoredWebsiteAction(value);
-  if (!action) {
-    throw new ZelavisValidationError(
-      "Stored website actions require a label and href.",
-    );
-  }
-
-  return action;
-}
-
-function parseStoredWebsiteCard(value: unknown): ZelavisWebsiteCard {
-  const card = normalizeStoredWebsiteCard(value);
-  if (!card) {
-    throw new ZelavisValidationError(
-      "Stored website cards require a title and description.",
-    );
-  }
-
-  return card;
-}
-
-function normalizeStoredWebsitePage(
-  value: unknown,
-): ZelavisWebsitePage | undefined {
-  const input = readBodyObject(value);
-  const path = normalizePath(
-    typeof input.path === "string" ? input.path : undefined,
-    "",
-  );
-  const title = typeof input.title === "string" ? input.title.trim() : "";
-  const kicker =
-    typeof input.kicker === "string" && input.kicker.trim()
-      ? input.kicker.trim()
-      : undefined;
-  const headline =
-    typeof input.headline === "string" && input.headline.trim()
-      ? input.headline.trim()
-      : undefined;
-  const description =
-    typeof input.description === "string" && input.description.trim()
-      ? input.description.trim()
-      : undefined;
-  const actions = Array.isArray(input.actions)
-    ? input.actions
-        .map((action) => normalizeStoredWebsiteAction(action))
-        .filter((action): action is ZelavisWebsiteAction => Boolean(action))
-    : undefined;
-  const cards = Array.isArray(input.cards)
-    ? input.cards
-        .map((card) => normalizeStoredWebsiteCard(card))
-        .filter((card): card is ZelavisWebsiteCard => Boolean(card))
-    : undefined;
-
-  if (!path || !title) {
-    return undefined;
-  }
-
-  return {
-    path,
-    title,
-    ...(kicker ? { kicker } : {}),
-    ...(headline ? { headline } : {}),
-    ...(description ? { description } : {}),
-    ...(actions && actions.length > 0 ? { actions } : {}),
-    ...(cards && cards.length > 0 ? { cards } : {}),
-  };
-}
-
-function parseStoredWebsitePage(value: unknown): ZelavisWebsitePage {
-  const input = readBodyObject(value);
-  const page = normalizeStoredWebsitePage(value);
-
-  if (!page) {
-    throw new ZelavisValidationError(
-      "Stored website pages require a path and title.",
-    );
-  }
-
-  if ("actions" in input && !Array.isArray(input.actions)) {
-    throw new ZelavisValidationError(
-      "Stored website page actions must be an array.",
-    );
-  }
-
-  if ("cards" in input && !Array.isArray(input.cards)) {
-    throw new ZelavisValidationError(
-      "Stored website page cards must be an array.",
-    );
-  }
-
-  const actions = Array.isArray(input.actions)
-    ? input.actions.map((action) => parseStoredWebsiteAction(action))
-    : undefined;
-  const cards = Array.isArray(input.cards)
-    ? input.cards.map((card) => parseStoredWebsiteCard(card))
-    : undefined;
-
-  return {
-    ...page,
-    ...(actions && actions.length > 0 ? { actions } : {}),
-    ...(cards && cards.length > 0 ? { cards } : {}),
-  };
-}
-
-function parseStoredWebsitePages(value: unknown): ZelavisWebsitePage[] {
-  const input = readBodyObject(value);
-
-  if (!("pages" in input)) {
-    return [];
-  }
-
-  if (!Array.isArray(input.pages)) {
-    throw new ZelavisValidationError(
-      "Stored website pages must be an array.",
-    );
-  }
-
-  return input.pages.map((page) => parseStoredWebsitePage(page));
-}
-
-function normalizeWebsitePages(
-  pages: readonly ZelavisWebsitePage[],
-): ZelavisWebsitePage[] {
-  return pages
-    .map((page) => normalizeStoredWebsitePage(page))
-    .filter((page): page is ZelavisWebsitePage => Boolean(page));
-}
-
-function serializeWebsitePage(page: ZelavisWebsitePage): DatabaseJsonObject {
-  return {
-    path: page.path,
-    title: page.title,
-    ...(page.kicker ? { kicker: page.kicker } : {}),
-    ...(page.headline ? { headline: page.headline } : {}),
-    ...(page.description ? { description: page.description } : {}),
-    ...(page.actions
-      ? {
-          actions: page.actions.map((action) => ({
-            label: action.label,
-            href: action.href,
-            ...(action.variant ? { variant: action.variant } : {}),
-          })),
-        }
-      : {}),
-    ...(page.cards
-      ? {
-          cards: page.cards.map((card) => ({
-            title: card.title,
-            description: card.description,
-            ...(card.href ? { href: card.href } : {}),
-          })),
-        }
-      : {}),
-  };
 }
 
 async function readDatabaseDocument(
@@ -2321,179 +1813,6 @@ function createServiceSetupPlatformContext(
   };
 }
 
-function renderWebsitePage(page: ZelavisWebsitePage): string {
-  const title = escapeHtml(page.title);
-  const kicker = page.kicker
-    ? `<span class="kicker">${escapeHtml(page.kicker)}</span>`
-    : "";
-  const headline = escapeHtml(page.headline ?? page.title);
-  const description = page.description
-    ? `<p>${escapeHtml(page.description)}</p>`
-    : "";
-  const actions =
-    page.actions && page.actions.length > 0
-      ? `<div class="actions">${page.actions
-          .map((action) => {
-            const variantClass = action.variant === "primary" ? " primary" : "";
-            return `<a class="button${variantClass}" href="${escapeHtml(action.href)}">${escapeHtml(action.label)}</a>`;
-          })
-          .join("")}</div>`
-      : "";
-  const cards =
-    page.cards && page.cards.length > 0
-      ? `<section class="grid">${page.cards
-          .map((card) => {
-            const content = `<h2>${escapeHtml(card.title)}</h2><p>${escapeHtml(card.description)}</p>`;
-
-            if (!card.href) {
-              return `<article class="card">${content}</article>`;
-            }
-
-            return `<a class="card card-link" href="${escapeHtml(card.href)}">${content}</a>`;
-          })
-          .join("")}</section>`
-      : "";
-
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${title}</title>
-    <style>
-      :root {
-        color-scheme: dark;
-        --bg: #09090b;
-        --panel: #111114;
-        --muted: #a1a1aa;
-        --text: #fafafa;
-        --accent: #8b5cf6;
-        --border: #27272a;
-      }
-
-      * { box-sizing: border-box; }
-
-      body {
-        margin: 0;
-        min-height: 100vh;
-        background: radial-gradient(circle at top, #18181b 0%, var(--bg) 50%);
-        color: var(--text);
-        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      }
-
-      main {
-        width: 100%;
-        max-width: 72rem;
-        margin: 0 auto;
-        padding: 5rem 1.5rem;
-      }
-
-      .hero {
-        padding: 2rem 0 3rem;
-      }
-
-      .kicker {
-        display: inline-block;
-        margin-bottom: 1rem;
-        padding: 0.375rem 0.625rem;
-        border: 1px solid var(--border);
-        border-radius: 999px;
-        color: #c4b5fd;
-        background: rgba(139, 92, 246, 0.1);
-        font-size: 0.875rem;
-      }
-
-      h1 {
-        margin: 0;
-        font-size: clamp(2.5rem, 8vw, 4.75rem);
-        line-height: 1;
-      }
-
-      p {
-        color: var(--muted);
-        font-size: 1.05rem;
-        line-height: 1.7;
-        max-width: 44rem;
-      }
-
-      .actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.875rem;
-        margin-top: 2rem;
-      }
-
-      a.button {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 0.75rem;
-        padding: 0.9rem 1.1rem;
-        text-decoration: none;
-        font-weight: 600;
-        border: 1px solid var(--border);
-        color: var(--text);
-        background: var(--panel);
-      }
-
-      a.button.primary {
-        background: var(--accent);
-        border-color: var(--accent);
-      }
-
-      .grid {
-        display: grid;
-        gap: 1rem;
-        grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-        margin-top: 2rem;
-      }
-
-      .card {
-        border: 1px solid var(--border);
-        border-radius: 1rem;
-        padding: 1rem;
-        background: rgba(17, 17, 20, 0.8);
-        text-decoration: none;
-      }
-
-      .card-link {
-        color: inherit;
-      }
-
-      .card h2 {
-        margin: 0 0 0.5rem;
-        font-size: 1rem;
-      }
-
-      .card p {
-        margin: 0;
-        font-size: 0.95rem;
-      }
-    </style>
-  </head>
-  <body>
-    <main>
-      <section class="hero">
-        ${kicker}
-        <h1>${headline}</h1>
-        ${description}
-        ${actions}
-      </section>
-      ${cards}
-    </main>
-  </body>
-</html>`;
-}
-
-
-function isReservedWebsitePath(path: string, rootPath: string): boolean {
-  return (
-    path === rootPath ||
-    path.startsWith(`${rootPath}/`) ||
-    path === "/api" ||
-    path.startsWith("/api/")
-  );
-}
 
 function isDatabaseApi(value: unknown): value is DatabaseApi {
   return Boolean(
@@ -4190,179 +3509,12 @@ async function resolvePlatformCoreService(
             }
           },
         },
-        ...(["GET", "POST", "PUT", "PATCH", "DELETE"] as const).map(
-          (method) => ({
-            id: `runtime.projects.proxy.${method.toLowerCase()}`,
-            method,
-            path: "/projects/:projectId/proxy/*path",
-            access: {
-              // A read of the Project runtime is `project.view`; anything that
-              // can change it requires runtime-management authority. Using
-              // `project.view` for every verb made read access a blanket
-              // mutation capability against the child.
-              permissions:
-                method === "GET"
-                  ? ["project.view"]
-                  : ["project.runtime.manage"],
-              scope: { type: "project" as const, projectIdParam: "projectId" },
-            },
-            handler: async ({
-              params,
-              query,
-              request,
-              principal,
-            }: {
-              params: Record<string, string>;
-              query: URLSearchParams;
-              request: Request;
-              principal?: ZelavisPrincipal;
-            }) => {
-              if (!projects) {
-                return unavailableProjectsResponse();
-              }
-              try {
-                const project = await projects.get(params.projectId ?? "");
-                if (!project) {
-                  throw new ZelavisProjectNotFoundError(
-                    `Project "${params.projectId ?? ""}" was not found.`,
-                  );
-                }
-                if (project.runtime.status !== "running" || !project.runtime.url) {
-                  return {
-                    status: 409,
-                    body: { error: `Project "${project.id}" is not running.` },
-                  };
-                }
-
-                const placement = await fabric?.getProjectPlacement(project.id);
-                if (
-                  !placement ||
-                  placement.identity.type !== "project" ||
-                  placement.identity.workloadId !== project.id ||
-                  placement.state !== "active"
-                ) {
-                  return {
-                    status: 409,
-                    body: {
-                      error: `Project "${project.id}" has no active Fabric placement.`,
-                    },
-                  };
-                }
-                const placementNode = await fabric?.getNode(
-                  placement.runtimeNodeId,
-                );
-                if (!placementNode || placementNode.status === "unavailable") {
-                  return {
-                    status: 503,
-                    body: {
-                      error: `Project "${project.id}" is placed on an unavailable Fabric node.`,
-                    },
-                  };
-                }
-
-                const target = resolveProxyTarget(
-                  project.runtime.url,
-                  params.path ?? "",
-                );
-                if (!target) {
-                  return {
-                    status: 400,
-                    body: { error: "Invalid Project proxy path." },
-                  };
-                }
-                target.search = query.toString();
-                const headers = gatewayRequestHeaders(request.headers);
-                // The runtime listens on loopback, so plain headers cannot
-                // establish who the caller is. Authority is carried in a
-                // short-lived envelope signed with a per-runtime secret, and
-                // it carries the caller's own Project permissions rather than
-                // a wildcard, so proxying never amplifies authority.
-                const authority = await projects.signGatewayAuthority(
-                  project.id,
-                  {
-                    projectId: project.id,
-                    scopeId: placement.identity.scopeId,
-                    generation: placement.generation,
-                    runtimeNodeId: placement.runtimeNodeId,
-                    subject: principal?.id ?? "anonymous",
-                    subjectType: principal?.type ?? "anonymous",
-                    permissions: projectRuntimePermissions(
-                      principal,
-                      project.id,
-                    ),
-                  },
-                );
-                if (authority) {
-                  headers.set(ZELAVIS_GATEWAY_AUTHORITY_HEADER, authority);
-                }
-                const body =
-                  request.method === "GET" || request.method === "HEAD"
-                    ? undefined
-                    : await request.clone().arrayBuffer();
-                if (body && body.byteLength > ZELAVIS_GATEWAY_MAX_BODY_BYTES) {
-                  return {
-                    status: 413,
-                    body: {
-                      error: `Project Gateway bodies are limited to ${ZELAVIS_GATEWAY_MAX_BODY_BYTES} bytes.`,
-                    },
-                  };
-                }
-
-                // A child that never answers must not pin a Platform request
-                // open indefinitely, and a caller that goes away should release
-                // the downstream request with it.
-                const timeout = AbortSignal.timeout(
-                  ZELAVIS_GATEWAY_TIMEOUT_MS,
-                );
-                const abort = request.signal
-                  ? AbortSignal.any([request.signal, timeout])
-                  : timeout;
-
-                let response: Response;
-                try {
-                  response = await fetch(target, {
-                    method: request.method,
-                    headers,
-                    redirect: "manual",
-                    signal: abort,
-                    ...(body && body.byteLength > 0 ? { body } : {}),
-                  });
-                } catch (cause) {
-                  if (
-                    cause instanceof Error &&
-                    (cause.name === "TimeoutError" ||
-                      cause.name === "AbortError")
-                  ) {
-                    return {
-                      status: 504,
-                      body: {
-                        error: `Project "${project.id}" did not respond within ${ZELAVIS_GATEWAY_TIMEOUT_MS}ms.`,
-                      },
-                    };
-                  }
-                  throw cause;
-                }
-                const responseHeaders = gatewayResponseHeaders(response.headers);
-                const responseBody = await response.arrayBuffer();
-                if (responseBody.byteLength > ZELAVIS_GATEWAY_MAX_BODY_BYTES) {
-                  return {
-                    status: 502,
-                    body: {
-                      error: `Project "${project.id}" returned a response larger than ${ZELAVIS_GATEWAY_MAX_BODY_BYTES} bytes.`,
-                    },
-                  };
-                }
-                return {
-                  status: response.status,
-                  headers: responseHeaders,
-                  body: new Uint8Array(responseBody),
-                };
-              } catch (error) {
-                return projectErrorResponse(error);
-              }
-            },
-          }),
-        ),
+        ...createProjectGatewayRoutes({
+          projects,
+          fabric,
+          unavailableProjectsResponse,
+          projectErrorResponse,
+        }),
         {
           id: "runtime.projects.remove",
           method: "DELETE",
