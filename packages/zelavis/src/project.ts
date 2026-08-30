@@ -235,12 +235,26 @@ async function mapWithConcurrency<TValue, TResult>(
   return results;
 }
 
+/** Longest accepted raw Project identifier before normalization. */
+const MAX_PROJECT_ID_INPUT_LENGTH = 256;
+
 function normalizeProjectId(value: string): string {
-  const normalized = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+  if (value.length > MAX_PROJECT_ID_INPUT_LENGTH) {
+    throw new ZelavisProjectValidationError(
+      `Project id must not exceed ${MAX_PROJECT_ID_INPUT_LENGTH} characters.`,
+    );
+  }
+
+  const slug = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
+
+  // Trim separators by scanning rather than with `/^-+|-+$/`: that alternation
+  // backtracks quadratically on a long run of separators, and this value comes
+  // from request input.
+  let start = 0;
+  let end = slug.length;
+  while (start < end && slug.charCodeAt(start) === 45) start += 1;
+  while (end > start && slug.charCodeAt(end - 1) === 45) end -= 1;
+  const normalized = slug.slice(start, end);
 
   if (!normalized) {
     throw new ZelavisProjectValidationError(

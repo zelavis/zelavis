@@ -93,5 +93,9 @@ test("Gateway proxy neutralizes scheme-like paths onto the runtime origin", () =
   const target = resolveProxyTarget(RUNTIME_URL, "https://example.com/pwn");
   assert.ok(target);
   assert.equal(target.origin, RUNTIME_URL);
-  assert.ok(!target.href.startsWith("https://example.com"));
+  // Assert the components rather than a substring: a prefix check would pass
+  // for `https://example.com.evil.test`.
+  assert.equal(target.protocol, "http:");
+  assert.equal(target.hostname, "127.0.0.1");
+  assert.equal(target.port, "52706");
 });
