@@ -60,3 +60,6 @@ test-results/
 .DS_Store
 Thumbs.db
 /pnotes/
+
+# Working notes, not repository content
+packages/zelavis/SERVER_FABRIC_REVIEW.md
