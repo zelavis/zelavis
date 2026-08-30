@@ -78,3 +78,73 @@ export function readBodyObject(body: unknown): Record<string, unknown> {
     ? (body as Record<string, unknown>)
     : {};
 }
+
+// ---------------------------------------------------------------------------
+// Typed error mapping and small path/date helpers shared by Platform services
+// ---------------------------------------------------------------------------
+
+import {
+  createMappedJsonErrorResponse,
+  type ZelavisServerErrorStatusRule,
+} from "../core/index.js";
+import {
+  AuthDomainError,
+  AuthNotFoundError,
+  AuthValidationError,
+} from "../app/auth/index.js";
+import {
+  DatabaseConflictError,
+  DatabaseNotFoundError,
+  DatabaseRevisionMismatchError,
+  DatabaseValidationError,
+} from "../app/db/index.js";
+
+export function joinPathParts(...parts: (string | undefined)[]): string {
+  const normalized = parts.map(normalizePathPart).filter(Boolean);
+  return normalized.length > 0 ? `/${normalized.join("/")}` : "/";
+}
+
+export function encodeStoragePath(path: string): string {
+  return path
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+export function toIsoDate(value: Date | undefined): string | undefined {
+  return value ? value.toISOString() : undefined;
+}
+
+export const zelavisErrorRules: readonly ZelavisServerErrorStatusRule[] = [
+  {
+    matches: (error) =>
+      error instanceof TypeError ||
+      error instanceof AuthValidationError ||
+      error instanceof DatabaseValidationError ||
+      error instanceof ZelavisValidationError,
+    status: 400,
+  },
+  {
+    matches: (error) =>
+      error instanceof DatabaseNotFoundError ||
+      error instanceof AuthNotFoundError,
+    status: 404,
+  },
+  {
+    matches: (error) =>
+      error instanceof DatabaseRevisionMismatchError ||
+      error instanceof DatabaseConflictError ||
+      error instanceof ZelavisConflictError,
+    status: 409,
+  },
+  {
+    matches: (error) =>
+      error instanceof AuthDomainError || error instanceof ZelavisDomainError,
+    status: 400,
+  },
+];
+
+export function zelavisErrorResponse(error: unknown, fallback = 500) {
+  return createMappedJsonErrorResponse(error, zelavisErrorRules, fallback);
+}
