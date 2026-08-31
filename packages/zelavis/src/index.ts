@@ -157,8 +157,12 @@ import {
   ZelavisDeploymentBackendValidationError,
   type ZelavisDeploymentBackendAdapter,
   type ZelavisDeploymentBackendManager,
-} from "./backends/index.js";
-export * from "./backends/index.js";
+} from "./backends/registry.js";
+// Only the runtime-neutral backend contracts are re-exported from the root
+// entrypoint. The concrete Native and Docker adapters import `node:` built-ins
+// and stay behind the `zelavis/backends` subpath, which Node hosts import
+// directly — otherwise a fetch-native host cannot even typecheck `zelavis`.
+export * from "./backends/registry.js";
 export * from "./agent/index.js";
 import type { ZelavisAgentOperationReader } from "./core/agent/index.js";
 import {
