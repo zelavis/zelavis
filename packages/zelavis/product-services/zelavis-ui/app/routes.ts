@@ -50,7 +50,7 @@ export default [
   route("projects/:projectId/settings", "routes/project.settings.tsx"),
   route("projects/:projectId/storage", "routes/storage.tsx"),
   route("projects/:projectId/users", "routes/users.tsx"),
-  route("projects/:projectId/website", "routes/website.tsx"),
+  route("projects/:projectId/frontend", "routes/frontend.tsx"),
   route("projects/:projectId/workloads", "routes/workloads.tsx"),
   route("projects/:projectId/workloads/functions", "routes/workloads.functions.tsx"),
   route("projects/:projectId/workloads/jobs", "routes/workloads.jobs.tsx"),

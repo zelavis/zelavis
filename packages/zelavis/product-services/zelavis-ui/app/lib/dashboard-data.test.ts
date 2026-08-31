@@ -299,16 +299,16 @@ describe("dashboard navigation ownership", () => {
     });
   });
 
-  it("exposes project Website and project-wide Media without the old Builder area", () => {
+  it("exposes project Frontend and project-wide Media without the old Builder area", () => {
     const services = [
       {
-        name: "@zelavis/website",
+        name: "@zelavis/frontend",
         core: true,
         apiPath: "/",
         menu: {
-          title: "Website",
-          path: "/website",
-          pageLabel: "Website",
+          title: "Frontend",
+          path: "/frontend",
+          pageLabel: "Frontend",
           sectionLabel: "Build",
           surface: "root",
           access: {
@@ -331,16 +331,16 @@ describe("dashboard navigation ownership", () => {
       ["Users", "Build"],
       ["Content", "Build"],
       ["Media", "Build"],
-      ["Website", "Build"],
+      ["Frontend", "Build"],
       ["Marketplace", "Extend"],
       ["Extensions", "Extend"],
       ["Backend", "Backend"],
       ["Settings", "Settings"],
     ]);
-    expect(nav.some((item) => item.title === "Website")).toBe(true);
-    expect(findNavItem(nav, "Website")).toMatchObject({
-      url: "/projects/project-a/website",
-      pageLabel: "Website",
+    expect(nav.some((item) => item.title === "Frontend")).toBe(true);
+    expect(findNavItem(nav, "Frontend")).toMatchObject({
+      url: "/projects/project-a/frontend",
+      pageLabel: "Frontend",
       access: {
         permissions: ["project.website.manage"],
         scope: { type: "project", projectId: "project-a" },
@@ -398,7 +398,7 @@ describe("dashboard navigation ownership", () => {
       url: "/server/access/users",
       pageLabel: "Users",
     });
-    expect(findNavItem(projectManagementNavItems, "Website")).toBeUndefined();
+    expect(findNavItem(projectManagementNavItems, "Frontend")).toBeUndefined();
     expect(findNavItem(projectManagementNavItems, "Marketplace")).toMatchObject({
       url: "/marketplace",
       pageLabel: "Marketplace",

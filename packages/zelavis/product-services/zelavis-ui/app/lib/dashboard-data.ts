@@ -59,7 +59,7 @@ export type DashboardRoutePath =
   | "/settings/appearance"
   | "/storage"
   | "/users"
-  | "/website"
+  | "/frontend"
   | `/${string}`;
 
 export type DashboardNavSearch = {
@@ -518,7 +518,7 @@ function isBuiltInProjectPath(path: string) {
     "/settings",
     "/storage",
     "/users",
-    "/website",
+    "/frontend",
     "/workloads",
   ].includes(path);
 }
@@ -691,7 +691,7 @@ function getServiceMenuIcon(title: string, serviceName?: string): LucideIcon {
       return Database;
     case "@zelavis/storage":
       return Files;
-    case "@zelavis/website":
+    case "@zelavis/frontend":
       return Globe2;
     case "@zelavis/workloads":
       return Cpu;
@@ -1012,13 +1012,13 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
     },
   },
   {
-    name: "@zelavis/website",
+    name: "@zelavis/frontend",
     core: true,
     apiPath: "/",
     menu: {
-      title: "Website",
-      path: "/website",
-      pageLabel: "Website",
+      title: "Frontend",
+      path: "/frontend",
+      pageLabel: "Frontend",
       sectionLabel: "Build",
       surface: "root",
       access: {
