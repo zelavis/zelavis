@@ -117,9 +117,11 @@ capabilities as normal services.
 Dashboard menu semantics belong to `@zelavis/ui`: it defines what a menu
 contribution means and renders it. `zelavis/core` may carry runtime-neutral
 menu/contribution wire data so headless Project runtimes do not need to bundle
-the dashboard. Do not let services add arbitrary top-level keys to
-`zelavis.service.json`; use a stable namespaced contribution map when the
-generic extension-point mechanism is introduced.
+the dashboard. Services are configured through the `package.json` `zelavis`
+namespace; the retired `zelavis.service.json` sidecar is no longer read. Do not
+let services add arbitrary top-level keys to that namespace; use a stable
+namespaced contribution map when the generic extension-point mechanism is
+introduced.
 
 The Platform OS can create multiple Zelavis App Projects from the official
 `zelavis/app` Project recipe. The default Node adapter prepares each Project

@@ -45,7 +45,7 @@ After install:
 
 For Node.js local development, select `dist/example-basic.zip` in the browser file
 picker. The Node adapter unpacks it into `.zelavis/services`, reads
-`zelavis.service.json`, and imports the declared ESM entry from there.
+`package.json`, and imports the ESM entry declared in its `exports`.
 
 You can still paste the absolute `dist/index.js` path into the ESM specifier
 field when you want to test path-based local imports directly.
