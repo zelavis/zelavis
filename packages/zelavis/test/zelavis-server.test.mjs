@@ -1544,3 +1544,44 @@ test("the frontend placeholder escapes its title", async () => {
   assert.ok(!html.includes("<script>"), "the title must not inject markup");
 });
 
+test("an installation running the dashboard uses it as its default frontend", async () => {
+  const runtime = await zelavis({ coreServices: { auth: false, database: false } });
+
+  // `/` must lead somewhere. The outermost installation is its own product, so
+  // its default frontend is the dashboard rather than a page explaining that
+  // nothing is installed.
+  const response = await runtime.fetch(new Request("http://localhost/"));
+  assert.equal(response.status, 307);
+  assert.equal(response.headers.get("location"), "/zelavis");
+
+  const dashboard = await runtime.fetch(new Request("http://localhost/zelavis"));
+  assert.equal(dashboard.status, 200);
+});
+
+test("a Project runtime falls back to the placeholder, not the dashboard", async () => {
+  // A Project exists to host something that has not been chosen yet, and it
+  // does not run the dashboard, so there is nothing to redirect to.
+  const runtime = await zelavis({
+    coreServices: { auth: false, database: false, dashboard: false },
+  });
+
+  const response = await runtime.fetch(new Request("http://localhost/"));
+  assert.equal(response.status, 503);
+  assert.match(await response.text(), /has no frontend yet/);
+});
+
+test("the default frontend never shadows control-plane paths", async () => {
+  for (const dashboard of [true, false]) {
+    const runtime = await zelavis({
+      coreServices: { auth: false, database: false, dashboard },
+    });
+    const response = await runtime.fetch(
+      new Request("http://localhost/zelavis/api/v1/nope"),
+    );
+    assert.equal(
+      response.status,
+      404,
+      `a mistyped API path must keep its own 404 (dashboard: ${dashboard})`,
+    );
+  }
+});

@@ -71,7 +71,9 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
         ? { dashboard: false, fabric: false }
         : {
             database: false,
-            website: false,
+            // The frontend service stays on for the Platform: with the
+            // dashboard enabled it makes `/` lead there instead of returning a
+            // 404 that reads as a broken installation.
             storage: false,
             workloads: false,
           };

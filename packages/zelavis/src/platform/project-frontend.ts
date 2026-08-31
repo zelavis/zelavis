@@ -11,7 +11,10 @@
  * what a real Frontend provides. This service only says "nothing is installed
  * yet, here is where to get one".
  */
-import type { ZelavisRuntimeService } from "../core/index.js";
+import type {
+  ZelavisRouteResponse,
+  ZelavisRuntimeService,
+} from "../core/index.js";
 
 export interface ZelavisProjectFrontendPlaceholderOptions {
   /** Shown as the page heading. Defaults to the Project or Platform name. */
@@ -91,6 +94,15 @@ export interface ZelavisProjectFrontendServiceOptions
   extends ZelavisProjectFrontendPlaceholderOptions {
   /** Paths owned by the runtime, which must never be served the placeholder. */
   readonly reservedPrefixes?: readonly string[];
+  /**
+   * Where to send visitors instead of rendering the placeholder.
+   *
+   * The outermost installation is its own product: its default frontend is the
+   * dashboard, so `/` should lead there rather than to a page explaining that
+   * nothing is installed. A Project has no such default and keeps the
+   * placeholder until someone chooses a frontend.
+   */
+  readonly redirectTo?: string;
 }
 
 /**
@@ -132,10 +144,20 @@ export function createProjectFrontendPlaceholderService(
         // Intentionally no access requirement: this is the Project's own
         // front door, seen by visitors who have no Platform identity. The
         // privileged route audit treats public data-plane routes as explicit.
-        handler: ({ request }: { request: Request }) => {
+        handler: ({ request }: { request: Request }): ZelavisRouteResponse => {
           const path = new URL(request.url).pathname;
           if (isReserved(path)) {
             return { status: 404, body: { error: "Not found" } };
+          }
+
+          if (options.redirectTo) {
+            return {
+              // 307: the destination is where this installation's frontend
+              // currently lives, not a permanent property of the path — a
+              // Project that later installs a frontend serves it here instead.
+              status: 307,
+              headers: { location: options.redirectTo },
+            };
           }
 
           return {

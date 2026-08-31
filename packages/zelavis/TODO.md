@@ -38,6 +38,11 @@ an exported type is never mistaken for an operational distributed feature.
   placement contracts.
 - [x] Fabric snapshot and read-only inventory endpoints for the current
   single-node implementation.
+- [x] Every installation answers at its root, and what it serves depends on
+  which installation it is. An installation running the dashboard uses it as
+  its default frontend, so `/` leads there; a Project runtime, which does not
+  run the dashboard, serves the frontend placeholder until one is chosen.
+  Neither shadows control-plane paths.
 - [x] The Frontend contract exists: `kind: "frontend"` in the `package.json`
   `zelavis` namespace declares `static` or `server`. The runtime is declared,
   never inferred from a `start` script, because a `server` frontend spawns a
@@ -236,9 +241,6 @@ an exported type is never mistaken for an operational distributed feature.
 - [ ] Add a `frontend` marketplace category and require marketplace frontends to
   use the Zelavis SDK, so a listed frontend can consume the menu and content
   APIs rather than only rendering.
-- [ ] Make `@zelavis/ui` an explicit default Frontend of the outermost
-  installation rather than an implicit core service. Project runtimes already
-  exclude it.
 
 
 - [ ] Prove local shard movement, split/merge, generation fencing, crash-safe

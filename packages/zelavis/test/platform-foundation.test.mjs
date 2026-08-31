@@ -334,7 +334,9 @@ test("Node adapter registers shipped app services and persists Platform Store SQ
 
     assert.ok(systemStore);
     assert.equal(first.coreServices.database, false);
-    assert.equal(first.coreServices.website, false);
+    // The frontend service stays enabled on the Platform: with the dashboard
+    // running it makes `/` lead there rather than returning a 404.
+    assert.equal(first.coreServices.website, undefined);
     assert.equal(first.coreServices.storage, false);
     assert.equal(first.coreServices.workloads, false);
     assert.equal(first.metadata.role, "platform");
