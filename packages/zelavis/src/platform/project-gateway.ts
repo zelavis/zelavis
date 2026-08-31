@@ -258,6 +258,41 @@ export function resolveProxyTarget(
   return target;
 }
 
+/**
+ * True when a proxied path addresses the Project runtime's own control plane.
+ *
+ * Control-plane paths belong to the Zelavis runtime and carry Platform
+ * authority. Everything else is the Project's public surface, which a server
+ * frontend serves once one is installed.
+ */
+export function isRuntimeControlPlanePath(wildcardPath: string): boolean {
+  const normalized = wildcardPath.replace(/^\/+/, "");
+  return normalized === "zelavis" || normalized.startsWith("zelavis/");
+}
+
+/**
+ * Finds a running server frontend owned by this Project.
+ *
+ * A Project owns at most one frontend today; the first running one wins rather
+ * than failing, so a half-finished replacement cannot take the site down.
+ */
+export async function findRunningFrontend(
+  projects: ZelavisProjectManager,
+  projectId: string,
+): Promise<{ readonly url: string } | undefined> {
+  const owned = await projects.listOwned(projectId).catch(() => []);
+  for (const candidate of owned) {
+    if (
+      candidate.kind === "frontend" &&
+      candidate.runtime.status === "running" &&
+      candidate.runtime.url
+    ) {
+      return { url: candidate.runtime.url };
+    }
+  }
+  return undefined;
+}
+
 export interface ProjectGatewayDependencies {
   readonly projects: ZelavisProjectManager | undefined;
   readonly fabric: Pick<FabricApi, "getProjectPlacement" | "getNode"> | undefined;
@@ -355,9 +390,17 @@ export function createProjectGatewayRoutes(
                 };
               }
 
+              // A Project's public surface is served by its frontend once one
+              // is installed; its control plane always stays with the Zelavis
+              // runtime.
+              const wildcardPath = params.path ?? "";
+              const frontend = isRuntimeControlPlanePath(wildcardPath)
+                ? undefined
+                : await findRunningFrontend(projects, project.id);
+
               const target = resolveProxyTarget(
-                project.runtime.url,
-                params.path ?? "",
+                frontend?.url ?? project.runtime.url,
+                wildcardPath,
               );
               if (!target) {
                 return {
@@ -367,26 +410,31 @@ export function createProjectGatewayRoutes(
               }
               target.search = query.toString();
               const headers = gatewayRequestHeaders(request.headers);
-              // The runtime listens on loopback, so plain headers cannot
-              // establish who the caller is. Authority is carried in a
-              // short-lived envelope signed with a per-runtime secret, and
-              // it carries the caller's own Project permissions rather than
-              // a wildcard, so proxying never amplifies authority.
-              const authority = await projects.signGatewayAuthority(
-                project.id,
-                {
-                  projectId: project.id,
-                  scopeId: placement.identity.scopeId,
-                  generation: placement.generation,
-                  runtimeNodeId: placement.runtimeNodeId,
-                  subject: principal?.id ?? "anonymous",
-                  subjectType: principal?.type ?? "anonymous",
-                  permissions: projectRuntimePermissions(
-                    principal,
-                    project.id,
-                  ),
-                },
-              );
+              // A frontend is third-party application code, not a Zelavis
+              // runtime. It must never receive a Platform authority envelope:
+              // the envelope exists so a Zelavis runtime can enforce the
+              // caller's permissions, and handing it to arbitrary code would
+              // give that code a signed claim about a Platform principal.
+              //
+              // The runtime, by contrast, listens on loopback where plain
+              // headers cannot establish who the caller is. Its authority is a
+              // short-lived envelope signed with a per-runtime secret, carrying
+              // the caller's own Project permissions rather than a wildcard, so
+              // proxying never amplifies authority.
+              const authority = frontend
+                ? undefined
+                : await projects.signGatewayAuthority(project.id, {
+                    projectId: project.id,
+                    scopeId: placement.identity.scopeId,
+                    generation: placement.generation,
+                    runtimeNodeId: placement.runtimeNodeId,
+                    subject: principal?.id ?? "anonymous",
+                    subjectType: principal?.type ?? "anonymous",
+                    permissions: projectRuntimePermissions(
+                      principal,
+                      project.id,
+                    ),
+                  });
               if (authority) {
                 headers.set(ZELAVIS_GATEWAY_AUTHORITY_HEADER, authority);
               }
