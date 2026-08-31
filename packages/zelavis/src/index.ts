@@ -2533,6 +2533,11 @@ export async function zelavis(
       : createProjectFrontendPlaceholderService({
           reservedPrefixes: [rootPath, joinPathParts(rootPath, apiPrefix)],
           ...(dashboardEnabled ? { redirectTo: rootPath } : {}),
+          publicDomains: {
+            ...(options.domainBindings ? { domainBindings: options.domainBindings } : {}),
+            // Late-bound: the Project manager is composed after this service.
+            projects: () => projects,
+          },
         });
   const storageService = await resolveStorageCoreService(options.coreServices?.storage, {
         rootPath,
