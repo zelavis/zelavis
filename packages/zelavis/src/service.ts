@@ -1,4 +1,8 @@
 import {
+  readFrontendManifest,
+  toServiceAppDefinition,
+} from "./core/service/frontend.js";
+import {
   validatePluginPackageManifest,
   resolvePackageExportsEntry,
   type ZelavisPackageManifest,
@@ -242,6 +246,36 @@ export function createServiceRegistry<TContext = unknown>(
   );
 }
 
+/**
+ * Projects a frontend manifest onto the service fields that serve it.
+ *
+ * A static frontend is files, not code: it reuses the existing service `app`
+ * definition so bundles, SPA and MPA resolution, and the shell all behave the
+ * same as any other app-serving service, rather than growing a second file
+ * server beside them.
+ *
+ * A server frontend needs a supervised process and a routed target. That path
+ * belongs to the Project runtime and Gateway, and is not wired yet, so it is
+ * refused with a message that says so rather than installing something that
+ * silently serves nothing.
+ */
+function frontendServiceFields(
+  manifest: ZelavisPackageManifest,
+): { app?: ZelavisServiceAppDefinition } {
+  const frontend = readFrontendManifest(manifest);
+  if (!frontend) return {};
+
+  if (frontend.runtime === "server") {
+    throw new TypeError(
+      `Zelavis frontend "${manifest.name}" declares runtime "server", which is not executable yet.\n` +
+        "Server frontends need a supervised process and a routed target through the Project runtime; " +
+        "only static frontends can be installed today.",
+    );
+  }
+
+  return { app: toServiceAppDefinition(frontend) };
+}
+
 export function resolveServiceModule<TContext = unknown>(
   module: unknown,
   manifest?: ZelavisPackageManifest,
@@ -285,6 +319,7 @@ export function resolveServiceModule<TContext = unknown>(
       version: manifest.version,
       api: {},
       service: raw,
+      ...frontendServiceFields(manifest),
     }) as any;
   }
 
@@ -343,6 +378,26 @@ export async function loadPluginPackage(options: {
   return Object.freeze(runtimeService);
 }
 
+/**
+ * Builds the service for a frontend package.
+ *
+ * A static frontend is files with no JavaScript entry, so the plugin-loading
+ * path — which resolves and executes an ESM export — cannot apply to it. It is
+ * synthesized from the manifest alone instead.
+ */
+function loadFrontendPackage(
+  manifest: ZelavisPackageManifest,
+): Readonly<ZelavisServiceRegistryEntry<any>["service"]> {
+  return Object.freeze({
+    name: manifest.name,
+    kind: "frontend",
+    version: manifest.version,
+    api: {},
+    service: {},
+    ...frontendServiceFields(manifest),
+  }) as any;
+}
+
 export async function loadService<TContext = unknown>(
   specifier: string,
   options: ZelavisServiceLoadOptions = {},
@@ -352,6 +407,9 @@ export async function loadService<TContext = unknown>(
   }
 
   if (options.manifest) {
+    if (options.manifest.zelavis?.kind === "frontend") {
+      return loadFrontendPackage(options.manifest) as any;
+    }
     return loadPluginPackage({
       manifest: options.manifest,
       importer: options.importer,
@@ -364,6 +422,9 @@ export async function loadService<TContext = unknown>(
   const manifest = resolver ? await resolver(specifier) : undefined;
 
   if (manifest) {
+    if (manifest.zelavis?.kind === "frontend") {
+      return loadFrontendPackage(manifest) as any;
+    }
     return loadPluginPackage({
       manifest,
       importer: options.importer,

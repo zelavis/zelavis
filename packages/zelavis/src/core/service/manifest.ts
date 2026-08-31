@@ -1,3 +1,5 @@
+import { readFrontendManifest } from "./frontend.js";
+
 export interface ZelavisManifestConfig {
   kind: string;
   capabilities?: readonly string[];
@@ -74,6 +76,12 @@ export function validatePluginPackageManifest(
         `Invalid Zelavis plugin "${name}":\n"main" is not supported for Zelavis plugins.\nUse the modern "exports" field instead.`,
       );
     }
+  }
+
+  if (kind === "frontend") {
+    // Validate the frontend block here so a malformed one is refused at install
+    // rather than surfacing as a broken site the first time someone visits it.
+    readFrontendManifest(manifest as ZelavisPackageManifest);
   }
 
   return manifest as ZelavisPackageManifest;
