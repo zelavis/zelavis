@@ -944,6 +944,44 @@ test("node adapter resolves uploaded service paths through its service cache imp
   }
 });
 
+test("a service package without package.json is refused", async () => {
+  const { nodeAdapter } = await import("../dist/adapters/node.js");
+  const tempDirectory = await mkdtemp(join(tmpdir(), "zelavis-legacy-service-"));
+
+  try {
+    const app = new Zelavis({
+      adapter: nodeAdapter({ dataDirectory: tempDirectory }),
+    });
+    // The retired sidecar must not be honoured: configuration lives in
+    // package.json under the `zelavis` namespace.
+    const packageBytes = createStoredZip({
+      "zelavis.service.json": JSON.stringify({ entry: "./dist/index.mjs" }),
+      "dist/index.mjs": "export default { name: \"@example/legacy\", api: {} };\n",
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/zelavis/api/v1/runtime/services/packages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/zip",
+          "x-zelavis-file-name": "legacy-service.zip",
+        },
+        body: packageBytes,
+      }),
+      PLATFORM_OWNER_CONTEXT,
+    );
+
+    assert.notEqual(
+      response.status,
+      201,
+      "a package configured only by zelavis.service.json must not install",
+    );
+    await app.close();
+  } finally {
+    await rm(tempDirectory, { recursive: true, force: true });
+  }
+});
+
 test("node adapter installs uploaded ZIP service packages", async () => {
   const { nodeAdapter } = await import("../dist/adapters/node.js");
   const tempDirectory = await mkdtemp(join(tmpdir(), "zelavis-node-package-"));
@@ -953,8 +991,14 @@ test("node adapter installs uploaded ZIP service packages", async () => {
       adapter: nodeAdapter({ dataDirectory: tempDirectory }),
     });
     const packageBytes = createStoredZip({
-      "zelavis.service.json": JSON.stringify({
-        entry: "./dist/index.mjs",
+      // Service packages are configured through package.json, the same as any
+      // other npm package; the retired zelavis.service.json is not read.
+      "package.json": JSON.stringify({
+        name: "@example/zip-uploaded-service",
+        version: "0.0.3",
+        type: "module",
+        exports: "./dist/index.mjs",
+        zelavis: { kind: "plugin" },
       }),
       "dist/index.mjs": `
         export default {

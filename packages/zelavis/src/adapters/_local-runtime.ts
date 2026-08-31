@@ -14,6 +14,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { inflateRawSync } from "node:zlib";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  resolvePackageExportsEntry,
+  validatePluginPackageManifest,
+} from "../core/service/manifest.js";
 import type {
   ZelavisPackageManifest,
   ZelavisServiceLoadOptions,
@@ -265,21 +269,44 @@ function readZipEntries(bytes: Uint8Array): ZipEntry[] {
   return entries;
 }
 
+/**
+ * Resolves a service package's ESM entry from its `package.json`.
+ *
+ * Service and plugin configuration lives in the `package.json` `zelavis`
+ * namespace and standard ESM fields, the same as any other npm package. The
+ * retired `zelavis.service.json` sidecar is not read.
+ *
+ * The entry comes from `exports` — the `.` condition, or a bare string — so a
+ * package that already works with Node resolution works here unchanged.
+ */
 function resolveServicePackageEntry(entries: readonly ZipEntry[]): string {
-  const manifest = entries.find((entry) => entry.path === "zelavis.service.json");
+  const manifestEntry = entries.find((entry) => entry.path === "package.json");
 
-  if (!manifest) {
-    throw new Error("Service package must include zelavis.service.json.");
+  if (!manifestEntry) {
+    throw new Error("Service package must include package.json.");
   }
 
-  const parsed = JSON.parse(new TextDecoder().decode(manifest.body)) as {
-    entry?: unknown;
-  };
-  const entry = typeof parsed.entry === "string" ? parsed.entry.trim() : "";
-  const normalized = normalizeZipEntryPath(entry.replace(/^\.\//, ""));
+  let manifest: ZelavisPackageManifest;
+  try {
+    manifest = JSON.parse(
+      new TextDecoder().decode(manifestEntry.body),
+    ) as ZelavisPackageManifest;
+  } catch {
+    throw new Error("Service package package.json is not valid JSON.");
+  }
 
+  validatePluginPackageManifest(manifest);
+
+  const entry = resolvePackageExportsEntry(manifest.exports);
+  if (!entry) {
+    throw new Error(
+      'Service package package.json must declare an ESM entry through "exports".',
+    );
+  }
+
+  const normalized = normalizeZipEntryPath(entry.replace(/^\.\//, ""));
   if (!normalized) {
-    throw new Error("Service package manifest must include a valid entry path.");
+    throw new Error("Service package must declare a valid entry path.");
   }
 
   if (!entries.some((candidate) => candidate.path === normalized)) {

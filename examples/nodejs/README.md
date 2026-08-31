@@ -47,6 +47,6 @@ it from **Uploaded sources**.
 The service module defines its own `name`, `version`, menu, pages, and services,
 so the dashboard does not ask for a separate service name. The Node adapter
 unpacks the ZIP into the active data directory's `services` folder, reads
-`zelavis.service.json`, and imports the declared ESM entry from there.
+`package.json`, and imports the ESM entry declared in its `exports`.
 
 After install, the service dashboard page is available at `/zelavis/example-basic` and its API health route is available at `/zelavis/api/v1/example-basic/health`.
