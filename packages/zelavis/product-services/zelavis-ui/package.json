@@ -68,7 +68,7 @@
     "clsx": "^2.1.1",
     "codemirror": "^6.0.2",
     "embla-carousel-react": "^8.6.0",
-    "isbot": "^5.2.1",
+    "isbot": "^5.2.2",
     "lexical": "^0.49.0",
     "lucide-react": "^1.21.0",
     "react": "19.2.8",
