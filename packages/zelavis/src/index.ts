@@ -2513,14 +2513,23 @@ export async function zelavis(
     createSystemStoreDashboardSettingsStore(systemStore),
   );
   const websiteCoreOptions = options.coreServices?.website;
-  // A Project serves its own public site. Until a Frontend is installed it
-  // serves a placeholder instead of a 404, which reads as unfinished rather
-  // than broken.
+  // Every installation serves something at its root, and what that is depends
+  // on which installation it is.
+  //
+  // An installation that runs the dashboard *is* its own product: the dashboard
+  // is its default frontend, so `/` leads there. A Project runtime has no such
+  // default — it exists to host something that has not been chosen yet — so it
+  // serves the placeholder until a Frontend is installed.
+  //
+  // Either way `/` answers, rather than returning the 404 that reads as a
+  // broken installation.
+  const dashboardEnabled = options.coreServices?.dashboard !== false;
   const websiteService =
     websiteCoreOptions === false
       ? undefined
       : createProjectFrontendPlaceholderService({
           reservedPrefixes: [rootPath, joinPathParts(rootPath, apiPrefix)],
+          ...(dashboardEnabled ? { redirectTo: rootPath } : {}),
         });
   const storageService = await resolveStorageCoreService(options.coreServices?.storage, {
         rootPath,
