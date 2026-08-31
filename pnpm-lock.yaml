@@ -235,8 +235,8 @@ importers:
         specifier: ^0.46.0
         version: 0.46.0(typescript@5.9.3)
       '@lexical/list':
-        specifier: ^0.46.0
-        version: 0.46.0(typescript@5.9.3)
+        specifier: ^0.49.0
+        version: 0.49.0(typescript@5.9.3)
       '@lexical/react':
         specifier: ^0.49.0
         version: 0.49.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(typescript@5.9.3)(yjs@13.6.30)
