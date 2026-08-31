@@ -23,6 +23,34 @@ export interface CreateShardedDatabaseDriverOptions {
     | Readonly<Record<string, DatabaseDriver>>;
 }
 
+/**
+ * Claims each physical shard for the writer generation the topology says owns
+ * it, so a superseded writer is rejected by the shard rather than trusted to
+ * notice on its own.
+ *
+ * Drivers without `claimWriterGeneration` are unfenced and skipped: fencing is
+ * a capability, not a requirement, and the embedded single-process default does
+ * not need it.
+ */
+async function claimWriterGenerations(
+  topology: DatabaseTopologySnapshot,
+  drivers: ReadonlyMap<string, DatabaseDriver>,
+): Promise<void> {
+  const writerGenerations = new Map<string, number>();
+  for (const placement of topology.observed.placements) {
+    if (placement.role !== "writer") continue;
+    const current = writerGenerations.get(placement.physicalShardId);
+    if (current === undefined || placement.generation > current) {
+      writerGenerations.set(placement.physicalShardId, placement.generation);
+    }
+  }
+
+  for (const [physicalShardId, generation] of writerGenerations) {
+    const driver = drivers.get(physicalShardId);
+    await driver?.claimWriterGeneration?.(generation);
+  }
+}
+
 function driverEntries(
   input: CreateShardedDatabaseDriverOptions["physicalDrivers"],
 ): readonly (readonly [string, DatabaseDriver])[] {
@@ -61,6 +89,14 @@ export function createShardedDatabaseDriver(
   const drivers = new Map<string, DatabaseDriver>(
     driverEntries(options.physicalDrivers),
   );
+
+  // Claimed once, lazily, and awaited before every write. The factory is
+  // synchronous, and claiming eagerly would make constructing a driver do I/O.
+  let writerClaims: Promise<void> | undefined;
+  const ensureWriterClaims = (): Promise<void> => {
+    writerClaims ??= claimWriterGenerations(options.topology, drivers);
+    return writerClaims;
+  };
 
   for (const shard of router.topology.desired.physicalShards) {
     if (!drivers.has(shard.id)) {
@@ -121,11 +157,13 @@ export function createShardedDatabaseDriver(
           });
         },
         async save(schema) {
+          await ensureWriterClaims();
           for (const storage of allSchemaDrivers) {
             await storage.save(schema);
           }
         },
         async activate(collection, version) {
+          await ensureWriterClaims();
           for (const storage of allSchemaDrivers) {
             await storage.activate(collection, version);
           }
@@ -144,12 +182,14 @@ export function createShardedDatabaseDriver(
           if (!driver) throw new DatabaseTopologyError("Time series driver is unavailable.");
           return driver.getState(input);
         },
-        reset(input) {
+        async reset(input) {
+          await ensureWriterClaims();
           const driver = physicalDriver(input.tenantId, "write").timeseries;
           if (!driver) throw new DatabaseTopologyError("Time series driver is unavailable.");
           return driver.reset(input);
         },
-        append(input) {
+        async append(input) {
+          await ensureWriterClaims();
           const driver = physicalDriver(input.tenantId, "write").timeseries;
           if (!driver) throw new DatabaseTopologyError("Time series driver is unavailable.");
           return driver.append(input);
@@ -179,6 +219,7 @@ export function createShardedDatabaseDriver(
     },
     events: {
       async append(input) {
+        await ensureWriterClaims();
         const route = router.route({ tenantId: input.tenantId, intent: "write" });
         const driver = drivers.get(route.physicalShardId);
         if (!driver) {
@@ -194,6 +235,7 @@ export function createShardedDatabaseDriver(
         };
       },
       async restore(input) {
+        await ensureWriterClaims();
         const route = router.route({ tenantId: input.tenantId, intent: "write" });
         const driver = drivers.get(route.physicalShardId);
         if (!driver?.events.restore) {

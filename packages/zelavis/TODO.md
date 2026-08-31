@@ -105,6 +105,11 @@ an exported type is never mistaken for an operational distributed feature.
   the runtime, removes Assistant threads, domain bindings, bundle assets, and
   runtime/project data through idempotent participants, and deletes the Project
   record only after every participant succeeds.
+- [x] Writer generations are durably fenced inside physical SQLite writes. A
+  writer claims a generation before it may mutate a shard, every write
+  transaction re-reads the fence, and a superseded writer is rejected by the
+  shard itself rather than trusted to stand down. Fencing is an advertised
+  driver capability, so the embedded single-process default stays unfenced.
 - [x] Local SQLite App writes serialize competing top-level transactions and
   enforce unique collection/document stream revisions; raw SQL collection
   protection handles comments and CTEs and rejects statement batches.
@@ -191,9 +196,9 @@ an exported type is never mistaken for an operational distributed feature.
 - [ ] The authority and placement model can represent a future delegated
   Project Platform/Project Cell, but nested registries, resource accounting,
   routing, reconciliation, and whole-cell movement are not implemented.
-- [ ] Official App local routing and topology persistence are operational, but
-  writer generations are not yet enforced inside physical SQLite writes and
-  local move/split/merge operations are not yet durable state machines.
+- [ ] Official App local routing, topology persistence, and writer-generation
+  fencing are operational, but local move/split/merge operations are not yet
+  durable state machines.
 - [ ] Docker has a centralized read-only backend adapter and detector but no
   installer, Project driver, secret provider, backup/restore contract, or
   durable migration state machine. Enabling Docker must remain separate from

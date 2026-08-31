@@ -7,6 +7,20 @@
  */
 
 export const SCHEMA_STATEMENTS = [
+  /**
+   * Durable writer fence for this physical shard.
+   *
+   * A single row holds the generation of the writer that currently owns the
+   * shard. A writer claims a generation before it may mutate anything, and
+   * every write transaction re-reads it, so a superseded writer that has not
+   * yet noticed it lost ownership is rejected by the database itself rather
+   * than by whichever process happens to still be running.
+   */
+  `CREATE TABLE IF NOT EXISTS zv_writer_generation (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    generation INTEGER NOT NULL,
+    claimed_at TEXT NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS zv_collections (
     tenant_id TEXT NOT NULL,
     name TEXT NOT NULL,
