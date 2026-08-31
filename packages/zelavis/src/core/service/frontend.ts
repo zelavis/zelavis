@@ -179,3 +179,89 @@ export function toServiceAppDefinition(
     ...(frontend.indexHtml ? { indexHtml: frontend.indexHtml } : {}),
   };
 }
+
+/**
+ * Marketplace category every listed frontend carries.
+ *
+ * A well-known constant rather than a free-form string, so the dashboard can
+ * offer "choose a frontend" without matching on prose.
+ */
+export const ZELAVIS_FRONTEND_MARKETPLACE_CATEGORY = "frontends";
+
+/**
+ * Package that a listed frontend must depend on to reach the Zelavis SDK.
+ *
+ * The SDK lives at the `zelavis/sdk` subpath, so the dependency is on the
+ * package itself.
+ */
+const ZELAVIS_SDK_PACKAGE = "zelavis";
+
+export class ZelavisFrontendListingError extends TypeError {
+  constructor(message: string) {
+    super(message);
+    this.name = "ZelavisFrontendListingError";
+  }
+}
+
+function dependsOnZelavis(manifest: ZelavisPackageManifest): boolean {
+  for (const field of ["dependencies", "peerDependencies"] as const) {
+    const declared = (manifest as Record<string, unknown>)[field];
+    if (
+      declared &&
+      typeof declared === "object" &&
+      !Array.isArray(declared) &&
+      ZELAVIS_SDK_PACKAGE in (declared as Record<string, unknown>)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Checks the extra requirements a frontend must meet to be *listed* in the
+ * marketplace.
+ *
+ * Deliberately separate from `readFrontendManifest`: a plain folder of HTML is
+ * a perfectly valid frontend to upload and install, it simply cannot be listed.
+ * Listing is a promise that the frontend integrates with Zelavis — that it can
+ * consume the menu and content APIs rather than only rendering — and that
+ * promise is only meaningful if it actually depends on the SDK.
+ *
+ * Throws on failure so a listing cannot be published with a silent gap.
+ */
+export function assertListableFrontend(
+  manifest: ZelavisPackageManifest,
+): ZelavisFrontendManifest {
+  const frontend = readFrontendManifest(manifest);
+  if (!frontend) {
+    throw new ZelavisFrontendListingError(
+      `"${manifest.name}" is not a frontend: it must declare "zelavis.kind": "frontend".`,
+    );
+  }
+
+  const categories = manifest.zelavis?.marketplace &&
+    typeof manifest.zelavis.marketplace === "object"
+    ? (manifest.zelavis.marketplace as { categories?: unknown }).categories
+    : undefined;
+
+  const listed =
+    Array.isArray(categories) &&
+    categories.includes(ZELAVIS_FRONTEND_MARKETPLACE_CATEGORY);
+
+  if (!listed) {
+    throw new ZelavisFrontendListingError(
+      `Frontend "${manifest.name}" must list the "${ZELAVIS_FRONTEND_MARKETPLACE_CATEGORY}" marketplace category to be published.`,
+    );
+  }
+
+  if (!dependsOnZelavis(manifest)) {
+    throw new ZelavisFrontendListingError(
+      `Frontend "${manifest.name}" must depend on "${ZELAVIS_SDK_PACKAGE}" to be published.\n` +
+        "A listed frontend is expected to use the Zelavis SDK — the menu and content APIs — rather than only rendering. " +
+        "A frontend that does not integrate can still be uploaded and installed; it just cannot be listed.",
+    );
+  }
+
+  return frontend;
+}

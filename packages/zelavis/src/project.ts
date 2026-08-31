@@ -60,6 +60,17 @@ export interface ZelavisProjectDescriptor {
   app: ZelavisProjectApp;
   /** Explicit host runtime assignment. Never infer this from live processes. */
   runtimeKind: ZelavisProjectRuntimeKind;
+  /**
+   * Project that owns this one, when it is not owned by the Platform.
+   *
+   * A server frontend is a Project-shaped runtime — process, data directory,
+   * lifecycle, logs, routed target — belonging to the Project it serves. That
+   * ownership, not a display rule, is what makes it disappear from the
+   * Platform's project list: an owned Project is deleted with its owner and
+   * placed alongside it, because it is part of that Project rather than a peer
+   * of it.
+   */
+  ownerProjectId?: string;
 }
 
 export interface ZelavisProjectRecord extends ZelavisProjectDescriptor {
@@ -140,6 +151,13 @@ export interface ZelavisProjectCreateInput {
   id?: string;
   appServiceName?: string;
   start?: boolean;
+  /**
+   * Project that will own this one.
+   *
+   * The owner must already exist: an owned Project whose owner is missing
+   * would never be cleaned up, because deletion reaches it through the owner.
+   */
+  ownerProjectId?: string;
 }
 
 export interface ZelavisProjectManager {
@@ -147,7 +165,17 @@ export interface ZelavisProjectManager {
     driver: string;
     availableKinds: readonly ZelavisProjectRuntimeKind[];
   };
-  list(): Promise<readonly ZelavisProjectRecord[]>;
+  /**
+   * Projects the Platform owns.
+   *
+   * Project-owned runtimes — a server frontend, for example — are excluded:
+   * they belong to the Project that owns them, not to the Platform, and appear
+   * through that Project rather than beside it. Pass `includeOwned` to see the
+   * complete set, which is what deletion and reconciliation need.
+   */
+  list(options?: { includeOwned?: boolean }): Promise<readonly ZelavisProjectRecord[]>;
+  /** Projects owned by one Project. */
+  listOwned(ownerProjectId: string): Promise<readonly ZelavisProjectRecord[]>;
   get(id: string): Promise<ZelavisProjectRecord | undefined>;
   create(input: ZelavisProjectCreateInput): Promise<ZelavisProjectRecord>;
   start(id: string): Promise<ZelavisProjectRecord>;
@@ -218,6 +246,7 @@ const PROJECTS_NAMESPACE = "projects";
 const DEFAULT_APP_SERVICE_NAME = "zelavis/app";
 const DEFAULT_STARTUP_CONCURRENCY = 1;
 const DEFAULT_RUNTIME_KIND: ZelavisProjectRuntimeKind = "native";
+const OWNED_PROJECTS_CLEANUP_PARTICIPANT = "owned-projects";
 const RUNTIME_DATA_CLEANUP_PARTICIPANT = "runtime-data";
 const RETIRED_OFFICIAL_APP_LOCKS = new Map([
   ["@zelavis/app", DEFAULT_APP_SERVICE_NAME],
@@ -488,6 +517,22 @@ export async function createProjectManager(options: {
   let closePromise: Promise<void> | undefined;
   const deletionPromises = new Map<string, Promise<boolean>>();
   const cleanupParticipants = [
+    // Owned Projects go before the host-supplied participants: a Project's own
+    // runtime data must outlive the things that depend on it until they are
+    // gone, and an owned runtime is only removable while its owner still
+    // exists to describe it.
+    {
+      id: OWNED_PROJECTS_CLEANUP_PARTICIPANT,
+      cleanup: async (project: Readonly<ZelavisProjectRecord>) => {
+        const owned = await manager.listOwned(project.id);
+        // Sequential, not concurrent: each removal is itself a durable,
+        // resumable lifecycle, and a partial failure must leave a state the
+        // next reconciliation can continue from.
+        for (const child of owned) {
+          await manager.remove(child.id);
+        }
+      },
+    },
     ...(options.cleanupParticipants ?? []),
     {
       id: RUNTIME_DATA_CLEANUP_PARTICIPANT,
@@ -536,11 +581,18 @@ export async function createProjectManager(options: {
           specifier: replacement.specifier ?? replacement.service.name,
         }
       : storedApp;
+    const storedOwner =
+      typeof (rawProject as { ownerProjectId?: unknown }).ownerProjectId === "string"
+        ? ((rawProject as { ownerProjectId: string }).ownerProjectId)
+        : undefined;
     const descriptor: ZelavisProjectDescriptor = {
       id: rawProject.id,
       name: rawProject.name,
       kind: rawProject.kind || projectKindFromAppService(app.name),
       app,
+      // Ownership must survive a restart. Dropping it here would orphan every
+      // owned runtime, because deletion reaches them through their owner.
+      ...(storedOwner ? { ownerProjectId: storedOwner } : {}),
       runtimeKind: rawRecord.runtimeKind === undefined
         ? DEFAULT_RUNTIME_KIND
         : normalizeRuntimeKind(rawRecord.runtimeKind),
@@ -812,7 +864,7 @@ export async function createProjectManager(options: {
       driver: runtime.name,
       availableKinds: availableRuntimeKinds,
     },
-    async list() {
+    async list(options) {
       const records = await store.list(PROJECTS_NAMESPACE);
       const projects = await mapWithConcurrency(
         records,
@@ -825,7 +877,17 @@ export async function createProjectManager(options: {
           return refresh(project);
         },
       );
-      return projects.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+      const visible = options?.includeOwned
+        ? projects
+        : projects.filter((project) => project.ownerProjectId === undefined);
+      return visible.sort((left, right) =>
+        right.createdAt.localeCompare(left.createdAt),
+      );
+    },
+    async listOwned(ownerProjectId) {
+      const owner = normalizeProjectId(ownerProjectId);
+      const all = await manager.list({ includeOwned: true });
+      return all.filter((project) => project.ownerProjectId === owner);
     },
     async get(id) {
       const project = await read(id);
@@ -859,8 +921,39 @@ export async function createProjectManager(options: {
         );
       }
       const now = new Date().toISOString();
+      const ownerProjectId = input.ownerProjectId
+        ? normalizeProjectId(input.ownerProjectId)
+        : undefined;
+      if (ownerProjectId) {
+        if (ownerProjectId === id) {
+          throw new ZelavisProjectValidationError(
+            `Project "${id}" cannot own itself.`,
+          );
+        }
+        const owner = await read(ownerProjectId);
+        if (!owner) {
+          throw new ZelavisProjectValidationError(
+            `Owner Project "${ownerProjectId}" was not found.`,
+          );
+        }
+        if (owner.ownerProjectId) {
+          // One level only for now. Deeper nesting is the Project Cell model,
+          // which needs placement grouping and resource accounting before it
+          // can be safe.
+          throw new ZelavisProjectValidationError(
+            `Project "${ownerProjectId}" is itself owned, and nested ownership is not supported yet.`,
+          );
+        }
+        if (owner.deletion) {
+          throw new ZelavisProjectValidationError(
+            `Owner Project "${ownerProjectId}" is being deleted.`,
+          );
+        }
+      }
+
       const descriptor: ZelavisProjectDescriptor = {
         id,
+        ...(ownerProjectId ? { ownerProjectId } : {}),
         name,
         kind: projectKindFromAppService(app.name),
         app,

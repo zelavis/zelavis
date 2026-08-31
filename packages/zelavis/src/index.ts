@@ -40,7 +40,10 @@ import { createZelavisCoreService } from "./platform/core-service.js";
 import { createProjectGatewayRoutes } from "./platform/project-gateway.js";
 import { createProjectFrontendPlaceholderService } from "./platform/project-frontend.js";
 export {
+  assertListableFrontend,
   readFrontendManifest,
+  ZELAVIS_FRONTEND_MARKETPLACE_CATEGORY,
+  ZelavisFrontendListingError,
   toServiceAppDefinition,
   ZelavisFrontendManifestError,
   type ZelavisFrontendManifest,

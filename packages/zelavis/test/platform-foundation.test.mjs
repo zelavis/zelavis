@@ -747,8 +747,15 @@ test("Project deletion persists progress and resumes unfinished cleanup after re
   const tombstone = (await store.get("projects", "delete-me")).value;
   assert.equal(tombstone.deletion.status, "failed");
   assert.equal(tombstone.deletion.currentParticipant, "flaky-resource");
-  assert.deepEqual(tombstone.deletion.completedParticipants, ["first-resource"]);
+  // `owned-projects` runs first: a Project's own runtime data must outlive the
+  // runtimes that belong to it, and an owned runtime is only removable while
+  // its owner still exists to describe it.
+  assert.deepEqual(tombstone.deletion.completedParticipants, [
+    "owned-projects",
+    "first-resource",
+  ]);
   assert.deepEqual(tombstone.deletion.participants, [
+    "owned-projects",
     "first-resource",
     "flaky-resource",
     "runtime-data",
