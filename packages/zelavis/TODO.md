@@ -38,6 +38,13 @@ an exported type is never mistaken for an operational distributed feature.
   placement contracts.
 - [x] Fabric snapshot and read-only inventory endpoints for the current
   single-node implementation.
+- [x] The Gateway routes a Project's public paths to its running server
+  frontend and keeps `/zelavis/*` with the Zelavis runtime. A frontend never
+  receives a Platform authority envelope: it is third-party application code,
+  and the envelope exists so a Zelavis runtime can enforce the caller's
+  permissions. A frontend that is not yet running, or an ownership lookup that
+  fails, falls back to the Project's own runtime rather than taking the site
+  down.
 - [x] A `server` frontend runs as a Project-owned runtime. The driver spawns
   the manifest's declared argv with a Platform-allocated port, treats the port
   accepting connections as readiness — an arbitrary frontend knows nothing
@@ -254,9 +261,11 @@ an exported type is never mistaken for an operational distributed feature.
   install them, because they need a supervised process and a routed target
   through the Project runtime and Gateway. Reuse the Agent/backend path rather
   than adding a second process supervisor.
-- [ ] Route an owning Project's public paths to its server frontend. The
-  frontend runtime reports a loopback URL; the Gateway still needs to forward
-  the Project's `/` to it in place of the placeholder.
+- [ ] Forward a verified public domain to the Project that owns it. Routes
+  already match on host inside a runtime, and the Gateway resolves a Project's
+  target, but nothing yet accepts public traffic on a bound domain and forwards
+  it. Until then a frontend is reachable through the authenticated Gateway
+  rather than at its own domain.
 - [ ] Acquire frontend packages. The runtime executes what is already on disk;
   npm, `npx create`, an uploaded archive, and Git sources each need an explicit
   trust policy through the existing service source settings.
