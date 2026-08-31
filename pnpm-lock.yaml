@@ -226,8 +226,8 @@ importers:
         specifier: ^6.0.3
         version: 6.0.3(lodash@4.18.1)(marked@4.3.0)(react-dom@19.2.5(react@19.2.5))(react-responsive-carousel@3.2.23)(react@19.2.5)
       '@lexical/history':
-        specifier: ^0.46.0
-        version: 0.46.0(typescript@5.9.3)
+        specifier: ^0.49.0
+        version: 0.49.0(typescript@5.9.3)
       '@lexical/html':
         specifier: ^0.46.0
         version: 0.46.0(typescript@5.9.3)
@@ -1662,14 +1662,6 @@ packages:
 
   '@lexical/hashtag@0.49.0':
     resolution: {integrity: sha512-aQTpNjrEO5apsaohWGl4ku22EgHpWUzZg5CIzvriS2A1vNmIfzLoCL+lDFpzAwk3DT1Kj1yvGHh5TvhYsb9D8w==}
-    peerDependencies:
-      typescript: '>=5.2'
-    peerDependenciesMeta:
-      typescript:
-        optional: true
-
-  '@lexical/history@0.46.0':
-    resolution: {integrity: sha512-PbbyXVfbm/RBS/hkPJrAGd6DYZ8/4E+nyPaiArwo4WGYQBoEXc2dU+dwAcIrhwVVXuOVrkm9Hp0cZYl4hKM8qQ==}
     peerDependencies:
       typescript: '>=5.2'
     peerDependenciesMeta:
@@ -9006,14 +8998,6 @@ snapshots:
       '@lexical/text': 0.49.0(typescript@5.9.3)
       '@lexical/utils': 0.49.0(typescript@5.9.3)
       lexical: 0.49.0(typescript@5.9.3)
-    optionalDependencies:
-      typescript: 5.9.3
-
-  '@lexical/history@0.46.0(typescript@5.9.3)':
-    dependencies:
-      '@lexical/extension': 0.46.0(typescript@5.9.3)
-      '@lexical/utils': 0.46.0(typescript@5.9.3)
-      lexical: 0.46.0(typescript@5.9.3)
     optionalDependencies:
       typescript: 5.9.3
 
