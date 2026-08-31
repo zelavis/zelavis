@@ -10,7 +10,6 @@ import {
   defineDatabaseService,
   type CreateDatabaseOptions,
   type DatabaseApi,
-  type DatabaseJsonObject,
 } from "./app/db/index.js";
 import {
   createFabricService,
@@ -39,6 +38,7 @@ import {
 } from "@zelavis/ui/service";
 import { createZelavisCoreService } from "./platform/core-service.js";
 import { createProjectGatewayRoutes } from "./platform/project-gateway.js";
+import { createProjectFrontendPlaceholderService } from "./platform/project-frontend.js";
 import { resolveStorageCoreService } from "./platform/storage.js";
 export type {
   ZelavisKeyValueStore,
@@ -96,7 +96,6 @@ import {
   normalizePathPart,
   readBodyObject,
   zelavisErrorResponse,
-  ZelavisConflictError,
   ZelavisValidationError,
 } from "./platform/shared.js";
 import { marketplaceService } from "./platform/marketplace-service.js";
@@ -202,23 +201,6 @@ import type {
   ZelavisStorageCoreServiceInput,
 } from "./platform/storage-types.js";
 
-export type {
-  ZelavisWebsiteAction,
-  ZelavisWebsiteCard,
-  ZelavisWebsitePage,
-  ZelavisWebsitePagesStore,
-} from "./platform/website.js";
-import type {
-  ZelavisWebsitePage,
-  ZelavisWebsitePagesStore,
-} from "./platform/website.js";
-import {
-  isReservedWebsitePath,
-  normalizeWebsitePages,
-  parseStoredWebsitePages,
-  renderWebsitePage,
-  serializeWebsitePage,
-} from "./platform/website.js";
 
 export type ZelavisAuthCoreServiceOptions = boolean | AuthServiceOptions;
 
@@ -235,13 +217,8 @@ export type ZelavisDashboardCoreServiceInput =
   | ZelavisDashboardCoreServiceOptions;
 
 
-export interface ZelavisWebsiteCoreServiceOptions {
-  pagesStore?: ZelavisWebsitePagesStore;
-}
 
-export type ZelavisWebsiteCoreServiceInput =
-  | boolean
-  | ZelavisWebsiteCoreServiceOptions;
+export type ZelavisWebsiteCoreServiceInput = boolean;
 
 
 export type ZelavisWorkloadsCoreServiceInput =
@@ -466,11 +443,6 @@ export interface ZelavisOptions {
   };
 }
 
-export interface ZelavisWebsiteDatabaseStoreOptions {
-  tenantId: string;
-  collection?: string;
-  documentId?: string;
-}
 
 export function defineAdapter(
   definition: ZelavisAdapterDefinition,
@@ -478,10 +450,6 @@ export function defineAdapter(
   return definition;
 }
 
-const DEFAULT_WEBSITE_STATE_COLLECTION = "zelavis_system";
-const DEFAULT_WEBSITE_PAGES_DOCUMENT_ID = "website.pages";
-const PLATFORM_WEBSITE_TENANT_ID = "zelavis-platform";
-const DEFAULT_PLATFORM_WEBSITE_PAGES_PATH = "zelavis/website-pages.json";
 const RESERVED_CORE_SERVICE_NAMES = new Set([
   "zelavis/app",
   "@zelavis/auth",
@@ -492,7 +460,7 @@ const RESERVED_CORE_SERVICE_NAMES = new Set([
   "@zelavis/ui:app",
   "@zelavis/db",
   "@zelavis/storage",
-  "@zelavis/website",
+  "@zelavis/frontend",
   "@zelavis/workloads",
   "zelavis-domain-challenge",
 ]);
@@ -645,169 +613,15 @@ function isServiceUploadFile(value: unknown): value is Blob & { name?: string } 
 
 
 
-function createMemoryWebsitePagesStore(
-  initialPages: readonly ZelavisWebsitePage[],
-): ZelavisWebsitePagesStore {
-  let pages = [...initialPages];
-
-  return {
-    read: () => pages,
-    write(nextPages) {
-      pages = [...nextPages];
-      return pages;
-    },
-  };
-}
-
-
-async function ensureDatabaseCollection(
-  database: DatabaseApi,
-  tenantId: string,
-  name: string,
-): Promise<void> {
-  const documents = database.forTenant(tenantId).documents;
-  if (await documents.collectionExists({ name })) {
-    return;
-  }
-
-  try {
-    await documents.createCollection({
-      name,
-      metadata: {
-        internal: true,
-        managedBy: "zelavis",
-      },
-    });
-  } catch (error) {
-    if (await documents.collectionExists({ name })) {
-      return;
-    }
-
-    throw error;
-  }
-}
-
-async function readDatabaseDocument(
-  database: DatabaseApi,
-  options: Required<ZelavisWebsiteDatabaseStoreOptions>,
-) {
-  await ensureDatabaseCollection(database, options.tenantId, options.collection);
-  return database.forTenant(options.tenantId).documents.findById({
-    collection: options.collection,
-    id: options.documentId,
-  });
-}
-
-async function readValidatedDatabaseDocumentData<T>(
-  database: DatabaseApi,
-  options: Required<ZelavisWebsiteDatabaseStoreOptions>,
-  parse: (value: unknown) => T,
-): Promise<T> {
-  const document = await readDatabaseDocument(database, options);
-  return parse(document?.data);
-}
-
-async function writeDatabaseDocument(
-  database: DatabaseApi,
-  options: Required<ZelavisWebsiteDatabaseStoreOptions>,
-  data: DatabaseJsonObject,
-): Promise<void> {
-  await ensureDatabaseCollection(database, options.tenantId, options.collection);
-  const documents = database.forTenant(options.tenantId).documents;
-  const current = await documents.findById({
-    collection: options.collection,
-    id: options.documentId,
-  });
-
-  if (current) {
-    await documents.update({
-      collection: options.collection,
-      id: options.documentId,
-      data,
-      mode: "replace",
-    });
-    return;
-  }
-
-  await documents.insert({
-    collection: options.collection,
-    id: options.documentId,
-    data,
-  });
-}
-
-export function createDatabaseWebsitePagesStore(
-  database: DatabaseApi,
-  options: ZelavisWebsiteDatabaseStoreOptions,
-): ZelavisWebsitePagesStore {
-  const documentOptions = {
-    tenantId: options.tenantId,
-    collection: options.collection ?? DEFAULT_WEBSITE_STATE_COLLECTION,
-    documentId: options.documentId ?? DEFAULT_WEBSITE_PAGES_DOCUMENT_ID,
-  };
-
-  return {
-    async read() {
-      return readValidatedDatabaseDocumentData(
-        database,
-        documentOptions,
-        parseStoredWebsitePages,
-      );
-    },
-    async write(pages) {
-      const normalizedPages = normalizeWebsitePages(pages);
-
-      await writeDatabaseDocument(database, documentOptions, {
-        kind: "website-pages",
-        pages: normalizedPages.map((page) => serializeWebsitePage(page)),
-      });
-
-      return normalizedPages;
-    },
-  };
-}
 
 
 
-export function createFileStorageWebsitePagesStore(
-  storage: ZelavisFileStorage,
-  path = DEFAULT_PLATFORM_WEBSITE_PAGES_PATH,
-): ZelavisWebsitePagesStore {
-  return {
-    async read() {
-      const file = await storage.get(path);
-      if (!file) {
-        return [];
-      }
 
-      return normalizeWebsitePages(
-        parseStoredWebsitePages(
-          readBodyObject(
-            JSON.parse(new TextDecoder().decode(file.body)) as unknown,
-          ),
-        ),
-      );
-    },
-    async write(pages) {
-      const normalizedPages = normalizeWebsitePages(pages);
 
-      await storage.put({
-        path,
-        body: JSON.stringify(
-          {
-            kind: "website-pages",
-            pages: normalizedPages.map((page) => serializeWebsitePage(page)),
-          },
-          null,
-          2,
-        ),
-        contentType: "application/json; charset=utf-8",
-      });
 
-      return normalizedPages;
-    },
-  };
-}
+
+
+
 
 
 
@@ -1423,10 +1237,10 @@ async function resolveRuntimeManagementCore(
           service.name === "@zelavis/auth" ||
           service.name === "@zelavis/db" ||
           service.name === "@zelavis/storage" ||
-          service.name === "@zelavis/website" ||
+          service.name === "@zelavis/frontend" ||
           service.name === "@zelavis/workloads",
         apiPath:
-          service.name === "@zelavis/website"
+          service.name === "@zelavis/frontend"
             ? "/"
             : service.name === "@zelavis/ui"
               ? rootPath
@@ -1889,223 +1703,6 @@ async function resolveDashboardCoreService(
     ),
     createRuntimeConfig: context.createRuntimeConfig,
   }) as unknown as ZelavisRuntimeService<any>;
-}
-
-async function resolveWebsiteCoreService(
-  option: ZelavisWebsiteCoreServiceInput | undefined,
-  context: {
-    rootPath: string;
-    apiPrefix: string;
-    apiVersion: string;
-    pagesStore?: ZelavisWebsitePagesStore;
-  },
-): Promise<ZelavisRuntimeService<any> | undefined> {
-  const websiteOption = option ?? true;
-
-  if (websiteOption === false) {
-    return undefined;
-  }
-
-  const options = websiteOption === true ? {} : websiteOption;
-  const pagesStore =
-    options.pagesStore ??
-    context.pagesStore ??
-    createMemoryWebsitePagesStore([]);
-
-  async function readPages(): Promise<ZelavisWebsitePage[]> {
-    return [...((await pagesStore.read()) ?? [])].map((page) => ({
-      ...page,
-      path: normalizePath(page.path, "/"),
-    }));
-  }
-
-  async function writePages(
-    pages: readonly ZelavisWebsitePage[],
-  ): Promise<readonly ZelavisWebsitePage[]> {
-    return pagesStore.write(
-      pages.map((page) => ({
-        ...page,
-        path: normalizePath(page.path, "/"),
-      })),
-    );
-  }
-
-  return {
-    name: "@zelavis/website",
-    basePath: "/",
-    menu: {
-      title: "Website",
-      path: "/website",
-      pageLabel: "Website",
-      sectionLabel: "Build",
-      surface: "root",
-      access: {
-        permissions: ["project.website.manage"],
-        scope: { type: "project", projectIdParam: "projectId" },
-      },
-    },
-    service: {
-      pages: [],
-    },
-    api: {
-      v1: [
-        {
-          id: "website.pages.list",
-          method: "GET",
-          path: joinPathParts(
-            context.rootPath,
-            context.apiPrefix,
-            context.apiVersion,
-            "website/pages",
-          ),
-          handler: async () => {
-            try {
-              return {
-                status: 200,
-                body: {
-                  pages: await readPages(),
-                },
-              };
-            } catch (error) {
-              return zelavisErrorResponse(error, 400);
-            }
-          },
-        },
-        {
-          id: "website.pages.create",
-          method: "POST",
-          access: { permissions: ["project.website.manage"] },
-          path: joinPathParts(
-            context.rootPath,
-            context.apiPrefix,
-            context.apiVersion,
-            "website/pages",
-          ),
-          handler: async ({ body }: { body: unknown }) => {
-            try {
-              const input = readBodyObject(body);
-              const title =
-                typeof input.title === "string" ? input.title.trim() : "";
-              const path = normalizePath(
-                typeof input.path === "string" ? input.path : undefined,
-                "",
-              );
-              const headline =
-                typeof input.headline === "string" && input.headline.trim()
-                  ? input.headline.trim()
-                  : undefined;
-              const description =
-                typeof input.description === "string" && input.description.trim()
-                  ? input.description.trim()
-                  : undefined;
-
-              if (!title) {
-                throw new ZelavisValidationError(
-                  "Website pages require a title.",
-                );
-              }
-
-              if (!path) {
-                throw new ZelavisValidationError(
-                  "Website pages require a path.",
-                );
-              }
-
-              if (isReservedWebsitePath(path, context.rootPath)) {
-                throw new ZelavisValidationError(
-                  "That path is reserved by Zelavis.",
-                );
-              }
-
-              const pages = await readPages();
-              if (pages.some((page) => page.path === path)) {
-                throw new ZelavisConflictError(
-                  "A website page already exists for that path.",
-                );
-              }
-
-              const page: ZelavisWebsitePage = {
-                path,
-                title,
-                headline,
-                description,
-              };
-
-              await writePages([...pages, page]);
-
-              return {
-                status: 201,
-                body: page,
-              };
-            } catch (error) {
-              return zelavisErrorResponse(error, 400);
-            }
-          },
-        },
-        {
-          id: "website.page.dynamic",
-          method: "GET",
-          path: "/*path",
-          handler: async ({ params }: { params: Record<string, string> }) => {
-            try {
-              const pages = await readPages();
-              const requestPath = normalizePath(params.path, "/");
-              const hasHomePage = pages.some((entry) => entry.path === "/");
-
-              if (requestPath === context.rootPath) {
-                return {
-                  status: 404,
-                  body: {
-                    error: "Not found",
-                  },
-                };
-              }
-
-              if (!hasHomePage) {
-                if (requestPath === "/") {
-                  return {
-                    status: 307,
-                    headers: {
-                      location: context.rootPath,
-                      "cache-control": "no-cache",
-                    } as Record<string, string>,
-                  };
-                }
-
-                return {
-                  status: 404,
-                  body: {
-                    error: "Not found",
-                  },
-                };
-              }
-
-              const page = pages.find((entry) => entry.path === requestPath);
-              if (!page) {
-                return {
-                  status: 404,
-                  body: {
-                    error: "Not found",
-                  },
-                };
-              }
-
-              return {
-                status: 200,
-                headers: {
-                  "content-type": "text/html; charset=utf-8",
-                  "cache-control": "no-cache",
-                } as Record<string, string>,
-                body: renderWebsitePage(page),
-              };
-            } catch (error) {
-              return zelavisErrorResponse(error, 400);
-            }
-          },
-        },
-      ],
-    },
-  };
 }
 
 async function resolveWorkloadsCoreService(
@@ -2772,7 +2369,7 @@ function createServicePrefixes(
   const mountAtRoot = options.mountPrefix === "/";
 
   for (const service of services) {
-    if (service.name === "@zelavis/website") {
+    if (service.name === "@zelavis/frontend") {
       prefixes[service.name] = "/";
       continue;
     }
@@ -2907,16 +2504,15 @@ export async function zelavis(
     createSystemStoreDashboardSettingsStore(systemStore),
   );
   const websiteCoreOptions = options.coreServices?.website;
-  const websiteService = await resolveWebsiteCoreService(websiteCoreOptions, {
-        rootPath,
-        apiPrefix,
-        apiVersion,
-        pagesStore: resolvedDatabaseApi
-          ? createDatabaseWebsitePagesStore(resolvedDatabaseApi, {
-              tenantId: PLATFORM_WEBSITE_TENANT_ID,
-            })
-          : undefined,
-      });
+  // A Project serves its own public site. Until a Frontend is installed it
+  // serves a placeholder instead of a 404, which reads as unfinished rather
+  // than broken.
+  const websiteService =
+    websiteCoreOptions === false
+      ? undefined
+      : createProjectFrontendPlaceholderService({
+          reservedPrefixes: [rootPath, joinPathParts(rootPath, apiPrefix)],
+        });
   const storageService = await resolveStorageCoreService(options.coreServices?.storage, {
         rootPath,
         apiPrefix,
@@ -3421,8 +3017,6 @@ function applyPlatformResourceDefaults(
   const nextServiceRegistry: ZelavisServiceRegistryOptions = {
     ...(options.serviceRegistry ?? {}),
   };
-  const databaseConfigured =
-    nextCoreServices.database !== undefined && nextCoreServices.database !== false;
 
   if (nextCoreServices.dashboard !== false) {
     const currentDashboard =
@@ -3443,20 +3037,6 @@ function applyPlatformResourceDefaults(
           settingsStore,
         };
       }
-    }
-  }
-
-  if (nextCoreServices.website !== false) {
-    const currentWebsite =
-      nextCoreServices.website === true || nextCoreServices.website === undefined
-        ? {}
-        : nextCoreServices.website;
-
-    if (!currentWebsite.pagesStore && !databaseConfigured && resources.files) {
-      nextCoreServices.website = {
-        ...currentWebsite,
-        pagesStore: createFileStorageWebsitePagesStore(resources.files),
-      };
     }
   }
 

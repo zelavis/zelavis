@@ -38,6 +38,11 @@ an exported type is never mistaken for an operational distributed feature.
   placement contracts.
 - [x] Fabric snapshot and read-only inventory endpoints for the current
   single-node implementation.
+- [x] The retired website content model is gone. A Project that has not chosen
+  a frontend serves an explicit placeholder at its public paths instead of a
+  404, while control-plane paths keep their own 404s. The placeholder is not a
+  content model: a Frontend is a static site or an application with its own
+  server, chosen from the marketplace.
 - [x] Fabric inventory and placement-planning endpoints enforce distinct
   `fabric.view` and `fabric.manage` permissions by default; intentionally
   public embedded Fabric services require an explicit access opt-out.
@@ -215,6 +220,16 @@ an exported type is never mistaken for an operational distributed feature.
   and adversarial cross-Project tests are not operational.
 
 ## Next
+
+- [ ] Define the Frontend contract: `kind: "frontend"` in the `package.json`
+  `zelavis` namespace, declaring `static` (reusing the existing service `app`
+  definition with its SPA/MPA modes) or `server` (a child process behind the
+  backend/Agent path). Declared, not sniffed from a `start` script — a `server`
+  frontend is a different trust and resource decision from serving files.
+- [ ] Make `@zelavis/ui` an explicit default Frontend of the outermost
+  installation rather than an implicit core service. Project runtimes already
+  exclude it.
+
 
 - [ ] Prove local shard movement, split/merge, generation fencing, crash-safe
   cutover, and resumable durable operation state before remote data placement.

@@ -85,7 +85,7 @@ test("zelavis exposes fetch handlers without requiring a mount adapter", async (
       "zelavis/fabric",
       "@zelavis/db",
       "@zelavis/auth",
-      "@zelavis/website",
+      "@zelavis/frontend",
       "@zelavis/workloads",
     ],
   );
@@ -108,7 +108,7 @@ test("zelavis includes core services by default", async () => {
   );
   assert.equal(runtime.services["@zelavis/auth"].name, "@zelavis/auth");
   assert.equal(runtime.services["@zelavis/db"].name, "@zelavis/db");
-  assert.equal(runtime.services["@zelavis/website"].name, "@zelavis/website");
+  assert.equal(runtime.services["@zelavis/frontend"].name, "@zelavis/frontend");
   assert.ok(routes.some((route) => route.fullPath === "/*path"));
   assert.ok(routes.some((route) => route.fullPath === "/zelavis"));
   // The dashboard's view+asset+fallback used to register one route per
@@ -233,7 +233,7 @@ test("zelavis includes core services by default", async () => {
       "zelavis/fabric",
       "@zelavis/db",
       "@zelavis/auth",
-      "@zelavis/website",
+      "@zelavis/frontend",
       "@zelavis/workloads",
     ],
   );
@@ -394,7 +394,6 @@ test("privileged project control routes declare explicit access requirements", a
   });
   const routes = new Map(runtime.routes.map((route) => [route.route.id, route.route]));
   const permissions = {
-    "website.pages.create": "project.website.manage",
     "storage.files.list": "storage.read",
     "storage.files.write": "storage.write",
     "storage.files.delete": "storage.write",
@@ -430,7 +429,8 @@ test("privileged project control routes declare explicit access requirements", a
       permissions: ["server.backends.manage"],
     });
   }
-  assert.equal(routes.get("website.page.dynamic")?.access, undefined);
+  // The Project's public front door stays an explicit public data-plane route.
+  assert.equal(routes.get("project.frontend.placeholder")?.access, undefined);
   assert.equal(routes.get("storage.files.read")?.access, undefined);
   for (const method of ["get", "post", "put", "patch", "delete"]) {
     assert.equal(routes.get(`workloads.http.${method}`)?.access, undefined);
@@ -1091,7 +1091,7 @@ test("zelavis can disable the database core service", async () => {
   });
 
   assert.equal(runtime.services["@zelavis/auth"].name, "@zelavis/auth");
-  assert.equal(runtime.services["@zelavis/website"].name, "@zelavis/website");
+  assert.equal(runtime.services["@zelavis/frontend"].name, "@zelavis/frontend");
   assert.equal(runtime.services["@zelavis/db"], undefined);
   assert.ok(
     runtime.routes.every((route) => !route.route.id.startsWith("database.")),
@@ -1107,7 +1107,7 @@ test("zelavis can disable the auth core service", async () => {
 
   assert.equal(runtime.services["@zelavis/auth"], undefined);
   assert.equal(runtime.services["@zelavis/db"].name, "@zelavis/db");
-  assert.equal(runtime.services["@zelavis/website"].name, "@zelavis/website");
+  assert.equal(runtime.services["@zelavis/frontend"].name, "@zelavis/frontend");
   assert.ok(
     runtime.routes.every((route) => !route.route.id.startsWith("auth.")),
   );
@@ -1123,7 +1123,7 @@ test("zelavis can disable the dashboard core service", async () => {
   assert.equal(runtime.services["@zelavis/ui"], undefined);
   assert.equal(runtime.services["@zelavis/auth"].name, "@zelavis/auth");
   assert.equal(runtime.services["@zelavis/db"].name, "@zelavis/db");
-  assert.equal(runtime.services["@zelavis/website"].name, "@zelavis/website");
+  assert.equal(runtime.services["@zelavis/frontend"].name, "@zelavis/frontend");
   assert.ok(
     runtime.routes.every((route) => !route.route.id.startsWith("dashboard.")),
   );
@@ -1472,247 +1472,8 @@ test("zelavis rejects obsolete direct runtime service options", async () => {
   );
 });
 
-test("zelavis can provide public website pages as a core service", async () => {
-  const runtime = await zelavis({
-    coreServices: {
-      auth: false,
-      database: false,
-      website: true,
-    },
-  });
 
-  assert.equal(runtime.services["@zelavis/website"].name, "@zelavis/website");
-  assert.equal(runtime.services["@zelavis/ui"].name, "@zelavis/ui");
-  assert.ok(runtime.routes.some((route) => route.fullPath === "/*path"));
-  assert.ok(runtime.routes.some((route) => route.fullPath === "/zelavis"));
-  assert.ok(
-    runtime.routes.some(
-      (route) => route.fullPath === "/zelavis/api/v1/runtime/config",
-    ),
-  );
-  assert.ok(
-    runtime.routes.some(
-      (route) => route.fullPath === "/zelavis/api/v1/website/pages",
-    ),
-  );
 
-  const listPagesResponse = await runtime.fetch(
-    new Request("http://localhost/zelavis/api/v1/website/pages"),
-  );
-  assert.equal(listPagesResponse.status, 200);
-  const listedPagesPayload = await listPagesResponse.json();
-  assert.equal(Array.isArray(listedPagesPayload.pages), true);
-
-  const createPageResponse = await runtime.fetch(
-    new Request("http://localhost/zelavis/api/v1/website/pages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        title: "About",
-        path: "/about",
-        headline: "About Zelavis",
-        description: "Public company page.",
-      }),
-    }),
-    PLATFORM_OWNER_CONTEXT,
-  );
-  assert.equal(createPageResponse.status, 201);
-  const createdPage = await createPageResponse.json();
-  assert.equal(createdPage.path, "/about");
-  assert.equal(createdPage.title, "About");
-
-  const createHomeResponse = await runtime.fetch(
-    new Request("http://localhost/zelavis/api/v1/website/pages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        title: "Zelavis",
-        path: "/",
-        headline: "Composable backend platform.",
-        description: "Public pages can now be served by Zelavis.",
-      }),
-    }),
-    PLATFORM_OWNER_CONTEXT,
-  );
-  assert.equal(createHomeResponse.status, 201);
-
-  const createDocsResponse = await runtime.fetch(
-    new Request("http://localhost/zelavis/api/v1/website/pages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        title: "Docs",
-        path: "/docs",
-        headline: "Docs placeholder",
-        description: "Docs will be mounted here later.",
-      }),
-    }),
-    PLATFORM_OWNER_CONTEXT,
-  );
-  assert.equal(createDocsResponse.status, 201);
-
-  const duplicateDocsResponse = await runtime.fetch(
-    new Request("http://localhost/zelavis/api/v1/website/pages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        title: "Docs Again",
-        path: "/docs",
-      }),
-    }),
-    PLATFORM_OWNER_CONTEXT,
-  );
-  assert.equal(duplicateDocsResponse.status, 409);
-
-  const homeResponse = await runtime.fetch(new Request("http://localhost/"));
-  assert.equal(homeResponse.status, 200);
-  assert.match(await homeResponse.text(), /Composable backend platform/);
-
-  const docsResponse = await runtime.fetch(
-    new Request("http://localhost/docs"),
-  );
-  assert.equal(docsResponse.status, 200);
-  assert.match(await docsResponse.text(), /Docs placeholder/);
-
-  const aboutResponse = await runtime.fetch(
-    new Request("http://localhost/about"),
-  );
-  assert.equal(aboutResponse.status, 200);
-  assert.match(await aboutResponse.text(), /About Zelavis/);
-
-  const dashboardResponse = await runtime.fetch(
-    new Request("http://localhost/zelavis"),
-  );
-  assert.equal(dashboardResponse.status, 200);
-  assert.match(await dashboardResponse.text(), /Zelavis Dashboard/);
-});
-
-test("zelavis keeps public routes inactive until the home page exists", async () => {
-  const runtime = await zelavis({
-    coreServices: {
-      auth: false,
-      database: false,
-      website: true,
-    },
-  });
-
-  const createAboutResponse = await runtime.fetch(
-    new Request("http://localhost/zelavis/api/v1/website/pages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        title: "About",
-        path: "/about",
-        headline: "About Zelavis",
-        description: "Public company page.",
-      }),
-    }),
-    PLATFORM_OWNER_CONTEXT,
-  );
-  assert.equal(createAboutResponse.status, 201);
-
-  const homeResponse = await runtime.fetch(new Request("http://localhost/"));
-  assert.equal(homeResponse.status, 307);
-  assert.equal(homeResponse.headers.get("location"), "/zelavis");
-
-  const aboutResponse = await runtime.fetch(
-    new Request("http://localhost/about"),
-  );
-  assert.equal(aboutResponse.status, 404);
-});
-
-test("zelavis persists dashboard settings and website pages through the database layer", async () => {
-  const database = await createDatabase();
-
-  const firstRuntime = await zelavis({
-    coreServices: {
-      auth: false,
-      database,
-      website: true,
-    },
-  });
-
-  const initialHomeResponse = await firstRuntime.fetch(
-    new Request("http://localhost/"),
-  );
-  assert.equal(initialHomeResponse.status, 307);
-  assert.equal(initialHomeResponse.headers.get("location"), "/zelavis");
-
-  const createPageResponse = await firstRuntime.fetch(
-    new Request("http://localhost/zelavis/api/v1/website/pages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        title: "About",
-        path: "/about",
-        headline: "About Zelavis",
-        description: "Persisted through the shared database layer.",
-      }),
-    }),
-    PLATFORM_OWNER_CONTEXT,
-  );
-  assert.equal(createPageResponse.status, 201);
-
-  const aboutBeforeHomeResponse = await firstRuntime.fetch(
-    new Request("http://localhost/about"),
-  );
-  assert.equal(aboutBeforeHomeResponse.status, 404);
-
-  const createHomePageResponse = await firstRuntime.fetch(
-    new Request("http://localhost/zelavis/api/v1/website/pages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        title: "Home",
-        path: "/",
-        headline: "Welcome to Zelavis",
-        description: "Seeded through the shared database layer.",
-      }),
-    }),
-    PLATFORM_OWNER_CONTEXT,
-  );
-  assert.equal(createHomePageResponse.status, 201);
-
-  const restartedRuntime = await zelavis({
-    coreServices: {
-      auth: false,
-      database,
-      website: true,
-    },
-  });
-
-  const homeResponse = await restartedRuntime.fetch(
-    new Request("http://localhost/"),
-  );
-  assert.equal(homeResponse.status, 200);
-  assert.match(
-    await homeResponse.text(),
-    /Seeded through the shared database layer/,
-  );
-
-  const aboutResponse = await restartedRuntime.fetch(
-    new Request("http://localhost/about"),
-  );
-  assert.equal(aboutResponse.status, 200);
-  assert.match(
-    await aboutResponse.text(),
-    /Persisted through the shared database layer/,
-  );
-});
 
 test("zelavis rejects invalid persisted dashboard settings on read", async () => {
   const runtime = await zelavis({
@@ -1740,36 +1501,46 @@ test("zelavis rejects invalid persisted dashboard settings on read", async () =>
   assert.match(await response.text(), /Stored dashboard theme must be one of/);
 });
 
-test("zelavis rejects invalid persisted website pages on read", async () => {
-  const database = await createDatabase();
-  await database.forTenant("zelavis-platform").documents.createCollection({ name: "zelavis_system" });
-  await database.forTenant("zelavis-platform").documents.insert({
-    collection: "zelavis_system",
-    id: "website.pages",
-    data: {
-      kind: "website-pages",
-      pages: [
-        {
-          path: "/broken",
-          title: "Broken",
-          actions: [{ label: "Missing href" }],
-        },
-      ],
-    },
-  });
-
+test("a Project without a frontend serves a placeholder rather than a 404", async () => {
   const runtime = await zelavis({
-    coreServices: {
-      auth: false,
-      database,
-      website: true,
-    },
+    coreServices: { auth: false, database: false, dashboard: false, website: true },
   });
 
-  const response = await runtime.fetch(
-    new Request("http://localhost/zelavis/api/v1/website/pages"),
-  );
+  const response = await runtime.fetch(new Request("http://localhost/"));
+  // 503, not 200: the Project is reachable but cannot serve content yet, and
+  // the placeholder must not be indexed as if it were the site.
+  assert.equal(response.status, 503);
+  assert.match(response.headers.get("content-type") ?? "", /text\/html/);
+  assert.equal(response.headers.get("cache-control"), "no-store");
 
-  assert.equal(response.status, 400);
-  assert.match(await response.text(), /Stored website actions require a label and href/);
+  const body = await response.text();
+  assert.match(body, /has no frontend yet/);
+  assert.match(body, /noindex/);
 });
+
+test("the frontend placeholder leaves control-plane paths alone", async () => {
+  const runtime = await zelavis({
+    coreServices: { auth: false, database: false, dashboard: false, website: true },
+  });
+
+  // A mistyped API path must keep its own 404 rather than being answered with
+  // a page, or every bad request looks like a working site.
+  for (const path of ["/zelavis/api/v1/nope", "/zelavis/nope"]) {
+    const response = await runtime.fetch(new Request(`http://localhost${path}`));
+    assert.notEqual(
+      response.headers.get("content-type"),
+      "text/html; charset=utf-8",
+      `${path} must not be served the placeholder`,
+    );
+  }
+});
+
+test("the frontend placeholder escapes its title", async () => {
+  const { renderProjectFrontendPlaceholder } = await import(
+    "../dist/platform/project-frontend.js"
+  );
+  const html = renderProjectFrontendPlaceholder({ title: 'Ann & <script>"x"' });
+  assert.match(html, /Ann &amp; &lt;script&gt;&quot;x&quot;/);
+  assert.ok(!html.includes("<script>"), "the title must not inject markup");
+});
+

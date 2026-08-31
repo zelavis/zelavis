@@ -264,7 +264,7 @@ test("Zelavis applies adapter resolve output as platform resources, metadata, an
   assert.equal(zelavis.platform.resources.kv.get("x"), "alpha");
 });
 
-test("Zelavis platform resources back dashboard settings, website pages, storage service, and ecommerce persistence", async () => {
+test("Zelavis platform resources back dashboard settings, storage service, and ecommerce persistence", async () => {
   const { Zelavis, defineAdapter, zelavis: createZelavis } =
     await import("zelavis");
   const { createDatabase } = await import("../dist/app/db/index.js");
@@ -567,23 +567,6 @@ test("Zelavis platform resources back dashboard settings, website pages, storage
 
   assert.equal(updateResponse.status, 200);
   assert.equal(kv.has("zelavis/dashboard-settings.json"), true);
-
-  const createPageResponse = await zelavis.fetch(
-    new Request("http://localhost/zelavis/api/v1/website/pages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        path: "/",
-        title: "Home",
-      }),
-    }),
-    PLATFORM_OWNER_CONTEXT,
-  );
-
-  assert.equal(createPageResponse.status, 201);
-  assert.equal(files.has("zelavis/website-pages.json"), true);
 
   const uploadResponse = await zelavis.fetch(
     new Request("http://localhost/zelavis/api/v1/storage/files/uploads/hello.txt", {

@@ -553,13 +553,6 @@ export interface DashboardSettingsUpdate {
   preferences?: DashboardPreferences;
 }
 
-export interface WebsitePage {
-  path: string;
-  title: string;
-  kicker?: string;
-  headline?: string;
-  description?: string;
-}
 
 export interface AuthAccount {
   id: string;
@@ -1907,28 +1900,6 @@ export async function createDashboardService(
   };
 }
 
-export async function listWebsitePages(config: RuntimeConfig) {
-  const result = await readJson<{ pages: WebsitePage[] }>(
-    `${config.api.basePath}/website/pages`,
-  );
-
-  return result.pages;
-}
-
-export async function createWebsitePage(
-  config: RuntimeConfig,
-  input: {
-    title: string;
-    path: string;
-    headline?: string;
-    description?: string;
-  },
-) {
-  return readJson<WebsitePage>(`${config.api.basePath}/website/pages`, {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-}
 
 export async function listWorkloads(
   config: RuntimeConfig,
