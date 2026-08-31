@@ -1,20 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
-
-// `projectProcessEnvironment` is internal to the Node project driver, so the
-// regression test exercises it directly out of the built bundle.
-const source = readFileSync(
-  new URL("../dist/adapters/_node-project-runtime.js", import.meta.url),
-  "utf8",
-);
-const declaration = source.match(
-  /const INHERITED_PROJECT_ENVIRONMENT[\s\S]*?function projectProcessEnvironment[\s\S]*?\n}\n/,
-);
-assert.ok(declaration, "projectProcessEnvironment must exist in the built driver");
-const projectProcessEnvironment = new Function(
-  `${declaration[0]}; return projectProcessEnvironment;`,
-)();
+// `projectProcessEnvironment` is exported from the Node project driver, so the
+// regression imports it directly rather than scraping the built bundle.
+import { projectProcessEnvironment } from "../dist/adapters/_node-project-runtime.js";
 
 test("Project children do not inherit Platform secrets", () => {
   const planted = {

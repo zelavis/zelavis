@@ -38,6 +38,13 @@ an exported type is never mistaken for an operational distributed feature.
   placement contracts.
 - [x] Fabric snapshot and read-only inventory endpoints for the current
   single-node implementation.
+- [x] A `server` frontend runs as a Project-owned runtime. The driver spawns
+  the manifest's declared argv with a Platform-allocated port, treats the port
+  accepting connections as readiness — an arbitrary frontend knows nothing
+  about Zelavis, so no protocol handshake is available — reports a routable
+  loopback URL, and surfaces the frontend's own stderr when it exits before
+  binding. It reuses the Project environment allow-list and log bounds rather
+  than a second copy.
 - [x] A `frontend` marketplace category exists, and a listed frontend must
   carry it and depend on the Zelavis SDK — listing is a promise that the
   frontend integrates rather than only renders. A frontend that does neither is
@@ -247,10 +254,12 @@ an exported type is never mistaken for an operational distributed feature.
   install them, because they need a supervised process and a routed target
   through the Project runtime and Gateway. Reuse the Agent/backend path rather
   than adding a second process supervisor.
-- [ ] Provision a `server` frontend as a Project-owned runtime. Ownership,
-  hidden listing, and cleanup exist; what remains is creating the owned runtime
-  from the frontend manifest and routing the owning Project's public paths to
-  it through the Gateway.
+- [ ] Route an owning Project's public paths to its server frontend. The
+  frontend runtime reports a loopback URL; the Gateway still needs to forward
+  the Project's `/` to it in place of the placeholder.
+- [ ] Acquire frontend packages. The runtime executes what is already on disk;
+  npm, `npx create`, an uploaded archive, and Git sources each need an explicit
+  trust policy through the existing service source settings.
 - [ ] Place an owned Project with its owner. Fabric currently plans each Project
   independently, so an owned runtime could be placed away from the Project it
   serves. This is the Project Cell placement-group rule applied one level down.

@@ -10,18 +10,42 @@ import {
   createNodeProcessProjectRuntime,
   type NodeProcessProjectRuntimeOptions,
 } from "./_node-project-runtime.js";
+import {
+  createServerFrontendProjectRuntime,
+  type ServerFrontendProjectRuntimeOptions,
+} from "./_server-frontend-project-runtime.js";
 
 export interface LocalProjectRuntimeOptions extends NodeProcessProjectRuntimeOptions {
   wordpress?: Omit<NativeWordPressProjectRuntimeOptions, "directory">;
+  /**
+   * Runs `server` frontends. Omit it and a frontend Project cannot start,
+   * rather than silently falling through to the Zelavis runner and failing in
+   * a way that looks like a broken frontend.
+   */
+  serverFrontend?: Omit<ServerFrontendProjectRuntimeOptions, "directory">;
 }
 
 const WORDPRESS_APP_NAME = "zelavis/wordpress";
+/** Project kind used for a Project-owned server frontend. */
+const SERVER_FRONTEND_KIND = "frontend";
 
 /** Routes Project recipes to native drivers while preserving one Platform lifecycle boundary. */
 export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): ZelavisProjectRuntimeDriver {
   const directory = resolve(options.directory);
   const node = createNodeProcessProjectRuntime(options);
   const wordpress = createNativeWordPressProjectRuntime({ directory, ...options.wordpress });
+  const serverFrontend = options.serverFrontend
+    ? createServerFrontendProjectRuntime({ directory, ...options.serverFrontend })
+    : undefined;
+
+  const selectFrontend = (): ZelavisProjectRuntimeDriver => {
+    if (!serverFrontend) {
+      throw new ZelavisProjectRuntimeError(
+        "This host is not configured to run server frontends.",
+      );
+    }
+    return serverFrontend;
+  };
 
   const assertNative = (runtimeKind: unknown) => {
     if (runtimeKind !== undefined && runtimeKind !== "native") {
@@ -33,14 +57,17 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
 
   const forDescriptor = (project: Readonly<ZelavisProjectDescriptor>) => {
     assertNative(project.runtimeKind);
+    if (project.kind === SERVER_FRONTEND_KIND) return selectFrontend();
     return project.app.name === WORDPRESS_APP_NAME ? wordpress : node;
   };
   const forProjectId = async (projectId: string) => {
     const record = JSON.parse(await readFile(join(directory, projectId, "project.json"), "utf8")) as {
       app?: { name?: unknown };
+      kind?: unknown;
       runtimeKind?: unknown;
     };
     assertNative(record.runtimeKind);
+    if (record.kind === SERVER_FRONTEND_KIND) return selectFrontend();
     return record.app?.name === WORDPRESS_APP_NAME ? wordpress : node;
   };
 
@@ -62,7 +89,13 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
       try { await (await forProjectId(id)).destroy(id); }
       catch { await node.destroy(id); }
     },
-    close: async () => { await Promise.all([node.close(), wordpress.close()]); },
+    close: async () => {
+      await Promise.all([
+        node.close(),
+        wordpress.close(),
+        serverFrontend?.close() ?? Promise.resolve(),
+      ]);
+    },
     signGatewayAuthority: async (id, claims) => {
       const selected = await forProjectId(id).catch(() => node);
       return selected.signGatewayAuthority?.(id, claims);
