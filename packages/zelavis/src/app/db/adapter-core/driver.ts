@@ -1,5 +1,6 @@
 import { defineDatabaseDriver } from "../core/define-database-driver.js";
 import {
+  DatabaseWriterFencedError,
   DatabaseConflictError,
   DatabaseDomainError,
   DatabaseNotFoundError,
@@ -429,6 +430,41 @@ export function createSqliteCompatibleDriver(
     ready = async () => {},
   } = options;
 
+  /**
+   * Generation this writer claimed, if any. `undefined` means the host has not
+   * opted into fencing, and writes proceed unfenced — the single-process local
+   * default, and what every existing embedded caller does today.
+   */
+  let claimedWriterGeneration: number | undefined;
+
+  async function readStoredGeneration(
+    tx: SqliteGateway,
+  ): Promise<number | undefined> {
+    const row = await tx.get<{ generation: number }>(
+      "SELECT generation FROM zv_writer_generation WHERE id = 1",
+    );
+    return row?.generation;
+  }
+
+  /**
+   * Rejects a write from a writer that no longer owns this shard.
+   *
+   * Called inside the same transaction as the mutation, so a takeover that
+   * lands between the check and the write cannot slip through: the newer
+   * writer's claim and this read serialize against each other.
+   */
+  async function assertWriterGeneration(tx: SqliteGateway): Promise<void> {
+    if (claimedWriterGeneration === undefined) return;
+
+    const stored = await readStoredGeneration(tx);
+    if (stored === undefined || stored !== claimedWriterGeneration) {
+      throw new DatabaseWriterFencedError(
+        `Writer generation ${claimedWriterGeneration} no longer owns this shard` +
+          `${stored === undefined ? "" : ` (current generation ${stored})`}.`,
+      );
+    }
+  }
+
   async function withReady<T>(fn: () => Promise<T>): Promise<T> {
     await ready();
     return fn();
@@ -733,6 +769,7 @@ export function createSqliteCompatibleDriver(
         if (input.type === "collection.created") {
           let concurrentIdempotentEvent: DatabaseEvent<TPayload> | undefined;
           await gateway.transaction(async (tx) => {
+            await assertWriterGeneration(tx);
             concurrentIdempotentEvent = await resolveIdempotentEvent(tx);
             if (concurrentIdempotentEvent) return;
             const nextRevision = await verifyRevision(tx);
@@ -798,6 +835,7 @@ export function createSqliteCompatibleDriver(
           let concurrentIdempotentEvent: DatabaseEvent<TPayload> | undefined;
 
           await gateway.transaction(async (tx) => {
+            await assertWriterGeneration(tx);
             concurrentIdempotentEvent = await resolveIdempotentEvent(tx);
             if (concurrentIdempotentEvent) return;
             const nextRevision = await verifyRevision(tx);
@@ -902,6 +940,7 @@ export function createSqliteCompatibleDriver(
         let concurrentIdempotentEvent: DatabaseEvent<TPayload> | undefined;
 
         await gateway.transaction(async (tx) => {
+          await assertWriterGeneration(tx);
           concurrentIdempotentEvent = await resolveIdempotentEvent(tx);
           if (concurrentIdempotentEvent) return;
           const nextRevision = await verifyRevision(tx);
@@ -1053,6 +1092,7 @@ export function createSqliteCompatibleDriver(
     async activate(collection: string, version: number): Promise<void> {
       return withReady(async () => {
         await gateway.transaction(async (tx) => {
+          await assertWriterGeneration(tx);
           const activated = await tx.run(
             `UPDATE zv_schemas SET is_active = 1
              WHERE collection_name = ? AND version = ?`,
@@ -1099,6 +1139,7 @@ export function createSqliteCompatibleDriver(
     async reset(input: DatabaseTimeSeriesStorageResetInput) {
       return withReady(async () => {
         await gateway.transaction(async (tx) => {
+          await assertWriterGeneration(tx);
           await tx.run(
             `DELETE FROM zv_time_series_points
              WHERE tenant_id = ? AND series_name = ?`,
@@ -1177,6 +1218,7 @@ export function createSqliteCompatibleDriver(
         }
 
         await gateway.transaction(async (tx) => {
+          await assertWriterGeneration(tx);
           for (const statement of pointStatements) {
             await tx.run(statement.sql, [...statement.params]);
           }
@@ -1320,11 +1362,40 @@ export function createSqliteCompatibleDriver(
       events: true,
       transactions: true,
       tenantRouting: true,
+      writerFencing: true,
     },
     events,
     projections,
     schemas,
     timeseries,
     sql,
+    async claimWriterGeneration(generation: number) {
+      if (!Number.isInteger(generation) || generation < 0) {
+        throw new TypeError("A writer generation must be a non-negative integer.");
+      }
+
+      await withReady(async () => {
+        await gateway.transaction(async (tx) => {
+          const stored = await readStoredGeneration(tx);
+          // A takeover advances the fence. An equal generation is a reconnect
+          // by the same writer and is allowed, so a restart does not need a new
+          // generation. A lower generation is a superseded writer.
+          if (stored !== undefined && generation < stored) {
+            throw new DatabaseWriterFencedError(
+              `Writer generation ${generation} cannot claim this shard; generation ${stored} already owns it.`,
+            );
+          }
+
+          await tx.run(
+            `INSERT INTO zv_writer_generation (id, generation, claimed_at)
+             VALUES (1, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET generation = excluded.generation, claimed_at = excluded.claimed_at`,
+            [generation, new Date().toISOString()],
+          );
+        });
+      });
+
+      claimedWriterGeneration = generation;
+    },
   });
 }

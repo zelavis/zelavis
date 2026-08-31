@@ -28,6 +28,11 @@ type TenantScoped<TInput> = Omit<
 };
 
 export interface DatabaseCapabilities {
+  /**
+   * The driver enforces a durable writer fence, so a superseded writer is
+   * rejected by the shard itself rather than trusted to stand down.
+   */
+  writerFencing?: boolean;
   documents: true;
   events: true;
   transactions: boolean;
@@ -124,6 +129,15 @@ export interface DatabaseTimeSeriesStorageDriver {
 }
 
 export interface DatabaseDriver {
+  /**
+   * Claims this shard for a writer generation.
+   *
+   * Advances the durable fence on takeover, accepts a re-claim of the same
+   * generation so a restart does not need a new one, and refuses a generation
+   * older than the one that currently owns the shard. Optional: a driver
+   * without it is unfenced, which is the single-process local default.
+   */
+  claimWriterGeneration?(generation: number): Promise<void>;
   name: string;
   capabilities: DatabaseCapabilities;
   events: DatabaseEventDriver;
