@@ -64,6 +64,12 @@ before editing.
   contracts. The local Node process driver is Platform-owned and stops children
   during `Zelavis.close()`; production worker Agents should be separately
   supervised.
+- Keep deployment backend adapters centralized under `src/backends/<id>` with
+  one shared registry/policy contract. Native, Docker, and future backend logic
+  must not be scattered as Platform or Node-adapter special cases. Keep signed
+  authority, durable leases, audit state, and privileged execution in the
+  shared Agent subsystem rather than duplicating queues or command runners per
+  backend.
 - Treat Project deletion as a durable lifecycle operation. Persist its
   tombstone, stop execution, run stable idempotent cleanup participants, remove
   runtime data last, and delete the registry record only after all participants

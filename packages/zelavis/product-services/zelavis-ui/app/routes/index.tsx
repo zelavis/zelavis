@@ -39,22 +39,6 @@ export async function clientLoader({ request }: Route.ClientLoaderArgs) {
   return { databaseHealth, providers }
 }
 
-function getManagedProjectKind(projectId: string | undefined) {
-  if (projectId?.startsWith("wordpress-")) {
-    return "WordPress";
-  }
-
-  if (projectId?.startsWith("static-")) {
-    return "Static website";
-  }
-
-  if (projectId?.startsWith("generic-")) {
-    return "Generic app";
-  }
-
-  return undefined;
-}
-
 function ManagedProjectOverview({ kind }: { kind: string }) {
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
@@ -127,9 +111,16 @@ function ManagedProjectOverview({ kind }: { kind: string }) {
 function Overview() {
   const params = useParams();
   const { databaseHealth, providers } = useLoaderData<typeof clientLoader>()
-  const { runtime } = useRouteLoaderData<typeof rootClientLoader>('root')!
+  const { runtime, projects } = useRouteLoaderData<typeof rootClientLoader>('root')!
   const services = runtime.services
-  const managedProjectKind = getManagedProjectKind(params.projectId);
+  const project = projects.find((candidate) => candidate.id === params.projectId);
+  const managedProjectKind = project?.kind === "wordpress"
+    ? "WordPress"
+    : project?.kind === "static"
+      ? "Static website"
+      : project?.kind === "generic"
+        ? "Generic app"
+        : undefined;
 
   if (managedProjectKind) {
     return <ManagedProjectOverview kind={managedProjectKind} />;

@@ -80,6 +80,18 @@
       "types": "./dist/app/workloads/index.d.ts",
       "import": "./dist/app/workloads/index.js"
     },
+    "./wordpress": {
+      "types": "./dist/wordpress/index.d.ts",
+      "import": "./dist/wordpress/index.js"
+    },
+    "./backends": {
+      "types": "./dist/backends/index.d.ts",
+      "import": "./dist/backends/index.js"
+    },
+    "./agent": {
+      "types": "./dist/agent/index.d.ts",
+      "import": "./dist/agent/index.js"
+    },
     "./adapters": {
       "types": "./dist/adapters/index.d.ts",
       "import": "./dist/adapters/index.js"
@@ -129,7 +141,8 @@
     "build:sdk:browser": "tsc -p tsconfig.sdk.browser.json",
     "build:sdk:node": "tsc -p tsconfig.sdk.node.json",
     "typecheck": "pnpm --filter @zelavis/ui build:plugin && pnpm --filter @zelavis/cli build && tsc -p tsconfig.json --noEmit",
-    "test": "pnpm run build && pnpm --filter @zelavis/ecommerce build && pnpm --filter @zelavis/app-auth-oidc build && node --test test/*.test.mjs"
+    "test": "pnpm run build && pnpm --filter @zelavis/ecommerce build && pnpm --filter @zelavis/app-auth-oidc build && node --test test/*.test.mjs",
+    "update:wordpress": "node scripts/update-wordpress-release.mjs"
   },
   "files": [
     "dist",

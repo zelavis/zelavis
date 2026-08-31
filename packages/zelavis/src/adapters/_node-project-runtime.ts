@@ -281,6 +281,8 @@ export function createNodeProcessProjectRuntime(
 
   const driver: ZelavisProjectRuntimeDriver = {
     name: "node-process",
+    runtimeKinds: Object.freeze(["native"]),
+    defaultRuntimeKind: "native",
     startupConcurrency,
     capabilities: () => capabilities,
     async prepare(project, app) {

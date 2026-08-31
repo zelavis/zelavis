@@ -15,6 +15,13 @@ deployment under `distribution/.tmp/stage/platform`, and adds:
 - the `zelavis` launcher and systemd service
 - the archive installer and release manifest
 
+The Debian package also declares Nginx, PHP-FPM and the WordPress PHP
+extensions, MariaDB server/client core binaries, and `tar` as dependencies. The
+core MariaDB packages avoid provisioning a machine-wide database instance. This
+gives native WordPress Projects their required host stack without Docker. Each
+Project runs its own service instances and owns its own configuration, sockets,
+ports, logs, site files, credentials, and database data.
+
 The private Node runtime lives under `/opt/zelavis/current/runtime/node` after
 installation. It does not replace `/usr/bin/node` and cannot conflict with Node
 versions used by other applications.
@@ -68,6 +75,11 @@ in this repository.
 - Direct Debian package: `apt install ./zelavis_<version>_<arch>.deb`.
 - Manual upload: extract `.tar.gz` or `.zip`, then run its `install.sh`.
 - npm: users who manage Node 24 themselves can run `npm install -g zelavis`.
+
+Archive and npm installations can provision the native WordPress dependencies
+through APT or Homebrew on first use when Zelavis has package-install authority.
+An unprivileged installation must have those packages installed by the host
+operator before creating its first WordPress Project.
 
 The generic quick-installer archive URLs are stable aliases such as
 `https://downloads.zelavis.com/latest/zelavis-linux-x64.tar.gz`. Release

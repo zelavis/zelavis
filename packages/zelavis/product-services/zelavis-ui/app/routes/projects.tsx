@@ -79,6 +79,7 @@ function ProjectsRoute() {
           service.menu?.title ??
           service.name,
         summary: service.marketplace?.summary,
+        runtimeKinds: service.project?.runtimeKinds ?? ["native"],
       })) ?? [];
   const selectedAppService =
     appServices.find((service) => service.name === appServiceName) ??
@@ -133,7 +134,7 @@ function ProjectsRoute() {
         start: true,
       });
       setParams({ name: null, new: null, app: null });
-      setMessage(`${project.name} is running in its own Node.js process.`);
+      setMessage(`${project.name} is running in its own project runtime.`);
       revalidator.revalidate();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError));
@@ -343,7 +344,8 @@ function ProjectsRoute() {
                     <div className="flex items-center justify-between gap-3">
                       <dt className="text-muted-foreground">Runtime</dt>
                       <dd className="truncate font-medium">
-                        {project.runtime.url ?? project.runtime.driver}
+                        <span className="capitalize">{project.runtimeKind}</span>
+                        {` · ${project.runtime.url ?? project.runtime.driver}`}
                       </dd>
                     </div>
                     <div className="flex items-center justify-between gap-3">

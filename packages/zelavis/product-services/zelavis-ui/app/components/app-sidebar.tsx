@@ -29,7 +29,7 @@ import {
 } from "#/lib/dashboard-data";
 import { filterUserDatabaseCollections } from "#/lib/database-collections";
 import {
-  getManagedProjectKindFromId,
+  getManagedProjectKind,
   getProjectIdFromPathname,
   isProjectManagementPath,
   readSearchParams,
@@ -93,7 +93,8 @@ export function AppSidebar({
     routeSidebarTrail.length > 0;
   const projectId = getProjectIdFromPathname(location.pathname);
   const isProjectDashboardRoute = Boolean(projectId) && !isProjectManagementRoute;
-  const managedProjectKind = getManagedProjectKindFromId(projectId);
+  const selectedProject = projects?.find((project) => project.id === projectId);
+  const managedProjectKind = getManagedProjectKind(selectedProject?.kind);
   const accessibleProjects = React.useMemo(
     () =>
       getDashboardProjectsForAccess(

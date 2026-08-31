@@ -75,12 +75,21 @@ export type {
   ZelavisServiceScope,
 };
 
+/** Host execution family supported by a Project recipe and runtime driver. */
+export type ZelavisProjectRuntimeKind = string;
+
+/** Project-specific recipe metadata locked when a Project is created. */
+export interface ZelavisProjectRecipeDefinition {
+  readonly runtimeKinds: readonly ZelavisProjectRuntimeKind[];
+}
+
 export interface ZelavisServiceRegistryEntry<TContext = unknown> {
   service: ZelavisRuntimeService<any> & {
     scope?: ZelavisServiceScope;
     version?: string;
     app?: ZelavisServiceAppDefinition;
     marketplace?: ZelavisServiceMarketplaceMetadata;
+    project?: ZelavisProjectRecipeDefinition;
     capabilities?: readonly ZelavisServiceCapability[];
     runtimeServices?: readonly ZelavisAnyRuntimeServiceInput[];
     setup?: (

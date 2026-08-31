@@ -70,6 +70,7 @@ export function zelavisAppService(options: ZelavisAppServiceOptions = {}) {
     version: ZELAVIS_VERSION,
     kind: "app",
     capabilities: Object.freeze(["app:project", "dashboard:menu", "api:routes"]),
+    project: Object.freeze({ runtimeKinds: Object.freeze(["native"] as const) }),
     service: Object.freeze({}),
     api: {},
     marketplace: {

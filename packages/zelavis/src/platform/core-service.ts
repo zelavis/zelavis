@@ -23,6 +23,15 @@ export const zelavisCoreMenu = {
       pageLabel: "Server",
     },
     {
+      title: "Deployment backends",
+      path: "/server/runtimes",
+      pageLabel: "Deployment backends",
+      access: {
+        permissions: ["server.backends.view"],
+        scope: { type: "system" },
+      },
+    },
+    {
       title: "Domains",
       path: "/server/domains",
       pageLabel: "Domains",

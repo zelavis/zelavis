@@ -24,6 +24,9 @@ test("zelavis package exports runtime APIs and local host adapters", async () =>
   const appAuth = await import("zelavis/app/auth");
   const appDatabase = await import("zelavis/app/db");
   const appWorkloads = await import("zelavis/app/workloads");
+  const wordpress = await import("zelavis/wordpress");
+  const backends = await import("zelavis/backends");
+  const agent = await import("zelavis/agent");
   const nodeSqlite = await import("zelavis/app/db/adapters/node-sqlite");
   const adapters = await import("zelavis/adapters");
   const nodeAdapter = await import("zelavis/adapters/node");
@@ -66,6 +69,13 @@ test("zelavis package exports runtime APIs and local host adapters", async () =>
   assert.equal(typeof appAuth.createAuth, "function");
   assert.equal(typeof appDatabase.createDatabase, "function");
   assert.equal(typeof appWorkloads.workloadsService, "function");
+  assert.equal(wordpress.wordpressApp.kind, "app");
+  assert.equal(wordpress.wordpressApp.name, "zelavis/wordpress");
+  assert.match(wordpress.WORDPRESS_DOWNLOAD_URL, /wordpress-[\d.]+\.tar\.gz$/);
+  assert.equal(typeof backends.createBuiltinDeploymentBackends, "function");
+  assert.equal(typeof backends.createDeploymentBackendManager, "function");
+  assert.equal(typeof agent.createAgentOperationManager, "function");
+  assert.equal(typeof agent.signAgentAuthority, "function");
   assert.equal(typeof nodeSqlite.createBetterSqlite3Database, "function");
 
   // Local runtime adapters via the barrel

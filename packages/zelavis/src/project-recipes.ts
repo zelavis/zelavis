@@ -1,4 +1,5 @@
 import { zelavisApp } from "./app/index.js";
+import { wordpressApp } from "./wordpress/index.js";
 import type {
   ZelavisServiceRegistryEntry,
   ZelavisServiceSetupContext,
@@ -11,5 +12,12 @@ export const officialProjectRecipes = Object.freeze([
     status: "available",
     source: "official",
     order: 0,
+  }),
+  Object.freeze({
+    service: wordpressApp,
+    specifier: "zelavis/wordpress",
+    status: "available",
+    source: "official",
+    order: 10,
   }),
 ]) satisfies readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[];

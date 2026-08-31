@@ -4,12 +4,32 @@ import {
   getResolvedDashboardPreferences,
   normalizeRuntimeProject,
   resolveRuntimeDynamicMenus,
+  setProjectRunning,
   type RuntimeConfig,
   type RuntimeProject,
 } from "./runtime-api";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+test("runtime errors retain the server correlation reference", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () =>
+    new Response(JSON.stringify({
+      error: "The request could not be completed.",
+      correlationId: "0123456789abcdef",
+    }), {
+      status: 500,
+      headers: { "content-type": "application/json" },
+    }),
+  ));
+  const config = {
+    api: { basePath: "/zelavis/api/v1" },
+  } as RuntimeConfig;
+
+  await expect(setProjectRunning(config, "blogger", true)).rejects.toThrow(
+    "The request could not be completed. Reference: 0123456789abcdef.",
+  );
 });
 
 test("getResolvedDashboardPreferences falls back to an empty object when preferences are missing", () => {
@@ -35,7 +55,9 @@ test("normalizeRuntimeProject recovers a missing app lock for project cards", ()
     name: "zelavis/app",
     title: "Zelavis App",
     specifier: "zelavis/app",
+    runtimeKinds: ["native"],
   });
+  expect(project.runtimeKind).toBe("native");
 });
 
 test("project dynamic menus stay scoped by the proxy without a project query", async () => {

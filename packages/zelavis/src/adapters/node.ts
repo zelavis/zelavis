@@ -13,9 +13,9 @@ import {
 import { createLocalSqliteSystemStore } from "./_sqlite-system-store.js";
 import { resolveLocalDatabaseTopology } from "./_database-topology-store.js";
 import {
-  createNodeProcessProjectRuntime,
-  type NodeProcessProjectRuntimeOptions,
-} from "./_node-project-runtime.js";
+  createLocalProjectRuntime,
+  type LocalProjectRuntimeOptions,
+} from "./_local-project-runtime.js";
 import {
   createLocalFileStorage,
   createMemoryKeyValueStore,
@@ -29,6 +29,7 @@ import {
 } from "./_local-runtime.js";
 import { officialProjectRecipes } from "../project-recipes.js";
 import { migrateLegacyAppDatabase } from "./_legacy-app-database-migration.js";
+import { createBuiltinDeploymentBackends } from "../backends/index.js";
 export {
   createNodeFileArtifactStore,
   type NodeFileArtifactStoreOptions,
@@ -58,6 +59,9 @@ export interface NodeAdapterProjectOptions {
   startupConcurrency?: number;
   shutdownConcurrency?: number;
   logLimit?: number;
+  wordpress?: {
+    startupTimeoutMs?: number;
+  };
 }
 
 export interface NodeAdapterOptions {
@@ -79,7 +83,7 @@ export const createNodeServicePackageInstaller = createLocalRuntimeServicePackag
 export const createNodeServiceImporter = createLocalRuntimeServiceImporter;
 
 export function nodeAdapter(options: NodeAdapterOptions = {}) {
-  let projectRuntime: ReturnType<typeof createNodeProcessProjectRuntime> | undefined;
+  let projectRuntime: ReturnType<typeof createLocalProjectRuntime> | undefined;
 
   return defineAdapter({
     name: "node",
@@ -173,7 +177,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         (!isProjectRuntime || normalizedProjectOptions !== undefined);
       const projectOptions = projectsEnabled ? normalizedProjectOptions : undefined;
       if (projectsEnabled && !projectRuntime) {
-        const runtimeOptions: NodeProcessProjectRuntimeOptions = {
+        const runtimeOptions: LocalProjectRuntimeOptions = {
           directory: projectOptions?.directory
             ? resolve(projectOptions.directory)
             : join(dataDirectory, "projects"),
@@ -189,8 +193,11 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           ...(projectOptions?.logLimit === undefined
             ? {}
             : { logLimit: projectOptions.logLimit }),
+          ...(projectOptions?.wordpress === undefined
+            ? {}
+            : { wordpress: projectOptions.wordpress }),
         };
-        projectRuntime = createNodeProcessProjectRuntime(runtimeOptions);
+        projectRuntime = createLocalProjectRuntime(runtimeOptions);
       }
       const fileStorage =
         options.files === false
@@ -224,6 +231,11 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         resources: {
           systemStore,
           projectRuntime: projectsEnabled ? projectRuntime : undefined,
+          deploymentBackends: isProjectRuntime
+            ? undefined
+            : createBuiltinDeploymentBackends({
+                nativeProjectRuntime: projectsEnabled ? projectRuntime : undefined,
+              }),
           kv: options.kv === false ? undefined : createMemoryKeyValueStore(),
           files: fileStorage,
           servicePackages:

@@ -61,8 +61,10 @@ placements; it does not introduce sharding for the first time.
 | Portable artifacts | `zelavis/artifact` | A validated versioned manifest exists; build, digest, signing, storage, and installation are not implemented. |
 | Provider boundary | `zelavis/provider` | Versioned provider definitions advertise narrow capabilities; capability-specific APIs and concrete cloud plugins are future work. |
 | Principals and permissions | `zelavis/core` contracts/dispatcher | Low-level principals, scoped grants, route requirements, and authorization hooks exist. |
-| Project registry/provisioning | `src/project.ts` | Platform System Store records plus direct prepare/start/stop calls. Creation selects a registered `kind: "app"` recipe and locks its exact version. Deletion persists resumable participant progress and removes the registry record only after all Project-owned resources are cleaned. |
-| Runtime execution | `zelavis` Node adapter | A direct child-process driver owns trusted Project processes and per-Project directories. |
+| Project registry/provisioning | `src/project.ts` | Platform System Store records plus direct prepare/start/stop calls. Creation selects a registered `kind: "app"` recipe, locks its exact version and supported runtime kinds, and persists an explicit Project runtime assignment. Historical records repair to their known native semantics. Deletion persists resumable participant progress and removes the registry record only after all Project-owned resources are cleaned. |
+| Runtime execution | `zelavis` Node adapter | The configured driver advertises only the runtime kinds it can execute. Current local recipe routing is explicitly native: Zelavis Apps run as Node child processes and WordPress through dedicated native Nginx, PHP-FPM, and MariaDB instances with per-Project configuration, sockets, ports, logs, files, and data. The Debian distribution installs the native stack; authorized local installs can provision it through APT or Homebrew. Docker is not currently available. |
+| Deployment backend policy | `src/backends` | A central adapter registry owns the shared contract and the built-in `native/` and `docker/` implementations. The System Store persists administrator policy and read-only observations. A backend cannot be enabled/default unless it is healthy and has a registered Project driver. |
+| Agent operations | `zelavis/agent` plus `zelavis/core` contracts | A stable Agent identity, operation-bound HMAC authority, durable journal, atomic leases, bounded execution, restart recovery, redacted audit summaries, and permission-gated read endpoints are implemented. The Node executor still runs in-process when explicitly assembled; separately supervised IPC, release-signed scripts, cancellation/process-group supervision, and registered installation operations remain. |
 | Project storage | `zelavis` Node/Bun adapters | Project data is isolated below `.zelavis/projects/<id>/.zelavis`; official App data uses one persisted logical topology backed by four local physical SQLite shards by default. Platform state stays in the System Store. |
 | App Data Fabric | `zelavis/app/db` | Versioned desired topology, observed placements, deterministic virtual ranges, single-writer route validation, and a composite tenant-routing driver are operational locally. Writer fence enforcement and durable topology operations remain future work. |
 | Fabric | `src/core/fabric/index.ts` | Read-only inventory/endpoints plus deterministic capability-, pressure-, topology-, and capacity-aware Project replica placement planning. |
@@ -83,11 +85,16 @@ System Store before multi-node enrollment exists.
 ### Project model
 
 Project is named correctly but creation is still coupled to installed App
-services and a single runtime driver. The next Project model must separate:
+services. Runtime assignment is now explicit and persisted separately from the
+Project/App kind, and exact recipe locks declare compatible runtime kinds.
+Creation validates the assignment against both the recipe and configured
+driver before it claims an ID; there is no native/Docker fallback. The local
+adapter still performs narrow recipe-to-driver routing for Zelavis App and
+WordPress, so the next Project model must finish separating:
 
 - universal Project identity, kind, desired state, authority, and resource envelope
 - a Project kind/recipe such as Zelavis App, WordPress, static, or generic
-- a capability-aware runtime driver selected for that Project
+- a capability-aware runtime driver registry resolving the explicit assignment
 - allocation and placement state owned by Fabric
 
 Capabilities are now declared per Project and can differ even when Projects use
@@ -101,6 +108,22 @@ The current Node child driver still loads code from the parent installation, so
 it correctly advertises `independentRuntimeVersion: false`; immutable artifact
 materialization and execution must turn the stored lock into a real runtime
 boundary before older and newer Zelavis versions can run side by side.
+
+Backend selection is administrator policy for new Projects, not an ordinary
+Project-creation choice. Each Project retains its explicit stored assignment,
+so changing the default never migrates existing workloads. Runtime/backend IDs
+are validated slugs rather than a Docker-shaped closed enum, leaving Podman,
+system containers, and microVM implementations possible without pretending
+they have identical capabilities.
+
+The current native backend is still a trusted-code process boundary, not a
+CloudLinux/CageFS-equivalent security boundary. Owner-only directories and
+separate processes do not protect two compromised workloads sharing one Unix
+identity. Production native isolation requires stable per-Project identities,
+filesystem/PID views, cgroup v2 resource limits, capability removal, syscall/
+MAC policy where supported, complete-cgroup lifecycle, and a separately
+supervised Agent. Capability reporting keeps those features `planned` until
+they are applied and tested.
 
 ### Delegated Project Platforms
 
@@ -120,11 +143,13 @@ are not implemented yet.
 
 ### Provisioning and Agent execution
 
-Creation still performs `prepare -> start` directly. There is no scheduler,
-allocation record, local Agent contract implementation, health gate, or
-placement activation transaction. The first replacement should be a local
-Agent using the same command contract future remote Agents use. Docker and
-remote execution must wait until that boundary is proven.
+Creation still performs `prepare -> start` directly. The durable Agent operation
+contract now exists, but Project lifecycle is not routed through it and there
+is no scheduler, allocation record, supervised IPC service, health gate, or
+placement activation transaction. The next replacement should connect the
+local Project drivers to a separately supervised Agent using this same journal
+and authority contract. Docker and remote execution must wait until that
+boundary is proven.
 
 ### Placement authority
 

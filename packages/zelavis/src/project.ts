@@ -3,9 +3,12 @@ import type {
   ZelavisRuntimeService,
 } from "./core/index.js";
 import type {
+  ZelavisProjectRuntimeKind,
   ZelavisServiceRegistryEntry,
   ZelavisServiceSetupContext,
 } from "./service.js";
+
+export type { ZelavisProjectRuntimeKind } from "./service.js";
 import type {
   ZelavisSystemStore,
   ZelavisSystemStoreValue,
@@ -46,6 +49,8 @@ export interface ZelavisProjectApp {
   /** Exact recipe/runtime version. Platform upgrades must never rewrite this lock. */
   version: string;
   specifier: string;
+  /** Runtime families allowed by this exact recipe lock. */
+  runtimeKinds: readonly ZelavisProjectRuntimeKind[];
 }
 
 export interface ZelavisProjectDescriptor {
@@ -53,6 +58,8 @@ export interface ZelavisProjectDescriptor {
   name: string;
   kind: ZelavisProjectKind;
   app: ZelavisProjectApp;
+  /** Explicit host runtime assignment. Never infer this from live processes. */
+  runtimeKind: ZelavisProjectRuntimeKind;
 }
 
 export interface ZelavisProjectRecord extends ZelavisProjectDescriptor {
@@ -86,6 +93,9 @@ export interface ZelavisProjectLogEntry {
 
 export interface ZelavisProjectRuntimeDriver {
   readonly name: string;
+  /** Runtime families this configured driver can currently execute. */
+  readonly runtimeKinds?: readonly ZelavisProjectRuntimeKind[];
+  readonly defaultRuntimeKind?: ZelavisProjectRuntimeKind;
   readonly startupConcurrency?: number;
   capabilities(
     project: Readonly<ZelavisProjectDescriptor>,
@@ -135,6 +145,7 @@ export interface ZelavisProjectCreateInput {
 export interface ZelavisProjectManager {
   readonly runtime: {
     driver: string;
+    availableKinds: readonly ZelavisProjectRuntimeKind[];
   };
   list(): Promise<readonly ZelavisProjectRecord[]>;
   get(id: string): Promise<ZelavisProjectRecord | undefined>;
@@ -174,6 +185,14 @@ export class ZelavisProjectNotFoundError extends Error {
   }
 }
 
+/** A caller-actionable failure while preparing or running a Project runtime. */
+export class ZelavisProjectRuntimeError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ZelavisProjectRuntimeError";
+  }
+}
+
 export class ZelavisProjectDeletionError extends Error {
   readonly projectId: string;
   readonly participantId: string;
@@ -198,6 +217,7 @@ export class ZelavisProjectDeletionError extends Error {
 const PROJECTS_NAMESPACE = "projects";
 const DEFAULT_APP_SERVICE_NAME = "zelavis/app";
 const DEFAULT_STARTUP_CONCURRENCY = 1;
+const DEFAULT_RUNTIME_KIND: ZelavisProjectRuntimeKind = "native";
 const RUNTIME_DATA_CLEANUP_PARTICIPANT = "runtime-data";
 const RETIRED_OFFICIAL_APP_LOCKS = new Map([
   ["@zelavis/app", DEFAULT_APP_SERVICE_NAME],
@@ -386,7 +406,33 @@ function appLockFromRegistryEntry(
     title: appTitleFromService(entry.service),
     version: entry.service.version,
     specifier: entry.specifier ?? entry.service.name,
+    runtimeKinds: normalizeRecipeRuntimeKinds(entry.service.project?.runtimeKinds),
   };
+}
+
+function normalizeRuntimeKind(value: unknown): ZelavisProjectRuntimeKind {
+  if (
+    typeof value === "string" &&
+    value.length <= 64 &&
+    /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(value)
+  ) {
+    return value;
+  }
+  throw new ZelavisProjectValidationError(
+    "Project runtime kind must be a lowercase backend slug of at most 64 characters.",
+  );
+}
+
+function normalizeRecipeRuntimeKinds(
+  values: readonly ZelavisProjectRuntimeKind[] | undefined,
+): readonly ZelavisProjectRuntimeKind[] {
+  const normalized = [...new Set((values ?? [DEFAULT_RUNTIME_KIND]).map(normalizeRuntimeKind))];
+  if (normalized.length === 0) {
+    throw new ZelavisProjectValidationError(
+      "An App service must support at least one Project runtime kind.",
+    );
+  }
+  return Object.freeze(normalized);
 }
 
 function readStoredAppLock(rawProject: Record<string, unknown>): ZelavisProjectApp {
@@ -411,6 +457,11 @@ function readStoredAppLock(rawProject: Record<string, unknown>): ZelavisProjectA
     title: rawApp.title as string,
     version: rawApp.version as string,
     specifier: rawApp.specifier as string,
+    runtimeKinds: normalizeRecipeRuntimeKinds(
+      Array.isArray(rawApp.runtimeKinds)
+        ? rawApp.runtimeKinds as ZelavisProjectRuntimeKind[]
+        : undefined,
+    ),
   };
 }
 
@@ -418,9 +469,19 @@ export async function createProjectManager(options: {
   store: ZelavisSystemStore;
   appServices: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[];
   runtime: ZelavisProjectRuntimeDriver;
+  resolveDefaultRuntimeKind?: () => Promise<ZelavisProjectRuntimeKind>;
   cleanupParticipants?: readonly ZelavisProjectCleanupParticipant[];
 }): Promise<ZelavisProjectManager> {
   const { store, appServices, runtime } = options;
+  const availableRuntimeKinds = normalizeRecipeRuntimeKinds(runtime.runtimeKinds);
+  const defaultRuntimeKind = normalizeRuntimeKind(
+    runtime.defaultRuntimeKind ?? availableRuntimeKinds[0] ?? DEFAULT_RUNTIME_KIND,
+  );
+  if (!availableRuntimeKinds.includes(defaultRuntimeKind)) {
+    throw new ZelavisProjectValidationError(
+      `Default Project runtime kind "${defaultRuntimeKind}" is not available from driver "${runtime.name}".`,
+    );
+  }
   const startupConcurrency = normalizeConcurrency(runtime.startupConcurrency);
   let closing = false;
   let reconciliationPromise: Promise<void> | undefined;
@@ -480,6 +541,9 @@ export async function createProjectManager(options: {
       name: rawProject.name,
       kind: rawProject.kind || projectKindFromAppService(app.name),
       app,
+      runtimeKind: rawRecord.runtimeKind === undefined
+        ? DEFAULT_RUNTIME_KIND
+        : normalizeRuntimeKind(rawRecord.runtimeKind),
     };
     const capabilities = runtime.capabilities(descriptor);
     const project: ZelavisProjectRecord = {
@@ -501,7 +565,8 @@ export async function createProjectManager(options: {
     return {
       project,
       repaired:
-        JSON.stringify(storedApp) !== JSON.stringify(app) ||
+        JSON.stringify(rawRecord.app) !== JSON.stringify(app) ||
+        rawRecord.runtimeKind !== project.runtimeKind ||
         rawProject.kind !== project.kind ||
         JSON.stringify(rawRecord.capabilities) !==
           JSON.stringify(capabilities) ||
@@ -745,6 +810,7 @@ export async function createProjectManager(options: {
   const manager: ZelavisProjectManager = {
     runtime: {
       driver: runtime.name,
+      availableKinds: availableRuntimeKinds,
     },
     async list() {
       const records = await store.list(PROJECTS_NAMESPACE);
@@ -777,12 +843,28 @@ export async function createProjectManager(options: {
         );
       }
       const app = appLockFromRegistryEntry(appService);
+      const runtimeKind = normalizeRuntimeKind(
+        options.resolveDefaultRuntimeKind
+          ? await options.resolveDefaultRuntimeKind()
+          : defaultRuntimeKind,
+      );
+      if (!app.runtimeKinds.includes(runtimeKind)) {
+        throw new ZelavisProjectValidationError(
+          `App service "${app.name}" does not support the "${runtimeKind}" runtime. Supported runtimes: ${app.runtimeKinds.join(", ")}.`,
+        );
+      }
+      if (!availableRuntimeKinds.includes(runtimeKind)) {
+        throw new ZelavisProjectValidationError(
+          `Project runtime "${runtimeKind}" is not available on this Zelavis server. Available runtimes: ${availableRuntimeKinds.join(", ")}.`,
+        );
+      }
       const now = new Date().toISOString();
       const descriptor: ZelavisProjectDescriptor = {
         id,
         name,
         kind: projectKindFromAppService(app.name),
         app,
+        runtimeKind,
       };
       let project: ZelavisProjectRecord = {
         ...descriptor,

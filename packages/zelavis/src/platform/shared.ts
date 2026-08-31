@@ -98,6 +98,10 @@ import {
   DatabaseRevisionMismatchError,
   DatabaseValidationError,
 } from "../app/db/index.js";
+import type { ZelavisSystemStoreValue } from "../system-store.js";
+
+export type ZelavisRuntimeEngine = "node" | "bun" | "deno";
+
 
 export function joinPathParts(...parts: (string | undefined)[]): string {
   const normalized = parts.map(normalizePathPart).filter(Boolean);
@@ -147,4 +151,33 @@ export const zelavisErrorRules: readonly ZelavisServerErrorStatusRule[] = [
 
 export function zelavisErrorResponse(error: unknown, fallback = 500) {
   return createMappedJsonErrorResponse(error, zelavisErrorRules, fallback);
+}
+
+export interface ZelavisKeyValueStore {
+  get(key: string): Promise<string | undefined> | string | undefined;
+  set(key: string, value: string): Promise<void> | void;
+  delete(key: string): Promise<boolean> | boolean;
+  list?(prefix?: string): Promise<readonly string[]> | readonly string[];
+}
+
+export function isBoolean(value: unknown): value is boolean {
+  return typeof value === "boolean";
+}
+
+export function isRuntimeEngine(value: unknown): value is ZelavisRuntimeEngine {
+  return value === "node" || value === "bun" || value === "deno";
+}
+
+export function normalizeEditableRootPath(
+  path: string | undefined,
+): string | undefined {
+  if (path === undefined) {
+    return undefined;
+  }
+
+  return normalizePath(path, "/");
+}
+
+export function toSystemStoreValue(value: unknown): ZelavisSystemStoreValue {
+  return JSON.parse(JSON.stringify(value)) as ZelavisSystemStoreValue;
 }

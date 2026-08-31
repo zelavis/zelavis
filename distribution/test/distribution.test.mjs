@@ -30,6 +30,13 @@ test("APT source binds the repository to its dedicated keyring", async () => {
   assert.match(source, /URIs: https:\/\/apt\.zelavis\.com/);
 });
 
+test("the Debian package installs the native WordPress host stack", async () => {
+  const builder = await readFile(new URL("scripts/build-deb.mjs", distribution), "utf8");
+  for (const dependency of ["nginx", "php-fpm", "php-mysql", "mariadb-server-core", "mariadb-client-core"]) {
+    assert.match(builder, new RegExp(`Depends:.*\\b${dependency}\\b`));
+  }
+});
+
 test("the quick archive installer verifies its payload", async () => {
   const installer = await readFile(new URL("installers/install.sh", distribution), "utf8");
   assert.match(installer, /\.sha256/);

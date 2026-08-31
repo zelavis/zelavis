@@ -85,6 +85,57 @@ Project boilerplates are app services. The selected app service is locked into
 the project record and owns its setup behavior, menu metadata, and app-facing
 runtime services through the shared service contract.
 
+The built-in `zelavis/wordpress` recipe provisions a native, Dockerless
+WordPress Project. It downloads the exact WordPress release locked in the
+Project, generates private database credentials and `wp-config.php` salts, and
+runs dedicated Nginx, PHP-FPM, and MariaDB instances with Project-owned
+configuration, sockets, ports, logs, site files, and database data. The Zelavis
+Debian package installs the native stack as package dependencies. Archive and
+npm installations provision it through APT or Homebrew on first use when the
+Zelavis process has host-package authority; otherwise preparation fails with an
+actionable dependency error instead of silently falling back to SQLite or a
+shared database.
+WordPress remains a managed app with hosting-style controls; it does not mount
+Zelavis App database/auth/content services. Maintainers can refresh the recipe
+pin from the official WordPress version API with:
+
+```bash
+pnpm --filter zelavis update:wordpress
+```
+
+The recipe is intentionally independent of its native execution strategy so a
+future OCI driver can run the same Project kind without changing the creation
+API or dashboard model.
+
+Project records nevertheless own an explicit runtime assignment. Current App
+recipes and the local driver advertise only `native`; server policy selects the
+assignment for a new Project, and a request-level `docker` override is rejected
+before Zelavis claims the Project ID. A future Docker capability can therefore
+be enabled without changing existing Projects or silently migrating them.
+
+Deployment backend policy is server-owned. Administrators can inspect it under
+`/zelavis/server/runtimes` or through
+`GET /zelavis/api/v1/runtime/deployment-backends`. The Node adapter currently
+reports Zelavis Native plus a read-only Docker probe. Native is the enabled
+default; Docker cannot be enabled until a Docker Project driver and privileged
+Agent path exist. Ordinary Project creation does not accept a backend override.
+
+The current native driver is still intended for trusted applications on local
+or small self-hosted installations. Its capability report does not claim
+hardened filesystem, process, network, or resource isolation. The planned
+production-native backend adds per-Project Unix identities, Linux namespace/
+filesystem views, cgroup v2 limits, systemd supervision, and policy confinement
+behind a separately supervised Agent.
+
+Deployment backends are centralized under `zelavis/backends`, with built-in
+`native` and `docker` adapters and a shared registry/policy contract. The
+`zelavis/agent` surface provides stable Agent identity, operation-bound signed
+authority, and a durable lease-based operation journal. Agent records can be
+read through `/zelavis/api/v1/runtime/agent`, but the Platform exposes no
+general command-submission endpoint. The current journal/executor components
+must still be assembled in a separately supervised process before they are a
+production privilege boundary.
+
 The dashboard opens to Projects. Project-local Zelavis surfaces live under
 `/zelavis/projects/:projectId/*`, global app/server discovery lives under
 `/zelavis/marketplace`, global management routes live outside projects, and

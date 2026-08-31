@@ -63,6 +63,7 @@ export const defaultZelavisDashboardClientRoutes = Object.freeze([
   "/server",
   "/server/backups",
   "/server/domains",
+  "/server/runtimes",
   "/server/logs",
   "/settings",
   "/settings/appearance",
