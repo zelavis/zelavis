@@ -38,6 +38,15 @@ an exported type is never mistaken for an operational distributed feature.
   placement contracts.
 - [x] Fabric snapshot and read-only inventory endpoints for the current
   single-node implementation.
+- [x] A `frontend` marketplace category exists, and a listed frontend must
+  carry it and depend on the Zelavis SDK — listing is a promise that the
+  frontend integrates rather than only renders. A frontend that does neither is
+  still installable; it simply cannot be listed.
+- [x] Projects can own Projects. An owned Project is excluded from the
+  Platform's project list, deleted with its owner through a durable cleanup
+  participant, and its ownership survives a restart. Ownership, not a display
+  rule, is the boundary: reconciliation still sees owned Projects, and nested
+  ownership is refused until placement grouping exists.
 - [x] Every installation answers at its root, and what it serves depends on
   which installation it is. An installation running the dashboard uses it as
   its default frontend, so `/` leads there; a Project runtime, which does not
@@ -238,9 +247,13 @@ an exported type is never mistaken for an operational distributed feature.
   install them, because they need a supervised process and a routed target
   through the Project runtime and Gateway. Reuse the Agent/backend path rather
   than adding a second process supervisor.
-- [ ] Add a `frontend` marketplace category and require marketplace frontends to
-  use the Zelavis SDK, so a listed frontend can consume the menu and content
-  APIs rather than only rendering.
+- [ ] Provision a `server` frontend as a Project-owned runtime. Ownership,
+  hidden listing, and cleanup exist; what remains is creating the owned runtime
+  from the frontend manifest and routing the owning Project's public paths to
+  it through the Gateway.
+- [ ] Place an owned Project with its owner. Fabric currently plans each Project
+  independently, so an owned runtime could be placed away from the Project it
+  serves. This is the Project Cell placement-group rule applied one level down.
 
 
 - [ ] Prove local shard movement, split/merge, generation fencing, crash-safe

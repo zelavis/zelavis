@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  assertListableFrontend,
   loadService,
   readFrontendManifest,
+  ZELAVIS_FRONTEND_MARKETPLACE_CATEGORY,
+  ZelavisFrontendListingError,
   toServiceAppDefinition,
   ZelavisFrontendManifestError,
   validatePluginPackageManifest,
@@ -173,5 +176,78 @@ test("a server frontend is refused with a message that says why", async () => {
       return true;
     },
     "installing something that silently serves nothing would be worse than refusing",
+  );
+});
+
+const listable = (extra = {}) => ({
+  name: "@acme/site",
+  version: "1.0.0",
+  type: "module",
+  dependencies: { zelavis: "^1.0.0" },
+  zelavis: {
+    kind: "frontend",
+    frontend: { runtime: "static", bundle: "dist" },
+    marketplace: { categories: [ZELAVIS_FRONTEND_MARKETPLACE_CATEGORY] },
+  },
+  ...extra,
+});
+
+test("a listable frontend carries the category and depends on the SDK", () => {
+  const frontend = assertListableFrontend(listable());
+  assert.equal(frontend.runtime, "static");
+  assert.equal(ZELAVIS_FRONTEND_MARKETPLACE_CATEGORY, "frontends");
+});
+
+test("a frontend without the marketplace category cannot be listed", () => {
+  const manifest = listable();
+  manifest.zelavis.marketplace = { categories: ["apps"] };
+  assert.throws(
+    () => assertListableFrontend(manifest),
+    (error) => {
+      assert.ok(error instanceof ZelavisFrontendListingError);
+      assert.match(error.message, /must list the "frontends" marketplace category/);
+      return true;
+    },
+  );
+});
+
+test("a frontend that does not use the SDK cannot be listed", () => {
+  const manifest = listable();
+  delete manifest.dependencies;
+  assert.throws(
+    () => assertListableFrontend(manifest),
+    /must depend on "zelavis" to be published/,
+  );
+
+  // peerDependencies count: a frontend may expect the host to provide it.
+  assert.doesNotThrow(() =>
+    assertListableFrontend(listable({ dependencies: undefined, peerDependencies: { zelavis: "*" } })),
+  );
+});
+
+test("an unlistable frontend is still installable", async () => {
+  // Listing is a promise of integration. A plain folder of HTML is a perfectly
+  // valid frontend to upload and install; it just cannot be listed.
+  const manifest = {
+    name: "@acme/plain",
+    version: "1.0.0",
+    type: "module",
+    zelavis: { kind: "frontend", frontend: { runtime: "static", bundle: "dist" } },
+  };
+
+  assert.throws(() => assertListableFrontend(manifest), ZelavisFrontendListingError);
+
+  const service = await loadService("@acme/plain", {
+    manifest,
+    importer: async () => ({}),
+  });
+  assert.equal(service.name, "@acme/plain");
+  assert.deepEqual(service.app, { mount: "/", bundle: "dist", mode: "spa" });
+});
+
+test("a non-frontend package cannot be listed as one", () => {
+  assert.throws(
+    () => assertListableFrontend({ name: "@acme/plugin", zelavis: { kind: "plugin" } }),
+    /is not a frontend/,
   );
 });
