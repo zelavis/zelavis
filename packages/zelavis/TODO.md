@@ -38,6 +38,14 @@ an exported type is never mistaken for an operational distributed feature.
   placement contracts.
 - [x] Fabric snapshot and read-only inventory endpoints for the current
   single-node implementation.
+- [x] The Frontend contract exists: `kind: "frontend"` in the `package.json`
+  `zelavis` namespace declares `static` or `server`. The runtime is declared,
+  never inferred from a `start` script, because a `server` frontend spawns a
+  process and a `static` one does not. Static frontends reuse the existing
+  service `app` definition with its SPA/MPA modes and load without a JavaScript
+  entry; bundle paths cannot escape the package; a `server` start command is
+  argv rather than a shell string. Malformed frontends are refused at manifest
+  validation rather than surfacing as a broken site.
 - [x] The retired website content model is gone. A Project that has not chosen
   a frontend serves an explicit placeholder at its public paths instead of a
   404, while control-plane paths keep their own 404s. The placeholder is not a
@@ -221,11 +229,13 @@ an exported type is never mistaken for an operational distributed feature.
 
 ## Next
 
-- [ ] Define the Frontend contract: `kind: "frontend"` in the `package.json`
-  `zelavis` namespace, declaring `static` (reusing the existing service `app`
-  definition with its SPA/MPA modes) or `server` (a child process behind the
-  backend/Agent path). Declared, not sniffed from a `start` script — a `server`
-  frontend is a different trust and resource decision from serving files.
+- [ ] Execute `server` frontends. The contract accepts them and refuses to
+  install them, because they need a supervised process and a routed target
+  through the Project runtime and Gateway. Reuse the Agent/backend path rather
+  than adding a second process supervisor.
+- [ ] Add a `frontend` marketplace category and require marketplace frontends to
+  use the Zelavis SDK, so a listed frontend can consume the menu and content
+  APIs rather than only rendering.
 - [ ] Make `@zelavis/ui` an explicit default Frontend of the outermost
   installation rather than an implicit core service. Project runtimes already
   exclude it.

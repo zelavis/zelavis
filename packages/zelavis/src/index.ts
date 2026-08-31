@@ -39,6 +39,15 @@ import {
 import { createZelavisCoreService } from "./platform/core-service.js";
 import { createProjectGatewayRoutes } from "./platform/project-gateway.js";
 import { createProjectFrontendPlaceholderService } from "./platform/project-frontend.js";
+export {
+  readFrontendManifest,
+  toServiceAppDefinition,
+  ZelavisFrontendManifestError,
+  type ZelavisFrontendManifest,
+  type ZelavisFrontendRuntime,
+  type ZelavisServerFrontendManifest,
+  type ZelavisStaticFrontendManifest,
+} from "./core/service/frontend.js";
 import { resolveStorageCoreService } from "./platform/storage.js";
 export type {
   ZelavisKeyValueStore,
