@@ -138,6 +138,7 @@ import {
   createProjectManager,
   ZelavisProjectConflictError,
   ZelavisProjectNotFoundError,
+  ZelavisProjectRuntimeError,
   ZelavisProjectValidationError,
   type ZelavisProjectRuntimeDriver,
   type ZelavisProjectManager,
@@ -149,6 +150,17 @@ import {
   ZelavisAssistantValidationError,
   type ZelavisAssistantResponder,
 } from "./assistant.js";
+import {
+  createDeploymentBackendManager,
+  createDeploymentBackendProjectRuntime,
+  ZelavisDeploymentBackendConflictError,
+  ZelavisDeploymentBackendValidationError,
+  type ZelavisDeploymentBackendAdapter,
+  type ZelavisDeploymentBackendManager,
+} from "./backends/index.js";
+export * from "./backends/index.js";
+export * from "./agent/index.js";
+import type { ZelavisAgentOperationReader } from "./core/agent/index.js";
 import {
   createMemorySystemStore,
   type ZelavisSystemStore,
@@ -314,6 +326,10 @@ export interface ZelavisServerOptions {
   domainBindings?: DomainBindingStore;
   systemStore?: ZelavisSystemStore;
   projectRuntime?: ZelavisProjectRuntimeDriver;
+  /** Host-provided deployment backend probes. Platform policy remains in the System Store. */
+  deploymentBackends?: readonly ZelavisDeploymentBackendAdapter[];
+  /** Read-only connection to a separately supervised Agent operation journal. */
+  agentOperations?: ZelavisAgentOperationReader;
   assistant?: false | ZelavisAssistantResponder;
   bootstrap?: {
     /** One-time secret required to claim the first Platform owner account. */
@@ -349,6 +365,8 @@ export interface ZelavisServicePackageInstaller {
 export interface ZelavisPlatformResources {
   systemStore?: ZelavisSystemStore;
   projectRuntime?: ZelavisProjectRuntimeDriver;
+  deploymentBackends?: readonly ZelavisDeploymentBackendAdapter[];
+  agentOperations?: ZelavisAgentOperationReader;
   kv?: ZelavisKeyValueStore;
   files?: ZelavisFileStorage;
   services?: ZelavisServiceActivationController;
@@ -1366,6 +1384,7 @@ async function resolveRuntimeManagementCore(
       source: entry.source,
       order: entry.order,
       marketplace: entry.service.marketplace,
+      project: entry.service.project,
       menu: serializeServiceMenuForDashboard(entry.service.name, entry.service.menu),
       menus: entry.service.menus?.map((menu) =>
         serializeServiceMenuForDashboard(entry.service.name, menu),
@@ -1451,6 +1470,7 @@ async function resolveRuntimeManagementCore(
         source: entry.source,
         order: entry.order,
         marketplace: entry.service.marketplace,
+        project: entry.service.project,
         menu: serializeServiceMenuForDashboard(entry.service.name, entry.service.menu),
         menus: entry.service.menus?.map((menu) =>
           serializeServiceMenuForDashboard(entry.service.name, menu),
@@ -2201,6 +2221,8 @@ async function resolvePlatformCoreService(
   projects?: ZelavisProjectManager,
   fabric?: FabricApi,
   systemStore?: ZelavisSystemStore,
+  deploymentBackends?: ZelavisDeploymentBackendManager,
+  agentOperations?: ZelavisAgentOperationReader,
   runtimeManagementRoutes: readonly ZelavisServerRoute<any>[] = [],
   assistantOption?: false | ZelavisAssistantResponder,
 ): Promise<ZelavisRuntimeService<any>> {
@@ -2230,6 +2252,8 @@ async function resolvePlatformCoreService(
           ? 409
           : error instanceof ZelavisProjectValidationError
             ? 400
+            : error instanceof ZelavisProjectRuntimeError
+              ? 503
             : 500;
     return createJsonErrorResponse(status, error);
   }
@@ -2244,10 +2268,131 @@ async function resolvePlatformCoreService(
     return createJsonErrorResponse(status, error);
   }
 
+  function deploymentBackendErrorResponse(error: unknown) {
+    const status = error instanceof ZelavisDeploymentBackendValidationError
+      ? 400
+      : error instanceof ZelavisDeploymentBackendConflictError
+        ? 409
+        : 500;
+    return createJsonErrorResponse(status, error);
+  }
+
   return createZelavisCoreService({
     service: {},
     routes: [
         ...runtimeManagementRoutes,
+        {
+          id: "runtime.agent.read",
+          method: "GET",
+          path: "/agent",
+          access: { permissions: ["server.agents.view"] },
+          handler: async () => agentOperations
+            ? {
+                status: 200,
+                body: {
+                  identity: agentOperations.identity,
+                  operations: await agentOperations.list({ limit: 100 }),
+                },
+              }
+            : {
+                status: 503,
+                body: { error: "Agent operation journal is unavailable." },
+              },
+        },
+        {
+          id: "runtime.agent.operations.list",
+          method: "GET",
+          path: "/agent/operations",
+          access: { permissions: ["server.agents.view"] },
+          handler: async () => agentOperations
+            ? {
+                status: 200,
+                body: { operations: await agentOperations.list({ limit: 100 }) },
+              }
+            : {
+                status: 503,
+                body: { error: "Agent operation journal is unavailable." },
+              },
+        },
+        {
+          id: "runtime.agent.operations.get",
+          method: "GET",
+          path: "/agent/operations/:operationId",
+          access: { permissions: ["server.agents.view"] },
+          handler: async ({ params }: { params: Record<string, string> }) => {
+            if (!agentOperations) {
+              return { status: 503, body: { error: "Agent operation journal is unavailable." } };
+            }
+            const operation = await agentOperations.get(params.operationId ?? "");
+            return operation
+              ? { status: 200, body: { operation } }
+              : { status: 404, body: { error: "Agent operation was not found." } };
+          },
+        },
+        {
+          id: "runtime.deployment-backends.list",
+          method: "GET",
+          path: "/deployment-backends",
+          access: { permissions: ["server.backends.view"] },
+          handler: async () => deploymentBackends
+            ? {
+                status: 200,
+                body: {
+                  policy: await deploymentBackends.getPolicy(),
+                  backends: await deploymentBackends.list(),
+                },
+              }
+            : {
+                status: 503,
+                body: { error: "Deployment backend management is unavailable." },
+              },
+        },
+        {
+          id: "runtime.deployment-backends.detect",
+          method: "POST",
+          path: "/deployment-backends/detect",
+          access: { permissions: ["server.backends.manage"] },
+          handler: async ({ body }: { body: unknown }) => {
+            if (!deploymentBackends) {
+              return { status: 503, body: { error: "Deployment backend management is unavailable." } };
+            }
+            try {
+              const input = readBodyObject(body);
+              return {
+                status: 200,
+                body: {
+                  backends: await deploymentBackends.detect(
+                    typeof input.id === "string" ? input.id : undefined,
+                  ),
+                },
+              };
+            } catch (error) {
+              return deploymentBackendErrorResponse(error);
+            }
+          },
+        },
+        ...(["enable", "disable", "default"] as const).map((action) => ({
+          id: `runtime.deployment-backends.${action}`,
+          method: "POST" as const,
+          path: `/deployment-backends/:backendId/${action}`,
+          access: { permissions: ["server.backends.manage"] },
+          handler: async ({ params }: { params: Record<string, string> }) => {
+            if (!deploymentBackends) {
+              return { status: 503, body: { error: "Deployment backend management is unavailable." } };
+            }
+            try {
+              const backendId = params.backendId ?? "";
+              const policy = action === "enable"
+                ? await deploymentBackends.enable(backendId)
+                : action === "disable"
+                  ? await deploymentBackends.disable(backendId)
+                  : await deploymentBackends.setDefault(backendId);
+              return { status: 200, body: { policy } };
+            } catch (error) {
+              return deploymentBackendErrorResponse(error);
+            }
+          },
+        })),
         {
           id: "runtime.access",
           method: "GET",
@@ -2282,6 +2427,7 @@ async function resolvePlatformCoreService(
                     entry.service.name,
                   summary: entry.service.marketplace?.summary,
                   marketplace: entry.service.marketplace,
+                  runtimeKinds: entry.service.project?.runtimeKinds ?? ["native"],
                 })),
             },
           }),
@@ -2410,6 +2556,11 @@ async function resolvePlatformCoreService(
             }
             try {
               const input = readBodyObject(body);
+              if (input.runtimeKind !== undefined) {
+                throw new ZelavisProjectValidationError(
+                  "New Project deployment backends are selected by server policy. Change the server default or use an explicit migration workflow for an existing Project.",
+                );
+              }
               const project = await projects.create({
                 name: typeof input.name === "string" ? input.name : "",
                 ...(typeof input.id === "string" ? { id: input.id } : {}),
@@ -2773,12 +2924,43 @@ export async function zelavis(
   const deletionAssistant = systemStore
     ? createAssistantManager({ store: systemStore })
     : undefined;
+  const deploymentBackends =
+    systemStore && options.deploymentBackends?.length
+      ? createDeploymentBackendManager({
+          store: systemStore,
+          backends: options.deploymentBackends,
+          assignedProjectCount: async (backendId) =>
+            (await systemStore.list("projects")).filter((record) => {
+              if (
+                !record.value ||
+                typeof record.value !== "object" ||
+                Array.isArray(record.value)
+              ) {
+                return false;
+              }
+              const value = record.value as Readonly<Record<string, unknown>>;
+              return (value.runtimeKind ?? "native") === backendId;
+            }).length,
+        })
+      : undefined;
+  const projectRuntime = systemStore && options.deploymentBackends?.length
+    ? createDeploymentBackendProjectRuntime({
+        store: systemStore,
+        backends: options.deploymentBackends,
+      }) ?? options.projectRuntime
+    : options.projectRuntime;
   const projects =
-    systemStore && options.projectRuntime
+    systemStore && projectRuntime
       ? await createProjectManager({
           appServices: serviceRegistry,
           store: systemStore,
-          runtime: options.projectRuntime,
+          runtime: projectRuntime,
+          ...(deploymentBackends
+            ? {
+                resolveDefaultRuntimeKind: async () =>
+                  (await deploymentBackends.getPolicy()).defaultBackend,
+              }
+            : {}),
           cleanupParticipants: [
             ...(deletionAssistant
               ? [{
@@ -2851,6 +3033,8 @@ export async function zelavis(
     projects,
     fabricCoreService?.service,
     systemStore,
+    deploymentBackends,
+    options.agentOperations,
     runtimeManagement.routes,
     options.assistant,
   );
@@ -3145,6 +3329,9 @@ function mergeZelavisServerOptions(
     serviceActivation: override.serviceActivation ?? base.serviceActivation,
     systemStore: override.systemStore ?? base.systemStore,
     projectRuntime: override.projectRuntime ?? base.projectRuntime,
+    deploymentBackends:
+      override.deploymentBackends ?? base.deploymentBackends,
+    agentOperations: override.agentOperations ?? base.agentOperations,
     serviceRegistry:
       serviceCatalog.length > 0 || serviceStore || serviceImporter
         ? {
@@ -3299,6 +3486,9 @@ function applyPlatformResourceDefaults(
     coreServices: nextCoreServices,
     systemStore: options.systemStore ?? resources.systemStore,
     projectRuntime: options.projectRuntime ?? resources.projectRuntime,
+    deploymentBackends:
+      options.deploymentBackends ?? resources.deploymentBackends,
+    agentOperations: options.agentOperations ?? resources.agentOperations,
   };
 }
 

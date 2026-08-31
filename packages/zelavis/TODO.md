@@ -53,6 +53,30 @@ an exported type is never mistaken for an operational distributed feature.
   `zelavis/app/workloads` on top of server contracts.
 - [x] App Projects persist an exact `zelavis/app` recipe/runtime version and
   preserve it when the parent Platform registry or package version changes.
+- [x] Every Project and exact App recipe lock persists an explicit
+  `runtimeKind`/supported-runtime assignment. Historical records are repaired
+  to their known `native` semantics, the configured driver publishes its
+  available/default kinds, and creation rejects incompatible or unavailable
+  kinds before claiming the Project ID. Docker is not advertised by this
+  contract alone.
+- [x] Deployment backends have host-supplied, backend-neutral capability and
+  read-only detection definitions; the Platform persists native-default
+  administrator policy, exposes permission-gated endpoints and a Server UI,
+  blocks request-level backend selection, and never changes existing Project
+  assignments when policy changes. Docker may be detected but cannot be
+  enabled without a registered Project driver.
+- [x] Host operations have a runtime-neutral manifest/request/executor contract
+  and a Node executor foundation that requires an authority verifier, exact
+  version and SHA-256 artifact match, declared bounded arguments, contained
+  non-writable executable files, deadline/output limits, shell-free spawning,
+  and idempotent operation IDs.
+- [x] The official `zelavis/wordpress` App recipe creates native Dockerless
+  WordPress Projects with a locked WordPress release, isolated files, generated
+  credentials, and dedicated project-owned Nginx, PHP-FPM, and MariaDB
+  instances, configuration, sockets, logs, and data. Debian packaging and
+  authorized APT/Homebrew first-use provisioning install the host stack.
+  Hosting-style dashboard navigation and local recipe routing leave room for a
+  later OCI driver without changing the Project kind.
 - [x] App Data Fabric topology contracts separate desired partitioning from
   observed placement, cover the complete deterministic hash space with stable
   virtual ranges, and enforce one active writer per physical shard.
@@ -170,6 +194,20 @@ an exported type is never mistaken for an operational distributed feature.
 - [ ] Official App local routing and topology persistence are operational, but
   writer generations are not yet enforced inside physical SQLite writes and
   local move/split/merge operations are not yet durable state machines.
+- [ ] Docker has a centralized read-only backend adapter and detector but no
+  installer, Project driver, secret provider, backup/restore contract, or
+  durable migration state machine. Enabling Docker must remain separate from
+  migrating Projects.
+- [ ] The Agent now has stable identity, operation-bound signed authority,
+  durable queued state, atomic leases, bounded concurrency, redacted audit
+  events, replay-safe IDs, restart recovery, and read-only management
+  endpoints. A separately supervised IPC service, release-signed manifests,
+  process-group cancellation/reconciliation, and registered installation
+  operations remain required.
+- [ ] Native reports its current `process` isolation boundary honestly. Stable
+  per-Project Unix identities, filesystem/PID/network namespace policy, cgroup
+  v2 limits, systemd supervision, capability/seccomp/MAC confinement, quotas,
+  and adversarial cross-Project tests are not operational.
 
 ## Next
 
@@ -183,8 +221,18 @@ an exported type is never mistaken for an operational distributed feature.
   of the parent Platform installation.
 - [ ] Add remote `ArtifactStore` adapters for Agent retrieval and immutable
   Project runtime installation.
-- [ ] Split universal Project descriptors from Project recipes and add the
-  Project-driver registry described in `ARCHITECTURE.md`.
+- [ ] Replace the current narrow native recipe router with the public
+  capability-aware Project-driver registry described in `ARCHITECTURE.md`.
+  Runtime assignment and recipe compatibility are now explicit, but leaf
+  driver registration and resolution still need to be generalized.
+- [ ] Implement the phased Docker/WordPress plan in
+  `pnotes/ZELAVIS_DOCKER_IMPLEMENTATION_PLAN.md`: capability detection and the
+  authenticated privileged executor first, then isolated Docker WordPress
+  creation, then durable backup/cutover/rollback migration.
+- [ ] Continue the reconciled native/backend plan in
+  `pnotes/ZELAVIS_NATIVE_ISOLATION_AND_DEPLOYMENT_BACKENDS_PLAN.md`: build the
+  separately supervised Agent transport and process supervisor, then harden
+  the native backend before adding Docker Project execution and migration.
 - [ ] Persist Platform identity, allocations, placements, and generations in
   the System Store.
 - [ ] Put local Node child-process execution behind the Zelavis Agent command

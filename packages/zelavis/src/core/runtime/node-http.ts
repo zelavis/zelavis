@@ -55,10 +55,21 @@ export function createNodeHttpServer<TService = unknown>(
     async (request: IncomingMessage, response: ServerResponse) => {
       // Let handlers observe the client going away instead of finishing work
       // for a socket that is already closed.
+      //
+      // The signal is driven from the *response*, not the request:
+      // `IncomingMessage` emits `close` as soon as its stream is fully read and
+      // destroyed, which for any request carrying a body happens the moment the
+      // dispatcher parses it — long before the handler is done. Aborting there
+      // cancelled every POST/PUT/PATCH handler that awaited outbound work.
+      // `ServerResponse` emits `close` when the response finishes or the
+      // connection drops, so a premature close is the real disconnect signal.
       const controller = new AbortController();
       const abort = () => controller.abort();
+      const abortIfUnfinished = () => {
+        if (!response.writableFinished) abort();
+      };
       request.once("aborted", abort);
-      request.once("close", abort);
+      response.once("close", abortIfUnfinished);
 
       let webRequest: Request;
       try {
@@ -84,7 +95,7 @@ export function createNodeHttpServer<TService = unknown>(
         failClosed(response, 500);
       } finally {
         request.off("aborted", abort);
-        request.off("close", abort);
+        response.off("close", abortIfUnfinished);
       }
     },
   );

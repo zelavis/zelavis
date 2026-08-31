@@ -134,3 +134,65 @@ test("the server declares explicit connection budgets", () => {
   assert.equal(server.keepAliveTimeout, 5_000);
   assert.equal(server.maxHeadersCount, 200);
 });
+
+test("reading a request body does not abort the handler's signal", async () => {
+  // `IncomingMessage` emits `close` as soon as its stream is drained, so a
+  // signal driven from the request aborted every body-carrying handler the
+  // moment the dispatcher parsed the body — cancelling outbound work such as
+  // the Project Gateway's proxy fetch.
+  const server = createNodeHttpServer({
+    fetch: async (request) => {
+      const body = await request.text();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return Response.json({ body, aborted: request.signal.aborted });
+    },
+  });
+  const port = await listen(server);
+  try {
+    for (const method of ["POST", "PUT", "PATCH"]) {
+      const response = await fetch(`http://127.0.0.1:${port}/`, {
+        method,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ n: 1 }),
+      });
+      assert.deepEqual(await response.json(), {
+        body: '{"n":1}',
+        aborted: false,
+      });
+    }
+  } finally {
+    await close(server);
+  }
+});
+
+test("a client that disconnects still aborts the handler's signal", async () => {
+  let observed;
+  const server = createNodeHttpServer({
+    fetch: async (request) => {
+      await request.text();
+      observed = await new Promise((resolve) => {
+        request.signal.addEventListener("abort", () => resolve("aborted"), {
+          once: true,
+        });
+        setTimeout(() => resolve("not-aborted"), 2_000);
+      });
+      return Response.json({ observed });
+    },
+  });
+  const port = await listen(server);
+  try {
+    const controller = new AbortController();
+    const pending = fetch(`http://127.0.0.1:${port}/`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ n: 1 }),
+      signal: controller.signal,
+    }).catch(() => undefined);
+    setTimeout(() => controller.abort(), 50);
+    await pending;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(observed, "aborted");
+  } finally {
+    await close(server);
+  }
+});

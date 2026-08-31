@@ -12,20 +12,10 @@ export function isProjectRootPath(pathname: string) {
   return /^\/projects\/[^/]+\/?$/.test(pathname);
 }
 
-export function getManagedProjectKindFromId(projectId: string | undefined) {
-  if (projectId?.startsWith("wordpress-")) {
-    return "wordpress";
-  }
-
-  if (projectId?.startsWith("static-")) {
-    return "static";
-  }
-
-  if (projectId?.startsWith("generic-")) {
-    return "generic";
-  }
-
-  return undefined;
+export function getManagedProjectKind(kind: string | undefined) {
+  return kind === "wordpress" || kind === "static" || kind === "generic"
+    ? kind
+    : undefined;
 }
 
 export function toProjectPath(path = "/", projectId?: string) {

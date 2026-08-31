@@ -428,6 +428,18 @@ export function createProjectGatewayRoutes(
                   (cause.name === "TimeoutError" ||
                     cause.name === "AbortError")
                 ) {
+                  // Only the Gateway's own deadline is a gateway timeout. A
+                  // caller that went away must not be reported as a slow
+                  // Project: that reads as a runtime fault and sends debugging
+                  // in the wrong direction entirely.
+                  if (!timeout.aborted) {
+                    return {
+                      status: 499,
+                      body: {
+                        error: "The client closed the request before the Project responded.",
+                      },
+                    };
+                  }
                   return {
                     status: 504,
                     body: {

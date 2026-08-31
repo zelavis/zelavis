@@ -413,6 +413,23 @@ test("privileged project control routes declare explicit access requirements", a
   assert.deepEqual(routes.get("runtime.service-page-asset.read")?.access, {
     authenticated: true,
   });
+  assert.deepEqual(routes.get("runtime.deployment-backends.list")?.access, {
+    permissions: ["server.backends.view"],
+  });
+  for (const id of [
+    "runtime.agent.read",
+    "runtime.agent.operations.list",
+    "runtime.agent.operations.get",
+  ]) {
+    assert.deepEqual(routes.get(id)?.access, {
+      permissions: ["server.agents.view"],
+    });
+  }
+  for (const action of ["detect", "enable", "disable", "default"]) {
+    assert.deepEqual(routes.get(`runtime.deployment-backends.${action}`)?.access, {
+      permissions: ["server.backends.manage"],
+    });
+  }
   assert.equal(routes.get("website.page.dynamic")?.access, undefined);
   assert.equal(routes.get("storage.files.read")?.access, undefined);
   for (const method of ["get", "post", "put", "patch", "delete"]) {
@@ -1279,6 +1296,14 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "runtime.settings.read",
       "runtime.settings.update",
       "runtime.openapi",
+      "runtime.agent.read",
+      "runtime.agent.operations.list",
+      "runtime.agent.operations.get",
+      "runtime.deployment-backends.list",
+      "runtime.deployment-backends.detect",
+      "runtime.deployment-backends.enable",
+      "runtime.deployment-backends.disable",
+      "runtime.deployment-backends.default",
       "runtime.access",
       "runtime.app-services.list",
       "runtime.assistant.threads.list",

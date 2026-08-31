@@ -1,10 +1,12 @@
 import { Archive, Database, Files, Globe2, MonitorCog, Package, ReceiptText } from "lucide-react";
-import { useParams } from "react-router";
+import { useParams, useRouteLoaderData } from "react-router";
 
 import { DashboardNotFound } from "#/components/DashboardNotFound";
 import { DataRow, ResourceNotice, StatusBadge } from "#/components/DashboardPage";
+import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
-import { getManagedProjectKindFromId } from "#/lib/routing";
+import { getManagedProjectKind } from "#/lib/routing";
+import type { clientLoader as rootClientLoader } from "../root";
 
 export const handle = {
   pageLabel: "Project",
@@ -50,7 +52,9 @@ const managedSections = {
 
 export default function ManagedProjectSectionRoute() {
   const params = useParams();
-  const managedKind = getManagedProjectKindFromId(params.projectId);
+  const { projects } = useRouteLoaderData<typeof rootClientLoader>("root")!;
+  const project = projects.find((candidate) => candidate.id === params.projectId);
+  const managedKind = getManagedProjectKind(project?.kind);
 
   if (!managedKind) {
     return <DashboardNotFound />;
@@ -83,6 +87,18 @@ export default function ManagedProjectSectionRoute() {
         title="Managed app boundary"
         description="This project does not expose Zelavis-native sections like Auth, Content, and Plugins. It gets hosting controls similar to managed WordPress or generic app hosting."
       />
+      {managedKind === "wordpress" && params.managedSection === "admin" && project?.runtime.url ? (
+        <Button
+          className="w-fit"
+          render={<a
+            href={`${project.runtime.url.replace(/\/$/, "")}/wp-admin/`}
+            target="_blank"
+            rel="noreferrer"
+          />}
+        >
+          Open WordPress Admin
+        </Button>
+      ) : null}
     </section>
   );
 }

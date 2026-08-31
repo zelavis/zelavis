@@ -187,6 +187,16 @@ drivers will also need leases or fencing, durable work queues, health-based
 placement, and paginated project discovery; do not stretch the in-process Node
 child map into the Zelavis Cloud scheduler.
 
+Deployment backend adapters are centralized under
+`packages/zelavis/src/backends/<backend-id>`. The shared registry/policy
+contract lives alongside them; built-in native, Docker, and future Podman,
+Incus, nspawn, or microVM implementations must not be scattered through the
+Platform service or hidden as special cases inside the Node adapter. Backend
+adapters declare capability and backend-specific operations. Signed authority,
+durable leases, audit state, reconciliation, and privileged execution belong to
+the shared Zelavis Agent subsystem, not to separate ad-hoc queues or general
+command runners in each backend.
+
 Keep traffic balancing, placement, replication, and infrastructure
 provisioning as separate capabilities. A placement is authoritative; a runtime
 URL is only an Agent-reported route target. Replicas do not imply multiple

@@ -10,6 +10,13 @@ class DatabaseValidationError extends Error {
   }
 }
 
+class ZelavisProjectRuntimeError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ZelavisProjectRuntimeError";
+  }
+}
+
 async function runtimeThrowing(error, hooks = {}) {
   return createServiceRuntime({
     prefix: "/api/v1",
@@ -70,6 +77,16 @@ test("a typed domain error keeps its message", async () => {
 
   const body = await (await call(runtime)).json();
   assert.equal(body.error, "A Tenant ID is required.");
+  assert.equal(body.correlationId, undefined);
+});
+
+test("an actionable Project runtime error keeps its safe message", async () => {
+  const runtime = await runtimeThrowing(
+    new ZelavisProjectRuntimeError("Native WordPress requires PHP-FPM."),
+  );
+
+  const body = await (await call(runtime)).json();
+  assert.equal(body.error, "Native WordPress requires PHP-FPM.");
   assert.equal(body.correlationId, undefined);
 });
 

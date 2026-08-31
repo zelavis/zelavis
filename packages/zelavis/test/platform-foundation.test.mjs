@@ -8,6 +8,8 @@ import {
   Zelavis,
   ZelavisProjectDeletionError,
   createAssistantManager,
+  createDeploymentBackendManager,
+  createDeploymentBackendProjectRuntime,
   createMemorySystemStore,
   createProjectManager,
 } from "../dist/index.js";
@@ -18,6 +20,154 @@ import { formatProjectProcessExitError } from "../dist/adapters/_node-project-ru
 const PLATFORM_OWNER_CONTEXT = {
   principal: { id: "test-owner", type: "user", roles: ["owner"], permissions: ["*"] },
 };
+
+const TEST_BACKEND_CAPABILITIES = {
+  isolationBoundary: "process",
+  filesystemIsolation: "planned",
+  processIsolation: "planned",
+  networkIsolation: "planned",
+  resourceLimits: "planned",
+  exec: "available",
+  persistentStorage: "available",
+  snapshots: "planned",
+  images: "unavailable",
+  description: "Test deployment backend",
+};
+
+test("deployment backend policy is durable and remains separate from Project assignment", async () => {
+  const store = createMemorySystemStore();
+  const detected = [];
+  const backends = ["native", "docker"].map((id) => ({
+    id,
+    title: id,
+    capabilities: TEST_BACKEND_CAPABILITIES,
+    projectRuntime: { name: `${id}-test-runtime` },
+    async detect() {
+      detected.push(id);
+      return {
+        state: "ready",
+        installed: true,
+        healthy: true,
+        checkedAt: new Date().toISOString(),
+      };
+    },
+  }));
+  const manager = createDeploymentBackendManager({
+    store,
+    backends,
+  });
+
+  assert.deepEqual(await manager.getPolicy(), {
+    defaultBackend: "native",
+    enabledBackends: ["native"],
+    updatedAt: (await manager.getPolicy()).updatedAt,
+  });
+  await manager.enable("docker");
+  await manager.setDefault("docker");
+  const durablePolicy = await manager.getPolicy();
+  assert.equal(durablePolicy.defaultBackend, "docker");
+  assert.deepEqual(durablePolicy.enabledBackends, ["native", "docker"]);
+  assert.deepEqual(detected, ["docker", "docker"]);
+
+  const restored = createDeploymentBackendManager({
+    store,
+    backends,
+  });
+  assert.equal((await restored.getPolicy()).defaultBackend, "docker");
+});
+
+test("Platform exposes only read access to the connected Agent journal", async () => {
+  const operation = {
+    operationId: "operation-id-0000003",
+    agentId: "agent-a",
+    operation: "native.preflight",
+    version: "v1",
+    artifactDigest: "a".repeat(64),
+    status: "queued",
+    attempts: 0,
+    createdAt: "2026-08-31T00:00:00.000Z",
+    updatedAt: "2026-08-31T00:00:00.000Z",
+    events: [],
+  };
+  const zv = new Zelavis({
+    agentOperations: {
+      identity: { id: "agent-a", createdAt: "2026-08-31T00:00:00.000Z" },
+      async get(id) {
+        return id === operation.operationId ? operation : undefined;
+      },
+      async list() {
+        return [operation];
+      },
+    },
+  });
+  try {
+    const runtime = await zv.runtime();
+    const response = await runtime.fetch(
+      new Request("http://localhost/zelavis/api/v1/runtime/agent"),
+      PLATFORM_OWNER_CONTEXT,
+    );
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.identity.id, "agent-a");
+    assert.equal(body.operations[0].operationId, operation.operationId);
+    assert.equal("authority" in body.operations[0], false);
+    assert.ok(!runtime.routes.some((route) =>
+      route.route.path === "/agent/operations" && route.route.method === "POST"
+    ));
+  } finally {
+    await zv.close();
+  }
+});
+
+test("deployment backend runtime registry dispatches from the stored Project assignment", async () => {
+  const store = createMemorySystemStore();
+  const calls = [];
+  const driver = (id) => ({
+    name: `${id}-driver`,
+    runtimeKinds: [id],
+    capabilities: () => ({ secureIsolation: id === "docker" }),
+    async prepare(project) { calls.push(`${id}:prepare:${project.id}`); },
+    async start(project) {
+      calls.push(`${id}:start:${project.id}`);
+      return { status: "running", url: `http://${id}.internal` };
+    },
+    async stop(projectId) {
+      calls.push(`${id}:stop:${projectId}`);
+      return { status: "stopped" };
+    },
+    async status() { return { status: "stopped" }; },
+    async logs() { return []; },
+    async destroy() {},
+    async close() {},
+  });
+  const native = driver("native");
+  const docker = driver("docker");
+  const runtime = createDeploymentBackendProjectRuntime({
+    store,
+    backends: [
+      { id: "native", title: "Native", capabilities: TEST_BACKEND_CAPABILITIES, projectRuntime: native, detect: async () => ({}) },
+      { id: "docker", title: "Docker", capabilities: TEST_BACKEND_CAPABILITIES, projectRuntime: docker, detect: async () => ({}) },
+    ],
+  });
+  assert.deepEqual(runtime.runtimeKinds, ["native", "docker"]);
+  const project = {
+    id: "site-a",
+    name: "Site A",
+    kind: "wordpress",
+    runtimeKind: "docker",
+    app: {
+      name: "zelavis/wordpress",
+      title: "WordPress",
+      version: "1.0.0",
+      specifier: "zelavis/wordpress",
+      runtimeKinds: ["native", "docker"],
+    },
+  };
+  await store.set("projects", project.id, project);
+  assert.equal((await runtime.start(project)).url, "http://docker.internal");
+  await runtime.stop(project.id);
+  assert.deepEqual(calls, ["docker:start:site-a", "docker:stop:site-a"]);
+});
 
 test("project process failures include the useful stderr cause", () => {
   assert.equal(
@@ -178,6 +328,9 @@ test("Node adapter registers shipped app services and persists Platform Store SQ
     const appService = first.serviceRegistry?.catalog?.find(
       (entry) => entry.service.name === "zelavis/app",
     );
+    const wordpressService = first.serviceRegistry?.catalog?.find(
+      (entry) => entry.service.name === "zelavis/wordpress",
+    );
 
     assert.ok(systemStore);
     assert.equal(first.coreServices.database, false);
@@ -187,6 +340,9 @@ test("Node adapter registers shipped app services and persists Platform Store SQ
     assert.equal(first.metadata.role, "platform");
     assert.equal(appService?.service.kind, "app");
     assert.equal(appService?.source, "official");
+    assert.equal(wordpressService?.service.kind, "app");
+    assert.equal(wordpressService?.service.marketplace?.title, "WordPress");
+    assert.equal(wordpressService?.source, "official");
     await systemStore.set("platform", "marker", { ready: true });
 
     const second = await nodeAdapter({ dataDirectory: directory }).resolve({});
@@ -206,6 +362,11 @@ test("Node adapter registers shipped app services and persists Platform Store SQ
     assert.equal(response.status, 200);
     assert.equal(body.appServices[0].name, "zelavis/app");
     assert.equal(body.appServices[0].source, "official");
+    assert.deepEqual(body.appServices[0].runtimeKinds, ["native"]);
+    assert.deepEqual(
+      body.appServices.map((service) => service.name),
+      ["zelavis/app", "zelavis/wordpress"],
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -304,6 +465,8 @@ test("Project manager preserves an older Zelavis App release lock when the Platf
   assert.equal(stored.app.name, "zelavis/app");
   assert.equal(stored.app.specifier, "zelavis/app");
   assert.equal(stored.app.version, "0.9.0");
+  assert.deepEqual(stored.app.runtimeKinds, ["native"]);
+  assert.equal(stored.runtimeKind, "native");
 });
 
 test("Project manager repairs the retired official App package lock without changing its version", async () => {
@@ -386,6 +549,7 @@ test("Project manager repairs the retired official App package lock without chan
     title: "Zelavis App",
     version: "0.9.0",
     specifier: "zelavis/app",
+    runtimeKinds: ["native"],
   });
   assert.deepEqual(preparedApp, project.app);
   assert.deepEqual((await store.get("projects", "legacy-app")).value.app, project.app);
@@ -621,6 +785,34 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
   const projectRuntimeUrls = new Map();
 
   try {
+    const unsupportedDockerResponse = await runtimeRequest("/projects", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: "docker-is-not-enabled",
+        name: "Docker Is Not Enabled",
+        appServiceName: "zelavis/app",
+        runtimeKind: "docker",
+      }),
+    });
+    const unsupportedDockerBody = await unsupportedDockerResponse.json();
+    assert.equal(unsupportedDockerResponse.status, 400);
+    assert.match(unsupportedDockerBody.error, /selected by server policy/);
+
+    const deploymentBackendsResponse = await runtimeRequest("/deployment-backends");
+    const deploymentBackendsBody = await deploymentBackendsResponse.json();
+    assert.equal(deploymentBackendsResponse.status, 200);
+    assert.equal(deploymentBackendsBody.policy.defaultBackend, "native");
+    assert.deepEqual(deploymentBackendsBody.policy.enabledBackends, ["native"]);
+    assert.equal(
+      deploymentBackendsBody.backends.find((backend) => backend.id === "native")?.executable,
+      true,
+    );
+    assert.equal(
+      deploymentBackendsBody.backends.find((backend) => backend.id === "docker")?.executable,
+      false,
+    );
+
     for (const [id, name] of [
       ["alpha", "Alpha"],
       ["beta", "Beta"],
@@ -808,7 +1000,9 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
     const listResponse = await runtimeRequest("/projects");
     const listBody = await listResponse.json();
     assert.equal(listResponse.status, 200);
-    assert.equal(listBody.runtime.driver, "node-process");
+    assert.equal(listBody.runtime.driver, "deployment-backends");
+    assert.deepEqual(listBody.runtime.availableKinds, ["native"]);
+    assert.equal(listBody.projects[0].runtimeKind, "native");
     assert.equal(listBody.projects[0].capabilities.secureIsolation, false);
     assert.equal(listBody.projects[0].capabilities.movable, false);
     assert.equal(listBody.projects[0].capabilities.managedDatabase, true);

@@ -410,6 +410,7 @@ describe("dashboard navigation ownership", () => {
     });
     expect(server?.items?.map((item) => item.title)).toEqual([
       "Overview",
+      "Deployment backends",
       "Domains",
       "Access",
       "Backups",

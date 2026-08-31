@@ -1,5 +1,6 @@
 import {
   Archive,
+  Boxes,
   Fingerprint,
   Globe2,
   ReceiptText,
@@ -24,6 +25,12 @@ export const handle = {
 } as const;
 
 const serverSections = [
+  {
+    title: "Deployment backends",
+    path: "/server/runtimes",
+    icon: Boxes,
+    detail: "Native, Docker, and future isolation backend detection and default policy.",
+  },
   {
     title: "Fabric",
     path: "/server/fabric",
@@ -65,7 +72,13 @@ function ServerRoute() {
 
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <StatCard
+          label="Deployment"
+          value="native default"
+          detail="Backend policy is explicit and existing Projects keep their assignment."
+          icon={Boxes}
+        />
         <StatCard
           label="Fabric"
           value="single-node"

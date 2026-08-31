@@ -22,6 +22,7 @@ const PUBLIC_ERROR_NAMES: ReadonlySet<string> = new Set([
   "ZelavisProjectValidationError",
   "ZelavisProjectConflictError",
   "ZelavisProjectNotFoundError",
+  "ZelavisProjectRuntimeError",
   "ZelavisProjectDeletionError",
   "ZelavisAssistantValidationError",
   "ZelavisAssistantNotFoundError",

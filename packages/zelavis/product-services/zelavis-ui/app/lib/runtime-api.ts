@@ -81,6 +81,9 @@ export interface RuntimeServiceRegistryEntry {
     categories?: readonly string[];
     tags?: readonly string[];
   };
+  project?: {
+    runtimeKinds: readonly RuntimeProjectRuntimeKind[];
+  };
   menu?: RuntimeServiceRegistryMenuDefinition;
   menus?: readonly RuntimeServiceRegistryMenuDefinition[];
 }
@@ -183,15 +186,61 @@ export type RuntimeProjectStatus =
   | "stopped"
   | "failed";
 
+export type RuntimeProjectRuntimeKind = string;
+
+export type RuntimeDeploymentBackendFeatureState =
+  | "available"
+  | "unavailable"
+  | "planned";
+
+export interface RuntimeDeploymentBackendSnapshot {
+  id: string;
+  title: string;
+  enabled: boolean;
+  isDefault: boolean;
+  executable: boolean;
+  capabilities: {
+    isolationBoundary: "process" | "os-container" | "microvm";
+    filesystemIsolation: RuntimeDeploymentBackendFeatureState;
+    processIsolation: RuntimeDeploymentBackendFeatureState;
+    networkIsolation: RuntimeDeploymentBackendFeatureState;
+    resourceLimits: RuntimeDeploymentBackendFeatureState;
+    exec: RuntimeDeploymentBackendFeatureState;
+    persistentStorage: RuntimeDeploymentBackendFeatureState;
+    snapshots: RuntimeDeploymentBackendFeatureState;
+    images: RuntimeDeploymentBackendFeatureState;
+    description: string;
+  };
+  detection: {
+    state: "ready" | "degraded" | "unavailable";
+    installed: boolean;
+    healthy: boolean;
+    version?: string;
+    apiVersion?: string;
+    rootless?: boolean;
+    checkedAt: string;
+    details?: Record<string, string | number | boolean>;
+    error?: string;
+  };
+}
+
+export interface RuntimeDeploymentBackendPolicy {
+  defaultBackend: string;
+  enabledBackends: readonly string[];
+  updatedAt: string;
+}
+
 export interface RuntimeProject {
   id: string;
   name: string;
   kind: string;
+  runtimeKind: RuntimeProjectRuntimeKind;
   app: {
     name: string;
     title: string;
     version?: string;
     specifier: string;
+    runtimeKinds: readonly RuntimeProjectRuntimeKind[];
   };
   capabilities: RuntimeProjectDriverCapabilities;
   desiredState: "running" | "stopped";
@@ -209,6 +258,7 @@ export interface RuntimeProject {
 
 export interface RuntimeProjectDriverInfo {
   driver: string;
+  availableKinds: readonly RuntimeProjectRuntimeKind[];
 }
 
 export interface RuntimeProjectDriverCapabilities {
@@ -333,11 +383,13 @@ export function normalizeRuntimeProject(project: RuntimeProject): RuntimeProject
 
   return {
     ...project,
+    runtimeKind: project.runtimeKind ?? "native",
     app: {
       name: appName,
       title: appTitle,
       ...(storedApp?.version ? { version: storedApp.version } : {}),
       specifier: storedApp?.specifier ?? appName,
+      runtimeKinds: storedApp?.runtimeKinds ?? ["native"],
     },
   };
 }
@@ -351,6 +403,7 @@ export interface RuntimeAppService {
   source?: "official" | "community";
   summary?: string;
   marketplace?: RuntimeServiceRegistryEntry["marketplace"];
+  runtimeKinds: readonly RuntimeProjectRuntimeKind[];
 }
 
 export interface RuntimeAssistantAction {
@@ -697,6 +750,7 @@ const fallbackConfig: RuntimeConfig = {
       "/server/backups",
       "/server/domains",
       "/server/logs",
+      "/server/runtimes",
       "/settings",
       "/settings/appearance",
       "/projects/:projectId",
@@ -748,6 +802,15 @@ const fallbackConfig: RuntimeConfig = {
             title: "Overview",
             path: "/server",
             pageLabel: "Server",
+          },
+          {
+            title: "Deployment backends",
+            path: "/server/runtimes",
+            pageLabel: "Deployment backends",
+            access: {
+              permissions: ["server.backends.view"],
+              scope: { type: "system" },
+            },
           },
           {
             title: "Domains",
@@ -1188,9 +1251,18 @@ async function readJson<T>(path: string, init?: RequestInit): Promise<T> {
     try {
       const contentType = response.headers.get("content-type") ?? "";
       if (contentType.includes("application/json")) {
-        const body = (await response.json()) as { error?: unknown };
+        const body = (await response.json()) as {
+          error?: unknown;
+          correlationId?: unknown;
+        };
         if (typeof body.error === "string" && body.error.length > 0) {
           message = body.error;
+          if (
+            typeof body.correlationId === "string" &&
+            /^[0-9a-f]{16}$/.test(body.correlationId)
+          ) {
+            message += ` Reference: ${body.correlationId}.`;
+          }
         }
       } else if (response.status === 404) {
         message =
@@ -1582,7 +1654,10 @@ export async function listProjects(
     `${config.api.basePath}/runtime/projects`,
   );
   return {
-    ...result,
+    runtime: {
+      ...result.runtime,
+      availableKinds: result.runtime.availableKinds ?? ["native"],
+    },
     projects: result.projects.map(normalizeRuntimeProject),
   };
 }
@@ -2108,6 +2183,34 @@ export async function deleteStorageFile(
 
 export async function getFabricSnapshot(config: RuntimeConfig) {
   return readJson<FabricSnapshot>(`${config.api.basePath}/fabric/snapshot`);
+}
+
+export async function listDeploymentBackends(config: RuntimeConfig): Promise<{
+  policy: RuntimeDeploymentBackendPolicy;
+  backends: RuntimeDeploymentBackendSnapshot[];
+}> {
+  return readJson(`${config.api.basePath}/runtime/deployment-backends`);
+}
+
+export async function detectDeploymentBackends(
+  config: RuntimeConfig,
+  id?: string,
+): Promise<{ backends: RuntimeDeploymentBackendSnapshot[] }> {
+  return readJson(`${config.api.basePath}/runtime/deployment-backends/detect`, {
+    method: "POST",
+    body: JSON.stringify(id ? { id } : {}),
+  });
+}
+
+export async function updateDeploymentBackendPolicy(
+  config: RuntimeConfig,
+  id: string,
+  action: "enable" | "disable" | "default",
+): Promise<{ policy: RuntimeDeploymentBackendPolicy }> {
+  return readJson(
+    `${config.api.basePath}/runtime/deployment-backends/${encodeURIComponent(id)}/${action}`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
 }
 
 export async function getDatabaseHealth(config: RuntimeConfig) {

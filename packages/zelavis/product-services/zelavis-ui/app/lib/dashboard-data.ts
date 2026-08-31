@@ -668,6 +668,8 @@ function getServiceMenuIcon(title: string, serviceName?: string): LucideIcon {
   switch (title.toLowerCase()) {
     case "server":
       return Server;
+    case "deployment backends":
+      return Boxes;
     case "domains":
       return Globe2;
     case "access":
@@ -856,6 +858,15 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
           title: "Overview",
           path: "/server",
           pageLabel: "Server",
+        },
+        {
+          title: "Deployment backends",
+          path: "/server/runtimes",
+          pageLabel: "Deployment backends",
+          access: {
+            permissions: ["server.backends.view"],
+            scope: { type: "system" },
+          },
         },
         {
           title: "Domains",

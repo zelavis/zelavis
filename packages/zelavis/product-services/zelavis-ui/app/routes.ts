@@ -11,6 +11,7 @@ export default [
   route("security", "routes/security.tsx"),
   route("services", "routes/services.tsx"),
   route("server", "routes/server.tsx", [
+    route("runtimes", "routes/server.runtimes.tsx"),
     route("domains", "routes/server.domains.tsx"),
     route("access", "routes/server.access.tsx"),
     route("access/users", "routes/server.access.users.tsx"),
