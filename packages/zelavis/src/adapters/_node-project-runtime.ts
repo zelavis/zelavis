@@ -143,10 +143,10 @@ async function restrictDirectoryPermissions(path: string): Promise<void> {
 }
 
 /** Largest partial stdout line retained while looking for a readiness event. */
-const MAX_CHILD_LINE_BYTES = 64 * 1024;
+export const MAX_CHILD_LINE_BYTES = 64 * 1024;
 
 /** Largest single log message retained per Project. */
-const MAX_CHILD_LOG_MESSAGE_BYTES = 8 * 1024;
+export const MAX_CHILD_LOG_MESSAGE_BYTES = 8 * 1024;
 
 const INHERITED_PROJECT_ENVIRONMENT = Object.freeze([
   "PATH",
@@ -168,7 +168,7 @@ const INHERITED_PROJECT_ENVIRONMENT = Object.freeze([
   "PATHEXT",
 ]);
 
-function projectProcessEnvironment(): Record<string, string> {
+export function projectProcessEnvironment(): Record<string, string> {
   const environment: Record<string, string> = {};
   for (const name of INHERITED_PROJECT_ENVIRONMENT) {
     const value = process.env[name];
