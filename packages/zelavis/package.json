@@ -156,7 +156,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^25.9.1",
+    "@types/node": "^26.4.0",
     "typescript": "^5.9.0"
   },
   "keywords": [
