@@ -22,9 +22,18 @@ before editing.
 
 - Treat `new Zelavis(...)` as the public Platform entrypoint and the `zelavis`
   package as the one official framework/App Platform distribution.
-- Do not recreate separate `@zelavis/server`, `@zelavis/app`,
-  `@zelavis/core`, or `@zelavis/marketplace` packages. Their responsibilities
-  are now public subpaths or internal product services of `zelavis`.
+- Do not recreate separate `@zelavis/server`, `@zelavis/app`, or
+  `@zelavis/core` packages. Their responsibilities are now public subpaths of
+  `zelavis`.
+- Ship first-party product surfaces as their own packages under
+  `packages/zelavis/product-services/*` — `@zelavis/ui` and
+  `@zelavis/marketplace` today. A product service is built the way a
+  third-party one is: a `package.json` manifest declaring `zelavis.kind`, and a
+  module that calls the official SDK. It is loaded through `loadPluginPackage`,
+  the same loader an installed plugin goes through, so it exercises the public
+  extension points rather than a private path into the Platform. If a
+  first-party service needs a private path, the extension point is incomplete —
+  extend the public contract instead of special-casing the service.
 - Keep `packages/zelavis/src/core` product-neutral and runtime-neutral. It owns
   the contracts and implementations exported through `zelavis/core`,
   `zelavis/runtime`, `zelavis/fabric`, `zelavis/workload`,

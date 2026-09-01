@@ -81,7 +81,7 @@ test("zelavis exposes fetch handlers without requiring a mount adapter", async (
     [
       "@zelavis/ui",
       "zelavis/platform",
-      "zelavis/marketplace",
+      "@zelavis/marketplace",
       "zelavis/fabric",
       "@zelavis/db",
       "@zelavis/auth",
@@ -99,8 +99,8 @@ test("zelavis includes core services by default", async () => {
   assert.equal(runtime.services["@zelavis/ui"].name, "@zelavis/ui");
   assert.equal(runtime.services["zelavis/platform"].name, "zelavis/platform");
   assert.equal(
-    runtime.services["zelavis/marketplace"].name,
-    "zelavis/marketplace",
+    runtime.services["@zelavis/marketplace"].name,
+    "@zelavis/marketplace",
   );
   assert.equal(
     runtime.services["zelavis/fabric"].name,
@@ -229,7 +229,7 @@ test("zelavis includes core services by default", async () => {
     [
       "@zelavis/ui",
       "zelavis/platform",
-      "zelavis/marketplace",
+      "@zelavis/marketplace",
       "zelavis/fabric",
       "@zelavis/db",
       "@zelavis/auth",
@@ -1326,7 +1326,7 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
 
   assert.deepEqual(Object.keys(runtime.services), [
     "zelavis/platform",
-    "zelavis/marketplace",
+    "@zelavis/marketplace",
     "zelavis/fabric",
   ]);
   assert.deepEqual(

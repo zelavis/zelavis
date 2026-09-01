@@ -444,7 +444,6 @@ function buildUtilityPanel({
           },
           { title: "Open chat", icon: Sparkles, url: "/assistant" },
           { title: "Build a project", icon: Sparkles, url: "/projects?new=1" },
-          { title: "Explore starters", icon: Boxes, url: "/marketplace" },
           { title: "Inspect services", icon: Settings2, url: "/services" },
         ],
       }
@@ -486,7 +485,6 @@ function buildUtilityPanel({
             ),
           },
           { title: "Projects", icon: Home, url: "/projects" },
-          { title: "Marketplace", icon: Boxes, url: "/marketplace" },
           { title: "Server", icon: Settings2, url: "/server" },
         ],
       }

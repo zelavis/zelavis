@@ -26,6 +26,7 @@ import type {
   ZelavisServiceAppShellRenderContext,
   ZelavisServiceAppShellResult,
   ZelavisServiceCapability,
+  ZelavisServicePageAsset,
   ZelavisServiceCatalogCompatibility,
   ZelavisServiceCatalogEntry,
   ZelavisServiceCatalogLinks,
@@ -95,6 +96,13 @@ export interface ZelavisServiceRegistryEntry<TContext = unknown> {
     marketplace?: ZelavisServiceMarketplaceMetadata;
     project?: ZelavisProjectRecipeDefinition;
     capabilities?: readonly ZelavisServiceCapability[];
+    /**
+     * Pages this service ships itself, keyed by bundle-relative path. Served
+     * through the same service page asset route as a bundle-store page, so a
+     * service that arrives inside the Platform reaches the dashboard the same
+     * way an installed one does.
+     */
+    pageAssets?: Readonly<Record<string, ZelavisServicePageAsset>>;
     runtimeServices?: readonly ZelavisAnyRuntimeServiceInput[];
     setup?: (
       context: TContext,
@@ -331,7 +339,7 @@ export function resolveServiceModule<TContext = unknown>(
 export async function loadPluginPackage(options: {
   manifest: unknown;
   importer?: (entry: string) => Promise<unknown>;
-}): Promise<Readonly<ZelavisRuntimeService<any>>> {
+}): Promise<Readonly<ZelavisServiceRegistryEntry<any>["service"]>> {
   const manifest = validatePluginPackageManifest(options.manifest);
   const entrypoint = resolvePackageExportsEntry(manifest.exports);
   const context = createPluginExecutionContext(manifest);
@@ -350,11 +358,24 @@ export async function loadPluginPackage(options: {
       : (moduleResult as any)?.default && typeof (moduleResult as any).default === "object" && "name" in (moduleResult as any).default
         ? (moduleResult as any).default
         : undefined
-  ) as ZelavisRuntimeService<any> | undefined;
+  ) as
+    | (ZelavisRuntimeService<any> &
+        Pick<
+          ZelavisServiceRegistryEntry<any>["service"],
+          "capabilities" | "marketplace" | "pageAssets"
+        >)
+    | undefined;
 
-  const runtimeService: ZelavisRuntimeService<any> = {
+  const runtimeService: ZelavisServiceRegistryEntry<any>["service"] = {
     name: manifest.name,
+    version: manifest.version,
     kind: manifest.zelavis?.kind ?? "plugin",
+    // Declared on the module, not through an SDK call: these describe what the
+    // service *is*, and a plugin that failed to load should not be registered
+    // with a half-built identity.
+    capabilities: resolvedService?.capabilities,
+    marketplace: resolvedService?.marketplace,
+    pageAssets: resolvedService?.pageAssets,
     basePath: resolvedService?.basePath,
     api: {
       v1: [

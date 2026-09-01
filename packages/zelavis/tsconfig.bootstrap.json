@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": true,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  // Emits just enough of `zelavis` for the product-service packages to compile
+  // against, before the full build compiles `zelavis` against them in turn.
+  //
+  // `include` is cleared deliberately: it is additive with `files`, so
+  // inheriting it would compile the whole tree — including the very modules
+  // that import the packages this pass exists to unblock.
+  "include": [],
+  "files": ["src/sdk/node.ts", "src/sdk/browser.ts"]
+}

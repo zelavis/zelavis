@@ -269,6 +269,23 @@ an exported type is never mistaken for an operational distributed feature.
 
 ## Next
 
+- [x] The marketplace is its own package, `@zelavis/marketplace`, alongside
+  `@zelavis/ui` under `product-services/`. It declares `zelavis.kind` in its
+  own `package.json`, contributes both its menus through `zelavis.menu.create`,
+  and is loaded through `loadPluginPackage` — the same loader an installed
+  third-party plugin goes through. Nothing in the dashboard names it: its
+  routes, pages, components, and hardcoded nav entries were removed from
+  `@zelavis/ui`, so a broken extension point now breaks the Platform's own
+  marketplace rather than hiding behind a private path.
+- [x] A service can ship the pages its menus point at, through
+  `pageAssets`. A page reaches the dashboard the same way whether its service
+  was installed from an archive into the bundle store or composed into the
+  Platform, and core services — which are not registry entries — resolve a
+  fetchable `page.src` like any other.
+- [ ] Replace the marketplace's placeholder page. It renders through the
+  service page frame because a service has no way to render natively yet; the
+  web-components library wrapping the Zelavis design system is what closes
+  that gap.
 - [ ] Execute `server` frontends. The contract accepts them and refuses to
   install them, because they need a supervised process and a routed target
   through the Project runtime and Gateway. Reuse the Agent/backend path rather

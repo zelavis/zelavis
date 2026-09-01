@@ -735,21 +735,37 @@ test('marketplace is a top-level item on the first sidebar slide', async ({
   const sidebar = page.getByRole('navigation', { name: 'Dashboard navigation' })
   const rootSlide = sidebar.locator('.swiper-slide-active').first()
 
+  // Nothing in the dashboard names the marketplace. This link exists only
+  // because `@zelavis/marketplace` contributed it through the SDK, so it is
+  // also the end-to-end check that the menu extension point works.
   await expect(rootSlide.getByRole('link', { name: 'Marketplace', exact: true })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Marketplace' })).toBeVisible()
 })
 
-test('@smoke marketplace shows promoted official services with install actions', async ({
+test('@smoke marketplace renders the page its own service ships', async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop')
 
   await gotoDashboard(page, '/marketplace')
 
-  await expect(page.getByRole('heading', { name: 'Promoted services' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Install' }).first()).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Info' }).first()).toBeVisible()
-  await expect(page.getByText('Runtime restart required')).toHaveCount(0)
+  // The dashboard has no marketplace route. The page comes from the service,
+  // through the service page frame, fetched from the service page asset route.
+  //
+  // Deliberately not asserting the host element is visible: `:host { display:
+  // block }` lives in its shadow root, so until `customElements.define` runs
+  // the element is inline and zero-size. `toHaveAttribute` waits for it to be
+  // attached, and the heading below only resolves once the frame has actually
+  // loaded the page — which is the thing worth asserting anyway.
+  await expect(page.locator('zelavis-service-frame')).toHaveAttribute(
+    'src',
+    /runtime\/service-page-assets\/%40zelavis%2Fmarketplace\/.*marketplace\.html$/,
+  )
+
+  await expect(
+    page.frameLocator('zelavis-service-frame iframe').getByRole('heading', {
+      name: 'Marketplace',
+    }),
+  ).toBeVisible()
 })
 
 test('marketplace does not expose ecommerce in extensions before install', async ({

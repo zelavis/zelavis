@@ -332,7 +332,6 @@ describe("dashboard navigation ownership", () => {
       ["Content", "Build"],
       ["Media", "Build"],
       ["Frontend", "Build"],
-      ["Marketplace", "Extend"],
       ["Extensions", "Extend"],
       ["Backend", "Backend"],
       ["Settings", "Settings"],
@@ -350,10 +349,9 @@ describe("dashboard navigation ownership", () => {
       url: "/projects/project-a/media",
       pageLabel: "Media",
     });
-    expect(findNavItem(nav, "Marketplace")).toMatchObject({
-      url: "/projects/project-a/marketplace",
-      pageLabel: "Marketplace",
-    });
+    // The marketplace is a service now, not a dashboard route. It reaches
+    // this nav only through the service registry.
+    expect(findNavItem(nav, "Marketplace")).toBeUndefined();
     const settings = nav.find((item) => item.title === "Settings");
     expect(settings).toMatchObject({
       landingUrl: "/projects/project-a/settings",
@@ -382,14 +380,12 @@ describe("dashboard navigation ownership", () => {
   it("uses a management nav for the all-projects view", () => {
     expect(projectManagementNavItems.map((item) => item.title)).toEqual([
       "Projects",
-      "Marketplace",
       "Resources",
       "Server",
       "Security",
     ]);
     expect(projectManagementNavItems.map((item) => item.sectionLabel)).toEqual([
       "Projects",
-      "Explore",
       "Manage",
       "Manage",
       "Manage",
@@ -399,10 +395,9 @@ describe("dashboard navigation ownership", () => {
       pageLabel: "Users",
     });
     expect(findNavItem(projectManagementNavItems, "Frontend")).toBeUndefined();
-    expect(findNavItem(projectManagementNavItems, "Marketplace")).toMatchObject({
-      url: "/marketplace",
-      pageLabel: "Marketplace",
-    });
+    expect(
+      findNavItem(projectManagementNavItems, "Marketplace"),
+    ).toBeUndefined();
     const server = projectManagementNavItems.find((item) => item.title === "Server");
     expect(server).toMatchObject({
       landingUrl: "/server",

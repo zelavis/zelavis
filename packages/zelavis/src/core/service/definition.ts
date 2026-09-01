@@ -20,6 +20,23 @@ function isBundleRelativeFilePath(path: string): boolean {
   );
 }
 
+/**
+ * One asset a service ships for its own `menu.page` files.
+ *
+ * A service installed from a package archive keeps its pages in the bundle
+ * store. A service that ships inside the Platform, or is loaded from an already
+ * resolved package rather than an uploaded archive, has no archive to unpack —
+ * it declares its pages here instead. Both reach the dashboard through the same
+ * service page asset route, so a page does not depend on how its service
+ * arrived.
+ */
+export interface ZelavisServicePageAsset {
+  /** Defaults to the type guessed from the asset path. */
+  contentType?: string;
+  cacheControl?: string;
+  body: string | Uint8Array;
+}
+
 export interface ZelavisServiceMenuPageDefinition {
   id: string;
   title?: string;

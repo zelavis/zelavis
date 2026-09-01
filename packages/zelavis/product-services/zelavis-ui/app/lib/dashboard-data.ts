@@ -50,7 +50,6 @@ export type DashboardRoutePath =
   | "/database"
   | "/database/new"
   | "/media"
-  | "/marketplace"
   | "/projects"
   | "/resources"
   | "/security"
@@ -514,7 +513,6 @@ function isBuiltInProjectPath(path: string) {
     "/database/new",
     "/extensions",
     "/media",
-    "/marketplace",
     "/settings",
     "/storage",
     "/users",
@@ -599,12 +597,36 @@ function materializeProjectMenuItemAccess(
   };
 }
 
+/**
+ * Scopes a service menu to a project.
+ *
+ * Unconditional, unlike `toProjectMenuItem`: a menu placed on a project
+ * surface is project-relative by definition, so the path it declares is
+ * relative to the project it is rendered under. `toProjectMenuItem` gates on
+ * `isBuiltInProjectPath` because the built-in nav mixes project paths with
+ * installation-wide ones like `/server`; a service menu has no such mix, and
+ * gating it would silently scope only the paths the dashboard happens to name.
+ */
+function toProjectServiceMenuItem(
+  item: DashboardNavItem,
+  projectId: string,
+): DashboardNavItem {
+  return {
+    ...item,
+    url: item.url ? toProjectRoutePath(item.url, projectId) : item.url,
+    landingUrl: item.landingUrl
+      ? toProjectRoutePath(item.landingUrl, projectId)
+      : item.landingUrl,
+    items: item.items?.map((child) => toProjectServiceMenuItem(child, projectId)),
+  };
+}
+
 function createProjectAwareDashboardServiceMenuItem(
   menu: RuntimeServiceMenuDefinition,
   serviceName: string | undefined,
   projectId: string,
 ): DashboardNavItem {
-  return toProjectMenuItem(
+  return toProjectServiceMenuItem(
     materializeProjectMenuItemAccess(
       createDashboardServiceMenuItem(menu, serviceName),
       menu,
@@ -683,8 +705,6 @@ function getServiceMenuIcon(title: string, serviceName?: string): LucideIcon {
   switch (serviceName ?? title.toLowerCase()) {
     case "zelavis/platform":
       return Fingerprint;
-    case "zelavis/marketplace":
-      return Boxes;
     case "@zelavis/auth":
       return Fingerprint;
     case "@zelavis/db":
@@ -944,23 +964,6 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
     },
   },
   {
-    name: "zelavis/marketplace",
-    core: true,
-    apiPath: "/api/v1/marketplace",
-    menu: {
-      title: "Marketplace",
-      path: "/marketplace",
-      pageLabel: "Marketplace",
-      sectionLabel: "Explore",
-      order: 30,
-      surface: "platform",
-      access: {
-        permissions: ["marketplace.view"],
-        scope: { type: "system" },
-      },
-    },
-  },
-  {
     name: "@zelavis/ui",
     core: true,
     apiPath: "/",
@@ -1154,14 +1157,6 @@ export function buildPlatformNavItems(
     },
     ...rootServiceNavItems,
     {
-      title: "Marketplace",
-      url: "/marketplace",
-      icon: Boxes,
-      pageLabel: "Marketplace",
-      sectionLabel: "Extend",
-      access: projectAccess("project.marketplace.manage", projectId),
-    },
-    {
       title: "Extensions",
       icon: Bot,
       landingUrl: "/extensions",
@@ -1219,18 +1214,19 @@ export function buildPlatformNavItems(
   });
 }
 
-export function buildMarketplacePackageItems(
+/**
+ * Nav entries for services the installation has, or could have.
+ *
+ * Every entry comes from the service registry. The marketplace itself is one of
+ * them and is not named here: it contributes its own menu like any other
+ * service.
+ */
+export function buildServicePackageItems(
   serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
 ): readonly DashboardPackageItem[] {
   const registryEntries = buildDashboardServiceRegistryEntries(serviceRegistry);
 
   return [
-    {
-      name: "Marketplace",
-      url: "/marketplace",
-      icon: Boxes,
-      pageLabel: "Marketplace",
-    },
     ...registryEntries.map((service) => ({
       name: service.name,
       url: service.status === "installed" ? service.menu.url : undefined,
@@ -1240,7 +1236,7 @@ export function buildMarketplacePackageItems(
   ] as const;
 }
 
-export const marketplacePackageItems = buildMarketplacePackageItems(
+export const servicePackageItems = buildServicePackageItems(
   defaultRuntimeServiceRegistry,
 );
 
@@ -1272,7 +1268,7 @@ export function buildDashboardNavItems(
           ),
         )
       : []),
-    ...buildMarketplacePackageItems(serviceRegistry)
+    ...buildServicePackageItems(serviceRegistry)
       .filter(
         (item): item is DashboardPackageItem & { url: DashboardRoutePath } =>
           Boolean(item.url),

@@ -54,7 +54,6 @@ export function isProjectManagementPath(pathname: string) {
   return (
     pathname === "/" ||
     pathname === "/projects" ||
-    pathname === "/marketplace" ||
     pathname === "/resources" ||
     pathname === "/security" ||
     pathname === "/services" ||

@@ -36,6 +36,7 @@ import {
   createZelavisDashboardService,
   defaultZelavisDashboardClientRoutes,
 } from "@zelavis/ui/service";
+import { createZelavisMarketplaceService } from "./platform/marketplace.js";
 import { createZelavisCoreService } from "./platform/core-service.js";
 import { createProjectGatewayRoutes } from "./platform/project-gateway.js";
 import { createProjectFrontendPlaceholderService } from "./platform/project-frontend.js";
@@ -111,7 +112,6 @@ import {
   zelavisErrorResponse,
   ZelavisValidationError,
 } from "./platform/shared.js";
-import { marketplaceService } from "./platform/marketplace-service.js";
 import {
   workloadsService,
   type WorkloadsServiceOptions,
@@ -467,7 +467,7 @@ const RESERVED_CORE_SERVICE_NAMES = new Set([
   "zelavis/app",
   "@zelavis/auth",
   "zelavis/platform",
-  "zelavis/marketplace",
+  "@zelavis/marketplace",
   "zelavis/fabric",
   "@zelavis/ui",
   "@zelavis/ui:app",
@@ -1157,11 +1157,26 @@ async function resolveRuntimeManagementCore(
     assetPath: string,
   ) => {
     const serviceRegistry = await readResolvedServiceRegistry();
-    const entry = serviceRegistry.find(
+    const registryEntry = serviceRegistry.find(
       (candidate) => candidate.service.name === serviceName,
     );
+    // Core services are composed into the runtime rather than installed
+    // through the registry, so they never appear above. They still own pages,
+    // and a page must not depend on how its service arrived.
+    const coreService = registryEntry
+      ? undefined
+      : context
+          .getServices()
+          .find((candidate) => candidate.name === serviceName);
 
-    if (!entry || entry.status !== "installed") {
+    const entry =
+      registryEntry?.status === "installed"
+        ? registryEntry
+        : coreService
+          ? { service: coreService as ZelavisServiceRegistryEntry<any>["service"] }
+          : undefined;
+
+    if (!entry) {
       return {
         status: 404,
         body: {
@@ -1171,6 +1186,25 @@ async function resolveRuntimeManagementCore(
     }
 
     const normalizedPath = normalizeBundleAssetPath(assetPath);
+
+    // A service that ships its own pages serves them from its declaration.
+    // The lookup is scoped to this registry entry, so one service can never
+    // reach another's assets, and no bundle store needs to exist at all.
+    const shipped = entry.service.pageAssets?.[normalizedPath.replace(/^\/+/, "")];
+    if (shipped) {
+      const body =
+        typeof shipped.body === "string"
+          ? new TextEncoder().encode(shipped.body)
+          : shipped.body;
+      const shippedHeaders = new Headers();
+      shippedHeaders.set(
+        "content-type",
+        shipped.contentType ?? guessServiceAssetContentType(normalizedPath),
+      );
+      shippedHeaders.set("cache-control", shipped.cacheControl ?? "no-cache");
+      return { status: 200, headers: shippedHeaders, body };
+    }
+
     const asset = await context.bundleStore?.read(
       {
         serviceName: entry.service.name,
@@ -1245,7 +1279,7 @@ async function resolveRuntimeManagementCore(
         core:
           service.name === "@zelavis/ui" ||
           service.name === "zelavis/platform" ||
-          service.name === "zelavis/marketplace" ||
+          service.name === "@zelavis/marketplace" ||
           service.name === "zelavis/fabric" ||
           service.name === "@zelavis/auth" ||
           service.name === "@zelavis/db" ||
@@ -1263,8 +1297,13 @@ async function resolveRuntimeManagementCore(
                   context.apiVersion,
                   service.basePath ?? service.name,
                 ),
-        menu: service.menu,
-        menus: service.menus,
+        // Serialized the same way registry menus are: a core service's page
+        // needs a resolvable `src` too, or the dashboard mounts a frame with
+        // nothing in it.
+        menu: serializeServiceMenuForDashboard(service.name, service.menu),
+        menus: service.menus?.map((menu) =>
+          serializeServiceMenuForDashboard(service.name, menu),
+        ),
       })),
       serviceRegistry: serializedServices,
       serviceActivation: context.serviceActivation
@@ -2667,7 +2706,7 @@ export async function zelavis(
   );
   const coreServices = [
     platformCoreService,
-    marketplaceService,
+    await createZelavisMarketplaceService(),
     fabricCoreService,
     databaseService,
     authService,

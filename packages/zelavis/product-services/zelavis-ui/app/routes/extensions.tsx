@@ -26,13 +26,6 @@ export default function ExtensionsRoute() {
       detail: "AI agents, assistants, and automated workflows.",
       active: true,
     },
-    {
-      title: "Marketplace",
-      path: `/projects/${projectId}/marketplace`,
-      icon: Boxes,
-      detail: "Browse and install plugins and extensions for this project.",
-      active: true,
-    },
   ] as const;
 
   return (
@@ -56,7 +49,7 @@ export default function ExtensionsRoute() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Boxes className="size-4" />
-            Project Extensions & Marketplace
+            Project Extensions
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -101,7 +94,7 @@ export default function ExtensionsRoute() {
 
       <ResourceNotice
         title="Project Extensions"
-        description="Extend this project with official plugins, AI assistants, and domain capabilities installed from the Zelavis marketplace."
+        description="Extend this project with official plugins, AI assistants, and domain capabilities installed from the marketplace."
       />
     </section>
   );
