@@ -39,12 +39,15 @@ test("plaintext http is gated separately from https", async () => {
   );
 });
 
-test("the legacy allowRemote flag enables https only", async () => {
+test("enabling https does not enable any other scheme", async () => {
   const importer = createLocalRuntimeServiceImporter({
     directory: "/tmp/zelavis-source-policy",
-    allowRemote: true,
+    sources: { https: true },
   });
 
+  // Each scheme is its own decision. Plaintext transport lets any network
+  // position substitute the code that runs, and `data:` carries its payload
+  // inline, so neither rides along with https.
   await assert.rejects(
     () => importer("http://example.com/service.mjs"),
     /sources\.insecureHttp/,

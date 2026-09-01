@@ -18,6 +18,15 @@ import {
   resolvePackageExportsEntry,
   validatePluginPackageManifest,
 } from "../core/service/manifest.js";
+import {
+  acquirePackage,
+  type PackageEntry,
+} from "./_package-acquisition.js";
+import type {
+  ZelavisHttpsSourcePolicy,
+  ZelavisNpmSourcePolicy,
+  ZelavisServiceSourcePolicy,
+} from "../platform/package-sources.js";
 import type {
   ZelavisPackageManifest,
   ZelavisServiceLoadOptions,
@@ -424,40 +433,116 @@ export interface LocalRuntimeServiceSourcePolicy {
   data?: boolean;
   /** `file:` URLs and filesystem paths. Development convenience; off by default. */
   filesystem?: boolean;
+  /**
+   * Registries this installation may acquire packages from. Off by default.
+   *
+   * Distinct from `https` above: that decides whether a module already named by
+   * a URL may be executed, this decides whether a package may be downloaded and
+   * installed in the first place. An installation can reasonably want one
+   * without the other.
+   */
+  npm?: ZelavisNpmSourcePolicy;
+  /** Hosts that may serve package archives directly. Off by default. */
+  archives?: ZelavisHttpsSourcePolicy;
 }
 
 export interface LocalRuntimeServiceOptions {
   directory?: string;
-  /**
-   * @deprecated Use `sources` instead. `allowRemote: true` enables `https` only;
-   * plaintext `http:` now requires `sources.insecureHttp`.
-   */
-  allowRemote?: boolean;
   sources?: LocalRuntimeServiceSourcePolicy;
+  /** Registry used when a reference does not name one. */
+  defaultRegistry?: string;
 }
 
 /**
- * Resolves the effective source policy.
+ * Resolves which specifier schemes may be executed.
  *
- * Remote loading now defaults to off. It previously defaulted to on, and
- * `allowRemote` covered plaintext HTTP as well as HTTPS while leaving `data:`
- * and arbitrary filesystem paths ungated entirely.
+ * Everything defaults to off. The failure mode of default-deny is a service
+ * that does not load; the failure mode of default-allow is code from anywhere
+ * running with Platform authority.
  */
-function resolveSourcePolicy(
-  options: LocalRuntimeServiceOptions,
-): Required<LocalRuntimeServiceSourcePolicy> {
+function resolveSourcePolicy(options: LocalRuntimeServiceOptions) {
   const sources = options.sources ?? {};
   return {
-    https: sources.https ?? options.allowRemote ?? false,
+    https: sources.https ?? false,
     insecureHttp: sources.insecureHttp ?? false,
     data: sources.data ?? false,
     filesystem: sources.filesystem ?? false,
   };
 }
 
+/**
+ * Resolves which remote sources packages may be acquired from.
+ *
+ * Returns undefined when none are configured, which is what makes acquisition
+ * refuse outright rather than fall back to some built-in registry.
+ */
+function resolveAcquisitionPolicy(
+  options: LocalRuntimeServiceOptions,
+): ZelavisServiceSourcePolicy | undefined {
+  const sources = options.sources ?? {};
+  if (!sources.npm && !sources.archives) {
+    return undefined;
+  }
+  return { npm: sources.npm, https: sources.archives };
+}
+
 // ---------------------------------------------------------------------------
 // Service package installer (ZIP → disk)
 // ---------------------------------------------------------------------------
+
+/**
+ * Writes package entries into a content-addressed directory.
+ *
+ * Content-addressed so the same package installs once no matter how many times
+ * or by how many names it arrives, and staged-then-renamed so a crashed install
+ * cannot leave a half-written package that looks complete.
+ */
+async function materializePackage(
+  serviceDirectory: string,
+  packageHash: string,
+  entries: readonly PackageEntry[],
+): Promise<string> {
+  const packageDirectory = join(serviceDirectory, "packages", packageHash);
+
+  if (existsSync(packageDirectory)) {
+    return packageDirectory;
+  }
+
+  const temporaryDirectory = join(
+    serviceDirectory,
+    ".tmp",
+    `${packageHash}-${randomUUID()}`,
+  );
+
+  await rm(temporaryDirectory, { recursive: true, force: true });
+  await mkdir(temporaryDirectory, { recursive: true });
+
+  try {
+    for (const entry of entries) {
+      const filePath = resolvePackageFilePath(temporaryDirectory, entry.path);
+      await mkdir(dirname(filePath), { recursive: true });
+      await writeFile(filePath, entry.body);
+    }
+
+    await mkdir(dirname(packageDirectory), { recursive: true });
+    renameSync(temporaryDirectory, packageDirectory);
+  } catch (error) {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "EEXIST"
+    ) {
+      // Another install completed the same package first.
+    } else {
+      throw error;
+    }
+  }
+
+  return packageDirectory;
+}
 
 export function createLocalRuntimeServicePackageInstaller(
   options: LocalRuntimeServiceOptions = {},
@@ -472,52 +557,41 @@ export function createLocalRuntimeServicePackageInstaller(
         throw new Error("Service package uploads must be ZIP archives.");
       }
 
-      const packageHash = createHash("sha256").update(input.body).digest("hex");
       const entries = readZipEntries(input.body);
       const entry = resolveServicePackageEntry(entries);
-      const packageDirectory = join(serviceDirectory, "packages", packageHash);
-      const temporaryDirectory = join(
+      const packageDirectory = await materializePackage(
         serviceDirectory,
-        ".tmp",
-        `${packageHash}-${randomUUID()}`,
+        createHash("sha256").update(input.body).digest("hex"),
+        entries,
       );
-
-      if (!existsSync(packageDirectory)) {
-        await rm(temporaryDirectory, { recursive: true, force: true });
-        await mkdir(temporaryDirectory, { recursive: true });
-
-        try {
-          for (const zipEntry of entries) {
-            const filePath = resolvePackageFilePath(
-              temporaryDirectory,
-              zipEntry.path,
-            );
-
-            await mkdir(dirname(filePath), { recursive: true });
-            await writeFile(filePath, zipEntry.body);
-          }
-
-          await mkdir(dirname(packageDirectory), { recursive: true });
-          renameSync(temporaryDirectory, packageDirectory);
-        } catch (error) {
-          await rm(temporaryDirectory, { recursive: true, force: true });
-
-          if (
-            typeof error === "object" &&
-            error !== null &&
-            "code" in error &&
-            error.code === "EEXIST"
-          ) {
-            // Another install completed the same package first.
-          } else {
-            throw error;
-          }
-        }
-      }
 
       return {
         specifier: join(packageDirectory, entry),
         message: `Installed service package ${input.fileName}.`,
+      };
+    },
+
+    async acquire(input) {
+      const acquired = await acquirePackage(input.reference, {
+        policy: resolveAcquisitionPolicy(options),
+        defaultRegistry: options.defaultRegistry,
+      });
+
+      const entry = resolveServicePackageEntry(acquired.entries);
+      // Addressed by the verified digest rather than a hash of the bytes we
+      // happened to receive: the digest is what the source committed to, and
+      // it is what makes two installs of the same reference the same install.
+      const packageDirectory = await materializePackage(
+        serviceDirectory,
+        createHash("sha256").update(acquired.integrity).digest("hex"),
+        acquired.entries,
+      );
+
+      return {
+        specifier: join(packageDirectory, entry),
+        resolved: acquired.resolved,
+        integrity: acquired.integrity,
+        message: `Installed ${acquired.resolved}.`,
       };
     },
   };

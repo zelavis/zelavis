@@ -290,9 +290,18 @@ an exported type is never mistaken for an operational distributed feature.
   install them, because they need a supervised process and a routed target
   through the Project runtime and Gateway. Reuse the Agent/backend path rather
   than adding a second process supervisor.
-- [ ] Acquire frontend packages. The runtime executes what is already on disk;
-  npm, `npx create`, an uploaded archive, and Git sources each need an explicit
-  trust policy through the existing service source settings.
+- [x] Acquire packages from npm and from explicit archive hosts. The trust
+  policy lives with the existing service source settings and defaults to
+  acquiring nothing: registries and scopes are matched exactly, the tarball URL
+  the registry advertises is re-checked against that same policy before it is
+  followed, and the bytes are verified against the digest the registry
+  published — sha1 is not accepted as a commitment. A reference must name one
+  package, so ranges are refused; a dist-tag is recorded as the version it
+  resolved to.
+- [ ] Acquire from Git sources and through `npx create`. Git needs a ref that
+  pins a commit rather than a moving branch, and `npx create` runs a generator
+  rather than installing a package — neither fits the verify-then-materialize
+  path npm uses, so both need their own trust story.
 - [ ] Place an owned Project with its owner. Fabric currently plans each Project
   independently, so an owned runtime could be placed away from the Project it
   serves. This is the Project Cell placement-group rule applied one level down.

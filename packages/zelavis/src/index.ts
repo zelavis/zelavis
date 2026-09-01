@@ -348,12 +348,37 @@ export interface ZelavisServicePackageInstallResult {
   message?: string;
 }
 
+export interface ZelavisServicePackageAcquireInput {
+  /** `npm:<name>@<version>` or an https archive URL. */
+  reference: string;
+}
+
+export interface ZelavisServicePackageAcquireResult
+  extends ZelavisServicePackageInstallResult {
+  /** What was installed, with any dist-tag resolved to a version. */
+  resolved: string;
+  /** The digest that was verified against the bytes received. */
+  integrity: string;
+}
+
 export interface ZelavisServicePackageInstaller {
   install(
     input: ZelavisServicePackageInstallInput,
   ):
     | Promise<ZelavisServicePackageInstallResult>
     | ZelavisServicePackageInstallResult;
+  /**
+   * Acquires a package from a remote source.
+   *
+   * Optional: a host that only accepts uploads implements `install` alone, and
+   * an installation without it refuses source references rather than silently
+   * treating them as something else.
+   */
+  acquire?(
+    input: ZelavisServicePackageAcquireInput,
+  ):
+    | Promise<ZelavisServicePackageAcquireResult>
+    | ZelavisServicePackageAcquireResult;
 }
 
 export interface ZelavisPlatformResources {
@@ -432,6 +457,12 @@ export interface ZelavisServiceActivationCapabilities {
   supportsRuntimeInstall: boolean;
   supportsUploadedSpecifiers: boolean;
   supportsPackageUploads: boolean;
+  /**
+   * Whether packages can be acquired from remote sources. False when the host
+   * has no acquirer, and also when it has one but the operator has configured
+   * no trusted sources — from a caller's side those are the same answer.
+   */
+  supportsPackageAcquisition: boolean;
   supportsIsolatedExecution: boolean;
   description?: string;
 }
@@ -703,6 +734,21 @@ async function readDashboardServiceRegistryCreate(
   let specifier =
     typeof input.specifier === "string" ? input.specifier.trim() : "";
   const uploadedFile = input.file;
+  const sourceReference =
+    typeof input.packageSource === "string" ? input.packageSource.trim() : "";
+
+  if (!specifier && sourceReference) {
+    if (!options.packageInstaller?.acquire) {
+      throw new ZelavisValidationError(
+        "This installation cannot acquire packages from remote sources.",
+      );
+    }
+
+    const acquired = await options.packageInstaller.acquire({
+      reference: sourceReference,
+    });
+    specifier = acquired.specifier;
+  }
 
   if (!specifier && isServiceUploadFile(uploadedFile)) {
     const bytes = new Uint8Array(await uploadedFile.arrayBuffer());
@@ -1312,6 +1358,9 @@ async function resolveRuntimeManagementCore(
             capabilities: {
               ...context.serviceActivation.capabilities,
               supportsPackageUploads: Boolean(context.servicePackageInstaller),
+              supportsPackageAcquisition: Boolean(
+                context.servicePackageInstaller?.acquire,
+              ),
             },
           }
         : {
@@ -3223,6 +3272,9 @@ export class Zelavis {
               supportsUploadedSpecifiers: true,
               supportsPackageUploads: Boolean(
                 resolved.context.resources.servicePackages,
+              ),
+              supportsPackageAcquisition: Boolean(
+                resolved.context.resources.servicePackages?.acquire,
               ),
               supportsIsolatedExecution: false,
               description:
