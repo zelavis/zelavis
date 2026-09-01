@@ -39,6 +39,7 @@ import {
 import { createZelavisCoreService } from "./platform/core-service.js";
 import { createProjectGatewayRoutes } from "./platform/project-gateway.js";
 import { createProjectFrontendPlaceholderService } from "./platform/project-frontend.js";
+import { guardControlPlaneHost } from "./platform/public-domain-forwarder.js";
 export {
   assertListableFrontend,
   readFrontendManifest,
@@ -2740,7 +2741,29 @@ export async function zelavis(
     return closePromise;
   };
 
-  return Object.assign(runtime, { close });
+  // A hostname bound to a Project is that Project's, not the Platform's. The
+  // dashboard route otherwise matches before the public forwarder runs, so
+  // `/zelavis` would serve a Platform login page on every customer domain.
+  const publicDomainOptions = options.domainBindings
+    ? { domainBindings: options.domainBindings, projects: () => projects }
+    : undefined;
+
+  // Captured before the assignment below: `Object.assign` mutates `runtime`, so
+  // reading `runtime.fetch` inside the wrapper would call the wrapper.
+  const composedFetch = runtime.fetch.bind(runtime);
+  const guardedFetch: typeof runtime.fetch = async (request, context) => {
+    if (publicDomainOptions) {
+      const refused = await guardControlPlaneHost(
+        publicDomainOptions,
+        request,
+        rootPath,
+      );
+      if (refused) return refused;
+    }
+    return composedFetch(request, context);
+  };
+
+  return Object.assign(runtime, { fetch: guardedFetch, close });
 }
 
 export interface ZelavisRuntime extends ZelavisServerRuntime<unknown> {

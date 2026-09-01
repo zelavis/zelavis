@@ -173,3 +173,46 @@ export async function forwardPublicRequest(
     body: new Uint8Array(responseBody),
   };
 }
+
+/**
+ * Guards the Platform control plane against being served on a Project's domain.
+ *
+ * A hostname bound to a Project is that Project's, not the Platform's. Serving
+ * `/zelavis` there puts a Platform login page on every customer domain: the
+ * control-plane API stays authenticated, so this is exposure rather than a
+ * breach, but it is still the wrong surface in the wrong place.
+ *
+ * This is a wrapper rather than a route restriction because route `host` fields
+ * are an allow-list resolved at composition time, while bindings are added and
+ * verified while the Platform runs. It is a wrapper rather than a request hook
+ * because hooks observe requests and cannot answer them.
+ *
+ * Returns `undefined` when the request should proceed normally.
+ */
+export async function guardControlPlaneHost(
+  options: PublicDomainForwarderOptions,
+  request: Request,
+  rootPath: string,
+): Promise<Response | undefined> {
+  const { domainBindings } = options;
+  if (!domainBindings) return undefined;
+
+  const url = new URL(request.url);
+  const path = url.pathname;
+  const withinControlPlane =
+    path === rootPath || path.startsWith(`${rootPath}/`);
+  if (!withinControlPlane) return undefined;
+
+  const binding = await resolveVerifiedBinding(domainBindings, url.host);
+  if (!binding) return undefined;
+
+  // 404 rather than 403: on this host the control plane does not exist, and
+  // saying so would confirm which Platform serves the domain.
+  return new Response(JSON.stringify({ error: "Not found" }), {
+    status: 404,
+    headers: {
+      "content-type": "application/json",
+      "cache-control": "no-store",
+    },
+  });
+}
