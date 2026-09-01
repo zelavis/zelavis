@@ -50,7 +50,7 @@ test("validatePluginPackageManifest rejects non-module plugins with exact messag
     (error) => {
       assert.equal(
         error.message,
-        'Invalid Zelavis plugin "@example/foo":\npackage.json must contain "type": "module".',
+        'Invalid Zelavis service "@example/foo":\npackage.json must contain "type": "module".',
       );
       return true;
     },
@@ -69,7 +69,7 @@ test("validatePluginPackageManifest rejects plugins missing exports with exact m
     (error) => {
       assert.equal(
         error.message,
-        'Invalid Zelavis plugin "@example/foo":\npackage.json must define "exports".',
+        'Invalid Zelavis service "@example/foo":\npackage.json must define "exports".',
       );
       return true;
     },
@@ -90,7 +90,7 @@ test("validatePluginPackageManifest rejects legacy main in plugins with exact me
     (error) => {
       assert.equal(
         error.message,
-        'Invalid Zelavis plugin "@example/foo":\n"main" is not supported for Zelavis plugins.\nUse the modern "exports" field instead.',
+        'Invalid Zelavis service "@example/foo":\n"main" is not supported.\nUse the modern "exports" field instead.',
       );
       return true;
     },

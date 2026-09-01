@@ -54,10 +54,17 @@ export function validatePluginPackageManifest(
 
   const kind = (zelavis as Record<string, unknown>).kind!.toString().trim();
 
-  if (kind === "plugin") {
+  // Applied to every kind that ships JavaScript, not only "plugin".
+  //
+  // These checks are about the package being modern ESM with a resolvable
+  // entry — a property of how the code is shipped, not of what the service is.
+  // Gating them on the "plugin" label meant a first-party service had to
+  // mislabel itself as a plugin to get its manifest validated at all.
+  // A frontend is exempt because it may be files with no JavaScript entry.
+  if (kind !== "frontend") {
     if (manifest.type !== "module") {
       throw new TypeError(
-        `Invalid Zelavis plugin "${name}":\npackage.json must contain "type": "module".`,
+        `Invalid Zelavis service "${name}":\npackage.json must contain "type": "module".`,
       );
     }
 
@@ -67,13 +74,13 @@ export function validatePluginPackageManifest(
       manifest.exports === ""
     ) {
       throw new TypeError(
-        `Invalid Zelavis plugin "${name}":\npackage.json must define "exports".`,
+        `Invalid Zelavis service "${name}":\npackage.json must define "exports".`,
       );
     }
 
     if (manifest.main !== undefined) {
       throw new TypeError(
-        `Invalid Zelavis plugin "${name}":\n"main" is not supported for Zelavis plugins.\nUse the modern "exports" field instead.`,
+        `Invalid Zelavis service "${name}":\n"main" is not supported.\nUse the modern "exports" field instead.`,
       );
     }
   }

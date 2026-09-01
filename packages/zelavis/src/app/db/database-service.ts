@@ -182,6 +182,7 @@ export function defineDatabaseService(
 ): DatabaseServiceDefinition {
   return {
     name: "@zelavis/db",
+    kind: "core" as const,
     basePath: "database",
     menu: {
       title: "Database",

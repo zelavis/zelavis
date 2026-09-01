@@ -6,7 +6,7 @@
   "license": "MIT",
   "type": "module",
   "zelavis": {
-    "kind": "plugin"
+    "kind": "core"
   },
   "exports": {
     ".": {
