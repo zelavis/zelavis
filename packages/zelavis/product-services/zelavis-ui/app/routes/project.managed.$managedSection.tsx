@@ -2,6 +2,7 @@ import { Archive, Database, Files, Globe2, MonitorCog, Package, ReceiptText } fr
 import { useParams, useRouteLoaderData } from "react-router";
 
 import { DashboardNotFound } from "#/components/DashboardNotFound";
+import { ServicePageMount } from "#/components/ServicePageMount";
 import { DataRow, ResourceNotice, StatusBadge } from "#/components/DashboardPage";
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
@@ -56,8 +57,13 @@ export default function ManagedProjectSectionRoute() {
   const project = projects.find((candidate) => candidate.id === params.projectId);
   const managedKind = getManagedProjectKind(project?.kind);
 
+  // This route's pattern swallows every single-segment path under a project,
+  // which is also where a service's project-surface pages live. A Zelavis-native
+  // project has no managed sections, so hand the path to the service page mount
+  // — the same thing the splat route would have done had this pattern not
+  // matched first.
   if (!managedKind) {
-    return <DashboardNotFound />;
+    return <ServicePageMount allowPlaceholder fallback={<DashboardNotFound />} />;
   }
 
   const section =

@@ -47,6 +47,17 @@ describe("the marketplace reaches the dashboard through the service registry", (
     expect(marketplace?.url).toBe("/projects/project-a/marketplace");
   });
 
+  it("resolves to a frame on a project path", async () => {
+    const config = await runtimeConfig();
+    const content = findServiceMenuContentByPath(
+      "/projects/dashboard-e2e/marketplace",
+      config.services,
+      config.serviceRegistry,
+    );
+
+    expect(content?.kind).toBe("frame");
+  });
+
   it("resolves to a frame, not a placeholder", async () => {
     const config = await runtimeConfig();
     const content = findServiceMenuContentByPath(

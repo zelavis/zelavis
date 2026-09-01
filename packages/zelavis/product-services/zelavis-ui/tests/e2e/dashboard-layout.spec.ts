@@ -750,9 +750,13 @@ test('@smoke marketplace renders the page its own service ships', async ({
 
   // The dashboard has no marketplace route. The page comes from the service,
   // through the service page frame, fetched from the service page asset route.
-  const frame = page.locator('zelavis-service-frame')
-  await expect(frame).toBeVisible()
-  await expect(frame).toHaveAttribute(
+  //
+  // Deliberately not asserting the host element is visible: `:host { display:
+  // block }` lives in its shadow root, so until `customElements.define` runs
+  // the element is inline and zero-size. `toHaveAttribute` waits for it to be
+  // attached, and the heading below only resolves once the frame has actually
+  // loaded the page — which is the thing worth asserting anyway.
+  await expect(page.locator('zelavis-service-frame')).toHaveAttribute(
     'src',
     /runtime\/service-page-assets\/%40zelavis%2Fmarketplace\/.*marketplace\.html$/,
   )
