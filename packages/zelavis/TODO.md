@@ -298,10 +298,22 @@ an exported type is never mistaken for an operational distributed feature.
   published — sha1 is not accepted as a commitment. A reference must name one
   package, so ranges are refused; a dist-tag is recorded as the version it
   resolved to.
-- [ ] Acquire from Git sources and through `npx create`. Git needs a ref that
-  pins a commit rather than a moving branch, and `npx create` runs a generator
-  rather than installing a package — neither fits the verify-then-materialize
-  path npm uses, so both need their own trust story.
+- [x] Acquire from Git forges, by pinned commit. A reference must name a full
+  commit SHA: a branch or tag moves, and unlike npm there is no registry digest
+  that would notice the same reference now installs different code. The forge's
+  archive URL is an operator-configured template, validated to stay on its own
+  origin because the values substituted into it come from the caller. There is
+  no digest to verify against — a forge builds archives on demand, so the bytes
+  are not stable for the same commit — so trust rests on the allow-listed forge
+  and the pinned commit, and what actually arrived is recorded.
+- [ ] Scaffold a frontend from a `create-*` package. Deliberately not `npx`:
+  npx resolves and installs a whole dependency tree from whatever registry npm
+  is configured with, which would route around the source policy entirely and
+  make it decorative. The shape that works is to acquire the create package
+  through the verified npm path, then run its declared bin in an isolated
+  working directory with no network, and register the result as a frontend
+  Project. That is Project scaffolding rather than service acquisition, so it
+  belongs with the frontend creation flow.
 - [ ] Place an owned Project with its owner. Fabric currently plans each Project
   independently, so an owned runtime could be placed away from the Project it
   serves. This is the Project Cell placement-group rule applied one level down.

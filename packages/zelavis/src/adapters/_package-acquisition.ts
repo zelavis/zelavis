@@ -14,6 +14,7 @@ import {
   assertPackageSourceAllowed,
   assertTarballOrigin,
   parsePackageSourceRef,
+  resolveGitArchiveUrl,
   ZELAVIS_DEFAULT_NPM_REGISTRY,
   type ZelavisPackageSourceRef,
   type ZelavisServiceSourcePolicy,
@@ -127,6 +128,42 @@ export function readTarGzEntries(bytes: Uint8Array): PackageEntry[] {
   }
 
   return entries;
+}
+
+/**
+ * Strips the single top-level directory a source archive is wrapped in.
+ *
+ * A forge names it after the repository and commit rather than `package`, so
+ * the exact name cannot be asserted. What can be asserted is that there is
+ * exactly one: an archive with entries at more than one root, or at the root
+ * itself, is not the shape a source archive takes and is not unpacked.
+ */
+export function stripSingleRootDirectory(
+  entries: readonly PackageEntry[],
+): PackageEntry[] {
+  const roots = new Set<string>();
+  for (const entry of entries) {
+    const normalized = entry.path.replace(/^\.\//, "");
+    const separator = normalized.indexOf("/");
+    if (separator <= 0) {
+      throw new Error(
+        `Package archive entry "${entry.path}" is not inside a root directory.`,
+      );
+    }
+    roots.add(normalized.slice(0, separator));
+  }
+
+  if (roots.size !== 1) {
+    throw new Error(
+      `Package archive has ${roots.size} root directories; expected exactly one.`,
+    );
+  }
+
+  const [root] = roots;
+  return entries.map((entry) => ({
+    path: entry.path.replace(/^\.\//, "").slice(root.length + 1),
+    body: entry.body,
+  }));
 }
 
 /**
@@ -264,7 +301,48 @@ export async function acquirePackage(
     };
   }
 
+  if (ref.kind === "git") {
+    return acquireFromGit(ref, options.policy, doFetch);
+  }
+
   return acquireFromNpm(ref, doFetch);
+}
+
+/**
+ * Acquires a commit's source archive from a Git forge.
+ *
+ * There is no digest to verify against, and that is a real difference from npm
+ * rather than an oversight: a forge builds its archives on demand, so the bytes
+ * are not stable even for the same commit. What holds instead is that the
+ * operator listed the forge and the reference pins an immutable commit. The
+ * digest of what actually arrived is recorded so the install is still
+ * content-addressed and reproducible after the fact.
+ */
+async function acquireFromGit(
+  ref: Extract<ZelavisPackageSourceRef, { kind: "git" }>,
+  policy: ZelavisServiceSourcePolicy | undefined,
+  doFetch: typeof globalThis.fetch,
+): Promise<AcquiredPackage> {
+  const url = resolveGitArchiveUrl(ref, policy);
+
+  // Forges redirect archive downloads to storage hosts, so this cannot be
+  // `redirect: "error"` the way the others are. Each hop is bounded and the
+  // final response is size-capped; the trust still rests on the pinned commit,
+  // which a redirect cannot change.
+  const response = await doFetch(url.toString());
+  if (!response.ok) {
+    throw new Error(
+      `Failed to download ${ref.repository}@${ref.commit.slice(0, 12)} from ${ref.host}: ${response.status}.`,
+    );
+  }
+
+  const body = await readCapped(response, MAX_ARCHIVE_BYTES, "Package archive");
+
+  return {
+    entries: stripSingleRootDirectory(readTarGzEntries(body)),
+    resolved: `git+https://${ref.host}/${ref.repository}#${ref.commit}`,
+    integrity: `sha512-${createHash("sha512").update(body).digest("base64")}`,
+  };
 }
 
 async function acquireFromNpm(
