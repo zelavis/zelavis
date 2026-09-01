@@ -36,6 +36,11 @@ import type {
 } from "#/lib/runtime-api";
 import type { ContentTypeRow } from "#/lib/content-studio";
 import { getProjectIdFromPathname, toProjectPath } from "#/lib/routing";
+import {
+  ZELAVIS_MARKETPLACE_SERVICE_NAME,
+  zelavisMarketplaceMenu,
+  zelavisProjectMarketplaceMenu,
+} from "@zelavis/ui/marketplace";
 
 export type DashboardRoutePath =
   | "/"
@@ -944,20 +949,14 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
     },
   },
   {
-    name: "zelavis/marketplace",
+    name: ZELAVIS_MARKETPLACE_SERVICE_NAME,
     core: true,
     apiPath: "/api/v1/marketplace",
+    // Single source: the menu is described by the marketplace service beside
+    // the pages it opens, not copied into this fallback list where the two
+    // could drift.
     menu: {
-      title: "Marketplace",
-      path: "/marketplace",
-      pageLabel: "Marketplace",
-      sectionLabel: "Explore",
-      order: 30,
-      surface: "platform",
-      access: {
-        permissions: ["marketplace.view"],
-        scope: { type: "system" },
-      },
+      ...zelavisMarketplaceMenu,
     },
   },
   {
@@ -1154,12 +1153,17 @@ export function buildPlatformNavItems(
     },
     ...rootServiceNavItems,
     {
-      title: "Marketplace",
-      url: "/marketplace",
+      // Contributed by the marketplace service rather than written here: the
+      // project marketplace was the one nav entry backed by no service at all.
+      title: zelavisProjectMarketplaceMenu.title,
+      url: zelavisProjectMarketplaceMenu.path,
       icon: Boxes,
-      pageLabel: "Marketplace",
-      sectionLabel: "Extend",
-      access: projectAccess("project.marketplace.manage", projectId),
+      pageLabel: zelavisProjectMarketplaceMenu.pageLabel,
+      sectionLabel: zelavisProjectMarketplaceMenu.sectionLabel,
+      access: projectAccess(
+        zelavisProjectMarketplaceMenu.access.permissions[0],
+        projectId,
+      ),
     },
     {
       title: "Extensions",

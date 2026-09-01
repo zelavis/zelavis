@@ -111,12 +111,13 @@ import {
   zelavisErrorResponse,
   ZelavisValidationError,
 } from "./platform/shared.js";
-import { marketplaceService } from "./platform/marketplace-service.js";
+import { createZelavisMarketplaceService } from "@zelavis/ui/marketplace";
 import {
   workloadsService,
   type WorkloadsServiceOptions,
 } from "./app/workloads/index.js";
 export { ZELAVIS_VERSION } from "./version.js";
+import { ZELAVIS_VERSION } from "./version.js";
 import {
   activateServiceRegistry,
   applyServiceRegistryState,
@@ -2667,7 +2668,7 @@ export async function zelavis(
   );
   const coreServices = [
     platformCoreService,
-    marketplaceService,
+    createZelavisMarketplaceService({ version: ZELAVIS_VERSION }),
     fabricCoreService,
     databaseService,
     authService,

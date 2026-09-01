@@ -19,6 +19,10 @@
     "./service": {
       "types": "./dist/dashboard-service.d.ts",
       "import": "./dist/dashboard-service.js"
+    },
+    "./marketplace": {
+      "types": "./dist/marketplace-service.d.ts",
+      "import": "./dist/marketplace-service.js"
     }
   },
   "files": [
