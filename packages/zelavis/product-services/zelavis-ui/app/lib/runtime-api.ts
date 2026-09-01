@@ -30,6 +30,11 @@ export interface RuntimeService {
   name: string;
   kind?: string;
   core: boolean;
+  /**
+   * Whether the operator composed this service or it was installed at runtime.
+   * The dashboard sandboxes an extension service's page.
+   */
+  scope?: "system" | "extension";
   apiPath: string;
   menu?: RuntimeServiceMenuDefinition;
   menus?: readonly RuntimeServiceMenuDefinition[];
@@ -70,6 +75,9 @@ export interface RuntimeServiceRegistryEntry {
   name: string;
   version?: string;
   kind?: string;
+  scope?: "system" | "extension";
+  /** API namespace this service owns; the only surface its page may reach. */
+  apiPath?: string;
   specifier?: string;
   status: "installed" | "available";
   source?: "official" | "community";

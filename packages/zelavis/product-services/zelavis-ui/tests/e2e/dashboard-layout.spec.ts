@@ -774,6 +774,47 @@ test('@smoke marketplace renders the page its own service ships', async ({
   await expect(frame.locator('body')).toHaveCSS('color', /oklch/)
 })
 
+test('@smoke a service the operator did not compose is sandboxed', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await gotoDashboard(page, '/marketplace')
+
+  const host = page.locator('zelavis-service-frame')
+  const src = await host.getAttribute('src')
+
+  // The marketplace is composed by the operator, so its page runs same-origin.
+  expect(await host.getAttribute('sandboxed')).toBe('false')
+
+  // The same element, told the service was installed at runtime. Mounted here
+  // rather than installed for real because what is being checked is the frame's
+  // isolation, and that is a property of the element, not of any one service.
+  const result = await page.evaluate(async (pageSrc) => {
+    const element = document.createElement('zelavis-service-frame')
+    element.setAttribute('src', pageSrc!)
+    element.setAttribute('sandboxed', 'true')
+    document.body.append(element)
+    await new Promise((resolve) => setTimeout(resolve, 500))
+
+    const iframe = element.shadowRoot!.querySelector('iframe')!
+    let reachable: unknown
+    try {
+      reachable = Boolean(iframe.contentDocument?.title)
+    } catch {
+      reachable = false
+    }
+    return { sandbox: iframe.getAttribute('sandbox'), reachable }
+  }, src)
+
+  // Without allow-same-origin the document has an opaque origin: it holds no
+  // session, cannot reach the dashboard, and can only call the Platform through
+  // the broker, which confines it to its own API.
+  expect(result.sandbox).not.toContain('allow-same-origin')
+  expect(result.sandbox).not.toContain('allow-popups')
+  expect(result.reachable).toBe(false)
+})
+
 test('marketplace does not expose ecommerce in extensions before install', async ({
   page,
 }, testInfo) => {

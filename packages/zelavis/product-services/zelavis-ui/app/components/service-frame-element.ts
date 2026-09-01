@@ -1,12 +1,35 @@
+import {
+  installServicePageBroker,
+  type ServicePageBrokerGrant,
+} from "#/lib/service-page-broker";
+
 const ELEMENT_NAME = "zelavis-service-frame";
+
+/**
+ * A page from a service the operator composed themselves runs same-origin:
+ * they already chose to run its code, and its page adds no authority its
+ * service does not already have in-process.
+ */
+const TRUSTED_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-popups";
+
+/**
+ * A page from a service installed at runtime gets an opaque origin. It cannot
+ * reach the dashboard, cannot send the session cookie, and cannot call the
+ * Platform except through the broker, which confines it to its own API.
+ *
+ * `allow-popups` is dropped with it: a popup from an opaque-origin document is
+ * a window the dashboard cannot see but the viewer will read as part of it.
+ */
+const SANDBOXED = "allow-scripts allow-forms";
 
 class ZelavisServiceFrameElement extends HTMLElement {
   static get observedAttributes() {
-    return ["src", "title"];
+    return ["src", "title", "sandboxed", "grant"];
   }
 
   private readonly iframe: HTMLIFrameElement;
   private readonly loading: HTMLDivElement;
+  private teardownBroker?: () => void;
 
   constructor() {
     super();
@@ -65,10 +88,11 @@ class ZelavisServiceFrameElement extends HTMLElement {
 
     this.iframe = document.createElement("iframe");
     this.iframe.setAttribute("loading", "lazy");
-    this.iframe.setAttribute(
-      "sandbox",
-      "allow-scripts allow-same-origin allow-forms allow-popups",
-    );
+    // Sandboxed until told otherwise. A missing or malformed attribute must
+    // fail closed: the cost of over-restricting a trusted page is a page that
+    // does not work, and the cost of under-restricting an untrusted one is the
+    // operator's session.
+    this.iframe.setAttribute("sandbox", SANDBOXED);
     this.iframe.addEventListener("load", () => {
       this.loading.dataset.hidden = "true";
     });
@@ -81,6 +105,11 @@ class ZelavisServiceFrameElement extends HTMLElement {
     this.sync();
   }
 
+  disconnectedCallback() {
+    this.teardownBroker?.();
+    this.teardownBroker = undefined;
+  }
+
   attributeChangedCallback() {
     this.sync();
   }
@@ -88,6 +117,28 @@ class ZelavisServiceFrameElement extends HTMLElement {
   private sync() {
     const src = this.getAttribute("src") ?? "about:blank";
     const title = this.getAttribute("title") ?? "Service page";
+    const sandboxed = this.getAttribute("sandboxed") !== "false";
+
+    const sandbox = sandboxed ? SANDBOXED : TRUSTED_SANDBOX;
+    if (this.iframe.getAttribute("sandbox") !== sandbox) {
+      // Changing the sandbox of a loaded document does not re-apply to it, so
+      // the frame is reloaded rather than left running under the old flags.
+      this.iframe.setAttribute("sandbox", sandbox);
+      this.iframe.removeAttribute("src");
+    }
+
+    this.teardownBroker?.();
+    this.teardownBroker = undefined;
+
+    if (sandboxed) {
+      const grant = this.readGrant();
+      if (grant) {
+        this.teardownBroker = installServicePageBroker({
+          grant,
+          frame: this.iframe,
+        });
+      }
+    }
 
     if (this.iframe.getAttribute("src") !== src) {
       this.loading.dataset.hidden = "false";
@@ -95,6 +146,22 @@ class ZelavisServiceFrameElement extends HTMLElement {
     }
 
     this.iframe.title = title;
+  }
+
+  private readGrant(): ServicePageBrokerGrant | undefined {
+    const raw = this.getAttribute("grant");
+    if (!raw) return undefined;
+
+    try {
+      const parsed = JSON.parse(raw) as Partial<ServicePageBrokerGrant>;
+      return typeof parsed?.serviceName === "string" &&
+        typeof parsed?.apiPath === "string"
+        ? { serviceName: parsed.serviceName, apiPath: parsed.apiPath }
+        : undefined;
+    } catch {
+      // No grant means no brokered access, which is the safe outcome.
+      return undefined;
+    }
   }
 }
 

@@ -131,6 +131,10 @@
     "./storage/s3": {
       "types": "./dist/storage/s3.d.ts",
       "import": "./dist/storage/s3.js"
+    },
+    "./sdk/service-page": {
+      "types": "./dist/sdk/service-page.d.ts",
+      "import": "./dist/sdk/service-page.js"
     }
   },
   "scripts": {

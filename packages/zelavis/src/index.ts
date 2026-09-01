@@ -1326,6 +1326,9 @@ async function resolveRuntimeManagementCore(
       services: context.getServices().map((service) => ({
         name: service.name,
         kind: service.kind,
+        // Composed into the runtime by the operator rather than installed at
+        // runtime, which is what "system" means here.
+        scope: "system" as const,
         core:
           service.name === "@zelavis/ui" ||
           service.name === "zelavis/platform" ||
@@ -1388,6 +1391,19 @@ async function resolveRuntimeManagementCore(
         name: entry.service.name,
         version: entry.service.version,
         kind: entry.service.kind,
+        // The trust boundary a client needs to render this service's page
+        // safely. "extension" means the service was installed at runtime and is
+        // not part of what the operator composed; the dashboard sandboxes its
+        // page rather than running it with the operator's ambient session.
+        scope: entry.service.scope ?? "extension",
+        // The API namespace this service owns, which is the only surface a
+        // sandboxed page of its own may be brokered access to.
+        apiPath: joinPathParts(
+          rootPath,
+          context.apiPrefix,
+          context.apiVersion,
+          entry.service.basePath ?? entry.service.name,
+        ),
         specifier: entry.specifier,
         status: entry.status,
         source: entry.source,
