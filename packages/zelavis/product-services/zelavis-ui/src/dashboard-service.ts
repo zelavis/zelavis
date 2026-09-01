@@ -336,6 +336,11 @@ export function createZelavisDashboardService(
 
   return Object.freeze({
     name: "@zelavis/ui",
+    // Matches this package's own `zelavis.kind`. The dashboard is composed
+    // directly rather than loaded through the plugin loader, so nothing reads
+    // its manifest for it; stating the kind here is what makes the declaration
+    // mean anything at runtime.
+    kind: "core" as const,
     scope: "system",
     basePath: "/",
     menu: {

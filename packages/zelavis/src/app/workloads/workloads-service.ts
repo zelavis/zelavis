@@ -548,6 +548,7 @@ export function workloadsService(
 
   return {
     name: "@zelavis/workloads",
+    kind: "core" as const,
     basePath: "/workloads",
     service,
     menu: {

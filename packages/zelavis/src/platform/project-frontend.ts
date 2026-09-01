@@ -131,6 +131,7 @@ export function createProjectFrontendPlaceholderService(
 
   return {
     name: "@zelavis/frontend",
+    kind: "core" as const,
     // Mounted at the root: this is the Project's public front door, not an API.
     basePath: "/",
     menu: {
