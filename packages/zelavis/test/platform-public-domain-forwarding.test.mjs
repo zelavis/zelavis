@@ -4,8 +4,10 @@ import { createServer } from "node:http";
 
 import {
   forwardPublicRequest,
+  guardControlPlaneHost,
   resolveVerifiedBinding,
 } from "../dist/platform/public-domain-forwarder.js";
+import { zelavis, createInMemoryDomainBindingStore } from "../dist/index.js";
 
 function bindingStore(bindings) {
   return { get: async (host) => bindings[host.toLowerCase()] };
@@ -188,4 +190,68 @@ test("a running frontend takes precedence over the Project runtime", async () =>
     site.server.close();
     frontend.server.close();
   }
+});
+
+test("the control plane is not served on a Project's domain", async () => {
+  const options = { domainBindings: bindingStore({ "example.com": verified() }) };
+
+  for (const path of ["/zelavis", "/zelavis/api/v1/runtime/projects", "/zelavis/login"]) {
+    const refused = await guardControlPlaneHost(
+      options,
+      new Request(`http://example.com${path}`),
+      "/zelavis",
+    );
+    assert.ok(refused, `${path} must not be served on a bound domain`);
+    // 404 rather than 403: on this host the control plane does not exist, and
+    // saying otherwise would confirm which Platform serves the domain.
+    assert.equal(refused.status, 404);
+  }
+
+  // The Platform's own hosts are unaffected.
+  assert.equal(
+    await guardControlPlaneHost(
+      options,
+      new Request("http://localhost/zelavis"),
+      "/zelavis",
+    ),
+    undefined,
+  );
+
+  // A path that merely starts with the same characters is not the control plane.
+  assert.equal(
+    await guardControlPlaneHost(
+      options,
+      new Request("http://example.com/zelavisation"),
+      "/zelavis",
+    ),
+    undefined,
+  );
+});
+
+test("a composed runtime refuses the dashboard on a bound domain", async () => {
+  const bindings = createInMemoryDomainBindingStore();
+  await bindings.put({
+    ...verified(),
+    host: "customer.example",
+  });
+
+  const runtime = await zelavis({
+    coreServices: { auth: false, database: false },
+    domainBindings: bindings,
+  });
+
+  // The dashboard route matches before the public forwarder runs, so this is
+  // enforced ahead of dispatch rather than inside the frontend service.
+  const onBoundDomain = await runtime.fetch(
+    new Request("http://customer.example/zelavis"),
+  );
+  assert.equal(onBoundDomain.status, 404);
+
+  // The Platform's own root still redirects to its dashboard.
+  const onPlatformHost = await runtime.fetch(new Request("http://localhost/"));
+  assert.equal(onPlatformHost.status, 307);
+  assert.equal(onPlatformHost.headers.get("location"), "/zelavis");
+
+  const dashboard = await runtime.fetch(new Request("http://localhost/zelavis"));
+  assert.equal(dashboard.status, 200);
 });

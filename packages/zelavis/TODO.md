@@ -38,6 +38,11 @@ an exported type is never mistaken for an operational distributed feature.
   placement contracts.
 - [x] Fabric snapshot and read-only inventory endpoints for the current
   single-node implementation.
+- [x] The Platform control plane is not served on a Project's domain. A host
+  bound to a Project is that Project's, so `/zelavis` answers `404` there rather
+  than a Platform login page. Enforced ahead of dispatch, because the dashboard
+  route matches before the public forwarder runs, and route `host` fields are an
+  allow-list resolved at composition time while bindings are verified at runtime.
 - [x] A verified bound domain forwards public traffic to the Project that owns
   it, choosing its running server frontend when there is one. Forwarding is
   anonymous — no Platform credentials and no authority envelope, since a visitor
@@ -268,12 +273,6 @@ an exported type is never mistaken for an operational distributed feature.
   install them, because they need a supervised process and a routed target
   through the Project runtime and Gateway. Reuse the Agent/backend path rather
   than adding a second process supervisor.
-- [ ] Host-scope the dashboard mount. A bound Project domain currently also
-  serves the Platform dashboard at `/zelavis`, because the dashboard route
-  matches before the public forwarder runs. The control-plane API stays
-  authenticated there (`401`), so this is exposure rather than a breach, but a
-  Platform login page should not appear on every customer domain. Routes already
-  carry a `host` field; the Platform needs to know its own hostnames to use it.
 - [ ] Acquire frontend packages. The runtime executes what is already on disk;
   npm, `npx create`, an uploaded archive, and Git sources each need an explicit
   trust policy through the existing service source settings.
