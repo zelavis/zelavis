@@ -38,6 +38,13 @@ an exported type is never mistaken for an operational distributed feature.
   placement contracts.
 - [x] Fabric snapshot and read-only inventory endpoints for the current
   single-node implementation.
+- [x] A verified bound domain forwards public traffic to the Project that owns
+  it, choosing its running server frontend when there is one. Forwarding is
+  anonymous — no Platform credentials and no authority envelope, since a visitor
+  has no Platform identity and the target may be third-party code — and only a
+  verified binding is routable, because anyone can point DNS at a host. The
+  Project's own `set-cookie` is preserved, unlike the Gateway path, because the
+  response is served from the Project's own domain.
 - [x] The Gateway routes a Project's public paths to its running server
   frontend and keeps `/zelavis/*` with the Zelavis runtime. A frontend never
   receives a Platform authority envelope: it is third-party application code,
@@ -261,11 +268,12 @@ an exported type is never mistaken for an operational distributed feature.
   install them, because they need a supervised process and a routed target
   through the Project runtime and Gateway. Reuse the Agent/backend path rather
   than adding a second process supervisor.
-- [ ] Forward a verified public domain to the Project that owns it. Routes
-  already match on host inside a runtime, and the Gateway resolves a Project's
-  target, but nothing yet accepts public traffic on a bound domain and forwards
-  it. Until then a frontend is reachable through the authenticated Gateway
-  rather than at its own domain.
+- [ ] Host-scope the dashboard mount. A bound Project domain currently also
+  serves the Platform dashboard at `/zelavis`, because the dashboard route
+  matches before the public forwarder runs. The control-plane API stays
+  authenticated there (`401`), so this is exposure rather than a breach, but a
+  Platform login page should not appear on every customer domain. Routes already
+  carry a `host` field; the Platform needs to know its own hostnames to use it.
 - [ ] Acquire frontend packages. The runtime executes what is already on disk;
   npm, `npx create`, an uploaded archive, and Git sources each need an explicit
   trust policy through the existing service source settings.

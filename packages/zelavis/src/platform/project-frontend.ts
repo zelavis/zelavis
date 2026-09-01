@@ -15,6 +15,10 @@ import type {
   ZelavisRouteResponse,
   ZelavisRuntimeService,
 } from "../core/index.js";
+import {
+  forwardPublicRequest,
+  type PublicDomainForwarderOptions,
+} from "./public-domain-forwarder.js";
 
 export interface ZelavisProjectFrontendPlaceholderOptions {
   /** Shown as the page heading. Defaults to the Project or Platform name. */
@@ -103,6 +107,12 @@ export interface ZelavisProjectFrontendServiceOptions
    * placeholder until someone chooses a frontend.
    */
   readonly redirectTo?: string;
+  /**
+   * Forwards a request arriving on a verified bound domain to the Project that
+   * owns it. Omitted on a host with no domain bindings, which then serves only
+   * its own root behaviour.
+   */
+  readonly publicDomains?: PublicDomainForwarderOptions;
 }
 
 /**
@@ -144,10 +154,27 @@ export function createProjectFrontendPlaceholderService(
         // Intentionally no access requirement: this is the Project's own
         // front door, seen by visitors who have no Platform identity. The
         // privileged route audit treats public data-plane routes as explicit.
-        handler: ({ request }: { request: Request }): ZelavisRouteResponse => {
+        handler: async ({
+          request,
+        }: {
+          request: Request;
+        }): Promise<ZelavisRouteResponse> => {
           const path = new URL(request.url).pathname;
           if (isReserved(path)) {
             return { status: 404, body: { error: "Not found" } };
+          }
+
+          // A verified bound domain belongs to the Project that owns it, and
+          // takes precedence over this installation's own root behaviour: a
+          // visitor on someone\u0027s site must not be redirected to the
+          // dashboard or shown a placeholder for a Project they never asked
+          // about.
+          if (options.publicDomains) {
+            const forwarded = await forwardPublicRequest(
+              options.publicDomains,
+              request,
+            );
+            if (forwarded) return forwarded;
           }
 
           if (options.redirectTo) {
