@@ -22,6 +22,7 @@ import {
   acquirePackage,
   type PackageEntry,
 } from "./_package-acquisition.js";
+import type { ZelavisServicePackageAcquireInput } from "../index.js";
 import type {
   ZelavisHttpsSourcePolicy,
   ZelavisNpmSourcePolicy,
@@ -548,6 +549,7 @@ export function createLocalRuntimeServicePackageInstaller(
   options: LocalRuntimeServiceOptions = {},
 ): ZelavisServicePackageInstaller {
   const serviceDirectory = resolve(options.directory ?? ".zelavis/services");
+  const acquisitionPolicy = resolveAcquisitionPolicy(options);
 
   return {
     async install(input) {
@@ -571,9 +573,18 @@ export function createLocalRuntimeServicePackageInstaller(
       };
     },
 
-    async acquire(input) {
+    // Present only when sources are actually configured.
+    //
+    // Callers decide whether to offer installing from a source by whether this
+    // exists, so it has to mean "this will work" rather than "this host has the
+    // code for it". An installer that always exposed it would advertise a
+    // capability that refuses every call.
+    ...(acquisitionPolicy ? { acquire } : {}),
+  };
+
+  async function acquire(input: ZelavisServicePackageAcquireInput) {
       const acquired = await acquirePackage(input.reference, {
-        policy: resolveAcquisitionPolicy(options),
+        policy: acquisitionPolicy,
         defaultRegistry: options.defaultRegistry,
       });
 
@@ -593,8 +604,7 @@ export function createLocalRuntimeServicePackageInstaller(
         integrity: acquired.integrity,
         message: `Installed ${acquired.resolved}.`,
       };
-    },
-  };
+  }
 }
 
 // ---------------------------------------------------------------------------

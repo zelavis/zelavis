@@ -55,7 +55,12 @@ test("a core service's page resolves to a fetchable src", async () => {
 
     assert.equal(response.status, 200);
     assert.match(response.headers.get("content-type"), /text\/html/);
-    assert.match(await response.text(), /<h1>Marketplace/);
+
+    // The page drives the real registry API from inside its frame rather than
+    // rendering a fixed document.
+    const html = await response.text();
+    assert.match(html, /<h1>Services<\/h1>/);
+    assert.match(html, /\/runtime\/services/);
   }
 });
 

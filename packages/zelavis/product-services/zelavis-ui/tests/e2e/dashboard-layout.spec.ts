@@ -761,11 +761,17 @@ test('@smoke marketplace renders the page its own service ships', async ({
     /runtime\/service-page-assets\/%40zelavis%2Fmarketplace\/.*marketplace\.html$/,
   )
 
-  await expect(
-    page.frameLocator('zelavis-service-frame iframe').getByRole('heading', {
-      name: 'Marketplace',
-    }),
-  ).toBeVisible()
+  const frame = page.frameLocator('zelavis-service-frame iframe')
+  await expect(frame.getByRole('heading', { name: 'Services' })).toBeVisible()
+
+  // Populated by a live call to the registry API from inside the frame. The
+  // frame is same-origin with the Platform, so it uses the same session the
+  // dashboard does — no privileged channel, and nothing a third-party
+  // service's page could not also do.
+  await expect(frame.locator('#services .zv-card').first()).toBeVisible()
+
+  // The design tokens reached the framed document.
+  await expect(frame.locator('body')).toHaveCSS('color', /oklch/)
 })
 
 test('marketplace does not expose ecommerce in extensions before install', async ({

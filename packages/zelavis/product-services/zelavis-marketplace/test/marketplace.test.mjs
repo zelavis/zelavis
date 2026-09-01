@@ -19,11 +19,16 @@ test("the manifest module matches package.json", async () => {
   assert.deepEqual(MARKETPLACE_MANIFEST.zelavis, packageJson.zelavis);
 });
 
-test("the page is a complete document", () => {
+test("the page is a complete document that styles itself from the Platform", () => {
   // It is loaded into a frame of its own rather than injected into the
   // dashboard, so a fragment would render as a broken page rather than fail.
   assert.match(MARKETPLACE_PAGE, /^<!doctype html>/);
-  assert.match(MARKETPLACE_PAGE, /<h1>Marketplace<\/h1>/);
+  assert.match(MARKETPLACE_PAGE, /<h1>Services<\/h1>/);
+
+  // Links the Platform's design tokens rather than shipping a palette, so the
+  // page follows whatever the installation looks like.
+  assert.match(MARKETPLACE_PAGE, /service-page\.css/);
+  assert.doesNotMatch(MARKETPLACE_PAGE, /--background:|#[0-9a-f]{6}/i);
 });
 
 test("the service cannot be imported outside a plugin context", async () => {
