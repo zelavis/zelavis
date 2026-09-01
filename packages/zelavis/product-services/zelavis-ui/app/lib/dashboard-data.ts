@@ -597,12 +597,36 @@ function materializeProjectMenuItemAccess(
   };
 }
 
+/**
+ * Scopes a service menu to a project.
+ *
+ * Unconditional, unlike `toProjectMenuItem`: a menu placed on a project
+ * surface is project-relative by definition, so the path it declares is
+ * relative to the project it is rendered under. `toProjectMenuItem` gates on
+ * `isBuiltInProjectPath` because the built-in nav mixes project paths with
+ * installation-wide ones like `/server`; a service menu has no such mix, and
+ * gating it would silently scope only the paths the dashboard happens to name.
+ */
+function toProjectServiceMenuItem(
+  item: DashboardNavItem,
+  projectId: string,
+): DashboardNavItem {
+  return {
+    ...item,
+    url: item.url ? toProjectRoutePath(item.url, projectId) : item.url,
+    landingUrl: item.landingUrl
+      ? toProjectRoutePath(item.landingUrl, projectId)
+      : item.landingUrl,
+    items: item.items?.map((child) => toProjectServiceMenuItem(child, projectId)),
+  };
+}
+
 function createProjectAwareDashboardServiceMenuItem(
   menu: RuntimeServiceMenuDefinition,
   serviceName: string | undefined,
   projectId: string,
 ): DashboardNavItem {
-  return toProjectMenuItem(
+  return toProjectServiceMenuItem(
     materializeProjectMenuItemAccess(
       createDashboardServiceMenuItem(menu, serviceName),
       menu,
