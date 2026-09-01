@@ -90,7 +90,21 @@ export type DashboardNavItem = {
   access?: RuntimeAccessRequirement | readonly RuntimeAccessRequirement[];
   page?: RuntimeServicePageDefinition;
   serviceOwned?: boolean;
+  /** Service that owns this item's page, and how far it is trusted. */
+  owner?: DashboardServicePageOwner;
   items?: readonly DashboardNavItem[];
+};
+
+/**
+ * Who owns a service page, and what the dashboard may let it do.
+ *
+ * `scope` is the Platform's own trust boundary: "system" services were composed
+ * by the operator, "extension" services were installed at runtime.
+ */
+export type DashboardServicePageOwner = {
+  name: string;
+  scope: "system" | "extension";
+  apiPath?: string;
 };
 
 export type DashboardPackageItem = {
@@ -116,6 +130,8 @@ export type DashboardServiceRegistryMenuItem = {
   disabled?: boolean;
   page?: RuntimeServicePageDefinition;
   serviceOwned?: boolean;
+  /** Service that owns this item's page, and how far it is trusted. */
+  owner?: DashboardServicePageOwner;
   items?: readonly DashboardServiceRegistryMenuItem[];
 };
 
@@ -333,7 +349,13 @@ export function buildProjectManagementNavItems(
             );
           },
         )
-        .map((menu) => createDashboardServiceMenuItem(menu, service.name)),
+        .map((menu) =>
+          createDashboardServiceMenuItem(menu, service.name, [], {
+            name: service.name,
+            scope: service.scope ?? "extension",
+            apiPath: service.apiPath,
+          }),
+        ),
     );
 
   return sortRootNavItems([
@@ -625,10 +647,11 @@ function createProjectAwareDashboardServiceMenuItem(
   menu: RuntimeServiceMenuDefinition,
   serviceName: string | undefined,
   projectId: string,
+  owner?: DashboardServicePageOwner,
 ): DashboardNavItem {
   return toProjectServiceMenuItem(
     materializeProjectMenuItemAccess(
-      createDashboardServiceMenuItem(menu, serviceName),
+      createDashboardServiceMenuItem(menu, serviceName, [], owner),
       menu,
       projectId,
     ),
@@ -657,6 +680,7 @@ function createDashboardServiceRegistryMenuItem(
   menu: RuntimeServiceRegistryMenuDefinition,
   serviceName?: string,
   parentSegments: readonly string[] = [],
+  owner?: DashboardServicePageOwner,
 ): DashboardServiceRegistryMenuItem {
   const path = menu.path ?? deriveServiceMenuPath(menu.title, serviceName, parentSegments);
   const nextSegments = [...parentSegments, slugifyMenuSegment(menu.title)];
@@ -680,8 +704,9 @@ function createDashboardServiceRegistryMenuItem(
     disabled: menu.disabled,
     page: menu.page,
     serviceOwned: true,
+    owner,
     items: menu.items?.map((item) =>
-      createDashboardServiceRegistryMenuItem(item, serviceName, nextSegments),
+      createDashboardServiceRegistryMenuItem(item, serviceName, nextSegments, owner),
     ),
   };
 }
@@ -724,6 +749,7 @@ function createDashboardServiceMenuItem(
   menu: RuntimeServiceMenuDefinition,
   serviceName?: string,
   parentSegments: readonly string[] = [],
+  owner?: DashboardServicePageOwner,
 ): DashboardNavItem {
   const path = menu.path ?? deriveServiceMenuPath(menu.title, serviceName, parentSegments);
   const nextSegments = [...parentSegments, slugifyMenuSegment(menu.title)];
@@ -747,8 +773,9 @@ function createDashboardServiceMenuItem(
     disabled: menu.disabled,
     access: menu.access,
     page: menu.page,
+    owner,
     items: menu.items?.map((item) =>
-      createDashboardServiceMenuItem(item, serviceName, nextSegments),
+      createDashboardServiceMenuItem(item, serviceName, nextSegments, owner),
     ),
   };
 }
@@ -828,6 +855,12 @@ export function buildDashboardServiceRegistryEntries(
             menu: createDashboardServiceRegistryMenuItem(
               service.menu,
               service.name,
+              [],
+              {
+                name: service.name,
+                scope: service.scope ?? "extension",
+                apiPath: service.apiPath,
+              },
             ),
           },
         ]
@@ -1066,6 +1099,11 @@ export function buildPlatformNavItems(
           menu,
           service.name,
           projectId,
+          {
+            name: service.name,
+            scope: service.scope ?? "extension",
+            apiPath: service.apiPath,
+          },
         ),
         surface: menu.surface ?? getServiceMenuSurface(service),
         serviceName: service.name,
@@ -1286,6 +1324,7 @@ export type DashboardMenuContent =
       kind: "frame";
       title: string;
       page: RuntimeServicePageDefinition;
+      owner?: DashboardServicePageOwner;
     }
   | {
       kind: "placeholder";
@@ -1319,6 +1358,7 @@ export function findServiceMenuContentByPath(
           kind: "frame",
           title: item.page.title ?? item.pageLabel ?? item.title,
           page: item.page,
+          owner: item.owner,
         };
       }
 

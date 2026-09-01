@@ -40,9 +40,23 @@ export function ServicePageMount({
     );
   }
 
+  // Trusted only when the Platform says the operator composed this service.
+  // Anything else — including a missing owner, which means the dashboard could
+  // not establish who owns the page — is sandboxed.
+  const trusted = content.owner?.scope === "system";
+
   return (
     <section className="mx-auto grid w-full max-w-7xl gap-6">
-      <ServiceFrame src={content.page.src} title={content.title} />
+      <ServiceFrame
+        src={content.page.src}
+        title={content.title}
+        sandboxed={!trusted}
+        grant={
+          !trusted && content.owner?.apiPath
+            ? { serviceName: content.owner.name, apiPath: content.owner.apiPath }
+            : undefined
+        }
+      />
     </section>
   );
 }
