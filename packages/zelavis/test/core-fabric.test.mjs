@@ -405,3 +405,112 @@ test("Fabric exposes deterministic placement planning through its managed endpoi
   });
   assert.equal(invalid.status, 400);
 });
+
+// --- owned Projects share their owner's node --------------------------------
+
+const twoWorkers = [
+  { id: "node-a", status: "ready", roles: ["worker"] },
+  { id: "node-b", status: "ready", roles: ["worker"] },
+];
+
+test("an owned Project is placed on its owner's node", () => {
+  const plan = planFabricProjectPlacements(twoWorkers, [
+    // Deliberately listed after the Project it belongs to, and named so that
+    // sorting by id would put it first. Ownership decides the order, not the
+    // caller's array and not the alphabet.
+    placementRequest("aaa-frontend", { ownerProjectId: "zzz-shop" }),
+    placementRequest("zzz-shop"),
+  ]);
+
+  assert.equal(plan.unplaced.length, 0);
+  const owner = plan.replicas.find((r) => r.identity.workloadId === "zzz-shop");
+  const owned = plan.replicas.find(
+    (r) => r.identity.workloadId === "aaa-frontend",
+  );
+
+  assert.ok(owner && owned);
+  assert.equal(owned.runtimeNodeId, owner.runtimeNodeId);
+});
+
+test("an owned Project follows its owner even when spreading would separate them", () => {
+  // Two workers and two Projects: the balancer would put one on each node.
+  // The group rule has to beat the balancer, or a Project's frontend ends up
+  // on a different machine than the Project it fronts.
+  const plan = planFabricProjectPlacements(twoWorkers, [
+    placementRequest("shop"),
+    placementRequest("shop-frontend", { ownerProjectId: "shop" }),
+  ]);
+
+  const nodes = new Set(plan.replicas.map((replica) => replica.runtimeNodeId));
+  assert.equal(plan.unplaced.length, 0);
+  assert.equal(nodes.size, 1);
+});
+
+test("an owned Project is unplaced when its owner is", () => {
+  const plan = planFabricProjectPlacements(
+    // No worker can take the owner.
+    [{ id: "node-a", status: "ready", roles: ["control"] }],
+    [
+      placementRequest("shop"),
+      placementRequest("shop-frontend", { ownerProjectId: "shop" }),
+    ],
+  );
+
+  assert.equal(plan.replicas.length, 0);
+  const owned = plan.unplaced.find(
+    (replica) => replica.identity.workloadId === "shop-frontend",
+  );
+  assert.equal(owned?.reason, "owner-unplaced");
+});
+
+test("an owner outside the plan is refused rather than guessed at", () => {
+  const plan = planFabricProjectPlacements(twoWorkers, [
+    placementRequest("shop-frontend", { ownerProjectId: "shop" }),
+  ]);
+
+  // The planner has no idea which node the absent owner occupies, so placing
+  // this anywhere is exactly the guess the rule exists to prevent.
+  assert.equal(plan.replicas.length, 0);
+  assert.equal(plan.unplaced[0]?.reason, "owner-unplaced");
+});
+
+test("an ownership cycle is reported rather than looping", () => {
+  const plan = planFabricProjectPlacements(twoWorkers, [
+    placementRequest("a", { ownerProjectId: "b" }),
+    placementRequest("b", { ownerProjectId: "a" }),
+    placementRequest("self", { ownerProjectId: "self" }),
+  ]);
+
+  assert.equal(plan.replicas.length, 0);
+  for (const replica of plan.unplaced) {
+    assert.equal(replica.reason, "owner-cycle", replica.identity.workloadId);
+  }
+});
+
+test("an ownership chain places every level together", () => {
+  const plan = planFabricProjectPlacements(twoWorkers, [
+    placementRequest("leaf", { ownerProjectId: "middle" }),
+    placementRequest("middle", { ownerProjectId: "root" }),
+    placementRequest("root"),
+  ]);
+
+  assert.equal(plan.unplaced.length, 0);
+  const nodes = new Set(plan.replicas.map((replica) => replica.runtimeNodeId));
+  assert.equal(nodes.size, 1);
+});
+
+test("planning stays deterministic with ownership in the mix", () => {
+  const requests = [
+    placementRequest("b-frontend", { ownerProjectId: "b" }),
+    placementRequest("a"),
+    placementRequest("b"),
+  ];
+
+  const first = planFabricProjectPlacements(twoWorkers, requests);
+  const second = planFabricProjectPlacements(twoWorkers, [...requests].reverse());
+
+  assert.deepEqual(
+    [...first.replicas].sort((l, r) => l.replicaId.localeCompare(r.replicaId)),
+    [...second.replicas].sort((l, r) => l.replicaId.localeCompare(r.replicaId)),
+  );
+});

@@ -314,9 +314,17 @@ an exported type is never mistaken for an operational distributed feature.
   working directory with no network, and register the result as a frontend
   Project. That is Project scaffolding rather than service acquisition, so it
   belongs with the frontend creation flow.
-- [ ] Place an owned Project with its owner. Fabric currently plans each Project
-  independently, so an owned runtime could be placed away from the Project it
-  serves. This is the Project Cell placement-group rule applied one level down.
+- [x] Place an owned Project with its owner. An owned Project is confined to
+  the nodes its owner occupies, so a Project's frontend cannot land on a
+  different machine than the Project it fronts — the group rule beats the
+  balancer rather than losing to it. Owners are planned first through a
+  depth-first ordering, chains work, and a cycle is reported rather than
+  hanging the planner. An owner named but absent from the plan is refused
+  rather than guessed at: the planner cannot know which nodes it occupies, and
+  placing anyway is the exact mistake the rule exists to prevent.
+- [ ] Wire the placement planner into reconciliation. It is still a pure
+  function the Platform does not call; Project placement is decided by the
+  runtime driver. Nothing enforces the group rule at runtime until it does.
 
 
 - [ ] Prove local shard movement, split/merge, generation fencing, crash-safe
