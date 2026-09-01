@@ -19,6 +19,10 @@
     "./service": {
       "types": "./dist/dashboard-service.d.ts",
       "import": "./dist/dashboard-service.js"
+    },
+    "./service-page-styles": {
+      "types": "./dist/generated/service-page-styles.d.ts",
+      "import": "./dist/generated/service-page-styles.js"
     }
   },
   "files": [
@@ -35,15 +39,16 @@
     "url": "https://github.com/zelavis/zelavis/issues"
   },
   "scripts": {
-    "build": "react-router build && node scripts/copy-dashboard-assets.mjs && tsc -p tsconfig.plugin.json",
-    "build:plugin": "tsc -p tsconfig.plugin.json",
+    "build": "node scripts/generate-service-page-styles.mjs && react-router build && node scripts/copy-dashboard-assets.mjs && tsc -p tsconfig.plugin.json",
+    "build:plugin": "node scripts/generate-service-page-styles.mjs && tsc -p tsconfig.plugin.json",
     "dev": "react-router dev --port 3000",
     "dev:mounted": "ZELAVIS_UI_BASE_PATH=/zelavis/ react-router dev --port 3000",
     "start": "react-router-serve ./build/server/index.js",
     "test": "vitest run --passWithNoTests --exclude 'tests/e2e/**'",
     "test:e2e": "playwright test",
     "test:e2e:mounted": "ZELAVIS_UI_BASE_PATH=/zelavis/ playwright test",
-    "typecheck": "react-router typegen && tsc && tsc -p tsconfig.plugin.json --noEmit"
+    "typecheck": "react-router typegen && tsc && tsc -p tsconfig.plugin.json --noEmit",
+    "build:service-page-styles": "node scripts/generate-service-page-styles.mjs"
   },
   "dependencies": {
     "@assistant-ui/core": "0.3.16",

@@ -17,16 +17,26 @@ async function withDirectory(run) {
   }
 }
 
-test("an installer with no configured sources cannot acquire anything", async () => {
+test("an installer with no configured sources does not offer acquisition", async () => {
   await withDirectory(async (directory) => {
     const installer = createLocalRuntimeServicePackageInstaller({ directory });
 
-    // The capability is present, but the policy is empty. That distinction
-    // matters: the operator gets a refusal that says why, not a 404.
-    await assert.rejects(
-      installer.acquire({ reference: "npm:@zelavis/anything@1.0.0" }),
-      /does not allow acquiring packages from remote sources/,
-    );
+    // Absent, not present-and-failing. Callers decide whether to offer an
+    // install action by whether this exists, so exposing a method that refuses
+    // every call would put a button in front of an operator that cannot work.
+    assert.equal(installer.acquire, undefined);
+    assert.equal(typeof installer.install, "function");
+  });
+});
+
+test("an installer with configured sources offers acquisition", async () => {
+  await withDirectory(async (directory) => {
+    const installer = createLocalRuntimeServicePackageInstaller({
+      directory,
+      sources: { npm: { registries: [NPM] } },
+    });
+
+    assert.equal(typeof installer.acquire, "function");
   });
 });
 

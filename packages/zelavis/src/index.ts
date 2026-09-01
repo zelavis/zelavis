@@ -36,6 +36,7 @@ import {
   createZelavisDashboardService,
   defaultZelavisDashboardClientRoutes,
 } from "@zelavis/ui/service";
+import { zelavisServicePageStylesheet } from "@zelavis/ui/service-page-styles";
 import { createZelavisMarketplaceService } from "./platform/marketplace.js";
 import { createZelavisCoreService } from "./platform/core-service.js";
 import { createProjectGatewayRoutes } from "./platform/project-gateway.js";
@@ -458,9 +459,12 @@ export interface ZelavisServiceActivationCapabilities {
   supportsUploadedSpecifiers: boolean;
   supportsPackageUploads: boolean;
   /**
-   * Whether packages can be acquired from remote sources. False when the host
-   * has no acquirer, and also when it has one but the operator has configured
-   * no trusted sources — from a caller's side those are the same answer.
+   * Whether packages can be acquired from remote sources.
+   *
+   * False both when the host cannot acquire at all and when it can but has no
+   * trusted sources configured — a caller offering an install action needs to
+   * know whether it will work, not whether the code exists. Hosts express this
+   * by exposing `acquire` only when acquisition is actually available.
    */
   supportsPackageAcquisition: boolean;
   supportsIsolatedExecution: boolean;
@@ -1553,6 +1557,29 @@ async function resolveRuntimeManagementCore(
               return zelavisErrorResponse(error, 400);
             }
           },
+        },
+        {
+          // Linked by service pages, which render in their own document and so
+          // inherit nothing from the dashboard. Serving the design tokens at a
+          // stable path is what lets a service ship a plain HTML page that
+          // still looks like it belongs, without depending on the dashboard's
+          // component classes or shipping its own palette.
+          id: "runtime.service-page-styles.read",
+          method: "GET",
+          access: { authenticated: true },
+          path: joinPathParts(
+            context.apiPrefix,
+            context.apiVersion,
+            "runtime/service-page.css",
+          ),
+          handler: () => ({
+            status: 200,
+            headers: new Headers({
+              "content-type": "text/css; charset=utf-8",
+              "cache-control": "no-cache",
+            }),
+            body: zelavisServicePageStylesheet,
+          }),
         },
         {
           id: "runtime.service-page-asset.read",
