@@ -1,5 +1,3 @@
-import type { ZelavisPackageManifest } from "zelavis/core";
-
 /**
  * This package's own manifest, as data.
  *
@@ -8,9 +6,13 @@ import type { ZelavisPackageManifest } from "zelavis/core";
  * A first-party service that ships inside the Platform has no install step and
  * therefore no filesystem resolution to read `package.json` from.
  *
- * `test/manifest.test.mjs` asserts this stays identical to `package.json`.
+ * `test/marketplace.test.mjs` asserts this stays identical to `package.json`.
+ *
+ * Typed locally rather than as `ZelavisPackageManifest`. This package compiles
+ * before `zelavis` does — see the build order in `packages/zelavis/package.json`
+ * — so at this point only `zelavis/sdk` exists to import from.
  */
-export const MARKETPLACE_MANIFEST: ZelavisPackageManifest = Object.freeze({
+export const MARKETPLACE_MANIFEST = Object.freeze({
   name: "@zelavis/marketplace",
   version: "1.0.1-alpha.2",
   type: "module",
@@ -21,4 +23,4 @@ export const MARKETPLACE_MANIFEST: ZelavisPackageManifest = Object.freeze({
     }),
   }),
   zelavis: Object.freeze({ kind: "plugin" }),
-}) as ZelavisPackageManifest;
+});

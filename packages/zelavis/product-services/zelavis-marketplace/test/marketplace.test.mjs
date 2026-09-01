@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { MARKETPLACE_MANIFEST } from "../dist/manifest.js";
-import { createZelavisMarketplaceService } from "../dist/service.js";
+import { MARKETPLACE_PAGE } from "../dist/page.js";
 
 test("the manifest module matches package.json", async () => {
   const packageJson = JSON.parse(
@@ -19,31 +19,20 @@ test("the manifest module matches package.json", async () => {
   assert.deepEqual(MARKETPLACE_MANIFEST.zelavis, packageJson.zelavis);
 });
 
-test("the marketplace contributes both menus through the SDK", async () => {
-  const service = await createZelavisMarketplaceService();
-
-  assert.equal(service.name, "@zelavis/marketplace");
-  assert.equal(service.version, MARKETPLACE_MANIFEST.version);
-  assert.equal(service.kind, "plugin");
-
-  // Both menus arrived through `zelavis.menu.create` inside a plugin execution
-  // context — the same path a third-party plugin takes.
-  assert.equal(service.menus?.length, 2);
-  const [platform, project] = service.menus;
-  assert.equal(platform.surface, "platform");
-  assert.equal(platform.path, "/marketplace");
-  assert.equal(project.surface, "root");
-  assert.deepEqual(project.access.scope, {
-    type: "project",
-    projectIdParam: "projectId",
-  });
+test("the page is a complete document", () => {
+  // It is loaded into a frame of its own rather than injected into the
+  // dashboard, so a fragment would render as a broken page rather than fail.
+  assert.match(MARKETPLACE_PAGE, /^<!doctype html>/);
+  assert.match(MARKETPLACE_PAGE, /<h1>Marketplace<\/h1>/);
 });
 
-test("the marketplace ships the page its menus point at", async () => {
-  const service = await createZelavisMarketplaceService();
-
-  for (const menu of service.menus) {
-    assert.ok(service.pageAssets?.[menu.page.file], menu.page.file);
-  }
-  assert.match(service.pageAssets["marketplace.html"].body, /<h1>Marketplace/);
+test("the service cannot be imported outside a plugin context", async () => {
+  // The module contributes its menus by calling the SDK at evaluation time.
+  // Importing it directly — composing it as a plain object the way the old
+  // in-tree marketplace was — must fail loudly rather than yield a service
+  // with no menus.
+  await assert.rejects(
+    () => import("../dist/index.js"),
+    /plugin execution context/,
+  );
 });

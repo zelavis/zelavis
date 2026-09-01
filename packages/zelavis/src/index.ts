@@ -36,7 +36,7 @@ import {
   createZelavisDashboardService,
   defaultZelavisDashboardClientRoutes,
 } from "@zelavis/ui/service";
-import { createZelavisMarketplaceService } from "@zelavis/marketplace/service";
+import { createZelavisMarketplaceService } from "./platform/marketplace.js";
 import { createZelavisCoreService } from "./platform/core-service.js";
 import { createProjectGatewayRoutes } from "./platform/project-gateway.js";
 import { createProjectFrontendPlaceholderService } from "./platform/project-frontend.js";
