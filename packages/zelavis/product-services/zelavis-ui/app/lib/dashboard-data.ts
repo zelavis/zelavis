@@ -50,7 +50,6 @@ export type DashboardRoutePath =
   | "/database"
   | "/database/new"
   | "/media"
-  | "/marketplace"
   | "/projects"
   | "/resources"
   | "/security"
@@ -514,7 +513,6 @@ function isBuiltInProjectPath(path: string) {
     "/database/new",
     "/extensions",
     "/media",
-    "/marketplace",
     "/settings",
     "/storage",
     "/users",
@@ -683,8 +681,6 @@ function getServiceMenuIcon(title: string, serviceName?: string): LucideIcon {
   switch (serviceName ?? title.toLowerCase()) {
     case "zelavis/platform":
       return Fingerprint;
-    case "zelavis/marketplace":
-      return Boxes;
     case "@zelavis/auth":
       return Fingerprint;
     case "@zelavis/db":
@@ -944,23 +940,6 @@ const defaultRuntimeServices: readonly RuntimeService[] = [
     },
   },
   {
-    name: "zelavis/marketplace",
-    core: true,
-    apiPath: "/api/v1/marketplace",
-    menu: {
-      title: "Marketplace",
-      path: "/marketplace",
-      pageLabel: "Marketplace",
-      sectionLabel: "Explore",
-      order: 30,
-      surface: "platform",
-      access: {
-        permissions: ["marketplace.view"],
-        scope: { type: "system" },
-      },
-    },
-  },
-  {
     name: "@zelavis/ui",
     core: true,
     apiPath: "/",
@@ -1154,14 +1133,6 @@ export function buildPlatformNavItems(
     },
     ...rootServiceNavItems,
     {
-      title: "Marketplace",
-      url: "/marketplace",
-      icon: Boxes,
-      pageLabel: "Marketplace",
-      sectionLabel: "Extend",
-      access: projectAccess("project.marketplace.manage", projectId),
-    },
-    {
       title: "Extensions",
       icon: Bot,
       landingUrl: "/extensions",
@@ -1219,18 +1190,19 @@ export function buildPlatformNavItems(
   });
 }
 
-export function buildMarketplacePackageItems(
+/**
+ * Nav entries for services the installation has, or could have.
+ *
+ * Every entry comes from the service registry. The marketplace itself is one of
+ * them and is not named here: it contributes its own menu like any other
+ * service.
+ */
+export function buildServicePackageItems(
   serviceRegistry?: readonly RuntimeServiceRegistryEntry[],
 ): readonly DashboardPackageItem[] {
   const registryEntries = buildDashboardServiceRegistryEntries(serviceRegistry);
 
   return [
-    {
-      name: "Marketplace",
-      url: "/marketplace",
-      icon: Boxes,
-      pageLabel: "Marketplace",
-    },
     ...registryEntries.map((service) => ({
       name: service.name,
       url: service.status === "installed" ? service.menu.url : undefined,
@@ -1240,7 +1212,7 @@ export function buildMarketplacePackageItems(
   ] as const;
 }
 
-export const marketplacePackageItems = buildMarketplacePackageItems(
+export const servicePackageItems = buildServicePackageItems(
   defaultRuntimeServiceRegistry,
 );
 
@@ -1272,7 +1244,7 @@ export function buildDashboardNavItems(
           ),
         )
       : []),
-    ...buildMarketplacePackageItems(serviceRegistry)
+    ...buildServicePackageItems(serviceRegistry)
       .filter(
         (item): item is DashboardPackageItem & { url: DashboardRoutePath } =>
           Boolean(item.url),

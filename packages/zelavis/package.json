@@ -162,6 +162,7 @@
   },
   "dependencies": {
     "@zelavis/cli": "workspace:*",
+    "@zelavis/marketplace": "workspace:*",
     "@zelavis/ui": "workspace:*",
     "better-sqlite3": "^12.10.0",
     "effect": "4.0.0-rc.111",

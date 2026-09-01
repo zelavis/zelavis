@@ -95,8 +95,10 @@ current automatically.
   the reusable, product-neutral foundation for both the privileged Platform and
   scoped Zelavis Apps. Hosting business logic stays in the Platform layer; App
   business logic stays inside the Project.
-- Trusted product-specific control-plane and Marketplace services live under
-  `packages/zelavis/src/platform`; `@zelavis/ui` owns dashboard delivery. These
+- Trusted product-specific control-plane services live under
+  `packages/zelavis/src/platform`. First-party product surfaces are their own
+  packages under `packages/zelavis/product-services/*`: `@zelavis/ui` owns
+  dashboard delivery, `@zelavis/marketplace` owns the marketplace. These
   internal services assemble the public core primitives into the Zelavis
   product and are not separate public framework brands.
 

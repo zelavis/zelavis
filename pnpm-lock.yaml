@@ -148,6 +148,9 @@ importers:
       '@zelavis/cli':
         specifier: workspace:*
         version: link:../cli
+      '@zelavis/marketplace':
+        specifier: workspace:*
+        version: link:product-services/zelavis-marketplace
       '@zelavis/ui':
         specifier: workspace:*
         version: link:product-services/zelavis-ui
@@ -185,6 +188,16 @@ importers:
         version: 25.9.5
       typescript:
         specifier: ^5.9.0
+        version: 5.9.3
+
+  packages/zelavis/product-services/zelavis-marketplace:
+    dependencies:
+      zelavis:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      typescript:
+        specifier: ^5.9.3
         version: 5.9.3
 
   packages/zelavis/product-services/zelavis-ui:
