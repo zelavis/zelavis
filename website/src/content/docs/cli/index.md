@@ -153,3 +153,15 @@ commerce plugins scanning for it would each pick up the other's providers.
 There is no parent/child relationship behind this. Discovery is a flat scan,
 naming an owner asks to be considered by it and grants nothing, and the owning
 plugin still validates every provider against its own registration contract.
+
+### Bundled services
+
+The distribution seeds the services it ships into the product-services folder
+the first time it starts, the way a CMS lays down its bundled plugins. They are
+ordinary packages from that point on: list them, replace them, or delete them.
+A deleted one stays deleted rather than reappearing on the next restart.
+
+Packages in the folder can import `zelavis` — the running Platform is linked
+into `<data directory>/product-services/node_modules` so Node's resolution
+finds it, and the link always points at the Platform that loaded the package
+rather than another copy on the machine.

@@ -1,3 +1,4 @@
+import { declaresServiceCapability } from "../core/index.js";
 import {
   authService,
   createDatabaseAuthRepositories,
@@ -42,7 +43,11 @@ function collectAuthMethodPlugins(
     context.registry
       .filter((entry) =>
         entry.status === "installed" &&
-        entry.service.capabilities?.includes("provider:auth") &&
+        declaresServiceCapability(
+          entry.service.capabilities,
+          "@zelavis/auth",
+          "credentials",
+        ) &&
         typeof (entry.service.service as AuthMethodPlugin | undefined)?.register === "function",
       )
       .map((entry) => entry.service.service as AuthMethodPlugin),

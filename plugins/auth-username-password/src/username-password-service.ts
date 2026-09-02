@@ -182,8 +182,8 @@ export function usernamePasswordService(options: UsernamePasswordServiceOptions 
   };
   return Object.freeze({
     name: "@zelavis/auth-username-password",
-    kind: "provider",
-    capabilities: Object.freeze(["provider:auth"]),
+    kind: "plugin",
+    capabilities: Object.freeze(["@zelavis/auth:credentials"]),
     service: method,
   });
 }

@@ -182,10 +182,22 @@ export function emailPasswordService(options: EmailPasswordServiceOptions = {}) 
   };
   return Object.freeze({
     name: "@zelavis/auth-email-password",
-    kind: "provider",
-    capabilities: Object.freeze(["provider:auth"]),
+    kind: "plugin",
+    // Names the plugin this extends rather than a bare `provider:auth` domain,
+    // so Platform auth collects it and another service wanting credentials
+    // does not.
+    capabilities: Object.freeze(["@zelavis/auth:credentials"]),
     service: method,
   });
 }
 
-export default emailPasswordService;
+/**
+ * The installed service.
+ *
+ * An installed package is loaded, not called: the Platform imports it and uses
+ * what it finds. Default-exporting the factory meant the loader received a
+ * function, produced no service object, and registered a package that
+ * extended nothing. `emailPasswordService(...)` stays exported for hosts that
+ * need to configure recovery delivery.
+ */
+export default emailPasswordService();

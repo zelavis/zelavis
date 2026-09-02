@@ -832,14 +832,55 @@ async function listProductServicePackages(directory: string): Promise<string[]> 
  * server, and the reason discovery refuses anything that resolves outside its
  * own package directory rather than trusting the manifest's own paths.
  */
+/**
+ * Makes `zelavis` resolvable from packages in the product-services folder.
+ *
+ * A package dropped into a folder outside `node_modules` cannot resolve its
+ * own peer dependency: Node walks parent directories looking for
+ * `node_modules/zelavis` and finds none, so any service importing
+ * `zelavis/app/auth` fails to load. Nearly every real plugin does.
+ *
+ * Linking the running Platform package into `<folder>/node_modules` puts it
+ * exactly where that walk looks. The link points at whichever `zelavis` is
+ * actually executing, so a folder package always compiles against the same
+ * Platform that loaded it rather than some other copy on the machine.
+ */
+async function linkPlatformPackage(folder: string): Promise<void> {
+  const { mkdir: makeDirectory, symlink, readlink } = await import("node:fs/promises");
+  // Four levels up from `dist/adapters/_local-runtime.js` is the package root.
+  const platformRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
+  const modules = join(folder, "node_modules");
+  const link = join(modules, "zelavis");
+
+  try {
+    if (existsSync(link)) {
+      // Repointed when it is stale, so upgrading or moving the Platform does
+      // not leave every folder package importing a version that is gone.
+      const current = await readlink(link).catch(() => undefined);
+      if (current && resolve(dirname(link), current) === platformRoot) return;
+      await rm(link, { recursive: true, force: true });
+    }
+    await makeDirectory(modules, { recursive: true });
+    await symlink(platformRoot, link, "junction");
+  } catch {
+    // Symlinks can be unavailable (restricted Windows accounts, some
+    // containers). Discovery continues: self-contained packages still load,
+    // and the ones that need the Platform report their own import failure.
+  }
+}
+
 export async function discoverProductServices(
   options: ProductServiceDiscoveryOptions,
 ): Promise<ZelavisServiceRegistryModuleEntry[]> {
   const root = resolve(options.directory);
   const skip = (name: string, reason: string) => options.onSkipped?.(name, reason);
   const discovered: ZelavisServiceRegistryModuleEntry[] = [];
+  const packageNames = await listProductServicePackages(root);
+  if (packageNames.length > 0) {
+    await linkPlatformPackage(root);
+  }
 
-  for (const packageName of await listProductServicePackages(root)) {
+  for (const packageName of packageNames) {
     const packageDirectory = join(root, packageName);
     let manifest;
     try {

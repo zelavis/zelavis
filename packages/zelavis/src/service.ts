@@ -316,7 +316,10 @@ export function resolveServiceModule<TContext = unknown>(
       version: (raw.version as string) ?? manifest?.version,
       marketplace: raw.marketplace as any,
       project: raw.project as any,
-      capabilities: raw.capabilities as any,
+      // Falls back to the manifest, which is where capabilities are declared
+      // and validated. A service object that omits them is not opting out; it
+      // simply did not restate what its package.json already says.
+      capabilities: (raw.capabilities ?? manifest?.zelavis?.capabilities) as any,
       app: raw.app as any,
       setup: typeof raw.setup === "function" ? (raw.setup as any) : undefined,
       runtimeServices: raw.runtimeServices as any,
@@ -338,6 +341,7 @@ export function resolveServiceModule<TContext = unknown>(
       version: manifest.version,
       api: {},
       service: raw,
+      capabilities: manifest.zelavis?.capabilities as any,
       ...frontendServiceFields(manifest),
     }) as any;
   }
@@ -384,7 +388,13 @@ export async function loadPluginPackage(options: {
     // Declared on the module, not through an SDK call: these describe what the
     // service *is*, and a plugin that failed to load should not be registered
     // with a half-built identity.
-    capabilities: resolvedService?.capabilities,
+    //
+    // Falls back to the manifest, which is where capabilities are declared and
+    // validated. A service object that does not restate them is not opting
+    // out, and dropping them made an installed provider extend nothing: it
+    // loaded and registered, then was never found by the plugin it named.
+    capabilities:
+      resolvedService?.capabilities ?? (manifest.zelavis?.capabilities as any),
     marketplace: resolvedService?.marketplace,
     pageAssets: resolvedService?.pageAssets,
     basePath: resolvedService?.basePath,
