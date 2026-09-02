@@ -93,6 +93,12 @@ interface AppHandlerOptions {
   bundleStore: BundleStore;
   scope: BundleScope;
   mount: string;
+  /**
+   * Rewrites a bundle asset's own references for the mount it is served from.
+   * Absent when the bundle declares no asset base, which is the right answer
+   * for one using relative references or built for its mount.
+   */
+  rewriteAssets?: (body: Uint8Array, contentType: string) => Uint8Array;
   indexHtml: string;
   mode: "spa" | "mpa";
   /**
@@ -206,12 +212,59 @@ async function renderShell(
   return { status, headers, body: result.body };
 }
 
+/** Text assets whose contents can carry references to other assets. */
+const REWRITABLE_CONTENT = /^(?:text\/|application\/(?:javascript|json))/;
+
+/**
+ * Rewrites a bundle's own asset references for the path it is mounted at.
+ *
+ * A static frontend is built against a fixed base — Vite's `base`, and `/` by
+ * default — so its HTML and JavaScript reference `/assets/...` absolutely. An
+ * installation's root path is a runtime setting, so the same bundle has to work
+ * at `/zelavis`, at `/`, or anywhere else without being rebuilt.
+ *
+ * Only the declared asset base is rewritten, and only where it appears as the
+ * start of a quoted string. Rewriting every absolute path would also rewrite a
+ * link to an API route, which is not the bundle's to move; a bundle that
+ * references absolute paths outside its asset base has to be built for its
+ * mount.
+ */
+export function rewriteBundleAssetBase(
+  body: Uint8Array,
+  contentType: string,
+  assetBase: string,
+  mount: string,
+): Uint8Array {
+  if (!REWRITABLE_CONTENT.test(contentType)) return body;
+
+  const normalizedMount = mount === "/" ? "" : mount.replace(/\/+$/, "");
+  if (!normalizedMount) return body;
+
+  const base = assetBase.startsWith("/") ? assetBase : `/${assetBase}`;
+  const source = new TextDecoder().decode(body);
+  // Anchored to an opening quote so a path that merely contains the base — a
+  // sourcemap comment, a string built at runtime — is left alone.
+  const pattern = new RegExp(
+    `(["'\`])${base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+    "g",
+  );
+
+  return new TextEncoder().encode(
+    source.replace(pattern, (_match, quote: string) => `${quote}${normalizedMount}${base}`),
+  );
+}
+
 function buildResponse(
   body: Uint8Array,
   contentType: string,
   cacheControl?: string,
   status = 200,
+  rewrite?: (body: Uint8Array, contentType: string) => Uint8Array,
 ): ZelavisRouteResponse {
+  if (rewrite) {
+    body = rewrite(body, contentType);
+  }
+
   const headers: Record<string, string> = { "content-type": contentType };
   if (cacheControl) {
     headers["cache-control"] = cacheControl;
@@ -238,6 +291,7 @@ function createAppAssetHandler(options: AppHandlerOptions) {
     bundleStore,
     scope: defaultScope,
     mount,
+    rewriteAssets,
     indexHtml,
     mode,
     shell,
@@ -301,6 +355,8 @@ function createAppAssetHandler(options: AppHandlerOptions) {
           indexHit.body,
           indexHit.contentType ?? guessContentType(indexHtml),
           indexHit.cacheControl,
+          200,
+          rewriteAssets,
         );
       }
 
@@ -312,6 +368,8 @@ function createAppAssetHandler(options: AppHandlerOptions) {
           exactHit.body,
           exactHit.contentType ?? guessContentType(relativePath),
           exactHit.cacheControl,
+          200,
+          rewriteAssets,
         );
       }
       if (shell) {
@@ -325,6 +383,8 @@ function createAppAssetHandler(options: AppHandlerOptions) {
         fallbackHit.body,
         fallbackHit.contentType ?? guessContentType(indexHtml),
         fallbackHit.cacheControl,
+        200,
+        rewriteAssets,
       );
     }
 
@@ -352,7 +412,13 @@ function createAppAssetHandler(options: AppHandlerOptions) {
     }
     const contentType =
       hit.asset.contentType ?? guessContentType(hit.resolvedPath);
-    return buildResponse(hit.asset.body, contentType, hit.asset.cacheControl);
+    return buildResponse(
+      hit.asset.body,
+      contentType,
+      hit.asset.cacheControl,
+      200,
+      rewriteAssets,
+    );
   };
 }
 
@@ -452,6 +518,15 @@ export async function synthesizeServiceAppService(
     mount = app.mount ?? DEFAULT_MOUNT;
   }
 
+  // A bundle built for a fixed base has to serve from wherever it is actually
+  // mounted, so its own asset references are rewritten on the way out. Absent
+  // `assetBase` nothing is rewritten, which is the right answer for a bundle
+  // using relative references or built for its mount.
+  const rewriteBundleAssets = app.assetBase
+    ? (body: Uint8Array, contentType: string) =>
+        rewriteBundleAssetBase(body, contentType, app.assetBase!, mount)
+    : undefined;
+
   const scope: BundleScope = {
     projectId,
     serviceName: service.name,
@@ -462,6 +537,7 @@ export async function synthesizeServiceAppService(
     bundleStore,
     scope,
     mount,
+    ...(rewriteBundleAssets ? { rewriteAssets: rewriteBundleAssets } : {}),
     indexHtml,
     mode,
     shell: app.shell,

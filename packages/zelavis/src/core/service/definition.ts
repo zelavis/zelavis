@@ -128,6 +128,17 @@ export interface ZelavisServiceAppDefinition {
   indexHtml?: string;
   mode?: ZelavisServiceAppMode;
   shell?: ZelavisServiceAppShellDefinition;
+  /**
+   * Path this bundle's own asset references were built against, e.g.
+   * `/assets/`.
+   *
+   * A static bundle is built for a fixed base, but an installation's root path
+   * is a runtime setting — so the Platform rewrites references starting with
+   * this prefix to wherever the bundle is actually mounted. Declaring it is
+   * what lets one build serve from any mount, and what a manifest can express
+   * where a render function would otherwise be required.
+   */
+  assetBase?: string;
   devUrl?: string;
   devUrlExcludePaths?: readonly string[];
 }
