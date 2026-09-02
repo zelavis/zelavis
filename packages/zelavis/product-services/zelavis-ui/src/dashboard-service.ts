@@ -336,11 +336,18 @@ export function createZelavisDashboardService(
 
   return Object.freeze({
     name: "@zelavis/ui",
-    // Matches this package's own `zelavis.kind`. The dashboard is composed
-    // directly rather than loaded through the plugin loader, so nothing reads
-    // its manifest for it; stating the kind here is what makes the declaration
-    // mean anything at runtime.
-    kind: "plugin" as const,
+    // The dashboard is a frontend — the default face of the outermost
+    // installation — not a plugin that happens to serve HTML. Its manifest
+    // declares the same thing, truthfully: a static frontend over the
+    // `build/client` bundle this package ships.
+    //
+    // It is composed rather than loaded from that manifest, which is what lets
+    // it supply the `app.shell` below. A JSON manifest cannot express a render
+    // function, and this one needs to: the installation's root path is a
+    // runtime setting, so the built SPA's absolute `/assets/...` references are
+    // rewritten per request. A future frontend installed purely from its
+    // manifest gets no shell, and would need to be built for a fixed base path.
+    kind: "frontend" as const,
     scope: "system",
     basePath: "/",
     menu: {
