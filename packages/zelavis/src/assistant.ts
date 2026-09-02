@@ -243,7 +243,7 @@ export function createLocalAssistantResponder(): ZelavisAssistantResponder {
         [["resource", "usage", "metrics"], "Resources", "/resources", "Host usage and resource charts are available in Resources."],
         [["log"], "Logs", "/server/logs", "Server logs are available from the global Server area."],
         [["domain"], "Domains", "/server/domains", "Domain management is a global server-level area."],
-        [["marketplace", "plugin"], "Marketplace", "/marketplace", "Apps, starters, templates, and provider plugins are in Marketplace."],
+        [["marketplace", "plugin"], "Marketplace", "/marketplace", "Project recipes, templates, and provider plugins are in Marketplace."],
         ...(projectId
           ? ([
               [["database", "table"], "Database", `/projects/${encodeURIComponent(projectId)}/database`, "You can inspect tables and rows in the project Database."],

@@ -10,7 +10,7 @@ import {
 } from "../platform/gateway-authority.js";
 import type {
   ZelavisProjectLogEntry,
-  ZelavisProjectApp,
+  ZelavisProjectRecipeLock,
   ZelavisProjectRuntimeDriver,
   ZelavisProjectRuntimeSnapshot,
 } from "../project.js";
@@ -285,7 +285,7 @@ export function createNodeProcessProjectRuntime(
     defaultRuntimeKind: "native",
     startupConcurrency,
     capabilities: () => capabilities,
-    async prepare(project, app) {
+    async prepare(project, recipe) {
       const directory = projectDirectory(project.id);
       const dataDirectory = join(directory, ".zelavis");
       // Project data and the descriptor are owner-only: on a permissive umask
@@ -299,7 +299,7 @@ export function createNodeProcessProjectRuntime(
         `${JSON.stringify(
           {
             ...project,
-            app: app satisfies ZelavisProjectApp,
+            recipe: recipe satisfies ZelavisProjectRecipeLock,
             runtime: {
               driver: driver.name,
               capabilities: driver.capabilities(project),

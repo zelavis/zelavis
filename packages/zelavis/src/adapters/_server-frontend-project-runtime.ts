@@ -18,7 +18,7 @@ import { mkdir, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import type {
-  ZelavisProjectApp,
+  ZelavisProjectRecipeLock,
   ZelavisProjectDescriptor,
   ZelavisProjectLogEntry,
   ZelavisProjectRuntimeDriver,
@@ -54,7 +54,7 @@ export interface ServerFrontendProjectRuntimeOptions {
    */
   readonly resolveFrontendDirectory: (
     project: Readonly<ZelavisProjectDescriptor>,
-    app: ZelavisProjectApp,
+    recipe: ZelavisProjectRecipeLock,
   ) => Promise<string>;
   readonly startupTimeoutMs?: number;
 }
@@ -206,18 +206,18 @@ export function createServerFrontendProjectRuntime(
     defaultRuntimeKind: "native",
     capabilities: () => capabilities,
 
-    async prepare(project, app) {
+    async prepare(project, recipe) {
       const directory = projectDirectory(project.id);
       await mkdir(directory, { recursive: true, mode: 0o700 });
 
-      const packageDirectory = await options.resolveFrontendDirectory(project, app);
+      const packageDirectory = await options.resolveFrontendDirectory(project, recipe);
       const manifestRaw = await readFile(
         join(packageDirectory, "package.json"),
         "utf8",
       ).catch(() => undefined);
       if (!manifestRaw) {
         throw new ZelavisProjectRuntimeError(
-          `Frontend "${app.specifier}" has no package.json at ${packageDirectory}.`,
+          `Frontend "${recipe.specifier}" has no package.json at ${packageDirectory}.`,
         );
       }
 
@@ -225,7 +225,7 @@ export function createServerFrontendProjectRuntime(
       const frontend = readFrontendManifest(manifest);
       if (!frontend || frontend.runtime !== "server") {
         throw new ZelavisProjectRuntimeError(
-          `Frontend "${app.specifier}" is not a server frontend.`,
+          `Frontend "${recipe.specifier}" is not a server frontend.`,
         );
       }
 

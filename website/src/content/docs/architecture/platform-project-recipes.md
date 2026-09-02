@@ -1,5 +1,5 @@
 ---
-title: Platform OS and App Services
+title: Platform OS and Project Recipes
 ---
 
 Zelavis is split into a control plane and the projects it manages. This is an
@@ -27,12 +27,20 @@ The Platform process does not mount an app-facing database service by default.
 In repository development through `pnpm dev`, its System Store lives at
 `packages/zelavis/.zelavis/system/zelavis.sqlite`.
 
-## App Services
+## Project Recipes
 
-Project boilerplates are services with `kind: "app"`. The service definition is
-the create-project unit: it owns the menu metadata, setup behavior, default
-files, provisioning hooks, and the app-facing runtime services it wants to
-mount inside the created project.
+A Project recipe is a service with `kind: "app"`; its optional Project metadata
+declares runtime compatibility. It is the create-project unit: it owns menu metadata, setup
+behavior, default files, provisioning hooks, and the runtime services mounted
+inside the created Project.
+
+Services with `kind: "plugin"` have a different role: they extend the Platform
+or a Project runtime rather than being something a Project can be created from.
+A plugin does not become a create-project option merely because it is built in.
+
+There is no `core` kind. What makes Auth, Database, Workloads, Fabric, the
+dashboard, and the marketplace trusted is that the operator composed them —
+`scope: "system"` — not a label on the service.
 
 The published `zelavis` Platform product is assembled from trusted product
 services in `packages/zelavis/src/platform` plus its dashboard service in:
@@ -50,20 +58,20 @@ The official native Project recipe is the `zelavis/app` subpath implemented at
 composes application database, auth, and workloads. Future WordPress, Drupal,
 static-site, or other Project recipes should use the same service shape.
 
-The current runtime exposes available app services through:
+The current runtime exposes available Project recipes through:
 
 ```text
-GET /zelavis/api/v1/runtime/app-services
+GET /zelavis/api/v1/runtime/project-recipes
 ```
 
-Creating a project locks the selected app service into:
+Creating a Project locks the selected recipe into:
 
 ```text
 .zelavis/projects/<project-id>/project.json
 ```
 
-The Node process driver then starts a headless project runtime with that app
-service installed.
+The Node process driver then starts a headless Project runtime with that recipe
+installed.
 
 The lock includes the exact Zelavis App recipe/runtime version and is preserved
 when the parent Platform updates. The local Node driver currently executes the
@@ -94,7 +102,7 @@ There is one dashboard application, mounted by the Platform OS from
 dashboard bundle. They expose runtime metadata, APIs, and service menus through
 the shared `zelavis/core` engine under Project-scoped authority; the Platform
 dashboard reads those endpoints through the Project Gateway and renders the
-selected project's navigation. App services must
+selected project's navigation. Project recipes must
 not be executed directly inside the Platform process because that would share
 memory, credentials, crash fate, and workload execution with the owner console.
 
@@ -112,7 +120,7 @@ DELETE /zelavis/api/v1/runtime/projects/:projectId
 
 Implemented now:
 
-- `kind: "app"` services in the service contract
+- `kind: "app"` Project recipes in the service contract
 - a shipped official `zelavis/app` service
 - trusted Core, Marketplace, and UI product services
 - direct local Node/Bun registration of official Project recipes

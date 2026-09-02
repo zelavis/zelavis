@@ -9,7 +9,7 @@ published `zelavis` package and the same staged release tree.
 `pnpm distribution:stage` builds `packages/zelavis`, creates a production
 deployment under `distribution/.tmp/stage/platform`, and adds:
 
-- the exact official Blueprint catalog and dashboard assets shipped by `zelavis`
+- the exact official Project recipe catalog and dashboard assets shipped by `zelavis`
 - production package dependencies, including native modules for the target CPU
 - a private, checksum-verified Node runtime pinned by `release.json`
 - the `zelavis` launcher and systemd service

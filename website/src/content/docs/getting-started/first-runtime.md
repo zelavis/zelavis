@@ -24,8 +24,8 @@ When you need direct access to the initialized runtime object, jump to [Advanced
 
 ## What you get by default
 
-During the Platform/App migration, a default development runtime mounts the
-current Zelavis App service set in-process:
+A Zelavis App Project created from the official Project recipe mounts these
+runtime services:
 
 - dashboard
 - auth
@@ -63,7 +63,12 @@ Default root namespace:
 
 The dashboard root at `/zelavis` opens the Projects overview. Create a project there, then open its project-local pages under `/zelavis/projects/:projectId/*`.
 
-The global Marketplace at `/zelavis/marketplace` is for apps, starters, templates, and server provider plugins. Project plugins live inside Zelavis-native projects at `/zelavis/projects/:projectId/marketplace`. Global management areas such as Domains, Resources, Server, and Security sit outside project URLs; server-owned backing routes currently live under `/zelavis/server/*`.
+The global Marketplace at `/zelavis/marketplace` is for Project recipes
+presented as apps and starters, plus templates and server provider plugins.
+Project plugins live inside Zelavis-native Projects at
+`/zelavis/projects/:projectId/marketplace`. Global management areas such as
+Domains, Resources, Server, and Security sit outside Project URLs; server-owned
+backing routes currently live under `/zelavis/server/*`.
 
 The website service also mounts public website pages at `/`, while still reserving the dashboard namespace under `/zelavis`.
 
@@ -75,9 +80,9 @@ project Database screen. Each Zelavis App project has an app database at
 local SQLite shard files by default, and private topology/runtime metadata at
 `.zelavis/projects/<projectId>/.zelavis/runtime/zelavis.sqlite`.
 
-The runtime lists project app services at
-`GET /zelavis/api/v1/runtime/app-services`. See [Platform OS and App
-Services](../architecture/platform-app-services.md).
+The runtime lists Project recipes at
+`GET /zelavis/api/v1/runtime/project-recipes`. See [Platform OS and Project
+Recipes](../architecture/platform-project-recipes.md).
 
 ## Dashboard settings
 

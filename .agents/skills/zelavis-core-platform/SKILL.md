@@ -51,6 +51,13 @@ before editing.
   through `zelavis/app`, `zelavis/app/auth`, `zelavis/app/db`, and
   `zelavis/app/workloads`. It reuses the core implementation; never create an
   App-private dispatcher or server contracts.
+- Use **Project recipe** as the canonical name for a versioned create-project
+  definition. A service with `kind: "app"` is a Project recipe; its optional
+  Project metadata declares runtime compatibility. The official kinds are
+  `app`, `frontend`, and `plugin`, and the union is enforced at manifest
+  validation — do not add a kind that nothing branches on. Trust comes from
+  `scope` (`system` for what the operator composed, `extension` for what was
+  installed at runtime), never from the kind.
 - Keep trusted Platform product behavior in `packages/zelavis/src/platform`
   and dashboard rendering in `@zelavis/ui`. Core must not own Zelavis product
   menus or root Platform policy.

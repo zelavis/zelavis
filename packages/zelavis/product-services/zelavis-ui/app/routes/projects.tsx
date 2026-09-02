@@ -51,7 +51,7 @@ const projectSearchSchema = {
   q: parseAsString.withDefault(""),
   new: parseAsString.withDefault(""),
   name: parseAsString.withDefault(""),
-  app: parseAsString.withDefault("zelavis/app"),
+  recipe: parseAsString.withDefault("zelavis/app"),
 } as const;
 
 function formatUpdatedAt(value: string) {
@@ -62,14 +62,14 @@ function formatUpdatedAt(value: string) {
 function ProjectsRoute() {
   const rootData = useRouteLoaderData<typeof rootClientLoader>("root");
   const revalidator = useRevalidator();
-  const [{ q, new: createMode, name: requestedName, app: appServiceName }, setParams] =
+  const [{ q, new: createMode, name: requestedName, recipe: recipeName }, setParams] =
     useTypedSearchParams(projectSearchSchema);
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
   const [pendingProjectId, setPendingProjectId] = useState<string>();
   const [creating, setCreating] = useState(false);
   const projects = rootData?.projects ?? [];
-  const appServices =
+  const projectRecipes =
     rootData?.runtime.serviceRegistry
       ?.filter((service) => service.kind === "app")
       .map((service) => ({
@@ -81,9 +81,9 @@ function ProjectsRoute() {
         summary: service.marketplace?.summary,
         runtimeKinds: service.project?.runtimeKinds ?? ["native"],
       })) ?? [];
-  const selectedAppService =
-    appServices.find((service) => service.name === appServiceName) ??
-    appServices[0];
+  const selectedRecipe =
+    projectRecipes.find((recipe) => recipe.name === recipeName) ??
+    projectRecipes[0];
   const showCreate = createMode === "1";
   const canCreateProjects =
     rootData?.runtime.access?.principal.permissions?.includes("*") ?? true;
@@ -130,10 +130,10 @@ function ProjectsRoute() {
     try {
       const project = await createProject(rootData.runtime, {
         name: requestedName,
-        appServiceName: selectedAppService?.name ?? appServiceName,
+        recipeName: selectedRecipe?.name ?? recipeName,
         start: true,
       });
-      setParams({ name: null, new: null, app: null });
+      setParams({ name: null, new: null, recipe: null });
       setMessage(`${project.name} is running in its own project runtime.`);
       revalidator.revalidate();
     } catch (nextError) {
@@ -231,30 +231,30 @@ function ProjectsRoute() {
                 />
               </div>
               <div className="grid gap-2">
-                <label className="text-sm font-medium" htmlFor="project-app">
-                  App service
+                <label className="text-sm font-medium" htmlFor="project-recipe">
+                  Project recipe
                 </label>
                 <div className="relative">
                   <SquareStack className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                   <select
-                    id="project-app"
-                    value={selectedAppService?.name ?? appServiceName}
+                    id="project-recipe"
+                    value={selectedRecipe?.name ?? recipeName}
                     onChange={(event) =>
-                      setParams({ app: event.target.value || null })
+                      setParams({ recipe: event.target.value || null })
                     }
                     className="flex h-9 w-full rounded-md border bg-background px-9 text-sm outline-hidden transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={creating || appServices.length === 0}
+                    disabled={creating || projectRecipes.length === 0}
                   >
-                    {appServices.map((service) => (
-                      <option key={service.name} value={service.name}>
-                        {service.title}
+                    {projectRecipes.map((recipe) => (
+                      <option key={recipe.name} value={recipe.name}>
+                        {recipe.title}
                       </option>
                     ))}
                   </select>
                 </div>
               </div>
               <div className="flex items-end gap-2">
-                <Button type="submit" disabled={creating || appServices.length === 0}>
+                <Button type="submit" disabled={creating || projectRecipes.length === 0}>
                   {creating ? "Creating..." : "Create"}
                 </Button>
                 <Button
@@ -335,10 +335,10 @@ function ProjectsRoute() {
                 <CardContent className="grid gap-3 border-t pt-4">
                   <dl className="grid gap-2 text-sm">
                     <div className="flex items-center justify-between gap-3">
-                      <dt className="text-muted-foreground">App</dt>
+                      <dt className="text-muted-foreground">Recipe</dt>
                       <dd className="truncate font-medium">
-                        {project.app.title}
-                        {project.app.version ? ` ${project.app.version}` : ""}
+                        {project.recipe.title}
+                        {project.recipe.version ? ` ${project.recipe.version}` : ""}
                       </dd>
                     </div>
                     <div className="flex items-center justify-between gap-3">

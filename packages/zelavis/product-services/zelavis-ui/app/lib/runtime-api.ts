@@ -243,7 +243,7 @@ export interface RuntimeProject {
   name: string;
   kind: string;
   runtimeKind: RuntimeProjectRuntimeKind;
-  app: {
+  recipe: {
     name: string;
     title: string;
     version?: string;
@@ -364,45 +364,18 @@ export interface FabricSnapshot {
   };
 }
 
-function appTitleFromName(name: string): string {
-  if (name === "zelavis/app") {
-    return "Zelavis App";
-  }
-
-  return name
-    .replace(/^@/, "")
-    .replace(/^zelavis\//, "")
-    .replace(/[-_/]+/g, " ")
-    .replace(/\b\w/g, (character) => character.toUpperCase());
-}
-
 export function normalizeRuntimeProject(project: RuntimeProject): RuntimeProject {
-  const storedApp = project.app as RuntimeProject["app"] | undefined;
-  const appName =
-    typeof storedApp?.name === "string" && storedApp.name.length > 0
-      ? storedApp.name
-      : project.kind === "zelavis"
-        ? "zelavis/app"
-        : project.kind || "app";
-  const appTitle =
-    typeof storedApp?.title === "string" && storedApp.title.length > 0
-      ? storedApp.title
-      : appTitleFromName(appName);
-
   return {
     ...project,
     runtimeKind: project.runtimeKind ?? "native",
-    app: {
-      name: appName,
-      title: appTitle,
-      ...(storedApp?.version ? { version: storedApp.version } : {}),
-      specifier: storedApp?.specifier ?? appName,
-      runtimeKinds: storedApp?.runtimeKinds ?? ["native"],
+    recipe: {
+      ...project.recipe,
+      runtimeKinds: project.recipe.runtimeKinds ?? ["native"],
     },
   };
 }
 
-export interface RuntimeAppService {
+export interface RuntimeProjectRecipe {
   name: string;
   title: string;
   version?: string;
@@ -1644,13 +1617,13 @@ export async function listProjects(
   };
 }
 
-export async function listAppServices(
+export async function listProjectRecipes(
   config: RuntimeConfig,
-): Promise<RuntimeAppService[]> {
-  const result = await readJson<{ appServices: RuntimeAppService[] }>(
-    `${config.api.basePath}/runtime/app-services`,
+): Promise<RuntimeProjectRecipe[]> {
+  const result = await readJson<{ projectRecipes: RuntimeProjectRecipe[] }>(
+    `${config.api.basePath}/runtime/project-recipes`,
   );
-  return result.appServices;
+  return result.projectRecipes;
 }
 
 export async function listAssistantThreads(
@@ -1745,7 +1718,7 @@ export async function createProject(
   input: {
     name: string;
     id?: string;
-    appServiceName?: string;
+    recipeName?: string;
     start?: boolean;
   },
 ): Promise<RuntimeProject> {

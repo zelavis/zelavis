@@ -13,7 +13,8 @@ behavior, or dashboard ownership. The `zelavis` Platform chooses to
 bundle this service alongside `zelavis/platform` and `@zelavis/ui`.
 
 The global Marketplace is distinct from a Project-local marketplace. Global
-entries cover apps, starters, templates, and server provider plugins;
+entries cover Project recipes presented as apps and starters, plus templates
+and server provider plugins;
 Project-local entries install services and plugins into a selected Project.
 
 ## Related docs

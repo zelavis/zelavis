@@ -23,7 +23,8 @@ Dashboard/product structure:
 - `/zelavis` is the Projects overview, not a single project dashboard.
 - Zelavis-native project pages live under `/zelavis/projects/:projectId/*`.
 - Managed app projects such as WordPress/static/generic projects may use hosting-style controls instead of Zelavis-native Auth/Database/Content navigation.
-- `/zelavis/marketplace` is global for apps, starters, templates, and server provider plugins.
+- `/zelavis/marketplace` is global for Project recipes (presented as apps and
+  starters), templates, and server provider plugins.
 - `/zelavis/projects/:projectId/marketplace` is project-local for Zelavis plugins and services.
 - `/zelavis/server/*` owns server-level concerns such as domains, backups, and logs.
 
@@ -67,25 +68,34 @@ current automatically.
   registry, server management, System Store, service registry, and lifecycle
   orchestration.
 - **Zelavis App** is the official Firebase/Supabase-style project stack made
-  from app-facing database, auth, storage, and workload services. It is a
-  `kind: "app"` service and production boilerplate, not the Platform OS itself.
-- **App services** are versioned Project recipes and runtime entrypoints. The
-  official recipe lives inside the same package at `zelavis/app`. Every Project
-  locks its exact recipe/runtime version, so a newer parent Platform can keep
-  running older Zelavis Apps without silently rewriting them. App services own
-  menu metadata and may contribute static and dynamic menus through the service
-  menu API.
-- **Service kinds** are `app`, `frontend`, and `plugin`, and the union is
-  enforced at manifest validation — an unrecognised kind is refused rather than
-  loading and doing nothing. `frontend` is the face of an installation or a
-  Project, declaring a `zelavis.frontend` block with a `static` or `server`
-  runtime. `app` is a Project recipe. `plugin` is everything else. There is no
-  `core` kind: it described who shipped a service rather than what it is, which
-  `scope` already carries, and nothing branched on it. A provider is discovered
-  by its capability (`provider:auth`), never by a kind.
-- **System Services** are trusted Platform OS capabilities, and what makes them
-  trusted is `scope: "system"` — the operator composed them — not their kind.
-  Do not call every bundled project service a core service.
+  from app-facing database, auth, storage, and workload services. It is an
+  official Project recipe implemented as a `kind: "app"` service, not the
+  Platform OS itself.
+- **Project recipes** are the versioned create-project definitions and runtime
+  entrypoints behind Marketplace apps and starters. They are services with
+  `kind: "app"`; optional Project recipe metadata declares runtime
+  compatibility.
+  The official Zelavis App recipe lives inside the same package at
+  `zelavis/app`. Every Project locks its exact recipe/runtime version, so a
+  newer parent Platform can keep running older Projects without silently
+  rewriting them. Project recipes own setup/provisioning behavior, default
+  files, menu metadata, and the runtime services mounted in the created
+  Project.
+- **Plugins** use `kind: "plugin"` and extend the Platform or a Project
+  runtime. Auth, Database, Workloads, Fabric, UI, and Marketplace are plugins
+  the operator composed rather than a separate kind: what makes them trusted is
+  `scope: "system"`, not a label. A plugin is not a Project recipe and does not
+  appear in the create-project selector merely because it is built in.
+- **Frontends** use `kind: "frontend"` and are the face of an installation or a
+  Project. They declare a `zelavis.frontend` block choosing a `static` or
+  `server` runtime, and are loaded from their manifest without executing
+  JavaScript.
+- There is no `core` kind, and no `web-app`, `website`, `dashboard-extension`,
+  `provider`, or `template`. Each described who shipped a service or restated a
+  capability, and nothing ever branched on them. A provider is discovered by
+  its capability (`provider:auth`), not by a kind.
+- **System Services** are trusted Platform OS capabilities. Do not call every
+  bundled project service a core service.
 - **System Store** is Platform OS persistence. Local adapters default to
   `.zelavis/system/zelavis.sqlite`. It must stay separate from `zelavis/app/db`
   project databases and must never appear in a project's Database UI.
