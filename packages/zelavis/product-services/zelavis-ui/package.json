@@ -7,7 +7,7 @@
   "author": "Ivan Jeremic",
   "type": "module",
   "zelavis": {
-    "kind": "core"
+    "kind": "plugin"
   },
   "main": "./dist/dashboard-service.js",
   "types": "./dist/dashboard-service.d.ts",

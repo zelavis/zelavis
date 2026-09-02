@@ -52,15 +52,32 @@ export type ZelavisServiceMenuDefinition = Omit<
   items?: readonly ZelavisServiceMenuDefinition[];
 };
 
-export type ZelavisServiceKind =
-  | "app"
-  | "core"
-  | "plugin"
-  | "web-app"
-  | "website"
-  | "dashboard-extension"
-  | "provider"
-  | "template";
+/**
+ * What a service is.
+ *
+ * Three kinds, because three is what the Platform actually distinguishes:
+ *
+ * - `frontend` — the face of an installation or a Project. Declares a
+ *   `zelavis.frontend` block, is loaded from its manifest without executing
+ *   JavaScript, and is routed to by the Gateway.
+ * - `app` — a Project recipe: something a Project can be created from.
+ * - `plugin` — code that extends the Platform. The default, and what
+ *   everything else is.
+ *
+ * `core` used to be a fourth. It described who shipped a service rather than
+ * what it is, which is what `scope` already carries — and nothing branched on
+ * it. `web-app`, `website`, `dashboard-extension`, `provider`, and `template`
+ * were the same: declared, documented, and never read. A provider is
+ * discovered by its capability (`provider:auth`), not by a label.
+ *
+ * This union is enforced at manifest validation. It drifted out of date once
+ * already — it was missing `frontend`, the kind the Platform branches on most —
+ * because nothing checked it.
+ */
+export type ZelavisServiceKind = "app" | "frontend" | "plugin";
+
+export const ZELAVIS_SERVICE_KINDS: readonly ZelavisServiceKind[] =
+  Object.freeze(["app", "frontend", "plugin"]);
 
 export type ZelavisServiceCapability =
   | "web:app"

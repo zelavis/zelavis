@@ -22,5 +22,5 @@ export const MARKETPLACE_MANIFEST = Object.freeze({
       import: "./dist/index.js",
     }),
   }),
-  zelavis: Object.freeze({ kind: "core" }),
+  zelavis: Object.freeze({ kind: "plugin" }),
 });

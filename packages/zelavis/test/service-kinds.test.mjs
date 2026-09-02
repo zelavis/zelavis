@@ -13,15 +13,14 @@ async function runtimeServices() {
   return (await response.json()).services;
 }
 
-test("every core service reports the kind it is", async () => {
+test("every composed service reports the kind it is", async () => {
   const services = await runtimeServices();
 
-  // `kind` describes what a service is. A core service composed into the
-  // Platform reports "core" whether it was loaded through the plugin loader or
-  // constructed directly — otherwise the field says nothing and the dashboard
-  // is left inferring core-ness from a hardcoded list of names.
+  // `kind` describes what a service is, and every service the Platform
+  // composes extends it — that is what `plugin` means. Whether the operator
+  // composed it is `scope`, a different question and a different field.
   for (const service of services) {
-    assert.equal(service.kind, "core", `${service.name} kind`);
+    assert.equal(service.kind, "plugin", `${service.name} kind`);
   }
 });
 
@@ -43,6 +42,43 @@ test("the marketplace's declared kind is the one it reports", async () => {
   assert.equal(marketplace.kind, manifest.zelavis.kind);
 });
 
+test("an unrecognised kind is refused rather than silently ignored", () => {
+  const base = {
+    name: "@example/thing",
+    type: "module",
+    exports: { ".": "./index.js" },
+  };
+
+  // The union used to be decorative: `kind` is typed as a bare string on the
+  // runtime service, so a typo or a retired kind loaded fine and produced a
+  // service that never participated in anything. That is also how the union
+  // drifted — it listed five kinds nothing read and omitted `frontend`, the
+  // one the Platform branches on most.
+  for (const kind of [
+    "core",
+    "web-app",
+    "website",
+    "dashboard-extension",
+    "provider",
+    "template",
+    "Plugin",
+    "typo",
+  ]) {
+    assert.throws(
+      () => validatePluginPackageManifest({ ...base, zelavis: { kind } }),
+      /must be one of app, frontend, plugin/,
+      kind,
+    );
+  }
+
+  for (const kind of ["app", "plugin"]) {
+    assert.doesNotThrow(
+      () => validatePluginPackageManifest({ ...base, zelavis: { kind } }),
+      kind,
+    );
+  }
+});
+
 test("manifest strictness follows the code, not the kind label", () => {
   const base = {
     name: "@example/thing",
@@ -52,7 +88,7 @@ test("manifest strictness follows the code, not the kind label", () => {
 
   // A non-plugin kind used to skip these checks entirely, so a first-party
   // service had to label itself a plugin to get its manifest validated.
-  for (const kind of ["core", "plugin", "provider"]) {
+  for (const kind of ["app", "plugin"]) {
     assert.throws(
       () => validatePluginPackageManifest({ ...base, type: undefined, zelavis: { kind } }),
       /"type": "module"/,

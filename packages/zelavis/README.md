@@ -415,7 +415,7 @@ Services can also ship full web apps through the `app` field:
 ```ts
 export default {
   name: "@acme/storefront",
-  kind: "web-app",
+  kind: "plugin",
   capabilities: ["web:app", "api:routes"],
   app: {
     mount: "/",

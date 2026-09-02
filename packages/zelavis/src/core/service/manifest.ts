@@ -1,3 +1,7 @@
+import {
+  ZELAVIS_SERVICE_KINDS,
+  type ZelavisServiceKind,
+} from "./definition.js";
 import { readFrontendManifest } from "./frontend.js";
 
 export interface ZelavisManifestConfig {
@@ -22,9 +26,10 @@ export interface ZelavisPackageManifest {
  * to the modern ESM plugin contract:
  * - Requires package.json with a valid string name
  * - Requires `zelavis.kind`
- * - If `kind === "plugin"`, requires `type: "module"`
- * - If `kind === "plugin"`, requires `exports`
- * - If `kind === "plugin"`, rejects legacy `main`
+ * - Requires `zelavis.kind` to be one of the official kinds
+ * - Requires `type: "module"` and `exports`, and rejects legacy `main`, for
+ *   every kind except `frontend`, which may ship files with no JS entry
+ * - Validates the `zelavis.frontend` block when the kind is `frontend`
  */
 export function validatePluginPackageManifest(
   rawManifest: unknown,
@@ -53,6 +58,15 @@ export function validatePluginPackageManifest(
   }
 
   const kind = (zelavis as Record<string, unknown>).kind!.toString().trim();
+
+  // Checked rather than merely declared. An unrecognised kind used to load
+  // fine and do nothing, so a typo produced a service that silently never
+  // participated in anything.
+  if (!ZELAVIS_SERVICE_KINDS.includes(kind as ZelavisServiceKind)) {
+    throw new TypeError(
+      `Invalid Zelavis service "${name}":\n"zelavis.kind" must be one of ${ZELAVIS_SERVICE_KINDS.join(", ")}, not "${kind}".`,
+    );
+  }
 
   // Applied to every kind that ships JavaScript, not only "plugin".
   //

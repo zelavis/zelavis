@@ -548,7 +548,7 @@ export function workloadsService(
 
   return {
     name: "@zelavis/workloads",
-    kind: "core" as const,
+    kind: "plugin" as const,
     basePath: "/workloads",
     service,
     menu: {

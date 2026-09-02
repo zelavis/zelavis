@@ -75,8 +75,17 @@ current automatically.
   running older Zelavis Apps without silently rewriting them. App services own
   menu metadata and may contribute static and dynamic menus through the service
   menu API.
-- **System Services** are trusted Platform OS capabilities. Do not call every
-  bundled project service a core service.
+- **Service kinds** are `app`, `frontend`, and `plugin`, and the union is
+  enforced at manifest validation — an unrecognised kind is refused rather than
+  loading and doing nothing. `frontend` is the face of an installation or a
+  Project, declaring a `zelavis.frontend` block with a `static` or `server`
+  runtime. `app` is a Project recipe. `plugin` is everything else. There is no
+  `core` kind: it described who shipped a service rather than what it is, which
+  `scope` already carries, and nothing branched on it. A provider is discovered
+  by its capability (`provider:auth`), never by a kind.
+- **System Services** are trusted Platform OS capabilities, and what makes them
+  trusted is `scope: "system"` — the operator composed them — not their kind.
+  Do not call every bundled project service a core service.
 - **System Store** is Platform OS persistence. Local adapters default to
   `.zelavis/system/zelavis.sqlite`. It must stay separate from `zelavis/app/db`
   project databases and must never appear in a project's Database UI.
