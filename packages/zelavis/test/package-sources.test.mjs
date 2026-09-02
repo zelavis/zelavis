@@ -7,11 +7,13 @@ import {
   assertPackageSourceAllowed,
   assertTarballOrigin,
   parsePackageSourceRef,
+  resolveGitArchiveUrl,
 } from "../dist/platform/package-sources.js";
 import {
   acquirePackage,
   readTarGzEntries,
   stripPackagePrefix,
+  stripSingleRootDirectory,
   verifyIntegrity,
 } from "../dist/adapters/_package-acquisition.js";
 
@@ -269,5 +271,152 @@ test("a tarball cannot smuggle a symlink or escape its root", () => {
   assert.throws(
     () => stripPackagePrefix([{ path: "other/evil", body: new Uint8Array() }]),
     /outside the package root/,
+  );
+});
+
+// --- git sources ------------------------------------------------------------
+
+const SHA = "a".repeat(40);
+const GIT_POLICY = {
+  git: {
+    forges: [
+      {
+        host: "github.com",
+        archive: "https://codeload.github.com/{repo}/tar.gz/{ref}",
+      },
+    ],
+  },
+};
+
+test("a git reference must pin a commit", () => {
+  const ref = parsePackageSourceRef(`git+https://github.com/owner/repo#${SHA}`);
+  assert.deepEqual(ref, {
+    kind: "git",
+    host: "github.com",
+    repository: "owner/repo",
+    commit: SHA,
+  });
+
+  // A branch or tag moves, and unlike npm there is no registry digest that
+  // would notice the same reference now installs different code.
+  for (const moving of ["main", "v1.2.3", "HEAD", "release", SHA.slice(0, 7)]) {
+    assert.throws(
+      () => parsePackageSourceRef(`git+https://github.com/owner/repo#${moving}`),
+      /not a commit SHA/,
+      moving,
+    );
+  }
+  assert.throws(
+    () => parsePackageSourceRef("git+https://github.com/owner/repo"),
+    /must pin a commit/,
+  );
+});
+
+test("a git reference cannot name something other than a repository", () => {
+  for (const path of ["owner", "owner/repo/extra", "../../etc", "owner/", "/repo"]) {
+    assert.throws(
+      () => parsePackageSourceRef(`git+https://github.com/${path}#${SHA}`),
+      `${path} should be refused`,
+    );
+  }
+  assert.throws(
+    () => parsePackageSourceRef(`git+https://user:pw@github.com/owner/repo#${SHA}`),
+    /must not embed credentials/,
+  );
+});
+
+test("a git forge outside the policy is refused", () => {
+  const ref = parsePackageSourceRef(`git+https://evil.test/owner/repo#${SHA}`);
+  assert.throws(
+    () => assertPackageSourceAllowed(ref, GIT_POLICY),
+    /not an allowed package source/,
+  );
+  assert.throws(
+    () => assertPackageSourceAllowed(
+      parsePackageSourceRef(`git+https://github.com/owner/repo#${SHA}`),
+      {},
+    ),
+    /does not allow installing packages from Git forges/,
+  );
+});
+
+test("an archive template cannot be steered off its own origin", () => {
+  const ref = parsePackageSourceRef(`git+https://github.com/owner/repo#${SHA}`);
+
+  assert.equal(
+    resolveGitArchiveUrl(ref, GIT_POLICY).toString(),
+    `https://codeload.github.com/owner/repo/tar.gz/${SHA}`,
+  );
+
+  // A template that resolves somewhere other than its own origin is refused
+  // even though the operator wrote it — the values substituted in come from a
+  // caller, so the result is checked rather than trusted.
+  assert.throws(
+    () =>
+      resolveGitArchiveUrl(ref, {
+        git: {
+          forges: [{ host: "github.com", archive: "http://codeload.github.com/{repo}" }],
+        },
+      }),
+    /must use https/,
+  );
+});
+
+test("a git archive is unwrapped by its single root directory", () => {
+  const tarball = makeTarball({
+    "repo-abc123/package.json": '{"name":"@example/from-git"}',
+    "repo-abc123/dist/index.js": "export default {}",
+  });
+
+  const entries = stripSingleRootDirectory(readTarGzEntries(tarball));
+  assert.deepEqual(
+    entries.map((entry) => entry.path).sort(),
+    ["dist/index.js", "package.json"],
+  );
+
+  // Two roots, or a file at the root, is not the shape a source archive takes.
+  assert.throws(
+    () =>
+      stripSingleRootDirectory([
+        { path: "a/x", body: new Uint8Array() },
+        { path: "b/y", body: new Uint8Array() },
+      ]),
+    /2 root directories/,
+  );
+  assert.throws(
+    () => stripSingleRootDirectory([{ path: "loose.js", body: new Uint8Array() }]),
+    /not inside a root directory/,
+  );
+});
+
+test("a git package is acquired and recorded by what actually arrived", async () => {
+  const tarball = makeTarball({
+    "repo-abc/package.json": '{"name":"@example/from-git"}',
+  });
+
+  const result = await acquirePackage(
+    `git+https://github.com/owner/repo#${SHA}`,
+    {
+      policy: GIT_POLICY,
+      fetch: async (url) => {
+        assert.equal(
+          String(url),
+          `https://codeload.github.com/owner/repo/tar.gz/${SHA}`,
+        );
+        return new Response(tarball, { status: 200 });
+      },
+    },
+  );
+
+  assert.deepEqual(
+    result.entries.map((entry) => entry.path),
+    ["package.json"],
+  );
+  assert.equal(result.resolved, `git+https://github.com/owner/repo#${SHA}`);
+  // No forge digest to verify against — a forge builds archives on demand — so
+  // what was installed is recorded instead.
+  assert.equal(
+    result.integrity,
+    `sha512-${createHash("sha512").update(tarball).digest("base64")}`,
   );
 });

@@ -24,6 +24,7 @@ import {
 } from "./_package-acquisition.js";
 import type { ZelavisServicePackageAcquireInput } from "../index.js";
 import type {
+  ZelavisGitSourcePolicy,
   ZelavisHttpsSourcePolicy,
   ZelavisNpmSourcePolicy,
   ZelavisServiceSourcePolicy,
@@ -445,6 +446,8 @@ export interface LocalRuntimeServiceSourcePolicy {
   npm?: ZelavisNpmSourcePolicy;
   /** Hosts that may serve package archives directly. Off by default. */
   archives?: ZelavisHttpsSourcePolicy;
+  /** Git forges that may be installed from, by pinned commit. Off by default. */
+  git?: ZelavisGitSourcePolicy;
 }
 
 export interface LocalRuntimeServiceOptions {
@@ -481,10 +484,10 @@ function resolveAcquisitionPolicy(
   options: LocalRuntimeServiceOptions,
 ): ZelavisServiceSourcePolicy | undefined {
   const sources = options.sources ?? {};
-  if (!sources.npm && !sources.archives) {
+  if (!sources.npm && !sources.archives && !sources.git) {
     return undefined;
   }
-  return { npm: sources.npm, https: sources.archives };
+  return { npm: sources.npm, https: sources.archives, git: sources.git };
 }
 
 // ---------------------------------------------------------------------------
