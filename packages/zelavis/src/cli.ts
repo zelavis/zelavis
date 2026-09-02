@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { runCli, type ZelavisCliServeOptions } from "@zelavis/cli";
+import { runCli, type ZelavisCliServeOptions } from "./cli/index.js";
 import { nodeAdapter } from "./adapters/node.js";
-import { Zelavis } from "./index.js";
+import { Zelavis, type ZelavisPlatformFrontendFactory } from "./index.js";
 import { closeNodeServer, createNodeServer } from "./runtimes/node.js";
 
 async function readVersion(): Promise<string> {
@@ -12,9 +12,40 @@ async function readVersion(): Promise<string> {
   return typeof manifest.version === "string" ? manifest.version : "unknown";
 }
 
+/**
+ * Loads the dashboard if this installation still has it.
+ *
+ * The Platform depends on no frontend, so the binary is where the product
+ * decision lives: ship with a dashboard, and keep working without one. Removing
+ * `@zelavis/ui` leaves an installation whose API is unchanged and whose root
+ * path says no frontend is installed, which is the whole point of the split.
+ */
+const BUNDLED_DASHBOARD = "@zelavis/ui/frontend";
+
+async function resolveBundledFrontend(): Promise<
+  ZelavisPlatformFrontendFactory | undefined
+> {
+  try {
+    // The specifier is held in a variable so TypeScript does not resolve it.
+    // The dashboard is an optional dependency, and a static specifier would
+    // make the Platform fail to compile without the very package it was
+    // decoupled from — the build-time version of the problem this fixes.
+    const loaded = (await import(BUNDLED_DASHBOARD)) as {
+      zelavisUiFrontend?: unknown;
+    };
+    return typeof loaded.zelavisUiFrontend === "function"
+      ? (loaded.zelavisUiFrontend as ZelavisPlatformFrontendFactory)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function serve(options: ZelavisCliServeOptions): Promise<void> {
   const dataDirectory = resolve(options.dataDirectory ?? ".zelavis");
+  const frontend = await resolveBundledFrontend();
   const zv = new Zelavis({
+    ...(frontend ? { frontend } : {}),
     adapter: nodeAdapter({
       dataDirectory,
     }),

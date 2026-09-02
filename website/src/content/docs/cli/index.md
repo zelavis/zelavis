@@ -3,7 +3,8 @@ title: CLI
 ---
 
 The public `zelavis` command starts and operates the long-running Platform OS.
-`@zelavis/cli` provides its reusable endpoint-backed command implementation.
+Its endpoint-backed command implementation is `zelavis/cli`, importable on its
+own for tooling that wants the commands without the binary.
 
 Install the Platform package to get the complete command, including `serve`:
 

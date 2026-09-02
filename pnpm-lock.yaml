@@ -137,20 +137,8 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
 
-  packages/cli:
-    devDependencies:
-      '@types/node':
-        specifier: ^25.9.3
-        version: 25.9.5
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
   packages/zelavis:
     dependencies:
-      '@zelavis/cli':
-        specifier: workspace:*
-        version: link:../cli
       '@zelavis/marketplace':
         specifier: workspace:*
         version: link:product-services/zelavis-marketplace
@@ -170,12 +158,13 @@ importers:
       '@types/node':
         specifier: ^25.9.1
         version: 25.9.1
-      '@zelavis/ui':
-        specifier: workspace:*
-        version: link:product-services/zelavis-ui
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
+    optionalDependencies:
+      '@zelavis/ui':
+        specifier: workspace:*
+        version: link:product-services/zelavis-ui
 
   packages/zelavis/adapters/libsql:
     dependencies:
