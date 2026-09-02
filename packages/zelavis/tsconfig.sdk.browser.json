@@ -5,5 +5,9 @@
     "outDir": "dist",
     "rootDir": "src"
   },
+  // Cleared deliberately: `include` is additive with `files`, and the base
+  // config includes the whole `src` tree — so this compiled all 147 modules of
+  // the package rather than the SDK entry its name and `files` describe.
+  "include": [],
   "files": ["src/sdk/browser.ts"]
 }
