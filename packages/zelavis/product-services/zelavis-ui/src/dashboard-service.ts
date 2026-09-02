@@ -340,7 +340,7 @@ export function createZelavisDashboardService(
     // directly rather than loaded through the plugin loader, so nothing reads
     // its manifest for it; stating the kind here is what makes the declaration
     // mean anything at runtime.
-    kind: "core" as const,
+    kind: "plugin" as const,
     scope: "system",
     basePath: "/",
     menu: {

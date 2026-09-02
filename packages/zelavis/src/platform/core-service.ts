@@ -117,7 +117,7 @@ export function createZelavisCoreService<TService>(
   return Object.freeze({
     name: "zelavis/platform",
     version: ZELAVIS_VERSION,
-    kind: "core",
+    kind: "plugin",
     capabilities: Object.freeze(["api:routes", "dashboard:menu", "platform:control-plane"]),
     basePath: "/runtime",
     menu: zelavisCoreMenu,

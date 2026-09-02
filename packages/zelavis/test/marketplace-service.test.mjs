@@ -24,10 +24,10 @@ async function bootWithMarketplace() {
 test("the marketplace reaches the dashboard as an ordinary service", async () => {
   const { service } = await bootWithMarketplace();
 
-  // Its kind comes from its own manifest, read by the plugin loader. "core"
-  // because that is what it is — a product service shipped with the Platform.
-  // How it was loaded is not what `kind` describes.
-  assert.equal(service.kind, "core");
+  // Its kind comes from its own manifest, read by the plugin loader. A
+  // marketplace extends the Platform, which is what `plugin` means. That it
+  // ships with the Platform is carried by `scope`, not by the kind.
+  assert.equal(service.kind, "plugin");
 
   // Two menus, both contributed by `zelavis.menu.create` in the package.
   // Nothing in the dashboard names the marketplace, so if these are missing

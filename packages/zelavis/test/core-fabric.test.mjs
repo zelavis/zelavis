@@ -123,7 +123,7 @@ test("Fabric mounts a single-node core service with project placement inventory"
       infrastructureAutoscaling: "planned",
     },
   });
-  assert.equal(service.kind, "core");
+  assert.equal(service.kind, "plugin");
   assert.equal(service.menu, undefined);
 });
 

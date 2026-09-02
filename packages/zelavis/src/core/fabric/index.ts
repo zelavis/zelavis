@@ -1011,7 +1011,7 @@ export function createFabricService(
 ): ZelavisRuntimeService<FabricApi> {
   return {
     name: "zelavis/fabric",
-    kind: "core",
+    kind: "plugin",
     basePath: "/fabric",
     service: createFabricApi(options),
     api: {

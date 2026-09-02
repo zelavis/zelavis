@@ -780,7 +780,7 @@ export function defineAuthService(
 
   return Object.freeze({
     name: "@zelavis/auth",
-    kind: "core",
+    kind: "plugin",
     capabilities: Object.freeze(["api:routes", "dashboard:menu"]),
     authenticators: [auth.requestAuthenticator],
     basePath: "/auth",
