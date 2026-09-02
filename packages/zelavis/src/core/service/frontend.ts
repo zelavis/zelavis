@@ -35,6 +35,16 @@ export interface ZelavisStaticFrontendManifest {
   readonly mode?: ZelavisServiceAppMode;
   /** Entry document. Defaults to `index.html`. */
   readonly indexHtml?: string;
+  /**
+   * Path this bundle's own asset references were built against, e.g.
+   * `/assets/`.
+   *
+   * Declaring it lets one build serve from any mount: the Platform rewrites
+   * references starting with this prefix to wherever the frontend is actually
+   * mounted, so a bundle built for `/` works at `/zelavis` without rebuilding.
+   * Omit it when the bundle uses relative references or is built for its mount.
+   */
+  readonly assetBase?: string;
 }
 
 export interface ZelavisServerFrontendManifest {
@@ -129,11 +139,29 @@ export function readFrontendManifest(
       typeof declared.indexHtml === "string" ? declared.indexHtml.trim() : undefined;
     if (indexHtml) assertContainedPath(name, "indexHtml", indexHtml);
 
+    const assetBase =
+      typeof declared.assetBase === "string" ? declared.assetBase.trim() : undefined;
+    if (assetBase !== undefined) {
+      if (!assetBase.startsWith("/") || !assetBase.endsWith("/")) {
+        invalid(
+          name,
+          '"frontend.assetBase" must be an absolute directory path such as "/assets/". It is matched at the start of a quoted reference, so a partial path would rewrite text that is not a reference.',
+        );
+      }
+      if (assetBase === "/") {
+        invalid(
+          name,
+          '"frontend.assetBase" must be more specific than "/". Rewriting every absolute reference would also rewrite links to API routes, which are not the bundle\'s to move.',
+        );
+      }
+    }
+
     return Object.freeze({
       runtime: "static" as const,
       bundle,
       ...(mode ? { mode } : {}),
       ...(indexHtml ? { indexHtml } : {}),
+      ...(assetBase ? { assetBase } : {}),
     });
   }
 
@@ -177,6 +205,7 @@ export function toServiceAppDefinition(
     bundle: frontend.bundle,
     mode: frontend.mode ?? "spa",
     ...(frontend.indexHtml ? { indexHtml: frontend.indexHtml } : {}),
+    ...(frontend.assetBase ? { assetBase: frontend.assetBase } : {}),
   };
 }
 
