@@ -203,6 +203,17 @@ an exported type is never mistaken for an operational distributed feature.
   only matching-origin browser requests receive session cookies, cookie
   mutations require a same-origin `Origin`, and critical Project, Assistant,
   service-mutation, and settings-mutation endpoints declare core permissions.
+- [x] Services are discovered from a `product-services` folder on the server.
+  The folder was documentation-only before: the placeholder told operators to
+  drop a package there and nothing read it. The Node adapter scans it at boot
+  and registers what it finds through the same importer and validation as an
+  installed service. An `exports` entry escaping its package, a missing entry
+  file, a reserved core service name, and a package that throws on import are
+  each skipped with a reason rather than taking the Platform down.
+- [x] Capabilities can be owned by the package that defines them
+  (`@zelavis/auth:credentials`), validated at manifest time. Discovery stays a
+  flat capability scan — no parent/child graph — so naming an owner asks to be
+  considered and grants nothing.
 - [x] A default installation can actually be adopted. The distribution loads
   `@zelavis/app-auth-email-password` the way it loads the dashboard, so the
   first-owner endpoint has something to enroll against instead of reporting no

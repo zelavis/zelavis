@@ -2,6 +2,7 @@ import {
   ZELAVIS_SERVICE_KINDS,
   type ZelavisServiceKind,
 } from "./definition.js";
+import { parseServiceCapability } from "./capability.js";
 import { readFrontendManifest } from "./frontend.js";
 
 export interface ZelavisManifestConfig {
@@ -96,6 +97,26 @@ export function validatePluginPackageManifest(
       throw new TypeError(
         `Invalid Zelavis service "${name}":\n"main" is not supported.\nUse the modern "exports" field instead.`,
       );
+    }
+  }
+
+  // Validated rather than merely carried. A capability is how a provider finds
+  // the plugin it extends, so a typo in one is a plugin that installs cleanly
+  // and is then silently never discovered — the least debuggable failure the
+  // registry can produce.
+  const capabilities = (zelavis as Record<string, unknown>).capabilities;
+  if (capabilities !== undefined) {
+    if (!Array.isArray(capabilities)) {
+      throw new TypeError(
+        `Invalid Zelavis service "${name}":\n"zelavis.capabilities" must be an array of strings.`,
+      );
+    }
+    for (const capability of capabilities) {
+      if (typeof capability !== "string" || !parseServiceCapability(capability)) {
+        throw new TypeError(
+          `Invalid Zelavis service "${name}":\n"${String(capability)}" is not a valid capability.\nUse "<package or namespace>:<name>", as in "@zelavis/auth:credentials".`,
+        );
+      }
     }
   }
 

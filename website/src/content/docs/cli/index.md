@@ -106,3 +106,50 @@ when the runtime is mounted elsewhere:
 ```bash
 zelavis services list --url http://localhost:8787/zelavis
 ```
+
+## Product Services
+
+Services can be dropped into a folder on the server instead of composed in
+code. The Platform scans `<data directory>/product-services` at boot:
+
+```
+/var/lib/zelavis/product-services/
+  acme-analytics/package.json
+  @acme/theme/package.json
+```
+
+Each package needs a `package.json` with a `zelavis` block naming its `kind`,
+`type: "module"`, and an `exports` entry. Scoped packages nest one level
+deeper, exactly as they do in `node_modules`. Restart the Platform to pick up
+changes.
+
+Code in this folder runs with Platform authority, which is inherent to a folder
+on your own server — treat adding a package there as seriously as installing
+one. Discovery still refuses anything it cannot verify: an `exports` entry that
+resolves outside its own package directory, a missing entry file, an invalid
+manifest, an invalid capability, or a package claiming a reserved core service
+name. Each is skipped with a logged reason, and a package that throws on import
+is skipped too, so one bad package cannot stop the Platform from booting.
+
+### Declaring what a plugin extends
+
+A capability says which contract a service satisfies. Alongside the Platform's
+own namespaces (`api:routes`, `provider:auth`), a capability can be owned by
+the package that defines it:
+
+```json
+{
+  "zelavis": {
+    "kind": "plugin",
+    "capabilities": ["@zelavis/auth:credentials"]
+  }
+}
+```
+
+This is how a provider says which plugin it extends. `provider:payments` states
+what interface a plugin implements but not whose contract it is, so two
+commerce plugins scanning for it would each pick up the other's providers.
+
+There is no parent/child relationship behind this. Discovery is a flat scan,
+naming an owner asks to be considered by it and grants nothing, and the owning
+plugin still validates every provider against its own registration contract.

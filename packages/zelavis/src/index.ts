@@ -128,6 +128,7 @@ import {
   type ZelavisServiceLoadOptions,
   type ZelavisServiceMenuDefinition,
   type ZelavisServiceRegistryEntry,
+  type ZelavisServiceRegistryModuleEntry,
   type ZelavisServiceRegistryStateEntry,
   type ZelavisServiceRegistryStore,
   type ZelavisServiceSetupPlatformContext,
@@ -278,6 +279,16 @@ export interface ZelavisApiOptions {
 
 export interface ZelavisServiceRegistryOptions {
   catalog?: readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[];
+  /**
+   * Services found in a folder on this server rather than composed in code.
+   *
+   * Kept separate from `catalog` because their trust story differs: a catalog
+   * entry was written by whoever composed the runtime, while these arrived as
+   * files an operator dropped in. They are loaded through the same importer
+   * and validated the same way, and a discovered service never displaces one
+   * the installation composed itself.
+   */
+  discovered?: readonly ZelavisServiceRegistryModuleEntry[];
   store?: ZelavisServiceRegistryStore;
   importer?: ZelavisServiceLoadOptions["importer"];
   /**
@@ -2680,11 +2691,61 @@ export async function zelavis(
     compositionOptions.serviceRegistry?.importer,
     compositionOptions.serviceRegistry?.manifestResolver,
   );
+  // Loaded through the same importer and manifest resolver as everything else,
+  // so a package dropped into the folder is subject to the same validation as
+  // one installed through the registry endpoints.
+  const discoveredServiceRegistry: Readonly<
+    ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>
+  >[] = [];
+  for (const entry of compositionOptions.serviceRegistry?.discovered ?? []) {
+    // Refused before loading, not after. A dropped-in package naming a core
+    // service reaches the activation guard otherwise, and that one throws —
+    // turning a bad package in the folder into a Platform that will not boot.
+    const declaredName =
+      typeof entry.manifest?.name === "string" ? entry.manifest.name : undefined;
+    if (declaredName && RESERVED_CORE_SERVICE_NAMES.has(declaredName)) {
+      console.warn(
+        `Zelavis skipped product service "${declaredName}": that name is reserved for a core Platform service.`,
+      );
+      continue;
+    }
+    try {
+      discoveredServiceRegistry.push(
+        ...(await loadServiceRegistry<ZelavisServiceSetupContext>([entry], {
+          importer: compositionOptions.serviceRegistry?.importer,
+          ...(compositionOptions.serviceRegistry?.manifestResolver
+            ? {
+                manifestResolver:
+                  compositionOptions.serviceRegistry.manifestResolver,
+              }
+            : {}),
+        })),
+      );
+    } catch (error) {
+      // Loaded one at a time so a single unusable package cannot stop the
+      // Platform from booting. An operator who drops in a broken download
+      // should lose that service, not their installation.
+      console.warn(
+        `Zelavis could not load product service ${entry.specifier}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
   const knownServiceNames = new Set(
     baseServiceRegistry.map((entry) => entry.service.name),
   );
+  // A dropped-in package must not take over a name the installation composed
+  // itself: shadowing `@zelavis/auth` from the folder would replace the
+  // Platform's own auth with whatever was on disk.
+  const discoveredServices = discoveredServiceRegistry.filter((entry) => {
+    if (knownServiceNames.has(entry.service.name)) return false;
+    knownServiceNames.add(entry.service.name);
+    return true;
+  });
   const completeServiceRegistry = createServiceRegistry([
     ...baseServiceRegistry,
+    ...discoveredServices,
     ...storedServiceRegistry.filter(
       (entry) => !knownServiceNames.has(entry.service.name),
     ),
@@ -3236,6 +3297,17 @@ function mergeZelavisServerOptions(
     override.serviceRegistry?.store ?? base.serviceRegistry?.store;
   const serviceImporter =
     override.serviceRegistry?.importer ?? base.serviceRegistry?.importer;
+  // Carried through the merge like every other registry field. Rebuilding the
+  // object from a fixed list of keys silently dropped whichever ones nobody
+  // remembered to add, which is how an adapter-supplied manifest resolver was
+  // being lost.
+  const serviceManifestResolver =
+    override.serviceRegistry?.manifestResolver ??
+    base.serviceRegistry?.manifestResolver;
+  const discoveredServices = [
+    ...(base.serviceRegistry?.discovered ?? []),
+    ...(override.serviceRegistry?.discovered ?? []),
+  ];
   const serviceContext = {
     ...(base.serviceContext ?? {}),
     ...(override.serviceContext ?? {}),
@@ -3257,11 +3329,21 @@ function mergeZelavisServerOptions(
       override.deploymentBackends ?? base.deploymentBackends,
     agentOperations: override.agentOperations ?? base.agentOperations,
     serviceRegistry:
-      serviceCatalog.length > 0 || serviceStore || serviceImporter
+      serviceCatalog.length > 0 ||
+      discoveredServices.length > 0 ||
+      serviceStore ||
+      serviceImporter ||
+      serviceManifestResolver
         ? {
             ...(serviceCatalog.length > 0 ? { catalog: serviceCatalog } : {}),
+            ...(discoveredServices.length > 0
+              ? { discovered: discoveredServices }
+              : {}),
             ...(serviceStore ? { store: serviceStore } : {}),
             ...(serviceImporter ? { importer: serviceImporter } : {}),
+            ...(serviceManifestResolver
+              ? { manifestResolver: serviceManifestResolver }
+              : {}),
           }
         : undefined,
     serviceContext:

@@ -25,6 +25,8 @@ import {
   createLocalFrontendDirectoryResolver,
   createLocalRuntimeServicePackageInstaller,
   createLocalRuntimeServiceImporter,
+  discoverProductServices,
+  PRODUCT_SERVICES_DIRECTORY,
   createLocalRuntimeServiceManifestResolver,
   type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
@@ -68,6 +70,14 @@ export interface NodeAdapterProjectOptions {
 export interface NodeAdapterOptions {
   role?: "platform" | "project";
   dataDirectory?: string;
+  /**
+   * Services dropped into a folder on this server.
+   *
+   * Defaults to `<dataDirectory>/product-services`. Set to `false` to scan
+   * nothing, which is what an installation composing every service itself
+   * wants.
+   */
+  productServices?: false | { directory?: string };
   database?: false | NodeAdapterDatabaseOptions;
   systemStore?: false | NodeAdapterSystemStoreOptions;
   projects?: false | NodeAdapterProjectOptions;
@@ -173,6 +183,29 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
 
       const serviceOptions = options.services === false ? undefined : options.services;
       const serviceDirectory = join(dataDirectory, "services");
+      const productServiceOptions =
+        options.productServices === false ? undefined : options.productServices;
+      const productServiceDirectory = productServiceOptions?.directory
+        ? resolve(productServiceOptions.directory)
+        : join(dataDirectory, PRODUCT_SERVICES_DIRECTORY);
+      // Scanned before composition so the Platform sees dropped-in services the
+      // same way it sees installed ones. A Project runtime deliberately skips
+      // it: the folder belongs to the installation, not to each Project.
+      const discoveredProductServices =
+        options.services === false ||
+        options.productServices === false ||
+        isProjectRuntime
+          ? []
+          : await discoverProductServices({
+              directory: productServiceDirectory,
+              onSkipped: (name, reason) => {
+                // Reported rather than swallowed: a package that silently fails
+                // to load looks identical to one nobody installed.
+                console.warn(
+                  `Zelavis skipped product service "${name}": ${reason}`,
+                );
+              },
+            });
       const normalizedProjectOptions =
         options.projects === false ? undefined : options.projects;
       const projectsEnabled =
@@ -235,9 +268,14 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
                       ...officialProjectRecipes,
                       ...(serviceOptions?.catalog ?? []),
                     ],
+                discovered: discoveredProductServices,
                 importer: createLocalRuntimeServiceImporter({
                   directory: serviceDirectory,
                   ...(serviceOptions ?? {}),
+                  managedDirectories: [
+                    productServiceDirectory,
+                    ...(serviceOptions?.managedDirectories ?? []),
+                  ],
                 }),
                 // Supplied per runtime rather than installed process-globally,
                 // so two embedded runtimes cannot affect each other.
