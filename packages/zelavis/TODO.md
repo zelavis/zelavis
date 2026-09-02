@@ -322,9 +322,19 @@ an exported type is never mistaken for an operational distributed feature.
   hanging the planner. An owner named but absent from the plan is refused
   rather than guessed at: the planner cannot know which nodes it occupies, and
   placing anyway is the exact mistake the rule exists to prevent.
-- [ ] Wire the placement planner into reconciliation. It is still a pure
-  function the Platform does not call; Project placement is decided by the
-  runtime driver. Nothing enforces the group rule at runtime until it does.
+- [x] Wire the placement planner into reconciliation. Reconciliation plans
+  every desired-running Project together — an owned Project can only be judged
+  against an owner the planner can see — and refuses to start one whose
+  ownership group is unsatisfiable. It acts on ownership failures only:
+  capacity and node eligibility are scheduling answers, and this host does not
+  schedule, so treating them as refusals would stop Projects on a single-node
+  installation that models no capacity. A host with no Fabric, a plan with no
+  owned Projects, and a failing planner all reconcile exactly as before —
+  Fabric being down is not a reason to leave an installation stopped.
+- [ ] Dispatch a Project to the node its placement names. Reconciliation now
+  enforces the group constraint but does not schedule: the local driver runs
+  every Project on this host, so an assigned `runtimeNodeId` is still advisory.
+  That needs the Agent execution path.
 
 
 - [ ] Prove local shard movement, split/merge, generation fencing, crash-safe

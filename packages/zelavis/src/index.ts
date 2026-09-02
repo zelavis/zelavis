@@ -2713,6 +2713,12 @@ export async function zelavis(
           projectRecipes: serviceRegistry,
           store: systemStore,
           runtime: projectRuntime,
+          // Resolved lazily: Fabric is composed further down, after the
+          // Project manager it plans for. Reconciliation is deferred to match,
+          // because it runs once and a pass before Fabric exists would enforce
+          // nothing.
+          placement: () => fabricCoreService?.service,
+          autoReconcile: false,
           ...(deploymentBackends
             ? {
                 resolveDefaultRuntimeKind: async () =>
@@ -2786,6 +2792,10 @@ export async function zelavis(
       platform: options.serviceContext?.platform,
     },
   );
+  // Composition is far enough along for placement to resolve, so the startup
+  // reconcile can run with the group rule in force. Fire-and-forget, as before:
+  // Platform readiness does not wait for every Project runtime.
+  void projects?.reconcile();
   const platformCoreService = await resolvePlatformCoreService(
     serviceRegistry,
     projects,

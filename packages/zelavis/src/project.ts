@@ -1,4 +1,8 @@
 import type {
+  FabricPlacementPlan,
+  FabricProjectPlacementRequest,
+} from "./core/fabric/index.js";
+import type {
   ZelavisProjectDriverCapabilities,
   ZelavisRuntimeService,
 } from "./core/index.js";
@@ -496,12 +500,53 @@ function readStoredRecipeLock(rawProject: Record<string, unknown>): ZelavisProje
   };
 }
 
+/**
+ * What reconciliation needs from Fabric to honour placement groups.
+ *
+ * Deliberately narrow. Reconciliation does not schedule: the local runtime
+ * driver runs every Project on this host, so an assigned node is not something
+ * it can act on. What it can do is refuse to start a Project whose placement
+ * group cannot be satisfied, which is the part that would otherwise be silently
+ * violated.
+ */
+export interface ZelavisProjectPlacementAuthority {
+  planProjectPlacements(
+    requests: readonly FabricProjectPlacementRequest[],
+  ): Promise<FabricPlacementPlan>;
+}
+
+/**
+ * Placement failures that reconciliation acts on.
+ *
+ * Only ownership. A Project reported unplaced for capacity or node eligibility
+ * is a scheduling answer, and this host does not schedule — treating it as a
+ * refusal would stop Projects from starting on a single-node installation that
+ * models no capacity at all. An ownership failure is different: it says the
+ * group is unsatisfiable no matter which node runs it.
+ */
+const BLOCKING_PLACEMENT_REASONS = new Set(["owner-unplaced", "owner-cycle"]);
+
 export async function createProjectManager(options: {
   store: ZelavisSystemStore;
   projectRecipes: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[];
   runtime: ZelavisProjectRuntimeDriver;
   resolveDefaultRuntimeKind?: () => Promise<ZelavisProjectRuntimeKind>;
   cleanupParticipants?: readonly ZelavisProjectCleanupParticipant[];
+  /**
+   * Resolved lazily because Fabric is composed after the Project manager, and
+   * absent on a host with no Fabric — which reconciles exactly as it did
+   * before.
+   */
+  placement?: () => ZelavisProjectPlacementAuthority | undefined;
+  /**
+   * Whether to reconcile as soon as the manager exists.
+   *
+   * A host that supplies `placement` must set this false and reconcile once
+   * composition finishes. Reconciliation runs once per manager, so a startup
+   * pass that fires before Fabric exists is not a late arrival — it is the only
+   * pass, and it would enforce nothing.
+   */
+  autoReconcile?: boolean;
 }): Promise<ZelavisProjectManager> {
   const { store, projectRecipes, runtime } = options;
   const availableRuntimeKinds = normalizeRecipeRuntimeKinds(runtime.runtimeKinds);
@@ -862,6 +907,59 @@ export async function createProjectManager(options: {
     }
   }
 
+  /**
+   * Projects whose placement group cannot be satisfied.
+   *
+   * Every desired-running Project is planned together, because an owned
+   * Project can only be judged against an owner the planner can see — planning
+   * one at a time would report every owner as absent and refuse everything.
+   *
+   * A host with no placement authority blocks nothing, which is how a
+   * single-node installation behaves today and should keep behaving.
+   */
+  async function resolveBlockedPlacements(
+    records: readonly { value: ZelavisSystemStoreValue }[],
+  ): Promise<ReadonlySet<string>> {
+    const authority = options.placement?.();
+    if (!authority) return new Set();
+
+    const requests: FabricProjectPlacementRequest[] = [];
+    for (const record of records) {
+      const { project } = normalizeStoredProject(record.value);
+      if (project.deletion || project.desiredState !== "running") continue;
+
+      requests.push({
+        identity: {
+          scopeId: "platform",
+          workloadId: project.id,
+          type: "project",
+        },
+        projectKind: project.kind,
+        capabilities: { statelessRuntimeReplicas: false },
+        ...(project.ownerProjectId
+          ? { ownerProjectId: project.ownerProjectId }
+          : {}),
+      });
+    }
+
+    // Nothing owns anything, so there is no group to violate and no reason to
+    // ask — which also keeps a Fabric outage from stopping ordinary startups.
+    if (!requests.some((request) => request.ownerProjectId)) return new Set();
+
+    const plan = await authority
+      .planProjectPlacements(requests)
+      .catch(() => undefined);
+    if (!plan) return new Set();
+
+    const blocked = new Set<string>();
+    for (const replica of plan.unplaced) {
+      if (BLOCKING_PLACEMENT_REASONS.has(replica.reason)) {
+        blocked.add(replica.identity.workloadId);
+      }
+    }
+    return blocked;
+  }
+
   const manager: ZelavisProjectManager = {
     runtime: {
       driver: runtime.name,
@@ -1114,6 +1212,7 @@ export async function createProjectManager(options: {
     reconcile() {
       reconciliationPromise ??= (async () => {
         const existing = await store.list(PROJECTS_NAMESPACE);
+        const blockedByPlacement = await resolveBlockedPlacements(existing);
         await mapWithConcurrency(
           existing,
           startupConcurrency,
@@ -1131,6 +1230,12 @@ export async function createProjectManager(options: {
               return;
             }
             if (project.desiredState !== "running") {
+              return;
+            }
+            if (blockedByPlacement.has(project.id)) {
+              // Left stopped rather than started somewhere its placement group
+              // does not permit. `desiredState` stays "running", so the next
+              // reconcile starts it as soon as its owner can be placed.
               return;
             }
             const snapshot = await runtime.status(project.id);
@@ -1156,7 +1261,9 @@ export async function createProjectManager(options: {
     },
   };
 
-  void manager.reconcile();
+  if (options.autoReconcile !== false) {
+    void manager.reconcile();
+  }
 
   return manager;
 }
