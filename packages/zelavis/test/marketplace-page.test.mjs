@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { zelavis } from "../dist/index.js";
+import { zelavisUiFrontend } from "@zelavis/ui/frontend";
 
 const OWNER = {
   principal: { id: "owner", type: "user", roles: ["owner"], permissions: ["*"] },
 };
 
 async function boot() {
-  const runtime = await zelavis({});
+  const runtime = await zelavis({ frontend: zelavisUiFrontend });
   // Takes the context explicitly rather than defaulting it: a default would
   // turn "call this anonymously" into "call this as the owner", and the test
   // asserting anonymous access is refused would pass while proving nothing.

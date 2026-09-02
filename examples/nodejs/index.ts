@@ -2,11 +2,15 @@ import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
 import { closeNodeServer, createNodeServer } from "zelavis/runtimes/node";
 import { emailPasswordService } from "@zelavis/app-auth-email-password";
+import { zelavisUiFrontend } from "@zelavis/ui/frontend";
 
 async function main(): Promise<void> {
   const port = Number(process.env.PORT ?? 3000);
 
   const zv = new Zelavis({
+    // The Platform serves whatever frontend it is given. Remove this and the
+    // API is unchanged while the root path says none is installed.
+    frontend: zelavisUiFrontend,
     adapter: nodeAdapter({
       dataDirectory: process.env.ZELAVIS_DATA_DIR,
       services: {

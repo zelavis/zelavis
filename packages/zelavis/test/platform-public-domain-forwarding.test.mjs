@@ -8,6 +8,7 @@ import {
   resolveVerifiedBinding,
 } from "../dist/platform/public-domain-forwarder.js";
 import { zelavis, createInMemoryDomainBindingStore } from "../dist/index.js";
+import { zelavisUiFrontend } from "@zelavis/ui/frontend";
 
 function bindingStore(bindings) {
   return { get: async (host) => bindings[host.toLowerCase()] };
@@ -236,6 +237,7 @@ test("a composed runtime refuses the dashboard on a bound domain", async () => {
   });
 
   const runtime = await zelavis({
+    frontend: zelavisUiFrontend,
     coreServices: { auth: false, database: false },
     domainBindings: bindings,
   });

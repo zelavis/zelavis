@@ -103,6 +103,9 @@ importers:
       '@zelavis/app-auth-email-password':
         specifier: workspace:*
         version: link:../../plugins/auth-email-password
+      '@zelavis/ui':
+        specifier: workspace:*
+        version: link:../../packages/zelavis/product-services/zelavis-ui
       zelavis:
         specifier: workspace:*
         version: link:../../packages/zelavis
@@ -151,9 +154,6 @@ importers:
       '@zelavis/marketplace':
         specifier: workspace:*
         version: link:product-services/zelavis-marketplace
-      '@zelavis/ui':
-        specifier: workspace:*
-        version: link:product-services/zelavis-ui
       better-sqlite3:
         specifier: ^12.10.0
         version: 12.10.0
@@ -170,6 +170,9 @@ importers:
       '@types/node':
         specifier: ^25.9.1
         version: 25.9.1
+      '@zelavis/ui':
+        specifier: workspace:*
+        version: link:product-services/zelavis-ui
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
@@ -356,6 +359,9 @@ importers:
       vitest:
         specifier: ^4.1.9
         version: 4.1.11(@types/node@25.9.5)(jsdom@28.1.0)(vite@8.2.2(@types/node@25.9.5)(esbuild@0.28.2)(jiti@2.7.0))
+      zelavis:
+        specifier: workspace:*
+        version: link:../..
 
   plugins/auth-email-password:
     devDependencies:
