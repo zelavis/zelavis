@@ -4,7 +4,7 @@ import test from "node:test";
 import { createProjectManager } from "../dist/project.js";
 import { createMemorySystemStore } from "../dist/system-store.js";
 
-const APP_SERVICES = [
+const PROJECT_RECIPES = [
   {
     service: {
       name: "zelavis/app",
@@ -65,7 +65,7 @@ function testDriver() {
 }
 
 async function manager(store, driver) {
-  return createProjectManager({ appServices: APP_SERVICES, store, runtime: driver });
+  return createProjectManager({ projectRecipes: PROJECT_RECIPES, store, runtime: driver });
 }
 
 test("an owned Project is hidden from the Platform list but still addressable", async () => {

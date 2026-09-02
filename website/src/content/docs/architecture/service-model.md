@@ -48,7 +48,8 @@ So the safe model is:
 The dashboard should reflect that split:
 
 - Dashboard pages are clients of service capabilities and endpoints; they must not be the only implementation of a platform action.
-- The global `Marketplace` is a top-level discovery area for apps, starters, templates, and server provider plugins.
+- The global `Marketplace` is a top-level discovery area for Project recipes
+  presented as apps and starters, plus templates and server provider plugins.
 - The project `Marketplace` under `/zelavis/projects/:projectId/marketplace` is where Zelavis-native project plugins are installed.
 - Installed services do not get first-slide root items.
 - Each installed service gets exactly one root entry under `Extensions`.

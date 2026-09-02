@@ -23,8 +23,9 @@ import { MARKETPLACE_PAGE } from "./page.js";
 export const ZELAVIS_MARKETPLACE_SERVICE_NAME = "@zelavis/marketplace";
 
 /**
- * Installation-wide marketplace: apps, starters, templates, and server provider
- * plugins for the Platform as a whole.
+ * Installation-wide marketplace: Project recipes presented as apps and
+ * starters, plus templates and server provider plugins for the Platform as a
+ * whole.
  */
 zelavis.menu.create({
   title: "Marketplace",

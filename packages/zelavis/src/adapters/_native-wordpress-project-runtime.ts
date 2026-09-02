@@ -6,7 +6,7 @@ import { userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import {
   ZelavisProjectRuntimeError,
-  type ZelavisProjectApp,
+  type ZelavisProjectRecipeLock,
   type ZelavisProjectLogEntry,
   type ZelavisProjectRecord,
   type ZelavisProjectRuntimeDriver,
@@ -534,8 +534,8 @@ export function createNativeWordPressProjectRuntime(
     defaultRuntimeKind: "native",
     startupConcurrency: 1,
     capabilities: () => capabilities,
-    async prepare(project: ZelavisProjectRecord, app: ZelavisProjectApp) {
-      if (app.name !== WORDPRESS_APP_NAME) throw new Error(`Unsupported native WordPress recipe "${app.name}".`);
+    async prepare(project: ZelavisProjectRecord, recipe: ZelavisProjectRecipeLock) {
+      if (recipe.name !== WORDPRESS_APP_NAME) throw new Error(`Unsupported native WordPress recipe "${recipe.name}".`);
       await mkdir(siteDirectory(project.id), { recursive: true, mode: 0o700 });
       await mkdir(databaseDirectory(project.id), { recursive: true, mode: 0o700 });
       for (const name of [
@@ -666,11 +666,11 @@ export function createNativeWordPressProjectRuntime(
         await readFile(join(siteDirectory(project.id), "wp-includes", "version.php"));
       } catch (error) {
         if (!isMissingFileError(error)) throw error;
-        const archive = join(runtimeDirectory(project.id), `wordpress-${app.version}.tar.gz`);
-        if (!/^\d+\.\d+(?:\.\d+)?(?:[-a-zA-Z0-9.]*)?$/.test(app.version)) {
-          throw new Error(`Invalid locked WordPress version "${app.version}".`);
+        const archive = join(runtimeDirectory(project.id), `wordpress-${recipe.version}.tar.gz`);
+        if (!/^\d+\.\d+(?:\.\d+)?(?:[-a-zA-Z0-9.]*)?$/.test(recipe.version)) {
+          throw new Error(`Invalid locked WordPress version "${recipe.version}".`);
         }
-        const response = await fetch(`https://wordpress.org/wordpress-${app.version}.tar.gz`);
+        const response = await fetch(`https://wordpress.org/wordpress-${recipe.version}.tar.gz`);
         if (!response.ok || !response.body) throw new Error(`WordPress download failed with HTTP ${response.status}.`);
         const declaredSize = Number(response.headers.get("content-length") ?? 0);
         if (declaredSize > MAX_WORDPRESS_ARCHIVE_BYTES) {
@@ -701,7 +701,7 @@ export function createNativeWordPressProjectRuntime(
       }
       await writeFile(
         join(projectDirectory(project.id), "project.json"),
-        `${JSON.stringify({ ...project, app, runtime: { driver: driver.name, capabilities } }, null, 2)}\n`,
+        `${JSON.stringify({ ...project, recipe, runtime: { driver: driver.name, capabilities } }, null, 2)}\n`,
         { mode: 0o600 },
       );
     },

@@ -5,7 +5,9 @@ Zelavis separates service discovery from service activation.
 
 Zelavis also separates Marketplace scope:
 
-- The **global Marketplace** at `/zelavis/marketplace` is for apps, starters, templates, and server provider plugins that can create or support projects.
+- The **global Marketplace** at `/zelavis/marketplace` is for Project recipes
+  presented as apps and starters, plus templates and server provider plugins
+  that can create or support Projects.
 - The **project Marketplace** at `/zelavis/projects/:projectId/marketplace` is for Zelavis-native plugins and services that extend a specific project.
 - Managed app projects such as WordPress or static sites can be installed or created globally, but they do not get Zelavis-native project plugins unless they are backed by a Zelavis project runtime.
 

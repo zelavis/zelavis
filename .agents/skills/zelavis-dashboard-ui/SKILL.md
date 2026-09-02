@@ -1,13 +1,13 @@
 ---
 name: zelavis-dashboard-ui
-description: Use when working on the Zelavis dashboard UI in packages/zelavis/services/zelavis-ui, including React Router v7 routes, the slide-based sidebar, mounted /zelavis dev behavior, and embedded-runtime dashboard mounting.
+description: Use when working on the Zelavis dashboard UI in packages/zelavis/product-services/zelavis-ui, including React Router v7 routes, the slide-based sidebar, mounted /zelavis dev behavior, and embedded-runtime dashboard mounting.
 ---
 
 # Zelavis Dashboard UI
 
 Use this skill for changes in:
 
-- `packages/zelavis/services/zelavis-ui`
+- `packages/zelavis/product-services/zelavis-ui`
 - embedded dashboard behavior in `packages/zelavis`
 - dashboard routing, settings, theme, and navigation
 
@@ -105,7 +105,9 @@ Available parsers: `parseAsString`, `parseAsStringLiteral`. Add new parsers to `
 - Do not make route modules, component callbacks, local React state, or framework-specific server actions the only implementation of privileged platform behavior.
 - The mounted dashboard path is `/zelavis`, including in dev mode
 - `/zelavis` opens the Projects overview. Project-scoped pages live under `/zelavis/projects/:projectId/*`; the current starter project is `/zelavis/projects/default`.
-- `/zelavis/marketplace` is the global marketplace for apps, starters, and server provider plugins. `/zelavis/projects/:projectId/marketplace` is the project marketplace for Zelavis plugins.
+- `/zelavis/marketplace` is the global marketplace for Project recipes presented as apps and starters, plus templates and server provider plugins. `/zelavis/projects/:projectId/marketplace` is the project marketplace for Zelavis plugins.
+- Label the create-project choice **Project recipe**, not App service,
+  Blueprint, or Boilerplate.
 - `/zelavis/server/domains`, `/zelavis/server/backups`, and `/zelavis/server/logs` are global server-level routes outside any project.
 - Managed app projects such as WordPress/static/generic projects use hosting-style project navigation, not the Zelavis-native project navigation.
 - Keep dashboard and runtime behavior aligned; dev mode must not drift from production mounting rules

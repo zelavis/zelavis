@@ -67,7 +67,7 @@ function createSlowDriver(latencyMs = 25) {
   };
 }
 
-const APP_SERVICES = [
+const PROJECT_RECIPES = [
   {
     service: {
       name: "zelavis/app",
@@ -85,7 +85,7 @@ const APP_SERVICES = [
 
 async function createManager(driver) {
   return createProjectManager({
-    appServices: APP_SERVICES,
+    projectRecipes: PROJECT_RECIPES,
     store: createMemorySystemStore(),
     runtime: driver,
   });

@@ -45,21 +45,22 @@ The lower-level `zelavis()` function still exists, but it now intentionally owns
 - path and mount overrides
 
 The `Zelavis` class is the product-facing Platform OS entrypoint. With the Node
-adapter it discovers shipped `kind: "app"` services, persists project records
-in the System Store, and runs created projects through the default process
-runtime driver. Lower-level route mounting knobs stay on `zelavis()`.
+adapter it discovers shipped Project recipes (`kind: "app"` services),
+persists Project records in the System Store, and
+runs created Projects through the default process runtime driver. Lower-level
+route mounting knobs stay on `zelavis()`.
 
 Examples use `zv` as the short local name for a `Zelavis` runtime instance.
 
 ## Default behavior
 
 By default, Zelavis owns one safe namespace under `/zelavis`. The Projects view
-creates app-service runtimes under `.zelavis/projects/<id>` and the
-project dashboard proxies API operations to the selected runtime.
+creates recipe-backed runtimes under `.zelavis/projects/<id>` and the Project
+dashboard proxies API operations to the selected runtime.
 
 The Platform process is the only process that mounts `@zelavis/ui`. Zelavis App
 project processes remain headless and expose service metadata through
-`zelavis/core`. The selected app service composes Database, Auth, Workloads,
+`zelavis/core`. The selected Project recipe composes Database, Auth, Workloads,
 and plugins, and each service contributes menu metadata through the shared
 service API.
 

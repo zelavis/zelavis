@@ -1,7 +1,8 @@
 /**
  * Official managed WordPress Project recipe.
  *
- * This is an App recipe (`kind: "app"`), not a Zelavis plugin. The local
+ * This is a Project recipe implemented by a `kind: "app"` service, not a
+ * Zelavis plugin. The local
  * Project runtime recognizes the exact recipe lock and provisions the
  * matching native Nginx + PHP-FPM + MariaDB stack. Keeping the release version here
  * makes new installs reproducible and prevents a Platform update from silently

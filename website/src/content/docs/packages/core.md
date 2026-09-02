@@ -28,4 +28,4 @@ Gateway.
 
 - [zelavis](./zelavis.md)
 - [zelavis/core](./server.md)
-- [Platform and App Services](../architecture/platform-app-services.md)
+- [Platform OS and Project Recipes](../architecture/platform-project-recipes.md)

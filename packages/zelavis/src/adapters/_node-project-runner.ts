@@ -31,24 +31,24 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) {
 const projectRecord = JSON.parse(
   await readFile(resolve("project.json"), "utf8"),
 ) as {
-  app?: {
+  recipe?: {
     name?: unknown;
     version?: unknown;
     specifier?: unknown;
   };
 };
-const app = projectRecord.app;
+const recipe = projectRecord.recipe;
 if (
-  !app ||
-  typeof app.name !== "string" ||
-  typeof app.version !== "string" ||
-  typeof app.specifier !== "string"
+  !recipe ||
+  typeof recipe.name !== "string" ||
+  typeof recipe.version !== "string" ||
+  typeof recipe.specifier !== "string"
 ) {
-  throw new Error("Project runner requires an exactly versioned app service lock.");
+  throw new Error("Project runner requires an exactly versioned Project recipe lock.");
 }
-const lockedAppName = app.name;
-const lockedAppVersion = app.version;
-const lockedAppSpecifier = app.specifier;
+const lockedRecipeName = recipe.name;
+const lockedRecipeVersion = recipe.version;
+const lockedRecipeSpecifier = recipe.specifier;
 
 const projectNodeAdapter = nodeAdapter({
   role: "project",
@@ -106,14 +106,14 @@ const zv = new Zelavis({
             ...(resolved?.serviceRegistry?.catalog ?? []),
             {
               service: {
-                name: lockedAppName,
-                version: lockedAppVersion,
+                name: lockedRecipeName,
+                version: lockedRecipeVersion,
                 kind: "app",
                 scope: "system",
                 api: {},
                 service: {},
               },
-              specifier: lockedAppSpecifier,
+              specifier: lockedRecipeSpecifier,
               status: "installed",
               source: "official",
             },

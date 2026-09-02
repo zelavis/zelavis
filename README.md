@@ -28,12 +28,12 @@ Zelavis starts at a Projects overview. A project is the operational unit the das
 
 - A **Zelavis-native project** gets project-local backend surfaces such as Auth, Database, Content, Media, Settings, and a project Marketplace for plugins.
 - A **managed app project** can represent software Zelavis hosts or manages, such as WordPress, a static site, or a generic app. These projects should show hosting-style controls instead of Zelavis-native backend menus.
-- The **global Marketplace** is outside any project and is for apps, starters, templates, and server provider plugins. Project plugins belong inside a Zelavis-native project.
+- The **global Marketplace** is outside any project and is for Project recipes presented as apps and starters, plus templates and server provider plugins. Project plugins belong inside a Zelavis-native project.
 - The **Server** area is outside projects and owns machine-level concerns such as domains, backups, and logs.
 
 The current Node host can create multiple Zelavis App projects from the
-shipped `zelavis/app` service boilerplate. Each project locks its exact app
-service version and runs with its own process and data directory. This default
+shipped `zelavis/app` Project recipe. Each project locks its exact recipe
+version and runs with its own process and data directory. This default
 is operational isolation for trusted code; stronger OCI and microVM drivers
 remain future implementations of the same project-runtime contract.
 
@@ -43,10 +43,13 @@ the Platform UI reads that runtime's service metadata and proxies its APIs, so
 Database, Auth, Workloads, and installed plugin menus still come from the
 project that owns them.
 
-An app service is both the project recipe and the runtime service entrypoint.
-It owns the app-facing modules, declares menu metadata, and gives project
-creation a real boilerplate folder to copy or execute. WordPress-style app
-services can follow the same shape later.
+A Project recipe is a versioned create-project definition and runtime
+entrypoint implemented as a service with `kind: "app"`. Its optional Project
+metadata declares runtime compatibility. It owns provisioning, default files, menu metadata, and the
+app-facing runtime services mounted in the created Project. Zelavis App and
+WordPress are official Project recipes. Services with `kind: "plugin"` extend
+the Platform or a Project runtime but are not create-project options, and
+services with `kind: "frontend"` are the face of an installation or a Project.
 
 Native website hosting is part of the core product story. External hosts, storage providers, DNS providers, CDNs, and deploy targets can be connected through plugins, but they are optional user choices rather than Zelavis runtime targets.
 

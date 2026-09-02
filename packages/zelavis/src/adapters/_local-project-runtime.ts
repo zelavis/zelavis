@@ -58,17 +58,20 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
   const forDescriptor = (project: Readonly<ZelavisProjectDescriptor>) => {
     assertNative(project.runtimeKind);
     if (project.kind === SERVER_FRONTEND_KIND) return selectFrontend();
-    return project.app.name === WORDPRESS_APP_NAME ? wordpress : node;
+    return project.recipe.name === WORDPRESS_APP_NAME ? wordpress : node;
   };
   const forProjectId = async (projectId: string) => {
     const record = JSON.parse(await readFile(join(directory, projectId, "project.json"), "utf8")) as {
+      recipe?: { name?: unknown };
       app?: { name?: unknown };
       kind?: unknown;
       runtimeKind?: unknown;
     };
     assertNative(record.runtimeKind);
     if (record.kind === SERVER_FRONTEND_KIND) return selectFrontend();
-    return record.app?.name === WORDPRESS_APP_NAME ? wordpress : node;
+    // `app` is accepted only to route a persisted pre-recipe descriptor long
+    // enough for the Project manager to migrate and rewrite it.
+    return (record.recipe ?? record.app)?.name === WORDPRESS_APP_NAME ? wordpress : node;
   };
 
   return {
@@ -77,7 +80,7 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
     defaultRuntimeKind: "native",
     startupConcurrency: 1,
     capabilities: (project) => forDescriptor(project).capabilities(project),
-    prepare: (project, app) => forDescriptor(project).prepare(project, app),
+    prepare: (project, recipe) => forDescriptor(project).prepare(project, recipe),
     start: (project) => forDescriptor(project).start(project),
     stop: async (id) => (await forProjectId(id)).stop(id),
     status: async (id) => {

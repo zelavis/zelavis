@@ -215,7 +215,6 @@ async function main() {
       PORT: String(backendPort),
       ZELAVIS_BOOTSTRAP_TOKEN: bootstrapToken,
       ZELAVIS_DATA_DIR: dataDirectory,
-      ZELAVIS_BLUEPRINTS_DIR: resolve("packages/zelavis/blueprints"),
       ZELAVIS_UI_DEV_SERVER: uiDashboardRedirectOrigin,
     }),
   ];

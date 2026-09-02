@@ -1962,7 +1962,7 @@ function resolveFabricCoreService(
 }
 
 async function resolvePlatformCoreService(
-  appServices: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
+  projectRecipes: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
   projects?: ZelavisProjectManager,
   fabric?: FabricApi,
   systemStore?: ZelavisSystemStore,
@@ -2151,14 +2151,14 @@ async function resolvePlatformCoreService(
             : { status: 401, body: { error: "Authentication required" } },
         },
         {
-          id: "runtime.app-services.list",
+          id: "runtime.project-recipes.list",
           method: "GET",
-          path: "/app-services",
+          path: "/project-recipes",
           access: { authenticated: true },
           handler: () => ({
             status: 200,
             body: {
-              appServices: appServices
+              projectRecipes: projectRecipes
                 .filter((entry) => entry.service.kind === "app")
                 .map((entry) => ({
                   name: entry.service.name,
@@ -2309,8 +2309,8 @@ async function resolvePlatformCoreService(
               const project = await projects.create({
                 name: typeof input.name === "string" ? input.name : "",
                 ...(typeof input.id === "string" ? { id: input.id } : {}),
-                ...(typeof input.appServiceName === "string"
-                  ? { appServiceName: input.appServiceName }
+                ...(typeof input.recipeName === "string"
+                  ? { recipeName: input.recipeName }
                   : {}),
                 ...(typeof input.start === "boolean" ? { start: input.start } : {}),
               });
@@ -2710,7 +2710,7 @@ export async function zelavis(
   const projects =
     systemStore && projectRuntime
       ? await createProjectManager({
-          appServices: serviceRegistry,
+          projectRecipes: serviceRegistry,
           store: systemStore,
           runtime: projectRuntime,
           ...(deploymentBackends

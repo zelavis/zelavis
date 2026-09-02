@@ -29,12 +29,15 @@ reported as an error instead of falling back to Platform data.
 Some dashboard surfaces are intentionally outside any project:
 
 - `/zelavis` opens the Projects overview.
-- `/zelavis/marketplace` is the global Marketplace for apps, starters, templates, and server provider plugins.
+- `/zelavis/marketplace` is the global Marketplace for Project recipes
+  presented as apps and starters, plus templates and server provider plugins.
 - Global management pages cover Domains, Resources, Server, and Security.
   Server-owned backing routes currently live under `/zelavis/server/*` for
   areas such as domains, backups, and logs.
 
-The global Marketplace can install or create new projects from apps and starters. Project plugins only make sense inside a Zelavis-native project, so they belong under:
+The global Marketplace can create new Projects from Project recipes presented
+as apps and starters. Project plugins only make sense inside a Zelavis-native
+Project, so they belong under:
 
 ```txt
 /zelavis/projects/:projectId/marketplace
@@ -54,7 +57,7 @@ The project model should leave room for:
 - project grouping
 - Zelavis-native and managed app project types
 - global domains, resources, security checks, server backups, and logs
-- ready-to-install apps and starters
+- versioned Project recipes presented as ready-to-install apps and starters
 - first-party project workloads for functions, jobs, schedules, and webhooks
 - future distributed and multi-master operation without baking in single-node assumptions
 

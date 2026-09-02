@@ -40,18 +40,18 @@ const runtime = await zv.runtime();
 
 That returns the mounted runtime object with `fetch`, `dispatch`, `plain`, resolved routes, and the service map.
 
-## App-service project composition
+## Project recipe composition
 
 There is no separate `defineCoreService(...)` helper. The current in-process
-composition is internal runtime plumbing; product project templates are
-services with `kind: "app"`.
+composition is internal runtime plumbing; create-project definitions are
+Project recipes: services with `kind: "app"`.
 
 The pattern is:
 
 1. A package exposes a normal server-service factory.
 2. That factory returns a plain `ZelavisRuntimeService` object literal.
-3. An app service decides when to call that factory and include the result in a
-   created project runtime.
+3. A Project recipe decides when to call that factory and include the result in
+   a created Project runtime.
 
 For example:
 
@@ -72,8 +72,8 @@ services, but their ownership and persistence are different.
 
 Do not build new architecture around the `coreServices` option name. It is
 transitional composition internals, not the product boundary. Platform state
-belongs in the System Store; app-facing capabilities belong to app-service
-projects.
+belongs in the System Store; app-facing capabilities belong to Project
+runtimes created from recipes.
 
 ## Why this split exists
 

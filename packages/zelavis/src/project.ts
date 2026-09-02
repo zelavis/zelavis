@@ -43,7 +43,7 @@ export interface ZelavisProjectDeletionState {
 
 export type ZelavisProjectKind = string;
 
-export interface ZelavisProjectApp {
+export interface ZelavisProjectRecipeLock {
   name: string;
   title: string;
   /** Exact recipe/runtime version. Platform upgrades must never rewrite this lock. */
@@ -57,7 +57,7 @@ export interface ZelavisProjectDescriptor {
   id: string;
   name: string;
   kind: ZelavisProjectKind;
-  app: ZelavisProjectApp;
+  recipe: ZelavisProjectRecipeLock;
   /** Explicit host runtime assignment. Never infer this from live processes. */
   runtimeKind: ZelavisProjectRuntimeKind;
   /**
@@ -113,7 +113,7 @@ export interface ZelavisProjectRuntimeDriver {
   ): ZelavisProjectDriverCapabilities;
   prepare(
     project: ZelavisProjectRecord,
-    app: ZelavisProjectApp,
+    recipe: ZelavisProjectRecipeLock,
   ): Promise<void>;
   start(project: ZelavisProjectRecord): Promise<ZelavisProjectRuntimeSnapshot>;
   stop(projectId: string): Promise<ZelavisProjectRuntimeSnapshot>;
@@ -149,7 +149,7 @@ export interface ZelavisProjectGatewayAuthorityInput {
 export interface ZelavisProjectCreateInput {
   name: string;
   id?: string;
-  appServiceName?: string;
+  recipeName?: string;
   start?: boolean;
   /**
    * Project that will own this one.
@@ -243,13 +243,13 @@ export class ZelavisProjectDeletionError extends Error {
 }
 
 const PROJECTS_NAMESPACE = "projects";
-const DEFAULT_APP_SERVICE_NAME = "zelavis/app";
+const DEFAULT_PROJECT_RECIPE_NAME = "zelavis/app";
 const DEFAULT_STARTUP_CONCURRENCY = 1;
 const DEFAULT_RUNTIME_KIND: ZelavisProjectRuntimeKind = "native";
 const OWNED_PROJECTS_CLEANUP_PARTICIPANT = "owned-projects";
 const RUNTIME_DATA_CLEANUP_PARTICIPANT = "runtime-data";
-const RETIRED_OFFICIAL_APP_LOCKS = new Map([
-  ["@zelavis/app", DEFAULT_APP_SERVICE_NAME],
+const RETIRED_OFFICIAL_RECIPE_LOCKS = new Map([
+  ["@zelavis/app", DEFAULT_PROJECT_RECIPE_NAME],
 ]);
 
 function normalizeConcurrency(value: number | undefined): number {
@@ -401,12 +401,12 @@ function applySnapshot(
   };
 }
 
-function projectKindFromAppService(serviceName: string): ZelavisProjectKind {
-  if (serviceName === "zelavis/app") {
+function projectKindFromRecipe(recipeName: string): ZelavisProjectKind {
+  if (recipeName === "zelavis/app") {
     return "zelavis";
   }
 
-  return serviceName
+  return recipeName
     .replace(/^@/, "")
     .replace(/^zelavis\//, "")
     .trim()
@@ -415,24 +415,24 @@ function projectKindFromAppService(serviceName: string): ZelavisProjectKind {
     .replace(/^-+|-+$/g, "") || "generic";
 }
 
-function appTitleFromService(
+function recipeTitleFromService(
   service: Readonly<ZelavisRuntimeService<any> & { marketplace?: { title?: string } }>,
 ) {
   return service.marketplace?.title ?? service.menu?.title ?? service.name;
 }
 
-function appLockFromRegistryEntry(
+function recipeLockFromRegistryEntry(
   entry: Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>,
-): ZelavisProjectApp {
+): ZelavisProjectRecipeLock {
   if (!entry.service.version) {
     throw new ZelavisProjectValidationError(
-      `App service "${entry.service.name}" must declare an exact version.`,
+      `Project recipe "${entry.service.name}" must declare an exact version.`,
     );
   }
 
   return {
     name: entry.service.name,
-    title: appTitleFromService(entry.service),
+    title: recipeTitleFromService(entry.service),
     version: entry.service.version,
     specifier: entry.specifier ?? entry.service.name,
     runtimeKinds: normalizeRecipeRuntimeKinds(entry.service.project?.runtimeKinds),
@@ -458,37 +458,39 @@ function normalizeRecipeRuntimeKinds(
   const normalized = [...new Set((values ?? [DEFAULT_RUNTIME_KIND]).map(normalizeRuntimeKind))];
   if (normalized.length === 0) {
     throw new ZelavisProjectValidationError(
-      "An App service must support at least one Project runtime kind.",
+      "A Project recipe must support at least one Project runtime kind.",
     );
   }
   return Object.freeze(normalized);
 }
 
-function readStoredAppLock(rawProject: Record<string, unknown>): ZelavisProjectApp {
-  const rawApp = rawProject.app;
-  if (!isObjectRecord(rawApp)) {
+function readStoredRecipeLock(rawProject: Record<string, unknown>): ZelavisProjectRecipeLock {
+  // `app` was the pre-recipe field name. Reading it here is a one-time stored
+  // data migration; repaired records are immediately rewritten with `recipe`.
+  const rawRecipe = rawProject.recipe ?? rawProject.app;
+  if (!isObjectRecord(rawRecipe)) {
     throw new ZelavisProjectValidationError(
-      "Stored project record is missing its app release lock.",
+      "Stored project record is missing its Project recipe lock.",
     );
   }
 
   const fields = ["name", "title", "version", "specifier"] as const;
   for (const field of fields) {
-    if (typeof rawApp[field] !== "string" || rawApp[field].trim().length === 0) {
+    if (typeof rawRecipe[field] !== "string" || rawRecipe[field].trim().length === 0) {
       throw new ZelavisProjectValidationError(
-        `Stored project app release ${field} must be a non-empty string.`,
+        `Stored Project recipe ${field} must be a non-empty string.`,
       );
     }
   }
 
   return {
-    name: rawApp.name as string,
-    title: rawApp.title as string,
-    version: rawApp.version as string,
-    specifier: rawApp.specifier as string,
+    name: rawRecipe.name as string,
+    title: rawRecipe.title as string,
+    version: rawRecipe.version as string,
+    specifier: rawRecipe.specifier as string,
     runtimeKinds: normalizeRecipeRuntimeKinds(
-      Array.isArray(rawApp.runtimeKinds)
-        ? rawApp.runtimeKinds as ZelavisProjectRuntimeKind[]
+      Array.isArray(rawRecipe.runtimeKinds)
+        ? rawRecipe.runtimeKinds as ZelavisProjectRuntimeKind[]
         : undefined,
     ),
   };
@@ -496,12 +498,12 @@ function readStoredAppLock(rawProject: Record<string, unknown>): ZelavisProjectA
 
 export async function createProjectManager(options: {
   store: ZelavisSystemStore;
-  appServices: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[];
+  projectRecipes: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[];
   runtime: ZelavisProjectRuntimeDriver;
   resolveDefaultRuntimeKind?: () => Promise<ZelavisProjectRuntimeKind>;
   cleanupParticipants?: readonly ZelavisProjectCleanupParticipant[];
 }): Promise<ZelavisProjectManager> {
-  const { store, appServices, runtime } = options;
+  const { store, projectRecipes, runtime } = options;
   const availableRuntimeKinds = normalizeRecipeRuntimeKinds(runtime.runtimeKinds);
   const defaultRuntimeKind = normalizeRuntimeKind(
     runtime.defaultRuntimeKind ?? availableRuntimeKinds[0] ?? DEFAULT_RUNTIME_KIND,
@@ -553,8 +555,8 @@ export async function createProjectManager(options: {
     cleanupParticipantIds.add(participant.id);
   }
 
-  const appServiceMap = new Map(
-    appServices
+  const projectRecipeMap = new Map(
+    projectRecipes
       .filter((entry) => entry.service.kind === "app")
       .map((entry) => [entry.service.name, entry]),
   );
@@ -565,22 +567,22 @@ export async function createProjectManager(options: {
   } {
     const rawProject = parseStoredProject(value);
     const rawRecord = rawProject as unknown as Record<string, unknown>;
-    const storedApp = readStoredAppLock(rawRecord);
+    const storedRecipe = readStoredRecipeLock(rawRecord);
     const deletion = readStoredDeletionState(rawRecord);
     const replacementName =
-      RETIRED_OFFICIAL_APP_LOCKS.get(storedApp.name) ??
-      RETIRED_OFFICIAL_APP_LOCKS.get(storedApp.specifier);
+      RETIRED_OFFICIAL_RECIPE_LOCKS.get(storedRecipe.name) ??
+      RETIRED_OFFICIAL_RECIPE_LOCKS.get(storedRecipe.specifier);
     const replacement = replacementName
-      ? appServiceMap.get(replacementName)
+      ? projectRecipeMap.get(replacementName)
       : undefined;
-    const app = replacement
+    const recipe = replacement
       ? {
-          ...storedApp,
+          ...storedRecipe,
           name: replacement.service.name,
-          title: appTitleFromService(replacement.service),
+          title: recipeTitleFromService(replacement.service),
           specifier: replacement.specifier ?? replacement.service.name,
         }
-      : storedApp;
+      : storedRecipe;
     const storedOwner =
       typeof (rawProject as { ownerProjectId?: unknown }).ownerProjectId === "string"
         ? ((rawProject as { ownerProjectId: string }).ownerProjectId)
@@ -588,8 +590,8 @@ export async function createProjectManager(options: {
     const descriptor: ZelavisProjectDescriptor = {
       id: rawProject.id,
       name: rawProject.name,
-      kind: rawProject.kind || projectKindFromAppService(app.name),
-      app,
+      kind: rawProject.kind || projectKindFromRecipe(recipe.name),
+      recipe,
       // Ownership must survive a restart. Dropping it here would orphan every
       // owned runtime, because deletion reaches them through their owner.
       ...(storedOwner ? { ownerProjectId: storedOwner } : {}),
@@ -617,7 +619,8 @@ export async function createProjectManager(options: {
     return {
       project,
       repaired:
-        JSON.stringify(rawRecord.app) !== JSON.stringify(app) ||
+        JSON.stringify(rawRecord.recipe) !== JSON.stringify(recipe) ||
+        rawRecord.app !== undefined ||
         rawRecord.runtimeKind !== project.runtimeKind ||
         rawProject.kind !== project.kind ||
         JSON.stringify(rawRecord.capabilities) !==
@@ -897,22 +900,22 @@ export async function createProjectManager(options: {
       const name = normalizeProjectName(input.name);
       const id = normalizeProjectId(input.id ?? name);
 
-      const appServiceName = input.appServiceName?.trim() || DEFAULT_APP_SERVICE_NAME;
-      const appService = appServiceMap.get(appServiceName);
-      if (!appService) {
+      const recipeName = input.recipeName?.trim() || DEFAULT_PROJECT_RECIPE_NAME;
+      const projectRecipe = projectRecipeMap.get(recipeName);
+      if (!projectRecipe) {
         throw new ZelavisProjectValidationError(
-          `App service "${appServiceName}" was not found.`,
+          `Project recipe "${recipeName}" was not found.`,
         );
       }
-      const app = appLockFromRegistryEntry(appService);
+      const recipe = recipeLockFromRegistryEntry(projectRecipe);
       const runtimeKind = normalizeRuntimeKind(
         options.resolveDefaultRuntimeKind
           ? await options.resolveDefaultRuntimeKind()
           : defaultRuntimeKind,
       );
-      if (!app.runtimeKinds.includes(runtimeKind)) {
+      if (!recipe.runtimeKinds.includes(runtimeKind)) {
         throw new ZelavisProjectValidationError(
-          `App service "${app.name}" does not support the "${runtimeKind}" runtime. Supported runtimes: ${app.runtimeKinds.join(", ")}.`,
+          `Project recipe "${recipe.name}" does not support the "${runtimeKind}" runtime. Supported runtimes: ${recipe.runtimeKinds.join(", ")}.`,
         );
       }
       if (!availableRuntimeKinds.includes(runtimeKind)) {
@@ -955,8 +958,8 @@ export async function createProjectManager(options: {
         id,
         ...(ownerProjectId ? { ownerProjectId } : {}),
         name,
-        kind: projectKindFromAppService(app.name),
-        app,
+        kind: projectKindFromRecipe(recipe.name),
+        recipe,
         runtimeKind,
       };
       let project: ZelavisProjectRecord = {
@@ -983,7 +986,7 @@ export async function createProjectManager(options: {
       }
 
       try {
-        await runtime.prepare(project, app);
+        await runtime.prepare(project, recipe);
         project = await write({
           ...project,
           runtime: { driver: runtime.name, status: "stopped" },
@@ -1016,7 +1019,7 @@ export async function createProjectManager(options: {
       });
 
       try {
-        await runtime.prepare(project, project.app);
+        await runtime.prepare(project, project.recipe);
         return write(applySnapshot(project, await runtime.start(project)));
       } catch (error) {
         const failed = {
@@ -1066,7 +1069,7 @@ export async function createProjectManager(options: {
       });
 
       try {
-        await runtime.prepare(project, project.app);
+        await runtime.prepare(project, project.recipe);
         return write(applySnapshot(project, await runtime.start(project)));
       } catch (error) {
         const failed = {

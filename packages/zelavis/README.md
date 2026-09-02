@@ -81,9 +81,11 @@ it serves its application APIs plus `zelavis/core` runtime metadata, but no
 dashboard shell or dashboard assets. The Platform dashboard uses the project
 proxy to read that metadata and render the Zelavis App services' own menu declarations.
 
-Project boilerplates are app services. The selected app service is locked into
-the project record and owns its setup behavior, menu metadata, and app-facing
-runtime services through the shared service contract.
+Project recipes are services with `kind: "app"`; their optional Project
+metadata declares runtime compatibility. The selected recipe is locked into the Project record and
+owns its setup behavior, menu metadata, and app-facing runtime services through
+the shared service contract. A `kind: "plugin"` service extends the Platform
+without being something a Project can be created from.
 
 The built-in `zelavis/wordpress` recipe provisions a native, Dockerless
 WordPress Project. It downloads the exact WordPress release locked in the
@@ -726,4 +728,4 @@ not silently upgrade child Apps.
 
 The dashboard, project registry, Platform settings, and service registry state
 persist through the separate System Store. Zelavis App capabilities run inside
-created app-service project runtimes.
+created Project runtimes.

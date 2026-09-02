@@ -83,7 +83,14 @@ export type {
 /** Host execution family supported by a Project recipe and runtime driver. */
 export type ZelavisProjectRuntimeKind = string;
 
-/** Project-specific recipe metadata locked when a Project is created. */
+/**
+ * Project-specific recipe metadata locked when a Project is created.
+ *
+ * Services with `kind: "app"` are Project recipes. This field carries their
+ * Project-specific runtime compatibility metadata. A `plugin` extends the
+ * Platform without being something a Project can be created from, so it never
+ * becomes a create-project option.
+ */
 export interface ZelavisProjectRecipeDefinition {
   readonly runtimeKinds: readonly ZelavisProjectRuntimeKind[];
 }
@@ -306,6 +313,9 @@ export function resolveServiceModule<TContext = unknown>(
       authenticators: raw.authenticators as any,
       kind: (raw.kind as string) ?? manifest?.zelavis?.kind,
       version: (raw.version as string) ?? manifest?.version,
+      marketplace: raw.marketplace as any,
+      project: raw.project as any,
+      capabilities: raw.capabilities as any,
       app: raw.app as any,
       setup: typeof raw.setup === "function" ? (raw.setup as any) : undefined,
       runtimeServices: raw.runtimeServices as any,

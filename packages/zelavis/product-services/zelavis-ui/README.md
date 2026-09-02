@@ -103,6 +103,7 @@ trees or framework-specific route shells.
 Key route scopes:
 
 - `/zelavis` for Projects
-- `/zelavis/marketplace` for global apps, starters, and server provider plugins
+- `/zelavis/marketplace` for Project recipes presented as apps and starters,
+  plus templates and server provider plugins
 - `/zelavis/projects/:projectId/*` for project-local pages
 - `/zelavis/server/*` for domains, backups, logs, and server operations

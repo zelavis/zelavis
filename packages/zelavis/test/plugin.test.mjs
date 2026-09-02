@@ -314,6 +314,24 @@ test("resolveServiceModule accepts named or default ESM exports", () => {
   assert.equal(byDefault.name, "@example/default-service");
 });
 
+test("resolveServiceModule preserves Project recipe metadata", () => {
+  const recipe = resolveServiceModule({
+    default: {
+      name: "@example/project-recipe",
+      kind: "app",
+      version: "1.2.3",
+      project: { runtimeKinds: ["native"] },
+      marketplace: { title: "Example App" },
+      capabilities: ["app:project"],
+    },
+  });
+
+  assert.equal(recipe.kind, "app");
+  assert.deepEqual(recipe.project, { runtimeKinds: ["native"] });
+  assert.deepEqual(recipe.marketplace, { title: "Example App" });
+  assert.deepEqual(recipe.capabilities, ["app:project"]);
+});
+
 test("removeServiceFromRegistry removes entries by name", () => {
   const registry = createServiceRegistry([
     {

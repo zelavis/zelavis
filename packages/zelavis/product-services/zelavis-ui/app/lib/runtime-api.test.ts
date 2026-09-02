@@ -36,11 +36,34 @@ test("getResolvedDashboardPreferences falls back to an empty object when prefere
   expect(getResolvedDashboardPreferences({})).toEqual({});
 });
 
-test("normalizeRuntimeProject recovers a missing app lock for project cards", () => {
+test("normalizeRuntimeProject preserves a Project recipe lock", () => {
   const project = normalizeRuntimeProject({
     id: "vibe",
     name: "Vibe",
     kind: "zelavis",
+    runtimeKind: "native",
+    recipe: {
+      name: "zelavis/app",
+      title: "Zelavis App",
+      specifier: "zelavis/app",
+      runtimeKinds: ["native"],
+    },
+    capabilities: {
+      movable: false,
+      liveMigration: false,
+      secureIsolation: false,
+      resourceLimits: false,
+      persistentFilesystem: true,
+      statelessRuntimeReplicas: false,
+      managedStorage: true,
+      managedDatabase: true,
+      databaseReplication: false,
+      tenantPlacement: false,
+      databaseSharding: false,
+      runtimeOwnership: "platform-process",
+      survivesControlPlaneRestart: false,
+      description: "Test runtime",
+    },
     desiredState: "running",
     runtime: {
       driver: "node",
@@ -51,7 +74,7 @@ test("normalizeRuntimeProject recovers a missing app lock for project cards", ()
     updatedAt: "2026-08-23T00:00:00.000Z",
   } as RuntimeProject);
 
-  expect(project.app).toEqual({
+  expect(project.recipe).toEqual({
     name: "zelavis/app",
     title: "Zelavis App",
     specifier: "zelavis/app",
