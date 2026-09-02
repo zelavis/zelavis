@@ -16,12 +16,42 @@ async function runtimeServices() {
 test("every composed service reports the kind it is", async () => {
   const services = await runtimeServices();
 
-  // `kind` describes what a service is, and every service the Platform
-  // composes extends it — that is what `plugin` means. Whether the operator
-  // composed it is `scope`, a different question and a different field.
+  // `kind` describes what a service is. Everything the Platform composes
+  // extends it — that is what `plugin` means — except the dashboard, which is
+  // the installation's default face rather than an extension of it. Whether
+  // the operator composed a service is `scope`, a different question and a
+  // different field.
   for (const service of services) {
-    assert.equal(service.kind, "plugin", `${service.name} kind`);
+    assert.equal(
+      service.kind,
+      service.name === "@zelavis/ui" ? "frontend" : "plugin",
+      `${service.name} kind`,
+    );
   }
+});
+
+test("the dashboard's manifest declares the frontend it is", async () => {
+  const manifest = JSON.parse(
+    await readFile(
+      new URL("../product-services/zelavis-ui/package.json", import.meta.url),
+      "utf8",
+    ),
+  );
+
+  assert.equal(manifest.zelavis.kind, "frontend");
+  // Declared truthfully rather than as a label: the manifest names the bundle
+  // this package actually ships, so validating it does not throw.
+  assert.deepEqual(manifest.zelavis.frontend, {
+    runtime: "static",
+    bundle: "build/client",
+    mode: "spa",
+  });
+  assert.ok(manifest.files.includes(manifest.zelavis.frontend.bundle));
+
+  assert.deepEqual(
+    validatePluginPackageManifest(manifest).zelavis.frontend,
+    manifest.zelavis.frontend,
+  );
 });
 
 test("the marketplace's declared kind is the one it reports", async () => {

@@ -7,7 +7,12 @@
   "author": "Ivan Jeremic",
   "type": "module",
   "zelavis": {
-    "kind": "plugin"
+    "kind": "frontend",
+    "frontend": {
+      "runtime": "static",
+      "bundle": "build/client",
+      "mode": "spa"
+    }
   },
   "main": "./dist/dashboard-service.js",
   "types": "./dist/dashboard-service.d.ts",
