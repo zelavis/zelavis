@@ -22,7 +22,10 @@ import {
   acquirePackage,
   type PackageEntry,
 } from "./_package-acquisition.js";
-import type { ZelavisServicePackageAcquireInput } from "../index.js";
+import type {
+  ZelavisServicePackageAcquireInput,
+  ZelavisServiceRegistryModuleEntry,
+} from "../index.js";
 import type {
   ZelavisGitSourcePolicy,
   ZelavisHttpsSourcePolicy,
@@ -452,6 +455,15 @@ export interface LocalRuntimeServiceSourcePolicy {
 
 export interface LocalRuntimeServiceOptions {
   directory?: string;
+  /**
+   * Further directories whose contents count as host-managed code.
+   *
+   * The product-services folder is one: an operator putting a package there is
+   * the same deliberate act as installing one, so it is not gated behind the
+   * filesystem source policy meant for arbitrary developer paths. It is still
+   * an explicit list — nothing outside these roots is trusted.
+   */
+  managedDirectories?: readonly string[];
   sources?: LocalRuntimeServiceSourcePolicy;
   /** Registry used when a reference does not name one. */
   defaultRegistry?: string;
@@ -665,6 +677,12 @@ export function createLocalRuntimeServiceImporter(
   options: LocalRuntimeServiceOptions = {},
 ): NonNullable<ZelavisServiceLoadOptions["importer"]> {
   const serviceDirectory = resolve(options.directory ?? ".zelavis/services");
+  const managedDirectories = [
+    serviceDirectory,
+    ...(options.managedDirectories ?? []).map((directory) => resolve(directory)),
+  ];
+  const isManaged = (path: string) =>
+    managedDirectories.some((directory) => isManagedServicePath(path, directory));
   const sources = resolveSourcePolicy(options);
 
   const refuse = (kind: string, setting: string): never => {
@@ -699,14 +717,14 @@ export function createLocalRuntimeServiceImporter(
     // filesystem policy for it would gate the normal service-install flow
     // behind a setting meant for development convenience.
     if (isFileSpecifier(specifier)) {
-      if (!sources.filesystem && !isManagedServicePath(fileURLToPath(specifier), serviceDirectory)) {
+      if (!sources.filesystem && !isManaged(fileURLToPath(specifier))) {
         refuse("file:", "filesystem");
       }
       return import(specifier);
     }
 
     if (looksLikePathSpecifier(specifier)) {
-      if (!sources.filesystem && !isManagedServicePath(specifier, serviceDirectory)) {
+      if (!sources.filesystem && !isManaged(specifier)) {
         refuse("Filesystem path", "filesystem");
       }
       return importFilePath(specifier);
@@ -750,4 +768,123 @@ export function createLocalRuntimeServiceManifestResolver(): ZelavisServiceManif
       return undefined;
     }
   };
+}
+
+// ---------------------------------------------------------------------------
+// product-services discovery
+// ---------------------------------------------------------------------------
+
+/** Folder name operators drop service packages into, under the data directory. */
+export const PRODUCT_SERVICES_DIRECTORY = "product-services";
+
+export interface ProductServiceDiscoveryOptions {
+  /** Absolute path of the folder to scan. */
+  directory: string;
+  /**
+   * Called once per package that cannot be used, with the reason. Discovery
+   * never throws for a bad package: one malformed folder must not stop a
+   * Platform from booting, or an operator could brick their installation by
+   * dropping in a broken download.
+   */
+  onSkipped?: (name: string, reason: string) => void;
+}
+
+async function readDirectoryEntries(directory: string): Promise<string[]> {
+  try {
+    const { readdir } = await import("node:fs/promises");
+    return (await readdir(directory, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
+      .map((entry) => entry.name)
+      .filter((name) => !name.startsWith(".") && name !== "node_modules");
+  } catch {
+    // A missing folder is the normal case for an installation nobody has added
+    // anything to, not an error.
+    return [];
+  }
+}
+
+/**
+ * Lists the package directories in a product-services folder.
+ *
+ * Scoped packages live one level deeper, exactly as they do in node_modules,
+ * so `@acme/theme` is the directory `@acme/theme` rather than a flattened name.
+ */
+async function listProductServicePackages(directory: string): Promise<string[]> {
+  const packages: string[] = [];
+  for (const name of await readDirectoryEntries(directory)) {
+    if (name.startsWith("@")) {
+      for (const scoped of await readDirectoryEntries(join(directory, name))) {
+        packages.push(join(name, scoped));
+      }
+      continue;
+    }
+    packages.push(name);
+  }
+  return packages.sort();
+}
+
+/**
+ * Discovers installable services from a folder on this server.
+ *
+ * This is the WordPress `wp-content/plugins` shape: an operator drops a package
+ * in, restarts, and the Platform picks it up. Code found here runs with
+ * Platform authority — which is inherent to a folder on the operator's own
+ * server, and the reason discovery refuses anything that resolves outside its
+ * own package directory rather than trusting the manifest's own paths.
+ */
+export async function discoverProductServices(
+  options: ProductServiceDiscoveryOptions,
+): Promise<ZelavisServiceRegistryModuleEntry[]> {
+  const root = resolve(options.directory);
+  const skip = (name: string, reason: string) => options.onSkipped?.(name, reason);
+  const discovered: ZelavisServiceRegistryModuleEntry[] = [];
+
+  for (const packageName of await listProductServicePackages(root)) {
+    const packageDirectory = join(root, packageName);
+    let manifest;
+    try {
+      manifest = validatePluginPackageManifest(
+        JSON.parse(await readFile(join(packageDirectory, "package.json"), "utf8")),
+      );
+    } catch (error) {
+      skip(packageName, error instanceof Error ? error.message : String(error));
+      continue;
+    }
+
+    let entryPath: string;
+    try {
+      entryPath = resolve(packageDirectory, resolvePackageExportsEntry(manifest.exports));
+    } catch (error) {
+      skip(packageName, error instanceof Error ? error.message : String(error));
+      continue;
+    }
+
+    // The manifest is data supplied by whoever wrote the package, so its
+    // exports path is not allowed to reach out of the package it belongs to.
+    // Without this an `exports` of "../../../etc/something" would make the
+    // Platform import a file the operator never put in this folder.
+    if (!isManagedServicePath(entryPath, packageDirectory)) {
+      skip(packageName, 'its "exports" entry resolves outside the package directory.');
+      continue;
+    }
+    if (!existsSync(entryPath)) {
+      skip(packageName, `its entry file ${relative(root, entryPath)} does not exist.`);
+      continue;
+    }
+
+    const entryUrl = pathToFileURL(entryPath).href;
+    discovered.push({
+      specifier: entryUrl,
+      status: "installed",
+      source: "community",
+      // `exports` is rewritten to the entry this scan actually resolved and
+      // containment-checked. Plugin loading imports the manifest's `exports`
+      // string verbatim, so leaving it relative would import "./index.js"
+      // against the Platform's working directory rather than against the
+      // package the file came from.
+      manifest: { ...manifest, exports: entryUrl },
+    });
+  }
+
+  return discovered;
 }
