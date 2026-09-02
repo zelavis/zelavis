@@ -66,6 +66,9 @@ jobs:
       - name: Build runtime packages for e2e
         run: |
           pnpm --filter zelavis build:runtime
+          # The Platform no longer builds the dashboard for you — it does not
+          # depend on it. Anything composing a frontend builds it explicitly.
+          pnpm --filter @zelavis/ui build
           pnpm --filter @zelavis/app-auth-email-password build
 
       # The e2e Platform is created empty and destroyed with the runner, so
