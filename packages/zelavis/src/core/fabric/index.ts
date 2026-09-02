@@ -118,6 +118,18 @@ export interface FabricProjectPlacementRequest {
   readonly resources?: FabricProjectReplicaResources;
   readonly allowedNodeIds?: readonly string[];
   readonly requiredLabels?: Readonly<Record<string, string>>;
+  /**
+   * Project that owns this one, if any.
+   *
+   * An owned Project exists to serve its owner — a Project's own frontend, for
+   * instance — so the two are one placement group: the owned Project is placed
+   * only on nodes its owner occupies, and moving the owner moves it too.
+   * Planning them independently would let a Project's frontend land on a
+   * different node than the Project it fronts.
+   *
+   * This is the Project Cell placement-group rule applied one level down.
+   */
+  readonly ownerProjectId?: string;
 }
 
 export interface FabricPlannedProjectReplica {
@@ -130,7 +142,11 @@ export interface FabricPlannedProjectReplica {
 
 export type FabricUnplacedReplicaReason =
   | "no-eligible-node"
-  | "insufficient-capacity";
+  | "insufficient-capacity"
+  /** Its owner could not be placed, so there is no node it may share. */
+  | "owner-unplaced"
+  /** Ownership formed a cycle, so no member of it has an anchor. */
+  | "owner-cycle";
 
 export interface FabricUnplacedProjectReplica {
   readonly identity: ZelavisProjectWorkloadIdentity;
@@ -436,11 +452,43 @@ export function planFabricProjectPlacements(
   const replicas: FabricPlannedProjectReplica[] = [];
   const unplaced: FabricUnplacedProjectReplica[] = [];
 
-  for (const request of [...requests].sort((left, right) =>
-    left.identity.workloadId.localeCompare(right.identity.workloadId),
-  )) {
+  // Nodes each Project ended up on, so an owned Project can be confined to its
+  // owner's. Recorded as it goes, which is why owners must be planned first.
+  const placedNodes = new Map<string, Set<string>>();
+
+  const byId = new Map(
+    requests.map((request) => [request.identity.workloadId, request]),
+  );
+
+  for (const request of orderRequestsByOwnership(requests)) {
     const projectId = request.identity.workloadId;
-    const eligible = sortedNodes.filter((node) => eligibleNode(node, request));
+
+    // An owner named but not present in this plan is not an error: the caller
+    // may be planning a subset. It is only unsatisfiable when the owner is
+    // here and could not be placed.
+    const ownerId = request.ownerProjectId;
+    const ownerFailure = ownerId
+      ? ownershipFailure(ownerId, byId, placedNodes)
+      : undefined;
+
+    if (ownerFailure) {
+      for (let replicaIndex = 0; replicaIndex < desiredReplicaCount(request); replicaIndex += 1) {
+        unplaced.push({
+          identity: request.identity,
+          projectKind: request.projectKind,
+          replicaId: `${projectId}:runtime:${replicaIndex + 1}`,
+          replicaIndex,
+          reason: ownerFailure,
+        });
+      }
+      continue;
+    }
+
+    const ownerNodes = ownerId ? placedNodes.get(ownerId) : undefined;
+    const eligible = sortedNodes.filter(
+      (node) =>
+        eligibleNode(node, request) && (!ownerNodes || ownerNodes.has(node.id)),
+    );
     const resources = request.resources ?? {};
     const count = desiredReplicaCount(request);
 
@@ -475,6 +523,13 @@ export function planFabricProjectPlacements(
         projectId,
         (selectedUsage.projects.get(projectId) ?? 0) + 1,
       );
+      let nodes = placedNodes.get(projectId);
+      if (!nodes) {
+        nodes = new Set();
+        placedNodes.set(projectId, nodes);
+      }
+      nodes.add(selected.id);
+
       replicas.push({
         identity: request.identity,
         projectKind: request.projectKind,
@@ -486,6 +541,85 @@ export function planFabricProjectPlacements(
   }
 
   return { replicas, unplaced };
+}
+
+/**
+ * Why an owned Project cannot be placed, or undefined when it can.
+ *
+ * An owner that is not part of this plan is a refusal, not a free pass. The
+ * planner would have no idea which nodes the owner occupies, so placing the
+ * owned Project anywhere is the guess this rule exists to prevent. A caller
+ * placing incrementally should either include the owner's request or pin the
+ * owned Project with `allowedNodeIds`.
+ */
+function ownershipFailure(
+  owner: string,
+  byId: ReadonlyMap<string, FabricProjectPlacementRequest>,
+  placedNodes: ReadonlyMap<string, ReadonlySet<string>>,
+): FabricUnplacedReplicaReason | undefined {
+  if (hasOwnershipCycle(owner, byId)) return "owner-cycle";
+  return placedNodes.get(owner)?.size ? undefined : "owner-unplaced";
+}
+
+/**
+ * Orders requests so an owner is planned before anything it owns.
+ *
+ * Ownership is expected to be one level deep, but a chain costs nothing to
+ * support and a cycle must not hang the planner, so this is a depth-first walk
+ * with an explicit visiting set rather than a single pass. Within a level the
+ * original workload-id ordering is preserved, which is what keeps planning
+ * deterministic.
+ */
+function orderRequestsByOwnership(
+  requests: readonly FabricProjectPlacementRequest[],
+): readonly FabricProjectPlacementRequest[] {
+  const byId = new Map(
+    requests.map((request) => [request.identity.workloadId, request]),
+  );
+  const sorted = [...requests].sort((left, right) =>
+    left.identity.workloadId.localeCompare(right.identity.workloadId),
+  );
+
+  const ordered: FabricProjectPlacementRequest[] = [];
+  const done = new Set<string>();
+  const visiting = new Set<string>();
+
+  const visit = (request: FabricProjectPlacementRequest) => {
+    const id = request.identity.workloadId;
+    if (done.has(id) || visiting.has(id)) return;
+
+    visiting.add(id);
+    const owner = request.ownerProjectId
+      ? byId.get(request.ownerProjectId)
+      : undefined;
+    if (owner) visit(owner);
+    visiting.delete(id);
+
+    if (!done.has(id)) {
+      done.add(id);
+      ordered.push(request);
+    }
+  };
+
+  for (const request of sorted) visit(request);
+  return ordered;
+}
+
+/** Whether following ownership from `projectId` returns to where it started. */
+function hasOwnershipCycle(
+  projectId: string,
+  byId: ReadonlyMap<string, FabricProjectPlacementRequest>,
+): boolean {
+  const seen = new Set<string>();
+  let current: string | undefined = projectId;
+
+  while (current) {
+    if (seen.has(current)) return true;
+    seen.add(current);
+    current = byId.get(current)?.ownerProjectId;
+  }
+
+  return false;
 }
 
 function fabricStatus(
