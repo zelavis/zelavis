@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { runCli, type ZelavisCliServeOptions } from "./cli/index.js";
 import { nodeAdapter } from "./adapters/node.js";
+import type { AuthMethodPlugin } from "./app/auth/index.js";
 import { Zelavis, type ZelavisPlatformFrontendFactory } from "./index.js";
 import { closeNodeServer, createNodeServer } from "./runtimes/node.js";
 
@@ -21,6 +22,7 @@ async function readVersion(): Promise<string> {
  * path says no frontend is installed, which is the whole point of the split.
  */
 const BUNDLED_DASHBOARD = "@zelavis/ui/frontend";
+const BUNDLED_AUTH_PROVIDER = "@zelavis/app-auth-email-password";
 
 async function resolveBundledFrontend(): Promise<
   ZelavisPlatformFrontendFactory | undefined
@@ -41,11 +43,40 @@ async function resolveBundledFrontend(): Promise<
   }
 }
 
+/**
+ * Loads the credential provider this distribution ships with.
+ *
+ * The Platform library stays identity-neutral: it owns the provider registry
+ * and the first-owner endpoint, but registers nothing itself. That left the
+ * shipped binary with no providers at all, so a fresh install reported
+ * `providers: []` and could never create its first owner. The product decision
+ * lives here, next to the dashboard one — ship an email-and-password provider,
+ * and keep working when an operator removes it in favour of their own.
+ */
+async function resolveBundledAuthProvider(): Promise<AuthMethodPlugin | undefined> {
+  try {
+    // Held in a variable for the same reason as the dashboard specifier: the
+    // provider is optional, and a static import would make the Platform fail
+    // to build without it.
+    const loaded = (await import(BUNDLED_AUTH_PROVIDER)) as {
+      emailPasswordService?: () => { service?: AuthMethodPlugin };
+    };
+    if (typeof loaded.emailPasswordService !== "function") {
+      return undefined;
+    }
+    return loaded.emailPasswordService().service;
+  } catch {
+    return undefined;
+  }
+}
+
 async function serve(options: ZelavisCliServeOptions): Promise<void> {
   const dataDirectory = resolve(options.dataDirectory ?? ".zelavis");
   const frontend = await resolveBundledFrontend();
+  const authProvider = await resolveBundledAuthProvider();
   const zv = new Zelavis({
     ...(frontend ? { frontend } : {}),
+    ...(authProvider ? { authMethods: [authProvider] } : {}),
     adapter: nodeAdapter({
       dataDirectory,
     }),

@@ -162,6 +162,9 @@ importers:
         specifier: ^5.9.0
         version: 5.9.3
     optionalDependencies:
+      '@zelavis/app-auth-email-password':
+        specifier: workspace:*
+        version: link:../../plugins/auth-email-password
       '@zelavis/ui':
         specifier: workspace:*
         version: link:product-services/zelavis-ui

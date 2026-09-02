@@ -11,5 +11,6 @@
  * separate package would publish an artifact with one consumer and a version
  * that must always match this one.
  */
+export * from "./bootstrap.js";
 export * from "./commands.js";
 export * from "./services.js";

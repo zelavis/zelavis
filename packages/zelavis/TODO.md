@@ -203,6 +203,13 @@ an exported type is never mistaken for an operational distributed feature.
   only matching-origin browser requests receive session cookies, cookie
   mutations require a same-origin `Origin`, and critical Project, Assistant,
   service-mutation, and settings-mutation endpoints declare core permissions.
+- [x] A default installation can actually be adopted. The distribution loads
+  `@zelavis/app-auth-email-password` the way it loads the dashboard, so the
+  first-owner endpoint has something to enroll against instead of reporting no
+  providers, and embedding hosts supply their own through the public
+  `authMethods` option. `zelavis bootstrap` claims that owner from the command
+  line and `bootstrap status` reports whether an owner, a token, and a provider
+  are in place. The password is never accepted as an argument.
 - [x] Retired the package-local auth plugin folder and the generic
   `childServices`/`extends` graph. Auth and payment providers are ordinary
   workspace plugins discovered by capability and registered through explicit
