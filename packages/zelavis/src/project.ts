@@ -600,11 +600,32 @@ export async function createProjectManager(options: {
     cleanupParticipantIds.add(participant.id);
   }
 
+  // Frontends are recipes too. A frontend is a Project like any other — it
+  // gets a directory, a lifecycle, logs, and a routed target — and differs only
+  // in what it runs and in being owned by the Project it fronts. Excluding it
+  // here is what made an installed frontend package unselectable.
   const projectRecipeMap = new Map(
     projectRecipes
-      .filter((entry) => entry.service.kind === "app")
+      .filter(
+        (entry) =>
+          entry.service.kind === "app" || entry.service.kind === "frontend",
+      )
       .map((entry) => [entry.service.name, entry]),
   );
+
+  /**
+   * The Project kind a recipe produces.
+   *
+   * A frontend recipe always produces a `frontend` Project, whatever the
+   * package is called: the runtime driver routes on that kind to decide whether
+   * to run a frontend process, so deriving it from the package name would send
+   * `@acme/theme` to the Zelavis runner.
+   */
+  function projectKindForRecipe(recipeName: string): ZelavisProjectKind {
+    return projectRecipeMap.get(recipeName)?.service.kind === "frontend"
+      ? "frontend"
+      : projectKindFromRecipe(recipeName);
+  }
 
   function normalizeStoredProject(value: ZelavisSystemStoreValue): {
     project: ZelavisProjectRecord;
@@ -635,7 +656,7 @@ export async function createProjectManager(options: {
     const descriptor: ZelavisProjectDescriptor = {
       id: rawProject.id,
       name: rawProject.name,
-      kind: rawProject.kind || projectKindFromRecipe(recipe.name),
+      kind: rawProject.kind || projectKindForRecipe(recipe.name),
       recipe,
       // Ownership must survive a restart. Dropping it here would orphan every
       // owned runtime, because deletion reaches them through their owner.
@@ -1056,7 +1077,7 @@ export async function createProjectManager(options: {
         id,
         ...(ownerProjectId ? { ownerProjectId } : {}),
         name,
-        kind: projectKindFromRecipe(recipe.name),
+        kind: projectKindForRecipe(recipe.name),
         recipe,
         runtimeKind,
       };

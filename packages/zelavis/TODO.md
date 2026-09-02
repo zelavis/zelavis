@@ -286,10 +286,14 @@ an exported type is never mistaken for an operational distributed feature.
   service page frame because a service has no way to render natively yet; the
   web-components library wrapping the Zelavis design system is what closes
   that gap.
-- [ ] Execute `server` frontends. The contract accepts them and refuses to
-  install them, because they need a supervised process and a routed target
-  through the Project runtime and Gateway. Reuse the Agent/backend path rather
-  than adding a second process supervisor.
+- [x] Execute `server` frontends. A frontend package installs as an ordinary
+  service, is selectable as a Project recipe, and produces a Project of kind
+  `frontend` whatever the package is called — the runtime driver routes on that
+  kind, so deriving it from the package name would send `@acme/theme` to the
+  Zelavis runner. The Node adapter now supplies the frontend driver and a
+  resolver that finds an installed package by walking up from its locked
+  specifier, bounded by the directory packages are installed into. A frontend
+  that was never installed is refused rather than guessed at.
 - [x] Acquire packages from npm and from explicit archive hosts. The trust
   policy lives with the existing service source settings and defaults to
   acquiring nothing: registries and scopes are matched exactly, the tarball URL

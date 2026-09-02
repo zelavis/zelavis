@@ -241,6 +241,23 @@ export function createServerFrontendProjectRuntime(
         `${JSON.stringify(value, null, 2)}\n`,
         { encoding: "utf8", mode: 0o600 },
       );
+      // The Project record too, in the same shape the Zelavis runner writes.
+      // The local runtime routes `stop`, `logs`, and `destroy` by reading this
+      // file back — those take a Project id, not a descriptor — so a frontend
+      // that only wrote `frontend.json` could be started and never stopped.
+      await writeFile(
+        join(directory, "project.json"),
+        `${JSON.stringify(
+          {
+            ...project,
+            recipe,
+            runtime: { driver: "server-frontend", capabilities },
+          },
+          null,
+          2,
+        )}\n`,
+        { encoding: "utf8", mode: 0o600 },
+      );
     },
 
     async start(project) {
