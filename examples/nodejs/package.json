@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@zelavis/app-auth-email-password": "workspace:*",
-    "zelavis": "workspace:*"
+    "zelavis": "workspace:*",
+    "@zelavis/ui": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.9.3",

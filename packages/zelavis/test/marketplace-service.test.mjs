@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { zelavis } from "../dist/index.js";
+import { zelavisUiFrontend } from "@zelavis/ui/frontend";
 
 const PLATFORM_OWNER_CONTEXT = {
   principal: { id: "test-owner", type: "user", roles: ["owner"], permissions: ["*"] },
@@ -10,7 +11,7 @@ const PLATFORM_OWNER_CONTEXT = {
 const MARKETPLACE = "@zelavis/marketplace";
 
 async function bootWithMarketplace() {
-  const runtime = await zelavis({});
+  const runtime = await zelavis({ frontend: zelavisUiFrontend });
   const response = await runtime.fetch(
     new Request("http://localhost/zelavis/api/v1/runtime/config"),
   );

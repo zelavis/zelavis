@@ -4,9 +4,10 @@ import test from "node:test";
 
 import { zelavis } from "../dist/index.js";
 import { validatePluginPackageManifest } from "../dist/core/service/manifest.js";
+import { zelavisUiFrontend } from "@zelavis/ui/frontend";
 
 async function runtimeServices() {
-  const runtime = await zelavis({});
+  const runtime = await zelavis({ frontend: zelavisUiFrontend });
   const response = await runtime.fetch(
     new Request("http://localhost/zelavis/api/v1/runtime/config"),
   );

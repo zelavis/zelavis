@@ -6,6 +6,7 @@ import {
 } from "../dist/core/index.js";
 import { createDatabase, defineDatabaseService } from "../dist/app/db/index.js";
 import { zelavis } from "../dist/index.js";
+import { zelavisUiFrontend } from "@zelavis/ui/frontend";
 
 test("generateOpenApiSpec produces valid OpenAPI 3.1 skeleton for empty routes", () => {
   const spec = generateOpenApiSpec([], {
@@ -178,6 +179,7 @@ test("database service generates complete OpenAPI spec with typed operations", a
 
 test("Zelavis runtime exposes /zelavis/api/v1/runtime/openapi.json", async () => {
   const app = await zelavis({
+    frontend: zelavisUiFrontend,
     coreServices: {
       dashboard: false,
     },

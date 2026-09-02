@@ -9,6 +9,7 @@ import {
   zelavis,
 } from "../dist/index.js";
 import { createServiceRuntime } from "../dist/core/index.js";
+import { zelavisUiFrontend } from "@zelavis/ui/frontend";
 
 // ---------- DNS-TXT verifier ----------
 
@@ -338,6 +339,7 @@ test("HTTP-01 verifier successfully verifies through the built-in challenge serv
   const binding = await addDomainBinding(store, { host: "acme.com" });
 
   const runtime = await zelavis({
+    frontend: zelavisUiFrontend,
     coreServices: { dashboard: false, auth: false, database: false },
     domainBindings: store,
   });

@@ -32,11 +32,11 @@ import {
   type ZelavisRuntimeService,
 } from "./core/index.js";
 import {
-  createZelavisDashboardBundleStore,
-  createZelavisDashboardService,
-  defaultZelavisDashboardClientRoutes,
-} from "@zelavis/ui/service";
-import { zelavisServicePageStylesheet } from "@zelavis/ui/service-page-styles";
+  createMissingPlatformFrontendService,
+  ZELAVIS_BASELINE_SERVICE_PAGE_STYLESHEET,
+  type ZelavisPlatformFrontend,
+  type ZelavisPlatformFrontendFactory,
+} from "./platform/frontend-host.js";
 import { createZelavisMarketplaceService } from "./platform/marketplace.js";
 import { createZelavisCoreService } from "./platform/core-service.js";
 import { createProjectGatewayRoutes } from "./platform/project-gateway.js";
@@ -230,6 +230,12 @@ export type ZelavisDashboardCoreServiceInput =
   | boolean
   | ZelavisDashboardCoreServiceOptions;
 
+export type {
+  ZelavisPlatformFrontend,
+  ZelavisPlatformFrontendContext,
+  ZelavisPlatformFrontendFactory,
+} from "./platform/frontend-host.js";
+
 
 
 export type ZelavisWebsiteCoreServiceInput = boolean;
@@ -308,6 +314,14 @@ export interface ZelavisServerOptions {
    * return 404 until a store is configured.
    */
   bundleStore?: BundleStore;
+  /**
+   * Frontend serving this installation's root path.
+   *
+   * The Platform names no frontend of its own. Supply one — `@zelavis/ui` is
+   * the default product choice — or leave it out: the API is identical either
+   * way, and the root path says no frontend is installed rather than 404ing.
+   */
+  frontend?: ZelavisPlatformFrontendFactory;
   /**
    * Domain bindings store. Extension service apps only get host-bound
    * routing for hosts with verified bindings owned by their project or
@@ -482,6 +496,13 @@ export interface ZelavisServiceActivationController {
 export interface ZelavisOptions {
   rootPath?: string;
   api?: ZelavisApiOptions;
+  /**
+   * Frontend serving this installation's root path.
+   *
+   * Omit it and the API is unchanged while the root path says no frontend is
+   * installed. The Platform names none of its own.
+   */
+  frontend?: ZelavisPlatformFrontendFactory;
   assistant?: false | ZelavisAssistantResponder;
   onError?: ZelavisServerErrorHandler;
   adapter?: ZelavisAdapter;
@@ -1109,6 +1130,12 @@ async function resolveRuntimeManagementCore(
     websiteEnabled: boolean;
     bundleStore?: BundleStore;
     platform?: ZelavisServiceSetupPlatformContext;
+    /** Paths the installed frontend resolves client-side, if any. */
+    frontendClientRoutes?: readonly string[];
+    /** Design tokens the installed frontend supplies for service pages. */
+    servicePageStylesheet?: string;
+    /** Name of the service serving the root path, whichever frontend that is. */
+    frontendServiceName?: string;
   },
 ): Promise<ZelavisRuntimeManagementCore> {
   const dashboardOption = option ?? true;
@@ -1130,7 +1157,7 @@ async function resolveRuntimeManagementCore(
     createMemoryDashboardSettingsStore();
   const clientRoutes = [
     ...new Set(
-      (options.clientRoutes ?? defaultZelavisDashboardClientRoutes)
+      (options.clientRoutes ?? context.frontendClientRoutes ?? [])
         .map((route) => normalizePath(route, "/"))
         .filter((route) => route !== "/"),
     ),
@@ -1330,7 +1357,7 @@ async function resolveRuntimeManagementCore(
         // runtime, which is what "system" means here.
         scope: "system" as const,
         core:
-          service.name === "@zelavis/ui" ||
+          service.name === context.frontendServiceName ||
           service.name === "zelavis/platform" ||
           service.name === "@zelavis/marketplace" ||
           service.name === "zelavis/fabric" ||
@@ -1342,7 +1369,7 @@ async function resolveRuntimeManagementCore(
         apiPath:
           service.name === "@zelavis/frontend"
             ? "/"
-            : service.name === "@zelavis/ui"
+            : service.name === context.frontendServiceName
               ? rootPath
               : joinPathParts(
                   rootPath,
@@ -1594,7 +1621,9 @@ async function resolveRuntimeManagementCore(
               "content-type": "text/css; charset=utf-8",
               "cache-control": "no-cache",
             }),
-            body: zelavisServicePageStylesheet,
+            body:
+              context.servicePageStylesheet ??
+              ZELAVIS_BASELINE_SERVICE_PAGE_STYLESHEET,
           }),
         },
         {
@@ -1825,28 +1854,40 @@ async function resolveRuntimeManagementCore(
   };
 }
 
-async function resolveDashboardCoreService(
+/**
+ * Resolves the frontend serving this installation's root path.
+ *
+ * The Platform names no frontend. A caller supplies one — `@zelavis/ui` is the
+ * default product choice, a theme from the marketplace is another — and an
+ * installation with none is a supported state rather than a broken one: the
+ * API is unaffected, and the root path explains itself.
+ */
+async function resolvePlatformFrontend(
   option: ZelavisDashboardCoreServiceInput | undefined,
+  frontend: ZelavisPlatformFrontendFactory | undefined,
   context: {
     rootPath: string;
     createRuntimeConfig: () => Promise<unknown>;
   },
-): Promise<ZelavisRuntimeService<any> | undefined> {
+): Promise<ZelavisPlatformFrontend | undefined> {
   const dashboardOption = option ?? true;
-  if (dashboardOption === false) {
+  if (dashboardOption === false || !frontend) {
     return undefined;
   }
 
   const options = dashboardOption === true ? {} : dashboardOption;
-  return createZelavisDashboardService({
-    title: options.title,
-    subtitle: options.subtitle,
+  return frontend({
     rootPath: context.rootPath,
-    devServerUrl: normalizeExternalUrl(
-      options.devServerUrl ?? readOptionalProcessEnv("ZELAVIS_UI_DEV_SERVER"),
-    ),
+    ...(options.title ? { title: options.title } : {}),
+    ...(options.subtitle ? { subtitle: options.subtitle } : {}),
+    ...(() => {
+      const devServerUrl = normalizeExternalUrl(
+        options.devServerUrl ?? readOptionalProcessEnv("ZELAVIS_UI_DEV_SERVER"),
+      );
+      return devServerUrl ? { devServerUrl } : {};
+    })(),
     createRuntimeConfig: context.createRuntimeConfig,
-  }) as unknown as ZelavisRuntimeService<any>;
+  });
 }
 
 async function resolveWorkloadsCoreService(
@@ -2468,30 +2509,26 @@ async function resolvePlatformCoreService(
   });
 }
 
-async function synthesizeDashboardAppService(
-  dashboardService: ZelavisRuntimeService<any>,
-  rootPath: string,
+async function synthesizeFrontendAppService(
+  frontend: ZelavisPlatformFrontend,
 ): Promise<ZelavisRuntimeService | undefined> {
-  const dashboardBundleStore = createZelavisDashboardBundleStore(rootPath);
-  const bundleStore: BundleStore = {
-    async read(scope, path) {
-      return dashboardBundleStore.read(scope, path);
-    },
-  };
+  // A frontend that ships no assets serves everything from its own routes, so
+  // there is nothing to mount.
+  if (!frontend.bundleStore) {
+    return undefined;
+  }
 
-  const appService = await synthesizeServiceAppService({
-    service: dashboardService as any,
-    bundleStore,
+  return synthesizeServiceAppService({
+    service: frontend.service as any,
+    bundleStore: frontend.bundleStore,
     effectiveMount: "/",
   });
-
-  return appService;
 }
 
-function stripDashboardServiceFields(
-  dashboardService: ZelavisRuntimeService<any>,
+function stripFrontendServiceFields(
+  frontendService: ZelavisRuntimeService<any>,
 ): ZelavisRuntimeService<any> {
-  const { app: _app, ...rest } = dashboardService as ZelavisRuntimeService<any> & {
+  const { app: _app, ...rest } = frontendService as ZelavisRuntimeService<any> & {
     app?: unknown;
   };
   return {
@@ -2507,10 +2544,19 @@ function createServicePrefixes(
     apiPrefix: string;
     apiVersion: string;
     overrides?: Record<string, string>;
+    /**
+     * Services serving this installation's face, by name.
+     *
+     * Passed in rather than matched against a known name: the Platform serves
+     * whichever frontend it was given, and a frontend from the marketplace has
+     * to mount the same way the first-party one does.
+     */
+    frontendServiceNames?: readonly string[];
   },
 ): Record<string, string> {
   const prefixes: Record<string, string> = {};
   const mountAtRoot = options.mountPrefix === "/";
+  const frontendServices = new Set(options.frontendServiceNames ?? []);
 
   for (const service of services) {
     if (service.name === "@zelavis/frontend") {
@@ -2518,7 +2564,7 @@ function createServicePrefixes(
       continue;
     }
 
-    if (service.name === "@zelavis/ui" || service.name === "@zelavis/ui:app") {
+    if (frontendServices.has(service.name)) {
       prefixes[service.name] = mountAtRoot ? options.rootPath : "/";
       continue;
     }
@@ -2772,7 +2818,55 @@ export async function zelavis(
   );
   const websiteEnabled = Boolean(websiteService);
   let runtimeConfigServices: readonly ZelavisRuntimeService<any>[] = [];
-  const runtimeManagement = await resolveRuntimeManagementCore(
+  // Resolved before the management core, which needs the paths this frontend
+  // claims and the design tokens it supplies. The frontend needs the runtime
+  // configuration in return, so it receives a thunk rather than the document —
+  // a frontend reads it when serving a request, long after composition.
+  let runtimeManagement: ZelavisRuntimeManagementCore | undefined;
+  const platformFrontend = await resolvePlatformFrontend(
+    options.coreServices?.dashboard,
+    options.frontend,
+    {
+      rootPath,
+      createRuntimeConfig: async () => {
+        if (!runtimeManagement) {
+          throw new Error(
+            "The runtime configuration was requested before composition finished.",
+          );
+        }
+        return runtimeManagement.createRuntimeConfig();
+      },
+    },
+  );
+  // An installation with no frontend still serves its API. The root path
+  // explains that rather than returning a 404, which reads as a broken
+  // deployment when it is a supported state.
+  // `dashboard: false` is an explicit opt-out — Zelavis embedded as an API with
+  // no face at all — which is different from having no frontend installed.
+  // The first serves nothing at the root path; the second explains itself.
+  const frontendService =
+    platformFrontend?.service ??
+    (options.coreServices?.dashboard === false
+      ? undefined
+      : createMissingPlatformFrontendService({
+          rootPath,
+          reservedPrefixes: [joinPathParts(rootPath, apiPrefix)],
+          ...(typeof options.coreServices?.dashboard === "object" &&
+          options.coreServices.dashboard.title
+            ? { title: options.coreServices.dashboard.title }
+            : {}),
+        }));
+  // Synthesize the sibling app service through the same primitive user
+  // services use, then hide the service-only `app` field from the externally
+  // visible service map.
+  const dashboardAppService = platformFrontend
+    ? await synthesizeFrontendAppService(platformFrontend)
+    : undefined;
+  const sanitizedDashboardService = frontendService
+    ? stripFrontendServiceFields(frontendService)
+    : undefined;
+
+  runtimeManagement = await resolveRuntimeManagementCore(
     options.coreServices?.dashboard,
     {
       apiPrefix,
@@ -2790,6 +2884,13 @@ export async function zelavis(
       websiteEnabled,
       bundleStore: options.bundleStore,
       platform: options.serviceContext?.platform,
+      ...(platformFrontend?.clientRoutes
+        ? { frontendClientRoutes: platformFrontend.clientRoutes }
+        : {}),
+      ...(platformFrontend?.servicePageStylesheet
+        ? { servicePageStylesheet: platformFrontend.servicePageStylesheet }
+        : {}),
+      ...(frontendService ? { frontendServiceName: frontendService.name } : {}),
     },
   );
   // Composition is far enough along for placement to resolve, so the startup
@@ -2819,19 +2920,6 @@ export async function zelavis(
   ].filter(
     (service): service is ZelavisRuntimeService<any> => Boolean(service),
   );
-  const dashboardService = await resolveDashboardCoreService(options.coreServices?.dashboard, {
-        rootPath,
-        createRuntimeConfig: runtimeManagement.createRuntimeConfig,
-      });
-  // Synthesize the sibling app service through the same primitive user
-  // services use, then hide the service-only `app` field from the externally
-  // visible service map.
-  const dashboardAppService = dashboardService
-    ? await synthesizeDashboardAppService(dashboardService, rootPath)
-    : undefined;
-  const sanitizedDashboardService = dashboardService
-    ? stripDashboardServiceFields(dashboardService)
-    : undefined;
   // Mount the HTTP-01 challenge responder when a domain-binding store
   // is configured. The endpoint serves `verificationToken` back to
   // requesters who hit `<host>/.well-known/zelavis-challenge/<token>`,
@@ -2867,6 +2955,10 @@ export async function zelavis(
       apiPrefix,
       apiVersion,
       overrides: options.servicePrefixes,
+      frontendServiceNames: [
+        ...(frontendService ? [frontendService.name] : []),
+        ...(dashboardAppService ? [dashboardAppService.name] : []),
+      ],
     }),
   });
   let closePromise: Promise<void> | undefined;

@@ -16,6 +16,7 @@ import {
 } from "../dist/core/index.js";
 import { createMemorySystemStore, zelavis } from "../dist/index.js";
 import { generateKeyPair, SignJWT } from "jose";
+import { zelavisUiFrontend } from "@zelavis/ui/frontend";
 
 function passwordMethodService() {
   const method = {
@@ -551,6 +552,7 @@ test("Platform first-owner bootstrap, login, rotation, CSRF, and logout use real
   const systemStore = createMemorySystemStore();
   const bootstrapToken = "test-bootstrap-token-with-at-least-32-characters";
   const runtime = await zelavis({
+    frontend: zelavisUiFrontend,
     systemStore,
     bootstrap: { token: bootstrapToken },
     coreServices: { dashboard: false },
