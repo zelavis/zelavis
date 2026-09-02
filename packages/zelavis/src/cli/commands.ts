@@ -1,4 +1,10 @@
 import {
+  bootstrapPlatformOwner,
+  formatBootstrapStatus,
+  readBootstrapStatus,
+} from "./bootstrap.js";
+import { promptSecret, readAllStdin } from "./prompt.js";
+import {
   formatActivationResult,
   formatRuntimeServiceList,
   listRuntimeServices,
@@ -33,6 +39,12 @@ interface ParsedArgs {
   specifier?: string;
   source?: RuntimeServiceSource;
   order?: number;
+  email?: string;
+  username?: string;
+  displayName?: string;
+  provider?: string;
+  token?: string;
+  passwordStdin: boolean;
   install: boolean;
   help: boolean;
   version: boolean;
@@ -47,9 +59,13 @@ Usage:
   zelavis services install <name> [--url <url>]
   zelavis services disable <name> [--url <url>]
   zelavis services register --specifier <specifier> [--name <name>] [--install] [--url <url>]
+  zelavis bootstrap --email <email> [--display-name <name>] [--password-stdin] [--url <url>]
+  zelavis bootstrap status [--url <url>]
 
 Commands:
   serve                     Run the long-lived Zelavis Platform OS.
+  bootstrap                 Create the first Platform owner account.
+  bootstrap status          Report whether an owner still has to be created.
   services list             List runtime service registry entries.
   services install          Mark a registered service as installed.
   services disable          Mark an installed service as available.
@@ -65,6 +81,12 @@ Options:
   --source <source>         Service source: official or community.
   --order <number>          Service display order.
   --install                 Register the service as installed.
+  --email <email>           Owner email address for bootstrap.
+  --username <username>     Owner username, when not using an email identity.
+  --display-name <name>     Owner display name.
+  --provider <provider>     Credential provider. Defaults to email-password.
+  --token <token>           Bootstrap token. Defaults to ZELAVIS_BOOTSTRAP_TOKEN.
+  --password-stdin          Read the owner password from standard input.
   --version, -v             Print the CLI version.
   --help, -h                Show this help message.
 `);
@@ -96,6 +118,7 @@ function parseOrder(value: string): number {
 
 function parseArgs(args: readonly string[]): ParsedArgs {
   const parsed: ParsedArgs = {
+    passwordStdin: false,
     install: false,
     help: false,
     version: false,
@@ -154,6 +177,40 @@ function parseArgs(args: readonly string[]): ParsedArgs {
         throw new Error('--source must be "official" or "community".');
       }
       parsed.source = value;
+    } else if (arg === "--password-stdin") {
+      parsed.passwordStdin = true;
+    } else if (arg === "--password" || arg.startsWith("--password=")) {
+      // Refused rather than ignored: silently dropping it would leave an
+      // operator believing a password they leaked into shell history and the
+      // process list had been accepted.
+      throw new Error(
+        "--password is not accepted because it leaks into shell history and the process list. Use --password-stdin or the interactive prompt.",
+      );
+    } else if (arg === "--email") {
+      parsed.email = readValue(args, index, arg);
+      index += 1;
+    } else if (arg.startsWith("--email=")) {
+      parsed.email = arg.slice("--email=".length);
+    } else if (arg === "--username") {
+      parsed.username = readValue(args, index, arg);
+      index += 1;
+    } else if (arg.startsWith("--username=")) {
+      parsed.username = arg.slice("--username=".length);
+    } else if (arg === "--display-name") {
+      parsed.displayName = readValue(args, index, arg);
+      index += 1;
+    } else if (arg.startsWith("--display-name=")) {
+      parsed.displayName = arg.slice("--display-name=".length);
+    } else if (arg === "--provider") {
+      parsed.provider = readValue(args, index, arg);
+      index += 1;
+    } else if (arg.startsWith("--provider=")) {
+      parsed.provider = arg.slice("--provider=".length);
+    } else if (arg === "--token") {
+      parsed.token = readValue(args, index, arg);
+      index += 1;
+    } else if (arg.startsWith("--token=")) {
+      parsed.token = arg.slice("--token=".length);
     } else if (arg === "--order") {
       parsed.order = parseOrder(readValue(args, index, arg));
       index += 1;
@@ -231,6 +288,81 @@ async function runServicesCommand(parsed: ParsedArgs): Promise<void> {
   );
 }
 
+const DEFAULT_BOOTSTRAP_PROVIDER = "email-password";
+
+async function resolveBootstrapPassword(parsed: ParsedArgs): Promise<string> {
+  if (parsed.passwordStdin) {
+    const piped = await readAllStdin();
+    if (!piped) {
+      throw new Error("--password-stdin was given but standard input was empty.");
+    }
+    return piped;
+  }
+
+  const password = await promptSecret("Owner password: ");
+  const confirmation = await promptSecret("Confirm password: ");
+  if (password !== confirmation) {
+    throw new Error("The passwords did not match.");
+  }
+  return password;
+}
+
+async function runBootstrapCommand(parsed: ParsedArgs): Promise<void> {
+  if (parsed.target === "status") {
+    console.log(formatBootstrapStatus(await readBootstrapStatus({ url: parsed.url })));
+    return;
+  }
+  if (parsed.target) {
+    throw new Error(
+      `Unknown bootstrap command "${parsed.target}". Expected status, or no argument to create the owner.`,
+    );
+  }
+
+  const token = parsed.token ?? process.env.ZELAVIS_BOOTSTRAP_TOKEN;
+  if (!token) {
+    throw new Error(
+      "A bootstrap token is required. Set ZELAVIS_BOOTSTRAP_TOKEN on this machine or pass --token.",
+    );
+  }
+  if (!parsed.email && !parsed.username) {
+    throw new Error("bootstrap requires --email or --username.");
+  }
+
+  // Checked before the password is asked for, so an operator is not made to
+  // type a secret into a Platform that was never going to accept it.
+  const status = await readBootstrapStatus({ url: parsed.url });
+  if (!status.required) {
+    throw new Error("This Platform already has an owner.");
+  }
+  const provider = parsed.provider ?? DEFAULT_BOOTSTRAP_PROVIDER;
+  if (!status.enrollmentProviders.includes(provider)) {
+    throw new Error(
+      status.enrollmentProviders.length
+        ? `No credential provider named "${provider}" is installed. Available: ${status.enrollmentProviders.join(", ")}.`
+        : "This Platform has no credential provider installed, so no owner can be enrolled.",
+    );
+  }
+
+  const result = await bootstrapPlatformOwner(
+    {
+      bootstrapToken: token,
+      provider,
+      password: await resolveBootstrapPassword(parsed),
+      ...(parsed.email ? { email: parsed.email } : {}),
+      ...(parsed.username ? { username: parsed.username } : {}),
+      ...(parsed.displayName ? { displayName: parsed.displayName } : {}),
+    },
+    { url: parsed.url },
+  );
+
+  // The session token is deliberately not printed. It is a live owner
+  // credential, and stdout is redirected into logs far too often.
+  console.log(
+    `Created Platform owner ${result.account.email ?? result.account.username ?? result.account.id}.`,
+  );
+  console.log("Sign in from the dashboard, or with the auth API, to continue.");
+}
+
 export async function runCli(
   args: readonly string[] = process.argv.slice(2),
   options: ZelavisCliOptions = {},
@@ -257,6 +389,10 @@ export async function runCli(
         port: parsed.port ?? parsePort(process.env.PORT ?? "3000"),
         dataDirectory: parsed.dataDirectory ?? process.env.ZELAVIS_DATA_DIR,
       });
+      return;
+    }
+    if (parsed.command === "bootstrap") {
+      await runBootstrapCommand(parsed);
       return;
     }
     if (parsed.command === "services") {

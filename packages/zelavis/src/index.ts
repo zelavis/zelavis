@@ -323,6 +323,16 @@ export interface ZelavisServerOptions {
    */
   frontend?: ZelavisPlatformFrontendFactory;
   /**
+   * Credential providers this installation offers.
+   *
+   * The Platform owns the provider registry and the first-owner endpoint but
+   * registers no provider itself, so an installation that supplies none has
+   * nobody it can enroll and no way to create its first account. Which
+   * providers exist is a product decision belonging to whoever composes the
+   * Platform, the same as the frontend above.
+   */
+  authMethods?: readonly AuthMethodPlugin[];
+  /**
    * Domain bindings store. Extension service apps only get host-bound
    * routing for hosts with verified bindings owned by their project or
    * service. Service packages declare `app.domainPolicy`; concrete hostnames
@@ -503,6 +513,16 @@ export interface ZelavisOptions {
    * installed. The Platform names none of its own.
    */
   frontend?: ZelavisPlatformFrontendFactory;
+  /**
+   * Credential providers this installation offers.
+   *
+   * The Platform owns the provider registry and the first-owner endpoint but
+   * registers no provider itself, so an installation that supplies none has
+   * nobody it can enroll and no way to create its first account. Which
+   * providers exist is a product decision belonging to whoever composes the
+   * Platform, the same as the frontend above.
+   */
+  authMethods?: readonly AuthMethodPlugin[];
   assistant?: false | ZelavisAssistantResponder;
   onError?: ZelavisServerErrorHandler;
   adapter?: ZelavisAdapter;
@@ -1013,6 +1033,28 @@ async function resolveDatabaseCoreService(
   return isDatabaseApi(resolvedDatabaseOption)
     ? resolvedDatabaseOption
     : await createDatabase(resolvedDatabaseOption);
+}
+
+/**
+ * Folds host-supplied credential providers into the auth core service options.
+ *
+ * `new Zelavis(...)` refuses `coreServices` so a host cannot reach into
+ * internal composition, which left the public constructor with no way to offer
+ * a credential provider at all. This narrows that back to the one thing a host
+ * legitimately owns.
+ */
+function mergeAuthMethodOptions(
+  option: ZelavisAuthCoreServiceOptions | undefined,
+  authMethods: readonly AuthMethodPlugin[] | undefined,
+): ZelavisAuthCoreServiceOptions | undefined {
+  if (!authMethods?.length || option === false) {
+    return option;
+  }
+  const configured = option === true || option === undefined ? {} : option;
+  return {
+    ...configured,
+    methods: [...(configured.methods ?? []), ...authMethods],
+  };
 }
 
 async function resolveAuthCoreService(
@@ -2662,7 +2704,7 @@ export async function zelavis(
   const authService = hasAppService
       ? undefined
       : await resolveAuthCoreService(
-        options.coreServices?.auth,
+        mergeAuthMethodOptions(options.coreServices?.auth, options.authMethods),
         collectAuthMethodPlugins(serviceRegistry),
         systemStore,
         rootPath,
