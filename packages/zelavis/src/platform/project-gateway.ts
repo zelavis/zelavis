@@ -44,8 +44,9 @@ export function projectRuntimePermissions(
 
   const addProjectAuthority = (permission: string) => {
     granted.add(permission);
-    const mapped = ZELAVIS_PROJECT_TO_RUNTIME_PERMISSION[permission];
-    if (mapped) granted.add(mapped);
+    for (const mapped of ZELAVIS_PROJECT_TO_RUNTIME_PERMISSION[permission] ?? []) {
+      granted.add(mapped);
+    }
   };
 
   for (const permission of global) {
@@ -80,14 +81,38 @@ export function projectRuntimePermissions(
 }
 
 /**
- * How a Project-scoped Platform permission appears inside the Project runtime,
- * where the Project is its own system.
+ * What a Project-scoped Platform permission authorizes inside the Project
+ * runtime, where the Project is its own system.
+ *
+ * A Project runs its own services — workloads, storage, database admin — and
+ * they enforce their own permissions. Nothing was mapping to those, so an owner
+ * holding full Platform authority reached a Project runtime with none of them
+ * and the Project's own workloads, storage, and database screens returned 403.
+ *
+ * Each entry is an implication, not a convenience: viewing a Project implies
+ * seeing what runs in it, and managing its runtime implies changing what runs
+ * in it. Anything destructive stays behind runtime management rather than
+ * riding along with view.
  */
-const ZELAVIS_PROJECT_TO_RUNTIME_PERMISSION: Readonly<Record<string, string>> =
-  Object.freeze({
-    "project.settings.manage": "system.settings.manage",
-    "project.users.manage": "system.users.manage",
-  });
+const ZELAVIS_PROJECT_TO_RUNTIME_PERMISSION: Readonly<
+  Record<string, readonly string[]>
+> = Object.freeze({
+  "project.settings.manage": Object.freeze(["system.settings.manage"]),
+  "project.users.manage": Object.freeze(["system.users.manage"]),
+  "project.view": Object.freeze([
+    "workloads.view",
+    "database.inspect",
+    "storage.read",
+  ]),
+  "project.logs.read": Object.freeze(["workloads.logs.read"]),
+  "project.runtime.manage": Object.freeze([
+    "workloads.manage",
+    "workloads.logs.read",
+    "storage.write",
+    "database.backup",
+    "database.restore",
+  ]),
+});
 
 /**
  * Project-scoped permissions a wildcard authority expands to.
