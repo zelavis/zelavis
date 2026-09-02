@@ -269,10 +269,15 @@ export function createServiceRegistry<TContext = unknown>(
  * same as any other app-serving service, rather than growing a second file
  * server beside them.
  *
- * A server frontend needs a supervised process and a routed target. That path
- * belongs to the Project runtime and Gateway, and is not wired yet, so it is
- * refused with a message that says so rather than installing something that
- * silently serves nothing.
+ * A static frontend is files, so it projects onto the existing service app
+ * definition — bundles, SPA and MPA resolution, the shell.
+ *
+ * A server frontend is a process, so it has no app definition at all. It runs
+ * as an owned Project: the Project runtime spawns its declared command on an
+ * allocated port, and the Gateway routes its owner's public traffic to it once
+ * it is listening. Nothing here needs to describe that, which is why this
+ * returns nothing rather than synthesizing something that would serve files it
+ * does not have.
  */
 function frontendServiceFields(
   manifest: ZelavisPackageManifest,
@@ -281,11 +286,7 @@ function frontendServiceFields(
   if (!frontend) return {};
 
   if (frontend.runtime === "server") {
-    throw new TypeError(
-      `Zelavis frontend "${manifest.name}" declares runtime "server", which is not executable yet.\n` +
-        "Server frontends need a supervised process and a routed target through the Project runtime; " +
-        "only static frontends can be installed today.",
-    );
+    return {};
   }
 
   return { app: toServiceAppDefinition(frontend) };

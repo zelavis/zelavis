@@ -22,6 +22,7 @@ import {
 } from "./_shared.js";
 import {
   normalizeDataDirectory,
+  createLocalFrontendDirectoryResolver,
   createLocalRuntimeServicePackageInstaller,
   createLocalRuntimeServiceImporter,
   createLocalRuntimeServiceManifestResolver,
@@ -198,6 +199,18 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           ...(projectOptions?.wordpress === undefined
             ? {}
             : { wordpress: projectOptions.wordpress }),
+          // Without this a frontend Project cannot start at all: the driver
+          // refuses rather than falling through to the Zelavis runner and
+          // failing in a way that looks like a broken frontend.
+          serverFrontend: {
+            // The same directory the package installer writes to. Resolving
+            // against anything else would look for installed packages where
+            // none are.
+            resolveFrontendDirectory: createLocalFrontendDirectoryResolver({
+              directory: serviceDirectory,
+              ...(serviceOptions ?? {}),
+            }),
+          },
         };
         projectRuntime = createLocalProjectRuntime(runtimeOptions);
       }

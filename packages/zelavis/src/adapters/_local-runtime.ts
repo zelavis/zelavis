@@ -610,6 +610,53 @@ export function createLocalRuntimeServicePackageInstaller(
   }
 }
 
+/**
+ * Resolves the package directory for a frontend Project's locked recipe.
+ *
+ * A recipe lock names the entry module of an installed package, so the package
+ * root is the nearest ancestor holding a `package.json`. Walking up rather than
+ * assuming a fixed depth keeps this working for a package whose entry is
+ * `dist/index.js`, `src/index.js`, or the root itself.
+ *
+ * A specifier that is not a path — a bare package name, or a `data:` module —
+ * is refused rather than guessed at. A frontend runs files from a directory,
+ * and there is no directory to run.
+ */
+export function createLocalFrontendDirectoryResolver(
+  options: LocalRuntimeServiceOptions = {},
+): (
+  project: unknown,
+  recipe: { readonly name: string; readonly specifier: string },
+) => Promise<string> {
+  const serviceDirectory = resolve(options.directory ?? ".zelavis/services");
+
+  return async (_project, recipe) => {
+    const specifier = recipe.specifier;
+    if (!specifier || !specifier.startsWith("/")) {
+      throw new Error(
+        `Frontend "${recipe.name}" is not installed as a package directory. Install it from a source before running it.`,
+      );
+    }
+
+    let current = dirname(resolve(specifier));
+    // Bounded by the service directory: a lock pointing outside the place
+    // packages are installed is not something to walk the filesystem for.
+    const root = serviceDirectory;
+    while (current.startsWith(root) && current !== root) {
+      if (existsSync(join(current, "package.json"))) {
+        return current;
+      }
+      const parent = dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+
+    throw new Error(
+      `Frontend "${recipe.name}" has no package.json under ${root}; its recipe lock does not point at an installed package.`,
+    );
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Service importer (specifier → ESM module)
 // ---------------------------------------------------------------------------

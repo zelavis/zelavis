@@ -155,28 +155,28 @@ test("a static frontend package loads as an app-serving service", async () => {
   assert.deepEqual(service.app, { mount: "/", bundle: "dist", mode: "spa" });
 });
 
-test("a server frontend is refused with a message that says why", async () => {
-  await assert.rejects(
-    () =>
-      loadService("@acme/app", {
-        manifest: {
-          name: "@acme/app",
-          version: "1.0.0",
-          type: "module",
-          zelavis: {
-            kind: "frontend",
-            frontend: { runtime: "server", start: ["node", "./server.js"] },
-          },
-        },
-        importer: async () => ({}),
-      }),
-    (error) => {
-      assert.match(error.message, /not executable yet/);
-      assert.match(error.message, /supervised process/);
-      return true;
+test("a server frontend installs without an app definition", async () => {
+  const service = await loadService("@acme/app", {
+    manifest: {
+      name: "@acme/app",
+      version: "1.0.0",
+      type: "module",
+      zelavis: {
+        kind: "frontend",
+        frontend: { runtime: "server", start: ["node", "./server.js"] },
+      },
     },
-    "installing something that silently serves nothing would be worse than refusing",
-  );
+    importer: async () => ({}),
+  });
+
+  assert.equal(service.kind, "frontend");
+
+  // A static frontend is files, so it projects onto the service app
+  // definition. A server frontend is a process: it runs as an owned Project
+  // with its command spawned on an allocated port, and the Gateway routes its
+  // owner's traffic to it. Synthesizing an app definition would describe a
+  // bundle it does not have.
+  assert.equal(service.app, undefined);
 });
 
 const listable = (extra = {}) => ({
