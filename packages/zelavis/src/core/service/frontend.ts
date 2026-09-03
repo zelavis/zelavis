@@ -45,6 +45,20 @@ export interface ZelavisStaticFrontendManifest {
    * Omit it when the bundle uses relative references or is built for its mount.
    */
   readonly assetBase?: string;
+  /**
+   * Global the Platform defines on the served page, holding the path this
+   * frontend is mounted at.
+   *
+   * Asset rewriting moves references; it cannot tell a client-side router
+   * where it lives, because that is a value the bundle reads rather than a
+   * path in the markup. Declaring a global name gets that value into the page
+   * without the Platform knowing anything about the framework: the bundle
+   * decides what to do with it.
+   *
+   * Without this a bundle must be built for a fixed mount, which is what kept
+   * a frontend from being installable anywhere but the path it was built for.
+   */
+  readonly basePathGlobal?: string;
 }
 
 export interface ZelavisServerFrontendManifest {
@@ -156,12 +170,29 @@ export function readFrontendManifest(
       }
     }
 
+    const basePathGlobal =
+      typeof declared.basePathGlobal === "string"
+        ? declared.basePathGlobal.trim()
+        : undefined;
+    if (basePathGlobal !== undefined) {
+      // The name is written into a script on the served page, so it has to be
+      // a plain identifier. Anything else would let a manifest close the
+      // assignment and append statements of its own.
+      if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(basePathGlobal)) {
+        invalid(
+          name,
+          '"frontend.basePathGlobal" must be a plain JavaScript identifier such as "__ZELAVIS_BASE_PATH__". It is written into a script tag on the served page.',
+        );
+      }
+    }
+
     return Object.freeze({
       runtime: "static" as const,
       bundle,
       ...(mode ? { mode } : {}),
       ...(indexHtml ? { indexHtml } : {}),
       ...(assetBase ? { assetBase } : {}),
+      ...(basePathGlobal ? { basePathGlobal } : {}),
     });
   }
 
@@ -206,6 +237,9 @@ export function toServiceAppDefinition(
     mode: frontend.mode ?? "spa",
     ...(frontend.indexHtml ? { indexHtml: frontend.indexHtml } : {}),
     ...(frontend.assetBase ? { assetBase: frontend.assetBase } : {}),
+    ...(frontend.basePathGlobal
+      ? { basePathGlobal: frontend.basePathGlobal }
+      : {}),
   };
 }
 

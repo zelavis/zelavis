@@ -242,16 +242,63 @@ export function rewriteBundleAssetBase(
 
   const base = assetBase.startsWith("/") ? assetBase : `/${assetBase}`;
   const source = new TextDecoder().decode(body);
-  // Anchored to an opening quote so a path that merely contains the base — a
-  // sourcemap comment, a string built at runtime — is left alone.
+  // Anchored to an opening quote or `(` so a path that merely contains the
+  // base — a sourcemap comment, a string built at runtime — is left alone.
+  // The `(` is for CSS: `url(/assets/font.woff2)` carries no quotes, so a
+  // quote-only anchor left every font and background image pointing at the
+  // server root, which 404s on any installation not mounted there.
   const pattern = new RegExp(
-    `(["'\`])${base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+    `(["'\`(])${base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
     "g",
   );
 
   return new TextEncoder().encode(
     source.replace(pattern, (_match, quote: string) => `${quote}${normalizedMount}${base}`),
   );
+}
+
+/**
+ * Tells the served page which path it is mounted at.
+ *
+ * Rewriting moves references that appear in the markup. It cannot tell a
+ * client-side router where it lives, because that is a value the bundle reads
+ * at boot rather than a path sitting in an attribute — which is why a bundle
+ * had to be built for a fixed mount, and why a frontend could be supplied but
+ * not installed anywhere else.
+ *
+ * The script goes first inside `<head>` so the value exists before anything
+ * else on the page runs. The Platform knows nothing about what reads it.
+ */
+export function injectFrontendBasePath(
+  body: Uint8Array,
+  contentType: string,
+  globalName: string,
+  mount: string,
+): Uint8Array {
+  if (!/^text\/html\b/i.test(contentType)) return body;
+
+  const source = new TextDecoder().decode(body);
+  const normalizedMount = mount === "/" ? "/" : `/${mount.replace(/^\/+|\/+$/g, "")}`;
+  // `<` is escaped as well as JSON-encoded. JSON.stringify does not touch it,
+  // and the HTML parser ends a script element at the first `</script>` even
+  // inside a string literal — so a mount containing one would close the
+  // element and let whatever followed run as markup.
+  const encodeForScript = (value: string) =>
+    JSON.stringify(value).replaceAll("<", "\\u003c");
+  const script = `<script>window[${encodeForScript(
+    globalName,
+  )}]=${encodeForScript(normalizedMount)};</script>`;
+
+  const headMatch = /<head\b[^>]*>/i.exec(source);
+  if (headMatch) {
+    const at = headMatch.index + headMatch[0].length;
+    return new TextEncoder().encode(
+      `${source.slice(0, at)}${script}${source.slice(at)}`,
+    );
+  }
+
+  // A fragment with no <head> still gets the value, before anything else.
+  return new TextEncoder().encode(`${script}${source}`);
 }
 
 function buildResponse(
@@ -522,10 +569,23 @@ export async function synthesizeServiceAppService(
   // mounted, so its own asset references are rewritten on the way out. Absent
   // `assetBase` nothing is rewritten, which is the right answer for a bundle
   // using relative references or built for its mount.
-  const rewriteBundleAssets = app.assetBase
-    ? (body: Uint8Array, contentType: string) =>
-        rewriteBundleAssetBase(body, contentType, app.assetBase!, mount)
-    : undefined;
+  const rewriteBundleAssets =
+    app.assetBase || app.basePathGlobal
+      ? (body: Uint8Array, contentType: string) => {
+          let next = app.assetBase
+            ? rewriteBundleAssetBase(body, contentType, app.assetBase, mount)
+            : body;
+          if (app.basePathGlobal) {
+            next = injectFrontendBasePath(
+              next,
+              contentType,
+              app.basePathGlobal,
+              mount,
+            );
+          }
+          return next;
+        }
+      : undefined;
 
   const scope: BundleScope = {
     projectId,

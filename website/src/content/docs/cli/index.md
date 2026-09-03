@@ -165,3 +165,37 @@ Packages in the folder can import `zelavis` — the running Platform is linked
 into `<data directory>/product-services/node_modules` so Node's resolution
 finds it, and the link always points at the Platform that loaded the package
 rather than another copy on the machine.
+
+### Frontends and their mount path
+
+A static frontend is built once and served from wherever it is installed. Two
+manifest fields make that work:
+
+```json
+{
+  "zelavis": {
+    "kind": "frontend",
+    "frontend": {
+      "runtime": "static",
+      "bundle": "build/client",
+      "mode": "spa",
+      "assetBase": "/assets/",
+      "basePathGlobal": "__ZELAVIS_BASE_PATH__"
+    }
+  }
+}
+```
+
+`assetBase` names the prefix the bundle's own references were built against, so
+the Platform can rewrite them to the real mount — including unquoted CSS
+references such as `url(/assets/font.woff2)`.
+
+`assetBase` moves references that appear in the markup. It cannot tell a
+client-side router where it lives, because that is a value the bundle reads at
+boot rather than a path to rewrite. `basePathGlobal` names a global the Platform
+defines on the served page, holding the mount path; the bundle reads it and
+configures its own router. The Platform knows nothing about what reads it, so
+this works for any framework.
+
+Without `basePathGlobal` a bundle must be built for a fixed mount, which is what
+kept a frontend from being installed anywhere but the path it was built for.

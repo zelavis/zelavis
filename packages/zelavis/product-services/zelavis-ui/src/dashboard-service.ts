@@ -135,6 +135,33 @@ function collectDashboardAssets(): DashboardAsset[] {
     .sort((left, right) => left.path.localeCompare(right.path));
 }
 
+/**
+ * Declares the mount path on the page, the same way an installed frontend
+ * receives it.
+ *
+ * This replaced a regex that rewrote React Router's `basename` literal in the
+ * served HTML. That worked only because the Platform knew which framework it
+ * was serving, so a frontend could be supplied by an installation but never
+ * installed at a path of someone's choosing. The bundle now reads this global
+ * itself, and the same build works whether it arrives through this shell or
+ * through its manifest.
+ */
+const BASE_PATH_GLOBAL = "__ZELAVIS_BASE_PATH__";
+
+function declareRuntimeBasePath(content: string, rootPath: string): string {
+  // `<` escaped as well as JSON-encoded: the HTML parser ends a script element
+  // at the first `</script>`, even inside a string literal.
+  const encodeForScript = (value: string) =>
+    JSON.stringify(value).replaceAll("<", "\\u003c");
+  const script = `<script>window[${encodeForScript(
+    BASE_PATH_GLOBAL,
+  )}]=${encodeForScript(rootPath)};</script>`;
+  const head = /<head\b[^>]*>/i.exec(content);
+  if (!head) return `${script}${content}`;
+  const at = head.index + head[0].length;
+  return `${content.slice(0, at)}${script}${content.slice(at)}`;
+}
+
 function prefixDashboardAssetReferences(
   content: string,
   rootPath: string,
@@ -172,17 +199,16 @@ function prefixDashboardAssetReferences(
 
   return content
     .replace(
-      /("basename"\s*:\s*)"\/"/g,
-      (_match, property: string) => `${property}${JSON.stringify(rootPath)}`,
-    )
-    .replace(
       /\b(href|src|action)="\/(?!\/)([^"]*)"/g,
       (_match, attribute, path) => {
         return prefixAbsolutePath(attribute, path);
       },
     )
-    .replace(/(["'`])\/assets\/([^"'`\\\s<>)]*)/g, prefixQuotedAbsoluteAsset)
-    .replace(/(["'`])assets\/([^"'`\\\s<>)]*)/g, prefixQuotedBareAsset);
+    // `(` alongside the quotes: CSS writes `url(/assets/font.woff2)` with no
+    // quotes at all, so a quote-only anchor left every font pointing at the
+    // server root — which 404s on an installation mounted anywhere else.
+    .replace(/(["'`(])\/assets\/([^"'`\\\s<>)]*)/g, prefixQuotedAbsoluteAsset)
+    .replace(/(["'`(])assets\/([^"'`\\\s<>)]*)/g, prefixQuotedBareAsset);
 }
 
 function shouldPrefixDashboardAsset(asset: DashboardAsset): boolean {
@@ -286,9 +312,12 @@ export function createZelavisDashboardService(
   const subtitle =
     options.subtitle ?? "Backend, dashboard, and core services.";
   const baseShell = embeddedDashboardShell
-    ? prefixDashboardAssetReferences(embeddedDashboardShell, rootPath, {
-        cacheAbsoluteAssets: true,
-      })
+    ? declareRuntimeBasePath(
+        prefixDashboardAssetReferences(embeddedDashboardShell, rootPath, {
+          cacheAbsoluteAssets: true,
+        }),
+        rootPath,
+      )
     : undefined;
 
   const render = async ({
