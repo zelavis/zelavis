@@ -83,12 +83,42 @@ zelavis bootstrap status
 ```
 
 That reports whether an owner exists, whether the bootstrap token is
-configured, and which credential providers are installed. The `zelavis`
-distribution ships `@zelavis/app-auth-email-password`, so a default
-installation can be adopted with nothing extra to install. The Platform library
-itself names no provider: hosts that embed it choose their own through the
-`authMethods` option, and an installation with no provider reports none rather
-than pretending it can enroll an owner.
+configured, and which credential providers are available. Password sign-in is
+part of Zelavis, so nothing has to be installed first. One provider covers both
+identifier kinds: an identifier containing `@` is treated as an email address,
+anything else as a username.
+
+## OAuth sign-in
+
+The Authorization Code flow is part of Zelavis: it holds the state, nonce, and
+PKCE verifier, which are the parts that are dangerous to get wrong and the same
+for every provider. What differs per provider — endpoints and claim mapping —
+is a definition, and Google, GitHub, and a generic OIDC builder ship in the box.
+
+The credentials your installation was issued are yours to supply:
+
+```bash
+curl -X PUT https://example.com/zelavis/api/v1/auth/oauth/connections/github   -H 'content-type: application/json'   -d '{
+    "clientId": "...",
+    "clientSecret": "...",
+    "redirectUri": "https://example.com/zelavis/api/v1/auth/oauth/github/callback"
+  }'
+```
+
+The client secret is write-only: no endpoint returns it, and omitting it on a
+later write keeps the stored one. A redirect URI must use `https` outside
+`localhost`, because the authorization code arrives on that URL and a code is
+enough to complete a sign-in.
+
+An installation that must come up already configured can set
+`ZELAVIS_AUTH_<PROVIDER>_CLIENT_ID`, `_CLIENT_SECRET`, `_REDIRECT_URI`, and
+`_SCOPES` instead. Anything stored through the API wins.
+
+To add a provider nobody has defined yet, ship a plugin declaring
+`"capabilities": ["zelavis/auth:oauth"]` whose service exports
+`oauthProviders`. A definition with an `issuer` must also give a `jwksUrl`: an
+ID token nobody can verify is attacker-supplied JSON, so one is refused at
+definition time.
 
 Runtime service management is available through the `services` command group:
 

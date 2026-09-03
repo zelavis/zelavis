@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
-import { defineOAuthProviders, zelavisAuthService } from "@zelavis/auth";
-import { oidcProvider } from "@zelavis/auth";
+import { defineOAuthProviders } from "../dist/app/auth/index.js";
+import { oidcProvider } from "../dist/app/auth/index.js";
 import { createMemorySystemStore, zelavis } from "../dist/index.js";
 
 const ISSUER = "https://identity.example";
@@ -56,20 +56,15 @@ async function platform() {
     serviceRegistry: {
       catalog: [
         {
-          // Constructed with the stub fetch so the token exchange is real
-          // code against a real signed token, not a mock of the exchange.
-          service: zelavisAuthService({ fetch: fetchImpl }),
-          status: "installed",
-          source: "official",
-        },
-        {
           service: defineOAuthProviders("@test/oidc", [provider]),
           status: "installed",
           source: "official",
         },
       ],
     },
-    subsystems: { auth: { authOptions: {} } },
+    // The stub fetch goes to the built-in client, so the token exchange is
+    // real code against a real signed token rather than a mock of it.
+    subsystems: { auth: { oauth: { fetch: fetchImpl } } },
   });
 
   return { runtime, state };
@@ -79,7 +74,7 @@ test("an OIDC sign-in verifies the ID token against the issuer's keys", async ()
   const { runtime, state } = await platform();
 
   await runtime.plain({
-    url: "/zelavis/api/v1/auth/connections/providers/oidc",
+    url: "/zelavis/api/v1/auth/oauth/connections/oidc",
     method: "PUT",
     body: {
       clientId: CLIENT_ID,
@@ -117,7 +112,7 @@ test("an OIDC sign-in verifies the ID token against the issuer's keys", async ()
 test("an ID token whose nonce does not match the flow is refused", async () => {
   const { runtime, state } = await platform();
   await runtime.plain({
-    url: "/zelavis/api/v1/auth/connections/providers/oidc",
+    url: "/zelavis/api/v1/auth/oauth/connections/oidc",
     method: "PUT",
     body: {
       clientId: CLIENT_ID,

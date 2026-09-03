@@ -54,12 +54,15 @@ export function LoginForm({
   const providers = status?.required
     ? status.enrollmentProviders
     : status?.providers
-  const provider = providers?.includes("email-password")
-    ? "email-password"
-    : providers?.includes("username-password")
-      ? "username-password"
-      : providers?.[0]
-  const usesUsername = provider === "username-password"
+  // `password` is built into Zelavis and covers both identifier kinds, so it
+  // is preferred when present; an installation that replaced it falls through
+  // to whatever it does offer.
+  const provider = providers?.includes("password")
+    ? "password"
+    : providers?.[0]
+  // The built-in provider takes either kind, so the field must not be typed
+  // `email` — that markup refuses a username before the request is made.
+  const acceptsEither = provider === "password"
   const destination = resolveReturnTo(searchParams.get("returnTo"))
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -74,8 +77,10 @@ export function LoginForm({
           bootstrapToken,
           provider,
           account: {
-            ...(usesUsername
-              ? { username: identifier }
+            // The Platform derives the identity from the identifier, so the
+            // form does not have to guess which field it belongs in.
+            ...(acceptsEither
+              ? {}
               : { email: identifier }),
             displayName,
           },
@@ -142,12 +147,12 @@ export function LoginForm({
                   htmlFor="identifier"
                   className="text-sm font-medium leading-none select-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                 >
-                  {usesUsername ? "Username" : "Email"}
+                  {acceptsEither ? "Email or username" : "Email"}
                 </label>
                 <Input
                   id="identifier"
-                  type={usesUsername ? "text" : "email"}
-                  placeholder={usesUsername ? "owner" : "owner@example.com"}
+                  type={acceptsEither ? "text" : "email"}
+                  placeholder="owner@example.com"
                   value={identifier}
                   onChange={(event) => setIdentifier(event.target.value)}
                   autoComplete="username"
@@ -181,7 +186,7 @@ export function LoginForm({
               {status && providers?.length === 0 ? (
                 <p role="alert" className="text-sm text-destructive">
                   {status.required
-                    ? "No credential-enrollment auth provider is installed. Install the official email/password or username/password plugin in the Platform service catalog before bootstrapping."
+                    ? "No credential-enrollment auth provider is available on this installation."
                     : "No interactive authentication provider is installed."}
                 </p>
               ) : null}

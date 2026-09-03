@@ -100,9 +100,6 @@ importers:
 
   examples/nodejs:
     dependencies:
-      '@zelavis/app-auth-email-password':
-        specifier: workspace:*
-        version: link:../../plugins/auth-email-password
       '@zelavis/ui':
         specifier: workspace:*
         version: link:../../packages/zelavis/product-services/zelavis-ui
@@ -158,16 +155,10 @@ importers:
       '@types/node':
         specifier: ^25.9.1
         version: 25.9.1
-      '@zelavis/auth':
-        specifier: workspace:*
-        version: link:../../plugins/auth
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
     optionalDependencies:
-      '@zelavis/app-auth-email-password':
-        specifier: workspace:*
-        version: link:../../plugins/auth-email-password
       '@zelavis/ui':
         specifier: workspace:*
         version: link:product-services/zelavis-ui
@@ -358,42 +349,11 @@ importers:
         specifier: workspace:*
         version: link:../..
 
-  plugins/auth:
-    dependencies:
-      jose:
-        specifier: ^6.2.10
-        version: 6.2.10
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      zelavis:
-        specifier: workspace:*
-        version: link:../../packages/zelavis
-
-  plugins/auth-email-password:
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      zelavis:
-        specifier: workspace:*
-        version: link:../../packages/zelavis
-
   plugins/auth-oidc:
     dependencies:
       jose:
         specifier: ^6.2.10
         version: 6.2.10
-    devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      zelavis:
-        specifier: workspace:*
-        version: link:../../packages/zelavis
-
-  plugins/auth-username-password:
     devDependencies:
       typescript:
         specifier: ^5.9.0

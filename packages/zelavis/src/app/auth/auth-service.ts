@@ -1,3 +1,4 @@
+import type { PasswordProviderOptions } from "./providers/password.js";
 import {
   createMappedJsonErrorResponse,
   type ZelavisServerErrorStatusRule,
@@ -66,6 +67,15 @@ export interface AuthSessionCookieOptions {
 export interface DefineAuthServiceOptions {
   authority?: "project" | "platform";
   bootstrap?: AuthBootstrapCapability;
+  /**
+   * Reads and writes the credentials an operator configured for OAuth
+   * providers. Supplied by the Platform, which owns the store these live in.
+   */
+  oauthConnections?: {
+    list(): Promise<readonly unknown[]>;
+    configure(provider: string, input: unknown): Promise<unknown | undefined>;
+    remove(provider: string): Promise<void>;
+  };
   bootstrapToken?: string;
   sessionCookie?: false | AuthSessionCookieOptions;
 }
@@ -684,6 +694,86 @@ export function defineAuthService(
               : { status: 404, body: { error: "Session not found" } };
           },
         },
+        ...(options.oauthConnections
+          ? [
+              {
+                id: "auth.oauth.connections.list",
+                method: "GET" as const,
+                path: "/oauth/connections",
+                access: { permissions: ["system.settings.manage"] },
+                spec: {
+                  operationId: "listOAuthConnections",
+                  summary: "List OAuth providers and their configuration",
+                  tags: ["auth"],
+                  responses: { 200: { description: "Installed providers" } },
+                },
+                handler: async () => ({
+                  status: 200,
+                  body: { providers: await options.oauthConnections!.list() },
+                }),
+              },
+              {
+                id: "auth.oauth.connections.configure",
+                method: "PUT" as const,
+                path: "/oauth/connections/:provider",
+                access: { permissions: ["system.settings.manage"] },
+                spec: {
+                  operationId: "configureOAuthConnection",
+                  summary: "Configure an OAuth provider for this installation",
+                  tags: ["auth"],
+                  pathParams: {
+                    provider: { type: "string" as const, required: true, description: "Provider name" },
+                  },
+                  requestBody: {
+                    required: true,
+                    schema: { type: "object", additionalProperties: true },
+                  },
+                  responses: {
+                    200: { description: "Connection saved" },
+                    400: { description: "Invalid connection details" },
+                    404: { description: "No such provider is installed" },
+                  },
+                },
+                handler: async ({ params, body }: { params: Record<string, string>; body: unknown }) => {
+                  try {
+                    const saved = await options.oauthConnections!.configure(
+                      params.provider,
+                      body,
+                    );
+                    return saved
+                      ? { status: 200, body: { connection: saved } }
+                      : {
+                          status: 404,
+                          body: {
+                            error: `No installed plugin defines "${params.provider}".`,
+                          },
+                        };
+                  } catch (error) {
+                    return authErrorResponse(error, 400);
+                  }
+                },
+              },
+              {
+                id: "auth.oauth.connections.remove",
+                method: "DELETE" as const,
+                path: "/oauth/connections/:provider",
+                access: { permissions: ["system.settings.manage"] },
+                spec: {
+                  operationId: "removeOAuthConnection",
+                  summary: "Remove an OAuth provider's configuration",
+                  tags: ["auth"],
+                  pathParams: {
+                    provider: { type: "string" as const, required: true, description: "Provider name" },
+                  },
+                  responses: { 204: { description: "Connection removed" } },
+                },
+                handler: async ({ params }: { params: Record<string, string> }) => {
+                  await options.oauthConnections!.remove(params.provider);
+                  return { status: 204 };
+                },
+              },
+            ]
+          : []),
         ...(options.bootstrap
           ? [
               {
@@ -797,6 +887,13 @@ export function defineAuthService(
 }
 
 export interface AuthServiceOptions {
+  /** Options for the built-in password provider. */
+  password?: PasswordProviderOptions;
+  /** Options for the built-in OAuth Authorization Code client. */
+  oauth?: {
+    /** Used for token and profile requests. Defaults to the global fetch. */
+    fetch?: typeof globalThis.fetch;
+  };
   auth?: AuthApi;
   authOptions?: CreateAuthOptions;
   methods?: readonly AuthMethodPlugin[];

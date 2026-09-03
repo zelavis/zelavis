@@ -2,7 +2,7 @@ import type {
   OAuthIdentity,
   OAuthIdentityClaims,
   OAuthProviderDefinition,
-} from "./contract.js";
+} from "./oauth-contract.js";
 
 /**
  * Identity providers this package knows about out of the box.

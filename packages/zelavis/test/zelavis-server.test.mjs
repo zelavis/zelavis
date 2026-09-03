@@ -477,7 +477,10 @@ test("auth method plugins register through the public auth capability", async ()
   const providers = await providersResponse.json();
 
   assert.equal(providersResponse.status, 200);
-  assert.deepEqual(providers, ["@example/test-auth-provider"]);
+  // Alongside the providers core ships: an installed plugin adds to them
+  // rather than replacing them.
+  assert.ok(providers.includes("@example/test-auth-provider"));
+  assert.ok(providers.includes("password"));
   assert.equal(
     runtime.routes.some((route) => route.route.id === "@example/test-auth-provider"),
     false,

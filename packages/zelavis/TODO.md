@@ -203,15 +203,14 @@ an exported type is never mistaken for an operational distributed feature.
   only matching-origin browser requests receive session cookies, cookie
   mutations require a same-origin `Origin`, and critical Project, Assistant,
   service-mutation, and settings-mutation endpoints declare core permissions.
-- [x] OAuth sign-in is a plugin above core auth. `@zelavis/auth` discovers
-  provider definitions declaring `@zelavis/auth:oauth`, pairs them with the
-  credentials an operator configured, and registers them with core auth, which
-  keeps the flow and its PKCE and nonce state. Client secrets are write-only
-  over the API. Installed services can persist state for the first time,
-  through a store namespaced to the service that asked, and a credential
-  provider now sees the installed services when it registers. Installing
-  `@zelavis/auth` is enough on its own: its provider definitions ship with it
-  rather than in a second package.
+- [x] Password sign-in and the OAuth Authorization Code client are part of
+  Zelavis rather than plugins. Both are ceremonies whose dangerous parts are
+  generic — password verification and its timing, and the state, nonce and PKCE
+  custody a redirect flow needs — so they are written once. What is
+  vendor-specific stays a plugin: an identity provider declares
+  `zelavis/auth:oauth` and supplies endpoints and claim mapping. The two
+  near-identical password plugins and the seeding that copied one into the
+  product-services folder are gone.
 - [x] The OpenAPI document describes what the runtime actually serves. It is
   generated from the routes mounting produced rather than re-resolved with a
   different prefix, so its paths exist; it covers every mounted route rather

@@ -570,8 +570,11 @@ test("Platform first-owner bootstrap, login, rotation, CSRF, and logout use real
   assert.equal(initial.status, 200);
   assert.equal(initial.body.required, true);
   assert.equal(initial.body.available, true);
-  assert.deepEqual(initial.body.providers, ["email-password"]);
-  assert.deepEqual(initial.body.enrollmentProviders, ["email-password"]);
+  // The built-in password provider and the OAuth definitions core ships sit
+  // alongside whatever a test or an installation adds.
+  assert.ok(initial.body.providers.includes("email-password"));
+  assert.ok(initial.body.providers.includes("password"));
+  assert.ok(initial.body.enrollmentProviders.includes("email-password"));
 
   const wrongToken = await runtime.plain({
     url: "/zelavis/api/v1/auth/bootstrap",
