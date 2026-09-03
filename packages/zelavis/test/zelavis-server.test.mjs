@@ -385,12 +385,13 @@ test("privileged project control routes declare explicit access requirements", a
     async delete() { return true; },
   };
   const runtime = await zelavis({
-    frontend: zelavisUiFrontend,
-    coreServices: {
+    // `dashboard: false` alongside a factory used to mean "no frontend"; the
+    // factory was supplied and then ignored. `frontend: false` says it once.
+    frontend: false,
+    subsystems: {
       auth: false,
       database: false,
-      dashboard: false,
-      website: true,
+      site: true,
       storage: { storage },
     },
   });
@@ -1092,7 +1093,7 @@ test("node adapter installs uploaded ZIP service packages", async () => {
 test("zelavis can disable the database core service", async () => {
   const runtime = await zelavis({
     frontend: zelavisUiFrontend,
-    coreServices: {
+    subsystems: {
       database: false,
     },
   });
@@ -1108,7 +1109,7 @@ test("zelavis can disable the database core service", async () => {
 test("zelavis can disable the auth core service", async () => {
   const runtime = await zelavis({
     frontend: zelavisUiFrontend,
-    coreServices: {
+    subsystems: {
       auth: false,
     },
   });
@@ -1124,9 +1125,7 @@ test("zelavis can disable the auth core service", async () => {
 test("zelavis can disable the dashboard core service", async () => {
   const runtime = await zelavis({
     frontend: zelavisUiFrontend,
-    coreServices: {
-      dashboard: false,
-    },
+    frontend: false,
   });
 
   assert.equal(runtime.services["@zelavis/ui"], undefined);
@@ -1248,11 +1247,9 @@ test("zelavis supports mounting at the root path when explicitly configured", as
 
 test("zelavis can redirect dashboard routes to a UI dev server", async () => {
   const runtime = await zelavis({
-    frontend: zelavisUiFrontend,
-    coreServices: {
-      dashboard: {
-        devServerUrl: "http://127.0.0.1:3001",
-      },
+    frontend: {
+      factory: zelavisUiFrontend,
+      devServerUrl: "http://127.0.0.1:3001",
     },
   });
 
@@ -1297,11 +1294,9 @@ test("zelavis can redirect dashboard routes to a UI dev server", async () => {
 
 test("zelavis preserves a mounted dev-server dashboard base path", async () => {
   const runtime = await zelavis({
-    frontend: zelavisUiFrontend,
-    coreServices: {
-      dashboard: {
-        devServerUrl: "http://127.0.0.1:3001/zelavis",
-      },
+    frontend: {
+      factory: zelavisUiFrontend,
+      devServerUrl: "http://127.0.0.1:3001/zelavis",
     },
   });
 
@@ -1328,12 +1323,11 @@ test("zelavis preserves a mounted dev-server dashboard base path", async () => {
 
 test("zelavis keeps the Platform server control plane when optional mounted services are disabled", async () => {
   const runtime = await zelavis({
-    frontend: zelavisUiFrontend,
-    coreServices: {
+    frontend: false,
+    subsystems: {
       auth: false,
-      dashboard: false,
       database: false,
-      website: false,
+      site: false,
       workloads: false,
     },
   });
@@ -1445,7 +1439,7 @@ test("zelavis uses a configured Fabric placement list for point lookups", async 
   };
   const runtime = await zelavis({
     frontend: zelavisUiFrontend,
-    coreServices: {
+    subsystems: {
       fabric: {
         authority: {
           scope: "platform",
@@ -1495,18 +1489,14 @@ test("zelavis rejects obsolete direct runtime service options", async () => {
 test("zelavis rejects invalid persisted dashboard settings on read", async () => {
   const runtime = await zelavis({
     frontend: zelavisUiFrontend,
-    coreServices: {
-      dashboard: {
-        settingsStore: {
-          async read() {
-            return {
-              theme: "violet",
-            };
-          },
-          async write(update) {
-            return update;
-          },
-        },
+    // The settings store is a resource, not a frontend field: an installation
+    // serving no frontend still persists its own settings.
+    runtimeSettingsStore: {
+      async read() {
+        return { theme: "violet" };
+      },
+      async write(update) {
+        return update;
       },
     },
   });
@@ -1522,7 +1512,8 @@ test("zelavis rejects invalid persisted dashboard settings on read", async () =>
 test("a Project without a frontend serves a placeholder rather than a 404", async () => {
   const runtime = await zelavis({
     frontend: zelavisUiFrontend,
-    coreServices: { auth: false, database: false, dashboard: false, website: true },
+    frontend: false,
+    subsystems: { auth: false, database: false, site: true },
   });
 
   const response = await runtime.fetch(new Request("http://localhost/"));
@@ -1540,7 +1531,8 @@ test("a Project without a frontend serves a placeholder rather than a 404", asyn
 test("the frontend placeholder leaves control-plane paths alone", async () => {
   const runtime = await zelavis({
     frontend: zelavisUiFrontend,
-    coreServices: { auth: false, database: false, dashboard: false, website: true },
+    frontend: false,
+    subsystems: { auth: false, database: false, site: true },
   });
 
   // A mistyped API path must keep its own 404 rather than being answered with
@@ -1565,7 +1557,7 @@ test("the frontend placeholder escapes its title", async () => {
 });
 
 test("an installation running the dashboard uses it as its default frontend", async () => {
-  const runtime = await zelavis({ coreServices: { auth: false, database: false } });
+  const runtime = await zelavis({ subsystems: { auth: false, database: false } });
 
   // `/` must lead somewhere. The outermost installation is its own product, so
   // its default frontend is the dashboard rather than a page explaining that
@@ -1583,7 +1575,8 @@ test("a Project runtime falls back to the placeholder, not the dashboard", async
   // does not run the dashboard, so there is nothing to redirect to.
   const runtime = await zelavis({
     frontend: zelavisUiFrontend,
-    coreServices: { auth: false, database: false, dashboard: false },
+    frontend: false,
+    subsystems: { auth: false, database: false },
   });
 
   const response = await runtime.fetch(new Request("http://localhost/"));
@@ -1595,7 +1588,8 @@ test("the default frontend never shadows control-plane paths", async () => {
   for (const dashboard of [true, false]) {
     const runtime = await zelavis({
     frontend: zelavisUiFrontend,
-      coreServices: { auth: false, database: false, dashboard },
+      frontend: dashboard,
+    subsystems: { auth: false, database: false },
     });
     const response = await runtime.fetch(
       new Request("http://localhost/zelavis/api/v1/nope"),

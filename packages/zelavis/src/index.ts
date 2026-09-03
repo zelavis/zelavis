@@ -210,28 +210,44 @@ export type {
   ZelavisFileStorageEntry,
   ZelavisFileStorageObject,
   ZelavisFileStoragePutInput,
-  ZelavisStorageCoreServiceInput,
+  ZelavisStorageOptions,
   ZelavisStorageCoreServiceOptions,
 } from "./platform/storage-types.js";
 import type {
   ZelavisFileStorage,
-  ZelavisStorageCoreServiceInput,
+  ZelavisStorageOptions,
 } from "./platform/storage-types.js";
 
 
-export type ZelavisAuthCoreServiceOptions = boolean | AuthServiceOptions;
+export type ZelavisAuthOptions = boolean | AuthServiceOptions;
 
-export interface ZelavisDashboardCoreServiceOptions {
+/**
+ * The face of an installation.
+ *
+ * This absorbed what `coreServices.dashboard` used to carry. That option
+ * predated frontends being a first-class Zelavis concept, and by the end every
+ * field it held was about the frontend: the title and subtitle were passed
+ * straight into the frontend factory, and `clientRoutes` already fell back to
+ * the routes the frontend declared for itself.
+ *
+ * `false` means this installation serves nothing at its root at all — Zelavis
+ * embedded as an API with no face. That is different from having no frontend
+ * installed, which still answers the root path by saying so.
+ */
+export type ZelavisFrontendInput =
+  | false
+  | ZelavisPlatformFrontendFactory
+  | ZelavisFrontendOptions;
+
+export interface ZelavisFrontendOptions {
+  /** Supplies the frontend. Omit for an installation that ships none. */
+  factory?: ZelavisPlatformFrontendFactory;
   title?: string;
   subtitle?: string;
-  clientRoutes?: readonly string[];
   devServerUrl?: string;
-  settingsStore?: ZelavisDashboardSettingsStore;
+  /** Overrides the client-side routes the frontend declares for itself. */
+  clientRoutes?: readonly string[];
 }
-
-export type ZelavisDashboardCoreServiceInput =
-  | boolean
-  | ZelavisDashboardCoreServiceOptions;
 
 export type {
   ZelavisPlatformFrontend,
@@ -241,10 +257,9 @@ export type {
 
 
 
-export type ZelavisWebsiteCoreServiceInput = boolean;
 
 
-export type ZelavisWorkloadsCoreServiceInput =
+export type ZelavisWorkloadsOptions =
   | boolean
   | WorkloadsServiceOptions;
 
@@ -255,22 +270,40 @@ export type ZelavisWorkloadsCoreServiceInput =
 
 
 
-export type ZelavisDatabaseCoreServiceOptions =
+export type ZelavisDatabaseOptions =
   | boolean
   | CreateDatabaseOptions
   | DatabaseApi
   | Promise<DatabaseApi>;
 
-export type ZelavisFabricCoreServiceInput = boolean | FabricServiceOptions;
+export type ZelavisFabricOptions = boolean | FabricServiceOptions;
 
-export interface ZelavisCoreServicesOptions {
-  auth?: ZelavisAuthCoreServiceOptions;
-  dashboard?: ZelavisDashboardCoreServiceInput;
-  database?: ZelavisDatabaseCoreServiceOptions;
-  fabric?: ZelavisFabricCoreServiceInput;
-  storage?: ZelavisStorageCoreServiceInput;
-  website?: ZelavisWebsiteCoreServiceInput;
-  workloads?: ZelavisWorkloadsCoreServiceInput;
+/**
+ * Platform subsystems, composed by the host rather than installed.
+ *
+ * These used to live in a `coreServices` bag, which read as though the Platform
+ * had a second, privileged way to install services. It did not: these are the
+ * Platform's own subsystems, and every one of them is either infrastructure
+ * (a database, object storage) or a policy switch. Services come from the
+ * product-services folder and the registry, and only from there.
+ *
+ * They stay internal to `zelavis(...)`; the public constructor refuses them.
+ */
+export interface ZelavisSubsystemOptions {
+  auth?: ZelavisAuthOptions;
+  database?: ZelavisDatabaseOptions;
+  fabric?: ZelavisFabricOptions;
+  storage?: ZelavisStorageOptions;
+  workloads?: ZelavisWorkloadsOptions;
+  /**
+   * Whether this installation serves the public root.
+   *
+   * With it on, Zelavis mounts at `/` and a Project or bound domain can be
+   * served from the root path; with it off the installation lives entirely
+   * under its root path. Not a service — the placeholder it mounts is the
+   * frontend one.
+   */
+  site?: boolean;
 }
 
 export interface ZelavisApiOptions {
@@ -313,7 +346,9 @@ export interface ZelavisServerOptions {
   servicePackageInstaller?: ZelavisServicePackageInstaller;
   serviceActivation?: ZelavisServiceActivationController;
   serviceContext?: ZelavisServiceContextOptions;
-  coreServices?: ZelavisCoreServicesOptions;
+  subsystems?: ZelavisSubsystemOptions;
+  /** Where Platform runtime settings persist. Supplied from host resources. */
+  runtimeSettingsStore?: ZelavisDashboardSettingsStore;
   servicePrefixes?: Record<string, string>;
   pathOverrides?: Record<string, string>;
   onError?: ZelavisServerErrorHandler;
@@ -334,7 +369,7 @@ export interface ZelavisServerOptions {
    * the default product choice — or leave it out: the API is identical either
    * way, and the root path says no frontend is installed rather than 404ing.
    */
-  frontend?: ZelavisPlatformFrontendFactory;
+  frontend?: ZelavisFrontendInput;
   /**
    * Domain bindings store. Extension service apps only get host-bound
    * routing for hosts with verified bindings owned by their project or
@@ -515,7 +550,7 @@ export interface ZelavisOptions {
    * Omit it and the API is unchanged while the root path says no frontend is
    * installed. The Platform names none of its own.
    */
-  frontend?: ZelavisPlatformFrontendFactory;
+  frontend?: ZelavisFrontendInput;
   assistant?: false | ZelavisAssistantResponder;
   onError?: ZelavisServerErrorHandler;
   adapter?: ZelavisAdapter;
@@ -1010,7 +1045,7 @@ function isDatabaseApi(value: unknown): value is DatabaseApi {
 }
 
 async function resolveDatabaseCoreService(
-  option: ZelavisDatabaseCoreServiceOptions | undefined,
+  option: ZelavisDatabaseOptions | undefined,
 ): Promise<DatabaseApi | undefined> {
   const databaseOption = option ?? true;
 
@@ -1029,7 +1064,7 @@ async function resolveDatabaseCoreService(
 }
 
 async function resolveAuthCoreService(
-  option: ZelavisAuthCoreServiceOptions | undefined,
+  option: ZelavisAuthOptions | undefined,
   methods: readonly AuthMethodPlugin[] = [],
   systemStore?: ZelavisSystemStore,
   rootPath = "/zelavis",
@@ -1148,7 +1183,7 @@ interface ZelavisRuntimeManagementCore {
 }
 
 async function resolveRuntimeManagementCore(
-  option: ZelavisDashboardCoreServiceInput | undefined,
+  option: ZelavisFrontendInput | undefined,
   context: {
     apiPrefix: string;
     apiVersion: string;
@@ -1163,7 +1198,7 @@ async function resolveRuntimeManagementCore(
     rootPath: string;
     getServices: () => readonly ZelavisRuntimeService<any>[];
     settingsStore?: ZelavisDashboardSettingsStore;
-    websiteEnabled: boolean;
+    siteEnabled: boolean;
     bundleStore?: BundleStore;
     platform?: ZelavisServiceSetupPlatformContext;
     /** Paths the installed frontend resolves client-side, if any. */
@@ -1174,9 +1209,7 @@ async function resolveRuntimeManagementCore(
     frontendServiceName?: string;
   },
 ): Promise<ZelavisRuntimeManagementCore> {
-  const dashboardOption = option ?? true;
-  const options =
-    dashboardOption === true || dashboardOption === false ? {} : dashboardOption;
+  const options = readFrontendOptions(option);
   const title = options.title ?? "zelavis";
   const rootPath = context.rootPath;
   const currentRuntimeEngine = detectCurrentRuntimeEngine(
@@ -1188,14 +1221,12 @@ async function resolveRuntimeManagementCore(
     "deno",
   ];
   const settingsStore =
-    context.settingsStore ??
-    options.settingsStore ??
-    createMemoryDashboardSettingsStore();
+    context.settingsStore ?? createMemoryDashboardSettingsStore();
   const clientRoutes = [
     ...new Set(
       (options.clientRoutes ?? context.frontendClientRoutes ?? [])
-        .map((route) => normalizePath(route, "/"))
-        .filter((route) => route !== "/"),
+        .map((route: string) => normalizePath(route, "/"))
+        .filter((route: string) => route !== "/"),
     ),
   ];
   const readResolvedServiceRegistry = async () => {
@@ -1551,7 +1582,7 @@ async function resolveRuntimeManagementCore(
         rootPath: true,
         runtimeEngine: true,
         theme: true,
-        pageBuilder: context.websiteEnabled,
+        pageBuilder: context.siteEnabled,
       },
       restartRequired: Boolean(pendingRootPath) || runtimeEngineRestartRequired,
     };
@@ -1898,21 +1929,39 @@ async function resolveRuntimeManagementCore(
  * installation with none is a supported state rather than a broken one: the
  * API is unaffected, and the root path explains itself.
  */
+/**
+ * Reads the frontend option in its three accepted forms.
+ *
+ * `frontend` is a factory for the common case, an object when an installation
+ * wants to name itself or point at a dev server, and `false` for a Platform
+ * that serves nothing at its root.
+ */
+function readFrontendOptions(
+  option: ZelavisFrontendInput | undefined,
+): ZelavisFrontendOptions {
+  if (option === false || option === undefined) return {};
+  return typeof option === "function" ? { factory: option } : option;
+}
+
+function readFrontendTitle(
+  option: ZelavisFrontendInput | undefined,
+): string | undefined {
+  return readFrontendOptions(option).title;
+}
+
 async function resolvePlatformFrontend(
-  option: ZelavisDashboardCoreServiceInput | undefined,
-  frontend: ZelavisPlatformFrontendFactory | undefined,
+  option: ZelavisFrontendInput | undefined,
   context: {
     rootPath: string;
     createRuntimeConfig: () => Promise<unknown>;
   },
 ): Promise<ZelavisPlatformFrontend | undefined> {
-  const dashboardOption = option ?? true;
-  if (dashboardOption === false || !frontend) {
+  const options = readFrontendOptions(option);
+  if (option === false || !options.factory) {
     return undefined;
   }
 
-  const options = dashboardOption === true ? {} : dashboardOption;
-  return frontend({
+  return options.factory({
     rootPath: context.rootPath,
     ...(options.title ? { title: options.title } : {}),
     ...(options.subtitle ? { subtitle: options.subtitle } : {}),
@@ -1927,7 +1976,7 @@ async function resolvePlatformFrontend(
 }
 
 async function resolveWorkloadsCoreService(
-  option: ZelavisWorkloadsCoreServiceInput | undefined,
+  option: ZelavisWorkloadsOptions | undefined,
 ): Promise<ZelavisRuntimeService<any> | undefined> {
   const workloadsOption = option ?? true;
 
@@ -1966,7 +2015,7 @@ function placementStateFromRuntimeStatus(
 }
 
 function resolveFabricCoreService(
-  option: ZelavisFabricCoreServiceInput | undefined,
+  option: ZelavisFabricOptions | undefined,
   context: {
     projects?: ZelavisProjectManager;
     runtimeEngine: ZelavisRuntimeEngine;
@@ -2646,7 +2695,16 @@ export async function zelavis(
 
   if (obsoleteKeys.length > 0) {
     throw new TypeError(
-      `zelavis(...) no longer accepts direct service options (${obsoleteKeys.join(", ")}). Put services in the services folder or install them through the service registry endpoints.`,
+      `zelavis(...) no longer accepts direct service options (${obsoleteKeys.join(", ")}). Put services in the product-services folder or install them through the service registry endpoints.`,
+    );
+  }
+
+  // Refused rather than ignored. Silently dropping a removed option leaves a
+  // caller believing they turned a subsystem off when it is still running,
+  // which for `auth: false` or `site: false` is a security-relevant surprise.
+  if (rawOptions.coreServices !== undefined) {
+    throw new TypeError(
+      'zelavis(...) no longer accepts "coreServices". Platform subsystems moved to "subsystems" (auth, database, fabric, storage, workloads, site), the dashboard options moved to "frontend", and its settings store is now "runtimeSettingsStore".',
     );
   }
 
@@ -2740,7 +2798,7 @@ export async function zelavis(
   const hasAppService = serviceRegistry.some(
     (entry) => entry.status === "installed" && entry.service.kind === "app",
   );
-  const databaseApi = await resolveDatabaseCoreService(options.coreServices?.database);
+  const databaseApi = await resolveDatabaseCoreService(options.subsystems?.database);
   const databaseService = databaseApi && !hasAppService
     ? defineDatabaseService(databaseApi)
     : undefined;
@@ -2748,7 +2806,7 @@ export async function zelavis(
   const authService = hasAppService
       ? undefined
       : await resolveAuthCoreService(
-        options.coreServices?.auth,
+        options.subsystems?.auth,
         collectAuthMethodPlugins(serviceRegistry),
         systemStore,
         rootPath,
@@ -2776,10 +2834,10 @@ export async function zelavis(
   );
   const serviceRuntimeServices = await Promise.all(activatedServices.services);
   const dashboardSettingsStore = resolveRuntimeSettingsStore(
-    options.coreServices?.dashboard,
+    options.runtimeSettingsStore,
     createSystemStoreDashboardSettingsStore(systemStore),
   );
-  const websiteCoreOptions = options.coreServices?.website;
+  const siteEnabled = options.subsystems?.site !== false;
   // Every installation serves something at its root, and what that is depends
   // on which installation it is.
   //
@@ -2790,27 +2848,26 @@ export async function zelavis(
   //
   // Either way `/` answers, rather than returning the 404 that reads as a
   // broken installation.
-  const dashboardEnabled = options.coreServices?.dashboard !== false;
-  const websiteService =
-    websiteCoreOptions === false
+  const frontendEnabled = options.frontend !== false;
+  const websiteService = !siteEnabled
       ? undefined
       : createProjectFrontendPlaceholderService({
           reservedPrefixes: [rootPath, joinPathParts(rootPath, apiPrefix)],
-          ...(dashboardEnabled ? { redirectTo: rootPath } : {}),
+          ...(frontendEnabled ? { redirectTo: rootPath } : {}),
           publicDomains: {
             ...(options.domainBindings ? { domainBindings: options.domainBindings } : {}),
             // Late-bound: the Project manager is composed after this service.
             projects: () => projects,
           },
         });
-  const storageService = await resolveStorageCoreService(options.coreServices?.storage, {
+  const storageService = await resolveStorageCoreService(options.subsystems?.storage, {
         rootPath,
         apiPrefix,
         apiVersion,
       });
   const workloadsCoreService = hasAppService
       ? undefined
-      : await resolveWorkloadsCoreService(options.coreServices?.workloads);
+      : await resolveWorkloadsCoreService(options.subsystems?.workloads);
   const deletionAssistant = systemStore
     ? createAssistantManager({ store: systemStore })
     : undefined;
@@ -2894,7 +2951,7 @@ export async function zelavis(
         })
       : undefined;
   const fabricCoreService = resolveFabricCoreService(
-    options.coreServices?.fabric,
+    options.subsystems?.fabric,
     {
       projects,
       runtimeEngine: detectCurrentRuntimeEngine(
@@ -2902,7 +2959,7 @@ export async function zelavis(
       ),
     },
   );
-  const websiteEnabled = Boolean(websiteService);
+  const siteMounted = Boolean(websiteService);
   let runtimeConfigServices: readonly ZelavisRuntimeService<any>[] = [];
   // Resolved before the management core, which needs the paths this frontend
   // claims and the design tokens it supplies. The frontend needs the runtime
@@ -2910,7 +2967,6 @@ export async function zelavis(
   // a frontend reads it when serving a request, long after composition.
   let runtimeManagement: ZelavisRuntimeManagementCore | undefined;
   const platformFrontend = await resolvePlatformFrontend(
-    options.coreServices?.dashboard,
     options.frontend,
     {
       rootPath,
@@ -2932,14 +2988,13 @@ export async function zelavis(
   // The first serves nothing at the root path; the second explains itself.
   const frontendService =
     platformFrontend?.service ??
-    (options.coreServices?.dashboard === false
+    (!frontendEnabled
       ? undefined
       : createMissingPlatformFrontendService({
           rootPath,
           reservedPrefixes: [joinPathParts(rootPath, apiPrefix)],
-          ...(typeof options.coreServices?.dashboard === "object" &&
-          options.coreServices.dashboard.title
-            ? { title: options.coreServices.dashboard.title }
+          ...(readFrontendTitle(options.frontend)
+            ? { title: readFrontendTitle(options.frontend)! }
             : {}),
         }));
   // Synthesize the sibling app service through the same primitive user
@@ -2953,7 +3008,7 @@ export async function zelavis(
     : undefined;
 
   runtimeManagement = await resolveRuntimeManagementCore(
-    options.coreServices?.dashboard,
+    options.frontend,
     {
       apiPrefix,
       apiVersion,
@@ -2967,7 +3022,7 @@ export async function zelavis(
       rootPath,
       getServices: () => runtimeConfigServices,
       settingsStore: dashboardSettingsStore,
-      websiteEnabled,
+      siteEnabled: siteMounted,
       bundleStore: options.bundleStore,
       platform: options.serviceContext?.platform,
       ...(platformFrontend?.clientRoutes
@@ -2993,7 +3048,7 @@ export async function zelavis(
     runtimeManagement.routes,
     options.assistant,
   );
-  const coreServices = [
+  const subsystemServices = [
     platformCoreService,
     await createZelavisMarketplaceService(),
     fabricCoreService,
@@ -3016,7 +3071,7 @@ export async function zelavis(
     : undefined;
   runtimeConfigServices = [
     sanitizedDashboardService,
-    ...coreServices,
+    ...subsystemServices,
   ].filter(
     (service): service is ZelavisRuntimeService<any> => Boolean(service),
   );
@@ -3024,11 +3079,11 @@ export async function zelavis(
     sanitizedDashboardService,
     dashboardAppService,
     domainChallengeService,
-    ...coreServices,
+    ...subsystemServices,
   ].filter(
     (service): service is ZelavisRuntimeService<any> => Boolean(service),
   );
-  const mountPrefix = websiteEnabled ? "/" : rootPath;
+  const mountPrefix = siteMounted ? "/" : rootPath;
 
   const runtime = await mountZelavisServer({
     ...options,
@@ -3097,11 +3152,17 @@ function assertNoInternalConstructorOptions(
   options: ZelavisOptions,
 ): void {
   const raw = options as Record<string, unknown>;
+  if ((raw as { coreServices?: unknown }).coreServices !== undefined) {
+    throw new TypeError(
+      'new Zelavis(...) no longer accepts "coreServices". Platform subsystems moved to "subsystems" on zelavis(...), and the dashboard options moved to the public "frontend" option.',
+    );
+  }
+
   const forbiddenKeys = [
     "services",
     "serviceRegistry",
     "runtimeServices",
-    "coreServices",
+    "subsystems",
     "serviceContext",
     "servicePrefixes",
     "pathOverrides",
@@ -3142,25 +3203,23 @@ function mergeMaybeRecord<TValue>(
   return override;
 }
 
-function mergeCoreServicesOptions(
-  base: ZelavisCoreServicesOptions | undefined,
-  override: ZelavisCoreServicesOptions | undefined,
-): ZelavisCoreServicesOptions | undefined {
-  if (!base) {
-    return override;
-  }
+function mergeSubsystemOptions(
+  base: ZelavisSubsystemOptions | undefined,
+  override: ZelavisSubsystemOptions | undefined,
+): ZelavisSubsystemOptions | undefined {
+  if (!base) return override;
+  if (!override) return base;
 
-  if (!override) {
-    return base;
-  }
-
+  // Every member, listed once. The version this replaced omitted `fabric`
+  // entirely, so an adapter and a host that both configured it silently lost
+  // one of them — the same failure the registry merge had.
   return {
     auth: mergeMaybeRecord(base.auth, override.auth),
-    dashboard: mergeMaybeRecord(base.dashboard, override.dashboard),
     database: mergeMaybeRecord(base.database, override.database),
+    fabric: mergeMaybeRecord(base.fabric, override.fabric),
     storage: mergeMaybeRecord(base.storage, override.storage),
-    website: mergeMaybeRecord(base.website, override.website),
     workloads: mergeMaybeRecord(base.workloads, override.workloads),
+    site: override.site ?? base.site,
   };
 }
 
@@ -3331,10 +3390,8 @@ function mergeZelavisServerOptions(
         : undefined,
     serviceContext:
       Object.keys(serviceContext).length > 0 ? serviceContext : undefined,
-    coreServices: mergeCoreServicesOptions(
-      base.coreServices,
-      override.coreServices,
-    ),
+    subsystems: mergeSubsystemOptions(base.subsystems, override.subsystems),
+    frontend: override.frontend ?? base.frontend,
     servicePrefixes: {
       ...(base.servicePrefixes ?? {}),
       ...(override.servicePrefixes ?? {}),
@@ -3400,43 +3457,32 @@ function applyPlatformResourceDefaults(
   options: ZelavisRuntimeCompositionOptions,
   resources: ZelavisPlatformResources,
 ): ZelavisRuntimeCompositionOptions {
-  const nextCoreServices: ZelavisCoreServicesOptions = {
-    ...(options.coreServices ?? {}),
+  const nextSubsystems: ZelavisSubsystemOptions = {
+    ...(options.subsystems ?? {}),
   };
   const nextServiceRegistry: ZelavisServiceRegistryOptions = {
     ...(options.serviceRegistry ?? {}),
   };
 
-  if (nextCoreServices.dashboard !== false) {
-    const currentDashboard =
-      nextCoreServices.dashboard === true || nextCoreServices.dashboard === undefined
-        ? {}
-        : nextCoreServices.dashboard;
+  // The runtime settings store is a resource, not a frontend concern. It used
+  // to hang off `coreServices.dashboard`, which is why turning the dashboard
+  // off also took the Platform's own settings persistence with it.
+  const runtimeSettingsStore =
+    options.runtimeSettingsStore ??
+    (resources.systemStore
+      ? createSystemStoreDashboardSettingsStore(resources.systemStore)
+      : resources.kv
+        ? createKeyValueDashboardSettingsStore(resources.kv)
+        : undefined);
 
-    if (!currentDashboard.settingsStore) {
-      const settingsStore = resources.systemStore
-        ? createSystemStoreDashboardSettingsStore(resources.systemStore)
-        : resources.kv
-          ? createKeyValueDashboardSettingsStore(resources.kv)
-          : undefined;
-
-      if (settingsStore) {
-        nextCoreServices.dashboard = {
-          ...currentDashboard,
-          settingsStore,
-        };
-      }
-    }
-  }
-
-  if (nextCoreServices.storage !== false) {
+  if (nextSubsystems.storage !== false) {
     const currentStorage =
-      nextCoreServices.storage === true || nextCoreServices.storage === undefined
+      nextSubsystems.storage === true || nextSubsystems.storage === undefined
         ? {}
-        : nextCoreServices.storage;
+        : nextSubsystems.storage;
 
     if (!currentStorage.storage && resources.files) {
-      nextCoreServices.storage = {
+      nextSubsystems.storage = {
         ...currentStorage,
         storage: resources.files,
       };
@@ -3456,7 +3502,8 @@ function applyPlatformResourceDefaults(
   return {
     ...options,
     serviceRegistry: nextServiceRegistry,
-    coreServices: nextCoreServices,
+    subsystems: nextSubsystems,
+    ...(runtimeSettingsStore ? { runtimeSettingsStore } : {}),
     systemStore: options.systemStore ?? resources.systemStore,
     projectRuntime: options.projectRuntime ?? resources.projectRuntime,
     deploymentBackends:

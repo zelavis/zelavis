@@ -523,7 +523,7 @@ test("Basic authentication is an optional native Request authenticator", async (
 
 test("Platform accounts and sessions use the System Store across runtime composition", async () => {
   const systemStore = createMemorySystemStore();
-  const first = await zelavis({ systemStore, coreServices: { dashboard: false } });
+  const first = await zelavis({ systemStore, frontend: false });
   const created = await first.plain({
     url: "/zelavis/api/v1/auth/accounts",
     method: "POST",
@@ -538,7 +538,7 @@ test("Platform accounts and sessions use the System Store across runtime composi
   assert.equal(created.status, 201);
   await first.close();
 
-  const second = await zelavis({ systemStore, coreServices: { dashboard: false } });
+  const second = await zelavis({ systemStore, frontend: false });
   const listed = await second.plain({
     url: "/zelavis/api/v1/auth/accounts",
     principal: { id: "owner", type: "system", permissions: ["*"] },
@@ -555,7 +555,7 @@ test("Platform first-owner bootstrap, login, rotation, CSRF, and logout use real
     frontend: zelavisUiFrontend,
     systemStore,
     bootstrap: { token: bootstrapToken },
-    coreServices: { dashboard: false },
+    frontend: false,
     serviceRegistry: {
       catalog: [{
         service: passwordMethodService(),
@@ -702,7 +702,7 @@ test("a durable bootstrap claim admits only one Platform writer", async () => {
   const options = {
     systemStore,
     bootstrap: { token: bootstrapToken },
-    coreServices: { dashboard: false },
+    frontend: false,
     serviceRegistry: {
       catalog: [{
         service: passwordMethodService(),
@@ -742,8 +742,8 @@ test("shared Platform Auth attempts update atomically across runtimes", async ()
   const options = {
     systemStore,
     bootstrap: { token: bootstrapToken },
-    coreServices: {
-      dashboard: false,
+    frontend: false,
+    subsystems: {
       auth: {
         authOptions: {
           security: { maxAttempts: 4, windowMs: 60_000, blockMs: 60_000 },
