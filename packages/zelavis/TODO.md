@@ -203,6 +203,15 @@ an exported type is never mistaken for an operational distributed feature.
   only matching-origin browser requests receive session cookies, cookie
   mutations require a same-origin `Origin`, and critical Project, Assistant,
   service-mutation, and settings-mutation endpoints declare core permissions.
+- [x] An identity provider is added by pasting its issuer URL. Core reads the
+  issuer's own OpenID configuration, so every OIDC provider is a URL rather
+  than a plugin, and shipping a curated list of popular providers is not a
+  problem the Platform has to have. A definition still ships only where it
+  is not OIDC at all.
+- [x] Extensions are listed by what they extend. `GET /runtime/extensions` and
+  `zelavis extensions --for <service>` answer "what can I install for this
+  plugin", each registry entry carries `extends` so a general catalogue can
+  leave them out, and an extension whose owner is absent cannot be installed.
 - [x] Password sign-in and the OAuth Authorization Code client are part of
   Zelavis rather than plugins. Both are ceremonies whose dangerous parts are
   generic — password verification and its timing, and the state, nonce and PKCE

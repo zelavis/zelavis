@@ -13,3 +13,4 @@ export * from "./oauth-contract.js";
 export * from "./oauth-connections.js";
 export * from "./oauth-flow.js";
 export * from "./oauth-definitions.js";
+export * from "./oauth-discovery.js";

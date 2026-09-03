@@ -10,6 +10,14 @@ import type { ZelavisServiceStore } from "../../../platform/service-store.js";
  */
 export interface OAuthConnection {
   provider: string;
+  /**
+   * The OIDC issuer this provider was discovered from, when it was not
+   * supplied by a plugin. Kept so the endpoints can be re-read rather than
+   * trusted from storage forever.
+   */
+  issuer?: string;
+  /** Endpoints read from the issuer, cached so a restart needs no network. */
+  discovered?: unknown;
   clientId: string;
   clientSecret?: string;
   redirectUri: string;
@@ -19,7 +27,10 @@ export interface OAuthConnection {
 }
 
 /** A connection as the API returns it. Never carries the secret. */
-export type PublicOAuthConnection = Omit<OAuthConnection, "clientSecret"> & {
+export type PublicOAuthConnection = Omit<
+  OAuthConnection,
+  "clientSecret" | "discovered"
+> & {
   /** Whether a secret is stored, which is all a caller needs to know. */
   hasClientSecret: boolean;
 };
@@ -32,6 +43,7 @@ export function publicConnection(
   // before it can leak.
   return {
     provider: connection.provider,
+    ...(connection.issuer ? { issuer: connection.issuer } : {}),
     clientId: connection.clientId,
     redirectUri: connection.redirectUri,
     ...(connection.scopes ? { scopes: connection.scopes } : {}),

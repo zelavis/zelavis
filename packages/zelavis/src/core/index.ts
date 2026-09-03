@@ -12,6 +12,7 @@ export * from "./artifact/index.js";
 export * from "./provider/index.js";
 export * from "./workload/index.js";
 export * from "./service/capability.js";
+export * from "./service/extension.js";
 export * from "./service/definition.js";
 export * from "./service/manifest.js";
 export * from "./service/context.js";

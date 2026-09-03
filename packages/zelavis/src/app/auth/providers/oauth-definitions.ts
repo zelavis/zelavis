@@ -18,16 +18,6 @@ import type {
  * `@zelavis/auth:oauth`; nothing about these is privileged.
  */
 
-export const googleProvider: OAuthProviderDefinition = {
-  name: "google",
-  title: "Google",
-  authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
-  tokenEndpoint: "https://oauth2.googleapis.com/token",
-  issuer: "https://accounts.google.com",
-  jwksUrl: "https://www.googleapis.com/oauth2/v3/certs",
-  scopes: ["email", "profile"],
-};
-
 export const githubProvider: OAuthProviderDefinition = {
   name: "github",
   title: "GitHub",
@@ -85,5 +75,14 @@ export function oidcProvider(
 }
 
 /** Provider definitions this package registers without anything else installed. */
+/**
+ * Provider definitions this package registers without anything else installed.
+ *
+ * Only GitHub, and only because it is not OIDC: it issues no ID token, so its
+ * profile endpoint and claim mapping are real code rather than a list of URLs.
+ * Google used to sit beside it and no longer does — every OIDC issuer is
+ * reached by pasting its issuer URL, which is why shipping a curated list of
+ * popular providers is not a problem this package has to have.
+ */
 export const builtInOAuthProviders: readonly OAuthProviderDefinition[] =
-  Object.freeze([googleProvider, githubProvider]);
+  Object.freeze([githubProvider]);

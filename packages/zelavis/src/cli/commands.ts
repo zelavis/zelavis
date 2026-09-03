@@ -6,6 +6,8 @@ import {
 import { promptSecret, readAllStdin } from "./prompt.js";
 import {
   formatActivationResult,
+  formatRuntimeExtensions,
+  listRuntimeExtensions,
   formatRuntimeServiceList,
   listRuntimeServices,
   registerRuntimeService,
@@ -44,6 +46,7 @@ interface ParsedArgs {
   displayName?: string;
   provider?: string;
   token?: string;
+  forService?: string;
   passwordStdin: boolean;
   install: boolean;
   help: boolean;
@@ -61,11 +64,13 @@ Usage:
   zelavis services register --specifier <specifier> [--name <name>] [--install] [--url <url>]
   zelavis bootstrap --email <email> [--display-name <name>] [--password-stdin] [--url <url>]
   zelavis bootstrap status [--url <url>]
+  zelavis extensions [--for <service>] [--url <url>]
 
 Commands:
   serve                     Run the long-lived Zelavis Platform OS.
   bootstrap                 Create the first Platform owner account.
   bootstrap status          Report whether an owner still has to be created.
+  extensions                List services that extend another, by what they extend.
   services list             List runtime service registry entries.
   services install          Mark a registered service as installed.
   services disable          Mark an installed service as available.
@@ -85,6 +90,7 @@ Options:
   --username <username>     Owner username, when not using an email identity.
   --display-name <name>     Owner display name.
   --provider <provider>     Credential provider. Defaults to password.
+  --for <service>           Limit extensions to those extending this service.
   --token <token>           Bootstrap token. Defaults to ZELAVIS_BOOTSTRAP_TOKEN.
   --password-stdin          Read the owner password from standard input.
   --version, -v             Print the CLI version.
@@ -177,6 +183,11 @@ function parseArgs(args: readonly string[]): ParsedArgs {
         throw new Error('--source must be "official" or "community".');
       }
       parsed.source = value;
+    } else if (arg === "--for") {
+      parsed.forService = readValue(args, index, arg);
+      index += 1;
+    } else if (arg.startsWith("--for=")) {
+      parsed.forService = arg.slice("--for=".length);
     } else if (arg === "--password-stdin") {
       parsed.passwordStdin = true;
     } else if (arg === "--password" || arg.startsWith("--password=")) {
@@ -391,6 +402,17 @@ export async function runCli(
         port: parsed.port ?? parsePort(process.env.PORT ?? "3000"),
         dataDirectory: parsed.dataDirectory ?? process.env.ZELAVIS_DATA_DIR,
       });
+      return;
+    }
+    if (parsed.command === "extensions") {
+      console.log(
+        formatRuntimeExtensions(
+          await listRuntimeExtensions({
+            url: parsed.url,
+            ...(parsed.forService ? { owner: parsed.forService } : {}),
+          }),
+        ),
+      );
       return;
     }
     if (parsed.command === "bootstrap") {

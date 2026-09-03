@@ -22,9 +22,16 @@
  * discovered.
  */
 
-/** Domain namespaces the Platform itself defines. */
+/**
+ * Domain namespaces the Platform itself defines.
+ *
+ * Documentation rather than a gate: what separates a namespace from a service
+ * is the shape below, not membership of this list. An allowlist would go stale
+ * the moment a new domain appeared, and a domain mistaken for a service owner
+ * invents an extension point nobody declared.
+ */
 export const ZELAVIS_PLATFORM_CAPABILITY_NAMESPACES: readonly string[] =
-  Object.freeze(["web", "api", "dashboard", "provider"]);
+  Object.freeze(["web", "api", "dashboard", "provider", "app"]);
 
 /**
  * A capability owner: a package name, or a core service name.
@@ -61,13 +68,14 @@ export function parseServiceCapability(
   const name = capability.slice(separator + 1);
   if (!CAPABILITY_NAME.test(name)) return undefined;
 
-  if (ZELAVIS_PLATFORM_CAPABILITY_NAMESPACES.includes(owner)) {
-    return { owner, name, serviceOwned: false };
-  }
-  if (CAPABILITY_OWNER.test(owner)) {
-    return { owner, name, serviceOwned: true };
-  }
-  return undefined;
+  if (!CAPABILITY_OWNER.test(owner)) return undefined;
+
+  // A service name always carries a `/` — `zelavis/auth` for a core service,
+  // `@acme/shop` for a package. A bare word is a domain namespace saying what
+  // a plugin implements, not whose contract it satisfies. Reading `app:project`
+  // as an extension of something called "app" invented an extension point that
+  // nobody declared and listed unrelated services under it.
+  return { owner, name, serviceOwned: owner.includes("/") };
 }
 
 /** Builds the capability string a service declares to extend `owner`. */

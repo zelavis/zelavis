@@ -114,11 +114,59 @@ An installation that must come up already configured can set
 `ZELAVIS_AUTH_<PROVIDER>_CLIENT_ID`, `_CLIENT_SECRET`, `_REDIRECT_URI`, and
 `_SCOPES` instead. Anything stored through the API wins.
 
-To add a provider nobody has defined yet, ship a plugin declaring
+### Adding a provider by its issuer
+
+Any OpenID Connect provider is added by pasting its issuer URL. Zelavis reads
+the endpoints from the issuer's own `/.well-known/openid-configuration`, so
+Google, Microsoft, Okta, Auth0, Keycloak, or your company's SSO needs no plugin
+and no release when an endpoint moves:
+
+```bash
+curl -X PUT https://example.com/zelavis/api/v1/auth/oauth/connections/acme \
+  -H 'content-type: application/json' \
+  -d '{
+    "issuer": "https://id.example.com",
+    "clientId": "...",
+    "clientSecret": "...",
+    "redirectUri": "https://example.com/zelavis/api/v1/auth/oauth/acme/callback"
+  }'
+```
+
+The document's own `issuer` must match the URL requested and every endpoint
+must be https — one of them supplies the keys that decide whether an ID token
+is genuine.
+
+A plugin is only needed for a provider that is not OIDC at all, where the
+profile endpoint and claim mapping are real code. Ship one declaring
 `"capabilities": ["zelavis/auth:oauth"]` whose service exports
 `oauthProviders`. A definition with an `issuer` must also give a `jwksUrl`: an
 ID token nobody can verify is attacker-supplied JSON, so one is refused at
 definition time.
+
+## Extensions
+
+A plugin that extends another declares a capability owned by it —
+`zelavis/auth:oauth`, not the domain namespace `provider:auth`. It is an
+ordinary plugin in every other way; the only difference is who it points at.
+
+That relationship is what lets an extension be listed beside the plugin it
+extends rather than in a general catalogue:
+
+```bash
+zelavis extensions
+zelavis extensions --for zelavis/auth
+```
+
+The same over the API, which is what a plugin's own settings page asks for:
+
+```
+GET /zelavis/api/v1/runtime/extensions?owner=zelavis/auth
+```
+
+Each entry in `runtime/services` carries `extends`, so a general listing can
+leave extensions out. Installing one whose owner is not present is refused: the
+plugin it points at is what discovers it, so on its own it would look installed
+and do nothing.
 
 Runtime service management is available through the `services` command group:
 

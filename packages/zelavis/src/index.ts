@@ -7,6 +7,7 @@ import {
   createPasswordProvider,
   builtInOAuthProviders,
   environmentConnection,
+  discoverOidcProvider,
   OAUTH_PROVIDER_CAPABILITY,
   PASSWORD_PROVIDER,
   publicConnection,
@@ -39,6 +40,8 @@ import {
   type ZelavisServerFetchHandler,
   declaresServiceCapability,
   serviceCapabilityFor,
+  serviceExtensionOwners,
+  serviceExtensionPoints,
   type ZelavisResolvedRoute,
   type ZelavisServerPlainHandler,
   type ZelavisServerRoute,
@@ -1109,11 +1112,11 @@ async function resolveDatabaseCoreService(
  * contract is synchronous, so the configuration is loaded once here and
  * refreshed whenever it is written.
  */
-function registerOAuthProviders(
+async function registerOAuthProviders(
   api: AuthApi,
   context: AuthMethodContext | undefined,
   options: { fetch?: typeof globalThis.fetch },
-): void {
+): Promise<void> {
   const definitions = new Map<string, OAuthProviderDefinition>();
   for (const entry of context?.registry ?? []) {
     if (entry.status !== "installed") continue;
@@ -1140,15 +1143,24 @@ function registerOAuthProviders(
     ? createConnectionStore(context.store as never)
     : undefined;
   const active = new Map<string, OAuthConnection>();
-  const refresh = async () => {
-    active.clear();
-    for (const name of definitions.keys()) {
-      const connection =
-        (await connections?.read(name)) ?? environmentConnection(name);
-      if (connection) active.set(name, connection);
+  // Awaited rather than floated: a sign-in arriving immediately after boot
+  // would otherwise find an empty map and be told the provider is unavailable.
+  for (const stored of (await connections?.list()) ?? []) {
+    active.set(stored.provider, stored);
+    // A connection carrying its own discovered definition defines a provider
+    // nothing installed knows about — an issuer an operator pasted in.
+    if (!definitions.has(stored.provider) && stored.discovered) {
+      definitions.set(
+        stored.provider,
+        stored.discovered as OAuthProviderDefinition,
+      );
     }
-  };
-  void refresh();
+  }
+  for (const name of definitions.keys()) {
+    if (active.has(name)) continue;
+    const fromEnvironment = environmentConnection(name);
+    if (fromEnvironment) active.set(name, fromEnvironment);
+  }
 
   const require = (name: string): OAuthConnection => {
     const connection = active.get(name);
@@ -1160,7 +1172,8 @@ function registerOAuthProviders(
     return connection;
   };
 
-  for (const [name, definition] of definitions) {
+  const registerProvider = (definition: OAuthProviderDefinition) => {
+    const name = definition.name;
     api.authentication.registerProvider({
       name,
       authorizationCode: {
@@ -1177,12 +1190,15 @@ function registerOAuthProviders(
         },
       },
     });
-  }
+  };
+  for (const definition of definitions.values()) registerProvider(definition);
 
   oauthRuntime = {
     definitions,
     connections,
     active,
+    fetch: options.fetch,
+    register: registerProvider,
   };
 }
 
@@ -1198,14 +1214,29 @@ async function configureOAuthConnection(
   input: unknown,
 ): Promise<PublicOAuthConnection | undefined> {
   const runtime = oauthRuntime;
-  if (!runtime?.definitions.has(provider)) return undefined;
+  if (!runtime) return undefined;
+
+  const body = (input ?? {}) as Partial<OAuthConnection>;
+  // An issuer turns a provider nobody shipped into one this installation has.
+  // Every OIDC issuer publishes its own endpoints, so adding Okta, Auth0,
+  // Keycloak, Google or a company's SSO is a URL rather than a plugin.
+  let discovered: OAuthProviderDefinition | undefined;
+  if (typeof body.issuer === "string" && body.issuer.trim()) {
+    discovered = await discoverOidcProvider(body.issuer.trim(), {
+      name: provider,
+      ...(runtime.fetch ? { fetch: runtime.fetch } : {}),
+    });
+    runtime.definitions.set(provider, discovered);
+    runtime.register?.(discovered);
+  }
+
+  if (!runtime.definitions.has(provider)) return undefined;
   if (!runtime.connections) {
     throw new ZelavisValidationError(
       "This installation has no durable store, so OAuth configuration cannot be saved.",
     );
   }
 
-  const body = (input ?? {}) as Partial<OAuthConnection>;
   if (typeof body.clientId !== "string" || !body.clientId.trim()) {
     throw new ZelavisValidationError("A clientId is required.");
   }
@@ -1238,6 +1269,11 @@ async function configureOAuthConnection(
         ? { clientSecret: existing.clientSecret }
         : {}),
     redirectUri: redirect.toString(),
+    ...(discovered
+      ? { issuer: discovered.issuer, discovered }
+      : existing?.discovered
+        ? { issuer: existing.issuer, discovered: existing.discovered }
+        : {}),
     ...(Array.isArray(body.scopes)
       ? { scopes: body.scopes.filter((scope) => typeof scope === "string") }
       : {}),
@@ -1288,9 +1324,11 @@ async function removeOAuthConnection(provider: string): Promise<void> {
 /** Set when auth is composed, so the endpoints below can reach the same state. */
 let oauthRuntime:
   | {
-      definitions: ReadonlyMap<string, OAuthProviderDefinition>;
+      definitions: Map<string, OAuthProviderDefinition>;
       connections: ReturnType<typeof createConnectionStore> | undefined;
       active: Map<string, OAuthConnection>;
+      fetch?: typeof globalThis.fetch;
+      register?: (definition: OAuthProviderDefinition) => void;
     }
   | undefined;
 
@@ -1328,7 +1366,7 @@ async function resolveAuthCoreService(
     {
       name: "zelavis/auth:oauth",
       register(api, context) {
-        registerOAuthProviders(api, context, configured.oauth ?? {});
+        return registerOAuthProviders(api, context, configured.oauth ?? {});
       },
     },
   ];
@@ -1687,6 +1725,10 @@ async function resolveRuntimeManagementCore(
       source: entry.source,
       order: entry.order,
       marketplace: entry.service.marketplace,
+      // Present only on a service that extends another. A client listing a
+      // general catalogue leaves these out and shows them beside the plugin
+      // they extend instead.
+      extends: serviceExtensionPoints(entry.service),
       project: entry.service.project,
       menu: serializeServiceMenuForDashboard(entry.service.name, entry.service.menu),
       menus: entry.service.menus?.map((menu) =>
@@ -1797,6 +1839,10 @@ async function resolveRuntimeManagementCore(
         source: entry.source,
         order: entry.order,
         marketplace: entry.service.marketplace,
+        // Present only on a service that extends another. A client listing a
+        // general catalogue leaves these out and shows them beside the plugin
+        // they extend instead.
+        extends: serviceExtensionPoints(entry.service),
         project: entry.service.project,
         menu: serializeServiceMenuForDashboard(entry.service.name, entry.service.menu),
         menus: entry.service.menus?.map((menu) =>
@@ -1909,6 +1955,89 @@ async function resolveRuntimeManagementCore(
                 status: 200,
                 body: {
                   services: await serializeServiceRegistryForDashboard(),
+                },
+              };
+            } catch (error) {
+              return zelavisErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "runtime.extensions.read",
+          method: "GET",
+          path: joinPathParts(
+            context.apiPrefix,
+            context.apiVersion,
+            "runtime/extensions",
+          ),
+          spec: {
+            operationId: "listServiceExtensions",
+            summary: "List services that extend another, grouped by what they extend",
+            tags: ["runtime"],
+            queryParams: {
+              owner: {
+                type: "string",
+                description:
+                  "Limit the result to extensions of this service, such as zelavis/auth.",
+              },
+            },
+            responses: {
+              200: { description: "Extension points and the services declaring them" },
+            },
+          },
+          handler: async ({ request }: { request: Request }) => {
+            try {
+              const wanted = new URL(request.url).searchParams.get("owner") ?? undefined;
+              const services = await serializeServiceRegistryForDashboard();
+              // Composed services count as present. A core service such as
+              // `zelavis/auth` never appears in the registry, so a listing
+              // built from that alone would report the one thing every auth
+              // extension points at as missing.
+              const installed = new Set<string>([
+                ...services
+                  .filter((service: any) => service.status === "installed")
+                  .map((service: any) => service.name as string),
+                ...context.getServices().map((service) => service.name),
+              ]);
+
+              const points = new Map<string, any>();
+              for (const service of services as any[]) {
+                for (const point of service.extends ?? []) {
+                  if (wanted && point.owner !== wanted) continue;
+                  const group = points.get(point.owner) ?? {
+                    owner: point.owner,
+                    // An extension is only usable once what it extends is
+                    // there, so a client can say so rather than offering an
+                    // install that would do nothing.
+                    ownerInstalled: installed.has(point.owner),
+                    capabilities: new Set<string>(),
+                    extensions: [] as unknown[],
+                  };
+                  for (const capability of point.capabilities) {
+                    group.capabilities.add(capability);
+                  }
+                  group.extensions.push({
+                    name: service.name,
+                    version: service.version,
+                    status: service.status,
+                    source: service.source,
+                    specifier: service.specifier,
+                    capabilities: point.capabilities,
+                    marketplace: service.marketplace,
+                  });
+                  points.set(point.owner, group);
+                }
+              }
+
+              return {
+                status: 200,
+                body: {
+                  extensionPoints: [...points.values()]
+                    .map((group) => ({
+                      ...group,
+                      capabilities: [...group.capabilities].sort(),
+                    }))
+                    .sort((left, right) => left.owner.localeCompare(right.owner)),
                 },
               };
             } catch (error) {
@@ -2068,6 +2197,32 @@ async function resolveRuntimeManagementCore(
                 throw new ZelavisValidationError(
                   `Unknown service "${serviceName}".`,
                 );
+              }
+
+              // An extension does nothing until what it extends is running:
+              // the plugin it points at is what discovers it. Installing one
+              // on its own would look like it worked and quietly do nothing.
+              if (update.status === "installed" && updatedRegistryEntry) {
+                // Composed services as well as installed registry entries. A
+                // core service like `zelavis/auth` never appears in the
+                // registry, so checking only that would refuse every extension
+                // of one — which is most of them.
+                const installedNames = new Set([
+                  ...nextRegistry
+                    .filter((entry) => entry.status === "installed")
+                    .map((entry) => entry.service.name),
+                  ...context.getServices().map((service) => service.name),
+                ]);
+                const missing = serviceExtensionOwners(
+                  updatedRegistryEntry.service,
+                ).filter((owner) => !installedNames.has(owner));
+                if (missing.length > 0) {
+                  throw new ZelavisValidationError(
+                    `"${serviceName}" extends ${missing.join(", ")}, which ${
+                      missing.length === 1 ? "is" : "are"
+                    } not installed.`,
+                  );
+                }
               }
 
               const serializedNextRegistry = serializeServiceRegistryState(
