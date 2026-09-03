@@ -25,7 +25,6 @@ import type {
 } from "../service.js";
 import type { ZelavisSystemStore } from "../system-store.js";
 import type {
-  ZelavisDashboardCoreServiceInput,
   ZelavisServiceRegistryOptions,
 } from "../index.js";
 const DEFAULT_PLATFORM_DASHBOARD_SETTINGS_KEY =
@@ -551,21 +550,18 @@ export function createFileStorageServiceRegistryStore(
   };
 }
 
+/**
+ * Resolves where Platform runtime settings persist.
+ *
+ * The store used to be reached through the dashboard option, which tied the
+ * Platform's own settings persistence to whether it had a face. It is a
+ * resource; an installation serving no frontend still has settings.
+ */
 export function resolveRuntimeSettingsStore(
-  option: ZelavisDashboardCoreServiceInput | undefined,
+  configured: ZelavisDashboardSettingsStore | undefined,
   fallbackStore?: ZelavisDashboardSettingsStore,
-): ZelavisDashboardSettingsStore | undefined {
-  const dashboardOption = option ?? true;
-
-  if (dashboardOption === true || dashboardOption === false) {
-    return fallbackStore ?? createMemoryDashboardSettingsStore();
-  }
-
-  return (
-    dashboardOption.settingsStore ??
-    fallbackStore ??
-    createMemoryDashboardSettingsStore()
-  );
+): ZelavisDashboardSettingsStore {
+  return configured ?? fallbackStore ?? createMemoryDashboardSettingsStore();
 }
 
 export function resolveServiceRegistryStore(

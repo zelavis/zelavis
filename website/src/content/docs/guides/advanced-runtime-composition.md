@@ -70,10 +70,26 @@ Concretely:
 The same low-level runtime service shape is used for System Services and project
 services, but their ownership and persistence are different.
 
-Do not build new architecture around the `coreServices` option name. It is
-transitional composition internals, not the product boundary. Platform state
-belongs in the System Store; app-facing capabilities belong to Project
-runtimes created from recipes.
+The `coreServices` option is gone. It read as though the Platform had a second,
+privileged way to install services; it did not. What it held was the Platform's
+own subsystems, and they now say what they are:
+
+- `subsystems` on `zelavis(...)` carries `auth`, `database`, `fabric`,
+  `storage`, `workloads`, and `site` — infrastructure and policy switches, not
+  installable services.
+- `frontend` carries what `coreServices.dashboard` used to: the factory, plus
+  `title`, `subtitle`, `devServerUrl`, and a `clientRoutes` override. It
+  predated frontends being a first-class concept, and by the end every field it
+  held was about the frontend — `clientRoutes` already fell back to the routes
+  the frontend declared for itself. `frontend: false` means an installation
+  that serves nothing at its root.
+- `runtimeSettingsStore` carries the settings store. It is a resource, and
+  hanging it off the dashboard option meant turning the dashboard off also took
+  the Platform's own settings persistence with it.
+
+Services come from the product-services folder and the registry endpoints, and
+only from there. Platform state belongs in the System Store; app-facing
+capabilities belong to Project runtimes created from recipes.
 
 ## Why this split exists
 

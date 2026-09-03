@@ -19,7 +19,7 @@ import {
 import type {
   ZelavisFileReference,
   ZelavisFileStorageEntry,
-  ZelavisStorageCoreServiceInput,
+  ZelavisStorageOptions,
 } from "./storage-types.js";
 import type { ZelavisRuntimeService } from "../core/index.js";
 
@@ -136,7 +136,7 @@ export function createFileReference(
 
 
 export async function resolveStorageCoreService(
-  option: ZelavisStorageCoreServiceInput | undefined,
+  option: ZelavisStorageOptions | undefined,
   context: {
     rootPath: string;
     apiPrefix: string;
@@ -182,7 +182,7 @@ export async function resolveStorageCoreService(
                 status: 200,
                 body: {
                   files,
-                  references: files.map((file) =>
+                  references: files.map((file: any) =>
                     createFileReference(file, {
                       rootPath: context.rootPath,
                       apiPrefix: context.apiPrefix,

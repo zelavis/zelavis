@@ -333,12 +333,12 @@ test("Node adapter registers shipped Project recipes and persists Platform Store
     );
 
     assert.ok(systemStore);
-    assert.equal(first.coreServices.database, false);
-    // The frontend service stays enabled on the Platform: with the dashboard
-    // running it makes `/` lead there rather than returning a 404.
-    assert.equal(first.coreServices.website, undefined);
-    assert.equal(first.coreServices.storage, false);
-    assert.equal(first.coreServices.workloads, false);
+    assert.equal(first.subsystems.database, false);
+    // The public root stays on for the Platform: with a frontend running it
+    // makes `/` lead there rather than returning a 404.
+    assert.equal(first.subsystems.site, undefined);
+    assert.equal(first.subsystems.storage, false);
+    assert.equal(first.subsystems.workloads, false);
     assert.equal(first.metadata.role, "platform");
     assert.equal(appService?.service.kind, "app");
     assert.equal(appService?.source, "official");

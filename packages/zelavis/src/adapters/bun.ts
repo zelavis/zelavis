@@ -67,8 +67,8 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
       const isProjectRuntime = options.role === "project";
       const databaseOptions =
         options.database ?? (isProjectRuntime ? {} : false);
-      const nextCoreServices: Record<string, unknown> = isProjectRuntime
-        ? { dashboard: false, fabric: false }
+      const nextSubsystems: Record<string, unknown> = isProjectRuntime
+        ? { fabric: false }
         : {
             database: false,
             // The frontend service stays on for the Platform: with the
@@ -140,7 +140,7 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
             tenantAliases: { default: "zelavis-app" },
           });
         }
-        nextCoreServices.database = {
+        nextSubsystems.database = {
           nodeId: "local",
           driver: shardedDriver,
         };
@@ -158,7 +158,10 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
             );
 
       return {
-        coreServices: nextCoreServices,
+        subsystems: nextSubsystems,
+        // A Project runtime has no installation face of its own: it exists to
+        // host whatever Frontend gets installed into it.
+        ...(isProjectRuntime ? { frontend: false as const } : {}),
         serviceRegistry:
           options.services === false
             ? undefined

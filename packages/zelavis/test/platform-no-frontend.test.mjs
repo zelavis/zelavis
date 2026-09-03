@@ -85,7 +85,7 @@ test("a service page still renders with no frontend installed", async () => {
 });
 
 test("dashboard: false serves nothing at the root path", async () => {
-  const get = await boot({ coreServices: { dashboard: false } });
+  const get = await boot({ frontend: false });
 
   // Distinct from having no frontend installed: this is Zelavis embedded as an
   // API on purpose, and a friendly page would be an intrusion.

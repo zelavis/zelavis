@@ -180,9 +180,7 @@ test("database service generates complete OpenAPI spec with typed operations", a
 test("Zelavis runtime exposes /zelavis/api/v1/runtime/openapi.json", async () => {
   const app = await zelavis({
     frontend: zelavisUiFrontend,
-    coreServices: {
-      dashboard: false,
-    },
+    frontend: false,
   });
 
   try {

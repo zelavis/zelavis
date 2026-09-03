@@ -298,7 +298,7 @@ test("Node project adapter recovers a legacy single-file App database into Tenan
       dataDirectory: directory,
     }).resolve({});
     const migrated = await createDatabase({
-      driver: resolved.coreServices.database.driver,
+      driver: resolved.subsystems.database.driver,
     });
     const appTenant = migrated.forTenant("zelavis-app");
 
@@ -339,7 +339,7 @@ test("Node project adapter recovers a legacy single-file App database into Tenan
       dataDirectory: directory,
     }).resolve({});
     const reopened = await createDatabase({
-      driver: second.coreServices.database.driver,
+      driver: second.subsystems.database.driver,
     });
     assert.equal(
       (await reopened.forTenant("zelavis-app").events.read()).length,

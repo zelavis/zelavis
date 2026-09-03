@@ -71,7 +71,7 @@ test("ecommercePlugin registers and exposes recurring subscription endpoints", a
       name: "ecommerce-test-adapter",
       resolve() {
         return {
-          coreServices: {
+          subsystems: {
             database,
           },
           serviceRegistry: {

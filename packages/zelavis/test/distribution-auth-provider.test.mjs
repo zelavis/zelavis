@@ -9,7 +9,7 @@ async function platform({ withProvider = true } = {}) {
   return zelavis({
     systemStore: createMemorySystemStore(),
     bootstrap: { token: TOKEN },
-    coreServices: { dashboard: false },
+    frontend: false,
     // A provider reaches auth only by being installed. The distribution seeds
     // this same package into the product-services folder; here it is supplied
     // as a registry entry, which is the identical path a discovered package
@@ -116,7 +116,7 @@ test("credential providers cannot be handed to the public constructor", async ()
   // provider passed that way never reached the registry, so it could not be
   // listed, disabled, or updated like the same provider installed normally.
   assert.throws(
-    () => new Zelavis({ coreServices: { auth: { methods: [] } } }),
+    () => new Zelavis({ subsystems: { auth: { methods: [] } } }),
     /does not accept internal runtime options/u,
   );
   assert.throws(
@@ -139,7 +139,7 @@ test("a provider that names a different owner is not collected by Platform auth"
   const runtime = await zelavis({
     systemStore: createMemorySystemStore(),
     bootstrap: { token: TOKEN },
-    coreServices: { dashboard: false },
+    frontend: false,
     serviceRegistry: {
       catalog: [{
         service: {

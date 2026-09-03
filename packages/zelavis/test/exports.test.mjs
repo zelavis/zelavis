@@ -208,7 +208,7 @@ test("Zelavis rejects internal runtime options on the public class constructor",
   assert.throws(
     () =>
       new Zelavis({
-        coreServices: {
+        subsystems: {
           database: false,
         },
       }),
@@ -276,7 +276,7 @@ test("Zelavis platform resources back dashboard settings, storage service, and e
     name: "storage-only",
     resolve() {
       return {
-        coreServices: {
+        subsystems: {
           database: false,
         },
         resources: {
@@ -466,7 +466,7 @@ test("Zelavis platform resources back dashboard settings, storage service, and e
 
   const databaseBacked = await createDatabase();
   const firstRuntime = await createZelavis({
-    coreServices: {
+    subsystems: {
       database: databaseBacked,
     },
     serviceRegistry: {
@@ -514,7 +514,7 @@ test("Zelavis platform resources back dashboard settings, storage service, and e
   assert.equal(persistedProductResponse.status, 201);
 
   const secondRuntime = await createZelavis({
-    coreServices: {
+    subsystems: {
       database: databaseBacked,
     },
     serviceRegistry: {

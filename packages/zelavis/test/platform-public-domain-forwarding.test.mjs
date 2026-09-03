@@ -238,7 +238,7 @@ test("a composed runtime refuses the dashboard on a bound domain", async () => {
 
   const runtime = await zelavis({
     frontend: zelavisUiFrontend,
-    coreServices: { auth: false, database: false },
+    subsystems: { auth: false, database: false },
     domainBindings: bindings,
   });
 

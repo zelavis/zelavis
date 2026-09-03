@@ -66,6 +66,6 @@ export interface ZelavisStorageCoreServiceOptions {
   storage?: ZelavisFileStorage;
 }
 
-export type ZelavisStorageCoreServiceInput =
+export type ZelavisStorageOptions =
   | boolean
   | ZelavisStorageCoreServiceOptions;
