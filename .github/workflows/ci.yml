@@ -69,7 +69,6 @@ jobs:
           # The Platform no longer builds the dashboard for you — it does not
           # depend on it. Anything composing a frontend builds it explicitly.
           pnpm --filter @zelavis/ui build
-          pnpm --filter @zelavis/app-auth-email-password build
 
       # The e2e Platform is created empty and destroyed with the runner, so
       # these are throwaway fixtures rather than credentials. Generating them
@@ -101,7 +100,7 @@ jobs:
           curl --fail --show-error --silent \
             --request POST \
             --header "content-type: application/json" \
-            --data "{\"bootstrapToken\":\"$ZELAVIS_BOOTSTRAP_TOKEN\",\"provider\":\"email-password\",\"account\":{\"email\":\"ci@example.com\",\"displayName\":\"Zelavis E2E\"},\"credential\":{\"identifier\":\"ci@example.com\",\"password\":\"$ZELAVIS_E2E_OWNER_PASSWORD\"}}" \
+            --data "{\"bootstrapToken\":\"$ZELAVIS_BOOTSTRAP_TOKEN\",\"provider\":\"password\",\"account\":{\"email\":\"ci@example.com\",\"displayName\":\"Zelavis E2E\"},\"credential\":{\"identifier\":\"ci@example.com\",\"password\":\"$ZELAVIS_E2E_OWNER_PASSWORD\"}}" \
             http://127.0.0.1:3000/zelavis/api/v1/auth/bootstrap > /tmp/zelavis-owner.json
           echo "ZELAVIS_E2E_SESSION_TOKEN=$(node -p "require('/tmp/zelavis-owner.json').session.token")" >> "$GITHUB_ENV"
 
