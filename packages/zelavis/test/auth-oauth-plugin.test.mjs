@@ -1,20 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import zelavisAuth from "@zelavis/auth";
-import authProviders from "@zelavis/auth-providers";
+import zelavisAuth, { defineOAuthProviders } from "@zelavis/auth";
 import { createMemorySystemStore, zelavis } from "../dist/index.js";
 
 const OWNER = { id: "owner", type: "user", roles: ["owner"], permissions: ["*"] };
 
-async function platform({ withProviders = true } = {}) {
+/** A provider someone else ships, declaring the capability this plugin owns. */
+const thirdPartyProviders = defineOAuthProviders("@acme/auth-gitlab", [
+  {
+    name: "gitlab",
+    title: "GitLab",
+    authorizationEndpoint: "https://gitlab.com/oauth/authorize",
+    tokenEndpoint: "https://gitlab.com/oauth/token",
+    issuer: "https://gitlab.com",
+    jwksUrl: "https://gitlab.com/oauth/discovery/keys",
+  },
+]);
+
+async function platform({ withThirdParty = false } = {}) {
   return zelavis({
     systemStore: createMemorySystemStore(),
     resolvePrincipal: () => OWNER,
     serviceRegistry: {
       catalog: [
         { service: zelavisAuth, status: "installed", source: "official" },
-        ...(withProviders
-          ? [{ service: authProviders, status: "installed", source: "official" }]
+        ...(withThirdParty
+          ? [{ service: thirdPartyProviders, status: "installed", source: "official" }]
           : []),
       ],
     },
@@ -31,11 +42,13 @@ test("the plugin exports an installable service, not a factory", () => {
   assert.deepEqual(zelavisAuth.capabilities, ["zelavis/auth:credentials", "api:routes"]);
   assert.equal(typeof zelavisAuth.service.register, "function");
 
-  assert.deepEqual(authProviders.capabilities, ["@zelavis/auth:oauth"]);
-  assert.ok(authProviders.service.oauthProviders.length >= 2);
+  // Installing the one plugin is enough to get somewhere: its own providers
+  // ship with it rather than in a second package that is neither the plugin
+  // nor a provider.
+  assert.deepEqual(thirdPartyProviders.capabilities, ["@zelavis/auth:oauth"]);
 });
 
-test("providers are discovered from the plugins that define them", async () => {
+test("the plugin ships usable providers on its own", async () => {
   const runtime = await platform();
   const response = await runtime.plain({ url: `${BASE}/providers` });
 
@@ -47,12 +60,14 @@ test("providers are discovered from the plugins that define them", async () => {
   assert.ok(response.body.providers.every((provider) => !provider.configured));
 });
 
-test("no provider plugins means no providers, not an error", async () => {
-  const runtime = await platform({ withProviders: false });
+test("a provider someone else ships is discovered by capability", async () => {
+  const runtime = await platform({ withThirdParty: true });
   const response = await runtime.plain({ url: `${BASE}/providers` });
 
-  assert.equal(response.status, 200);
-  assert.deepEqual(response.body.providers, []);
+  // The extension point is the capability, not this package's own list: a
+  // third-party plugin appears beside the built-in providers.
+  const names = response.body.providers.map((provider) => provider.provider);
+  assert.deepEqual(names.sort(), ["github", "gitlab", "google"]);
 });
 
 test("an operator configures a provider and the secret never comes back", async () => {
@@ -145,7 +160,7 @@ test("the OAuth endpoints require permission to manage auth", async () => {
     serviceRegistry: {
       catalog: [
         { service: zelavisAuth, status: "installed", source: "official" },
-        { service: authProviders, status: "installed", source: "official" },
+        { service: thirdPartyProviders, status: "installed", source: "community" },
       ],
     },
   });

@@ -161,9 +161,6 @@ importers:
       '@zelavis/auth':
         specifier: workspace:*
         version: link:../../plugins/auth
-      '@zelavis/auth-providers':
-        specifier: workspace:*
-        version: link:../../plugins/auth-providers
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
@@ -389,18 +386,6 @@ importers:
         specifier: ^6.2.10
         version: 6.2.10
     devDependencies:
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-      zelavis:
-        specifier: workspace:*
-        version: link:../../packages/zelavis
-
-  plugins/auth-providers:
-    devDependencies:
-      '@zelavis/auth':
-        specifier: workspace:*
-        version: link:../auth
       typescript:
         specifier: ^5.9.0
         version: 5.9.3

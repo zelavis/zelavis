@@ -12,8 +12,10 @@ import {
   type OAuthProviderDefinition,
 } from "./contract.js";
 import { createAuthorizationCodeFlow } from "./provider.js";
+import { builtInOAuthProviders } from "./providers.js";
 
 export * from "./contract.js";
+export * from "./providers.js";
 export * from "./connections.js";
 export * from "./provider.js";
 
@@ -109,6 +111,14 @@ export function zelavisAuthService(options: ZelavisAuthOptions = {}) {
     name: "@zelavis/auth",
     async register(auth: AuthApi, context?: AuthMethodContext) {
       definitions = readOAuthProviders(context?.registry ?? []);
+      // The providers this package ships go in last, so a plugin someone
+      // installed for the same name keeps its own definition rather than
+      // being displaced by a built-in one.
+      for (const definition of builtInOAuthProviders) {
+        if (!definitions.has(definition.name)) {
+          definitions.set(definition.name, definition);
+        }
+      }
       connections = context?.store
         ? createConnectionStore(context.store as never)
         : undefined;

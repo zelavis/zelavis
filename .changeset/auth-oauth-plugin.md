@@ -1,7 +1,6 @@
 ---
 "zelavis": minor
 "@zelavis/auth": minor
-"@zelavis/auth-providers": minor
 "@zelavis/app-auth-oidc": major
 ---
 
@@ -12,8 +11,9 @@ Core auth owns accounts, sessions, credentials, permissions, and the
 Authorization Code flow. `@zelavis/auth` sits above it: it discovers identity
 provider definitions from plugins declaring `@zelavis/auth:oauth`, pairs each
 with the credentials an operator configured, and registers the result with core
-auth. `@zelavis/auth-providers` ships Google, GitHub, and a builder for any
-OpenID Connect issuer.
+auth. It ships Google, GitHub, and a builder for any OpenID Connect issuer, so
+installing the one plugin is enough to get somewhere; a provider someone else
+ships is an ordinary plugin declaring the same capability.
 
 The split follows who has what. A provider plugin knows a provider's endpoints
 and claim shapes and can ship them; only the operator has the client id and

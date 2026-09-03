@@ -38,6 +38,11 @@ set once at deploy time does not override what an operator changed later.
 Sign-in itself runs through core auth's existing endpoints:
 `POST /auth/oauth/:provider/start` and `GET /auth/oauth/:provider/callback`.
 
+Google and GitHub ship with this package, and `oidcProvider()` builds a
+definition for any standards-compliant OpenID Connect issuer. Installing this
+one plugin is enough to configure a provider; nothing else has to be installed
+first.
+
 ## Writing a provider plugin
 
 ```ts
@@ -55,7 +60,9 @@ export default defineOAuthProviders("@acme/auth-gitlab", [
 ]);
 ```
 
-Declare `"capabilities": ["@zelavis/auth:oauth"]` in `package.json`. A
+Declare `"capabilities": ["@zelavis/auth:oauth"]` in `package.json`. A plugin
+someone else ships is discovered exactly like the built-in definitions, and
+keeps its own definition if it uses a name this package also knows. A
 definition with an `issuer` must also give a `jwksUrl`: an ID token nobody can
 verify is attacker-supplied JSON, so one is refused at definition time.
 

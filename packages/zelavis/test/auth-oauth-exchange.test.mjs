@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAuthorizationCodeFlow } from "@zelavis/auth";
-import { githubProvider } from "@zelavis/auth-providers";
+import { githubProvider } from "@zelavis/auth";
 
 const CONNECTION = {
   provider: "github",

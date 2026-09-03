@@ -209,7 +209,9 @@ an exported type is never mistaken for an operational distributed feature.
   keeps the flow and its PKCE and nonce state. Client secrets are write-only
   over the API. Installed services can persist state for the first time,
   through a store namespaced to the service that asked, and a credential
-  provider now sees the installed services when it registers.
+  provider now sees the installed services when it registers. Installing
+  `@zelavis/auth` is enough on its own: its provider definitions ship with it
+  rather than in a second package.
 - [x] The OpenAPI document describes what the runtime actually serves. It is
   generated from the routes mounting produced rather than re-resolved with a
   different prefix, so its paths exist; it covers every mounted route rather

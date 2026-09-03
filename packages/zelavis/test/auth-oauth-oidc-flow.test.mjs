@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { defineOAuthProviders, zelavisAuthService } from "@zelavis/auth";
-import { oidcProvider } from "@zelavis/auth-providers";
+import { oidcProvider } from "@zelavis/auth";
 import { createMemorySystemStore, zelavis } from "../dist/index.js";
 
 const ISSUER = "https://identity.example";

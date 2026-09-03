@@ -1,16 +1,21 @@
-import {
-  defineOAuthProviders,
-  type OAuthIdentity,
-  type OAuthIdentityClaims,
-  type OAuthProviderDefinition,
-} from "@zelavis/auth";
+import type {
+  OAuthIdentity,
+  OAuthIdentityClaims,
+  OAuthProviderDefinition,
+} from "./contract.js";
 
 /**
- * Identity provider definitions for `@zelavis/auth`.
+ * Identity providers this package knows about out of the box.
  *
  * Endpoints and claim shapes only. Nothing here is installation-specific,
  * which is what makes it shippable: the client id and secret an installation
  * was issued are configured by the operator against the provider name.
+ *
+ * They live here rather than in a package of their own. A separate bundle of
+ * definitions was neither the plugin an operator installs nor a provider on
+ * its own, and it made a build-order dependency out of two files of constants.
+ * A provider someone else ships is still an ordinary plugin declaring
+ * `@zelavis/auth:oauth`; nothing about these is privileged.
  */
 
 export const googleProvider: OAuthProviderDefinition = {
@@ -79,7 +84,6 @@ export function oidcProvider(
   };
 }
 
-export default defineOAuthProviders("@zelavis/auth-providers", [
-  googleProvider,
-  githubProvider,
-]);
+/** Provider definitions this package registers without anything else installed. */
+export const builtInOAuthProviders: readonly OAuthProviderDefinition[] =
+  Object.freeze([googleProvider, githubProvider]);
