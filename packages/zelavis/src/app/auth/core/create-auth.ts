@@ -5,12 +5,19 @@ import { CredentialService } from "../services/credential-service.js";
 import { SessionService } from "../services/session-service.js";
 import { AuthSecurityService } from "../services/security-service.js";
 import { createInMemoryAuthRepositories } from "../storage/in-memory.js";
-import type { AuthApi, AuthMethodPlugin } from "./types.js";
+import type { AuthApi, AuthMethodContext, AuthMethodPlugin } from "./types.js";
 import { createSessionAuthenticator } from "./session-authenticator.js";
 
 export interface CreateAuthOptions {
   config?: Record<string, unknown>;
   methods?: readonly AuthMethodPlugin[];
+  /**
+   * Builds the context a method receives when it registers.
+   *
+   * Supplied by whoever composed auth, because a method's registry view and
+   * its storage namespace are the host's to decide, not the plugin's.
+   */
+  methodContext?: (method: AuthMethodPlugin) => AuthMethodContext | undefined;
   projectId?: string;
   sessionCookieName?: string | false;
   repositories?: Partial<AuthRepositories>;
@@ -58,7 +65,7 @@ export async function createAuth(options: CreateAuthOptions = {}): Promise<AuthA
   };
 
   for (const method of options.methods ?? []) {
-    await method.register(api);
+    await method.register(api, options.methodContext?.(method));
   }
 
   return api;

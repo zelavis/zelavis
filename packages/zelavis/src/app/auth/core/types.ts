@@ -8,9 +8,32 @@ import type { ZelavisRequestAuthenticator } from "../../../core/index.js";
 import type { Account, IssuedSession } from "../domain/entities.js";
 import type { CredentialEnrollmentInput } from "../contracts/credential-provider.js";
 
+/**
+ * What a credential provider plugin is given when it registers.
+ *
+ * Registration happens while auth is being created, which is before services
+ * are set up — so a plugin that hosts other plugins' providers had no way to
+ * see them, and no way to read the configuration an operator saved. Both
+ * arrive here instead.
+ */
+export interface AuthMethodContext {
+  /** The installed services, for a plugin that discovers others by capability. */
+  registry: readonly {
+    status: string;
+    service: { name: string; capabilities?: readonly string[]; service?: unknown };
+  }[];
+  /** Durable storage scoped to the registering service, when the host has one. */
+  store?: {
+    get(key: string): Promise<unknown>;
+    set(key: string, value: any): Promise<void>;
+    delete(key: string): Promise<boolean>;
+    list(): Promise<readonly { key: string; value: unknown }[]>;
+  };
+}
+
 export interface AuthMethodPlugin {
   name: string;
-  register: (api: AuthApi) => void | Promise<void>;
+  register: (api: AuthApi, context?: AuthMethodContext) => void | Promise<void>;
 }
 
 export interface AuthContext {

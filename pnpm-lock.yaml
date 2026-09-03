@@ -158,6 +158,12 @@ importers:
       '@types/node':
         specifier: ^25.9.1
         version: 25.9.1
+      '@zelavis/auth':
+        specifier: workspace:*
+        version: link:../../plugins/auth
+      '@zelavis/auth-providers':
+        specifier: workspace:*
+        version: link:../../plugins/auth-providers
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
@@ -355,6 +361,19 @@ importers:
         specifier: workspace:*
         version: link:../..
 
+  plugins/auth:
+    dependencies:
+      jose:
+        specifier: ^6.2.10
+        version: 6.2.10
+    devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      zelavis:
+        specifier: workspace:*
+        version: link:../../packages/zelavis
+
   plugins/auth-email-password:
     devDependencies:
       typescript:
@@ -370,6 +389,18 @@ importers:
         specifier: ^6.2.10
         version: 6.2.10
     devDependencies:
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      zelavis:
+        specifier: workspace:*
+        version: link:../../packages/zelavis
+
+  plugins/auth-providers:
+    devDependencies:
+      '@zelavis/auth':
+        specifier: workspace:*
+        version: link:../auth
       typescript:
         specifier: ^5.9.0
         version: 5.9.3

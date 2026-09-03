@@ -2,6 +2,7 @@ import {
   authService as createAuthService,
   createAuth,
   type AuthServiceOptions,
+  type AuthMethodContext,
   type AuthMethodPlugin,
   type AuthApi,
 } from "./app/auth/index.js";
@@ -104,6 +105,11 @@ import {
   resolveServiceRegistryStore,
 } from "./platform/settings.js";
 export { createFileReference } from "./platform/storage.js";
+export {
+  createServiceStore,
+  serviceStoreNamespace,
+  type ZelavisServiceStore,
+} from "./platform/service-store.js";
 import {
   encodeStoragePath,
   isBoolean,
@@ -190,6 +196,7 @@ import { createDomainChallengeService } from "./domain-verifier.js";
 import { synthesizeServiceAppService } from "./service-app.js";
 import { createPlatformAuthRepositories } from "./platform/auth-repositories.js";
 import { createPlatformAuthBootstrap } from "./platform/auth-bootstrap.js";
+import { createServiceStore } from "./platform/service-store.js";
 export * from "./storage/s3.js";
 
 export type {
@@ -1081,6 +1088,10 @@ async function resolveAuthCoreService(
   option: ZelavisAuthOptions | undefined,
   methods: readonly AuthMethodPlugin[] = [],
   systemStore?: ZelavisSystemStore,
+  registryEntries: readonly Readonly<
+    ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>
+  >[] = [],
+  methodServiceNames: ReadonlyMap<AuthMethodPlugin, string> = new Map(),
   rootPath = "/zelavis",
   bootstrapToken?: string,
 ): Promise<ZelavisRuntimeService<any> | undefined> {
@@ -1102,6 +1113,16 @@ async function resolveAuthCoreService(
     // provider passed here never appeared in the registry, so it could not be
     // listed, disabled, or updated like the same provider installed normally.
     methods,
+    // Each method sees the installed services and gets storage scoped to the
+    // service that supplied it, so a plugin hosting other plugins' providers
+    // can find them and read what an operator configured. Registration runs
+    // before service setup, so this is the only point where it can.
+    methodContext: (method) => ({
+      registry: registryEntries as AuthMethodContext["registry"],
+      ...(systemStore
+        ? { store: createServiceStore(systemStore, methodServiceNames.get(method) ?? method.name) }
+        : {}),
+    }),
   });
 
   return createAuthService({
@@ -1142,6 +1163,20 @@ export const ZELAVIS_AUTH_CREDENTIALS_CAPABILITY = serviceCapabilityFor(
  * a provider written for Platform auth is not also collected by some other
  * service that happens to want credentials.
  */
+/** Maps each collected method back to the service that supplied it. */
+function collectAuthMethodServiceNames(
+  registry: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
+): ReadonlyMap<AuthMethodPlugin, string> {
+  const names = new Map<AuthMethodPlugin, string>();
+  for (const entry of registry) {
+    const method = entry.service.service as AuthMethodPlugin | undefined;
+    if (typeof method?.register === "function") {
+      names.set(method, entry.service.name);
+    }
+  }
+  return names;
+}
+
 function collectAuthMethodPlugins(
   registry: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
 ): readonly AuthMethodPlugin[] {
@@ -2842,6 +2877,8 @@ export async function zelavis(
         options.subsystems?.auth,
         collectAuthMethodPlugins(serviceRegistry),
         systemStore,
+        serviceRegistry,
+        collectAuthMethodServiceNames(serviceRegistry),
         rootPath,
         options.bootstrap?.token ?? readOptionalProcessEnv("ZELAVIS_BOOTSTRAP_TOKEN"),
       );
@@ -2863,6 +2900,10 @@ export async function zelavis(
       bundleStore: options.bundleStore,
       domainBindings: options.domainBindings,
       reservedRuntimeServiceNames: [...RESERVED_CORE_SERVICE_NAMES],
+      // Scoped per service, so the namespace a plugin writes to is decided
+      // here rather than by the plugin naming one for itself.
+      serviceStore: (serviceName: string) =>
+        createServiceStore(systemStore, serviceName),
     },
   );
   const serviceRuntimeServices = await Promise.all(activatedServices.services);

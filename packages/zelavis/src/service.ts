@@ -1,3 +1,4 @@
+import type { ZelavisServiceStore } from "./platform/service-store.js";
 import {
   readFrontendManifest,
   toServiceAppDefinition,
@@ -190,6 +191,13 @@ export interface ZelavisServiceSetupPlatformContext {
 
 export interface ZelavisServiceSetupCoreContext {
   database?: unknown;
+  /**
+   * Durable storage scoped to this service.
+   *
+   * Present when the host has a System Store. Its namespace is fixed to the
+   * service that received it, so a plugin cannot reach another one's records.
+   */
+  store?: ZelavisServiceStore;
 }
 
 export interface ZelavisServiceSetupContext {
@@ -578,6 +586,8 @@ export interface ActivateServiceRegistryOptions {
   projectId?: string;
   domainBindings?: DomainBindingStore;
   reservedRuntimeServiceNames?: readonly string[];
+  /** Builds the durable store a named service is given. */
+  serviceStore?: (serviceName: string) => ZelavisServiceStore;
 }
 
 export async function activateServiceRegistry<
@@ -675,6 +685,14 @@ export async function activateServiceRegistry<
 
     const result = await entry.service.setup({
       ...(context as TContext),
+      // Built per service so the namespace is decided here, from the name the
+      // registry knows, rather than by a plugin naming one for itself.
+      core: {
+        ...((context as unknown as ZelavisServiceSetupContext).core ?? {}),
+        ...(options.serviceStore
+          ? { store: options.serviceStore(entry.service.name) }
+          : {}),
+      },
       service: entry.service as any,
       registry: registry as any,
       runtimeServices: activatedServices,
