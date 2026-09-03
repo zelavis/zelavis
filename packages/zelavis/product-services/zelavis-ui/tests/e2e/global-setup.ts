@@ -62,7 +62,7 @@ async function resolveSessionToken(): Promise<string> {
 
     const created = await postJson(`${authBase}/bootstrap`, {
       bootstrapToken,
-      provider: "email-password",
+      provider: "password",
       account: { email: ownerEmail, displayName: "Zelavis E2E" },
       credential: { identifier: ownerEmail, password: ownerPassword },
     });
@@ -78,7 +78,7 @@ async function resolveSessionToken(): Promise<string> {
     return (await created.json()).session.token;
   }
 
-  const signedIn = await postJson(`${authBase}/authenticate/email-password`, {
+  const signedIn = await postJson(`${authBase}/authenticate/password`, {
     identifier: ownerEmail,
     password: ownerPassword,
   });

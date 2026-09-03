@@ -168,10 +168,8 @@ Database adapters:
 
 Auth plugins:
 
-- [plugins/auth-email-password](plugins/auth-email-password)
-  An email/password auth provider service for `zelavis/app/auth`.
-- [plugins/auth-username-password](plugins/auth-username-password)
-  A username/password auth provider service for `zelavis/app/auth`.
+- [plugins/auth-oidc](plugins/auth-oidc)
+  Accepts JWT bearer tokens issued by an external OpenID Connect provider.
 
 Official domain plugins:
 
@@ -278,53 +276,32 @@ Core services use the same service contract as extension services. The high-leve
 
 The dashboard and admin experience are still evolving. The runtime already serves the current UI package, but the overall product surface should be treated as early and subject to change.
 
-Disable built-in core services when you need a smaller server:
+Platform subsystems are composed through `zelavis(...)`, not the public
+constructor, which refuses them: what an installation runs is decided by what
+is installed, not by switches in code.
 
 ```ts
-const zv = new Zelavis({
-  coreServices: {
-    auth: false,
-    dashboard: false,
-    database: false,
-    website: false,
-    workloads: false,
-  },
+import { zelavis } from "zelavis";
+
+const runtime = await zelavis({
+  subsystems: { database: false, workloads: false },
 });
 ```
 
 Configure the built-in database service when the defaults are not enough:
 
-```ts
-const zv = new Zelavis({
-  coreServices: {
-    database: {
-      defaultTenantId: "acme",
-    },
-  },
-});
-```
-
-Authentication methods remain external plugins. A Node installation can add
-the official email/password plugin to its explicit adapter catalog while the
-Platform keeps account, credential, and session authority:
+Password sign-in is part of Zelavis, so an installation can be adopted with
+nothing installed first. One provider covers both identifier kinds: an
+identifier containing `@` is treated as an email address, anything else as a
+username.
 
 ```ts
-import { emailPasswordService } from "@zelavis/app-auth-email-password";
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
 
 const zv = new Zelavis({
   bootstrap: { token: process.env.ZELAVIS_BOOTSTRAP_TOKEN! },
-  adapter: nodeAdapter({
-    services: {
-      catalog: [{
-        service: emailPasswordService(),
-        specifier: "@zelavis/app-auth-email-password",
-        status: "installed",
-        source: "official",
-      }],
-    },
-  }),
+  adapter: nodeAdapter(),
 });
 ```
 
