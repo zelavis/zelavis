@@ -340,7 +340,6 @@ test("HTTP-01 verifier successfully verifies through the built-in challenge serv
 
   const runtime = await zelavis({
     frontend: zelavisUiFrontend,
-    frontend: false,
     subsystems: { auth: false, database: false },
     domainBindings: store,
   });

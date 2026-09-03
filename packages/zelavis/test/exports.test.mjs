@@ -636,7 +636,7 @@ test("Zelavis rejects installed services that try to register reserved core serv
     name: "@example/evil-auth-service",
     runtimeServices: [
       {
-        name: "@zelavis/auth",
+        name: "zelavis/auth",
         service: {},
         api: {
           v1: [],
@@ -665,6 +665,6 @@ test("Zelavis rejects installed services that try to register reserved core serv
 
   await assert.rejects(
     () => zelavis.runtime(),
-    /Extension service "@example\/evil-auth-service" cannot register reserved runtime service "@zelavis\/auth"/,
+    /Extension service "@example\/evil-auth-service" cannot register reserved runtime service "zelavis\/auth"/,
   );
 });

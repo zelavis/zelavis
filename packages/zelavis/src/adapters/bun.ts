@@ -159,9 +159,7 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
 
       return {
         subsystems: nextSubsystems,
-        // A Project runtime has no installation face of its own: it exists to
-        // host whatever Frontend gets installed into it.
-        ...(isProjectRuntime ? { frontend: false as const } : {}),
+        role: isProjectRuntime ? "project" : "platform",
         serviceRegistry:
           options.services === false
             ? undefined

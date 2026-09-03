@@ -203,6 +203,14 @@ an exported type is never mistaken for an operational distributed feature.
   only matching-origin browser requests receive session cookies, cookie
   mutations require a same-origin `Origin`, and critical Project, Assistant,
   service-mutation, and settings-mutation endpoints declare core permissions.
+- [x] Core auth is named as core. Accounts, sessions, credentials, and
+  roles/permissions are part of Zelavis itself, so the service is
+  `zelavis/auth` beside `zelavis/platform` and `zelavis/fabric`; providers
+  declare `zelavis/auth:credentials`. The scoped `@zelavis/auth` name is free
+  for the plugin layer that brings OAuth and the providers extending it.
+- [x] Features are not switched off in code. `frontend: false` is gone: having
+  no frontend means installing none, and the root path explains it. What that
+  flag really carried was the kind of runtime, which `role` now states.
 - [x] The `coreServices` option is gone. It read as a second, privileged way to
   install services, but held the Platform's own subsystems: infrastructure and
   policy switches. They are now `subsystems` (auth, database, fabric, storage,

@@ -45,7 +45,7 @@ function collectAuthMethodPlugins(
         entry.status === "installed" &&
         declaresServiceCapability(
           entry.service.capabilities,
-          "@zelavis/auth",
+          "zelavis/auth",
           "credentials",
         ) &&
         typeof (entry.service.service as AuthMethodPlugin | undefined)?.register === "function",

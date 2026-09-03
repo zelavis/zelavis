@@ -9,7 +9,6 @@ async function platform({ withProvider = true } = {}) {
   return zelavis({
     systemStore: createMemorySystemStore(),
     bootstrap: { token: TOKEN },
-    frontend: false,
     // A provider reaches auth only by being installed. The distribution seeds
     // this same package into the product-services folder; here it is supplied
     // as a registry entry, which is the identical path a discovered package
@@ -131,7 +130,7 @@ test("the shipped provider package exports a service, not a factory", async () =
   // package installed cleanly and extended nothing.
   assert.equal(typeof emailPasswordProvider, "object");
   assert.equal(emailPasswordProvider.name, "@zelavis/auth-email-password");
-  assert.deepEqual(emailPasswordProvider.capabilities, ["@zelavis/auth:credentials"]);
+  assert.deepEqual(emailPasswordProvider.capabilities, ["zelavis/auth:credentials"]);
   assert.equal(typeof emailPasswordProvider.service.register, "function");
 });
 
@@ -139,7 +138,6 @@ test("a provider that names a different owner is not collected by Platform auth"
   const runtime = await zelavis({
     systemStore: createMemorySystemStore(),
     bootstrap: { token: TOKEN },
-    frontend: false,
     serviceRegistry: {
       catalog: [{
         service: {

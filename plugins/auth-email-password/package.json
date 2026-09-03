@@ -10,7 +10,7 @@
   "zelavis": {
     "kind": "plugin",
     "capabilities": [
-      "@zelavis/auth:credentials"
+      "zelavis/auth:credentials"
     ]
   },
   "exports": {
