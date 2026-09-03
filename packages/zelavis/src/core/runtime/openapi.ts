@@ -33,14 +33,18 @@ export function generateOpenApiSpec(
     spec.components = options.components;
   }
 
-  // Filter to only routes that have a `spec` field
-  const specRoutes = routes.filter((r) => r.route.spec);
+  // Every mounted route, not only the annotated ones. Filtering to routes
+  // carrying a `spec` silently omitted whatever had not been annotated yet —
+  // which was most of the Platform's own control plane, so the document
+  // described a fraction of the API while looking complete.
+  for (const resolvedRoute of routes) {
+    const routeSpec = resolvedRoute.route.spec;
 
-  for (const resolvedRoute of specRoutes) {
-    const routeSpec = resolvedRoute.route.spec!;
-
-    // Convert :param path syntax to {param} OpenAPI syntax
-    const openApiPath = resolvedRoute.fullPath.replace(/:([a-zA-Z0-9_]+)/g, "{$1}");
+    // `:param` and `*rest` are this router's syntax; OpenAPI writes both as
+    // `{name}`.
+    const openApiPath = resolvedRoute.fullPath
+      .replace(/:([a-zA-Z0-9_]+)/g, "{$1}")
+      .replace(/\*([a-zA-Z0-9_]+)/g, "{$1}");
 
     if (!spec.paths[openApiPath]) {
       spec.paths[openApiPath] = {};
@@ -49,20 +53,29 @@ export function generateOpenApiSpec(
     const method = resolvedRoute.route.method.toLowerCase();
 
     const operation: any = {
-      operationId: routeSpec.operationId,
+      // A route id is stable and unique, so it stands in for an operation id
+      // nobody has written yet rather than leaving the operation unnamed.
+      operationId: routeSpec?.operationId ?? resolvedRoute.route.id,
     };
 
-    if (routeSpec.summary) operation.summary = routeSpec.summary;
-    if (routeSpec.description) operation.description = routeSpec.description;
-    if (routeSpec.tags) operation.tags = routeSpec.tags;
+    if (routeSpec?.summary) operation.summary = routeSpec.summary;
+    if (routeSpec?.description) operation.description = routeSpec.description;
+    if (routeSpec?.tags) operation.tags = routeSpec.tags;
+    if (!routeSpec) {
+      // Marked rather than passed off as documented: a consumer can see which
+      // endpoints exist but have not described their inputs and responses.
+      operation.tags = [resolvedRoute.service.name];
+      operation["x-zelavis-undocumented"] = true;
+    }
 
     const parameters: any[] = [];
 
     // Extract path parameters from the path pattern and merge with spec.pathParams
-    const pathParamsMatch = resolvedRoute.fullPath.match(/:([a-zA-Z0-9_]+)/g) || [];
+    const pathParamsMatch =
+      resolvedRoute.fullPath.match(/[:*]([a-zA-Z0-9_]+)/g) ?? [];
     for (const match of pathParamsMatch) {
       const paramName = match.substring(1);
-      const paramSpec = routeSpec.pathParams?.[paramName];
+      const paramSpec = routeSpec?.pathParams?.[paramName];
       const param: Record<string, unknown> = {
         name: paramName,
         in: "path",
@@ -79,7 +92,7 @@ export function generateOpenApiSpec(
     }
 
     // Add query parameters from spec.queryParams
-    if (routeSpec.queryParams) {
+    if (routeSpec?.queryParams) {
       for (const [name, queryParam] of Object.entries(routeSpec.queryParams)) {
         const param: Record<string, unknown> = {
           name,
@@ -100,7 +113,7 @@ export function generateOpenApiSpec(
     }
 
     // Add request body from spec.requestBody
-    if (routeSpec.requestBody) {
+    if (routeSpec?.requestBody) {
       const requestBody: Record<string, unknown> = {
         content: {
           "application/json": {
@@ -115,7 +128,7 @@ export function generateOpenApiSpec(
 
     // Add responses from spec.responses (default 200 if none specified)
     operation.responses = {};
-    if (routeSpec.responses) {
+    if (routeSpec?.responses) {
       for (const [statusCode, responseSpec] of Object.entries(routeSpec.responses)) {
         operation.responses[statusCode] = {
           description: responseSpec.description,

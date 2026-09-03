@@ -203,6 +203,12 @@ an exported type is never mistaken for an operational distributed feature.
   only matching-origin browser requests receive session cookies, cookie
   mutations require a same-origin `Origin`, and critical Project, Assistant,
   service-mutation, and settings-mutation endpoints declare core permissions.
+- [x] The OpenAPI document describes what the runtime actually serves. It is
+  generated from the routes mounting produced rather than re-resolved with a
+  different prefix, so its paths exist; it covers every mounted route rather
+  than only annotated ones, marking the undocumented ones instead of omitting
+  them; and it is served at `runtime/openapi` as well as
+  `runtime/openapi.json`.
 - [x] A frontend is installable at any mount. It declares
   `frontend.basePathGlobal`, the Platform defines that global on the served
   page with the mount path, and the bundle applies it — replacing a rewrite of
