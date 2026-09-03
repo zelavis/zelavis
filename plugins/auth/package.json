@@ -1,0 +1,59 @@
+{
+  "name": "@zelavis/auth",
+  "version": "1.0.1-alpha.2",
+  "private": false,
+  "description": "OAuth and OpenID Connect sign-in for Zelavis, extended by provider plugins.",
+  "license": "MIT",
+  "author": "Ivan Jeremic",
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "zelavis": {
+    "kind": "plugin",
+    "capabilities": [
+      "zelavis/auth:credentials",
+      "api:routes"
+    ]
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run typecheck"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zelavis/zelavis.git",
+    "directory": "plugins/auth"
+  },
+  "homepage": "https://github.com/zelavis/zelavis/tree/main/plugins/auth#readme",
+  "bugs": {
+    "url": "https://github.com/zelavis/zelavis/issues"
+  },
+  "peerDependencies": {
+    "zelavis": ">=1.0.1-alpha.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "zelavis": "workspace:*"
+  },
+  "dependencies": {
+    "jose": "^6.2.10"
+  },
+  "keywords": [
+    "auth",
+    "oauth",
+    "oidc",
+    "sso"
+  ]
+}
