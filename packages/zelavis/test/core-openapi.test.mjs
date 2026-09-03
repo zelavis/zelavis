@@ -75,7 +75,7 @@ test("generateOpenApiSpec converts routes with spec into OpenAPI paths and opera
         id: "internal.health",
         method: "GET",
         path: "/health",
-        // No spec field — should be omitted from OpenAPI output
+        // No spec field — described anyway, and marked as undocumented
         handler: () => ({ status: 200, body: { ok: true } }),
       },
       service: { name: "internal", api: {} },
@@ -84,8 +84,13 @@ test("generateOpenApiSpec converts routes with spec into OpenAPI paths and opera
 
   const spec = generateOpenApiSpec(routes);
 
-  // Route without spec must not be in paths
-  assert.equal(spec.paths["/api/v1/internal/health"], undefined);
+  // A route with no spec is still described. Omitting it left the document
+  // looking complete while most of the API was missing from it; marking it
+  // says which endpoints exist but have no inputs or responses written down.
+  const health = spec.paths["/api/v1/internal/health"].get;
+  assert.equal(health["x-zelavis-undocumented"], true);
+  assert.equal(health.operationId, "internal.health");
+  assert.deepEqual(health.tags, ["internal"]);
 
   // Path with :itemId should be transformed to {itemId}
   const itemPath = spec.paths["/api/v1/items/{itemId}"];

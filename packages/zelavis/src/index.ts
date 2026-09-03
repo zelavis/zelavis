@@ -27,6 +27,7 @@ import {
   type ZelavisServerFetchHandler,
   declaresServiceCapability,
   serviceCapabilityFor,
+  type ZelavisResolvedRoute,
   type ZelavisServerPlainHandler,
   type ZelavisServerRoute,
   type ZelavisServerRuntime,
@@ -1214,6 +1215,16 @@ async function resolveRuntimeManagementCore(
     siteEnabled: boolean;
     bundleStore?: BundleStore;
     platform?: ZelavisServiceSetupPlatformContext;
+    /**
+     * The routes this runtime actually mounted.
+     *
+     * Late-bound, because mounting happens after this core is composed. The
+     * spec used to re-resolve endpoints from the service list with a different
+     * prefix and no service prefixes, so it published paths that did not
+     * exist: `/api/auth/accounts` for an endpoint served at
+     * `/zelavis/api/v1/auth/accounts`.
+     */
+    getMountedRoutes?: () => readonly ZelavisResolvedRoute[];
     /** Paths the installed frontend resolves client-side, if any. */
     frontendClientRoutes?: readonly string[];
     /** Design tokens the installed frontend supplies for service pages. */
@@ -1888,20 +1899,25 @@ async function resolveRuntimeManagementCore(
             }
           },
         },
-        {
-          id: "runtime.openapi",
-          method: "GET",
-          path: joinPathParts(
-            context.apiPrefix,
-            context.apiVersion,
-            "runtime/openapi.json",
-          ),
-          handler: () => {
-            const services = context.getServices();
-            const resolved = resolveMountedEndpoints(services, {
-              prefix: context.apiPrefix,
-              version: context.apiVersion,
-            });
+        // Served at both `runtime/openapi` and `runtime/openapi.json`. The
+        // extensionless path is what a reader tries first, and answering it
+        // with a 404 reads as "this Platform publishes no spec".
+        ...["runtime/openapi", "runtime/openapi.json"].map((suffix) => ({
+          id: `runtime.openapi${suffix.endsWith(".json") ? "" : ".bare"}`,
+          method: "GET" as const,
+          path: joinPathParts(context.apiPrefix, context.apiVersion, suffix),
+          handler: ({ request }: { request: Request }) => {
+            const mounted = context.getMountedRoutes?.();
+            const resolved =
+              mounted ??
+              resolveMountedEndpoints(context.getServices(), {
+                prefix: joinPathParts(
+                  context.rootPath,
+                  context.apiPrefix,
+                  context.apiVersion,
+                ),
+                version: context.apiVersion,
+              });
             return {
               status: 200,
               headers: { "content-type": "application/json" },
@@ -1910,10 +1926,14 @@ async function resolveRuntimeManagementCore(
                 version: context.apiVersion,
                 description:
                   "Auto-generated OpenAPI specification for this Zelavis instance.",
+                // Paths are absolute from the host root, so the server is the
+                // origin this document was fetched from. Without it a client
+                // has to guess where to send the requests it just read about.
+                servers: [{ url: new URL(request.url).origin }],
               }),
             };
           },
-        },
+        })),
       ];
 
   const routePrefix = joinPathParts(
@@ -2863,6 +2883,8 @@ export async function zelavis(
   // broken installation.
 
   let runtimeConfigServices: readonly ZelavisRuntimeService<any>[] = [];
+  // Filled in once mounting resolves them, and read at request time.
+  let mountedRoutes: readonly ZelavisResolvedRoute[] | undefined;
   // Resolved before the management core, which needs the paths this frontend
   // claims and the design tokens it supplies. The frontend needs the runtime
   // configuration in return, so it receives a thunk rather than the document —
@@ -3031,6 +3053,7 @@ export async function zelavis(
       serviceActivation: options.serviceActivation,
       rootPath,
       getServices: () => runtimeConfigServices,
+      getMountedRoutes: () => mountedRoutes ?? [],
       settingsStore: dashboardSettingsStore,
       siteEnabled: siteMounted,
       bundleStore: options.bundleStore,
@@ -3112,6 +3135,10 @@ export async function zelavis(
       ],
     }),
   });
+  // The spec describes what this runtime actually serves, so it reads the
+  // routes mounting produced rather than recomputing them from the service
+  // list with inputs that were never guaranteed to match.
+  mountedRoutes = runtime.routes as readonly ZelavisResolvedRoute[];
   let closePromise: Promise<void> | undefined;
   const close = (): Promise<void> => {
     closePromise ??= (async () => {
