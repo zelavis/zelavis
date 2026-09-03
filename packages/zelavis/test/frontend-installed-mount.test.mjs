@@ -3,6 +3,10 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { readFrontendManifest, toServiceAppDefinition } from "../dist/core/service/frontend.js";
 import { injectFrontendBasePath, rewriteBundleAssetBase } from "../dist/service-app.js";
+// The committed copy of the built `index.html`. Reading `build/client`
+// directly would tie these tests to a full `react-router build`, which the
+// runtime test job does not run — the dashboard e2e job builds that.
+import { embeddedDashboardShell } from "@zelavis/ui/dashboard-assets";
 
 async function dashboardManifest() {
   return JSON.parse(
@@ -13,15 +17,12 @@ async function dashboardManifest() {
   );
 }
 
-async function dashboardIndexHtml() {
-  return readFile(
-    new URL("../product-services/zelavis-ui/build/client/index.html", import.meta.url),
-    "utf8",
-  );
+function dashboardIndexHtml() {
+  return embeddedDashboardShell;
 }
 
 test("the dashboard bundle carries the script that applies its mount", async () => {
-  const html = await dashboardIndexHtml();
+  const html = dashboardIndexHtml();
 
   // Without this the bundle is built for one path and the Platform has to
   // rewrite a router literal on the way out — which is what made the dashboard
@@ -40,7 +41,7 @@ test("serving the dashboard purely from its manifest declares the mount", async 
   assert.equal(app.basePathGlobal, "__ZELAVIS_BASE_PATH__");
   assert.equal(app.assetBase, "/assets/");
 
-  const source = await dashboardIndexHtml();
+  const source = dashboardIndexHtml();
   const encode = (text) => new TextEncoder().encode(text);
   const decode = (bytes) => new TextDecoder().decode(bytes);
   const contentType = "text/html; charset=utf-8";

@@ -34,6 +34,10 @@
     "./frontend": {
       "types": "./dist/frontend.d.ts",
       "import": "./dist/frontend.js"
+    },
+    "./dashboard-assets": {
+      "types": "./dist/generated/dashboard-assets.d.ts",
+      "import": "./dist/generated/dashboard-assets.js"
     }
   },
   "files": [
