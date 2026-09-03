@@ -1,7 +1,6 @@
 import { Zelavis } from "zelavis";
 import { nodeAdapter } from "zelavis/adapters/node";
 import { closeNodeServer, createNodeServer } from "zelavis/runtimes/node";
-import { emailPasswordService } from "@zelavis/app-auth-email-password";
 import { zelavisUiFrontend } from "@zelavis/ui/frontend";
 
 async function main(): Promise<void> {
@@ -11,19 +10,9 @@ async function main(): Promise<void> {
     // The Platform serves whatever frontend it is given. Remove this and the
     // API is unchanged while the root path says none is installed.
     frontend: zelavisUiFrontend,
+    // Password sign-in needs nothing here: it ships with Zelavis.
     adapter: nodeAdapter({
       dataDirectory: process.env.ZELAVIS_DATA_DIR,
-      services: {
-        catalog: [
-          {
-            service: emailPasswordService(),
-            specifier: "@zelavis/app-auth-email-password",
-            status: "installed",
-            source: "official",
-            order: 10,
-          },
-        ],
-      },
     }),
     onError: ({ error }) => ({
       status: 400,

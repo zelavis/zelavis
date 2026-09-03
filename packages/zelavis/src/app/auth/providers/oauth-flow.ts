@@ -1,10 +1,10 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import type { OAuthConnection } from "./connections.js";
+import type { OAuthConnection } from "./oauth-connections.js";
 import type {
   OAuthIdentity,
   OAuthIdentityClaims,
   OAuthProviderDefinition,
-} from "./contract.js";
+} from "./oauth-contract.js";
 
 /**
  * Compares two strings without revealing where they first differ.

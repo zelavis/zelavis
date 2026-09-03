@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import zelavisAuth, { defineOAuthProviders } from "@zelavis/auth";
+import { defineOAuthProviders } from "../dist/app/auth/index.js";
 import { createMemorySystemStore, zelavis } from "../dist/index.js";
 
 const OWNER = { id: "owner", type: "user", roles: ["owner"], permissions: ["*"] };
 
-/** A provider someone else ships, declaring the capability this plugin owns. */
+/** A provider someone else ships, declaring the capability core owns. */
 const thirdPartyProviders = defineOAuthProviders("@acme/auth-gitlab", [
   {
     name: "gitlab",
@@ -21,39 +21,34 @@ async function platform({ withThirdParty = false } = {}) {
   return zelavis({
     systemStore: createMemorySystemStore(),
     resolvePrincipal: () => OWNER,
-    serviceRegistry: {
-      catalog: [
-        { service: zelavisAuth, status: "installed", source: "official" },
-        ...(withThirdParty
-          ? [{ service: thirdPartyProviders, status: "installed", source: "official" }]
-          : []),
-      ],
-    },
+    // Omitted rather than set to an empty catalog: an explicit `[]` means
+    // this runtime composes no services at all, core auth included.
+    ...(withThirdParty
+      ? {
+          serviceRegistry: {
+            catalog: [
+              { service: thirdPartyProviders, status: "installed", source: "community" },
+            ],
+          },
+        }
+      : {}),
   });
 }
 
-const BASE = "/zelavis/api/v1/auth/connections";
+const BASE = "/zelavis/api/v1/auth/oauth/connections";
 
-test("the plugin exports an installable service, not a factory", () => {
-  // An installed package is loaded, not called: a default-exported factory
-  // produces no service object at all.
-  assert.equal(typeof zelavisAuth, "object");
-  assert.equal(zelavisAuth.name, "@zelavis/auth");
-  assert.deepEqual(zelavisAuth.capabilities, ["zelavis/auth:credentials", "api:routes"]);
-  assert.equal(typeof zelavisAuth.service.register, "function");
-
-  // Installing the one plugin is enough to get somewhere: its own providers
-  // ship with it rather than in a second package that is neither the plugin
-  // nor a provider.
-  assert.deepEqual(thirdPartyProviders.capabilities, ["@zelavis/auth:oauth"]);
+test("a provider plugin declares the capability core owns", () => {
+  assert.deepEqual(thirdPartyProviders.capabilities, ["zelavis/auth:oauth"]);
+  assert.equal(thirdPartyProviders.service.oauthProviders.length, 1);
 });
 
-test("the plugin ships usable providers on its own", async () => {
+test("OAuth providers work with nothing installed", async () => {
   const runtime = await platform();
-  const response = await runtime.plain({ url: `${BASE}/providers` });
+  const response = await runtime.plain({ url: `${BASE}` });
 
   assert.equal(response.status, 200);
   const names = response.body.providers.map((provider) => provider.provider);
+  // No plugin required: the definitions core ships are usable on their own.
   assert.deepEqual(names.sort(), ["github", "google"]);
   // Discovered but unconfigured: an operator still has to supply the client
   // credentials their installation was issued.
@@ -62,7 +57,7 @@ test("the plugin ships usable providers on its own", async () => {
 
 test("a provider someone else ships is discovered by capability", async () => {
   const runtime = await platform({ withThirdParty: true });
-  const response = await runtime.plain({ url: `${BASE}/providers` });
+  const response = await runtime.plain({ url: `${BASE}` });
 
   // The extension point is the capability, not this package's own list: a
   // third-party plugin appears beside the built-in providers.
@@ -73,7 +68,7 @@ test("a provider someone else ships is discovered by capability", async () => {
 test("an operator configures a provider and the secret never comes back", async () => {
   const runtime = await platform();
   const saved = await runtime.plain({
-    url: `${BASE}/providers/google`,
+    url: `${BASE}/google`,
     method: "PUT",
     body: {
       clientId: "client-id-123",
@@ -91,7 +86,7 @@ test("an operator configures a provider and the secret never comes back", async 
   assert.equal(saved.body.connection.hasClientSecret, true);
   assert.ok(!JSON.stringify(saved.body).includes("super-secret-value"));
 
-  const listed = await runtime.plain({ url: `${BASE}/providers` });
+  const listed = await runtime.plain({ url: `${BASE}` });
   assert.ok(!JSON.stringify(listed.body).includes("super-secret-value"));
   assert.equal(
     listed.body.providers.find((provider) => provider.provider === "google").configured,
@@ -102,7 +97,7 @@ test("an operator configures a provider and the secret never comes back", async 
 test("editing a connection keeps a secret the caller was never shown", async () => {
   const runtime = await platform();
   await runtime.plain({
-    url: `${BASE}/providers/google`,
+    url: `${BASE}/google`,
     method: "PUT",
     body: {
       clientId: "client-id-123",
@@ -114,7 +109,7 @@ test("editing a connection keeps a secret the caller was never shown", async () 
   // The API never returns the secret, so a caller editing the redirect URI
   // cannot send it back. Dropping it would silently break sign-in.
   const edited = await runtime.plain({
-    url: `${BASE}/providers/google`,
+    url: `${BASE}/google`,
     method: "PUT",
     body: { clientId: "client-id-123", redirectUri: "https://example.com/other" },
   });
@@ -125,7 +120,7 @@ test("editing a connection keeps a secret the caller was never shown", async () 
 test("a redirect URI that is not https is refused", async () => {
   const runtime = await platform();
   const refused = await runtime.plain({
-    url: `${BASE}/providers/google`,
+    url: `${BASE}/google`,
     method: "PUT",
     body: { clientId: "id", redirectUri: "http://example.com/callback" },
   });
@@ -136,7 +131,7 @@ test("a redirect URI that is not https is refused", async () => {
   assert.match(refused.body.error, /https/u);
 
   const localhost = await runtime.plain({
-    url: `${BASE}/providers/google`,
+    url: `${BASE}/google`,
     method: "PUT",
     body: { clientId: "id", redirectUri: "http://localhost:3000/callback" },
   });
@@ -146,31 +141,25 @@ test("a redirect URI that is not https is refused", async () => {
 test("configuring a provider nobody defines is refused", async () => {
   const runtime = await platform();
   const response = await runtime.plain({
-    url: `${BASE}/providers/nope`,
+    url: `${BASE}/nope`,
     method: "PUT",
     body: { clientId: "id", redirectUri: "https://example.com/callback" },
   });
   assert.equal(response.status, 404);
 });
 
-test("the OAuth endpoints require permission to manage auth", async () => {
+test("the OAuth endpoints require permission to manage the installation", async () => {
   const runtime = await zelavis({
     systemStore: createMemorySystemStore(),
     resolvePrincipal: () => ({ id: "visitor", type: "user", roles: [], permissions: [] }),
-    serviceRegistry: {
-      catalog: [
-        { service: zelavisAuth, status: "installed", source: "official" },
-        { service: thirdPartyProviders, status: "installed", source: "community" },
-      ],
-    },
   });
 
   // Client secrets and redirect URIs are here; anyone who can write them can
   // redirect an installation's sign-in.
   for (const [method, url] of [
-    ["GET", `${BASE}/providers`],
-    ["PUT", `${BASE}/providers/google`],
-    ["DELETE", `${BASE}/providers/google`],
+    ["GET", BASE],
+    ["PUT", `${BASE}/google`],
+    ["DELETE", `${BASE}/google`],
   ]) {
     const response = await runtime.plain({ url, method, body: {} });
     assert.ok(
@@ -180,10 +169,10 @@ test("the OAuth endpoints require permission to manage auth", async () => {
   }
 });
 
-test("core drives the flow and this plugin supplies the provider", async () => {
+test("core drives the flow and a definition supplies the provider", async () => {
   const runtime = await platform();
   await runtime.plain({
-    url: `${BASE}/providers/github`,
+    url: `${BASE}/github`,
     method: "PUT",
     body: {
       clientId: "gh-client",
@@ -192,8 +181,8 @@ test("core drives the flow and this plugin supplies the provider", async () => {
     },
   });
 
-  // The flow endpoints belong to core auth, which holds the state and PKCE
-  // verifier. This plugin only says where to send the browser.
+  // Core holds the state and PKCE verifier. A provider definition only says
+  // where to send the browser and how to read what comes back.
   const started = await runtime.plain({
     url: "/zelavis/api/v1/auth/oauth/github/start",
     method: "POST",
@@ -234,10 +223,10 @@ test("disabling a provider stops sign-in without deleting its credentials", asyn
     clientSecret: "gh-secret",
     redirectUri: "https://example.com/callback",
   };
-  await runtime.plain({ url: `${BASE}/providers/github`, method: "PUT", body });
+  await runtime.plain({ url: `${BASE}/github`, method: "PUT", body });
 
   const disabled = await runtime.plain({
-    url: `${BASE}/providers/github`,
+    url: `${BASE}/github`,
     method: "PUT",
     body: { ...body, clientSecret: undefined, enabled: false },
   });

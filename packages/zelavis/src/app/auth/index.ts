@@ -1,4 +1,5 @@
 export * from "./contracts/credential-provider.js";
+export * from "./providers/index.js";
 export * from "./contracts/repositories.js";
 export * from "./auth-service.js";
 export * from "./core/create-auth.js";

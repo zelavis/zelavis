@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import emailPasswordProvider from "@zelavis/app-auth-email-password";
 import { createMemorySystemStore, zelavis } from "../dist/index.js";
 
 async function spec(options = {}, path = "/zelavis/api/v1/runtime/openapi.json") {
@@ -81,9 +80,6 @@ test("declared route metadata survives", async () => {
   const { body } = await spec({
     subsystems: {},
     bootstrap: { token: "openapi-bootstrap-token-with-32-characters" },
-    serviceRegistry: {
-      catalog: [{ service: emailPasswordProvider, status: "installed", source: "official" }],
-    },
   });
 
   const bootstrap = body.paths["/zelavis/api/v1/auth/bootstrap"].post;

@@ -149,7 +149,7 @@
     "build:sdk:browser": "tsc -p tsconfig.sdk.browser.json",
     "build:sdk:node": "tsc -p tsconfig.sdk.node.json",
     "typecheck": "pnpm run build:bootstrap && pnpm --filter @zelavis/marketplace build && tsc -p tsconfig.json --noEmit",
-    "test": "pnpm --filter @zelavis/ui build:plugin && pnpm run build && pnpm --filter @zelavis/ecommerce build && pnpm --filter @zelavis/app-auth-oidc build && pnpm --filter @zelavis/app-auth-email-password build && pnpm --filter @zelavis/auth build && node --test test/*.test.mjs",
+    "test": "pnpm --filter @zelavis/ui build:plugin && pnpm run build && pnpm --filter @zelavis/ecommerce build && pnpm --filter @zelavis/app-auth-oidc build && node --test test/*.test.mjs",
     "update:wordpress": "node scripts/update-wordpress-release.mjs",
     "build:bootstrap": "tsc -p tsconfig.bootstrap.json"
   },
@@ -178,7 +178,6 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.9.1",
-    "@zelavis/auth": "workspace:*",
     "typescript": "^5.9.0"
   },
   "keywords": [
@@ -191,7 +190,6 @@
     "node": ">=24"
   },
   "optionalDependencies": {
-    "@zelavis/app-auth-email-password": "workspace:*",
     "@zelavis/ui": "workspace:*"
   }
 }

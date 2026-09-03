@@ -9,7 +9,6 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@zelavis/app-auth-email-password": "workspace:*",
     "zelavis": "workspace:*",
     "@zelavis/ui": "workspace:*"
   },

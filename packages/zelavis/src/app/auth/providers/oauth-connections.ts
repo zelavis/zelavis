@@ -1,4 +1,5 @@
-import type { ZelavisServiceStore, ZelavisSystemStoreValue } from "zelavis";
+import type { ZelavisSystemStoreValue } from "../../../system-store.js";
+import type { ZelavisServiceStore } from "../../../platform/service-store.js";
 
 /**
  * An operator's credentials for one identity provider.

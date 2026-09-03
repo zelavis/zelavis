@@ -2,8 +2,19 @@ import {
   authService as createAuthService,
   createAuth,
   type AuthServiceOptions,
+  createAuthorizationCodeFlow,
+  createConnectionStore,
+  createPasswordProvider,
+  builtInOAuthProviders,
+  environmentConnection,
+  OAUTH_PROVIDER_CAPABILITY,
+  PASSWORD_PROVIDER,
+  publicConnection,
+  type PublicOAuthConnection,
   type AuthMethodContext,
   type AuthMethodPlugin,
+  type OAuthConnection,
+  type OAuthProviderDefinition,
   type AuthApi,
 } from "./app/auth/index.js";
 import {
@@ -1084,6 +1095,205 @@ async function resolveDatabaseCoreService(
     : await createDatabase(resolvedDatabaseOption);
 }
 
+/**
+ * Registers a credential provider for every installed OAuth definition.
+ *
+ * Core runs the Authorization Code flow — it holds the state, nonce and PKCE
+ * verifier, and it is the only place those are handled — and a plugin
+ * declaring `zelavis/auth:oauth` supplies the endpoints and claim mapping for
+ * one identity provider. Google, GitHub, and a generic OIDC builder ship in
+ * the box; anything else arrives as an ordinary plugin.
+ *
+ * The credentials an installation was issued are the operator's, so they are
+ * read from the store rather than from any package. The Authorization Code
+ * contract is synchronous, so the configuration is loaded once here and
+ * refreshed whenever it is written.
+ */
+function registerOAuthProviders(
+  api: AuthApi,
+  context: AuthMethodContext | undefined,
+  options: { fetch?: typeof globalThis.fetch },
+): void {
+  const definitions = new Map<string, OAuthProviderDefinition>();
+  for (const entry of context?.registry ?? []) {
+    if (entry.status !== "installed") continue;
+    if (!entry.service.capabilities?.includes(OAUTH_PROVIDER_CAPABILITY)) continue;
+    const declared = (
+      entry.service.service as
+        | { oauthProviders?: readonly OAuthProviderDefinition[] }
+        | undefined
+    )?.oauthProviders;
+    if (!Array.isArray(declared)) continue;
+    for (const definition of declared) {
+      // First installed plugin wins, and the built-ins go in last: a later
+      // install must not redirect sign-in for a name accounts already use.
+      if (definition?.name && !definitions.has(definition.name)) {
+        definitions.set(definition.name, definition);
+      }
+    }
+  }
+  for (const definition of builtInOAuthProviders) {
+    if (!definitions.has(definition.name)) definitions.set(definition.name, definition);
+  }
+
+  const connections = context?.store
+    ? createConnectionStore(context.store as never)
+    : undefined;
+  const active = new Map<string, OAuthConnection>();
+  const refresh = async () => {
+    active.clear();
+    for (const name of definitions.keys()) {
+      const connection =
+        (await connections?.read(name)) ?? environmentConnection(name);
+      if (connection) active.set(name, connection);
+    }
+  };
+  void refresh();
+
+  const require = (name: string): OAuthConnection => {
+    const connection = active.get(name);
+    if (!connection?.enabled) {
+      // The same message whether a provider is unconfigured or switched off:
+      // which it is describes the installation's setup to a stranger.
+      throw new TypeError(`${name} sign-in is not available on this installation.`);
+    }
+    return connection;
+  };
+
+  for (const [name, definition] of definitions) {
+    api.authentication.registerProvider({
+      name,
+      authorizationCode: {
+        get redirectUri() {
+          return require(name).redirectUri;
+        },
+        createAuthorizationUrl(input) {
+          return createAuthorizationCodeFlow(definition, require(name), options)
+            .createAuthorizationUrl(input);
+        },
+        exchange(input) {
+          return createAuthorizationCodeFlow(definition, require(name), options)
+            .exchange(input);
+        },
+      },
+    });
+  }
+
+  oauthRuntime = {
+    definitions,
+    connections,
+    active,
+  };
+}
+
+/**
+ * Saves the credentials an installation was issued for one provider.
+ *
+ * Kept beside registration rather than in a service of its own: the same map
+ * the flow reads is the one this writes, and a second copy of it would drift
+ * from whatever an operator last saved.
+ */
+async function configureOAuthConnection(
+  provider: string,
+  input: unknown,
+): Promise<PublicOAuthConnection | undefined> {
+  const runtime = oauthRuntime;
+  if (!runtime?.definitions.has(provider)) return undefined;
+  if (!runtime.connections) {
+    throw new ZelavisValidationError(
+      "This installation has no durable store, so OAuth configuration cannot be saved.",
+    );
+  }
+
+  const body = (input ?? {}) as Partial<OAuthConnection>;
+  if (typeof body.clientId !== "string" || !body.clientId.trim()) {
+    throw new ZelavisValidationError("A clientId is required.");
+  }
+  if (typeof body.redirectUri !== "string" || !body.redirectUri.trim()) {
+    throw new ZelavisValidationError("A redirectUri is required.");
+  }
+  let redirect: URL;
+  try {
+    redirect = new URL(body.redirectUri);
+  } catch {
+    throw new ZelavisValidationError("The redirectUri must be an absolute URL.");
+  }
+  if (redirect.protocol !== "https:" && redirect.hostname !== "localhost") {
+    // The authorization code arrives on this URL. Over plaintext anyone on the
+    // path can take it, and a code is enough to complete a sign-in.
+    throw new ZelavisValidationError(
+      "The redirectUri must use https, except on localhost for development.",
+    );
+  }
+
+  const existing = await runtime.connections.read(provider);
+  const connection: OAuthConnection = {
+    provider,
+    clientId: body.clientId.trim(),
+    // An omitted secret keeps the stored one: the API never returns it, so an
+    // operator editing a redirect URI has nothing to send back.
+    ...(typeof body.clientSecret === "string" && body.clientSecret
+      ? { clientSecret: body.clientSecret }
+      : existing?.clientSecret
+        ? { clientSecret: existing.clientSecret }
+        : {}),
+    redirectUri: redirect.toString(),
+    ...(Array.isArray(body.scopes)
+      ? { scopes: body.scopes.filter((scope) => typeof scope === "string") }
+      : {}),
+    enabled: body.enabled !== false,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await runtime.connections.write(connection);
+  runtime.active.set(provider, connection);
+  return publicConnection(connection);
+}
+
+async function listOAuthConnections(): Promise<
+  readonly (PublicOAuthConnection & { title?: string; configured: boolean })[]
+> {
+  const runtime = oauthRuntime;
+  if (!runtime) return [];
+  return [...runtime.definitions].map(([name, definition]) => {
+    const connection = runtime.active.get(name);
+    return {
+      ...(connection
+        ? publicConnection(connection)
+        : {
+            provider: name,
+            clientId: "",
+            redirectUri: "",
+            enabled: false,
+            updatedAt: new Date(0).toISOString(),
+            hasClientSecret: false,
+          }),
+      ...(definition.title ? { title: definition.title } : {}),
+      configured: Boolean(connection),
+    };
+  });
+}
+
+async function removeOAuthConnection(provider: string): Promise<void> {
+  const runtime = oauthRuntime;
+  if (!runtime) return;
+  await runtime.connections?.remove(provider);
+  // The environment may still define it, so the active map is recomputed for
+  // this provider rather than the entry simply dropped.
+  const fallback = environmentConnection(provider);
+  if (fallback) runtime.active.set(provider, fallback);
+  else runtime.active.delete(provider);
+}
+
+/** Set when auth is composed, so the endpoints below can reach the same state. */
+let oauthRuntime:
+  | {
+      definitions: ReadonlyMap<string, OAuthProviderDefinition>;
+      connections: ReturnType<typeof createConnectionStore> | undefined;
+      active: Map<string, OAuthConnection>;
+    }
+  | undefined;
+
 async function resolveAuthCoreService(
   option: ZelavisAuthOptions | undefined,
   methods: readonly AuthMethodPlugin[] = [],
@@ -1102,6 +1312,26 @@ async function resolveAuthCoreService(
   }
 
   const configured = authOption === true ? {} : authOption;
+  // Password sign-in ships with Zelavis. It used to be a plugin the
+  // distribution copied into the product-services folder on first boot,
+  // because an installation with no credential provider can never create its
+  // first owner — mandatory in everything but name.
+  const builtInMethods: AuthMethodPlugin[] = [
+    {
+      name: PASSWORD_PROVIDER,
+      register(api) {
+        api.authentication.registerProvider(
+          createPasswordProvider(configured.password ?? {}),
+        );
+      },
+    },
+    {
+      name: "zelavis/auth:oauth",
+      register(api, context) {
+        registerOAuthProviders(api, context, configured.oauth ?? {});
+      },
+    },
+  ];
   const auth = configured.auth ?? await createAuth({
     ...(configured.authOptions ?? {}),
     repositories: {
@@ -1112,7 +1342,7 @@ async function resolveAuthCoreService(
     // code was a second way to supply a service, and the two disagreed: a
     // provider passed here never appeared in the registry, so it could not be
     // listed, disabled, or updated like the same provider installed normally.
-    methods,
+    methods: [...builtInMethods, ...methods],
     // Each method sees the installed services and gets storage scoped to the
     // service that supplied it, so a plugin hosting other plugins' providers
     // can find them and read what an operator configured. Registration runs
@@ -1133,6 +1363,11 @@ async function resolveAuthCoreService(
       ...(configured.definition ?? {}),
       authority: "platform",
       bootstrap: createPlatformAuthBootstrap(auth, { store: systemStore }),
+      oauthConnections: {
+        list: listOAuthConnections,
+        configure: configureOAuthConnection,
+        remove: removeOAuthConnection,
+      },
       bootstrapToken,
       sessionCookie: configured.definition?.sessionCookie === false
         ? false

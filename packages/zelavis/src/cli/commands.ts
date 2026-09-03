@@ -84,7 +84,7 @@ Options:
   --email <email>           Owner email address for bootstrap.
   --username <username>     Owner username, when not using an email identity.
   --display-name <name>     Owner display name.
-  --provider <provider>     Credential provider. Defaults to email-password.
+  --provider <provider>     Credential provider. Defaults to password.
   --token <token>           Bootstrap token. Defaults to ZELAVIS_BOOTSTRAP_TOKEN.
   --password-stdin          Read the owner password from standard input.
   --version, -v             Print the CLI version.
@@ -288,7 +288,9 @@ async function runServicesCommand(parsed: ParsedArgs): Promise<void> {
   );
 }
 
-const DEFAULT_BOOTSTRAP_PROVIDER = "email-password";
+// The provider Zelavis ships with. An installation that replaced it names
+// its own with --provider.
+const DEFAULT_BOOTSTRAP_PROVIDER = "password";
 
 async function resolveBootstrapPassword(parsed: ParsedArgs): Promise<string> {
   if (parsed.passwordStdin) {
