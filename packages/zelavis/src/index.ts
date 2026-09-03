@@ -25,6 +25,8 @@ import {
   type ZelavisServerErrorHandler,
   type ZelavisServerExecutionContext,
   type ZelavisServerFetchHandler,
+  declaresServiceCapability,
+  serviceCapabilityFor,
   type ZelavisServerPlainHandler,
   type ZelavisServerRoute,
   type ZelavisServerRuntime,
@@ -334,16 +336,6 @@ export interface ZelavisServerOptions {
    */
   frontend?: ZelavisPlatformFrontendFactory;
   /**
-   * Credential providers this installation offers.
-   *
-   * The Platform owns the provider registry and the first-owner endpoint but
-   * registers no provider itself, so an installation that supplies none has
-   * nobody it can enroll and no way to create its first account. Which
-   * providers exist is a product decision belonging to whoever composes the
-   * Platform, the same as the frontend above.
-   */
-  authMethods?: readonly AuthMethodPlugin[];
-  /**
    * Domain bindings store. Extension service apps only get host-bound
    * routing for hosts with verified bindings owned by their project or
    * service. Service packages declare `app.domainPolicy`; concrete hostnames
@@ -524,16 +516,6 @@ export interface ZelavisOptions {
    * installed. The Platform names none of its own.
    */
   frontend?: ZelavisPlatformFrontendFactory;
-  /**
-   * Credential providers this installation offers.
-   *
-   * The Platform owns the provider registry and the first-owner endpoint but
-   * registers no provider itself, so an installation that supplies none has
-   * nobody it can enroll and no way to create its first account. Which
-   * providers exist is a product decision belonging to whoever composes the
-   * Platform, the same as the frontend above.
-   */
-  authMethods?: readonly AuthMethodPlugin[];
   assistant?: false | ZelavisAssistantResponder;
   onError?: ZelavisServerErrorHandler;
   adapter?: ZelavisAdapter;
@@ -1046,28 +1028,6 @@ async function resolveDatabaseCoreService(
     : await createDatabase(resolvedDatabaseOption);
 }
 
-/**
- * Folds host-supplied credential providers into the auth core service options.
- *
- * `new Zelavis(...)` refuses `coreServices` so a host cannot reach into
- * internal composition, which left the public constructor with no way to offer
- * a credential provider at all. This narrows that back to the one thing a host
- * legitimately owns.
- */
-function mergeAuthMethodOptions(
-  option: ZelavisAuthCoreServiceOptions | undefined,
-  authMethods: readonly AuthMethodPlugin[] | undefined,
-): ZelavisAuthCoreServiceOptions | undefined {
-  if (!authMethods?.length || option === false) {
-    return option;
-  }
-  const configured = option === true || option === undefined ? {} : option;
-  return {
-    ...configured,
-    methods: [...(configured.methods ?? []), ...authMethods],
-  };
-}
-
 async function resolveAuthCoreService(
   option: ZelavisAuthCoreServiceOptions | undefined,
   methods: readonly AuthMethodPlugin[] = [],
@@ -1088,11 +1048,11 @@ async function resolveAuthCoreService(
       ...(systemStore ? createPlatformAuthRepositories(systemStore) : {}),
       ...(configured.authOptions?.repositories ?? {}),
     },
-    methods: [
-      ...(configured.authOptions?.methods ?? []),
-      ...(configured.methods ?? []),
-      ...methods,
-    ],
+    // Installed providers only. Handing credential providers to composition in
+    // code was a second way to supply a service, and the two disagreed: a
+    // provider passed here never appeared in the registry, so it could not be
+    // listed, disabled, or updated like the same provider installed normally.
+    methods,
   });
 
   return createAuthService({
@@ -1114,6 +1074,25 @@ async function resolveAuthCoreService(
   });
 }
 
+/** The capability a credential provider declares to extend Platform auth. */
+export const ZELAVIS_AUTH_CREDENTIALS_CAPABILITY = serviceCapabilityFor(
+  "@zelavis/auth",
+  "credentials",
+);
+
+/**
+ * Finds the credential providers installed on this Platform.
+ *
+ * Providers are ordinary installed services found by capability, and this is
+ * now the only way one reaches auth: there is no option for handing providers
+ * to the constructor. A provider arrives by being installed, which means the
+ * same path whether it came from the product-services folder, the registry
+ * endpoints, or the marketplace.
+ *
+ * The capability names the plugin being extended rather than a bare domain, so
+ * a provider written for Platform auth is not also collected by some other
+ * service that happens to want credentials.
+ */
 function collectAuthMethodPlugins(
   registry: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
 ): readonly AuthMethodPlugin[] {
@@ -1122,7 +1101,11 @@ function collectAuthMethodPlugins(
       .filter(
         (entry) =>
           entry.status === "installed" &&
-          entry.service.capabilities?.includes("provider:auth") &&
+          declaresServiceCapability(
+            entry.service.capabilities,
+            "@zelavis/auth",
+            "credentials",
+          ) &&
           typeof (entry.service.service as AuthMethodPlugin | undefined)?.register === "function",
       )
       .map((entry) => entry.service.service as AuthMethodPlugin),
@@ -2765,7 +2748,7 @@ export async function zelavis(
   const authService = hasAppService
       ? undefined
       : await resolveAuthCoreService(
-        mergeAuthMethodOptions(options.coreServices?.auth, options.authMethods),
+        options.coreServices?.auth,
         collectAuthMethodPlugins(serviceRegistry),
         systemStore,
         rootPath,

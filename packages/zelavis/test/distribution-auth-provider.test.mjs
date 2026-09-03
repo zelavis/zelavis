@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { emailPasswordService } from "@zelavis/app-auth-email-password";
+import emailPasswordProvider from "@zelavis/app-auth-email-password";
 import { createMemorySystemStore, zelavis } from "../dist/index.js";
 
 const TOKEN = "distribution-bootstrap-token-with-32-chars";
@@ -10,9 +10,13 @@ async function platform({ withProvider = true } = {}) {
     systemStore: createMemorySystemStore(),
     bootstrap: { token: TOKEN },
     coreServices: { dashboard: false },
-    // Exactly what `zelavis serve` composes through the public `authMethods`
-    // option: the distribution chooses a provider, the library names none.
-    authMethods: withProvider ? [emailPasswordService().service] : undefined,
+    // A provider reaches auth only by being installed. The distribution seeds
+    // this same package into the product-services folder; here it is supplied
+    // as a registry entry, which is the identical path a discovered package
+    // takes once it has been loaded.
+    serviceRegistry: withProvider
+      ? { catalog: [{ service: emailPasswordProvider, status: "installed", source: "official" }] }
+      : undefined,
   });
 }
 
@@ -105,23 +109,52 @@ test("the owner password is never stored in a recoverable form", async () => {
   assert.ok(!JSON.stringify(accounts).includes(password));
 });
 
-test("a host can offer a credential provider through the public constructor", async () => {
-  // `new Zelavis(...)` refuses `coreServices` and `serviceRegistry` on purpose,
-  // so `authMethods` is the only way a host composes identity. Without it the
-  // public constructor could not produce an adoptable Platform at all.
+test("credential providers cannot be handed to the public constructor", async () => {
   const { Zelavis } = await import("../dist/index.js");
+  // There is no option for supplying a provider in code any more. Composition
+  // options were a second way to provide a service, and the two disagreed: a
+  // provider passed that way never reached the registry, so it could not be
+  // listed, disabled, or updated like the same provider installed normally.
   assert.throws(
     () => new Zelavis({ coreServices: { auth: { methods: [] } } }),
-    /does not accept internal runtime options/,
+    /does not accept internal runtime options/u,
   );
+  assert.throws(
+    () => new Zelavis({ serviceRegistry: { catalog: [] } }),
+    /does not accept internal runtime options/u,
+  );
+});
 
-  const zv = new Zelavis({ authMethods: [emailPasswordService().service] });
-  try {
-    const status = await (
-      await zv.fetch(new Request("http://localhost/zelavis/api/v1/auth/bootstrap"))
-    ).json();
-    assert.deepEqual(status.enrollmentProviders, ["email-password"]);
-  } finally {
-    await zv.close();
-  }
+test("the shipped provider package exports a service, not a factory", async () => {
+  // An installed package is loaded, not called. Default-exporting the factory
+  // gave the loader a function, which produced no service object at all — the
+  // package installed cleanly and extended nothing.
+  assert.equal(typeof emailPasswordProvider, "object");
+  assert.equal(emailPasswordProvider.name, "@zelavis/auth-email-password");
+  assert.deepEqual(emailPasswordProvider.capabilities, ["@zelavis/auth:credentials"]);
+  assert.equal(typeof emailPasswordProvider.service.register, "function");
+});
+
+test("a provider that names a different owner is not collected by Platform auth", async () => {
+  const runtime = await zelavis({
+    systemStore: createMemorySystemStore(),
+    bootstrap: { token: TOKEN },
+    coreServices: { dashboard: false },
+    serviceRegistry: {
+      catalog: [{
+        service: {
+          ...emailPasswordProvider,
+          name: "@acme/other-credentials",
+          // Same shape, different owner. Capability ownership exists so a
+          // provider written for one plugin is not collected by another.
+          capabilities: ["@acme/something-else:credentials"],
+        },
+        status: "installed",
+        source: "community",
+      }],
+    },
+  });
+
+  const status = await runtime.plain({ url: "/zelavis/api/v1/auth/bootstrap" });
+  assert.deepEqual(status.body.enrollmentProviders, []);
 });

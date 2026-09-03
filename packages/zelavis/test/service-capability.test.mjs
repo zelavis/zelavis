@@ -82,3 +82,32 @@ test("a manifest carrying an invalid capability is refused at validation", () =>
   assert.throws(() => validatePluginPackageManifest(manifest(["NotValid"])), /not a valid capability/u);
   assert.throws(() => validatePluginPackageManifest(manifest("api:routes")), /must be an array/u);
 });
+
+test("manifest capabilities reach the loaded service", async () => {
+  const { loadPluginPackage } = await import("../dist/service.js");
+  const manifest = {
+    name: "@acme/provider",
+    version: "1.0.0",
+    type: "module",
+    exports: "./index.js",
+    zelavis: { kind: "plugin", capabilities: ["@zelavis/auth:credentials"] },
+  };
+
+  // A service object that does not restate its capabilities is not opting out.
+  // Dropping them here made an installed provider extend nothing: it loaded,
+  // registered, and was then never discovered by the plugin it named.
+  const declared = await loadPluginPackage({
+    manifest,
+    importer: async () => ({ default: { name: "@acme/provider", service: { register() {} } } }),
+  });
+  assert.deepEqual(declared.capabilities, ["@zelavis/auth:credentials"]);
+
+  // A module that names its own capabilities still wins.
+  const explicit = await loadPluginPackage({
+    manifest,
+    importer: async () => ({
+      default: { name: "@acme/provider", capabilities: ["api:routes"], service: {} },
+    }),
+  });
+  assert.deepEqual(explicit.capabilities, ["api:routes"]);
+});

@@ -210,6 +210,13 @@ an exported type is never mistaken for an operational distributed feature.
   installed service. An `exports` entry escaping its package, a missing entry
   file, a reserved core service name, and a package that throws on import are
   each skipped with a reason rather than taking the Platform down.
+- [x] Credential providers reach auth only by being installed. The
+  `authMethods` option and the `coreServices.auth.methods` path are gone: they
+  were a second way to provide a service whose result never entered the
+  registry, so it could not be listed, disabled, or updated like an installed
+  one. The distribution seeds its bundled services into the product-services
+  folder on first boot and the operator owns them from then on, including
+  deleting them for good.
 - [x] Capabilities can be owned by the package that defines them
   (`@zelavis/auth:credentials`), validated at manifest time. Discovery stays a
   flat capability scan — no parent/child graph — so naming an owner asks to be

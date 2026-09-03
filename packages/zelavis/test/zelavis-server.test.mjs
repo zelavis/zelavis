@@ -450,7 +450,7 @@ test("auth method plugins register through the public auth capability", async ()
           service: {
             name: "@example/test-auth-provider",
             kind: "provider",
-            capabilities: ["provider:auth"],
+            capabilities: ["@zelavis/auth:credentials"],
             service: {
               name: "test-auth",
               register(api) {

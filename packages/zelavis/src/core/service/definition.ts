@@ -68,7 +68,7 @@ export type ZelavisServiceMenuDefinition = Omit<
  * what it is, which is what `scope` already carries — and nothing branched on
  * it. `web-app`, `website`, `dashboard-extension`, `provider`, and `template`
  * were the same: declared, documented, and never read. A provider is
- * discovered by its capability (`provider:auth`), not by a label.
+ * discovered by its capability (`@zelavis/auth:credentials`), not by a label.
  *
  * This union is enforced at manifest validation. It drifted out of date once
  * already — it was missing `frontend`, the kind the Platform branches on most —
@@ -85,9 +85,7 @@ export type ZelavisServiceCapability =
   | "api:routes"
   | "dashboard:menu"
   | "dashboard:settings"
-  | "provider:auth"
-  | "provider:database"
-  | "provider:payments"
+  | "@zelavis/auth:credentials"
   | (string & {});
 
 export interface ZelavisServiceMarketplaceMetadata {

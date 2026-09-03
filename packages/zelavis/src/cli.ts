@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { runCli, type ZelavisCliServeOptions } from "./cli/index.js";
 import { nodeAdapter } from "./adapters/node.js";
-import type { AuthMethodPlugin } from "./app/auth/index.js";
 import { Zelavis, type ZelavisPlatformFrontendFactory } from "./index.js";
 import { closeNodeServer, createNodeServer } from "./runtimes/node.js";
 
@@ -22,7 +22,6 @@ async function readVersion(): Promise<string> {
  * path says no frontend is installed, which is the whole point of the split.
  */
 const BUNDLED_DASHBOARD = "@zelavis/ui/frontend";
-const BUNDLED_AUTH_PROVIDER = "@zelavis/app-auth-email-password";
 
 async function resolveBundledFrontend(): Promise<
   ZelavisPlatformFrontendFactory | undefined
@@ -44,39 +43,106 @@ async function resolveBundledFrontend(): Promise<
 }
 
 /**
- * Loads the credential provider this distribution ships with.
+ * Seeds the distribution's own services into the product-services folder.
  *
- * The Platform library stays identity-neutral: it owns the provider registry
- * and the first-owner endpoint, but registers nothing itself. That left the
- * shipped binary with no providers at all, so a fresh install reported
- * `providers: []` and could never create its first owner. The product decision
- * lives here, next to the dashboard one — ship an email-and-password provider,
- * and keep working when an operator removes it in favour of their own.
+ * Credential providers are no longer handed to composition in code: a provider
+ * reaches auth by being installed, and the folder is where an installation's
+ * services live. So the binary materializes what it ships into that folder on
+ * first boot, the way a CMS lays down its bundled plugins, and from then on the
+ * operator owns them — they can be listed, replaced, or deleted, and a deleted
+ * one stays deleted rather than reappearing on the next restart.
+ *
+ * Copied rather than symlinked so an installation keeps working when the
+ * `zelavis` package is upgraded or removed underneath it.
  */
-async function resolveBundledAuthProvider(): Promise<AuthMethodPlugin | undefined> {
-  try {
-    // Held in a variable for the same reason as the dashboard specifier: the
-    // provider is optional, and a static import would make the Platform fail
-    // to build without it.
-    const loaded = (await import(BUNDLED_AUTH_PROVIDER)) as {
-      emailPasswordService?: () => { service?: AuthMethodPlugin };
-    };
-    if (typeof loaded.emailPasswordService !== "function") {
-      return undefined;
+const BUNDLED_PRODUCT_SERVICES = ["@zelavis/app-auth-email-password"];
+
+/**
+ * Finds the directory a package was installed into.
+ *
+ * Resolving `<name>/package.json` directly fails for any package whose
+ * `exports` does not list it, which is most of them, so the entry point is
+ * resolved instead and its directories walked up until the manifest that
+ * names this package turns up.
+ */
+async function resolvePackageRoot(specifier: string): Promise<string> {
+  const { readFile: read } = await import("node:fs/promises");
+  const { existsSync } = await import("node:fs");
+  let directory = dirname(fileURLToPath(import.meta.resolve(specifier)));
+
+  for (let depth = 0; depth < 10; depth += 1) {
+    const manifestPath = join(directory, "package.json");
+    if (existsSync(manifestPath)) {
+      const manifest = JSON.parse(await read(manifestPath, "utf8")) as {
+        name?: unknown;
+      };
+      if (manifest.name === specifier) return directory;
     }
-    return loaded.emailPasswordService().service;
-  } catch {
-    return undefined;
+    const parent = dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+
+  throw new Error(`could not locate the installed package directory.`);
+}
+
+async function seedBundledProductServices(
+  dataDirectory: string,
+): Promise<void> {
+  const { cp, mkdir, readdir, writeFile } = await import("node:fs/promises");
+  const { existsSync } = await import("node:fs");
+  const folder = join(dataDirectory, "product-services");
+  // One marker for the whole folder, not one per package. Re-seeding a service
+  // the operator deleted would make deletion impossible.
+  const marker = join(folder, ".seeded");
+  if (existsSync(marker)) return;
+
+  await mkdir(folder, { recursive: true });
+  let seeded = 0;
+  for (const specifier of BUNDLED_PRODUCT_SERVICES) {
+    try {
+      const source = await resolvePackageRoot(specifier);
+      const target = join(folder, specifier.replace(/^@/u, "").replace("/", "-"));
+      if (existsSync(target)) {
+        seeded += 1;
+        continue;
+      }
+      await cp(source, target, {
+        recursive: true,
+        // Only a node_modules *inside* the package is skipped, which would
+        // otherwise drag the whole dependency tree in. Matching the absolute
+        // path instead rejected every file of a package that is itself
+        // installed under node_modules — which is where packages normally
+        // live, so nothing was copied at all.
+        filter: (path) =>
+          !relative(source, path).split(sep).includes("node_modules"),
+      });
+      if ((await readdir(target)).length === 0) {
+        throw new Error("nothing was copied");
+      }
+      seeded += 1;
+    } catch (error) {
+      console.warn(
+        `Zelavis could not install bundled service ${specifier}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+  // Only claim the folder is seeded once everything actually landed. Writing
+  // the marker after a failure would make the failure permanent: the next boot
+  // would skip seeding and the service would never appear.
+  if (seeded === BUNDLED_PRODUCT_SERVICES.length) {
+    await writeFile(marker, new Date().toISOString(), "utf8");
   }
 }
 
 async function serve(options: ZelavisCliServeOptions): Promise<void> {
   const dataDirectory = resolve(options.dataDirectory ?? ".zelavis");
+  await seedBundledProductServices(dataDirectory);
   const frontend = await resolveBundledFrontend();
-  const authProvider = await resolveBundledAuthProvider();
   const zv = new Zelavis({
     ...(frontend ? { frontend } : {}),
-    ...(authProvider ? { authMethods: [authProvider] } : {}),
     adapter: nodeAdapter({
       dataDirectory,
     }),
