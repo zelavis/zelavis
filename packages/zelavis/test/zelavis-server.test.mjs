@@ -147,7 +147,9 @@ test("zelavis includes core services by default", async () => {
   const dashboardBody = await dashboardResponse.text();
   assert.match(dashboardBody, /Zelavis Dashboard/);
   assert.match(dashboardBody, /__ZELAVIS_RUNTIME_CONFIG__/);
-  assert.match(dashboardBody, /"basename":"\/zelavis"/);
+  // The Platform declares the mount and the bundle applies it, rather than the
+  // Platform rewriting a router literal it had to know the shape of.
+  assert.match(dashboardBody, /window\["__ZELAVIS_BASE_PATH__"\]="\/zelavis"/);
   assert.match(dashboardBody, /\/zelavis\/assets\//);
   assert.match(dashboardBody, /\?zelavis-runtime-v1/);
   assert.match(
@@ -168,7 +170,7 @@ test("zelavis includes core services by default", async () => {
   );
   assert.equal(settingsResponse.status, 200);
   const settingsBody = await settingsResponse.text();
-  assert.match(settingsBody, /"basename":"\/zelavis"/);
+  assert.match(settingsBody, /window\["__ZELAVIS_BASE_PATH__"\]="\/zelavis"/);
   assert.match(settingsBody, /\/zelavis\/assets\//);
 
   // A bundle asset path is served by the catch-all reading from the
@@ -1181,7 +1183,7 @@ test("zelavis uses a configurable root path for dashboard and APIs", async () =>
   assert.equal(dashboardResponse.status, 200);
   const dashboardBody = await dashboardResponse.text();
   assert.match(dashboardBody, /\/admin\/assets\//);
-  assert.match(dashboardBody, /"basename":"\/admin"/);
+  assert.match(dashboardBody, /window\["__ZELAVIS_BASE_PATH__"\]="\/admin"/);
   assert.match(dashboardBody, /\?zelavis-runtime-v1/);
   assert.match(
     dashboardBody,

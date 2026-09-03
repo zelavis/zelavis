@@ -46,6 +46,10 @@ test("the dashboard's manifest declares the frontend it is", async () => {
     runtime: "static",
     bundle: "build/client",
     mode: "spa",
+    // What makes it installable rather than merely suppliable: the bundle
+    // learns its mount at runtime instead of being built for one.
+    assetBase: "/assets/",
+    basePathGlobal: "__ZELAVIS_BASE_PATH__",
   });
   assert.ok(manifest.files.includes(manifest.zelavis.frontend.bundle));
 

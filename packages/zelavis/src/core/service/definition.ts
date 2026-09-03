@@ -137,6 +137,15 @@ export interface ZelavisServiceAppDefinition {
    * where a render function would otherwise be required.
    */
   assetBase?: string;
+  /**
+   * Global defined on the served page, holding the mount path.
+   *
+   * Rewriting moves references in the markup; it cannot tell a client-side
+   * router where it lives, because that is a value the bundle reads rather
+   * than a path to rewrite. The Platform sets the named global and the bundle
+   * decides what to do with it, so nothing here knows the framework.
+   */
+  basePathGlobal?: string;
   devUrl?: string;
   devUrlExcludePaths?: readonly string[];
 }

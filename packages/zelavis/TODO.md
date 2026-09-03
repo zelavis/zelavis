@@ -203,6 +203,12 @@ an exported type is never mistaken for an operational distributed feature.
   only matching-origin browser requests receive session cookies, cookie
   mutations require a same-origin `Origin`, and critical Project, Assistant,
   service-mutation, and settings-mutation endpoints declare core permissions.
+- [x] A frontend is installable at any mount. It declares
+  `frontend.basePathGlobal`, the Platform defines that global on the served
+  page with the mount path, and the bundle applies it — replacing a rewrite of
+  React Router's `basename` literal that only worked because the Platform knew
+  the framework. `@zelavis/ui` serves from `/`, `/zelavis`, or anywhere else
+  from one build, through its manifest alone.
 - [x] Core auth is named as core. Accounts, sessions, credentials, and
   roles/permissions are part of Zelavis itself, so the service is
   `zelavis/auth` beside `zelavis/platform` and `zelavis/fabric`; providers

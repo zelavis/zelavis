@@ -11,7 +11,9 @@
     "frontend": {
       "runtime": "static",
       "bundle": "build/client",
-      "mode": "spa"
+      "mode": "spa",
+      "assetBase": "/assets/",
+      "basePathGlobal": "__ZELAVIS_BASE_PATH__"
     }
   },
   "main": "./dist/dashboard-service.js",
@@ -32,6 +34,10 @@
     "./frontend": {
       "types": "./dist/frontend.d.ts",
       "import": "./dist/frontend.js"
+    },
+    "./dashboard-assets": {
+      "types": "./dist/generated/dashboard-assets.d.ts",
+      "import": "./dist/generated/dashboard-assets.js"
     }
   },
   "files": [
@@ -48,7 +54,7 @@
     "url": "https://github.com/zelavis/zelavis/issues"
   },
   "scripts": {
-    "build": "node scripts/generate-service-page-styles.mjs && react-router build && node scripts/copy-dashboard-assets.mjs && tsc -p tsconfig.plugin.json",
+    "build": "node scripts/generate-service-page-styles.mjs && react-router build && node scripts/apply-runtime-base-path.mjs && node scripts/copy-dashboard-assets.mjs && tsc -p tsconfig.plugin.json",
     "build:plugin": "node scripts/generate-service-page-styles.mjs && tsc -p tsconfig.plugin.json",
     "dev": "react-router dev --port 3000",
     "dev:mounted": "ZELAVIS_UI_BASE_PATH=/zelavis/ react-router dev --port 3000",
