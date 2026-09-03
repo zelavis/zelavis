@@ -85,7 +85,7 @@ test("zelavis exposes fetch handlers without requiring a mount adapter", async (
       "@zelavis/marketplace",
       "zelavis/fabric",
       "@zelavis/db",
-      "@zelavis/auth",
+      "zelavis/auth",
       "@zelavis/frontend",
       "@zelavis/workloads",
     ],
@@ -107,7 +107,7 @@ test("zelavis includes core services by default", async () => {
     runtime.services["zelavis/fabric"].name,
     "zelavis/fabric",
   );
-  assert.equal(runtime.services["@zelavis/auth"].name, "@zelavis/auth");
+  assert.equal(runtime.services["zelavis/auth"].name, "zelavis/auth");
   assert.equal(runtime.services["@zelavis/db"].name, "@zelavis/db");
   assert.equal(runtime.services["@zelavis/frontend"].name, "@zelavis/frontend");
   assert.ok(routes.some((route) => route.fullPath === "/*path"));
@@ -233,7 +233,7 @@ test("zelavis includes core services by default", async () => {
       "@zelavis/marketplace",
       "zelavis/fabric",
       "@zelavis/db",
-      "@zelavis/auth",
+      "zelavis/auth",
       "@zelavis/frontend",
       "@zelavis/workloads",
     ],
@@ -387,7 +387,6 @@ test("privileged project control routes declare explicit access requirements", a
   const runtime = await zelavis({
     // `dashboard: false` alongside a factory used to mean "no frontend"; the
     // factory was supplied and then ignored. `frontend: false` says it once.
-    frontend: false,
     subsystems: {
       auth: false,
       database: false,
@@ -451,7 +450,7 @@ test("auth method plugins register through the public auth capability", async ()
           service: {
             name: "@example/test-auth-provider",
             kind: "provider",
-            capabilities: ["@zelavis/auth:credentials"],
+            capabilities: ["zelavis/auth:credentials"],
             service: {
               name: "test-auth",
               register(api) {
@@ -1098,7 +1097,7 @@ test("zelavis can disable the database core service", async () => {
     },
   });
 
-  assert.equal(runtime.services["@zelavis/auth"].name, "@zelavis/auth");
+  assert.equal(runtime.services["zelavis/auth"].name, "zelavis/auth");
   assert.equal(runtime.services["@zelavis/frontend"].name, "@zelavis/frontend");
   assert.equal(runtime.services["@zelavis/db"], undefined);
   assert.ok(
@@ -1114,7 +1113,7 @@ test("zelavis can disable the auth core service", async () => {
     },
   });
 
-  assert.equal(runtime.services["@zelavis/auth"], undefined);
+  assert.equal(runtime.services["zelavis/auth"], undefined);
   assert.equal(runtime.services["@zelavis/db"].name, "@zelavis/db");
   assert.equal(runtime.services["@zelavis/frontend"].name, "@zelavis/frontend");
   assert.ok(
@@ -1122,31 +1121,30 @@ test("zelavis can disable the auth core service", async () => {
   );
 });
 
-test("zelavis can disable the dashboard core service", async () => {
-  const runtime = await zelavis({
-    frontend: zelavisUiFrontend,
-    frontend: false,
-  });
+test("the frontend cannot be switched off in code", async () => {
+  // There is no `frontend: false`. Having no frontend is expressed by
+  // installing none, and a second code-level switch meant the same thing twice
+  // — a factory could be supplied and then silently ignored.
+  const withFrontend = await zelavis({ frontend: zelavisUiFrontend });
+  const withoutFrontend = await zelavis({});
 
-  assert.equal(runtime.services["@zelavis/ui"], undefined);
-  assert.equal(runtime.services["@zelavis/auth"].name, "@zelavis/auth");
-  assert.equal(runtime.services["@zelavis/db"].name, "@zelavis/db");
-  assert.equal(runtime.services["@zelavis/frontend"].name, "@zelavis/frontend");
-  assert.ok(
-    runtime.routes.every((route) => !route.route.id.startsWith("dashboard.")),
-  );
+  // Whichever it is, the root path answers and the API is identical.
+  for (const runtime of [withFrontend, withoutFrontend]) {
+    const root = await runtime.fetch(new Request("http://localhost/zelavis/"));
+    assert.equal(root.status, 200);
+    const config = await runtime.fetch(
+      new Request("http://localhost/zelavis/api/v1/runtime/config"),
+    );
+    assert.equal(config.status, 200);
+    assert.equal(runtime.services["zelavis/auth"].name, "zelavis/auth");
+  }
 
-  const configResponse = await runtime.fetch(
-    new Request("http://localhost/zelavis/api/v1/runtime/config"),
-  );
-  assert.equal(configResponse.status, 200);
-  const config = await configResponse.json();
-  assert.ok(!config.services.some((service) => service.name === "@zelavis/ui"));
-  assert.equal(
-    config.services.find((service) => service.name === "@zelavis/db")?.menu
-      ?.title,
-    "Database",
-  );
+  assert.match(await (await withFrontend.fetch(
+    new Request("http://localhost/zelavis/"),
+  )).text(), /Loading Zelavis dashboard/u);
+  assert.match(await (await withoutFrontend.fetch(
+    new Request("http://localhost/zelavis/"),
+  )).text(), /No frontend installed/u);
 });
 
 test("zelavis uses a configurable root path for dashboard and APIs", async () => {
@@ -1323,7 +1321,6 @@ test("zelavis preserves a mounted dev-server dashboard base path", async () => {
 
 test("zelavis keeps the Platform server control plane when optional mounted services are disabled", async () => {
   const runtime = await zelavis({
-    frontend: false,
     subsystems: {
       auth: false,
       database: false,
@@ -1332,13 +1329,18 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
     },
   });
 
+  // The front-door page is always present: having no frontend is a state the
+  // installation explains, not one it can be configured out of.
   assert.deepEqual(Object.keys(runtime.services), [
+    "@zelavis/no-frontend",
     "zelavis/platform",
     "@zelavis/marketplace",
     "zelavis/fabric",
   ]);
   assert.deepEqual(
-    runtime.routes.map((route) => route.route.id),
+    runtime.routes.map((route) => route.route.id).filter(
+      (id) => id !== "platform.frontend.missing",
+    ),
     [
       "runtime.config",
       "runtime.services.read",
@@ -1511,8 +1513,7 @@ test("zelavis rejects invalid persisted dashboard settings on read", async () =>
 
 test("a Project without a frontend serves a placeholder rather than a 404", async () => {
   const runtime = await zelavis({
-    frontend: zelavisUiFrontend,
-    frontend: false,
+    role: "project",
     subsystems: { auth: false, database: false, site: true },
   });
 
@@ -1530,8 +1531,7 @@ test("a Project without a frontend serves a placeholder rather than a 404", asyn
 
 test("the frontend placeholder leaves control-plane paths alone", async () => {
   const runtime = await zelavis({
-    frontend: zelavisUiFrontend,
-    frontend: false,
+    role: "project",
     subsystems: { auth: false, database: false, site: true },
   });
 
@@ -1571,11 +1571,10 @@ test("an installation running the dashboard uses it as its default frontend", as
 });
 
 test("a Project runtime falls back to the placeholder, not the dashboard", async () => {
-  // A Project exists to host something that has not been chosen yet, and it
-  // does not run the dashboard, so there is nothing to redirect to.
+  // A Project exists to host something that has not been chosen yet, so `/`
+  // serves its own placeholder rather than bouncing to a Platform page.
   const runtime = await zelavis({
-    frontend: zelavisUiFrontend,
-    frontend: false,
+    role: "project",
     subsystems: { auth: false, database: false },
   });
 

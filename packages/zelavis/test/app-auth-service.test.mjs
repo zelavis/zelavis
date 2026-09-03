@@ -58,7 +58,7 @@ function passwordMethodService() {
   return {
     name: "@example/auth-email-password",
     kind: "provider",
-    capabilities: ["@zelavis/auth:credentials"],
+    capabilities: ["zelavis/auth:credentials"],
     service: method,
   };
 }
@@ -523,7 +523,7 @@ test("Basic authentication is an optional native Request authenticator", async (
 
 test("Platform accounts and sessions use the System Store across runtime composition", async () => {
   const systemStore = createMemorySystemStore();
-  const first = await zelavis({ systemStore, frontend: false });
+  const first = await zelavis({ systemStore });
   const created = await first.plain({
     url: "/zelavis/api/v1/auth/accounts",
     method: "POST",
@@ -538,7 +538,7 @@ test("Platform accounts and sessions use the System Store across runtime composi
   assert.equal(created.status, 201);
   await first.close();
 
-  const second = await zelavis({ systemStore, frontend: false });
+  const second = await zelavis({ systemStore });
   const listed = await second.plain({
     url: "/zelavis/api/v1/auth/accounts",
     principal: { id: "owner", type: "system", permissions: ["*"] },
@@ -555,7 +555,6 @@ test("Platform first-owner bootstrap, login, rotation, CSRF, and logout use real
     frontend: zelavisUiFrontend,
     systemStore,
     bootstrap: { token: bootstrapToken },
-    frontend: false,
     serviceRegistry: {
       catalog: [{
         service: passwordMethodService(),
@@ -702,7 +701,6 @@ test("a durable bootstrap claim admits only one Platform writer", async () => {
   const options = {
     systemStore,
     bootstrap: { token: bootstrapToken },
-    frontend: false,
     serviceRegistry: {
       catalog: [{
         service: passwordMethodService(),
@@ -742,7 +740,6 @@ test("shared Platform Auth attempts update atomically across runtimes", async ()
   const options = {
     systemStore,
     bootstrap: { token: bootstrapToken },
-    frontend: false,
     subsystems: {
       auth: {
         authOptions: {

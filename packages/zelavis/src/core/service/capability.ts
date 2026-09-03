@@ -7,9 +7,10 @@
  * Two commerce plugins both scanning for `provider:payments` pick up each
  * other's payment providers, and neither can tell.
  *
- * So a capability may instead be owned by the package that defines it:
+ * So a capability may instead be owned by the service that defines it —
+ * a core service or an installable package:
  *
- *     "@zelavis/auth:credentials"
+ *     "zelavis/auth:credentials"
  *     "@zelavis/ecommerce:payments"
  *
  * Discovery stays a flat scan over installed services. There is deliberately
@@ -25,7 +26,15 @@
 export const ZELAVIS_PLATFORM_CAPABILITY_NAMESPACES: readonly string[] =
   Object.freeze(["web", "api", "dashboard", "provider"]);
 
-const PACKAGE_OWNER = /^(?:@[a-z0-9-*~][a-z0-9-*._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/u;
+/**
+ * A capability owner: a package name, or a core service name.
+ *
+ * Core services are unscoped and slash-separated (`zelavis/auth`,
+ * `zelavis/platform`) while installable packages carry an npm scope
+ * (`@zelavis/ecommerce`). Both own capabilities, so both are accepted here.
+ */
+const CAPABILITY_OWNER =
+  /^(?:@[a-z0-9-*~][a-z0-9-*._~]*\/)?[a-z0-9-~][a-z0-9-._~]*(?:\/[a-z0-9-~][a-z0-9-._~]*)?$/u;
 const CAPABILITY_NAME = /^[a-z0-9][a-z0-9-]*$/u;
 
 export interface ParsedServiceCapability {
@@ -33,8 +42,8 @@ export interface ParsedServiceCapability {
   owner: string;
   /** The contract name after it. */
   name: string;
-  /** True when the owner is a package rather than a Platform namespace. */
-  packageOwned: boolean;
+  /** True when the owner is a service rather than a Platform domain namespace. */
+  serviceOwned: boolean;
 }
 
 /**
@@ -53,10 +62,10 @@ export function parseServiceCapability(
   if (!CAPABILITY_NAME.test(name)) return undefined;
 
   if (ZELAVIS_PLATFORM_CAPABILITY_NAMESPACES.includes(owner)) {
-    return { owner, name, packageOwned: false };
+    return { owner, name, serviceOwned: false };
   }
-  if (PACKAGE_OWNER.test(owner)) {
-    return { owner, name, packageOwned: true };
+  if (CAPABILITY_OWNER.test(owner)) {
+    return { owner, name, serviceOwned: true };
   }
   return undefined;
 }

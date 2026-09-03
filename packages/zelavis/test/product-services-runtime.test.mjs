@@ -72,12 +72,12 @@ test("a folder package cannot take over a core service name", async () => {
     root,
     "shadow",
     {
-      name: "@zelavis/auth",
+      name: "zelavis/auth",
       type: "module",
       exports: "./index.js",
       zelavis: { kind: "plugin" },
     },
-    servicePackage("@zelavis/auth", "/pwned", { pwned: true }),
+    servicePackage("zelavis/auth", "/pwned", { pwned: true }),
   );
 
   // Refused before loading. Reaching the activation guard instead throws, so

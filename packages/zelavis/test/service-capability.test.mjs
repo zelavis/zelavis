@@ -11,7 +11,7 @@ test("a Platform namespace capability parses as one", () => {
   assert.deepEqual(parseServiceCapability("provider:auth"), {
     owner: "provider",
     name: "auth",
-    packageOwned: false,
+    serviceOwned: false,
   });
 });
 
@@ -22,13 +22,13 @@ test("a package can own the capability providers declare into", () => {
   assert.deepEqual(parseServiceCapability("@zelavis/ecommerce:payments"), {
     owner: "@zelavis/ecommerce",
     name: "payments",
-    packageOwned: true,
+    serviceOwned: true,
   });
 });
 
 test("a scoped owner is split on the last colon, not the scope", () => {
-  const parsed = parseServiceCapability("@zelavis/auth:credentials");
-  assert.equal(parsed.owner, "@zelavis/auth");
+  const parsed = parseServiceCapability("zelavis/auth:credentials");
+  assert.equal(parsed.owner, "zelavis/auth");
   assert.equal(parsed.name, "credentials");
 });
 
@@ -52,20 +52,20 @@ test("malformed capabilities are rejected rather than half-understood", () => {
 
 test("building a capability refuses an owner that cannot be parsed back", () => {
   assert.equal(
-    serviceCapabilityFor("@zelavis/auth", "credentials"),
-    "@zelavis/auth:credentials",
+    serviceCapabilityFor("zelavis/auth", "credentials"),
+    "zelavis/auth:credentials",
   );
   assert.throws(() => serviceCapabilityFor("Not A Package", "x"), /not a valid/u);
 });
 
 test("declaring is an exact match, never a lookalike owner", () => {
-  const capabilities = ["@zelavis/auth:credentials"];
-  assert.equal(declaresServiceCapability(capabilities, "@zelavis/auth", "credentials"), true);
+  const capabilities = ["zelavis/auth:credentials"];
+  assert.equal(declaresServiceCapability(capabilities, "zelavis/auth", "credentials"), true);
   // A package whose name merely starts the same must not be discovered as a
   // provider for another one.
   assert.equal(declaresServiceCapability(capabilities, "@zelavis/auth-extra", "credentials"), false);
-  assert.equal(declaresServiceCapability(capabilities, "@zelavis/auth", "payments"), false);
-  assert.equal(declaresServiceCapability(undefined, "@zelavis/auth", "credentials"), false);
+  assert.equal(declaresServiceCapability(capabilities, "zelavis/auth", "payments"), false);
+  assert.equal(declaresServiceCapability(undefined, "zelavis/auth", "credentials"), false);
 });
 
 test("a manifest carrying an invalid capability is refused at validation", () => {
@@ -77,7 +77,7 @@ test("a manifest carrying an invalid capability is refused at validation", () =>
   });
 
   assert.doesNotThrow(() =>
-    validatePluginPackageManifest(manifest(["@zelavis/auth:credentials", "api:routes"])),
+    validatePluginPackageManifest(manifest(["zelavis/auth:credentials", "api:routes"])),
   );
   assert.throws(() => validatePluginPackageManifest(manifest(["NotValid"])), /not a valid capability/u);
   assert.throws(() => validatePluginPackageManifest(manifest("api:routes")), /must be an array/u);
@@ -90,7 +90,7 @@ test("manifest capabilities reach the loaded service", async () => {
     version: "1.0.0",
     type: "module",
     exports: "./index.js",
-    zelavis: { kind: "plugin", capabilities: ["@zelavis/auth:credentials"] },
+    zelavis: { kind: "plugin", capabilities: ["zelavis/auth:credentials"] },
   };
 
   // A service object that does not restate its capabilities is not opting out.
@@ -100,7 +100,7 @@ test("manifest capabilities reach the loaded service", async () => {
     manifest,
     importer: async () => ({ default: { name: "@acme/provider", service: { register() {} } } }),
   });
-  assert.deepEqual(declared.capabilities, ["@zelavis/auth:credentials"]);
+  assert.deepEqual(declared.capabilities, ["zelavis/auth:credentials"]);
 
   // A module that names its own capabilities still wins.
   const explicit = await loadPluginPackage({

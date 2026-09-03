@@ -183,10 +183,10 @@ export function emailPasswordService(options: EmailPasswordServiceOptions = {}) 
   return Object.freeze({
     name: "@zelavis/auth-email-password",
     kind: "plugin",
-    // Names the plugin this extends rather than a bare `provider:auth` domain,
-    // so Platform auth collects it and another service wanting credentials
-    // does not.
-    capabilities: Object.freeze(["@zelavis/auth:credentials"]),
+    // Names the core auth service this extends rather than a bare
+    // `provider:auth` domain, so Platform auth collects it and another service
+    // wanting credentials does not.
+    capabilities: Object.freeze(["zelavis/auth:credentials"]),
     service: method,
   });
 }

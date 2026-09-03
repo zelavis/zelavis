@@ -148,8 +148,8 @@ export function createMissingPlatformFrontendService(options: {
   /**
    * Paths this page must not answer for.
    *
-   * It is mounted at the root path and matches everything under it, so without
-   * this a mistyped API path would render a friendly page instead of the 404 a
+   * It is mounted at the root path, so without this a mistyped API path would
+   * render a friendly page instead of the 404 a
    * client needs to see.
    */
   readonly reservedPrefixes?: readonly string[];
@@ -231,7 +231,16 @@ export function createMissingPlatformFrontendService(options: {
           // by whoever opens it, including someone who has not signed in
           // because there is no page to sign in on.
           handler: async ({ request }: { request: Request }) => {
-            if (isReserved(new URL(request.url).pathname)) {
+            const pathname = new URL(request.url).pathname;
+            if (isReserved(pathname)) {
+              return { status: 404, body: { error: "Not found" } };
+            }
+            // Only the front door itself. An installed frontend claims every
+            // path beneath it because it routes them client-side; this page
+            // routes nothing, so answering a mistyped path with 200 HTML would
+            // dress up a typo as a working page.
+            const root = options.rootPath.replace(/\/+$/u, "");
+            if (pathname.replace(/\/+$/u, "") !== root) {
               return { status: 404, body: { error: "Not found" } };
             }
 

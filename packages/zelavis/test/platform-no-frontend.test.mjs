@@ -84,11 +84,13 @@ test("a service page still renders with no frontend installed", async () => {
   assert.equal(page.status, 200);
 });
 
-test("dashboard: false serves nothing at the root path", async () => {
-  const get = await boot({ frontend: false });
+test("there is no way to switch the frontend off", async () => {
+  // `frontend: false` used to serve nothing at the root path. It expressed the
+  // same state as installing no frontend, and the two could contradict each
+  // other: a factory supplied alongside it was accepted and then ignored.
+  const get = await boot({});
 
-  // Distinct from having no frontend installed: this is Zelavis embedded as an
-  // API on purpose, and a friendly page would be an intrusion.
-  assert.equal((await get("/zelavis/")).status, 404);
+  const root = await get("/zelavis/");
+  assert.equal(root.status, 200);
   assert.equal((await get("/zelavis/api/v1/runtime/config")).status, 200);
 });

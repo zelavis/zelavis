@@ -230,12 +230,12 @@ export type ZelavisAuthOptions = boolean | AuthServiceOptions;
  * straight into the frontend factory, and `clientRoutes` already fell back to
  * the routes the frontend declared for itself.
  *
- * `false` means this installation serves nothing at its root at all — Zelavis
- * embedded as an API with no face. That is different from having no frontend
- * installed, which still answers the root path by saying so.
+ * There is no way to switch the frontend off. Having no frontend is expressed
+ * by installing none, and the root path then says so — a state the API is
+ * unaffected by. A second, code-level off switch meant the same thing twice
+ * and let the two disagree: a factory could be supplied and then ignored.
  */
 export type ZelavisFrontendInput =
-  | false
   | ZelavisPlatformFrontendFactory
   | ZelavisFrontendOptions;
 
@@ -347,6 +347,19 @@ export interface ZelavisServerOptions {
   serviceActivation?: ZelavisServiceActivationController;
   serviceContext?: ZelavisServiceContextOptions;
   subsystems?: ZelavisSubsystemOptions;
+  /**
+   * What this runtime is.
+   *
+   * A Platform is its own product and leads `/` to its root path, whether that
+   * shows an installed frontend or the page explaining none is installed. A
+   * Project exists to host something not yet chosen, so `/` serves its own
+   * "no frontend yet" placeholder — a 503 that is deliberately not indexed —
+   * rather than bouncing to a Platform page.
+   *
+   * This used to be carried by `frontend: false`, which read as a preference
+   * and was really a statement about the kind of runtime.
+   */
+  role?: "platform" | "project";
   /** Where Platform runtime settings persist. Supplied from host resources. */
   runtimeSettingsStore?: ZelavisDashboardSettingsStore;
   servicePrefixes?: Record<string, string>;
@@ -569,7 +582,7 @@ export function defineAdapter(
 
 const RESERVED_CORE_SERVICE_NAMES = new Set([
   "zelavis/app",
-  "@zelavis/auth",
+  "zelavis/auth",
   "zelavis/platform",
   "@zelavis/marketplace",
   "zelavis/fabric",
@@ -1111,7 +1124,7 @@ async function resolveAuthCoreService(
 
 /** The capability a credential provider declares to extend Platform auth. */
 export const ZELAVIS_AUTH_CREDENTIALS_CAPABILITY = serviceCapabilityFor(
-  "@zelavis/auth",
+  "zelavis/auth",
   "credentials",
 );
 
@@ -1138,7 +1151,7 @@ function collectAuthMethodPlugins(
           entry.status === "installed" &&
           declaresServiceCapability(
             entry.service.capabilities,
-            "@zelavis/auth",
+            "zelavis/auth",
             "credentials",
           ) &&
           typeof (entry.service.service as AuthMethodPlugin | undefined)?.register === "function",
@@ -1428,7 +1441,7 @@ async function resolveRuntimeManagementCore(
           service.name === "zelavis/platform" ||
           service.name === "@zelavis/marketplace" ||
           service.name === "zelavis/fabric" ||
-          service.name === "@zelavis/auth" ||
+          service.name === "zelavis/auth" ||
           service.name === "@zelavis/db" ||
           service.name === "@zelavis/storage" ||
           service.name === "@zelavis/frontend" ||
@@ -1939,7 +1952,7 @@ async function resolveRuntimeManagementCore(
 function readFrontendOptions(
   option: ZelavisFrontendInput | undefined,
 ): ZelavisFrontendOptions {
-  if (option === false || option === undefined) return {};
+  if (option === undefined) return {};
   return typeof option === "function" ? { factory: option } : option;
 }
 
@@ -1957,7 +1970,7 @@ async function resolvePlatformFrontend(
   },
 ): Promise<ZelavisPlatformFrontend | undefined> {
   const options = readFrontendOptions(option);
-  if (option === false || !options.factory) {
+  if (!options.factory) {
     return undefined;
   }
 
@@ -2848,12 +2861,33 @@ export async function zelavis(
   //
   // Either way `/` answers, rather than returning the 404 that reads as a
   // broken installation.
-  const frontendEnabled = options.frontend !== false;
+
+  let runtimeConfigServices: readonly ZelavisRuntimeService<any>[] = [];
+  // Resolved before the management core, which needs the paths this frontend
+  // claims and the design tokens it supplies. The frontend needs the runtime
+  // configuration in return, so it receives a thunk rather than the document —
+  // a frontend reads it when serving a request, long after composition.
+  let runtimeManagement: ZelavisRuntimeManagementCore | undefined;
+  const platformFrontend = await resolvePlatformFrontend(
+    options.frontend,
+    {
+      rootPath,
+      createRuntimeConfig: async () => {
+        if (!runtimeManagement) {
+          throw new Error(
+            "The runtime configuration was requested before composition finished.",
+          );
+        }
+        return runtimeManagement.createRuntimeConfig();
+      },
+    },
+  );
+
   const websiteService = !siteEnabled
       ? undefined
       : createProjectFrontendPlaceholderService({
           reservedPrefixes: [rootPath, joinPathParts(rootPath, apiPrefix)],
-          ...(frontendEnabled ? { redirectTo: rootPath } : {}),
+          ...(options.role === "project" ? {} : { redirectTo: rootPath }),
           publicDomains: {
             ...(options.domainBindings ? { domainBindings: options.domainBindings } : {}),
             // Late-bound: the Project manager is composed after this service.
@@ -2960,43 +2994,19 @@ export async function zelavis(
     },
   );
   const siteMounted = Boolean(websiteService);
-  let runtimeConfigServices: readonly ZelavisRuntimeService<any>[] = [];
-  // Resolved before the management core, which needs the paths this frontend
-  // claims and the design tokens it supplies. The frontend needs the runtime
-  // configuration in return, so it receives a thunk rather than the document —
-  // a frontend reads it when serving a request, long after composition.
-  let runtimeManagement: ZelavisRuntimeManagementCore | undefined;
-  const platformFrontend = await resolvePlatformFrontend(
-    options.frontend,
-    {
-      rootPath,
-      createRuntimeConfig: async () => {
-        if (!runtimeManagement) {
-          throw new Error(
-            "The runtime configuration was requested before composition finished.",
-          );
-        }
-        return runtimeManagement.createRuntimeConfig();
-      },
-    },
-  );
   // An installation with no frontend still serves its API. The root path
   // explains that rather than returning a 404, which reads as a broken
-  // deployment when it is a supported state.
-  // `dashboard: false` is an explicit opt-out — Zelavis embedded as an API with
-  // no face at all — which is different from having no frontend installed.
-  // The first serves nothing at the root path; the second explains itself.
+  // deployment when it is a supported state — and it is the only way to have
+  // no frontend, so there is nothing to reconcile against a second switch.
   const frontendService =
     platformFrontend?.service ??
-    (!frontendEnabled
-      ? undefined
-      : createMissingPlatformFrontendService({
-          rootPath,
-          reservedPrefixes: [joinPathParts(rootPath, apiPrefix)],
-          ...(readFrontendTitle(options.frontend)
-            ? { title: readFrontendTitle(options.frontend)! }
-            : {}),
-        }));
+    createMissingPlatformFrontendService({
+      rootPath,
+      reservedPrefixes: [joinPathParts(rootPath, apiPrefix)],
+      ...(readFrontendTitle(options.frontend)
+        ? { title: readFrontendTitle(options.frontend)! }
+        : {}),
+    });
   // Synthesize the sibling app service through the same primitive user
   // services use, then hide the service-only `app` field from the externally
   // visible service map.
@@ -3643,8 +3653,8 @@ export class Zelavis {
     }
 
     const runtime = await this.runtime();
-    const service = runtime.services["@zelavis/auth"]?.service;
-    assertResolvedServiceApi<AuthApi>(service, "@zelavis/auth");
+    const service = runtime.services["zelavis/auth"]?.service;
+    assertResolvedServiceApi<AuthApi>(service, "zelavis/auth");
     this.resolvedAuthApi = service;
     return service;
   }
