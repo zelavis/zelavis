@@ -1349,6 +1349,7 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
     [
       "runtime.config",
       "runtime.services.read",
+      "runtime.extensions.read",
       "runtime.services.create",
       "runtime.service-page-styles.read",
       "runtime.service-page-asset.read",

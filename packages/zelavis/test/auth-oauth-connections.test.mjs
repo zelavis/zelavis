@@ -49,7 +49,10 @@ test("OAuth providers work with nothing installed", async () => {
   assert.equal(response.status, 200);
   const names = response.body.providers.map((provider) => provider.provider);
   // No plugin required: the definitions core ships are usable on their own.
-  assert.deepEqual(names.sort(), ["github", "google"]);
+  // Only GitHub ships as a definition: it is not OIDC, so its profile
+  // endpoint and claim mapping are real code. Every OIDC issuer is added by
+  // pasting its issuer URL instead.
+  assert.deepEqual(names.sort(), ["github"]);
   // Discovered but unconfigured: an operator still has to supply the client
   // credentials their installation was issued.
   assert.ok(response.body.providers.every((provider) => !provider.configured));
@@ -62,13 +65,13 @@ test("a provider someone else ships is discovered by capability", async () => {
   // The extension point is the capability, not this package's own list: a
   // third-party plugin appears beside the built-in providers.
   const names = response.body.providers.map((provider) => provider.provider);
-  assert.deepEqual(names.sort(), ["github", "gitlab", "google"]);
+  assert.deepEqual(names.sort(), ["github", "gitlab"]);
 });
 
 test("an operator configures a provider and the secret never comes back", async () => {
   const runtime = await platform();
   const saved = await runtime.plain({
-    url: `${BASE}/google`,
+    url: `${BASE}/github`,
     method: "PUT",
     body: {
       clientId: "client-id-123",
@@ -89,7 +92,7 @@ test("an operator configures a provider and the secret never comes back", async 
   const listed = await runtime.plain({ url: `${BASE}` });
   assert.ok(!JSON.stringify(listed.body).includes("super-secret-value"));
   assert.equal(
-    listed.body.providers.find((provider) => provider.provider === "google").configured,
+    listed.body.providers.find((provider) => provider.provider === "github").configured,
     true,
   );
 });
@@ -97,7 +100,7 @@ test("an operator configures a provider and the secret never comes back", async 
 test("editing a connection keeps a secret the caller was never shown", async () => {
   const runtime = await platform();
   await runtime.plain({
-    url: `${BASE}/google`,
+    url: `${BASE}/github`,
     method: "PUT",
     body: {
       clientId: "client-id-123",
@@ -109,7 +112,7 @@ test("editing a connection keeps a secret the caller was never shown", async () 
   // The API never returns the secret, so a caller editing the redirect URI
   // cannot send it back. Dropping it would silently break sign-in.
   const edited = await runtime.plain({
-    url: `${BASE}/google`,
+    url: `${BASE}/github`,
     method: "PUT",
     body: { clientId: "client-id-123", redirectUri: "https://example.com/other" },
   });
@@ -120,7 +123,7 @@ test("editing a connection keeps a secret the caller was never shown", async () 
 test("a redirect URI that is not https is refused", async () => {
   const runtime = await platform();
   const refused = await runtime.plain({
-    url: `${BASE}/google`,
+    url: `${BASE}/github`,
     method: "PUT",
     body: { clientId: "id", redirectUri: "http://example.com/callback" },
   });
@@ -131,7 +134,7 @@ test("a redirect URI that is not https is refused", async () => {
   assert.match(refused.body.error, /https/u);
 
   const localhost = await runtime.plain({
-    url: `${BASE}/google`,
+    url: `${BASE}/github`,
     method: "PUT",
     body: { clientId: "id", redirectUri: "http://localhost:3000/callback" },
   });
@@ -158,8 +161,8 @@ test("the OAuth endpoints require permission to manage the installation", async 
   // redirect an installation's sign-in.
   for (const [method, url] of [
     ["GET", BASE],
-    ["PUT", `${BASE}/google`],
-    ["DELETE", `${BASE}/google`],
+    ["PUT", `${BASE}/github`],
+    ["DELETE", `${BASE}/github`],
   ]) {
     const response = await runtime.plain({ url, method, body: {} });
     assert.ok(

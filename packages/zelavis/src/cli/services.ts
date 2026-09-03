@@ -171,3 +171,65 @@ export function formatActivationResult(
     ? `${activation.status}: ${activation.message}`
     : activation.status;
 }
+
+export interface RuntimeServiceExtension {
+  name: string;
+  version?: string;
+  status: RuntimeServiceStatus;
+  source?: RuntimeServiceSource;
+  specifier?: string;
+  capabilities: readonly string[];
+  marketplace?: { title?: string; summary?: string };
+}
+
+export interface RuntimeExtensionPoint {
+  owner: string;
+  ownerInstalled: boolean;
+  capabilities: readonly string[];
+  extensions: readonly RuntimeServiceExtension[];
+}
+
+/**
+ * Lists services that extend another, grouped by what they extend.
+ *
+ * Separate from `services list` on purpose: an extension belongs beside the
+ * plugin it extends rather than in a general catalogue, where a payment
+ * provider sitting next to a dashboard theme tells nobody anything.
+ */
+export async function listRuntimeExtensions(
+  options: RuntimeServicesClientOptions & { owner?: string } = {},
+): Promise<RuntimeExtensionPoint[]> {
+  const query = options.owner
+    ? `?owner=${encodeURIComponent(options.owner)}`
+    : "";
+  const body = await requestJson<{ extensionPoints: RuntimeExtensionPoint[] }>(
+    `/runtime/extensions${query}`,
+    options,
+  );
+
+  return body.extensionPoints;
+}
+
+export function formatRuntimeExtensions(
+  points: readonly RuntimeExtensionPoint[],
+): string {
+  if (points.length === 0) {
+    return "No installed service declares an extension point.";
+  }
+
+  return points
+    .map((point) => {
+      const heading = point.ownerInstalled
+        ? point.owner
+        : `${point.owner} (not installed)`;
+      const rows = point.extensions.map((extension) => {
+        const version = extension.version ? `@${extension.version}` : "";
+        const title = extension.marketplace?.title
+          ? `  ${extension.marketplace.title}`
+          : "";
+        return `  ${extension.status.padEnd(9)} ${extension.name}${version}${title}`;
+      });
+      return [heading, ...rows].join("\n");
+    })
+    .join("\n\n");
+}
