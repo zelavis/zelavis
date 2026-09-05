@@ -446,10 +446,24 @@ an exported type is never mistaken for an operational distributed feature.
   installation that models no capacity. A host with no Fabric, a plan with no
   owned Projects, and a failing planner all reconcile exactly as before —
   Fabric being down is not a reason to leave an installation stopped.
-- [ ] Dispatch a Project to the node its placement names. Reconciliation now
-  enforces the group constraint but does not schedule: the local driver runs
-  every Project on this host, so an assigned `runtimeNodeId` is still advisory.
-  That needs the Agent execution path.
+- [x] Placement decides where a Project runs. Reconciliation reads the plan's
+  assignments, not only its refusals: a Project the planner placed on another
+  node is not started here, and one already running here when it moves away is
+  stopped. Running it anyway would contradict the Fabric, and on a fleet where
+  every host reconciles, every host would reach the same conclusion and run its
+  own copy. A host that does not know which node it is, and a planner that
+  fails, both start everything locally exactly as before — Fabric being down is
+  not a reason to leave an installation stopped. The node a Project was placed
+  on is recorded on the Project rather than in its runtime state, which the
+  driver overwrites on every poll, so "why is this not running" has an answer;
+  the Fabric's placement inventory reports that node instead of asserting
+  everything is local.
+- [ ] Reach the node a Project was dispatched to. `ZelavisProjectDispatcher`
+  is the seam — a host supplies `dispatchStart` and the Project is handed over
+  rather than left stopped — but no transport implements it yet. That is the
+  Agent execution path: a worker Agent on the target node, claiming the
+  operation under signed authority and a durable lease, is what turns the seam
+  into a running Project.
 
 
 - [ ] Prove local shard movement, split/merge, generation fencing, crash-safe
