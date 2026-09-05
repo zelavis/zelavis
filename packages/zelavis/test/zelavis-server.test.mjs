@@ -9,7 +9,7 @@ import {
   Zelavis,
   zelavis,
 } from "../dist/index.js";
-import { ecommercePlugin } from "../../../plugins/ecommerce/dist/index.js";
+import { loadEcommercePlugin } from "./helpers/ecommerce.mjs";
 import { zelavisUiFrontend } from "@zelavis/ui/frontend";
 
 const PLATFORM_OWNER_CONTEXT = {
@@ -523,7 +523,7 @@ test("service registry install state controls service activation on boot", async
     serviceRegistry: {
       catalog: [
         {
-          service: ecommercePlugin,
+          service: await loadEcommercePlugin(),
           status: "installed",
           source: "official",
           order: 0,

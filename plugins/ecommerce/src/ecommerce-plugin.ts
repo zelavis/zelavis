@@ -1,3 +1,4 @@
+import { zelavis } from "zelavis/sdk";
 import { ecommerceDashboardPages } from "./generated/dashboard-pages.js";
 import {
   createJsonErrorResponse,
@@ -417,6 +418,81 @@ function parseSubscriptionCreation(body: unknown): {
  * points at, and that is what lets it be listed on this plugin's own settings
  * page rather than in a general catalogue where it means nothing.
  */
+/**
+ * The plugin's dashboard menu, declared through the official SDK.
+ *
+ * `zelavis.menu.create` rather than a `menu` field on the exported object.
+ * Both reach the same place — the loader merges SDK contributions over the
+ * field — but the SDK is what the authoring guide tells plugin authors to use,
+ * and a first-party plugin contradicting that makes the rule not stick.
+ *
+ * It only works inside a plugin execution context, which the loader sets up.
+ * That is the trade: this plugin is now loaded rather than composed as a live
+ * object, which is how it arrives on a real installation anyway.
+ */
+zelavis.menu.create({
+  title: "Ecommerce",
+  path: "/commerce",
+  pageLabel: "Commerce",
+  page: {
+    id: "dashboard",
+    title: "Commerce",
+      file: "dashboard.html",
+  },
+  items: [
+    {
+      title: "Products",
+      path: "/commerce/products",
+      page: {
+        id: "products",
+        title: "Products",
+      file: "products.html",
+      },
+    },
+    {
+      title: "Orders",
+      path: "/commerce/orders",
+      page: {
+        id: "orders",
+        title: "Orders",
+      file: "orders.html",
+      },
+    },
+    {
+      title: "Payments",
+      path: "/commerce/payments",
+      page: {
+        id: "payments",
+        title: "Payments",
+      file: "payments.html",
+      },
+    },
+    {
+      title: "More",
+      items: [
+        {
+          title: "Customers",
+          path: "/commerce/customers",
+          page: {
+            id: "customers",
+            title: "Customers",
+      file: "customers.html",
+          },
+        },
+        {
+          title: "Coupons",
+          path: "/commerce/coupons",
+          page: {
+            id: "coupons",
+            title: "Coupons",
+      file: "coupons.html",
+          },
+        },
+      ],
+    },
+  ],
+  });
+
 export const ecommercePlugin = Object.freeze({
   name: "@zelavis/ecommerce",
   // Shipped as page assets rather than a bundle. The menu used to point at
@@ -427,68 +503,6 @@ export const ecommercePlugin = Object.freeze({
   version: "1.0.1-alpha.2",
   kind: "plugin",
   capabilities: Object.freeze(["api:routes", "dashboard:menu"]),
-  menu: {
-    title: "Ecommerce",
-    path: "/commerce",
-    pageLabel: "Commerce",
-    page: {
-      id: "dashboard",
-      title: "Commerce",
-          file: "dashboard.html",
-    },
-    items: [
-      {
-        title: "Products",
-        path: "/commerce/products",
-        page: {
-          id: "products",
-          title: "Products",
-          file: "products.html",
-        },
-      },
-      {
-        title: "Orders",
-        path: "/commerce/orders",
-        page: {
-          id: "orders",
-          title: "Orders",
-          file: "orders.html",
-        },
-      },
-      {
-        title: "Payments",
-        path: "/commerce/payments",
-        page: {
-          id: "payments",
-          title: "Payments",
-          file: "payments.html",
-        },
-      },
-      {
-        title: "More",
-        items: [
-          {
-            title: "Customers",
-            path: "/commerce/customers",
-            page: {
-              id: "customers",
-              title: "Customers",
-          file: "customers.html",
-            },
-          },
-          {
-            title: "Coupons",
-            path: "/commerce/coupons",
-            page: {
-              id: "coupons",
-              title: "Coupons",
-          file: "coupons.html",
-            },
-          },
-        ],
-      },
-    ],
-  },
   async setup(context: ZelavisServiceSetupContext) {
     // Dynamic provider discovery: discover payment providers by declared capability
     const paymentServices = context.registry

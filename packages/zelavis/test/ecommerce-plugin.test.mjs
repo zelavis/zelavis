@@ -4,14 +4,17 @@ import {
   Zelavis,
 } from "../dist/index.js";
 import { createDatabase } from "../dist/app/db/index.js";
-import {
-  ecommercePlugin,
-} from "../../../plugins/ecommerce/dist/index.js";
+import { loadEcommercePlugin } from "./helpers/ecommerce.mjs";
 
-test("ecommercePlugin defines standard Zelavis plugin structure with OpenAPI specs", () => {
+test("ecommercePlugin defines standard Zelavis plugin structure with OpenAPI specs", async () => {
+  // Loaded rather than imported: the plugin declares its menu through
+  // `zelavis.menu.create`, which only works inside a plugin execution context.
+  const ecommercePlugin = await loadEcommercePlugin();
   assert.equal(ecommercePlugin.name, "@zelavis/ecommerce");
   assert.equal(ecommercePlugin.kind, "plugin");
   assert.deepEqual(ecommercePlugin.capabilities, ["api:routes", "dashboard:menu"]);
+  // The menu the SDK contributed reaches the loaded service.
+  assert.equal(ecommercePlugin.menu.title, "Ecommerce");
 });
 
 test("ecommercePlugin registers and exposes recurring subscription endpoints", async () => {
@@ -69,7 +72,7 @@ test("ecommercePlugin registers and exposes recurring subscription endpoints", a
   const zelavis = new Zelavis({
     adapter: {
       name: "ecommerce-test-adapter",
-      resolve() {
+      async resolve() {
         return {
           subsystems: {
             database,
@@ -77,7 +80,7 @@ test("ecommercePlugin registers and exposes recurring subscription endpoints", a
           serviceRegistry: {
             catalog: [
               {
-                service: ecommercePlugin,
+                service: await loadEcommercePlugin(),
                 status: "installed",
                 source: "official",
                 order: 0,

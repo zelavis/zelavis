@@ -385,7 +385,17 @@ export async function loadPluginPackage(options: {
     | (ZelavisRuntimeService<any> &
         Pick<
           ZelavisServiceRegistryEntry<any>["service"],
-          "capabilities" | "marketplace" | "pageAssets"
+          // `setup` and `runtimeServices` were missing here, so the fields a
+          // plugin uses to register its own services were invisible to the
+          // loader and silently dropped from what it built.
+          | "capabilities"
+          | "marketplace"
+          | "pageAssets"
+          | "setup"
+          | "runtimeServices"
+          | "scope"
+          | "project"
+          | "app"
         >)
     | undefined;
 
@@ -423,6 +433,23 @@ export async function loadPluginPackage(options: {
       ...context.authenticators,
     ],
     service: resolvedService?.service ?? moduleResult,
+    // Carried through, and it was not before. A plugin that registers its
+    // services during setup — the ecommerce plugin adds its whole `commerce`
+    // API that way — lost all of it when loaded through this path, so
+    // installing such a package produced a service with a menu and no
+    // endpoints while composing the same object in code worked.
+    ...(typeof resolvedService?.setup === "function"
+      ? { setup: resolvedService.setup }
+      : {}),
+    ...(resolvedService?.authenticators
+      ? { authenticators: resolvedService.authenticators }
+      : {}),
+    ...(resolvedService?.runtimeServices
+      ? { runtimeServices: resolvedService.runtimeServices }
+      : {}),
+    ...(resolvedService?.app ? { app: resolvedService.app } : {}),
+    ...(resolvedService?.project ? { project: resolvedService.project } : {}),
+    ...(resolvedService?.scope ? { scope: resolvedService.scope } : {}),
   };
 
   return Object.freeze(runtimeService);

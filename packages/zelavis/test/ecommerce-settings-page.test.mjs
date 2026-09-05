@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ecommercePlugin } from "../../../plugins/ecommerce/dist/index.js";
+import { loadEcommercePlugin } from "./helpers/ecommerce.mjs";
 import { stripeService } from "../../../plugins/ecommerce/plugins/stripe/dist/index.js";
 import { paypalService } from "../../../plugins/ecommerce/plugins/paypal/dist/index.js";
 import { createMemorySystemStore, zelavis } from "../dist/index.js";
@@ -13,7 +13,7 @@ async function platform({ withPaypal = false } = {}) {
     resolvePrincipal: () => OWNER,
     serviceRegistry: {
       catalog: [
-        { service: ecommercePlugin, status: "installed", source: "official" },
+        { service: await loadEcommercePlugin(), status: "installed", source: "official" },
         {
           service: stripeService({ secretKey: "sk_test_x", webhookSecret: "whsec_x" }),
           status: "installed",

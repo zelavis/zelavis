@@ -12,3 +12,5 @@ export * from "./services/customer-service.js";
 export * from "./services/order-service.js";
 export * from "./services/payment-service.js";
 export * from "./services/product-service.js";
+
+export { ECOMMERCE_MANIFEST } from "./manifest.js";
