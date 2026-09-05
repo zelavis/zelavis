@@ -225,6 +225,24 @@ export function createMissingPlatformFrontendService(options: {
       v1: [
         {
           id: "platform.frontend.missing",
+          spec: {
+            operationId: "getPlatformFrontend",
+            summary: "Serve the Platform's front door",
+            description:
+              "Serves the installed Platform frontend, or an explanation of how to install one when none is mounted.",
+            tags: ["platform"],
+            pathParams: {
+              path: {
+                type: "string" as const,
+                required: true,
+                description: "The requested page or asset path.",
+              },
+            },
+            responses: {
+              200: { description: "A page or asset" },
+              404: { description: "Not found" },
+            },
+          },
           method: "GET" as const,
           path: "/*path",
           // No access requirement: this is the installation's front door, seen

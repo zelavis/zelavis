@@ -497,6 +497,29 @@ function createHttpFunctionRoute(
 ) {
   return {
     id: `workloads.http.${method.toLowerCase()}`,
+    spec: {
+      operationId: `invokeHttpWorkload${method[0]}${method.slice(1).toLowerCase()}`,
+      summary: "Invoke an HTTP workload",
+      description:
+        "Dispatches to the HTTP workload a Project has registered for this path.",
+      tags: ["workloads"],
+      pathParams: {
+        projectId: {
+          type: "string" as const,
+          required: true,
+          description: "The Project owning the workload.",
+        },
+        path: {
+          type: "string" as const,
+          required: true,
+          description: "The workload's registered path.",
+        },
+      },
+      responses: {
+        200: { description: "The workload's response" },
+        404: { description: "No workload is registered for that path" },
+      },
+    },
     method,
     path: "/http/:projectId/*path",
     handler: async ({
@@ -614,12 +637,28 @@ export function workloadsService(
       v1: [
         {
           id: "workloads.health",
+          spec: {
+            operationId: "getWorkloadsHealth",
+            summary: "Report workloads health",
+            tags: ["workloads"],
+            responses: {
+              200: { description: "Health" },
+            },
+          },
           method: "GET",
           path: "/health",
           handler: route(async () => ({ status: "ready" })),
         },
         {
           id: "workloads.menu",
+          spec: {
+            operationId: "listWorkloadsMenu",
+            summary: "List workloads as dashboard menu items",
+            tags: ["workloads"],
+            responses: {
+              200: { description: "Menu items" },
+            },
+          },
           method: "GET",
           path: "/menu/:section",
           access: { permissions: ["workloads.view"] },
@@ -638,6 +677,14 @@ export function workloadsService(
         },
         {
           id: "workloads.list",
+          spec: {
+            operationId: "listWorkloads",
+            summary: "List workloads",
+            tags: ["workloads"],
+            responses: {
+              200: { description: "Workloads" },
+            },
+          },
           method: "GET",
           path: "/",
           access: { permissions: ["workloads.view"] },
@@ -650,6 +697,15 @@ export function workloadsService(
         },
         {
           id: "workloads.create",
+          spec: {
+            operationId: "createWorkload",
+            summary: "Create a workload",
+            tags: ["workloads"],
+            responses: {
+              201: { description: "Workload created" },
+              400: { description: "Invalid workload" },
+            },
+          },
           method: "POST",
           path: "/",
           access: { permissions: ["workloads.manage"] },
@@ -666,6 +722,15 @@ export function workloadsService(
         },
         {
           id: "workloads.read",
+          spec: {
+            operationId: "getWorkload",
+            summary: "Read one workload",
+            tags: ["workloads"],
+            responses: {
+              200: { description: "Workload" },
+              404: { description: "No such workload" },
+            },
+          },
           method: "GET",
           path: "/:id",
           access: { permissions: ["workloads.view"] },
@@ -679,6 +744,15 @@ export function workloadsService(
         },
         {
           id: "workloads.update",
+          spec: {
+            operationId: "updateWorkload",
+            summary: "Replace a workload definition",
+            tags: ["workloads"],
+            responses: {
+              200: { description: "Workload updated" },
+              404: { description: "No such workload" },
+            },
+          },
           method: "PUT",
           path: "/:id",
           access: { permissions: ["workloads.manage"] },
@@ -688,6 +762,15 @@ export function workloadsService(
         },
         {
           id: "workloads.run",
+          spec: {
+            operationId: "runWorkload",
+            summary: "Run a workload now",
+            tags: ["workloads"],
+            responses: {
+              200: { description: "Run started" },
+              404: { description: "No such workload" },
+            },
+          },
           method: "POST",
           path: "/:id/run",
           access: { permissions: ["workloads.manage"] },
@@ -704,6 +787,14 @@ export function workloadsService(
         ),
         {
           id: "workloads.logs",
+          spec: {
+            operationId: "getWorkloadLogs",
+            summary: "Read recent workload logs",
+            tags: ["workloads"],
+            responses: {
+              200: { description: "Log lines" },
+            },
+          },
           method: "GET",
           path: "/logs",
           access: { permissions: ["workloads.logs.read"] },

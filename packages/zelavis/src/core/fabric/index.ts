@@ -899,6 +899,14 @@ function createFabricRoutes(
   return [
     {
       id: "fabric.snapshot",
+      spec: {
+        operationId: "getFabricSnapshot",
+        summary: "Read the Fabric's current view of nodes and placements",
+        tags: ["fabric"],
+        responses: {
+          200: { description: "Fabric snapshot" },
+        },
+      },
       method: "GET",
       path: "/snapshot",
       access: viewAccess,
@@ -909,6 +917,14 @@ function createFabricRoutes(
     },
     {
       id: "fabric.health",
+      spec: {
+        operationId: "getFabricHealth",
+        summary: "Report Fabric health",
+        tags: ["fabric"],
+        responses: {
+          200: { description: "Health" },
+        },
+      },
       method: "GET",
       path: "/health",
       handler: async ({ service }) => {
@@ -926,6 +942,14 @@ function createFabricRoutes(
     },
     {
       id: "fabric.nodes.list",
+      spec: {
+        operationId: "listFabricNodes",
+        summary: "List the physical nodes this Fabric owns",
+        tags: ["fabric"],
+        responses: {
+          200: { description: "Nodes" },
+        },
+      },
       method: "GET",
       path: "/nodes",
       access: viewAccess,
@@ -936,6 +960,15 @@ function createFabricRoutes(
     },
     {
       id: "fabric.nodes.get",
+      spec: {
+        operationId: "getFabricNode",
+        summary: "Read one node",
+        tags: ["fabric"],
+        responses: {
+          200: { description: "Node" },
+          404: { description: "No such node" },
+        },
+      },
       method: "GET",
       path: "/nodes/:nodeId",
       access: viewAccess,
@@ -948,6 +981,14 @@ function createFabricRoutes(
     },
     {
       id: "fabric.project-placements.list",
+      spec: {
+        operationId: "listProjectPlacements",
+        summary: "List where Projects are placed",
+        tags: ["fabric"],
+        responses: {
+          200: { description: "Placements" },
+        },
+      },
       method: "GET",
       path: "/placements/projects",
       access: viewAccess,
@@ -958,6 +999,15 @@ function createFabricRoutes(
     },
     {
       id: "fabric.project-placements.get",
+      spec: {
+        operationId: "getProjectPlacement",
+        summary: "Read one Project's placement",
+        tags: ["fabric"],
+        responses: {
+          200: { description: "Placement" },
+          404: { description: "No placement for that Project" },
+        },
+      },
       method: "GET",
       path: "/placements/projects/:projectId",
       access: viewAccess,
@@ -975,6 +1025,15 @@ function createFabricRoutes(
     },
     {
       id: "fabric.project-placements.plan",
+      spec: {
+        operationId: "planProjectPlacements",
+        summary: "Compute a placement plan without applying it",
+        tags: ["fabric"],
+        responses: {
+          200: { description: "Plan" },
+          400: { description: "The plan is unsatisfiable" },
+        },
+      },
       method: "POST",
       path: "/placements/projects/plan",
       access: manageAccess,
@@ -995,6 +1054,14 @@ function createFabricRoutes(
     },
     {
       id: "fabric.migrations.list",
+      spec: {
+        operationId: "listFabricMigrations",
+        summary: "List in-flight placement migrations",
+        tags: ["fabric"],
+        responses: {
+          200: { description: "Migrations" },
+        },
+      },
       method: "GET",
       path: "/migrations",
       access: viewAccess,

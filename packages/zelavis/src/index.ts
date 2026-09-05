@@ -1932,6 +1932,14 @@ async function resolveRuntimeManagementCore(
   const routes: ZelavisServerRoute<any>[] = [
         {
           id: "runtime.config",
+          spec: {
+            operationId: "getRuntimeConfig",
+            summary: "Read this installation's runtime configuration",
+            tags: ["runtime"],
+            responses: {
+              200: { description: "Runtime configuration, services and menus" },
+            },
+          },
           method: "GET",
           path: joinPathParts(
             context.apiPrefix,
@@ -1945,6 +1953,14 @@ async function resolveRuntimeManagementCore(
         },
         {
           id: "runtime.services.read",
+          spec: {
+            operationId: "listRuntimeServices",
+            summary: "List the service registry",
+            tags: ["runtime"],
+            responses: {
+              200: { description: "Registered services and their install state" },
+            },
+          },
           method: "GET",
           path: joinPathParts(
             context.apiPrefix,
@@ -2049,6 +2065,15 @@ async function resolveRuntimeManagementCore(
         },
         {
           id: "runtime.services.create",
+          spec: {
+            operationId: "registerRuntimeService",
+            summary: "Register a service by specifier or package source",
+            tags: ["runtime"],
+            responses: {
+              200: { description: "Service registered" },
+              400: { description: "Invalid registration" },
+            },
+          },
           method: "POST",
           access: { permissions: ["system.services.manage"] },
           path: joinPathParts(
@@ -2100,6 +2125,14 @@ async function resolveRuntimeManagementCore(
           // still looks like it belongs, without depending on the dashboard's
           // component classes or shipping its own palette.
           id: "runtime.service-page-styles.read",
+          spec: {
+            operationId: "getServicePageStylesheet",
+            summary: "Read the design tokens service pages render against",
+            tags: ["runtime"],
+            responses: {
+              200: { description: "Stylesheet" },
+            },
+          },
           method: "GET",
           access: { authenticated: true },
           path: joinPathParts(
@@ -2120,6 +2153,15 @@ async function resolveRuntimeManagementCore(
         },
         {
           id: "runtime.service-page-asset.read",
+          spec: {
+            operationId: "getServicePageAsset",
+            summary: "Read a page a service ships itself",
+            tags: ["runtime"],
+            responses: {
+              200: { description: "Page asset" },
+              404: { description: "No such asset" },
+            },
+          },
           method: "GET",
           access: { authenticated: true },
           path: joinPathParts(
@@ -2154,6 +2196,15 @@ async function resolveRuntimeManagementCore(
         },
         {
           id: "runtime.services.update",
+          spec: {
+            operationId: "updateRuntimeService",
+            summary: "Install, disable or reorder a registered service",
+            tags: ["runtime"],
+            responses: {
+              200: { description: "Service updated" },
+              400: { description: "Invalid update or unmet extension owner" },
+            },
+          },
           method: "PATCH",
           access: { permissions: ["system.services.manage"] },
           path: joinPathParts(
@@ -2286,6 +2337,15 @@ async function resolveRuntimeManagementCore(
         },
         {
           id: "runtime.settings.read",
+          spec: {
+            operationId: "getRuntimeSettings",
+            summary: "Read Platform runtime settings",
+            tags: ["runtime"],
+            responses: {
+              200: { description: "Current settings" },
+              400: { description: "Stored settings are invalid" },
+            },
+          },
           method: "GET",
           path: joinPathParts(
             context.apiPrefix,
@@ -2305,6 +2365,15 @@ async function resolveRuntimeManagementCore(
         },
         {
           id: "runtime.settings.update",
+          spec: {
+            operationId: "updateRuntimeSettings",
+            summary: "Update Platform runtime settings",
+            tags: ["runtime"],
+            responses: {
+              200: { description: "Settings updated" },
+              400: { description: "Invalid settings" },
+            },
+          },
           method: "PATCH",
           access: { permissions: ["system.settings.manage"] },
           path: joinPathParts(
@@ -2331,6 +2400,18 @@ async function resolveRuntimeManagementCore(
         // with a 404 reads as "this Platform publishes no spec".
         ...["runtime/openapi", "runtime/openapi.json"].map((suffix) => ({
           id: `runtime.openapi${suffix.endsWith(".json") ? "" : ".bare"}`,
+          spec: {
+            operationId: suffix.endsWith(".json")
+              ? "getOpenApiDocumentJson"
+              : "getOpenApiDocument",
+            summary: "Read the OpenAPI document for this installation",
+            description:
+              "Describes every route this runtime actually serves, including the ones installed services contribute.",
+            tags: ["runtime"],
+            responses: {
+              200: { description: "OpenAPI 3.1 document" },
+            },
+          },
           method: "GET" as const,
           path: joinPathParts(context.apiPrefix, context.apiVersion, suffix),
           handler: ({ request }: { request: Request }) => {
@@ -2614,6 +2695,14 @@ async function resolvePlatformCoreService(
         ...runtimeManagementRoutes,
         {
           id: "runtime.agent.read",
+          spec: {
+            operationId: "getAgentStatus",
+            summary: "Read the Agent's identity and status",
+            tags: ["runtime"],
+            responses: {
+              200: { description: "Agent status" },
+            },
+          },
           method: "GET",
           path: "/agent",
           access: { permissions: ["server.agents.view"] },
@@ -2632,6 +2721,14 @@ async function resolvePlatformCoreService(
         },
         {
           id: "runtime.agent.operations.list",
+          spec: {
+            operationId: "listAgentOperations",
+            summary: "List entries in the Agent operation journal",
+            tags: ["runtime"],
+            responses: {
+              200: { description: "Operations" },
+            },
+          },
           method: "GET",
           path: "/agent/operations",
           access: { permissions: ["server.agents.view"] },
@@ -2647,6 +2744,15 @@ async function resolvePlatformCoreService(
         },
         {
           id: "runtime.agent.operations.get",
+          spec: {
+            operationId: "getAgentOperation",
+            summary: "Read one Agent operation",
+            tags: ["runtime"],
+            responses: {
+              200: { description: "Operation" },
+              404: { description: "No such operation" },
+            },
+          },
           method: "GET",
           path: "/agent/operations/:operationId",
           access: { permissions: ["server.agents.view"] },
@@ -2662,6 +2768,14 @@ async function resolvePlatformCoreService(
         },
         {
           id: "runtime.deployment-backends.list",
+          spec: {
+            operationId: "listDeploymentBackends",
+            summary: "List deployment backends and their policy",
+            tags: ["runtime"],
+            responses: {
+              200: { description: "Backends" },
+            },
+          },
           method: "GET",
           path: "/deployment-backends",
           access: { permissions: ["server.backends.view"] },
@@ -2680,6 +2794,14 @@ async function resolvePlatformCoreService(
         },
         {
           id: "runtime.deployment-backends.detect",
+          spec: {
+            operationId: "detectDeploymentBackends",
+            summary: "Probe which deployment backends this host supports",
+            tags: ["runtime"],
+            responses: {
+              200: { description: "Detection results" },
+            },
+          },
           method: "POST",
           path: "/deployment-backends/detect",
           access: { permissions: ["server.backends.manage"] },
@@ -2707,6 +2829,28 @@ async function resolvePlatformCoreService(
           method: "POST" as const,
           path: `/deployment-backends/:backendId/${action}`,
           access: { permissions: ["server.backends.manage"] },
+          spec: {
+            operationId: `${action}DeploymentBackend`,
+            summary:
+              action === "enable"
+                ? "Allow a deployment backend on this installation"
+                : action === "disable"
+                  ? "Stop allowing a deployment backend"
+                  : "Choose the backend new Projects use",
+            tags: ["runtime"],
+            pathParams: {
+              backendId: {
+                type: "string" as const,
+                required: true,
+                description: "Deployment backend identifier",
+              },
+            },
+            responses: {
+              200: { description: "Backend policy updated" },
+              404: { description: "No such backend" },
+              503: { description: "Deployment backend management is unavailable" },
+            },
+          },
           handler: async ({ params }: { params: Record<string, string> }) => {
             if (!deploymentBackends) {
               return { status: 503, body: { error: "Deployment backend management is unavailable." } };
@@ -2726,6 +2870,14 @@ async function resolvePlatformCoreService(
         })),
         {
           id: "runtime.access",
+          spec: {
+            operationId: "getRuntimeAccess",
+            summary: "Describe the caller's access to this installation",
+            tags: ["runtime"],
+            responses: {
+              200: { description: "Access mode and principal" },
+            },
+          },
           method: "GET",
           path: "/access",
           access: { authenticated: true },
@@ -2738,6 +2890,14 @@ async function resolvePlatformCoreService(
         },
         {
           id: "runtime.project-recipes.list",
+          spec: {
+            operationId: "listProjectRecipes",
+            summary: "List the recipes a Project can be created from",
+            tags: ["runtime"],
+            responses: {
+              200: { description: "Installed recipes" },
+            },
+          },
           method: "GET",
           path: "/project-recipes",
           access: { authenticated: true },
@@ -2765,6 +2925,14 @@ async function resolvePlatformCoreService(
         },
         {
           id: "runtime.assistant.threads.list",
+          spec: {
+            operationId: "listAssistantThreads",
+            summary: "List assistant threads",
+            tags: ["assistant"],
+            responses: {
+              200: { description: "Threads" },
+            },
+          },
           method: "GET",
           path: "/assistant/threads",
           access: { permissions: ["assistant.use"] },
@@ -2784,6 +2952,15 @@ async function resolvePlatformCoreService(
         },
         {
           id: "runtime.assistant.threads.create",
+          spec: {
+            operationId: "createAssistantThread",
+            summary: "Start an assistant thread",
+            tags: ["assistant"],
+            responses: {
+              201: { description: "Thread created" },
+              400: { description: "Invalid thread" },
+            },
+          },
           method: "POST",
           path: "/assistant/threads",
           access: { permissions: ["assistant.use"] },
@@ -2811,6 +2988,15 @@ async function resolvePlatformCoreService(
         },
         {
           id: "runtime.assistant.threads.get",
+          spec: {
+            operationId: "getAssistantThread",
+            summary: "Read one assistant thread",
+            tags: ["assistant"],
+            responses: {
+              200: { description: "Thread" },
+              404: { description: "No such thread" },
+            },
+          },
           method: "GET",
           path: "/assistant/threads/:threadId",
           access: { permissions: ["assistant.use"] },
@@ -2833,6 +3019,15 @@ async function resolvePlatformCoreService(
         },
         {
           id: "runtime.assistant.messages.create",
+          spec: {
+            operationId: "createAssistantMessage",
+            summary: "Post a message to an assistant thread",
+            tags: ["assistant"],
+            responses: {
+              201: { description: "Message accepted" },
+              404: { description: "No such thread" },
+            },
+          },
           method: "POST",
           path: "/assistant/threads/:threadId/messages",
           access: { permissions: ["assistant.use"] },
@@ -2862,6 +3057,14 @@ async function resolvePlatformCoreService(
         },
         {
           id: "runtime.projects.list",
+          spec: {
+            operationId: "listProjects",
+            summary: "List Projects on this installation",
+            tags: ["projects"],
+            responses: {
+              200: { description: "Projects" },
+            },
+          },
           method: "GET",
           path: "/projects",
           access: { permissions: ["projects.list"] },
@@ -2878,6 +3081,15 @@ async function resolvePlatformCoreService(
         },
         {
           id: "runtime.projects.create",
+          spec: {
+            operationId: "createProject",
+            summary: "Create a Project from a recipe",
+            tags: ["projects"],
+            responses: {
+              201: { description: "Project created" },
+              400: { description: "Invalid Project" },
+            },
+          },
           method: "POST",
           path: "/projects",
           access: { permissions: ["projects.create"] },
@@ -2908,6 +3120,15 @@ async function resolvePlatformCoreService(
         },
         {
           id: "runtime.projects.get",
+          spec: {
+            operationId: "getProject",
+            summary: "Read one Project",
+            tags: ["projects"],
+            responses: {
+              200: { description: "Project" },
+              404: { description: "No such Project" },
+            },
+          },
           method: "GET",
           path: "/projects/:projectId",
           access: {
@@ -2933,6 +3154,15 @@ async function resolvePlatformCoreService(
         },
         {
           id: "runtime.projects.start",
+          spec: {
+            operationId: "startProject",
+            summary: "Start a Project's runtime",
+            tags: ["projects"],
+            responses: {
+              200: { description: "Project starting" },
+              404: { description: "No such Project" },
+            },
+          },
           method: "POST",
           path: "/projects/:projectId/start",
           access: {
@@ -2955,6 +3185,15 @@ async function resolvePlatformCoreService(
         },
         {
           id: "runtime.projects.stop",
+          spec: {
+            operationId: "stopProject",
+            summary: "Stop a Project's runtime",
+            tags: ["projects"],
+            responses: {
+              200: { description: "Project stopping" },
+              404: { description: "No such Project" },
+            },
+          },
           method: "POST",
           path: "/projects/:projectId/stop",
           access: {
@@ -2977,6 +3216,15 @@ async function resolvePlatformCoreService(
         },
         {
           id: "runtime.projects.restart",
+          spec: {
+            operationId: "restartProject",
+            summary: "Restart a Project's runtime",
+            tags: ["projects"],
+            responses: {
+              200: { description: "Project restarting" },
+              404: { description: "No such Project" },
+            },
+          },
           method: "POST",
           path: "/projects/:projectId/restart",
           access: {
@@ -2999,6 +3247,15 @@ async function resolvePlatformCoreService(
         },
         {
           id: "runtime.projects.logs",
+          spec: {
+            operationId: "getProjectLogs",
+            summary: "Read a Project's recent runtime logs",
+            tags: ["projects"],
+            responses: {
+              200: { description: "Log lines" },
+              404: { description: "No such Project" },
+            },
+          },
           method: "GET",
           path: "/projects/:projectId/logs",
           access: {
@@ -3027,6 +3284,15 @@ async function resolvePlatformCoreService(
         }),
         {
           id: "runtime.projects.remove",
+          spec: {
+            operationId: "deleteProject",
+            summary: "Delete a Project and its runtime state",
+            tags: ["projects"],
+            responses: {
+              204: { description: "Deletion started" },
+              404: { description: "No such Project" },
+            },
+          },
           method: "DELETE",
           path: "/projects/:projectId",
           access: {

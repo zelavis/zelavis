@@ -150,6 +150,24 @@ export function createProjectFrontendPlaceholderService(
       v1: [
       {
         id: "project.frontend.placeholder",
+        spec: {
+          operationId: "getProjectFrontend",
+          summary: "Serve a Project's public front door",
+          description:
+            "Serves the Project's own frontend to visitors, who need no Platform identity.",
+          tags: ["project"],
+          pathParams: {
+            path: {
+              type: "string" as const,
+              required: true,
+              description: "The requested page or asset path.",
+            },
+          },
+          responses: {
+            200: { description: "A page or asset" },
+            404: { description: "Not found" },
+          },
+        },
         method: "GET" as const,
         path: "/*path",
         // Intentionally no access requirement: this is the Project's own

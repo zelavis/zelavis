@@ -260,6 +260,14 @@ an exported type is never mistaken for an operational distributed feature.
   than only annotated ones, marking the undocumented ones instead of omitting
   them; and it is served at `runtime/openapi` as well as
   `runtime/openapi.json`.
+- [x] Every operation the control plane serves carries a summary. All 108
+  operations of a Platform running the Zelavis App — runtime, platform, auth,
+  fabric, database, workloads, the proxies, and the frontend front doors —
+  declare an operation id, a summary, tags, and their responses, so a generated
+  client names methods after the operation rather than after a route id. The
+  `x-zelavis-undocumented` marker remains for routes an installed service
+  ships without a `spec`, and a test asserts the Platform's own surface never
+  carries it.
 - [x] A frontend is installable at any mount. It declares
   `frontend.basePathGlobal`, the Platform defines that global on the served
   page with the mount path, and the bundle applies it — replacing a rewrite of
