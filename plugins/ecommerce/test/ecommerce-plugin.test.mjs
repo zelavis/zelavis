@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   Zelavis,
-} from "../dist/index.js";
-import { createDatabase } from "../dist/app/db/index.js";
-import { loadEcommercePlugin } from "./helpers/ecommerce.mjs";
+} from "../../../packages/zelavis/dist/index.js";
+import { createDatabase } from "../../../packages/zelavis/dist/app/db/index.js";
+import { loadEcommercePlugin } from "./load-plugin.mjs";
 
 test("ecommercePlugin defines standard Zelavis plugin structure with OpenAPI specs", async () => {
   // Loaded rather than imported: the plugin declares its menu through

@@ -27,7 +27,7 @@
   "scripts": {
     "build": "node scripts/generate-dashboard-pages.mjs && tsc -p tsconfig.json",
     "typecheck": "node scripts/generate-dashboard-pages.mjs && tsc -p tsconfig.json --noEmit",
-    "test": "pnpm run typecheck"
+    "test": "pnpm run typecheck && node --test \"test/**/*.test.mjs\""
   },
   "files": [
     "dashboard",

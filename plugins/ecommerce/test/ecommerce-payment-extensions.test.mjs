@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { loadEcommercePlugin } from "./helpers/ecommerce.mjs";
-import { stripeService } from "../../../plugins/ecommerce/plugins/stripe/dist/index.js";
-import { paypalService } from "../../../plugins/ecommerce/plugins/paypal/dist/index.js";
-import { isServiceExtension, serviceExtensionOwners } from "../dist/core/index.js";
-import { createMemorySystemStore, zelavis } from "../dist/index.js";
+import { loadEcommercePlugin } from "./load-plugin.mjs";
+import { stripeService } from "../plugins/stripe/dist/index.js";
+import { paypalService } from "../plugins/paypal/dist/index.js";
+import { isServiceExtension, serviceExtensionOwners } from "../../../packages/zelavis/dist/core/index.js";
+import { createMemorySystemStore, zelavis } from "../../../packages/zelavis/dist/index.js";
 
 const OWNER = { id: "owner", type: "user", roles: ["owner"], permissions: ["*"] };
 const EXTENSIONS = "/zelavis/api/v1/runtime/extensions";
@@ -38,8 +38,8 @@ test("a gateway declares a kind that still exists", () => {
 test("the gateways carry the manifest an install would validate", async () => {
   const { readFile } = await import("node:fs/promises");
   for (const [name, path] of [
-    ["stripe", "../../../plugins/ecommerce/plugins/stripe/package.json"],
-    ["paypal", "../../../plugins/ecommerce/plugins/paypal/package.json"],
+    ["stripe", "../plugins/stripe/package.json"],
+    ["paypal", "../plugins/paypal/package.json"],
   ]) {
     const manifest = JSON.parse(
       await readFile(new URL(path, import.meta.url), "utf8"),

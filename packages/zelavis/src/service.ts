@@ -434,9 +434,8 @@ export async function loadPluginPackage(options: {
     ],
     service: resolvedService?.service ?? moduleResult,
     // Carried through, and it was not before. A plugin that registers its
-    // services during setup — the ecommerce plugin adds its whole `commerce`
-    // API that way — lost all of it when loaded through this path, so
-    // installing such a package produced a service with a menu and no
+    // services during setup lost all of them when loaded through this path,
+    // so installing such a package produced a service with a menu and no
     // endpoints while composing the same object in code worked.
     ...(typeof resolvedService?.setup === "function"
       ? { setup: resolvedService.setup }
@@ -670,9 +669,8 @@ export async function activateServiceRegistry<
     service.service !== undefined ||
     Boolean(service.authenticators?.length) ||
     // A menu is a contribution too. A plugin whose routes are added during
-    // setup — the ecommerce plugin adds its own `commerce` service — has none
-    // of the fields above on itself, so its menu was dropped and its pages
-    // were unreachable while everything looked installed.
+    // setup has none of the fields above on itself, so its menu was dropped
+    // and its pages were unreachable while everything looked installed.
     service.menu !== undefined ||
     Boolean(service.menus?.length) ||
     Boolean(service.pageAssets && Object.keys(service.pageAssets).length > 0) ||

@@ -17,10 +17,10 @@ test("a Platform namespace capability parses as one", () => {
 
 test("a package can own the capability providers declare into", () => {
   // This is the point of the grammar: `provider:payments` says what interface
-  // a plugin implements but not whose contract it satisfies, so two commerce
+  // a plugin implements but not whose contract it satisfies, so two
   // plugins scanning for it pick up each other's providers.
-  assert.deepEqual(parseServiceCapability("@zelavis/ecommerce:payments"), {
-    owner: "@zelavis/ecommerce",
+  assert.deepEqual(parseServiceCapability("@acme/shop:payments"), {
+    owner: "@acme/shop",
     name: "payments",
     serviceOwned: true,
   });

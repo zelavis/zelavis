@@ -203,6 +203,11 @@ an exported type is never mistaken for an operational distributed feature.
   only matching-origin browser requests receive session cookies, cookie
   mutations require a same-origin `Origin`, and critical Project, Assistant,
   service-mutation, and settings-mutation endpoints declare core permissions.
+- [x] The Platform contains no ecommerce. Its capability hints named a plugin
+  it does not ship, its tests imported one, and its test script built three
+  ecommerce packages before it could run. Product tests live with the product,
+  core tests a fixture that belongs to nobody, and the Platform's suite passes
+  with every ecommerce build deleted.
 - [x] Every first-party plugin manifest validates against the real contract,
   pinned by a test. Two payment gateways carried a legacy `main` the contract
   refuses, one plugin declared capabilities only on its service object, and an

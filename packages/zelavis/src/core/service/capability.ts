@@ -4,14 +4,14 @@
  * A capability says what contract a service satisfies. The original set —
  * `provider:auth`, `provider:payments` — is namespaced by *domain*, which
  * answers "what interface do I implement" but never "whose contract is it".
- * Two commerce plugins both scanning for `provider:payments` pick up each
+ * Two plugins both scanning for `provider:payments` pick up each
  * other's payment providers, and neither can tell.
  *
  * So a capability may instead be owned by the service that defines it —
  * a core service or an installable package:
  *
  *     "zelavis/auth:credentials"
- *     "@zelavis/ecommerce:payments"
+ *     "@acme/shop:payments"
  *
  * Discovery stays a flat scan over installed services. There is deliberately
  * no parent/child graph: a provider naming an owner is *asking* to be
@@ -38,7 +38,7 @@ export const ZELAVIS_PLATFORM_CAPABILITY_NAMESPACES: readonly string[] =
  *
  * Core services are unscoped and slash-separated (`zelavis/auth`,
  * `zelavis/platform`) while installable packages carry an npm scope
- * (`@zelavis/ecommerce`). Both own capabilities, so both are accepted here.
+ * (`@acme/shop`). Both own capabilities, so both are accepted here.
  */
 const CAPABILITY_OWNER =
   /^(?:@[a-z0-9-*~][a-z0-9-*._~]*\/)?[a-z0-9-~][a-z0-9-._~]*(?:\/[a-z0-9-~][a-z0-9-._~]*)?$/u;

@@ -9,7 +9,7 @@ import {
   Zelavis,
   zelavis,
 } from "../dist/index.js";
-import { loadEcommercePlugin } from "./helpers/ecommerce.mjs";
+import { loadExamplePlugin } from "./fixtures/example-plugin.mjs";
 import { zelavisUiFrontend } from "@zelavis/ui/frontend";
 
 const PLATFORM_OWNER_CONTEXT = {
@@ -115,7 +115,7 @@ test("zelavis includes core services by default", async () => {
   assert.ok(routes.some((route) => route.fullPath === "/zelavis"));
   // The dashboard's view+asset+fallback used to register one route per
   // asset and an explicit route per client-side path (e.g.
-  // `/zelavis/commerce/orders` from the ecommerce service's menu); now
+  // `/zelavis/catalog/items` from an installed plugin's menu); now
   // everything under the dashboard mount is handled by a single
   // catch-all that serves bundle bytes or falls back to the shell
   // renderer for SPA deep links.
@@ -493,7 +493,7 @@ test("auth method plugins register through the public auth capability", async ()
 test("service registry install state controls service activation on boot", async () => {
   const storeState = [
     {
-      name: "@zelavis/ecommerce",
+      name: "@example/catalog",
       status: "installed",
       order: 0,
     },
@@ -502,14 +502,14 @@ test("service registry install state controls service activation on boot", async
   const bundleStore = createInMemoryBundleStore(
     new Map([
       [
-        "system/@zelavis/ecommerce/dashboard/dashboard.html",
+        "system/@example/catalog/dashboard/dashboard.html",
         {
-          body: encoder.encode("<!doctype html><title>Ecommerce</title><main>Commerce workspace</main>"),
+          body: encoder.encode("<!doctype html><title>Catalog</title><main>Catalog workspace</main>"),
           contentType: "text/html; charset=utf-8",
         },
       ],
       [
-        "system/@zelavis/ecommerce/dashboard/placeholder.css",
+        "system/@example/catalog/dashboard/placeholder.css",
         {
           body: encoder.encode("main { display: grid; }"),
           contentType: "text/css; charset=utf-8",
@@ -523,7 +523,7 @@ test("service registry install state controls service activation on boot", async
     serviceRegistry: {
       catalog: [
         {
-          service: await loadEcommercePlugin(),
+          service: await loadExamplePlugin(),
           status: "installed",
           source: "official",
           order: 0,
@@ -543,7 +543,7 @@ test("service registry install state controls service activation on boot", async
 
   assert.ok(
     runtime.routes.some(
-      (route) => route.fullPath === "/zelavis/api/v1/commerce/health",
+      (route) => route.fullPath === "/zelavis/api/v1/catalog/health",
     ),
   );
 
@@ -559,13 +559,13 @@ test("service registry install state controls service activation on boot", async
   // is the one the plugin carries.
   assert.equal(
     config.serviceRegistry[0].menu.page.src,
-    "/zelavis/api/v1/runtime/service-page-assets/%40zelavis%2Fecommerce/dist/dashboard.html",
+    "/zelavis/api/v1/runtime/service-page-assets/%40example%2Fcatalog/dist/catalog.html",
   );
-  assert.ok(config.services.some((service) => service.name === "commerce"));
+  assert.ok(config.services.some((service) => service.name === "catalog"));
 
   const servicePageResponse = await runtime.fetch(
     new Request(
-      "http://localhost/zelavis/api/v1/runtime/service-page-assets/%40zelavis%2Fecommerce/dist/dashboard.html",
+      "http://localhost/zelavis/api/v1/runtime/service-page-assets/%40example%2Fcatalog/dist/catalog.html",
     ),
     PLATFORM_OWNER_CONTEXT,
   );
@@ -573,7 +573,7 @@ test("service registry install state controls service activation on boot", async
 
   assert.equal(servicePageResponse.status, 200);
   assert.match(servicePageResponse.headers.get("content-type"), /text\/html/);
-  assert.match(servicePage, /Commerce/);
+  assert.match(servicePage, /Catalog/);
 });
 
 test("dashboard service registry can register ESM service sources", async () => {
