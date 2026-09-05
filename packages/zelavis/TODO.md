@@ -203,6 +203,11 @@ an exported type is never mistaken for an operational distributed feature.
   only matching-origin browser requests receive session cookies, cookie
   mutations require a same-origin `Origin`, and critical Project, Assistant,
   service-mutation, and settings-mutation endpoints declare core permissions.
+- [x] Payment gateways declare `@zelavis/ecommerce:payments` rather than the
+  bare `provider:payments` domain, so they are listed under the plugin they
+  extend and cannot be collected by another commerce plugin. Both also
+  declared a removed `kind` and shipped no `zelavis` manifest block, so
+  installing either would have been refused at validation.
 - [x] The auth settings page is a product service. `@zelavis/auth` ships beside
   `@zelavis/ui` and the marketplace and owns the page: how people sign in, the
   configured OAuth providers, and a catalogue of the plugins extending

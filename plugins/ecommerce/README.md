@@ -6,7 +6,7 @@ This package provides an end-to-end commerce capability for Zelavis applications
 
 - the official Zelavis plugin `ecommercePlugin`
 - low-level commerce domain APIs via `createEcommerce(...)`
-- payment provider integrations (e.g. Stripe and PayPal) discovered through the `provider:payments` capability
+- payment provider integrations (e.g. Stripe and PayPal) discovered through the `@zelavis/ecommerce:payments` capability
 - recurring billing and subscription lifecycle management
 
 ## Main entrypoints
@@ -39,13 +39,13 @@ export const ecommercePlugin: ZelavisRuntimeService = Object.freeze({
 
 ### Payment Provider Discovery
 
-Payment providers (such as `@zelavis/ecommerce-stripe` or `@zelavis/ecommerce-paypal`) are standalone provider plugins. They register with Zelavis by declaring the `provider:payments` capability:
+Payment providers (such as `@zelavis/ecommerce-stripe` or `@zelavis/ecommerce-paypal`) are standalone provider plugins. They register with Zelavis by declaring the `@zelavis/ecommerce:payments` capability, which names this plugin rather than a bare domain:
 
 ```ts
 export const stripeService: ZelavisRuntimeService = Object.freeze({
   name: "@zelavis/ecommerce-stripe",
   kind: "provider",
-  capabilities: ["provider:payments"],
+  capabilities: ["@zelavis/ecommerce:payments"],
   service: {
     name: "stripe",
     register(api) {
