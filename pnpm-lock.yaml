@@ -136,6 +136,9 @@ importers:
 
   packages/zelavis:
     dependencies:
+      '@zelavis/auth':
+        specifier: workspace:*
+        version: link:product-services/zelavis-auth
       '@zelavis/marketplace':
         specifier: workspace:*
         version: link:product-services/zelavis-marketplace
@@ -177,6 +180,16 @@ importers:
         version: 25.9.5
       typescript:
         specifier: ^5.9.0
+        version: 5.9.3
+
+  packages/zelavis/product-services/zelavis-auth:
+    dependencies:
+      zelavis:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      typescript:
+        specifier: ^5.9.3
         version: 5.9.3
 
   packages/zelavis/product-services/zelavis-marketplace:

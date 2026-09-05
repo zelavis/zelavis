@@ -203,6 +203,15 @@ an exported type is never mistaken for an operational distributed feature.
   only matching-origin browser requests receive session cookies, cookie
   mutations require a same-origin `Origin`, and critical Project, Assistant,
   service-mutation, and settings-mutation endpoints declare core permissions.
+- [x] The auth settings page is a product service. `@zelavis/auth` ships beside
+  `@zelavis/ui` and the marketplace and owns the page: how people sign in, the
+  configured OAuth providers, and a catalogue of the plugins extending
+  `zelavis/auth`. Removing it costs the page, not sign-in. Core auth stopped
+  contributing its own menu, which had put two "Auth" entries in the sidebar.
+- [x] A stale session cookie no longer locks anyone out. One that does not
+  resolve means "not signed in" rather than failing the request, so the public
+  sign-in and bootstrap endpoints stay reachable; an invalid bearer token is
+  still an error.
 - [x] An identity provider is added by pasting its issuer URL. Core reads the
   issuer's own OpenID configuration, so every OIDC provider is a URL rather
   than a plugin, and shipping a curated list of popular providers is not a

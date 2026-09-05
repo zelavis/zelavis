@@ -90,3 +90,24 @@ test("a trailing slash on the issuer does not defeat the match", async () => {
   const provider = await discoverOidcProvider(`${ISSUER}/`, { fetch });
   assert.equal(provider.issuer, ISSUER);
 });
+
+test("an unreachable issuer says which URL failed", async () => {
+  // The transport error is "fetch failed", which tells an operator nothing
+  // about what was tried — and this is a value they typed, so it is usually
+  // a typo they could fix if told.
+  const failing = async () => {
+    throw new TypeError("fetch failed");
+  };
+  await assert.rejects(
+    discoverOidcProvider(ISSUER, { fetch: failing }),
+    /Could not reach https:\/\/id\.example\.com\/\.well-known/u,
+  );
+});
+
+test("a response that is not an OpenID document says so", async () => {
+  const { fetch } = stubFetch(() => new Response("<html>hello</html>", { status: 200 }));
+  await assert.rejects(
+    discoverOidcProvider(ISSUER, { fetch }),
+    /did not return an OpenID configuration document/u,
+  );
+});

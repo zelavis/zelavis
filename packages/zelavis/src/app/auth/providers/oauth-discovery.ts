@@ -59,16 +59,35 @@ export async function discoverOidcProvider(
 
   const base = issuerUrl.href.replace(/\/+$/u, "");
   const requestFetch = options.fetch ?? globalThis.fetch;
-  const response = await requestFetch(`${base}${WELL_KNOWN}`, {
-    headers: { accept: "application/json" },
-  });
+  const configurationUrl = `${base}${WELL_KNOWN}`;
+  let response: Response;
+  try {
+    response = await requestFetch(configurationUrl, {
+      headers: { accept: "application/json" },
+    });
+  } catch (cause) {
+    // A transport failure surfaces as "fetch failed", which tells an operator
+    // nothing about which URL was tried or why they are seeing it.
+    throw new TypeError(
+      `Could not reach ${configurationUrl}. Check the issuer URL is correct and reachable from this server.`,
+      { cause },
+    );
+  }
   if (!response.ok) {
     throw new TypeError(
       `Reading the OpenID configuration for ${base} failed with status ${response.status}.`,
     );
   }
 
-  const document = (await response.json()) as Record<string, unknown>;
+  let document: Record<string, unknown>;
+  try {
+    document = (await response.json()) as Record<string, unknown>;
+  } catch (cause) {
+    throw new TypeError(
+      `${configurationUrl} did not return an OpenID configuration document.`,
+      { cause },
+    );
+  }
 
   // The document names its own issuer, and it must be the one that was asked
   // for. Without this a redirect could hand back another provider's metadata
