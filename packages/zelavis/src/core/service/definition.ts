@@ -85,7 +85,11 @@ export type ZelavisServiceCapability =
   | "api:routes"
   | "dashboard:menu"
   | "dashboard:settings"
-  | "@zelavis/auth:credentials"
+  // Owned by the service that defines them, so a provider names what it
+  // extends rather than a bare domain two plugins could both scan for.
+  | "zelavis/auth:credentials"
+  | "zelavis/auth:oauth"
+  | "@zelavis/ecommerce:payments"
   | (string & {});
 
 export interface ZelavisServiceMarketplaceMetadata {

@@ -18,7 +18,7 @@ test("ecommercePlugin registers and exposes recurring subscription endpoints", a
   const dummyStripeProvider = {
     name: "@zelavis/ecommerce-stripe-test",
     kind: "provider",
-    capabilities: ["provider:payments"],
+    capabilities: ["@zelavis/ecommerce:payments"],
     service: {
       name: "stripe-test",
       register(api) {

@@ -30,7 +30,8 @@ That lower-level provider layer uses named capabilities and explicit public regi
 Current example:
 
 - `zelavis-ecommerce` is a top-level project Marketplace/runtime service
-- payment providers such as Stripe or PayPal are ordinary `provider:payments` plugins
+- payment providers such as Stripe or PayPal are ordinary plugins declaring
+  `@zelavis/ecommerce:payments`, the capability that plugin owns
 
 So the safe model is:
 
@@ -199,7 +200,7 @@ import type { ZelavisRuntimeService } from "zelavis";
 export const stripePlugin: ZelavisRuntimeService = {
   name: "@zelavis/ecommerce-stripe",
   kind: "provider",
-  capabilities: ["provider:payments"],
+  capabilities: ["@zelavis/ecommerce:payments"],
   service: {
     name: "stripe",
     register(api: EcommerceApi) {

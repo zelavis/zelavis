@@ -128,7 +128,7 @@ export function stripeService(): ZelavisRuntimeService {
   return Object.freeze({
     name: "@zelavis/ecommerce-stripe",
     kind: "provider",
-    capabilities: ["provider:payments"],
+    capabilities: ["@zelavis/ecommerce:payments"],
     service: {
       name: "stripe",
       register(api: EcommerceApi) {
@@ -139,7 +139,9 @@ export function stripeService(): ZelavisRuntimeService {
 }
 ```
 
-Provider plugins declare a capability such as `provider:auth` or `provider:payments` and expose the corresponding public registration contract as their service value. The owning domain discovers installed providers by capability. There is no hidden parent/child service graph or parent-maintained name allow-list.
+Provider plugins declare a capability owned by the service they extend — `zelavis/auth:credentials`, `@zelavis/ecommerce:payments` — and expose that service's public registration contract as their service value. The owner discovers them by capability.
+
+The owner is named because a bare domain such as `provider:payments` says what a plugin implements and never whose contract it satisfies, so two commerce plugins scanning for it would each collect the other's gateways. There is still no parent/child graph: discovery is a flat scan, naming an owner asks to be considered by it and grants nothing, and the owner validates every provider against its own contract.
 
 ## Rule 5: Make capabilities endpoint-backed
 

@@ -47,7 +47,7 @@ An official service package may define a public provider registration contract.
   - `ecommercePlugin`
 - payment provider plugins:
   - declared as provider plugins (`"zelavis": { "kind": "plugin" }`)
-  - declare `provider:payments` capability
+  - declare the `@zelavis/ecommerce:payments` capability
 
 The Ecommerce service discovers installed providers by capability and invokes their explicit registration object. It does not receive hidden children or maintain a package-name allow-list.
 

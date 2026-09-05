@@ -157,11 +157,14 @@ function isDatabaseApi(value: unknown): value is DatabaseApi {
   );
 }
 
+/** The capability a payment gateway declares to be discovered by this plugin. */
+export const ECOMMERCE_PAYMENTS_CAPABILITY = "@zelavis/ecommerce:payments";
+
 function isEcommercePaymentService(
   service: Readonly<{ capabilities?: readonly string[]; service?: unknown }>,
 ): boolean {
   return (
-    service.capabilities?.includes("provider:payments") === true &&
+    service.capabilities?.includes(ECOMMERCE_PAYMENTS_CAPABILITY) === true &&
     typeof (service.service as EcommerceService | undefined)?.register === "function"
   );
 }
@@ -403,8 +406,15 @@ function parseSubscriptionCreation(body: unknown): {
  * Implements the standard Zelavis plugin definition contract (kind: "plugin")
  * providing products, customers, coupons, orders, and payment/subscription lifecycle management.
  *
- * Payment gateways (Stripe, PayPal, etc.) are discovered dynamically through
- * the `provider:payments` capability from installed services, avoiding hardcoded plugin allow-lists.
+ * Payment gateways (Stripe, PayPal, etc.) are discovered through the
+ * `@zelavis/ecommerce:payments` capability rather than a hardcoded allow-list.
+ * The capability names this plugin, not a bare `provider:payments` domain: a
+ * domain says what a gateway implements and never whose contract it satisfies,
+ * so another commerce plugin scanning for it would collect these gateways too.
+ *
+ * A gateway declaring it is an ordinary plugin. The only difference is who it
+ * points at, and that is what lets it be listed on this plugin's own settings
+ * page rather than in a general catalogue where it means nothing.
  */
 export const ecommercePlugin = Object.freeze({
   name: "@zelavis/ecommerce",

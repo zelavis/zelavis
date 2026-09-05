@@ -6,6 +6,12 @@
   "author": "Ivan Jeremic",
   "license": "MIT",
   "type": "module",
+  "zelavis": {
+    "kind": "plugin",
+    "capabilities": [
+      "@zelavis/ecommerce:payments"
+    ]
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

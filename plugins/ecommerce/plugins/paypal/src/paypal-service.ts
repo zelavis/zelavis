@@ -699,8 +699,12 @@ export function createPayPalPaymentProvider(
 export function paypalService(options: PayPalServiceOptions = {}) {
   return Object.freeze({
     name: "@zelavis/ecommerce-paypal",
-    kind: "provider",
-    capabilities: Object.freeze(["provider:payments"]),
+    kind: "plugin",
+    // Names the plugin this extends rather than the bare `provider:payments`
+    // domain. A domain says what a plugin implements, never whose contract it
+    // satisfies, so two commerce plugins scanning for it collect each other's
+    // gateways and neither can tell.
+    capabilities: Object.freeze(["@zelavis/ecommerce:payments"]),
     service: {
       name: "paypal",
       register(api: EcommerceApi) {
