@@ -77,10 +77,29 @@ export interface ZelavisProjectDescriptor {
   ownerProjectId?: string;
 }
 
+/**
+ * Where a Project is placed, when that is not this host.
+ *
+ * Kept beside `runtime` rather than inside it because the driver owns runtime
+ * state and reports it fresh on every read — a note written there is erased by
+ * the next status poll. This is the Platform's own record of a decision the
+ * Fabric made, and it is what answers "why is this Project not running".
+ */
+export interface ZelavisProjectPlacementState {
+  /** The node the Fabric placed it on. */
+  readonly nodeId: string;
+  /** When this host handed it to that node, if it could. */
+  readonly dispatchedAt?: string;
+  /** Why it could not be handed over. */
+  readonly error?: string;
+}
+
 export interface ZelavisProjectRecord extends ZelavisProjectDescriptor {
   capabilities: ZelavisProjectDriverCapabilities;
   desiredState: "running" | "stopped";
   runtime: ZelavisProjectRuntimeState;
+  /** Set only while the Project belongs to a node this host is not. */
+  placement?: ZelavisProjectPlacementState;
   deletion?: ZelavisProjectDeletionState;
   createdAt: string;
   updatedAt: string;
@@ -516,6 +535,31 @@ export interface ZelavisProjectPlacementAuthority {
 }
 
 /**
+ * Runs a Project on a node this host is not.
+ *
+ * Placement is only authoritative if a Project placed elsewhere actually goes
+ * elsewhere. Without a dispatcher, a Project the planner assigned to another
+ * node is left stopped and says so — which is a worse outcome than running it,
+ * and the correct one: running it here would silently contradict the placement
+ * the Fabric decided, and two hosts each deciding that would run it twice.
+ */
+export interface ZelavisProjectDispatcher {
+  /** The node whose work this host executes itself. */
+  readonly localNodeId: string;
+  /**
+   * Hands a Project's start to the node that owns it.
+   *
+   * Optional: an installation that knows its node id but has no way to reach
+   * the others still gets the refusal above, which is the part that keeps
+   * placement honest. Implementing this is the Agent execution path.
+   */
+  dispatchStart?(request: {
+    readonly projectId: string;
+    readonly nodeId: string;
+  }): Promise<void>;
+}
+
+/**
  * Placement failures that reconciliation acts on.
  *
  * Only ownership. A Project reported unplaced for capacity or node eligibility
@@ -538,6 +582,13 @@ export async function createProjectManager(options: {
    * before.
    */
   placement?: () => ZelavisProjectPlacementAuthority | undefined;
+  /**
+   * Which node this host is, and how to reach the others.
+   *
+   * Resolved lazily for the same reason as `placement`. Absent on a host that
+   * models no nodes at all, which starts everything locally exactly as before.
+   */
+  dispatch?: () => ZelavisProjectDispatcher | undefined;
   /**
    * Whether to reconcile as soon as the manager exists.
    *
@@ -678,6 +729,7 @@ export async function createProjectManager(options: {
               status: "stopped",
             },
       ...(deletion ? { deletion } : {}),
+      ...(rawProject.placement ? { placement: rawProject.placement } : {}),
       createdAt: rawProject.createdAt,
       updatedAt: rawProject.updatedAt,
     };
@@ -929,25 +981,41 @@ export async function createProjectManager(options: {
   }
 
   /**
-   * Projects whose placement group cannot be satisfied.
+   * What the planner says about every desired-running Project.
    *
-   * Every desired-running Project is planned together, because an owned
-   * Project can only be judged against an owner the planner can see — planning
-   * one at a time would report every owner as absent and refuse everything.
+   * Every one is planned together, because an owned Project can only be judged
+   * against an owner the planner can see — planning one at a time would report
+   * every owner as absent and refuse everything.
    *
-   * A host with no placement authority blocks nothing, which is how a
-   * single-node installation behaves today and should keep behaving.
+   * A host with no placement authority decides nothing here, which is how a
+   * single-node installation behaves today and should keep behaving. So does a
+   * planner that fails: the result is empty, and reconciliation starts what it
+   * would have started anyway. Fabric being down is not a reason to leave an
+   * installation stopped.
    */
-  async function resolveBlockedPlacements(
+  async function resolvePlacementDecisions(
     records: readonly { value: ZelavisSystemStoreValue }[],
-  ): Promise<ReadonlySet<string>> {
+    planOptions: { readonly alsoPlan?: string } = {},
+  ): Promise<{
+    /** Left stopped: no node may run it, whatever this host does. */
+    readonly blocked: ReadonlySet<string>;
+    /** Placed on another node, mapped to the node that owns it. */
+    readonly elsewhere: ReadonlyMap<string, string>;
+  }> {
+    const empty = { blocked: new Set<string>(), elsewhere: new Map<string, string>() };
     const authority = options.placement?.();
-    if (!authority) return new Set();
+    if (!authority) return empty;
 
     const requests: FabricProjectPlacementRequest[] = [];
     for (const record of records) {
       const { project } = normalizeStoredProject(record.value);
-      if (project.deletion || project.desiredState !== "running") continue;
+      if (project.deletion) continue;
+      if (
+        project.desiredState !== "running" &&
+        project.id !== planOptions.alsoPlan
+      ) {
+        continue;
+      }
 
       requests.push({
         identity: {
@@ -963,14 +1031,18 @@ export async function createProjectManager(options: {
       });
     }
 
-    // Nothing owns anything, so there is no group to violate and no reason to
-    // ask — which also keeps a Fabric outage from stopping ordinary startups.
-    if (!requests.some((request) => request.ownerProjectId)) return new Set();
+    const localNodeId = options.dispatch?.()?.localNodeId;
+
+    // Nothing owns anything and this host does not know which node it is, so
+    // there is no group to violate and no assignment to compare against.
+    if (!localNodeId && !requests.some((request) => request.ownerProjectId)) {
+      return empty;
+    }
 
     const plan = await authority
       .planProjectPlacements(requests)
       .catch(() => undefined);
-    if (!plan) return new Set();
+    if (!plan) return empty;
 
     const blocked = new Set<string>();
     for (const replica of plan.unplaced) {
@@ -978,7 +1050,136 @@ export async function createProjectManager(options: {
         blocked.add(replica.identity.workloadId);
       }
     }
-    return blocked;
+
+    const elsewhere = new Map<string, string>();
+    if (localNodeId) {
+      for (const replica of plan.replicas) {
+        if (replica.runtimeNodeId !== localNodeId) {
+          elsewhere.set(replica.identity.workloadId, replica.runtimeNodeId);
+        }
+      }
+    }
+
+    return { blocked, elsewhere };
+  }
+
+  /**
+   * Starts a Project on this host.
+   *
+   * Split out from `start` so reconciliation, which has already planned every
+   * Project together, does not re-plan the whole fleet once per Project it
+   * starts.
+   */
+  async function startLocally(id: string): Promise<ZelavisProjectRecord> {
+    let project = await requireProject(id);
+    // Starting it here settles the question the note recorded, so the note
+    // goes rather than lingering as a stale explanation of a state that has
+    // changed.
+    const { placement: _placedElsewhere, ...withoutPlacement } = project;
+    project = await write({
+      ...withoutPlacement,
+      desiredState: "running",
+      runtime: { driver: runtime.name, status: "starting" },
+      updatedAt: new Date().toISOString(),
+    });
+
+    try {
+      await runtime.prepare(project, project.recipe);
+      return write(applySnapshot(project, await runtime.start(project)));
+    } catch (error) {
+      const failed = {
+        ...project,
+        runtime: {
+          driver: runtime.name,
+          status: "failed" as const,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        updatedAt: new Date().toISOString(),
+      };
+      await write(failed);
+      throw error;
+    }
+  }
+
+  /**
+   * The node one Project is placed on, when that node is not this host.
+   *
+   * Plans the whole fleet rather than the one Project, because an owned
+   * Project is only placeable against an owner the planner can see.
+   */
+  async function resolveAssignedNodeElsewhere(
+    projectId: string,
+  ): Promise<string | undefined> {
+    if (!options.dispatch?.()?.localNodeId) return undefined;
+    const records = await store.list(PROJECTS_NAMESPACE);
+    // Planned as though it were already desired-running: it is about to be,
+    // and a Project that is currently stopped contributes no request, so
+    // without this the answer would always be "placed here".
+    const placement = await resolvePlacementDecisions(records, {
+      alsoPlan: projectId,
+    });
+    return placement.elsewhere.get(projectId);
+  }
+
+  /**
+   * Hands a Project to the node its placement names, or records why it could
+   * not be.
+   *
+   * The refusal is the point. Running it here anyway would contradict the
+   * placement the Fabric decided, and on a fleet where every host reconciles,
+   * every host would reach the same conclusion and run its own copy. Leaving
+   * it stopped with the node named is recoverable; two live copies of a
+   * Project's data are not.
+   */
+  async function dispatchElsewhere(
+    project: ZelavisProjectRecord,
+    nodeId: string,
+  ): Promise<void> {
+    const dispatcher = options.dispatch?.();
+    const now = new Date().toISOString();
+
+    if (dispatcher?.dispatchStart) {
+      try {
+        await dispatcher.dispatchStart({ projectId: project.id, nodeId });
+        await write({
+          ...project,
+          placement: { nodeId, dispatchedAt: now },
+          updatedAt: now,
+        }).catch(() => undefined);
+        return;
+      } catch (error) {
+        await write({
+          ...project,
+          placement: {
+            nodeId,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          updatedAt: now,
+        }).catch(() => undefined);
+        return;
+      }
+    }
+
+    // `desiredState` stays "running": the Project is not stopped by intent,
+    // it is unstarted by this host, and a later reconcile with a dispatcher
+    // configured — or a placement that names this node — starts it.
+    await write({
+      ...project,
+      placement: {
+        nodeId,
+        error: `This host cannot start Projects on node "${nodeId}".`,
+      },
+      updatedAt: now,
+    }).catch(() => undefined);
+
+    const snapshot = await runtime.status(project.id);
+    if (snapshot.status === "running" || snapshot.status === "starting") {
+      // It is running here and no longer placed here. Stopping it is this
+      // host's half of the move; the node that now owns it starts it. The
+      // driver is asked directly rather than through `stop`, which would clear
+      // `desiredState` and make the move look like an operator stopping it.
+      await runtime.stop(project.id).catch(() => undefined);
+    }
   }
 
   const manager: ZelavisProjectManager = {
@@ -1128,31 +1329,25 @@ export async function createProjectManager(options: {
     },
     async start(id) {
       return withProjectLifecycle(normalizeProjectId(id), async () => {
-      let project = await requireProject(id);
-      assertProjectIsOperable(project, "started");
-      project = await write({
-        ...project,
-        desiredState: "running",
-        runtime: { driver: runtime.name, status: "starting" },
-        updatedAt: new Date().toISOString(),
-      });
+      const placed = await requireProject(id);
+      assertProjectIsOperable(placed, "started");
 
-      try {
-        await runtime.prepare(project, project.recipe);
-        return write(applySnapshot(project, await runtime.start(project)));
-      } catch (error) {
-        const failed = {
-          ...project,
-          runtime: {
-            driver: runtime.name,
-            status: "failed" as const,
-            error: error instanceof Error ? error.message : String(error),
-          },
-          updatedAt: new Date().toISOString(),
-        };
-        await write(failed);
-        throw error;
+      // An explicit start is still subject to placement. Told to run a Project
+      // this host is not placed to run, saying so is the only answer that does
+      // not quietly contradict the Fabric.
+      const assignedNodeId = await resolveAssignedNodeElsewhere(placed.id);
+      if (assignedNodeId !== undefined) {
+        await dispatchElsewhere(placed, assignedNodeId);
+        const dispatched = options.dispatch?.()?.dispatchStart !== undefined;
+        if (!dispatched) {
+          throw new ZelavisProjectValidationError(
+            `Project "${placed.id}" is placed on node "${assignedNodeId}", which this host cannot start Projects on.`,
+          );
+        }
+        return requireProject(id);
       }
+
+      return startLocally(id);
       });
     },
     async stop(id) {
@@ -1233,7 +1428,7 @@ export async function createProjectManager(options: {
     reconcile() {
       reconciliationPromise ??= (async () => {
         const existing = await store.list(PROJECTS_NAMESPACE);
-        const blockedByPlacement = await resolveBlockedPlacements(existing);
+        const placement = await resolvePlacementDecisions(existing);
         await mapWithConcurrency(
           existing,
           startupConcurrency,
@@ -1253,10 +1448,16 @@ export async function createProjectManager(options: {
             if (project.desiredState !== "running") {
               return;
             }
-            if (blockedByPlacement.has(project.id)) {
+            if (placement.blocked.has(project.id)) {
               // Left stopped rather than started somewhere its placement group
               // does not permit. `desiredState` stays "running", so the next
               // reconcile starts it as soon as its owner can be placed.
+              return;
+            }
+
+            const assignedNodeId = placement.elsewhere.get(project.id);
+            if (assignedNodeId !== undefined) {
+              await dispatchElsewhere(project, assignedNodeId);
               return;
             }
             const snapshot = await runtime.status(project.id);
@@ -1265,7 +1466,9 @@ export async function createProjectManager(options: {
               snapshot.status !== "running" &&
               snapshot.status !== "starting"
             ) {
-              await manager.start(project.id).catch(() => undefined);
+              // Placement was decided once for the whole fleet above, so this
+              // starts locally rather than re-planning per Project.
+              await startLocally(project.id).catch(() => undefined);
             }
           },
         );

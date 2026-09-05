@@ -178,6 +178,7 @@ import {
   ZelavisProjectNotFoundError,
   ZelavisProjectRuntimeError,
   ZelavisProjectValidationError,
+  type ZelavisProjectDispatcher,
   type ZelavisProjectRuntimeDriver,
   type ZelavisProjectManager,
   type ZelavisProjectRecord,
@@ -365,6 +366,15 @@ export interface ZelavisServiceContextOptions {
 
 export interface ZelavisServerOptions {
   rootPath?: string;
+  /**
+   * How this host runs a Project the Fabric placed on another node.
+   *
+   * Without one, the local node id still comes from the Fabric options and a
+   * Project placed elsewhere is left stopped rather than started here — which
+   * is what makes placement authoritative rather than advisory. Supplying a
+   * dispatcher is the Agent execution path.
+   */
+  projectDispatcher?: ZelavisProjectDispatcher;
   api?: ZelavisApiOptions;
   servicePackageInstaller?: ZelavisServicePackageInstaller;
   serviceActivation?: ZelavisServiceActivationController;
@@ -2623,6 +2633,20 @@ function placementStateFromRuntimeStatus(
   }
 }
 
+/**
+ * The node this host is.
+ *
+ * The same default the Fabric service uses, read separately because the
+ * Project manager needs it before the Fabric is composed — it is composed
+ * after the Projects it plans for.
+ */
+function resolveLocalNodeId(option: ZelavisFabricOptions | undefined): string {
+  const fabricOption = option ?? true;
+  if (fabricOption === false) return "local";
+  const configured = fabricOption === true ? {} : fabricOption;
+  return configured.localNode?.id ?? "local";
+}
+
 function resolveFabricCoreService(
   option: ZelavisFabricOptions | undefined,
   context: {
@@ -2657,9 +2681,12 @@ function resolveFabricCoreService(
       type: "project" as const,
     },
     projectKind: project.kind,
-    runtimeNodeId: localNodeId,
+    // The node it is actually on. A Project the planner placed elsewhere is
+    // recorded as such by the Project manager, and reporting it as local here
+    // would have the Fabric's own inventory contradict its placement decision.
+    runtimeNodeId: project.placement?.nodeId ?? localNodeId,
     ...(project.capabilities.managedDatabase
-      ? { databaseNodeId: localNodeId }
+      ? { databaseNodeId: project.placement?.nodeId ?? localNodeId }
       : {}),
     generation: 1,
     state: placementStateFromRuntimeStatus(project.runtime.status),
@@ -3730,6 +3757,12 @@ export async function zelavis(
           // because it runs once and a pass before Fabric exists would enforce
           // nothing.
           placement: () => fabricCoreService?.service,
+          dispatch: () => ({
+            localNodeId: resolveLocalNodeId(options.subsystems?.fabric),
+            ...(options.projectDispatcher?.dispatchStart
+              ? { dispatchStart: options.projectDispatcher.dispatchStart }
+              : {}),
+          }),
           autoReconcile: false,
           ...(deploymentBackends
             ? {
