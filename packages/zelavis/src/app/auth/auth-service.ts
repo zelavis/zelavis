@@ -252,6 +252,14 @@ export function defineAuthService(
         },
         {
           id: "auth.recovery.providers.list",
+          spec: {
+            operationId: "listRecoveryProviders",
+            summary: "List providers that support credential recovery",
+            tags: ["auth"],
+            responses: {
+              200: { description: "Providers" },
+            },
+          },
           method: "GET",
           path: "/recovery/providers",
           handler: ({ service }) => ({
@@ -261,6 +269,14 @@ export function defineAuthService(
         },
         {
           id: "auth.authorizationCode.providers.list",
+          spec: {
+            operationId: "listAuthorizationCodeProviders",
+            summary: "List providers offering an Authorization Code flow",
+            tags: ["auth"],
+            responses: {
+              200: { description: "Providers" },
+            },
+          },
           method: "GET",
           path: "/oauth/providers",
           handler: ({ service }) => ({
@@ -270,6 +286,15 @@ export function defineAuthService(
         },
         {
           id: "auth.authorizationCode.start",
+          spec: {
+            operationId: "startAuthorizationCode",
+            summary: "Begin an Authorization Code sign-in",
+            tags: ["auth"],
+            responses: {
+              200: { description: "Authorization URL" },
+              404: { description: "Provider unavailable" },
+            },
+          },
           method: "POST",
           path: "/oauth/:provider/start",
           handler: async ({ service, params }) => {
@@ -287,6 +312,16 @@ export function defineAuthService(
         },
         {
           id: "auth.authorizationCode.link.start",
+          spec: {
+            operationId: "startAuthorizationCodeLink",
+            summary: "Begin linking a provider to the signed-in account",
+            tags: ["auth"],
+            responses: {
+              200: { description: "Authorization URL" },
+              401: { description: "Not signed in" },
+              404: { description: "Provider unavailable" },
+            },
+          },
           method: "POST",
           path: "/oauth/:provider/link/start",
           access: { authenticated: true },
@@ -306,6 +341,15 @@ export function defineAuthService(
         },
         {
           id: "auth.authorizationCode.callback",
+          spec: {
+            operationId: "completeAuthorizationCode",
+            summary: "Complete an Authorization Code sign-in",
+            tags: ["auth"],
+            responses: {
+              200: { description: "Signed in" },
+              400: { description: "The callback does not match a pending flow" },
+            },
+          },
           method: "GET",
           path: "/oauth/:provider/callback",
           handler: async ({ service, params, query, request }) => {

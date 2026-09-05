@@ -348,6 +348,30 @@ export function createProjectGatewayRoutes(
   return (["GET", "POST", "PUT", "PATCH", "DELETE"] as const).map(
     (method) => ({
           id: `runtime.projects.proxy.${method.toLowerCase()}`,
+          spec: {
+            operationId: `proxyToProject${method[0]}${method.slice(1).toLowerCase()}`,
+            summary: "Forward a request to a Project's own runtime",
+            description:
+              "Everything after `proxy/` is passed through to the Project runtime the Fabric currently places, with the caller's authority carried along.",
+            tags: ["runtime"],
+            pathParams: {
+              projectId: {
+                type: "string" as const,
+                required: true,
+                description: "The Project to forward to.",
+              },
+              path: {
+                type: "string" as const,
+                required: true,
+                description: "The path within the Project runtime.",
+              },
+            },
+            responses: {
+              200: { description: "The Project runtime's response" },
+              404: { description: "No such Project" },
+              503: { description: "The Project runtime is not reachable" },
+            },
+          },
           method,
           path: "/projects/:projectId/proxy/*path",
           access: {

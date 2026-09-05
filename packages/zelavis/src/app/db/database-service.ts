@@ -208,6 +208,14 @@ export function defineDatabaseService(
       v1: [
         {
           id: "database.menu.tables",
+          spec: {
+            operationId: "listDatabaseTablesMenu",
+            summary: "List tables as dashboard menu items",
+            tags: ["database"],
+            responses: {
+              200: { description: "Menu items" },
+            },
+          },
           method: "GET",
           path: "/menu/tables",
           handler: async ({ service, query }) => {
@@ -280,6 +288,14 @@ export function defineDatabaseMaintenanceService(
       v1: [
         {
           id: "database.system-views.list",
+          spec: {
+            operationId: "listDatabaseSystemViews",
+            summary: "List the maintenance views this database exposes",
+            tags: ["database"],
+            responses: {
+              200: { description: "Views" },
+            },
+          },
           method: "GET",
           path: "/system/views",
           access: { permissions: ["database.inspect"] },
@@ -287,6 +303,15 @@ export function defineDatabaseMaintenanceService(
         },
         {
           id: "database.system-views.query",
+          spec: {
+            operationId: "queryDatabaseSystemView",
+            summary: "Read one maintenance view",
+            tags: ["database"],
+            responses: {
+              200: { description: "Rows" },
+              404: { description: "No such view" },
+            },
+          },
           method: "GET",
           path: "/system/views/:view",
           access: { permissions: ["database.inspect"] },
@@ -307,6 +332,15 @@ export function defineDatabaseMaintenanceService(
         },
         {
           id: "database.backups.export",
+          spec: {
+            operationId: "exportDatabaseBackup",
+            summary: "Export a database backup",
+            tags: ["database"],
+            responses: {
+              200: { description: "Backup exported" },
+              400: { description: "Export failed" },
+            },
+          },
           method: "POST",
           path: "/backups/export",
           access: { permissions: ["database.backup"] },
@@ -323,6 +357,15 @@ export function defineDatabaseMaintenanceService(
         },
         {
           id: "database.backups.restore",
+          spec: {
+            operationId: "restoreDatabaseBackup",
+            summary: "Restore a database backup",
+            tags: ["database"],
+            responses: {
+              200: { description: "Backup restored" },
+              400: { description: "Restore failed" },
+            },
+          },
           method: "POST",
           path: "/backups/restore",
           access: { permissions: ["database.restore"] },

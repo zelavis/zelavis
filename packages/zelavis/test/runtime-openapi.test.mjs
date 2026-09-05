@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createMemorySystemStore, zelavis } from "../dist/index.js";
+import { loadExamplePlugin } from "./fixtures/example-plugin.mjs";
 
 async function spec(options = {}, path = "/zelavis/api/v1/runtime/openapi.json") {
   const runtime = await zelavis({
@@ -66,14 +67,36 @@ test("the whole control plane is described, not only the annotated part", async 
 });
 
 test("an endpoint nobody has documented says so rather than looking described", async () => {
-  const { body } = await spec();
-  const config = body.paths["/zelavis/api/v1/runtime/config"].get;
+  // The Platform's own control plane is fully annotated, so the fallback has
+  // to be proven on an installed service that ships a route without a `spec`
+  // — which is exactly the case the marker exists for.
+  const { body } = await spec({
+    serviceRegistry: {
+      catalog: [
+        { service: await loadExamplePlugin(), status: "installed", source: "official", order: 0 },
+      ],
+    },
+  });
 
-  assert.equal(config["x-zelavis-undocumented"], true);
+  const health = body.paths["/zelavis/api/v1/catalog/health"].get;
+
+  assert.equal(health["x-zelavis-undocumented"], true);
   // A route id is stable and unique, so it stands in for an operation id
   // nobody has written yet.
-  assert.equal(typeof config.operationId, "string");
-  assert.ok(config.operationId.length > 0);
+  assert.equal(typeof health.operationId, "string");
+  assert.ok(health.operationId.length > 0);
+});
+
+test("the Platform's own control plane leaves nothing undocumented", async () => {
+  // The point of annotating every route: a reader generating a client from
+  // this document never meets an operation described only by its route id.
+  const { body } = await spec();
+
+  const undocumented = operations(body)
+    .filter(({ operation }) => operation["x-zelavis-undocumented"])
+    .map(({ method, path }) => `${method.toUpperCase()} ${path}`);
+
+  assert.deepEqual(undocumented, []);
 });
 
 test("declared route metadata survives", async () => {
