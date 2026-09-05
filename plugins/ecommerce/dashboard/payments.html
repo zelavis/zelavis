@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Payments</title>
+    <link rel="stylesheet" href="../../../service-page.css" />
+    <style>
+      .grid { display: grid; gap: 0.75rem; }
+      .row {
+        display: flex;
+        gap: 0.75rem;
+        align-items: baseline;
+        justify-content: space-between;
+        flex-wrap: wrap;
+      }
+      .name { font-weight: 600; }
+      .empty { color: var(--muted-foreground); }
+      .error { border-color: var(--destructive); color: var(--destructive); }
+      .tag {
+        font-size: 0.75rem;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 0.05rem 0.5rem;
+        color: var(--muted-foreground);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="zv-stack">
+      <section class="zv-card zv-stack">
+        <div>
+          <h2>Active gateways</h2>
+          <p class="zv-muted" id="active-hint">Loading…</p>
+        </div>
+        <div class="grid" id="active"></div>
+      </section>
+
+      <section class="zv-card zv-stack">
+        <div>
+          <h2>Payment plugins</h2>
+          <p class="zv-muted" id="catalogue-hint">Loading…</p>
+        </div>
+        <div class="grid" id="catalogue"></div>
+      </section>
+    </main>
+
+    <script type="module">
+      // Four levels up from /runtime/service-page-assets/<service>/<bundle>/<file>
+      // is the API root this page was served from.
+      const apiRoot = new URL("../../../../", location.href).pathname.replace(/\/$/, "");
+      // The plugin these gateways extend. Named explicitly: a catalogue asking
+      // for the wrong owner lists nothing while looking like it worked.
+      const OWNER = "@zelavis/ecommerce";
+
+      const el = (id) => document.getElementById(id);
+
+      async function api(path) {
+        const response = await fetch(apiRoot + path, {
+          headers: { accept: "application/json" },
+        });
+        const text = await response.text();
+        const body = text ? JSON.parse(text) : undefined;
+        if (!response.ok) {
+          throw new Error(body?.error ?? `Request failed (${response.status})`);
+        }
+        return body;
+      }
+
+      function card(children) {
+        const row = document.createElement("div");
+        row.className = "zv-card row";
+        for (const child of children) row.append(child);
+        return row;
+      }
+
+      function text(value, className) {
+        const span = document.createElement("span");
+        if (className) span.className = className;
+        span.textContent = value;
+        return span;
+      }
+
+      async function renderActive() {
+        const list = el("active");
+        list.replaceChildren();
+        try {
+          const { providers = [] } = await api("/commerce/payments/providers");
+          el("active-hint").textContent = providers.length
+            ? "Gateways this installation can take payments through."
+            : "No payment gateway is registered.";
+          for (const provider of providers) {
+            const name = provider.name ?? provider;
+            list.append(card([text(name, "name"), text("registered", "tag")]));
+          }
+        } catch (cause) {
+          el("active-hint").textContent = cause.message;
+          el("active-hint").classList.add("error");
+        }
+      }
+
+      async function renderCatalogue() {
+        const list = el("catalogue");
+        list.replaceChildren();
+        try {
+          // Scoped to what extends this plugin. A general catalogue would list
+          // a dashboard theme beside a payment gateway and mean nothing here.
+          const { extensionPoints = [] } = await api(
+            `/runtime/extensions?owner=${encodeURIComponent(OWNER)}`,
+          );
+          const extensions = extensionPoints[0]?.extensions ?? [];
+          el("catalogue-hint").textContent = extensions.length
+            ? "Gateways that can be installed into this plugin."
+            : "No payment plugins are registered on this installation.";
+          for (const extension of extensions) {
+            list.append(
+              card([
+                text(extension.marketplace?.title ?? extension.name, "name"),
+                text(extension.status, "tag"),
+              ]),
+            );
+          }
+        } catch (cause) {
+          el("catalogue-hint").textContent = cause.message;
+          el("catalogue-hint").classList.add("error");
+        }
+      }
+
+      await Promise.all([renderActive(), renderCatalogue()]);
+    </script>
+  </body>
+</html>

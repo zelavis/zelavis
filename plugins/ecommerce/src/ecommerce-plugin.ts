@@ -1,3 +1,4 @@
+import { ecommerceDashboardPages } from "./generated/dashboard-pages.js";
 import {
   createJsonErrorResponse,
   createMappedJsonErrorResponse,
@@ -418,6 +419,11 @@ function parseSubscriptionCreation(body: unknown): {
  */
 export const ecommercePlugin = Object.freeze({
   name: "@zelavis/ecommerce",
+  // Shipped as page assets rather than a bundle. The menu used to point at
+  // `bundle: "dashboard"`, which resolves through the bundle store, and
+  // nothing ever uploaded these files into one — so every page answered
+  // "Service asset not found" while the plugin looked installed.
+  pageAssets: ecommerceDashboardPages,
   version: "1.0.1-alpha.2",
   kind: "plugin",
   capabilities: Object.freeze(["api:routes", "dashboard:menu"]),
@@ -428,8 +434,7 @@ export const ecommercePlugin = Object.freeze({
     page: {
       id: "dashboard",
       title: "Commerce",
-      bundle: "dashboard",
-      file: "dashboard.html",
+          file: "dashboard.html",
     },
     items: [
       {
@@ -438,7 +443,6 @@ export const ecommercePlugin = Object.freeze({
         page: {
           id: "products",
           title: "Products",
-          bundle: "dashboard",
           file: "products.html",
         },
       },
@@ -448,8 +452,16 @@ export const ecommercePlugin = Object.freeze({
         page: {
           id: "orders",
           title: "Orders",
-          bundle: "dashboard",
           file: "orders.html",
+        },
+      },
+      {
+        title: "Payments",
+        path: "/commerce/payments",
+        page: {
+          id: "payments",
+          title: "Payments",
+          file: "payments.html",
         },
       },
       {
@@ -461,8 +473,7 @@ export const ecommercePlugin = Object.freeze({
             page: {
               id: "customers",
               title: "Customers",
-              bundle: "dashboard",
-              file: "customers.html",
+          file: "customers.html",
             },
           },
           {
@@ -471,8 +482,7 @@ export const ecommercePlugin = Object.freeze({
             page: {
               id: "coupons",
               title: "Coupons",
-              bundle: "dashboard",
-              file: "coupons.html",
+          file: "coupons.html",
             },
           },
         ],

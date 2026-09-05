@@ -445,6 +445,13 @@ export function stripeService(options: StripeServiceOptions = {}) {
     // satisfies, so two commerce plugins scanning for it collect each other's
     // gateways and neither can tell.
     capabilities: Object.freeze(["@zelavis/ecommerce:payments"]),
+    // Named for a catalogue: a list showing package names tells an operator
+    // less than the gateway they are actually choosing between.
+    marketplace: Object.freeze({
+      title: "Stripe",
+      summary: "Take card payments and manage subscriptions through Stripe.",
+      categories: Object.freeze(["payments"]),
+    }),
     service: {
       name: "stripe",
       register(api: EcommerceApi) {

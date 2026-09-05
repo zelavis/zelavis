@@ -203,6 +203,11 @@ an exported type is never mistaken for an operational distributed feature.
   only matching-origin browser requests receive session cookies, cookie
   mutations require a same-origin `Origin`, and critical Project, Assistant,
   service-mutation, and settings-mutation endpoints declare core permissions.
+- [x] The ecommerce plugin has a working dashboard and a payments settings
+  page listing its gateways. Its menu had never reached the dashboard — the
+  mount check ignored a service whose only contribution is a menu — and its
+  pages pointed at a bundle nothing uploaded, so all five answered "Service
+  asset not found".
 - [x] Payment gateways declare `@zelavis/ecommerce:payments` rather than the
   bare `provider:payments` domain, so they are listed under the plugin they
   extend and cannot be collected by another commerce plugin. Both also

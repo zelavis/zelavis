@@ -705,6 +705,13 @@ export function paypalService(options: PayPalServiceOptions = {}) {
     // satisfies, so two commerce plugins scanning for it collect each other's
     // gateways and neither can tell.
     capabilities: Object.freeze(["@zelavis/ecommerce:payments"]),
+    // Named for a catalogue: a list showing package names tells an operator
+    // less than the gateway they are actually choosing between.
+    marketplace: Object.freeze({
+      title: "PayPal",
+      summary: "Take payments and manage subscriptions through PayPal.",
+      categories: Object.freeze(["payments"]),
+    }),
     service: {
       name: "paypal",
       register(api: EcommerceApi) {

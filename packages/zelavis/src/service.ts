@@ -642,6 +642,13 @@ export async function activateServiceRegistry<
     service.basePath !== undefined ||
     service.service !== undefined ||
     Boolean(service.authenticators?.length) ||
+    // A menu is a contribution too. A plugin whose routes are added during
+    // setup — the ecommerce plugin adds its own `commerce` service — has none
+    // of the fields above on itself, so its menu was dropped and its pages
+    // were unreachable while everything looked installed.
+    service.menu !== undefined ||
+    Boolean(service.menus?.length) ||
+    Boolean(service.pageAssets && Object.keys(service.pageAssets).length > 0) ||
     Object.values(service.api ?? {}).some((routes) => routes.length > 0);
 
   for (const entry of installedServices) {
