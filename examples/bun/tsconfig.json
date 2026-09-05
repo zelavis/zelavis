@@ -7,40 +7,38 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "noEmit": true,
-    "baseUrl": "../..",
-    "typeRoots": [
-      "packages/zelavis/node_modules/@types",
-      "node_modules/@types"
-    ],
     "paths": {
       "@zelavis/ecommerce": [
-        "plugins/ecommerce/src/index.ts"
+        "../../plugins/ecommerce/src/index.ts"
       ],
       "@zelavis/ecommerce-paypal": [
-        "plugins/ecommerce/plugins/paypal/src/index.ts"
+        "../../plugins/ecommerce/plugins/paypal/src/index.ts"
       ],
       "@zelavis/ecommerce-stripe": [
-        "plugins/ecommerce/plugins/stripe/src/index.ts"
+        "../../plugins/ecommerce/plugins/stripe/src/index.ts"
       ],
       "bun:sqlite": [
-        "packages/zelavis/src/app/db/adapters/bun-sqlite.d.ts"
+        "../../packages/zelavis/src/app/db/adapters/bun-sqlite.d.ts"
       ],
       "zelavis": [
-        "packages/zelavis/src/index.ts"
+        "../../packages/zelavis/src/index.ts"
       ],
       "zelavis/app/auth": [
-        "packages/zelavis/src/app/auth/index.ts"
+        "../../packages/zelavis/src/app/auth/index.ts"
       ],
       "zelavis/app/db": [
-        "packages/zelavis/src/app/db/index.ts"
+        "../../packages/zelavis/src/app/db/index.ts"
       ],
       "zelavis/runtime": [
-        "packages/zelavis/src/core/runtime/index.ts"
+        "../../packages/zelavis/src/core/runtime/index.ts"
       ],
       "zelavis/adapters/bun": [
-        "packages/zelavis/src/adapters/bun.ts"
+        "../../packages/zelavis/src/adapters/bun.ts"
       ]
-    }
+    },
+    "types": [
+      "node"
+    ]
   },
   "include": [
     "index.ts",

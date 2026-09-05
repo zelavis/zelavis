@@ -7,43 +7,41 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "noEmit": true,
-    "baseUrl": "../..",
-    "typeRoots": [
-      "packages/zelavis/node_modules/@types",
-      "node_modules/@types"
-    ],
     "paths": {
       "@zelavis/app-auth-email-password": [
-        "plugins/auth-email-password/src/index.ts"
+        "../../plugins/auth-email-password/src/index.ts"
       ],
       "@zelavis/ecommerce": [
-        "plugins/ecommerce/src/index.ts"
+        "../../plugins/ecommerce/src/index.ts"
       ],
       "@zelavis/ecommerce-paypal": [
-        "plugins/ecommerce/plugins/paypal/src/index.ts"
+        "../../plugins/ecommerce/plugins/paypal/src/index.ts"
       ],
       "@zelavis/ecommerce-stripe": [
-        "plugins/ecommerce/plugins/stripe/src/index.ts"
+        "../../plugins/ecommerce/plugins/stripe/src/index.ts"
       ],
       "zelavis": [
-        "packages/zelavis/src/index.ts"
+        "../../packages/zelavis/src/index.ts"
       ],
       "zelavis/app/auth": [
-        "packages/zelavis/src/app/auth/index.ts"
+        "../../packages/zelavis/src/app/auth/index.ts"
       ],
       "zelavis/app/db": [
-        "packages/zelavis/src/app/db/index.ts"
+        "../../packages/zelavis/src/app/db/index.ts"
       ],
       "zelavis/runtime": [
-        "packages/zelavis/src/core/runtime/index.ts"
+        "../../packages/zelavis/src/core/runtime/index.ts"
       ],
       "zelavis/adapters/node": [
-        "packages/zelavis/src/adapters/node.ts"
+        "../../packages/zelavis/src/adapters/node.ts"
       ],
       "zelavis/runtimes/node": [
-        "packages/zelavis/src/runtimes/node.ts"
+        "../../packages/zelavis/src/runtimes/node.ts"
       ]
-    }
+    },
+    "types": [
+      "node"
+    ]
   },
   "include": [
     "index.ts"

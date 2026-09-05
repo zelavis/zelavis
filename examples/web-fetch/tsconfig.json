@@ -1,16 +1,24 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["es2022", "dom", "dom.iterable"],
+    "lib": [
+      "es2022",
+      "dom",
+      "dom.iterable"
+    ],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "baseUrl": "../..",
     "paths": {
-      "zelavis": ["packages/zelavis/src/index.ts"]
-    }
+      "zelavis": [
+        "../../packages/zelavis/src/index.ts"
+      ]
+    },
+    "types": []
   },
-  "include": ["index.ts"]
+  "include": [
+    "index.ts"
+  ]
 }
