@@ -44,7 +44,7 @@ Payment providers (such as `@zelavis/ecommerce-stripe` or `@zelavis/ecommerce-pa
 ```ts
 export const stripeService: ZelavisRuntimeService = Object.freeze({
   name: "@zelavis/ecommerce-stripe",
-  kind: "provider",
+  kind: "plugin",
   capabilities: ["@zelavis/ecommerce:payments"],
   service: {
     name: "stripe",

@@ -56,5 +56,3 @@ export function oidcBearerService(options: OidcBearerPluginOptions) {
     service: { name: options.providerName ?? "oidc", register() {} },
   });
 }
-
-export const oidcService = oidcBearerService;

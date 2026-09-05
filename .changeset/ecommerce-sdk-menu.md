@@ -1,5 +1,8 @@
 ---
 "@zelavis/ecommerce": major
+"@zelavis/ecommerce-stripe": patch
+"@zelavis/ecommerce-paypal": patch
+"@zelavis/app-auth-oidc": patch
 "zelavis": patch
 ---
 
@@ -24,3 +27,16 @@ path was the broken one.
 Breaking: `ecommercePlugin` can no longer be imported and used directly. Load
 it through `loadPluginPackage` with the exported `ECOMMERCE_MANIFEST`, which is
 what an installation does.
+
+Also clears what an audit of the first-party plugins turned up:
+
+- Both payment gateways still carried a legacy `main` field, which the manifest
+  contract refuses — so even with the `zelavis` block added they could not have
+  been installed.
+- `@zelavis/ecommerce` declared its capabilities only on the service object,
+  not in its manifest, unlike every other plugin.
+- `@zelavis/app-auth-oidc` exported an `oidcService` alias nothing imported.
+- The ecommerce README documented `kind: "provider"`, removed with the taxonomy.
+
+A test now validates every first-party manifest against the real contract, so
+they cannot drift back.

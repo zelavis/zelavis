@@ -203,6 +203,11 @@ an exported type is never mistaken for an operational distributed feature.
   only matching-origin browser requests receive session cookies, cookie
   mutations require a same-origin `Origin`, and critical Project, Assistant,
   service-mutation, and settings-mutation endpoints declare core permissions.
+- [x] Every first-party plugin manifest validates against the real contract,
+  pinned by a test. Two payment gateways carried a legacy `main` the contract
+  refuses, one plugin declared capabilities only on its service object, and an
+  unused alias survived a rename — none of which install-time validation would
+  have forgiven.
 - [x] The plugin loader carries everything a plugin declares. It built its
   service object field by field and omitted `setup`, so a plugin registering
   its services there installed as a package with a menu and no endpoints while

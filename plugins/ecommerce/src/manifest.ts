@@ -19,5 +19,8 @@ export const ECOMMERCE_MANIFEST = Object.freeze({
       import: "./dist/index.js",
     }),
   }),
-  zelavis: Object.freeze({ kind: "plugin" }),
+  zelavis: Object.freeze({
+    kind: "plugin",
+    capabilities: Object.freeze(["api:routes", "dashboard:menu"]),
+  }),
 });
