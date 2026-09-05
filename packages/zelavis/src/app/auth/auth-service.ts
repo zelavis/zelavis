@@ -874,11 +874,10 @@ export function defineAuthService(
     capabilities: Object.freeze(["api:routes", "dashboard:menu"]),
     authenticators: [auth.requestAuthenticator],
     basePath: "/auth",
-    menu: Object.freeze({
-      title: "Auth",
-      path: "/auth",
-      surface: "core" as const,
-    }),
+    // No menu. Core auth is the API and the authority; the settings page is
+    // `@zelavis/auth`, a product service. Both contributing an "Auth" entry
+    // would put two of them in the sidebar, and the one without a page would
+    // lead nowhere.
     service: auth,
     api: {
       v1: routes,

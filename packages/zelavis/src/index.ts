@@ -55,6 +55,7 @@ import {
   type ZelavisPlatformFrontend,
   type ZelavisPlatformFrontendFactory,
 } from "./platform/frontend-host.js";
+import { createZelavisAuthSettingsService } from "./platform/auth-settings.js";
 import { createZelavisMarketplaceService } from "./platform/marketplace.js";
 import { createZelavisCoreService } from "./platform/core-service.js";
 import { createProjectGatewayRoutes } from "./platform/project-gateway.js";
@@ -607,6 +608,7 @@ const RESERVED_CORE_SERVICE_NAMES = new Set([
   "zelavis/auth",
   "zelavis/platform",
   "@zelavis/marketplace",
+  "@zelavis/auth",
   "zelavis/fabric",
   "@zelavis/ui",
   "@zelavis/ui:app",
@@ -3515,6 +3517,9 @@ export async function zelavis(
   const subsystemServices = [
     platformCoreService,
     await createZelavisMarketplaceService(),
+    // Composed only where auth is: a settings page for a service that is not
+    // running would configure nothing.
+    ...(authService ? [await createZelavisAuthSettingsService()] : []),
     fabricCoreService,
     databaseService,
     authService,

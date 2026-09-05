@@ -143,12 +143,12 @@
   },
   "scripts": {
     "clean": "node scripts/clean-dist.mjs",
-    "build": "pnpm run clean && pnpm run build:bootstrap && pnpm --filter @zelavis/marketplace build && tsc -p tsconfig.json",
-    "build:runtime": "pnpm run clean && pnpm run build:bootstrap && pnpm --filter @zelavis/marketplace build && tsc -p tsconfig.json",
+    "build": "pnpm run clean && pnpm run build:bootstrap && pnpm --filter @zelavis/marketplace build && pnpm --filter @zelavis/auth build && tsc -p tsconfig.json",
+    "build:runtime": "pnpm run clean && pnpm run build:bootstrap && pnpm --filter @zelavis/marketplace build && pnpm --filter @zelavis/auth build && tsc -p tsconfig.json",
     "build:sdk": "pnpm run build:sdk:browser && pnpm run build:sdk:node",
     "build:sdk:browser": "tsc -p tsconfig.sdk.browser.json",
     "build:sdk:node": "tsc -p tsconfig.sdk.node.json",
-    "typecheck": "pnpm run build:bootstrap && pnpm --filter @zelavis/marketplace build && tsc -p tsconfig.json --noEmit",
+    "typecheck": "pnpm run build:bootstrap && pnpm --filter @zelavis/marketplace build && pnpm --filter @zelavis/auth build && tsc -p tsconfig.json --noEmit",
     "test": "pnpm --filter @zelavis/ui build:plugin && pnpm run build && pnpm --filter @zelavis/ecommerce build && pnpm --filter @zelavis/app-auth-oidc build && node --test test/*.test.mjs",
     "update:wordpress": "node scripts/update-wordpress-release.mjs",
     "build:bootstrap": "tsc -p tsconfig.bootstrap.json"
@@ -170,6 +170,7 @@
     "url": "https://github.com/zelavis/zelavis/issues"
   },
   "dependencies": {
+    "@zelavis/auth": "workspace:*",
     "@zelavis/marketplace": "workspace:*",
     "better-sqlite3": "^12.10.0",
     "effect": "4.0.0-rc.111",

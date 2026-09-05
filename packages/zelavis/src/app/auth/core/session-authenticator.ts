@@ -87,14 +87,33 @@ export function createSessionAuthenticator(
       const token = bearer ?? cookie;
       if (!token) return undefined;
 
+      /**
+       * A credential the caller chose to send is different from one the
+       * browser attached on its own.
+       *
+       * A bearer token is an assertion: presenting an invalid one is an error
+       * worth reporting. A session cookie is ambient — it rides along on every
+       * request whether or not the caller meant to authenticate — so a stale
+       * one means "not signed in", not "request refused".
+       *
+       * Rejecting on a stale cookie locked people out: the sign-in and
+       * bootstrap endpoints are public, but a cookie left over from an expired
+       * session, a revoked one, or another installation on the same host made
+       * even those answer 401, and the only way through was clearing cookies
+       * by hand.
+       */
+      const anonymousOnFailure = bearer === undefined;
+
       const session = await options.sessions.resolveToken(token);
       if (!session) {
+        if (anonymousOnFailure) return undefined;
         throw new ZelavisAuthenticationError("Invalid or expired session.", {
           challenge: { scheme: "Bearer" },
         });
       }
       const account = await options.accounts.findById(session.accountId);
       if (!account) {
+        if (anonymousOnFailure) return undefined;
         throw new ZelavisAuthenticationError("Session account no longer exists.", {
           challenge: { scheme: "Bearer" },
         });
