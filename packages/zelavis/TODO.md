@@ -413,14 +413,27 @@ an exported type is never mistaken for an operational distributed feature.
   no digest to verify against — a forge builds archives on demand, so the bytes
   are not stable for the same commit — so trust rests on the allow-listed forge
   and the pinned commit, and what actually arrived is recorded.
-- [ ] Scaffold a frontend from a `create-*` package. Deliberately not `npx`:
+- [x] Scaffold a frontend from a `create-*` package. Deliberately not `npx`:
   npx resolves and installs a whole dependency tree from whatever registry npm
   is configured with, which would route around the source policy entirely and
   make it decorative. The shape that works is to acquire the create package
   through the verified npm path, then run its declared bin in an isolated
   working directory with no network, and register the result as a frontend
   Project. That is Project scaffolding rather than service acquisition, so it
-  belongs with the frontend creation flow.
+  belongs with the frontend creation flow. `POST /runtime/services` now takes
+  `scaffoldFrom` alongside `packageSource`: the create package is acquired
+  through the verified npm path, its declared bin runs as a child under the
+  permission model — no child processes, no native addons, reads confined to
+  the package and writes to the output directory — with a preload that removes
+  `net.connect`, `Socket.prototype.connect`, `tls.connect`, `http`/`https`
+  requests, `dgram`, DNS, and `fetch` from the module layer the child sees. The
+  preload patches through `createRequire` rather than `import`, because a
+  built-in's ESM namespace snapshots its named exports on first import and a
+  later patch would leave `import { lookup } from "node:dns"` pointing at the
+  real function. What the run produced is validated as a Zelavis frontend and
+  registered like any other installed package, so it is immediately selectable
+  as a Project recipe. This is a boundary against a create package doing
+  something unexpected, not an OS sandbox, and is documented as such.
 - [x] Place an owned Project with its owner. An owned Project is confined to
   the nodes its owner occupies, so a Project's frontend cannot land on a
   different machine than the Project it fronts — the group rule beats the

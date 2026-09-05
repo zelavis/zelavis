@@ -460,6 +460,21 @@ export interface ZelavisServicePackageAcquireResult
   integrity: string;
 }
 
+export interface ZelavisServicePackageScaffoldInput {
+  /** The create package: `npm:create-<name>@<version>`. */
+  reference: string;
+  /**
+   * Which of the package's commands to run.
+   *
+   * Only needed when the package declares more than one. Guessing which
+   * command scaffolds a project is how a run silently produces the wrong
+   * thing, so an ambiguous package is refused instead.
+   */
+  command?: string;
+  /** Arguments passed through to the create package. */
+  args?: readonly string[];
+}
+
 export interface ZelavisServicePackageInstaller {
   install(
     input: ZelavisServicePackageInstallInput,
@@ -475,6 +490,19 @@ export interface ZelavisServicePackageInstaller {
    */
   acquire?(
     input: ZelavisServicePackageAcquireInput,
+  ):
+    | Promise<ZelavisServicePackageAcquireResult>
+    | ZelavisServicePackageAcquireResult;
+  /**
+   * Scaffolds a frontend package by running a `create-*` package.
+   *
+   * Optional, and gated on the same source policy as `acquire`, because it
+   * begins with the same verified acquisition: a host that acquires nothing
+   * has no create package to run. The result is a specifier the registry
+   * installs like any other package.
+   */
+  scaffold?(
+    input: ZelavisServicePackageScaffoldInput,
   ):
     | Promise<ZelavisServicePackageAcquireResult>
     | ZelavisServicePackageAcquireResult;
@@ -565,6 +593,14 @@ export interface ZelavisServiceActivationCapabilities {
    * by exposing `acquire` only when acquisition is actually available.
    */
   supportsPackageAcquisition: boolean;
+  /**
+   * Whether a frontend can be scaffolded by running a `create-*` package.
+   *
+   * Separate from acquisition because it is a stronger claim: the host has to
+   * be able to run a child process under the isolation the scaffold requires,
+   * not only download and unpack bytes.
+   */
+  supportsFrontendScaffolding?: boolean;
   supportsIsolatedExecution: boolean;
   description?: string;
 }
@@ -847,6 +883,9 @@ async function readDashboardServiceRegistryCreate(
   const sourceReference =
     typeof input.packageSource === "string" ? input.packageSource.trim() : "";
 
+  const scaffoldReference =
+    typeof input.scaffoldFrom === "string" ? input.scaffoldFrom.trim() : "";
+
   if (!specifier && sourceReference) {
     if (!options.packageInstaller?.acquire) {
       throw new ZelavisValidationError(
@@ -858,6 +897,32 @@ async function readDashboardServiceRegistryCreate(
       reference: sourceReference,
     });
     specifier = acquired.specifier;
+  }
+
+  // Scaffolding produces a package the same way acquiring one does, so it
+  // joins the registry through the same path rather than a parallel install
+  // flow that would have to repeat the loading and naming below.
+  if (!specifier && scaffoldReference) {
+    if (!options.packageInstaller?.scaffold) {
+      throw new ZelavisValidationError(
+        "This installation cannot scaffold a frontend from a create package.",
+      );
+    }
+
+    const scaffolded = await options.packageInstaller.scaffold({
+      reference: scaffoldReference,
+      ...(typeof input.scaffoldCommand === "string" && input.scaffoldCommand.trim()
+        ? { command: input.scaffoldCommand.trim() }
+        : {}),
+      ...(Array.isArray(input.scaffoldArgs)
+        ? {
+            args: input.scaffoldArgs.filter(
+              (value): value is string => typeof value === "string",
+            ),
+          }
+        : {}),
+    });
+    specifier = scaffolded.specifier;
   }
 
   if (!specifier && isServiceUploadFile(uploadedFile)) {
@@ -1799,6 +1864,9 @@ async function resolveRuntimeManagementCore(
               supportsPackageUploads: Boolean(context.servicePackageInstaller),
               supportsPackageAcquisition: Boolean(
                 context.servicePackageInstaller?.acquire,
+              ),
+              supportsFrontendScaffolding: Boolean(
+                context.servicePackageInstaller?.scaffold,
               ),
             },
           }
@@ -4047,6 +4115,9 @@ export class Zelavis {
               ),
               supportsPackageAcquisition: Boolean(
                 resolved.context.resources.servicePackages?.acquire,
+              ),
+              supportsFrontendScaffolding: Boolean(
+                resolved.context.resources.servicePackages?.scaffold,
               ),
               supportsIsolatedExecution: false,
               description:
