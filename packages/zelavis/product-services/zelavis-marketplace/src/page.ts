@@ -7,9 +7,18 @@
  * privileged channel here: everything this page can do, an installed service's
  * page can do, which is the point of building the marketplace this way.
  *
- * Styling comes from the dashboard's own design tokens over the service page
- * stylesheet, so the page follows the installation's palette without knowing
- * anything about the dashboard's components.
+ * It composes the Platform's service page elements rather than its own markup.
+ * That is the difference between this and the placeholder it replaces: the
+ * page describes what it shows — a section, a card, a title with a detail
+ * line, a badge — and the design system decides how those look. A frontend
+ * that supplies its own element library restyles this page without it
+ * changing, and a service that wants to look like the marketplace writes the
+ * same tags rather than copying its CSS.
+ *
+ * The frame stays. Shadow DOM scopes styles, not scripts, and rendering an
+ * installed service's page inside the dashboard's document would give its code
+ * the dashboard's origin and its session. The frame is the isolation boundary;
+ * the elements are how a page inside it stops looking like a placeholder.
  */
 export const MARKETPLACE_PAGE = `<!doctype html>
 <html lang="en">
@@ -18,54 +27,49 @@ export const MARKETPLACE_PAGE = `<!doctype html>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Marketplace</title>
     <link rel="stylesheet" href="../../../service-page.css" />
+    <script type="module" src="../../../service-elements.js"></script>
     <style>
-      .grid { display: grid; gap: 0.75rem; }
-      .name { font-weight: 600; }
-      .actions { display: flex; gap: 0.5rem; align-items: center; }
-      .empty { color: var(--muted-foreground); }
-      .error {
-        border-color: var(--destructive);
-        color: var(--destructive);
-      }
-      form { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-      input {
-        font: inherit;
-        flex: 1 1 18rem;
-        padding: 0.375rem 0.625rem;
-        border-radius: 0.5rem;
-        border: 1px solid var(--border);
-        background: var(--background);
-        color: var(--foreground);
-      }
+      /* Layout between components is the page's business; how a component
+         looks is not, which is why there is so little here. */
+      form { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: end; }
+      [data-filter] { max-width: 20rem; }
     </style>
   </head>
   <body>
-    <main class="zv-stack">
-      <section class="zv-card zv-stack">
-        <div>
-          <h2>Install from a source</h2>
-          <p class="zv-muted" id="acquire-hint">Checking what this installation allows…</p>
-        </div>
-        <form id="acquire" hidden>
-          <input
-            id="reference"
-            name="reference"
-            placeholder="npm:@scope/package@1.2.3"
-            aria-label="Package source reference"
-            required
-          />
-          <button class="zv-button" type="submit">Install</button>
-        </form>
-        <p id="acquire-status" class="zv-muted" role="status" hidden></p>
-      </section>
+    <zv-page heading="Marketplace" description="Services this installation knows about, and packages it can install.">
+      <zv-section
+        heading="Install from a source"
+        description="A package is acquired through the sources this installation trusts."
+      >
+        <zv-card>
+          <zv-stack>
+            <zv-status id="acquire-hint">Checking what this installation allows…</zv-status>
+            <form id="acquire" hidden>
+              <zv-field
+                id="reference"
+                label="Package source"
+                placeholder="npm:@scope/package@1.2.3"
+                required
+              ></zv-field>
+              <zv-button id="install" type="submit">Install</zv-button>
+            </form>
+            <zv-status id="acquire-status"></zv-status>
+          </zv-stack>
+        </zv-card>
+      </zv-section>
 
-      <section class="zv-stack">
-        <h1>Services</h1>
-        <div id="services" class="grid" aria-live="polite">
-          <p class="empty">Loading…</p>
-        </div>
-      </section>
-    </main>
+      <zv-section id="services-section" heading="Services">
+        <zv-field
+          data-filter
+          id="filter"
+          label="Filter"
+          placeholder="Name or status"
+        ></zv-field>
+        <zv-stack id="services" aria-live="polite">
+          <zv-empty>Loading…</zv-empty>
+        </zv-stack>
+      </zv-section>
+    </zv-page>
 
     <script type="module">
       // The page is served at
@@ -78,6 +82,12 @@ export const MARKETPLACE_PAGE = `<!doctype html>
       const statusEl = document.getElementById("acquire-status");
       const formEl = document.getElementById("acquire");
       const hintEl = document.getElementById("acquire-hint");
+      const referenceEl = document.getElementById("reference");
+      const installEl = document.getElementById("install");
+      const filterEl = document.getElementById("filter");
+      const sectionEl = document.getElementById("services-section");
+
+      let services = [];
 
       async function api(path, init) {
         // Same-origin, so the session cookie goes along on its own.
@@ -93,57 +103,71 @@ export const MARKETPLACE_PAGE = `<!doctype html>
       }
 
       function card(service) {
-        const element = document.createElement("div");
-        element.className = "zv-card zv-row";
+        const card = document.createElement("zv-card");
+        const row = document.createElement("zv-row");
 
-        const left = document.createElement("div");
-        const name = document.createElement("div");
-        name.className = "name";
-        name.textContent = service.marketplace?.title || service.name;
-        const detail = document.createElement("div");
-        detail.className = "zv-muted";
-        detail.textContent =
+        const title = document.createElement("zv-title");
+        title.textContent = service.marketplace?.title || service.name;
+        const detail =
           service.marketplace?.summary ||
           [service.name, service.version].filter(Boolean).join(" · ");
-        left.append(name, detail);
+        if (detail) title.setAttribute("detail", detail);
 
-        const right = document.createElement("div");
-        right.className = "actions";
-        const badge = document.createElement("span");
-        badge.className = "zv-badge";
+        const badge = document.createElement("zv-badge");
         badge.textContent = service.status;
-        right.append(badge);
+        if (service.status === "installed" || service.status === "active") {
+          badge.setAttribute("tone", "active");
+        }
 
-        element.append(left, right);
-        return element;
+        row.append(title, badge);
+        card.append(row);
+        return card;
       }
 
-      function fail(message) {
-        servicesEl.replaceChildren();
-        const element = document.createElement("div");
-        element.className = "zv-card error";
-        element.textContent = message;
-        servicesEl.append(element);
+      function message(text, tone) {
+        const empty = document.createElement("zv-empty");
+        empty.textContent = text;
+        if (tone) empty.setAttribute("tone", tone);
+        return empty;
+      }
+
+      function paint() {
+        const needle = filterEl.value.trim().toLowerCase();
+        const matching = needle
+          ? services.filter((service) =>
+              [service.name, service.status, service.marketplace?.title]
+                .filter(Boolean)
+                .some((value) => value.toLowerCase().includes(needle)),
+            )
+          : services;
+
+        sectionEl.setAttribute(
+          "description",
+          matching.length === services.length
+            ? \`\${services.length} registered\`
+            : \`\${matching.length} of \${services.length} registered\`,
+        );
+
+        servicesEl.replaceChildren(
+          ...(matching.length === 0
+            ? [
+                message(
+                  services.length === 0
+                    ? "No services are registered yet."
+                    : "Nothing matches that filter.",
+                ),
+              ]
+            : matching.map(card)),
+        );
       }
 
       async function refresh() {
         try {
-          const { services = [] } = await api("/runtime/services");
-          servicesEl.replaceChildren();
-
-          if (services.length === 0) {
-            const empty = document.createElement("p");
-            empty.className = "empty";
-            empty.textContent = "No services are registered yet.";
-            servicesEl.append(empty);
-            return;
-          }
-
-          for (const service of services) {
-            servicesEl.append(card(service));
-          }
+          const body = await api("/runtime/services");
+          services = body.services ?? [];
+          paint();
         } catch (error) {
-          fail(error.message);
+          servicesEl.replaceChildren(message(error.message, "danger"));
         }
       }
 
@@ -164,17 +188,19 @@ export const MARKETPLACE_PAGE = `<!doctype html>
           }
         } catch (error) {
           hintEl.textContent = error.message;
+          hintEl.setAttribute("tone", "danger");
         }
       }
 
+      filterEl.addEventListener("input", paint);
+
       formEl.addEventListener("submit", async (event) => {
         event.preventDefault();
-        const reference = document.getElementById("reference").value.trim();
+        const reference = referenceEl.value.trim();
         if (!reference) return;
 
-        const button = formEl.querySelector("button");
-        button.disabled = true;
-        statusEl.hidden = false;
+        installEl.setAttribute("busy", "");
+        statusEl.removeAttribute("tone");
         statusEl.textContent = \`Installing \${reference}…\`;
 
         try {
@@ -187,12 +213,13 @@ export const MARKETPLACE_PAGE = `<!doctype html>
             body: JSON.stringify({ packageSource: reference }),
           });
           statusEl.textContent = \`Installed \${reference}.\`;
-          document.getElementById("reference").value = "";
+          referenceEl.value = "";
           await refresh();
         } catch (error) {
           statusEl.textContent = error.message;
+          statusEl.setAttribute("tone", "danger");
         } finally {
-          button.disabled = false;
+          installEl.removeAttribute("busy");
         }
       });
 

@@ -768,10 +768,37 @@ test('@smoke marketplace renders the page its own service ships', async ({
   // frame is same-origin with the Platform, so it uses the same session the
   // dashboard does — no privileged channel, and nothing a third-party
   // service's page could not also do.
-  await expect(frame.locator('#services .zv-card').first()).toBeVisible()
+  await expect(frame.locator('#services zv-card').first()).toBeVisible()
 
   // The design tokens reached the framed document.
   await expect(frame.locator('body')).toHaveCSS('color', /oklch/)
+})
+
+test('@smoke the marketplace page renders real components, not a placeholder', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop')
+
+  await gotoDashboard(page, '/marketplace')
+
+  const frame = page.frameLocator('zelavis-service-frame iframe')
+  // Visible only if the element upgraded: `:host { display: block }` and the
+  // padding live in its shadow root, so an unupgraded `zv-card` is an inline
+  // element with no box at all.
+  const card = frame.locator('#services zv-card').first()
+  await expect(card).toBeVisible()
+
+  const rendered = await card.evaluate((element) => ({
+    upgraded: Boolean(element.shadowRoot),
+    // The token reached through the shadow boundary, which is what lets a
+    // frontend restyle every service page without touching one.
+    border: getComputedStyle(element).borderTopColor,
+    padding: getComputedStyle(element).paddingLeft,
+  }))
+
+  expect(rendered.upgraded).toBe(true)
+  expect(rendered.padding).not.toBe('0px')
+  expect(rendered.border).not.toBe('rgba(0, 0, 0, 0)')
 })
 
 test('@smoke a service the operator did not compose is sandboxed', async ({

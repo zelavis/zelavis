@@ -47,6 +47,15 @@ export interface ZelavisPlatformFrontend {
    * a service page still renders legibly rather than unstyled.
    */
   readonly servicePageStylesheet?: string;
+  /**
+   * Element library a service page loads to render with the design system.
+   *
+   * Supplied by the frontend for the same reason as the stylesheet: components
+   * are part of a design system, and the Platform has none of its own. Without
+   * one the Platform serves a baseline, so a service page composes real
+   * components rather than reinventing a card.
+   */
+  readonly serviceElementsScript?: string;
 }
 
 export type ZelavisPlatformFrontendFactory = (
