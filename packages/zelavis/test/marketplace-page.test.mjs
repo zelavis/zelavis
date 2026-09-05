@@ -57,6 +57,18 @@ test("every URL the marketplace page builds actually resolves", async () => {
   assert.match(stylesheet.contentType, /text\/css/);
   assert.match(stylesheet.body, /--background:/);
 
+  // Same arithmetic, same failure mode: the element library is loaded by a
+  // relative path from a page mounted several segments deep.
+  const elementsSrc = page.body.match(
+    /<script type="module" src="([^"]+)"><\/script>/,
+  )?.[1];
+  assert.ok(elementsSrc, "the page loads no element library");
+
+  const elements = await get(new URL(elementsSrc, base).pathname, OWNER);
+  assert.equal(elements.status, 200);
+  assert.match(elements.contentType, /javascript/);
+  assert.match(elements.body, /customElements\.define/);
+
   const apiRootExpr = page.body.match(/new URL\("((?:\.\.\/)+)", location\.href\)/)?.[1];
   assert.ok(apiRootExpr, "the page derives no API root");
 
@@ -109,4 +121,63 @@ test("the marketplace page drives the real registry API, not a mock", async () =
   // an operator would use directly.
   assert.match(page.body, /packageSource/);
   assert.match(page.body, /supportsPackageAcquisition/);
+});
+
+test("the element library defines the tags a service page composes", async () => {
+  const { get } = await boot();
+  const elements = await get(
+    "/zelavis/api/v1/runtime/service-elements.js",
+    OWNER,
+  );
+
+  assert.equal(elements.status, 200);
+
+  // The library is the contract a service page writes against, so the tags it
+  // defines are as much a public surface as the endpoints are.
+  for (const tag of [
+    "zv-page",
+    "zv-section",
+    "zv-card",
+    "zv-stack",
+    "zv-row",
+    "zv-title",
+    "zv-badge",
+    "zv-button",
+    "zv-field",
+    "zv-empty",
+    "zv-status",
+  ]) {
+    assert.match(elements.body, new RegExp(`define\\("${tag}"`), tag);
+  }
+
+  // Components style themselves in a shadow root, so a page's CSS cannot reach
+  // in and a component's rules cannot leak out.
+  assert.match(elements.body, /attachShadow\(\{ mode: "open" \}\)/);
+  // Restyling happens through tokens rather than by overriding component CSS.
+  assert.match(elements.body, /var\(--border\)/);
+});
+
+test("the element library is not readable by an anonymous caller", async () => {
+  const { get } = await boot();
+  const elements = await get("/zelavis/api/v1/runtime/service-elements.js");
+
+  assert.equal(elements.status, 401);
+});
+
+test("a frontend can supply its own element library", async () => {
+  // The Platform ships a baseline so a page is never left composing nothing;
+  // the components themselves belong to whichever frontend is installed.
+  const runtime = await zelavis({
+    frontend: async (context) => ({
+      ...(await zelavisUiFrontend(context)),
+      serviceElementsScript: "/* the frontend's own components */",
+    }),
+  });
+
+  const response = await runtime.fetch(
+    new Request("http://localhost/zelavis/api/v1/runtime/service-elements.js"),
+    OWNER,
+  );
+
+  assert.equal(await response.text(), "/* the frontend's own components */");
 });

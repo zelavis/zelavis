@@ -55,6 +55,7 @@ import {
   type ZelavisPlatformFrontend,
   type ZelavisPlatformFrontendFactory,
 } from "./platform/frontend-host.js";
+import { ZELAVIS_BASELINE_SERVICE_ELEMENTS } from "./platform/service-elements.js";
 import { createZelavisAuthSettingsService } from "./platform/auth-settings.js";
 import { createZelavisMarketplaceService } from "./platform/marketplace.js";
 import { createZelavisCoreService } from "./platform/core-service.js";
@@ -1614,6 +1615,7 @@ async function resolveRuntimeManagementCore(
     frontendClientRoutes?: readonly string[];
     /** Design tokens the installed frontend supplies for service pages. */
     servicePageStylesheet?: string;
+    serviceElementsScript?: string;
     /** Name of the service serving the root path, whichever frontend that is. */
     frontendServiceName?: string;
   },
@@ -2227,6 +2229,37 @@ async function resolveRuntimeManagementCore(
             body:
               context.servicePageStylesheet ??
               ZELAVIS_BASELINE_SERVICE_PAGE_STYLESHEET,
+          }),
+        },
+        {
+          // The components half of the same contract as the stylesheet above.
+          // Served as a module so a page's `<script type="module">` has the
+          // elements defined before its own first line runs.
+          id: "runtime.service-elements.read",
+          spec: {
+            operationId: "getServicePageElements",
+            summary: "Read the component library service pages render with",
+            tags: ["runtime"],
+            responses: {
+              200: { description: "JavaScript module" },
+            },
+          },
+          method: "GET",
+          access: { authenticated: true },
+          path: joinPathParts(
+            context.apiPrefix,
+            context.apiVersion,
+            "runtime/service-elements.js",
+          ),
+          handler: () => ({
+            status: 200,
+            headers: new Headers({
+              "content-type": "text/javascript; charset=utf-8",
+              "cache-control": "no-cache",
+            }),
+            body:
+              context.serviceElementsScript ??
+              ZELAVIS_BASELINE_SERVICE_ELEMENTS,
           }),
         },
         {
@@ -3863,6 +3896,9 @@ export async function zelavis(
         : {}),
       ...(platformFrontend?.servicePageStylesheet
         ? { servicePageStylesheet: platformFrontend.servicePageStylesheet }
+        : {}),
+      ...(platformFrontend?.serviceElementsScript
+        ? { serviceElementsScript: platformFrontend.serviceElementsScript }
         : {}),
       ...(frontendService ? { frontendServiceName: frontendService.name } : {}),
     },

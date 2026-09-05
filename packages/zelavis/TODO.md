@@ -393,10 +393,23 @@ an exported type is never mistaken for an operational distributed feature.
   was installed from an archive into the bundle store or composed into the
   Platform, and core services — which are not registry entries — resolve a
   fetchable `page.src` like any other.
-- [ ] Replace the marketplace's placeholder page. It renders through the
-  service page frame because a service has no way to render natively yet; the
-  web-components library wrapping the Zelavis design system is what closes
-  that gap.
+- [x] A service page composes real components. The Platform serves an element
+  library at `runtime/service-elements.js` beside the design tokens it already
+  served at `runtime/service-page.css`, and a frontend may supply its own —
+  components belong to a design system, and the Platform ships a baseline only
+  so a page is never left composing nothing. Each element renders into a shadow
+  root, so a page's CSS cannot reach in and a component's rules cannot leak
+  out, while the tokens still reach the components because custom properties
+  inherit through shadow boundaries. That is the seam that restyles every
+  service page in an installation. The marketplace page is rebuilt on it and is
+  no longer a placeholder: `zv-page`, `zv-section`, `zv-card`, `zv-row`,
+  `zv-title`, `zv-badge`, `zv-button`, `zv-field`, `zv-empty`, `zv-status`,
+  plus a filter over the registry it lists.
+- [ ] Let a service page render inside the dashboard's own document. The frame
+  stays for now, and deliberately: shadow DOM scopes styles, not scripts, so
+  rendering an installed service's page inline would hand its code the
+  dashboard's origin and its session. Closing that needs an execution boundary
+  for third-party page code, not more components.
 - [x] Execute `server` frontends. A frontend package installs as an ordinary
   service, is selectable as a Project recipe, and produces a Project of kind
   `frontend` whatever the package is called — the runtime driver routes on that
