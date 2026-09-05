@@ -81,8 +81,9 @@ own subsystems, and they now say what they are:
   `title`, `subtitle`, `devServerUrl`, and a `clientRoutes` override. It
   predated frontends being a first-class concept, and by the end every field it
   held was about the frontend — `clientRoutes` already fell back to the routes
-  the frontend declared for itself. `frontend: false` means an installation
-  that serves nothing at its root.
+  the frontend declared for itself. There is no way to switch it off: an
+  installation with no frontend is one with none installed, and its root path
+  says so while the API is unchanged.
 - `runtimeSettingsStore` carries the settings store. It is a resource, and
   hanging it off the dashboard option meant turning the dashboard off also took
   the Platform's own settings persistence with it.

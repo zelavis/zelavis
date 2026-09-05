@@ -219,7 +219,7 @@ the package that defines it:
 {
   "zelavis": {
     "kind": "plugin",
-    "capabilities": ["@zelavis/auth:credentials"]
+    "capabilities": ["zelavis/auth:credentials"]
   }
 }
 ```

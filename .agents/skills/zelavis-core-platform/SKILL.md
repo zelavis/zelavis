@@ -26,8 +26,10 @@ before editing.
   `@zelavis/core` packages. Their responsibilities are now public subpaths of
   `zelavis`.
 - Ship first-party product surfaces as their own packages under
-  `packages/zelavis/product-services/*` — `@zelavis/ui` and
-  `@zelavis/marketplace` today. A product service is built the way a
+  `packages/zelavis/product-services/*` — `@zelavis/ui`, `@zelavis/marketplace`
+  and `@zelavis/auth` today. A product service owns a face, never an authority:
+  `@zelavis/auth` is the settings page for core auth, and removing it costs the
+  page rather than the ability to sign in. A product service is built the way a
   third-party one is: a `package.json` manifest declaring `zelavis.kind`, and a
   module that calls the official SDK. It is loaded through `loadPluginPackage`,
   the same loader an installed plugin goes through, so it exercises the public
@@ -41,12 +43,42 @@ before editing.
 - Do not create parent/child service graphs. Provider plugins are ordinary
   installed services discovered by capability and validated against an explicit
   public registration contract; never use `childServices` or service `extends`.
+- A capability names the service that owns it — `zelavis/auth:credentials`,
+  `zelavis/auth:oauth`, `@acme/shop:payments` — not a bare domain. A domain
+  such as `provider:payments` says what a plugin implements and never whose
+  contract it satisfies, so two plugins scanning for it collect each other's
+  providers. An owner is recognised by containing a `/`; a bare word stays a
+  Platform domain namespace. Naming an owner asks to be considered by it and
+  grants nothing: discovery stays a flat scan and the owner still validates.
+- Core names no capability owned by a product it does not ship. Core once
+  listed `@zelavis/ecommerce:payments` in its capability hints and imported the
+  plugin in its own tests, so the Platform could not test itself without
+  building a shopping cart. Test core against a fixture, not a product.
+- Do not switch features off in code. There is no `frontend: false`: an
+  installation with no frontend is one with none installed, and the root path
+  says so. A flag that expresses what a runtime *is* rather than a preference
+  is named for that instead — `role: "platform" | "project"`.
+- `coreServices` is gone. Platform subsystems are `subsystems` on
+  `zelavis(...)` (auth, database, fabric, storage, workloads, site), frontend
+  options are the public `frontend` option, and the settings store is
+  `runtimeSettingsStore`. Passing `coreServices` is refused rather than
+  ignored, because silently dropping it would leave a caller believing they
+  had turned a subsystem off.
 - The official service kinds are `app`, `frontend`, and `plugin`, enforced at
   manifest validation. Do not add a kind nothing branches on — that is how the
   union previously drifted to list five dead kinds while omitting `frontend`.
   Trust comes from `scope` (`system` for what the operator composed,
   `extension` for what was installed at runtime), never from the kind.
-- Plugins and services are configured via `package.json` manifests (`"zelavis": { "kind": "plugin" }`, `"type": "module"`, `"exports"`). Plugin code uses the official Zelavis SDK (`zelavis.menu.create`, `zelavis.routes.create`, etc.); `defineService` is completely removed.
+- Plugins and services are configured via `package.json` manifests (`"zelavis": { "kind": "plugin", "capabilities": [...] }`, `"type": "module"`, `"exports"`, no legacy `main` outside `frontend`). Plugin code uses the official Zelavis SDK (`zelavis.menu.create`, `zelavis.routes.create`, `zelavis.services.add`); `defineService` is completely removed. See `website/src/content/docs/guides/plugin-api.md`.
+- The SDK contributes during module evaluation, so it only works inside the
+  loader's execution context. A service that needs the registry, a database, or
+  platform resources is added from `setup(context)` with `context.addService`
+  instead. Both are official; which applies is decided by whether the service
+  can be described before the runtime exists.
+- The loader must carry everything a plugin declares. It once built its service
+  object field by field and omitted `setup`, so a plugin registering its API
+  there installed as a package with a menu and no endpoints while the same
+  object composed in code worked — the supported path was the broken one.
 - Keep the built-in Zelavis App stack in `packages/zelavis/src/app`, exported
   through `zelavis/app`, `zelavis/app/auth`, `zelavis/app/db`, and
   `zelavis/app/workloads`. It reuses the core implementation; never create an

@@ -199,7 +199,7 @@ import type { ZelavisRuntimeService } from "zelavis";
 
 export const stripePlugin: ZelavisRuntimeService = {
   name: "@zelavis/ecommerce-stripe",
-  kind: "provider",
+  kind: "plugin",
   capabilities: ["@zelavis/ecommerce:payments"],
   service: {
     name: "stripe",
