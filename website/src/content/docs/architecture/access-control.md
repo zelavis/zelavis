@@ -89,11 +89,21 @@ the standard Web `Request` boundary. No router framework owns authentication.
 - invalid credentials produce a `401` and the appropriate
   `WWW-Authenticate` challenge
 
-Password methods are ordinary `provider:auth` plugins under `plugins/`, not
-code embedded in the unified package. The shared Web Crypto password primitive
-uses salted PBKDF2-HMAC-SHA-256. The OIDC plugin validates bearer tokens through
-issuer, audience, algorithm, and JWKS checks; interactive authorization-code
-login and provider-specific account linking remain endpoint workflows to add
+Password sign-in is part of Zelavis rather than a plugin. An installation with
+no credential provider can never create its first owner, so it is not something
+an extension supplies. One provider covers both identifier kinds: an identifier
+containing `@` is treated as an email address, anything else as a username. The
+password primitive uses salted PBKDF2-HMAC-SHA-256 over Web Crypto, and an
+unknown identifier is verified against a decoy hash so the response does not
+reveal whether an account exists.
+
+The OAuth Authorization Code flow is core too — it holds the state, nonce and
+PKCE verifier, which are the parts that are dangerous to get wrong and the same
+for every provider. Any OpenID Connect issuer is added by pasting its issuer
+URL; a plugin declaring `zelavis/auth:oauth` is needed only for a provider that
+is not OIDC, where the profile endpoint and claim mapping are real code. The
+OIDC plugin under `plugins/` is now only a bearer-token authenticator for
+callers already holding a token from an issuer
 on top of that verifier.
 
 ## Dashboard Views

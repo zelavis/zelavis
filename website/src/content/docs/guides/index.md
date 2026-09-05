@@ -22,5 +22,6 @@ Each guide should solve one practical problem end to end.
 - [Dashboard Development](./dashboard-development.md)
 - [File Storage Flow](./file-storage-flow.md)
 - [Official Service Packages](./official-service-packages.md)
+- [Plugin API](./plugin-api.md)
 - [Service Authoring](./service-authoring.md)
 - [Working with Schemas](./working-with-schemas.md)

@@ -93,7 +93,9 @@ current automatically.
 - There is no `core` kind, and no `web-app`, `website`, `dashboard-extension`,
   `provider`, or `template`. Each described who shipped a service or restated a
   capability, and nothing ever branched on them. A provider is discovered by
-  its capability (`provider:auth`), not by a kind.
+  its capability, and that capability names the service it extends
+  (`zelavis/auth:credentials`, `@acme/shop:payments`) rather than a bare domain
+  two plugins could both scan for.
 - **System Services** are trusted Platform OS capabilities. Do not call every
   bundled project service a core service.
 - **System Store** is Platform OS persistence. Local adapters default to
@@ -486,10 +488,18 @@ The base authorization contract belongs in `zelavis/core`, because every
 runtime service route needs to declare and enforce access requirements
 independently of the authentication method that produced the caller.
 
-`zelavis/app/auth` owns authentication primitives: accounts, credentials, sessions,
-and pluggable auth methods such as email/password, passkeys, OAuth, SSO, API
-keys, and service-token providers. It resolves identities into principals; the
-server contract enforces route access.
+`zelavis/app/auth` owns authentication primitives: accounts, credentials,
+sessions, roles and permissions. It ships the credential ceremonies whose
+dangerous parts are generic and identical for every provider — password
+verification and its timing, and the state, nonce and PKCE custody an OAuth
+redirect flow depends on — so they are written and audited once. It resolves
+identities into principals; the server contract enforces route access.
+
+What is vendor-specific stays a plugin. A credential provider declares
+`zelavis/auth:credentials` and owns its whole exchange; an OAuth provider
+declares `zelavis/auth:oauth` and supplies only endpoints and claim mapping.
+Any OpenID Connect issuer needs neither: pasting its issuer URL is enough,
+because the issuer publishes its own endpoints.
 
 Future official modules such as Hosting Provider must not create a separate
 customer permission system. Customers, resellers, operators, and owners are
@@ -548,7 +558,7 @@ Each package should remain independently useful and focused.
 - Global dashboard areas such as `/zelavis/marketplace` and `/zelavis/server/*` sit outside any project. Project-local marketplace/plugins live under `/zelavis/projects/:projectId/marketplace`.
 - Server-level dashboard routes include `/zelavis/server/domains`, `/zelavis/server/backups`, and `/zelavis/server/logs`.
 - Projects may represent Zelavis-native apps or managed apps such as WordPress/static/generic projects. Managed app projects should show hosting-style controls instead of Zelavis-native Auth/Database/Content plugin navigation.
-- The runtime supports dashboard dev-server mode through `ZELAVIS_UI_DEV_SERVER`; the lower-level `coreServices.dashboard.devServerUrl` option remains transitional composition internals during the Platform/App split.
+- The runtime supports dashboard dev-server mode through `ZELAVIS_UI_DEV_SERVER` or `frontend.devServerUrl`. The `coreServices` option it used to live under is gone: Platform subsystems are `subsystems` on `zelavis(...)`, the frontend options are the public `frontend` option, and the settings store is `runtimeSettingsStore`.
 - The main local platform workflow is `pnpm dev`.
 - In repository development through `pnpm dev`, runtime state lives below
   `packages/zelavis/.zelavis`: the Platform System Store is under `system/` and
@@ -575,7 +585,7 @@ When creating or extending packages:
 Use these boundaries consistently:
 
 - `adapters` for framework bindings and external runtime adapters such as Express, Hono, or Node-specific mounting
-- `plugins` for optional domain/provider capabilities such as auth methods or payment providers
+- `plugins` for optional domain/provider capabilities such as OAuth providers or payment gateways, each declaring the capability of the service it extends
 
 First-party core plugins such as `zelavis/app/workloads` may be enabled by default
 by the high-level runtime while staying package-separated. Workloads are

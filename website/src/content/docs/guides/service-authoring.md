@@ -24,7 +24,7 @@ Examples:
 
 - [plugins/ecommerce/src/ecommerce-service.ts](/Users/ivanjeremicx/Projects/zelavis/plugins/ecommerce/src/ecommerce-service.ts)
 - [plugins/ecommerce/plugins/stripe/src/stripe-service.ts](/Users/ivanjeremicx/Projects/zelavis/plugins/ecommerce/plugins/stripe/src/stripe-service.ts)
-- `plugins/auth-email-password/src/email-password-service.ts`
+- `packages/zelavis/src/app/auth/providers/password.ts`
 
 Avoid hiding the real definition under paths like:
 
@@ -127,7 +127,7 @@ import type { ZelavisRuntimeService } from "zelavis";
 export function stripeService(): ZelavisRuntimeService {
   return Object.freeze({
     name: "@zelavis/ecommerce-stripe",
-    kind: "provider",
+    kind: "plugin",
     capabilities: ["@zelavis/ecommerce:payments"],
     service: {
       name: "stripe",
