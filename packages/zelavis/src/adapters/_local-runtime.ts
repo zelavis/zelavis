@@ -18,12 +18,19 @@ import {
   resolvePackageExportsEntry,
   validatePluginPackageManifest,
 } from "../core/service/manifest.js";
+import { readFrontendManifest } from "../core/service/frontend.js";
 import {
   acquirePackage,
   type PackageEntry,
 } from "./_package-acquisition.js";
+import {
+  readScaffoldOutput,
+  resolveCreatePackageBin,
+  runCreatePackage,
+} from "./_package-scaffold.js";
 import type {
   ZelavisServicePackageAcquireInput,
+  ZelavisServicePackageScaffoldInput,
   ZelavisServiceRegistryModuleEntry,
 } from "../index.js";
 import type {
@@ -467,6 +474,13 @@ export interface LocalRuntimeServiceOptions {
   sources?: LocalRuntimeServiceSourcePolicy;
   /** Registry used when a reference does not name one. */
   defaultRegistry?: string;
+  /**
+   * How long a create package may run while scaffolding a frontend.
+   *
+   * A create package runs with no network and no ability to spawn anything, so
+   * a run that has not finished is stuck rather than slow.
+   */
+  scaffoldTimeoutMs?: number;
 }
 
 /**
@@ -594,7 +608,11 @@ export function createLocalRuntimeServicePackageInstaller(
     // exists, so it has to mean "this will work" rather than "this host has the
     // code for it". An installer that always exposed it would advertise a
     // capability that refuses every call.
-    ...(acquisitionPolicy ? { acquire } : {}),
+    //
+    // Scaffolding is gated on the same policy for the same reason: it begins
+    // with the same verified acquisition, and a host that acquires nothing has
+    // no create package to run.
+    ...(acquisitionPolicy ? { acquire, scaffold } : {}),
   };
 
   async function acquire(input: ZelavisServicePackageAcquireInput) {
@@ -620,6 +638,128 @@ export function createLocalRuntimeServicePackageInstaller(
         message: `Installed ${acquired.resolved}.`,
       };
   }
+
+  /**
+   * Scaffolds a frontend package by running a create package's bin.
+   *
+   * The create package is acquired through the same verified path as any other
+   * install, so the source policy governs what can be run here. What the run
+   * produces is then treated exactly like an uploaded package: validated as a
+   * Zelavis frontend, materialized content-addressed, and returned as a
+   * specifier the registry installs. A scaffold that did not produce a
+   * frontend is refused rather than registered as something else.
+   */
+  async function scaffold(input: ZelavisServicePackageScaffoldInput) {
+    const acquired = await acquirePackage(input.reference, {
+      policy: acquisitionPolicy,
+      defaultRegistry: options.defaultRegistry,
+    });
+
+    const manifestEntry = acquired.entries.find(
+      (entry) => entry.path === "package.json",
+    );
+    if (!manifestEntry) {
+      throw new Error("A create package must include package.json.");
+    }
+
+    let createManifest: ZelavisPackageManifest & { bin?: unknown };
+    try {
+      createManifest = JSON.parse(
+        new TextDecoder().decode(manifestEntry.body),
+      ) as ZelavisPackageManifest & { bin?: unknown };
+    } catch {
+      throw new Error("The create package's package.json is not valid JSON.");
+    }
+
+    const binPath = resolveCreatePackageBin(createManifest, input.command);
+
+    const createDirectory = await materializePackage(
+      serviceDirectory,
+      createHash("sha256").update(acquired.integrity).digest("hex"),
+      acquired.entries,
+    );
+
+    // Run-local, and removed whatever happens: a half-finished scaffold is not
+    // something a later run should find and reuse.
+    const runDirectory = join(serviceDirectory, ".scaffold", randomUUID());
+    const outputDirectory = join(runDirectory, "out");
+    await mkdir(outputDirectory, { recursive: true });
+
+    let entries: readonly PackageEntry[];
+    try {
+      await runCreatePackage({
+        packageDirectory: createDirectory,
+        binPath,
+        outputDirectory,
+        runDirectory,
+        args: input.args,
+        ...(options.scaffoldTimeoutMs === undefined
+          ? {}
+          : { timeoutMs: options.scaffoldTimeoutMs }),
+      });
+      entries = await readScaffoldOutput(outputDirectory);
+    } finally {
+      await rm(runDirectory, { recursive: true, force: true });
+    }
+
+    const entry = resolveScaffoldedFrontendEntry(entries);
+    const packageDirectory = await materializePackage(
+      serviceDirectory,
+      createHash("sha256")
+        .update(
+          entries
+            .map(
+              (item) =>
+                `${item.path}:${createHash("sha256").update(item.body).digest("hex")}`,
+            )
+            .join("\n"),
+        )
+        .digest("hex"),
+      entries,
+    );
+
+    return {
+      specifier: join(packageDirectory, entry),
+      resolved: acquired.resolved,
+      integrity: acquired.integrity,
+      message: `Scaffolded a frontend with ${acquired.resolved}.`,
+    };
+  }
+}
+
+/**
+ * Validates that a scaffold produced a Zelavis frontend and resolves its entry.
+ *
+ * The generic service check answers "is this a Zelavis package"; a scaffold
+ * registered as a frontend has to also be one, or the Project it becomes runs
+ * under a driver that does not match what was written.
+ */
+function resolveScaffoldedFrontendEntry(
+  entries: readonly PackageEntry[],
+): string {
+  const manifestEntry = entries.find((entry) => entry.path === "package.json");
+  if (!manifestEntry) {
+    throw new Error(
+      "The scaffold produced no package.json, so it is not an installable frontend.",
+    );
+  }
+
+  let manifest: ZelavisPackageManifest;
+  try {
+    manifest = JSON.parse(
+      new TextDecoder().decode(manifestEntry.body),
+    ) as ZelavisPackageManifest;
+  } catch {
+    throw new Error("The scaffold's package.json is not valid JSON.");
+  }
+
+  if (!readFrontendManifest(manifest)) {
+    throw new Error(
+      `The scaffold produced "${manifest.name ?? "an unnamed package"}", which does not declare "zelavis": { "kind": "frontend" }.`,
+    );
+  }
+
+  return resolveServicePackageEntry(entries);
 }
 
 /**
