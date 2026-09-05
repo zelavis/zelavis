@@ -172,7 +172,7 @@
   "dependencies": {
     "@zelavis/auth": "workspace:*",
     "@zelavis/marketplace": "workspace:*",
-    "better-sqlite3": "^12.10.0",
+    "better-sqlite3": "^13.0.3",
     "effect": "4.0.0-rc.111",
     "jose": "^6.2.10"
   },
