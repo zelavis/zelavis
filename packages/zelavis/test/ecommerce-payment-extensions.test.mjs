@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ecommercePlugin } from "../../../plugins/ecommerce/dist/index.js";
+import { loadEcommercePlugin } from "./helpers/ecommerce.mjs";
 import { stripeService } from "../../../plugins/ecommerce/plugins/stripe/dist/index.js";
 import { paypalService } from "../../../plugins/ecommerce/plugins/paypal/dist/index.js";
 import { isServiceExtension, serviceExtensionOwners } from "../dist/core/index.js";
@@ -61,7 +61,7 @@ async function platform(catalog) {
 
 test("gateways are listed under the plugin they extend", async () => {
   const runtime = await platform([
-    { service: ecommercePlugin, status: "installed", source: "official" },
+    { service: await loadEcommercePlugin(), status: "installed", source: "official" },
     ...gateways().map((service) => ({
       service,
       status: "installed",
@@ -86,7 +86,7 @@ test("gateways are listed under the plugin they extend", async () => {
 
 test("ecommerce still discovers the gateways it lists", async () => {
   const runtime = await platform([
-    { service: ecommercePlugin, status: "installed", source: "official" },
+    { service: await loadEcommercePlugin(), status: "installed", source: "official" },
     ...gateways().map((service) => ({
       service,
       status: "installed",

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { ecommercePlugin } from "../../../plugins/ecommerce/dist/index.js";
+import { loadEcommercePlugin } from "./helpers/ecommerce.mjs";
 
 const PLATFORM_OWNER_CONTEXT = {
   principal: { id: "test-owner", type: "user", roles: ["owner"], permissions: ["*"] },
@@ -237,7 +237,7 @@ test("Zelavis applies adapter resolve output as platform resources, metadata, an
 
   const adapter = defineAdapter({
     name: "capture",
-    resolve() {
+    async resolve() {
       return {
         metadata: { runtime: "custom", marker: true },
         resources: {
@@ -274,7 +274,7 @@ test("Zelavis platform resources back dashboard settings, storage service, and e
 
   const adapter = defineAdapter({
     name: "storage-only",
-    resolve() {
+    async resolve() {
       return {
         subsystems: {
           database: false,
@@ -334,7 +334,7 @@ test("Zelavis platform resources back dashboard settings, storage service, and e
         serviceRegistry: {
           catalog: [
             {
-              service: ecommercePlugin,
+              service: await loadEcommercePlugin(),
               status: "installed",
               source: "official",
               order: 0,
@@ -472,7 +472,7 @@ test("Zelavis platform resources back dashboard settings, storage service, and e
     serviceRegistry: {
       catalog: [
         {
-          service: ecommercePlugin,
+          service: await loadEcommercePlugin(),
           status: "installed",
           source: "official",
           order: 0,
@@ -520,7 +520,7 @@ test("Zelavis platform resources back dashboard settings, storage service, and e
     serviceRegistry: {
       catalog: [
         {
-          service: ecommercePlugin,
+          service: await loadEcommercePlugin(),
           status: "installed",
           source: "official",
           order: 0,
@@ -648,7 +648,7 @@ test("Zelavis rejects installed services that try to register reserved core serv
   const zelavis = new Zelavis({
     adapter: defineAdapter({
       name: "reserved-service-test",
-      resolve() {
+      async resolve() {
         return {
           serviceRegistry: {
             catalog: createServiceRegistry([
