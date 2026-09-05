@@ -7,18 +7,18 @@ const noopHandler = () => ({ status: 204 });
 function createService(overrides = {}) {
   return {
     name: "catalog",
-    basePath: "/commerce/",
+    basePath: "/catalog/",
     service: { id: "catalog-api" },
     api: {
       v1: [
         {
-          id: "products.list",
+          id: "items.list",
           method: "GET",
-          path: " /products/ ",
+          path: " /items/ ",
           handler: noopHandler,
         },
         {
-          id: "products.root",
+          id: "items.root",
           method: "GET",
           path: "/",
           handler: noopHandler,
@@ -26,9 +26,9 @@ function createService(overrides = {}) {
       ],
       v2: [
         {
-          id: "products.admin",
+          id: "items.admin",
           method: "POST",
-          path: "/admin/products",
+          path: "/admin/items",
           handler: noopHandler,
         },
       ],
@@ -44,7 +44,7 @@ test("resolveMountedEndpoints normalizes prefixes, service paths, and route path
 
   assert.deepEqual(
     routes.map((resolved) => resolved.fullPath),
-    ["/api/commerce/products", "/api/commerce"],
+    ["/api/catalog/items", "/api/catalog"],
   );
 });
 
@@ -55,7 +55,7 @@ test("resolveMountedEndpoints applies service prefixes and endpoint path overrid
       catalog: "shop",
     },
     pathOverrides: {
-      "products.list": "/items/:id/",
+      "items.list": "/items/:id/",
     },
   });
 
@@ -69,15 +69,15 @@ test("resolveMountedEndpoints defaults to v1 and can select another API version"
   const defaultRoutes = resolveMountedEndpoints([service]);
   assert.deepEqual(
     defaultRoutes.map((resolved) => resolved.route.id),
-    ["products.list", "products.root"],
+    ["items.list", "items.root"],
   );
 
   const v2Routes = resolveMountedEndpoints([service], { version: "v2" });
   assert.deepEqual(
     v2Routes.map((resolved) => resolved.route.id),
-    ["products.admin"],
+    ["items.admin"],
   );
-  assert.equal(v2Routes[0].fullPath, "/commerce/admin/products");
+  assert.equal(v2Routes[0].fullPath, "/catalog/admin/items");
 });
 
 test("resolveMountedEndpoints skips services without routes for the selected version", () => {

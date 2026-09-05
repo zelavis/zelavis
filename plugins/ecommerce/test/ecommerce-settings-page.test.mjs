@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { loadEcommercePlugin } from "./helpers/ecommerce.mjs";
-import { stripeService } from "../../../plugins/ecommerce/plugins/stripe/dist/index.js";
-import { paypalService } from "../../../plugins/ecommerce/plugins/paypal/dist/index.js";
-import { createMemorySystemStore, zelavis } from "../dist/index.js";
+import { loadEcommercePlugin } from "./load-plugin.mjs";
+import { stripeService } from "../plugins/stripe/dist/index.js";
+import { paypalService } from "../plugins/paypal/dist/index.js";
+import { createMemorySystemStore, zelavis } from "../../../packages/zelavis/dist/index.js";
 
 const OWNER = { id: "owner", type: "user", roles: ["owner"], permissions: ["*"] };
 

@@ -207,8 +207,8 @@ test("loadPluginPackage executes plugin and attributes menus, routes, and comman
 
 test("defineServiceCatalogEntry normalizes marketplace metadata", () => {
   const entry = defineServiceCatalogEntry({
-    name: "@zelavis/ecommerce-stripe",
-    package: "@zelavis/ecommerce-stripe",
+    name: "@example/payments-gateway",
+    package: "@example/payments-gateway",
     publisher: "zelavis",
     source: "official",
     compatibility: {
@@ -218,14 +218,14 @@ test("defineServiceCatalogEntry normalizes marketplace metadata", () => {
     links: {
       repository: "https://github.com/zelavis/zelavis",
     },
-    tags: ["payments", "@zelavis/ecommerce-stripe"],
+    tags: ["payments", "@example/payments-gateway"],
   });
 
   assert.equal(entry.reviewStatus, "official");
   assert.equal(entry.verified, true);
   assert.equal(entry.compatibility.zelavis, "^1.0.0");
   assert.equal(entry.links.repository, "https://github.com/zelavis/zelavis");
-  assert.deepEqual(entry.tags, ["payments", "@zelavis/ecommerce-stripe"]);
+  assert.deepEqual(entry.tags, ["payments", "@example/payments-gateway"]);
   assert.ok(Object.isFrozen(entry));
   assert.ok(Object.isFrozen(entry.compatibility));
   assert.ok(Object.isFrozen(entry.links));
@@ -268,10 +268,10 @@ test("createServiceRegistry normalizes service registry entries", () => {
   const registry = createServiceRegistry([
     {
       service: {
-        name: "@zelavis/ecommerce",
+        name: "@example/catalog",
         menu: {
-          title: "Ecommerce",
-          path: "/commerce",
+          title: "Catalog",
+          path: "/catalog",
           items: [
             {
               title: "Orders",

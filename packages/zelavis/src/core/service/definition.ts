@@ -86,10 +86,12 @@ export type ZelavisServiceCapability =
   | "dashboard:menu"
   | "dashboard:settings"
   // Owned by the service that defines them, so a provider names what it
-  // extends rather than a bare domain two plugins could both scan for.
+  // extends rather than a bare domain two plugins could both scan for. Only
+  // the Platform's own services appear here: a capability owned by a plugin is
+  // that plugin's to name, and listing one would make core know about a
+  // product it does not ship.
   | "zelavis/auth:credentials"
   | "zelavis/auth:oauth"
-  | "@zelavis/ecommerce:payments"
   | (string & {});
 
 export interface ZelavisServiceMarketplaceMetadata {
