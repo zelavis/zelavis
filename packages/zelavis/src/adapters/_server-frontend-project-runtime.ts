@@ -12,7 +12,6 @@
  * knows nothing about Zelavis, so the only portable signal is that the port it
  * was told to bind starts accepting connections.
  */
-import { spawn, type ChildProcess } from "node:child_process";
 import { connect, createServer } from "node:net";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -27,10 +26,14 @@ import type {
 import { ZelavisProjectRuntimeError } from "../project.js";
 import type { ZelavisProjectDriverCapabilities } from "../core/workload/index.js";
 import {
-  MAX_CHILD_LINE_BYTES,
   MAX_CHILD_LOG_MESSAGE_BYTES,
   projectProcessEnvironment,
 } from "./_node-project-runtime.js";
+import { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
+import type {
+  ZelavisAgentProcess,
+  ZelavisAgentProcessRunner,
+} from "../core/agent/process-command.js";
 import {
   readFrontendManifest,
   type ZelavisServerFrontendManifest,
@@ -57,10 +60,17 @@ export interface ServerFrontendProjectRuntimeOptions {
     recipe: ZelavisProjectRecipeLock,
   ) => Promise<string>;
   readonly startupTimeoutMs?: number;
+  /**
+   * Agent that executes the frontend's process.
+   *
+   * Defaults to the local runner. The driver issues the same command whichever
+   * Agent runs it.
+   */
+  readonly agent?: ZelavisAgentProcessRunner;
 }
 
 interface FrontendProcess {
-  child?: ChildProcess;
+  process?: ZelavisAgentProcess;
   snapshot: ZelavisProjectRuntimeSnapshot;
   logs: ZelavisProjectLogEntry[];
   stopping: boolean;
@@ -131,6 +141,7 @@ export function createServerFrontendProjectRuntime(
   const root = resolve(options.directory);
   const startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
   const processes = new Map<string, FrontendProcess>();
+  const agent = options.agent ?? createLocalAgentProcessRunner();
   const prepared = new Map<string, PreparedFrontend>();
 
   const projectDirectory = (projectId: string) => join(root, projectId);
@@ -154,22 +165,6 @@ export function createServerFrontendProjectRuntime(
       message: normalized,
     });
     if (state.logs.length > LOG_LIMIT) state.logs.splice(0, state.logs.length - LOG_LIMIT);
-  }
-
-  function captureOutput(
-    state: FrontendProcess,
-    child: ChildProcess,
-    stream: "stdout" | "stderr",
-  ): void {
-    let buffer = "";
-    child[stream]?.on("data", (chunk: Buffer) => {
-      buffer += chunk.toString("utf8");
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      // A frontend that never emits a newline must not grow this without bound.
-      if (buffer.length > MAX_CHILD_LINE_BYTES) buffer = "";
-      for (const line of lines) appendLog(state, stream, line);
-    });
   }
 
   async function readPrepared(projectId: string): Promise<PreparedFrontend> {
@@ -272,22 +267,27 @@ export function createServerFrontendProjectRuntime(
       appendLog(state, "system", `Starting frontend on port ${port}.`);
 
       const [command, ...args] = plan.start;
-      const child = spawn(command!, args, {
-        cwd: plan.directory,
-        env: {
-          ...projectProcessEnvironment(),
-          [plan.portEnv]: String(port),
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      state.child = child;
-      captureOutput(state, child, "stdout");
-      captureOutput(state, child, "stderr");
-
       let exited: { code: number | null; signal: string | null } | undefined;
-      child.once("exit", (code, signal) => {
-        exited = { code, signal };
-      });
+      const child = await agent.start(
+        {
+          workloadId: project.id,
+          executable: command!,
+          args,
+          cwd: plan.directory,
+          env: {
+            ...projectProcessEnvironment(),
+            [plan.portEnv]: String(port),
+          },
+        },
+        {
+          onOutput: ({ stream, line }: { stream: "stdout" | "stderr"; line: string }) =>
+            appendLog(state, stream, line),
+          onExit: (exit: { code: number | null; signal: string | null }) => {
+            exited = exit;
+          },
+        },
+      );
+      state.process = child;
 
       const deadline = Date.now() + startupTimeoutMs;
       while (Date.now() < deadline) {
@@ -321,7 +321,8 @@ export function createServerFrontendProjectRuntime(
         await new Promise((wait) => setTimeout(wait, READINESS_POLL_INTERVAL_MS));
       }
 
-      child.kill("SIGTERM");
+      state.stopping = true;
+      await child.stop().catch(() => undefined);
       state.snapshot = {
         status: "failed",
         stoppedAt: new Date().toISOString(),
@@ -332,7 +333,7 @@ export function createServerFrontendProjectRuntime(
 
     async stop(projectId) {
       const state = processes.get(projectId);
-      if (!state?.child || state.child.exitCode !== null) {
+      if (!state?.process?.running) {
         const snapshot = stoppedSnapshot(state);
         if (state) state.snapshot = snapshot;
         return snapshot;
@@ -340,31 +341,10 @@ export function createServerFrontendProjectRuntime(
 
       state.stopping = true;
       appendLog(state, "system", "Stopping frontend.");
-      const child = state.child;
-      // Listen before signalling. A frontend that exits promptly would
-      // otherwise be missed — `once("exit")` never fires for a process that has
-      // already gone — and every stop would wait out the SIGKILL fallback.
-      const exited = new Promise<void>((done) => {
-        if (child.exitCode !== null || child.signalCode !== null) {
-          done();
-          return;
-        }
-        child.once("exit", () => done());
-      });
-
-      child.kill("SIGTERM");
-      let escalation: NodeJS.Timeout | undefined;
-      await Promise.race([
-        exited,
-        new Promise<void>((done) => {
-          escalation = setTimeout(() => {
-            // A frontend that ignores SIGTERM must not hold the lifecycle open.
-            child.kill("SIGKILL");
-            done();
-          }, 5_000);
-        }),
-      ]);
-      if (escalation) clearTimeout(escalation);
+      // The Agent escalates SIGTERM to SIGKILL and resolves only once the
+      // process is actually gone, so a frontend that ignores SIGTERM cannot
+      // hold the lifecycle open.
+      await state.process.stop();
       state.snapshot = stoppedSnapshot(state);
       return state.snapshot;
     },

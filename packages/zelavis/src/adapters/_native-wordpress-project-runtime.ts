@@ -1,9 +1,14 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, Socket } from "node:net";
 import { userInfo } from "node:os";
 import { join, resolve } from "node:path";
+import { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
+import type {
+  ZelavisAgentProcess,
+  ZelavisAgentProcessRunner,
+} from "../core/agent/process-command.js";
 import {
   ZelavisProjectRuntimeError,
   type ZelavisProjectRecipeLock,
@@ -19,6 +24,13 @@ import {
 export interface NativeWordPressProjectRuntimeOptions {
   directory: string;
   startupTimeoutMs?: number;
+  /**
+   * Agent that executes nginx, php-fpm, and the database.
+   *
+   * Defaults to the local runner. Three supervised processes rather than one,
+   * all issued as the same command through the same contract.
+   */
+  agent?: ZelavisAgentProcessRunner;
 }
 
 interface NativeWordPressConfig {
@@ -38,9 +50,9 @@ interface NativeWordPressConfig {
 }
 
 interface NativeWordPressProcesses {
-  database?: ChildProcess;
-  nginx?: ChildProcess;
-  phpFpm?: ChildProcess;
+  database?: ZelavisAgentProcess;
+  nginx?: ZelavisAgentProcess;
+  phpFpm?: ZelavisAgentProcess;
   logs: ZelavisProjectLogEntry[];
 }
 
@@ -72,6 +84,22 @@ const APT_WORDPRESS_PACKAGES = Object.freeze([
   "mariadb-client-core",
 ]);
 const BREW_WORDPRESS_PACKAGES = Object.freeze(["nginx", "php", "mariadb"]);
+
+/**
+ * Environment handed to a supervised native daemon.
+ *
+ * nginx, php-fpm, and mariadbd need almost nothing from the caller, and
+ * inheriting the Platform's environment would hand a Project's web server the
+ * control plane's bootstrap token and provider credentials.
+ */
+function nativeProcessEnvironment(): Record<string, string> {
+  const environment: Record<string, string> = {};
+  for (const name of ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ"]) {
+    const value = process.env[name];
+    if (value !== undefined) environment[name] = value;
+  }
+  return environment;
+}
 
 function isMissingFileError(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
@@ -319,20 +347,6 @@ function versionAtLeast(actual: string, minimum: readonly [number, number]): boo
   return major > minimum[0] || (major === minimum[0] && minor >= minimum[1]);
 }
 
-async function stopChild(child: ChildProcess | undefined): Promise<void> {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return;
-  child.kill("SIGTERM");
-  await new Promise<void>((resolveExit) => {
-    const timeout = setTimeout(() => {
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-    }, 5_000);
-    child.once("exit", () => {
-      clearTimeout(timeout);
-      resolveExit();
-    });
-  });
-}
-
 function wordpressConfig(config: NativeWordPressConfig): string {
   const salts = Array.from({ length: 8 }, () => randomBytes(48).toString("base64url"));
   const saltNames = [
@@ -482,6 +496,7 @@ export function createNativeWordPressProjectRuntime(
   const projectsDirectory = resolve(options.directory);
   const startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
   const processes = new Map<string, NativeWordPressProcesses>();
+  const agent = options.agent ?? createLocalAgentProcessRunner();
 
   const projectDirectory = (id: string) => join(projectsDirectory, id);
   const runtimeDirectory = (id: string) => join(projectDirectory(id), ".zelavis");
@@ -504,9 +519,10 @@ export function createNativeWordPressProjectRuntime(
     processes.set(projectId, state);
   }
 
-  function capture(projectId: string, child: ChildProcess, label: string) {
-    child.stdout?.on("data", (chunk: Buffer) => appendLog(projectId, "stdout", `[${label}] ${chunk.toString("utf8")}`));
-    child.stderr?.on("data", (chunk: Buffer) => appendLog(projectId, "stderr", `[${label}] ${chunk.toString("utf8")}`));
+  /** Labels a process's output, so three of them share one Project log. */
+  function capture(projectId: string, label: string) {
+    return ({ stream, line }: { stream: "stdout" | "stderr"; line: string }) =>
+      appendLog(projectId, stream, `[${label}] ${line}`);
   }
 
   const capabilities = Object.freeze({
@@ -717,16 +733,24 @@ export function createNativeWordPressProjectRuntime(
             "--skip-test-db",
           ]);
         }
-        if (!state.database || state.database.exitCode !== null) {
-          state.database = spawn(config.mariadbd, [
-            `--datadir=${databaseDirectory(project.id)}`,
-            `--socket=${join(socketDirectory(config), "mariadb.sock")}`,
-            `--port=${config.databasePort}`,
-            "--bind-address=127.0.0.1",
-            `--pid-file=${join(runtimeDirectory(project.id), "mariadb.pid")}`,
-            `--log-error=${join(runtimeDirectory(project.id), "mariadb.log")}`,
-          ], { stdio: ["ignore", "pipe", "pipe"] });
-          capture(project.id, state.database, "mariadb");
+        if (!state.database?.running) {
+          state.database = await agent.start(
+            {
+              workloadId: project.id,
+              executable: config.mariadbd,
+              args: [
+                `--datadir=${databaseDirectory(project.id)}`,
+                `--socket=${join(socketDirectory(config), "mariadb.sock")}`,
+                `--port=${config.databasePort}`,
+                "--bind-address=127.0.0.1",
+                `--pid-file=${join(runtimeDirectory(project.id), "mariadb.pid")}`,
+                `--log-error=${join(runtimeDirectory(project.id), "mariadb.log")}`,
+              ],
+              cwd: runtimeDirectory(project.id),
+              env: nativeProcessEnvironment(),
+            },
+            { onOutput: capture(project.id, "mariadb") },
+          );
         }
         await waitForPort(config.databasePort, startupTimeoutMs);
         if (!config.databaseInitialized) {
@@ -743,31 +767,37 @@ export function createNativeWordPressProjectRuntime(
         }
         const phpSocket = join(socketDirectory(config), "php-fpm.sock");
         await rm(phpSocket, { force: true });
-        if (!state.phpFpm || state.phpFpm.exitCode !== null) {
-          state.phpFpm = spawn(config.phpFpm, [
-            "-F",
-            "-y",
-            join(runtimeDirectory(project.id), "php-fpm.conf"),
-          ], {
-            cwd: siteDirectory(project.id),
-            stdio: ["ignore", "pipe", "pipe"],
-          });
-          capture(project.id, state.phpFpm, "php-fpm");
+        if (!state.phpFpm?.running) {
+          state.phpFpm = await agent.start(
+            {
+              workloadId: project.id,
+              executable: config.phpFpm,
+              args: ["-F", "-y", join(runtimeDirectory(project.id), "php-fpm.conf")],
+              cwd: siteDirectory(project.id),
+              env: nativeProcessEnvironment(),
+            },
+            { onOutput: capture(project.id, "php-fpm") },
+          );
         }
         await waitForPath(phpSocket, startupTimeoutMs);
-        if (!state.nginx || state.nginx.exitCode !== null) {
-          state.nginx = spawn(config.nginx, [
-            "-c",
-            join(runtimeDirectory(project.id), "nginx.conf"),
-            "-p",
-            runtimeDirectory(project.id),
-            "-g",
-            "daemon off;",
-          ], {
-            cwd: runtimeDirectory(project.id),
-            stdio: ["ignore", "pipe", "pipe"],
-          });
-          capture(project.id, state.nginx, "nginx");
+        if (!state.nginx?.running) {
+          state.nginx = await agent.start(
+            {
+              workloadId: project.id,
+              executable: config.nginx,
+              args: [
+                "-c",
+                join(runtimeDirectory(project.id), "nginx.conf"),
+                "-p",
+                runtimeDirectory(project.id),
+                "-g",
+                "daemon off;",
+              ],
+              cwd: runtimeDirectory(project.id),
+              env: nativeProcessEnvironment(),
+            },
+            { onOutput: capture(project.id, "nginx") },
+          );
         }
         await waitForPort(config.httpPort, startupTimeoutMs);
         return { status: "running", url: `http://127.0.0.1:${config.httpPort}`, startedAt: new Date().toISOString() };
@@ -778,16 +808,18 @@ export function createNativeWordPressProjectRuntime(
     },
     async stop(projectId) {
       const state = processes.get(projectId);
-      await stopChild(state?.nginx);
-      await stopChild(state?.phpFpm);
-      await stopChild(state?.database);
+      // In dependency order: nginx stops serving before php-fpm goes away, and
+      // php-fpm releases its connections before the database does.
+      for (const process of [state?.nginx, state?.phpFpm, state?.database]) {
+        await process?.stop().catch(() => undefined);
+      }
       processes.delete(projectId);
       return { status: "stopped", stoppedAt: new Date().toISOString() };
     },
     async status(projectId) {
       const state = processes.get(projectId);
       const config = await readConfig(projectId).catch(() => undefined);
-      return state?.nginx?.exitCode === null && config
+      return state?.nginx?.running && config
         ? { status: "running", url: `http://127.0.0.1:${config.httpPort}` }
         : { status: "stopped" };
     },

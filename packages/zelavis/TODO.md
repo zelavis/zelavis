@@ -516,8 +516,22 @@ an exported type is never mistaken for an operational distributed feature.
   the native backend before adding Docker Project execution and migration.
 - [ ] Persist Platform identity, allocations, placements, and generations in
   the System Store.
-- [ ] Put local Node child-process execution behind the Zelavis Agent command
-  contract before adding remote Agents or other isolation drivers.
+- [x] Local child-process execution runs through the Agent command contract.
+  Every long-lived Project process — the Node Project runtime, the server
+  frontend, and native WordPress's nginx, php-fpm, and database — is started by
+  asking an Agent rather than by calling `spawn`. The host operation contract
+  the Agent already had describes a short registered program; a supervised
+  process is the other shape, so `ZelavisAgentProcessRunner` covers it: line
+  output, SIGTERM escalated to SIGKILL, a stop that resolves only once the
+  process is gone, and an exit that says whether the Platform asked for it. The
+  local runner is the first implementation rather than the thing a remote Agent
+  is retrofitted around. Unifying three supervisors also settled differences
+  that were never decisions: only one registered its children for cleanup when
+  the Platform exits, only one reassembled output into whole lines, and native
+  WordPress handed its daemons the Platform's entire environment. The remaining
+  direct spawns are all short and bounded — WordPress's one-shot setup
+  commands, backend detection probes, the create-package scaffold, and the host
+  operation executor, which is the Agent's own other contract.
 - [ ] Make the Gateway resolve authoritative placement plus Agent-reported
   healthy targets.
 - [ ] Require real principal permissions on every Agent and provider control

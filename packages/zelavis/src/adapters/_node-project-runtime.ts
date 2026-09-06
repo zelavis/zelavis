@@ -1,4 +1,3 @@
-import { spawn, type ChildProcess } from "node:child_process";
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +7,11 @@ import {
   signGatewayAuthority,
   ZELAVIS_GATEWAY_AUTHORITY_TTL_MS,
 } from "../platform/gateway-authority.js";
+import { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
+import type {
+  ZelavisAgentProcess,
+  ZelavisAgentProcessRunner,
+} from "../core/agent/process-command.js";
 import type {
   ZelavisProjectLogEntry,
   ZelavisProjectRecipeLock,
@@ -17,6 +21,14 @@ import type {
 
 export interface NodeProcessProjectRuntimeOptions {
   directory: string;
+  /**
+   * Agent that executes this Project's process.
+   *
+   * Defaults to the local runner, which is this host executing it itself. The
+   * driver issues the same command whichever Agent runs it, which is the point
+   * of routing through the contract before a remote one exists.
+   */
+  agent?: ZelavisAgentProcessRunner;
   startupTimeoutMs?: number;
   startupConcurrency?: number;
   shutdownConcurrency?: number;
@@ -24,7 +36,7 @@ export interface NodeProcessProjectRuntimeOptions {
 }
 
 interface NodeProjectProcess {
-  child?: ChildProcess;
+  process?: ZelavisAgentProcess;
   logs: ZelavisProjectLogEntry[];
   snapshot: ZelavisProjectRuntimeSnapshot;
   stopping: boolean;
@@ -34,28 +46,6 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 15_000;
 const DEFAULT_STARTUP_CONCURRENCY = 1;
 const DEFAULT_SHUTDOWN_CONCURRENCY = 8;
 const DEFAULT_LOG_LIMIT = 500;
-const activeProjectChildren = new Set<ChildProcess>();
-let exitCleanupInstalled = false;
-
-function registerProjectChild(child: ChildProcess) {
-  activeProjectChildren.add(child);
-  child.once("exit", () => activeProjectChildren.delete(child));
-
-  if (!exitCleanupInstalled) {
-    exitCleanupInstalled = true;
-    process.once("exit", () => {
-      for (const activeChild of activeProjectChildren) {
-        if (
-          activeChild.exitCode === null &&
-          activeChild.signalCode === null
-        ) {
-          activeChild.kill("SIGTERM");
-        }
-      }
-    });
-  }
-}
-
 function isMissingFileError(error: unknown): boolean {
   return Boolean(
     error &&
@@ -194,6 +184,7 @@ export function createNodeProcessProjectRuntime(
   );
   const logLimit = options.logLimit ?? DEFAULT_LOG_LIMIT;
   const runnerPath = fileURLToPath(new URL("./_node-project-runner.js", import.meta.url));
+  const agent = options.agent ?? createLocalAgentProcessRunner();
   const processes = new Map<string, NodeProjectProcess>();
   /**
    * Per-runtime Gateway signing secrets.
@@ -242,22 +233,6 @@ export function createNodeProcessProjectRuntime(
       status: "stopped",
       stoppedAt: state?.snapshot.stoppedAt ?? new Date().toISOString(),
     };
-  }
-
-  async function waitForExit(child: ChildProcess, timeoutMs: number): Promise<void> {
-    if (child.exitCode !== null || child.signalCode !== null) {
-      return;
-    }
-
-    await new Promise<void>((resolveExit) => {
-      const timeout = setTimeout(() => {
-        child.kill("SIGKILL");
-      }, timeoutMs);
-      child.once("exit", () => {
-        clearTimeout(timeout);
-        resolveExit();
-      });
-    });
   }
 
   const capabilities = {
@@ -318,9 +293,7 @@ export function createNodeProcessProjectRuntime(
 
       const current = processes.get(project.id);
       if (
-        current?.child &&
-        current.child.exitCode === null &&
-        current.child.signalCode === null &&
+        current?.process?.running &&
         (current.snapshot.status === "starting" || current.snapshot.status === "running")
       ) {
         return current.snapshot;
@@ -347,66 +320,58 @@ export function createNodeProcessProjectRuntime(
       const gatewaySecret = createGatewayAuthoritySecret();
       gatewaySecrets.set(project.id, gatewaySecret);
 
-      const child = spawn(process.execPath, [runnerPath], {
-        cwd: directory,
-        env: {
-          ...projectProcessEnvironment(),
-          PORT: "0",
-          ZELAVIS_PROJECT_GATEWAY_SECRET: gatewaySecret,
-          ZELAVIS_PROJECT_ID: project.id,
-          ZELAVIS_PROJECT_DATA_DIR: join(directory, ".zelavis"),
-          ZELAVIS_UI_DEV_SERVER: "",
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      state.child = child;
-      registerProjectChild(child);
-
-      let stdoutBuffer = "";
       let settled = false;
-      const ready = new Promise<ZelavisProjectRuntimeSnapshot>((resolveReady, rejectReady) => {
-        const timeout = setTimeout(() => {
-          rejectReady(
-            new Error(
-              `Project "${project.id}" did not become ready within ${startupTimeoutMs}ms.`,
-            ),
-          );
-        }, startupTimeoutMs);
+      let readyResolve: (snapshot: ZelavisProjectRuntimeSnapshot) => void;
+      let readyReject: (error: Error) => void;
+      const ready = new Promise<ZelavisProjectRuntimeSnapshot>(
+        (resolveReady, rejectReady) => {
+          readyResolve = resolveReady;
+          readyReject = rejectReady;
+        },
+      );
+      const timeout = setTimeout(() => {
+        finish(
+          new Error(
+            `Project "${project.id}" did not become ready within ${startupTimeoutMs}ms.`,
+          ),
+        );
+      }, startupTimeoutMs);
 
-        function finish(error?: Error, snapshot?: ZelavisProjectRuntimeSnapshot) {
-          if (settled) {
-            return;
-          }
-          settled = true;
-          clearTimeout(timeout);
-          if (error) {
-            rejectReady(error);
-          } else if (snapshot) {
-            resolveReady(snapshot);
-          }
-        }
+      function finish(error?: Error, snapshot?: ZelavisProjectRuntimeSnapshot) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        if (error) readyReject(error);
+        else if (snapshot) readyResolve(snapshot);
+      }
 
-        child.stdout?.on("data", (chunk: Buffer) => {
-          stdoutBuffer += chunk.toString("utf8");
-          const lines = stdoutBuffer.split("\n");
-          stdoutBuffer = lines.pop() ?? "";
-          // A child that never emits a newline would otherwise grow this
-          // buffer without bound. Readiness events are small, so a partial
-          // line beyond the cap is not one and can be discarded.
-          if (stdoutBuffer.length > MAX_CHILD_LINE_BYTES) {
-            appendLog(
-              state,
-              "system",
-              `Discarded an over-long stdout line (> ${MAX_CHILD_LINE_BYTES} bytes).`,
-            );
-            stdoutBuffer = "";
-          }
-          for (const line of lines) {
+      const child = await agent.start(
+        {
+          workloadId: project.id,
+          executable: process.execPath,
+          args: [runnerPath],
+          cwd: directory,
+          env: {
+            ...projectProcessEnvironment(),
+            PORT: "0",
+            ZELAVIS_PROJECT_GATEWAY_SECRET: gatewaySecret,
+            ZELAVIS_PROJECT_ID: project.id,
+            ZELAVIS_PROJECT_DATA_DIR: join(directory, ".zelavis"),
+            ZELAVIS_UI_DEV_SERVER: "",
+          },
+        },
+        {
+          onOutput: ({ stream, line }) => {
+            if (stream === "stderr") {
+              appendLog(state, "stderr", line);
+              return;
+            }
+
+            // The readiness handshake: the child announces the address it
+            // actually bound, because it was started on port 0 and the
+            // Platform cannot know the port until it says so.
             try {
-              const event = JSON.parse(line) as {
-                type?: unknown;
-                url?: unknown;
-              };
+              const event = JSON.parse(line) as { type?: unknown; url?: unknown };
               if (event.type === "ready" && typeof event.url === "string") {
                 const snapshot: ZelavisProjectRuntimeSnapshot = {
                   status: "running",
@@ -416,52 +381,46 @@ export function createNodeProcessProjectRuntime(
                 state.snapshot = snapshot;
                 appendLog(state, "system", `Project ready at ${event.url}.`);
                 finish(undefined, snapshot);
-                continue;
+                return;
               }
             } catch {
               // Ordinary application output is retained as a project log.
             }
             appendLog(state, "stdout", line);
-          }
-        });
-        child.stderr?.on("data", (chunk: Buffer) => {
-          for (const line of chunk.toString("utf8").split("\n")) {
-            appendLog(state, "stderr", line);
-          }
-        });
-        child.once("error", (error) => finish(error));
-        child.once("exit", (code, signal) => {
-          const stoppedAt = new Date().toISOString();
-          if (state.stopping || code === 0) {
-            state.snapshot = { status: "stopped", stoppedAt };
-          } else {
-            state.snapshot = {
-              status: "failed",
-              stoppedAt,
-              error: formatProjectProcessExitError({
-                code,
-                signal,
-                logs: state.logs,
-              }),
-            };
-          }
-          appendLog(state, "system", state.snapshot.error ?? "Project stopped.");
-          finish(
-            state.snapshot.status === "failed"
-              ? new Error(state.snapshot.error)
-              : new Error(`Project "${project.id}" stopped before becoming ready.`),
-          );
-        });
-      });
+          },
+          onExit: ({ code, signal, requested }) => {
+            const stoppedAt = new Date().toISOString();
+            if (requested || state.stopping || code === 0) {
+              state.snapshot = { status: "stopped", stoppedAt };
+            } else {
+              state.snapshot = {
+                status: "failed",
+                stoppedAt,
+                error: formatProjectProcessExitError({
+                  code,
+                  signal: signal as NodeJS.Signals | null,
+                  logs: state.logs,
+                }),
+              };
+            }
+            appendLog(state, "system", state.snapshot.error ?? "Project stopped.");
+            finish(
+              state.snapshot.status === "failed"
+                ? new Error(state.snapshot.error)
+                : new Error(`Project "${project.id}" stopped before becoming ready.`),
+            );
+          },
+        },
+      );
+      state.process = child;
 
       try {
         return await ready;
       } catch (error) {
-        if (child.exitCode === null && child.signalCode === null) {
-          state.stopping = true;
-          child.kill("SIGTERM");
-          await waitForExit(child, 2_000);
-        }
+        // Whatever went wrong, the process must not be left running: a Project
+        // reported as failed that is still serving is worse than either state.
+        state.stopping = true;
+        await child.stop({ graceMs: 2_000 }).catch(() => undefined);
         state.snapshot = {
           status: "failed",
           stoppedAt: new Date().toISOString(),
@@ -472,7 +431,7 @@ export function createNodeProcessProjectRuntime(
     },
     async stop(projectId) {
       const state = processes.get(projectId);
-      if (!state?.child || state.child.exitCode !== null || state.child.signalCode !== null) {
+      if (!state?.process?.running) {
         const snapshot = stoppedSnapshot(state);
         if (state) {
           state.snapshot = snapshot;
@@ -483,8 +442,9 @@ export function createNodeProcessProjectRuntime(
       state.stopping = true;
       state.snapshot = { ...state.snapshot, status: "stopping" };
       appendLog(state, "system", "Stopping project.");
-      state.child.kill("SIGTERM");
-      await waitForExit(state.child, 5_000);
+      // Resolves once the process has actually exited, so reporting "stopped"
+      // never describes one that is still running.
+      await state.process.stop();
       gatewaySecrets.delete(projectId);
       state.snapshot = stoppedSnapshot(state);
       return state.snapshot;
