@@ -426,15 +426,18 @@ an exported type is never mistaken for an operational distributed feature.
   half of the promise had never once executed. A committed container script
   runs it in CI and on a laptop, and refuses to run where the packages are
   already present rather than passing and looking like evidence.
-- [ ] Run the native WordPress stack as root. MariaDB refuses to start as root
-  unless told which user to drop to, and `mariadb-server-core` creates no
-  account to drop to — so a Platform running as root provisions its packages
-  successfully and then cannot start the Project. Running as an ordinary user
-  with `sudo -n` package authority works and is the safer arrangement, but the
-  root branch in `provisionNativeWordPressPackages` invites a configuration
-  that cannot work. Either the daemons need a non-root account to drop to, or
-  root has to be refused with an explanation instead of failing at the first
-  port wait.
+- [x] The native WordPress stack runs as root. A Platform installed as a system
+  service is root, and the daemons now drop to an unprivileged account —
+  configurable, else www-data, mysql or nobody, and refused up front with an
+  explanation if none exists rather than dying at the first port wait. Four
+  things had to hold at once, each hidden behind the last: MariaDB will not run
+  as root without `--user`; the account cannot reach files it owns unless every
+  ancestor is traversable, so the Platform's own directories gain the execute
+  bit and never the read bit; PHP-FPM's master creates its socket while still
+  root, so `listen.owner` has to name the dropped-to account or nginx answers
+  502; and nginx needs a `user` directive, but only when root. CI now checks
+  both identities, because testing one left the other broken for as long as
+  nobody tried it.
 - [ ] Native reports its current `process` isolation boundary honestly. Stable
   per-Project Unix identities, filesystem/PID/network namespace policy, cgroup
   v2 limits, systemd supervision, capability/seccomp/MAC confinement, quotas,

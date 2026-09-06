@@ -76,31 +76,22 @@ if (installed.length > 0) {
 }
 
 // Root, or able to become it without a prompt — the two shapes provisioning
-// knows how to install packages in.
-//
-// Not root itself, deliberately. MariaDB refuses to run as root unless it is
-// told which user to drop to, and the Platform has no business choosing one, so
-// an installation that provisions runs as an ordinary user with package
-// authority. That is also the safer arrangement, and it is the one the driver's
-// `sudo -n apt-get` path was written for.
+// knows how to install packages in. Both are exercised: an installation run as
+// a system service is root, and one run as an operator's own account is not,
+// and the daemons have to come up either way.
 const asRoot = process.getuid?.() === 0;
 const canSudo = !asRoot && (await run("sudo", ["-n", "true"])).ok;
 
 if (!asRoot && !canSudo) {
   console.error(
     "Provisioning installs host packages, so this check needs package " +
-      "authority: run it as a user with passwordless sudo, in a container.",
+      "authority: run it as root or as a user with passwordless sudo, in a " +
+      "container.",
   );
   process.exit(2);
 }
-if (asRoot) {
-  console.error(
-    "Running as root: MariaDB refuses to start without being told which user " +
-      "to drop to, so this check cannot distinguish a provisioning failure " +
-      "from that. Run it as a user with passwordless sudo instead.",
-  );
-  process.exit(2);
-}
+
+console.log(`Running as ${asRoot ? "root" : "an unprivileged user with sudo"}.`);
 
 console.log("Host is missing nginx, php-fpm and mariadbd. Starting a WordPress Project.");
 

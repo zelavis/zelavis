@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, Socket } from "node:net";
 import { userInfo } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
 import type {
   ZelavisAgentProcess,
@@ -24,6 +24,18 @@ import {
 export interface NativeWordPressProjectRuntimeOptions {
   directory: string;
   startupTimeoutMs?: number;
+  /**
+   * Unprivileged account the daemons run as when the Platform runs as root.
+   *
+   * Ignored otherwise: a Platform that is already unprivileged runs its
+   * Project's daemons as itself, which is what happens today.
+   *
+   * One account for all three daemons rather than the conventional split of
+   * `mysql` and `www-data`. They serve a single Project and share its files, so
+   * one identity keeps ownership coherent — and it is the shape per-Project
+   * Unix identities will need, rather than something to undo on the way there.
+   */
+  user?: string;
   /**
    * Agent that executes nginx, php-fpm, and the database.
    *
@@ -107,6 +119,49 @@ function nativeProcessEnvironment(): Record<string, string> {
     if (value !== undefined) environment[name] = value;
   }
   return environment;
+}
+
+/**
+ * The account the daemons drop to, when the Platform is root.
+ *
+ * MariaDB refuses to start as root at all unless it is told which user to
+ * become — "Please consult the Knowledge Base to find out how to run mysqld as
+ * root!" — and installing only `mariadb-server-core` leaves no `mysql` account
+ * to name. Without this a root Platform installs its packages successfully and
+ * then dies at the first port wait, which reads as a provisioning failure and
+ * is not one.
+ *
+ * Returns undefined when the Platform is not root, which is the ordinary case:
+ * the daemons run as whoever started the Platform.
+ */
+async function resolveRuntimeAccount(
+  configured: string | undefined,
+): Promise<{ name: string; uid: number; gid: number } | undefined> {
+  if (process.getuid?.() !== 0) return undefined;
+
+  // A configured account is used or refused; it is not quietly replaced with a
+  // fallback, because an operator who named one is describing their host.
+  const candidates = configured ? [configured] : ["www-data", "mysql", "nobody"];
+
+  for (const name of candidates) {
+    const uid = await run("id", ["-u", name], { allowFailure: true });
+    const gid = await run("id", ["-g", name], { allowFailure: true });
+    if (uid.code === 0 && gid.code === 0) {
+      return {
+        name,
+        uid: Number(uid.stdout.trim()),
+        gid: Number(gid.stdout.trim()),
+      };
+    }
+  }
+
+  throw new ZelavisProjectRuntimeError(
+    configured
+      ? `Native WordPress is configured to run as "${configured}", but no such account exists on this host.`
+      : "Native WordPress is running as root and found no unprivileged account to run its daemons as. " +
+          "MariaDB will not start as root. Create one of www-data, mysql or nobody, name one with the " +
+          "WordPress runtime's `user` option, or run Zelavis as an ordinary user with package authority.",
+  );
 }
 
 function isMissingFileError(error: unknown): boolean {
@@ -457,7 +512,15 @@ daemonize = no
 
 [wordpress]
 user = ${input.username}
+group = ${input.username}
 listen = ${input.socketDirectory}/php-fpm.sock
+; The socket is created by the PHP-FPM master, which is still root when the
+; Platform is. Without these it lands root-owned and nginx's workers — which
+; dropped to the same unprivileged account the pool did — get a 502 connecting
+; to a socket they cannot open. Comments here are ";", not "#": PHP-FPM parses
+; this with the INI parser, which rejects a "#" line as a null entry.
+listen.owner = ${input.username}
+listen.group = ${input.username}
 listen.mode = 0600
 pm = dynamic
 pm.max_children = 8
@@ -481,10 +544,15 @@ function nginxConfig(input: {
   runtimeDirectory: string;
   socketDirectory: string;
   siteDirectory: string;
+  /** Set only when the Platform is root; nginx workers drop to it. */
+  runAs?: string;
 }): string {
   const site = nginxQuoted(input.siteDirectory);
   const phpSocket = `unix:${input.socketDirectory}/php-fpm.sock`;
-  return `pid ${nginxQuoted(join(input.runtimeDirectory, "nginx.pid"))};
+  // Without this an nginx started by root runs its workers as `nobody`, which
+  // cannot read a Project directory owned by anyone else. Set only when root:
+  // an unprivileged nginx cannot switch user and warns about the directive.
+  return `${input.runAs ? `user ${input.runAs};\n` : ""}pid ${nginxQuoted(join(input.runtimeDirectory, "nginx.pid"))};
 error_log stderr notice;
 
 events { worker_connections 1024; }
@@ -578,6 +646,73 @@ export function createNativeWordPressProjectRuntime(
     createLocalAgentProcessRunner({
       stateDirectory: join(projectsDirectory, ".agent-processes"),
     });
+  let runtimeAccount: Awaited<ReturnType<typeof resolveRuntimeAccount>> | undefined;
+  let runtimeAccountResolved = false;
+
+  async function account() {
+    if (!runtimeAccountResolved) {
+      runtimeAccount = await resolveRuntimeAccount(options.user);
+      runtimeAccountResolved = true;
+    }
+    return runtimeAccount;
+  }
+
+  /**
+   * Hands a path to the account the daemons run as.
+   *
+   * A no-op unless the Platform is root. The daemons cannot write a data
+   * directory, a socket directory or a site they do not own, and they are no
+   * longer the same user as the Platform that created those.
+   */
+  async function handOver(path: string) {
+    const owner = await account();
+    if (!owner) return;
+    // Not `allowFailure`. A silent chown failure surfaces later as MariaDB
+    // being unable to write its own data directory, which reads as a database
+    // problem and is a permissions one.
+    await run("chown", ["-R", `${owner.uid}:${owner.gid}`, path]);
+    await ensureTraversable(dirname(path), owner);
+  }
+
+  /**
+   * Lets the account reach a directory it owns.
+   *
+   * Owning the Project directory is not enough: every directory above it has to
+   * be traversable, and the Platform's data directory is created 0700 by the
+   * user that created it — root. Without this the daemons drop to an account
+   * that cannot walk to the files it owns, and MariaDB reports "Can't
+   * create/write to file ... Permission denied" on a directory that is
+   * unambiguously its own.
+   *
+   * Adds the execute bit only, never read. A directory that is traversable but
+   * not readable can be walked through by someone who already knows the path
+   * and cannot be listed, so this does not expose the System Store or anything
+   * else living beside the Projects — those keep their own modes. It stops at
+   * the first directory the Platform does not own, because widening something
+   * the operator set up is not this driver's business.
+   */
+  async function ensureTraversable(
+    from: string,
+    owner: { uid: number; gid: number },
+  ): Promise<void> {
+    let current = resolve(from);
+
+    while (true) {
+      const info = await stat(current).catch(() => undefined);
+      if (!info) return;
+
+      const alreadyOwned = info.uid === owner.uid;
+      const traversable = alreadyOwned || (info.mode & 0o001) !== 0;
+      if (!traversable) {
+        if (info.uid !== process.getuid?.()) return;
+        await chmod(current, info.mode | 0o001).catch(() => undefined);
+      }
+
+      const parent = dirname(current);
+      if (parent === current) return;
+      current = parent;
+    }
+  }
 
   const projectDirectory = (id: string) => join(projectsDirectory, id);
   const runtimeDirectory = (id: string) => join(projectDirectory(id), ".zelavis");
@@ -641,6 +776,8 @@ export function createNativeWordPressProjectRuntime(
         "nginx-client-temp",
         "nginx-proxy-temp",
         "nginx-fastcgi-temp",
+        "nginx-uwsgi-temp",
+        "nginx-scgi-temp",
       ]) {
         await mkdir(join(runtimeDirectory(project.id), name), {
           recursive: true,
@@ -721,6 +858,7 @@ export function createNativeWordPressProjectRuntime(
         { mode: 0o600 },
       );
       await mkdir(socketDirectory(config), { recursive: true, mode: 0o700 });
+      await handOver(socketDirectory(config));
 
       const phpFpmConfiguration = join(
         runtimeDirectory(project.id),
@@ -732,7 +870,7 @@ export function createNativeWordPressProjectRuntime(
           runtimeDirectory: runtimeDirectory(project.id),
           socketDirectory: socketDirectory(config),
           siteDirectory: siteDirectory(project.id),
-          username: userInfo().username,
+          username: (await account())?.name ?? userInfo().username,
         }),
         { mode: 0o600 },
       );
@@ -747,6 +885,7 @@ export function createNativeWordPressProjectRuntime(
           runtimeDirectory: runtimeDirectory(project.id),
           socketDirectory: socketDirectory(config),
           siteDirectory: siteDirectory(project.id),
+          ...((await account()) ? { runAs: (await account())!.name } : {}),
         }),
         { mode: 0o600 },
       );
@@ -801,6 +940,11 @@ export function createNativeWordPressProjectRuntime(
         `${JSON.stringify({ ...project, recipe, runtime: { driver: driver.name, capabilities } }, null, 2)}\n`,
         { mode: 0o600 },
       );
+
+      // Last, once every file exists. Handing the tree over earlier would leave
+      // whatever `prepare` wrote afterwards — the generated wp-config.php among
+      // it — owned by the Platform and unreadable to the daemons.
+      await handOver(projectDirectory(project.id));
     },
     async start(project) {
       const config = await readConfig(project.id);
@@ -808,10 +952,12 @@ export function createNativeWordPressProjectRuntime(
       processes.set(project.id, state);
       try {
         if (!config.databaseInitialized) {
+          const installAs = await account();
           await run(config.mariadbInstallDb, [
             `--datadir=${databaseDirectory(project.id)}`,
             "--auth-root-authentication-method=normal",
             "--skip-test-db",
+            ...(installAs ? [`--user=${installAs.name}`] : []),
           ]);
         }
         if (!state.database?.running) {
@@ -826,6 +972,9 @@ export function createNativeWordPressProjectRuntime(
                 "--bind-address=127.0.0.1",
                 `--pid-file=${join(runtimeDirectory(project.id), "mariadb.pid")}`,
                 `--log-error=${join(runtimeDirectory(project.id), "mariadb.log")}`,
+                // MariaDB refuses to run as root without this, and there is
+                // nothing sensible for it to guess.
+                ...((await account()) ? [`--user=${(await account())!.name}`] : []),
               ],
               cwd: runtimeDirectory(project.id),
               env: nativeProcessEnvironment(),
