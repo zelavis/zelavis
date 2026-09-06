@@ -86,11 +86,19 @@ const APT_WORDPRESS_PACKAGES = Object.freeze([
 const BREW_WORDPRESS_PACKAGES = Object.freeze(["nginx", "php", "mariadb"]);
 
 /**
- * Environment handed to a supervised native daemon.
+ * Environment handed to a native process this driver starts.
  *
- * nginx, php-fpm, and mariadbd need almost nothing from the caller, and
- * inheriting the Platform's environment would hand a Project's web server the
- * control plane's bootstrap token and provider credentials.
+ * Both the supervised daemons and the one-shot setup commands get this, and
+ * neither gets the Platform's own environment: inheriting `process.env` would
+ * hand a Project's web server — and every `tar`, `php`, and MariaDB invocation
+ * beside it — the control plane's bootstrap token, provider credentials, and
+ * signing keys.
+ *
+ * `HOME` is forwarded because the MariaDB tools need somewhere to write and
+ * read their option files, and a missing `HOME` makes them fail in ways that
+ * read as a database problem rather than a configuration one. The one class of
+ * command that genuinely needs more is host package installation, which opts
+ * in explicitly.
  */
 function nativeProcessEnvironment(): Record<string, string> {
   const environment: Record<string, string> = {};
@@ -108,12 +116,29 @@ function isMissingFileError(error: unknown): boolean {
 async function run(
   executable: string,
   args: readonly string[],
-  options: { cwd?: string; allowFailure?: boolean } = {},
+  options: {
+    cwd?: string;
+    allowFailure?: boolean;
+    /**
+     * Run with the Platform's own environment.
+     *
+     * Only for host package managers. `brew` and `apt` are configured through
+     * environment variables an operator sets — a prefix, a mirror, a proxy, a
+     * non-interactive flag — and stripping those turns "install the packages
+     * this host needs" into a failure the operator cannot explain. They also
+     * run as the operator provisioning their own machine, not as Project code,
+     * which is the distinction that makes this safe where it would not be for
+     * anything a Project can influence.
+     */
+    inheritEnvironment?: boolean;
+  } = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolveRun, rejectRun) => {
     const child = spawn(executable, [...args], {
       cwd: options.cwd,
-      env: process.env,
+      env: options.inheritEnvironment
+        ? { ...process.env }
+        : nativeProcessEnvironment(),
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -155,7 +180,14 @@ async function resolveExecutable(
 
 async function executableAvailable(executable: string): Promise<boolean> {
   try {
-    return (await run(executable, ["--version"], { allowFailure: true })).code === 0;
+    // `brew` is one of the executables probed here and reports its version
+    // from its own installation, which it locates through its environment.
+    return (
+      await run(executable, ["--version"], {
+        allowFailure: true,
+        inheritEnvironment: true,
+      })
+    ).code === 0;
   } catch {
     return false;
   }
@@ -166,7 +198,7 @@ async function provisionNativeWordPressPackages(): Promise<void> {
     const apt = process.getuid?.() === 0
       ? { executable: "apt-get", prefix: [] as string[] }
       : await executableAvailable("sudo") &&
-          (await run("sudo", ["-n", "true"], { allowFailure: true })).code === 0
+          (await run("sudo", ["-n", "true"], { allowFailure: true, inheritEnvironment: true })).code === 0
         ? { executable: "sudo", prefix: ["-n", "apt-get"] }
         : undefined;
     if (!apt) {
@@ -175,14 +207,18 @@ async function provisionNativeWordPressPackages(): Promise<void> {
       );
     }
     try {
-      await run(apt.executable, [...apt.prefix, "update"]);
-      await run(apt.executable, [
-        ...apt.prefix,
-        "install",
-        "-y",
-        "--no-install-recommends",
-        ...APT_WORDPRESS_PACKAGES,
-      ]);
+      await run(apt.executable, [...apt.prefix, "update"], { inheritEnvironment: true });
+      await run(
+        apt.executable,
+        [
+          ...apt.prefix,
+          "install",
+          "-y",
+          "--no-install-recommends",
+          ...APT_WORDPRESS_PACKAGES,
+        ],
+        { inheritEnvironment: true },
+      );
     } catch (cause) {
       throw new ZelavisProjectRuntimeError(
         "Zelavis could not install the native WordPress dependencies through APT. Check the host package repositories and Agent package-install permissions.",
@@ -194,7 +230,9 @@ async function provisionNativeWordPressPackages(): Promise<void> {
 
   if (process.platform === "darwin" && await executableAvailable("brew")) {
     try {
-      await run("brew", ["install", ...BREW_WORDPRESS_PACKAGES]);
+      await run("brew", ["install", ...BREW_WORDPRESS_PACKAGES], {
+        inheritEnvironment: true,
+      });
     } catch (cause) {
       throw new ZelavisProjectRuntimeError(
         "Zelavis could not install the native WordPress dependencies through Homebrew. Check the Homebrew installation and retry the Project start.",
@@ -216,8 +254,11 @@ async function brewFormulaExecutable(
   if (process.platform !== "darwin" || !await executableAvailable("brew")) {
     return undefined;
   }
+  // Homebrew resolves its own prefix from its environment, so asking it where
+  // a formula lives is one of the calls that needs that environment.
   const prefix = await run("brew", ["--prefix", formula], {
     allowFailure: true,
+    inheritEnvironment: true,
   });
   const directory = prefix.stdout.trim();
   return prefix.code === 0 && directory ? join(directory, relativePath) : undefined;

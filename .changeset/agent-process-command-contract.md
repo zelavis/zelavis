@@ -23,5 +23,9 @@ first implementation of one contract rather than the thing a remote Agent would
 have to be retrofitted around. Each driver takes an `agent` option and defaults
 to the local runner, so nothing about single-host behaviour changes.
 
-Native WordPress no longer hands nginx, php-fpm, and its database the Platform's
-entire environment.
+Native WordPress no longer hands the Platform's entire environment — bootstrap
+token, provider credentials, signing keys — to nginx, php-fpm, its database, or
+the one-shot setup commands beside them. Host package installation (`brew`,
+`apt`, `sudo`) opts back in explicitly, because those are configured through
+environment variables an operator sets and they run as the operator
+provisioning their own machine rather than as anything a Project influences.

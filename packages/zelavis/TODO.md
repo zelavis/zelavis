@@ -528,10 +528,14 @@ an exported type is never mistaken for an operational distributed feature.
   is retrofitted around. Unifying three supervisors also settled differences
   that were never decisions: only one registered its children for cleanup when
   the Platform exits, only one reassembled output into whole lines, and native
-  WordPress handed its daemons the Platform's entire environment. The remaining
-  direct spawns are all short and bounded — WordPress's one-shot setup
-  commands, backend detection probes, the create-package scaffold, and the host
-  operation executor, which is the Agent's own other contract.
+  WordPress handed every process it started — daemons and one-shot setup
+  commands alike — the Platform's entire environment, including the bootstrap
+  token and provider credentials. Both now get a narrow one; host package
+  installation opts back in explicitly, because `brew` and `apt` are configured
+  through an operator's environment and run as the operator provisioning their
+  own machine. The remaining direct spawns are short and bounded: those package
+  and setup commands, backend detection probes, the create-package scaffold,
+  and the host operation executor, which is the Agent's own other contract.
 - [ ] Make the Gateway resolve authoritative placement plus Agent-reported
   healthy targets.
 - [ ] Require real principal permissions on every Agent and provider control
