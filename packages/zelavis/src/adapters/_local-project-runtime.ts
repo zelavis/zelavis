@@ -14,6 +14,8 @@ import {
   createServerFrontendProjectRuntime,
   type ServerFrontendProjectRuntimeOptions,
 } from "./_server-frontend-project-runtime.js";
+import { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
+import type { ZelavisAgentProcessRunner } from "../core/agent/process-command.js";
 
 export interface LocalProjectRuntimeOptions extends NodeProcessProjectRuntimeOptions {
   wordpress?: Omit<NativeWordPressProjectRuntimeOptions, "directory">;
@@ -23,6 +25,14 @@ export interface LocalProjectRuntimeOptions extends NodeProcessProjectRuntimeOpt
    * a way that looks like a broken frontend.
    */
   serverFrontend?: Omit<ServerFrontendProjectRuntimeOptions, "directory">;
+  /**
+   * Agent that executes every Project process on this host.
+   *
+   * Defaults to running them in this process. Point it at a separately
+   * supervised Agent and the drivers are unchanged — that is what putting them
+   * behind the contract bought.
+   */
+  agent?: ZelavisAgentProcessRunner;
 }
 
 const WORDPRESS_APP_NAME = "zelavis/wordpress";
@@ -32,10 +42,28 @@ const SERVER_FRONTEND_KIND = "frontend";
 /** Routes Project recipes to native drivers while preserving one Platform lifecycle boundary. */
 export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): ZelavisProjectRuntimeDriver {
   const directory = resolve(options.directory);
-  const node = createNodeProcessProjectRuntime(options);
-  const wordpress = createNativeWordPressProjectRuntime({ directory, ...options.wordpress });
+  // One Agent for all three drivers rather than one each. They share a host, so
+  // they share the record of what is running on it — three separate runners
+  // would each sweep only their own leftovers, and a Project that changed
+  // recipe would leave one behind that nothing owns. It is also the single
+  // place to swap in an Agent that runs elsewhere.
+  const agent =
+    options.agent ??
+    createLocalAgentProcessRunner({
+      stateDirectory: join(directory, ".agent-processes"),
+    });
+  const node = createNodeProcessProjectRuntime({ ...options, agent });
+  const wordpress = createNativeWordPressProjectRuntime({
+    directory,
+    ...options.wordpress,
+    agent,
+  });
   const serverFrontend = options.serverFrontend
-    ? createServerFrontendProjectRuntime({ directory, ...options.serverFrontend })
+    ? createServerFrontendProjectRuntime({
+        directory,
+        ...options.serverFrontend,
+        agent,
+      })
     : undefined;
 
   const selectFrontend = (): ZelavisProjectRuntimeDriver => {

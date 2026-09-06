@@ -10,6 +10,8 @@ import {
   type ZelavisServiceRegistryEntry,
   type ZelavisServiceSetupContext,
 } from "../index.js";
+import { createAgentProcessClient } from "./_agent-ipc.js";
+import { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
 import { createLocalSqliteSystemStore } from "./_sqlite-system-store.js";
 import { resolveLocalDatabaseTopology } from "./_database-topology-store.js";
 import {
@@ -65,6 +67,18 @@ export interface NodeAdapterProjectOptions {
   wordpress?: {
     startupTimeoutMs?: number;
   };
+  /**
+   * Run Project processes through a separately supervised Agent.
+   *
+   * The directory holding its socket and token — what `zelavis agent` created.
+   * Omit it and Projects run in the Platform process, which is the default and
+   * needs nothing supervised alongside it.
+   *
+   * Note what this does not yet buy: a Platform restart still stops nothing and
+   * adopts nothing. The Agent keeps the processes running, but the new Platform
+   * has no handles to them, so it reclaims them and starts fresh.
+   */
+  agentEndpoint?: string;
 }
 
 export interface NodeAdapterOptions {
@@ -245,6 +259,27 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
             }),
           },
         };
+        // The Agent is resolved here rather than left to the driver so the
+        // sweep below can run: the adapter's `resolve` is async, and a driver
+        // constructor is not.
+        runtimeOptions.agent = projectOptions?.agentEndpoint
+          ? // Fails rather than falling back to in-process execution: a host
+            // that asked for a supervised Agent and silently got Projects
+            // inside the Platform has the opposite of what it configured, and
+            // would only find out when the Platform next died.
+            await createAgentProcessClient({
+              directory: resolve(projectOptions.agentEndpoint),
+            })
+          : createLocalAgentProcessRunner({
+              stateDirectory: join(runtimeOptions.directory, ".agent-processes"),
+            });
+
+        // Anything a crashed Platform left running is stopped before this one
+        // starts. Reconciliation reclaims the Projects it restarts, but a
+        // Project the operator has since stopped is never started again — and
+        // so would never be reclaimed at all.
+        await runtimeOptions.agent.reclaim?.().catch(() => undefined);
+
         projectRuntime = createLocalProjectRuntime(runtimeOptions);
       }
       const fileStorage =

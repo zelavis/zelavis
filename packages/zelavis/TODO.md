@@ -369,8 +369,8 @@ an exported type is never mistaken for an operational distributed feature.
   migrating Projects.
 - [ ] The Agent now has stable identity, operation-bound signed authority,
   durable queued state, atomic leases, bounded concurrency, redacted audit
-  events, replay-safe IDs, restart recovery, and read-only management
-  endpoints. A separately supervised IPC service, release-signed manifests,
+  events, replay-safe IDs, restart recovery, read-only management endpoints,
+  and a separately supervised IPC service. Release-signed manifests,
   process-group cancellation/reconciliation, and registered installation
   operations remain required.
 - [x] A Platform reclaims the processes a crashed one left running. A Platform
@@ -390,10 +390,27 @@ an exported type is never mistaken for an operational distributed feature.
   record whose owning Platform is still alive is left alone. The readiness waits
   now fail when the process they are waiting for has exited, so a stale listener
   can no longer be mistaken for success.
-- [ ] Sweep leftovers for Projects that are never started again. The sweep runs
-  on the first start after boot, so an installation that boots and starts
-  nothing still leaves a crashed Platform's processes running. A host-level
-  call at boot would close it.
+- [x] Sweep leftovers at boot, not only on the first start. The Node adapter
+  owns one Agent for all three Project drivers and reclaims through it while
+  composing, so an installation that boots and starts nothing still cleans up
+  after a crashed Platform. One Agent rather than one per driver is also what
+  makes the record of what is running on a host a single thing.
+- [x] Run the Agent as its own process. `zelavis agent` serves the process
+  command contract over a unix socket, and a host opts in with
+  `projects.agentEndpoint`; the drivers are unchanged, which is what putting
+  them behind the contract bought. The operator supervises the Agent — systemd,
+  launchd — so it is restarted on its own terms rather than inheriting the
+  Platform's lifetime. Verified with a real WordPress Project: nginx, php-fpm
+  and MariaDB run as the Agent's children, survive the Platform being killed,
+  and are reclaimed by the next Platform, which then starts cleanly with no
+  port conflict. Trust rests on filesystem permissions — a 0700 directory and a
+  0600 socket — with a shared token as the second lock.
+- [ ] Re-attach to Projects an earlier Platform started. The Agent keeps them
+  running, but a new Platform gets a new client with no handles: it cannot
+  receive their output, observe readiness, or stop them through the contract,
+  so it reclaims them and starts fresh. Closing this needs the Agent to replay
+  buffered output and the drivers to re-derive readiness from it — and it is
+  what would let `survivesControlPlaneRestart` finally be true.
 - [ ] Native reports its current `process` isolation boundary honestly. Stable
   per-Project Unix identities, filesystem/PID/network namespace policy, cgroup
   v2 limits, systemd supervision, capability/seccomp/MAC confinement, quotas,
