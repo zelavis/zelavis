@@ -373,6 +373,27 @@ an exported type is never mistaken for an operational distributed feature.
   endpoints. A separately supervised IPC service, release-signed manifests,
   process-group cancellation/reconciliation, and registered installation
   operations remain required.
+- [x] A Platform reclaims the processes a crashed one left running. A Platform
+  killed outright runs no shutdown, so its Project processes keep their ports,
+  keep answering requests, and keep their database files open while the
+  Platform replacing them has no memory of them. Observed: a WordPress Project
+  reported running whose new nginx logged `Address already in use`, with
+  traffic served by the process from before the crash — and, separately, a
+  Project's daemons still running three days after the Platform that started
+  them was gone. The Agent runner now records each process it starts and stops
+  the leftovers before starting the same workload, plus a full sweep on the
+  first start after boot. Stopped rather than adopted, because a child's output
+  arrives over pipes owned by the process that spawned it: once that is gone
+  there is nothing to reattach to. A leftover is matched by how long it has been
+  running rather than by its command line — daemons rewrite their own argv, and
+  matching on the command left a real php-fpm alive through a reclaim — and a
+  record whose owning Platform is still alive is left alone. The readiness waits
+  now fail when the process they are waiting for has exited, so a stale listener
+  can no longer be mistaken for success.
+- [ ] Sweep leftovers for Projects that are never started again. The sweep runs
+  on the first start after boot, so an installation that boots and starts
+  nothing still leaves a crashed Platform's processes running. A host-level
+  call at boot would close it.
 - [ ] Native reports its current `process` isolation boundary honestly. Stable
   per-Project Unix identities, filesystem/PID/network namespace policy, cgroup
   v2 limits, systemd supervision, capability/seccomp/MAC confinement, quotas,

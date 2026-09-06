@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import test, { after } from "node:test";
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -261,4 +261,203 @@ test("the child gets only the environment it was given", async () => {
     output.map((entry) => entry.line),
     ["null"],
   );
+});
+
+
+/**
+ * A process started by a "previous Platform".
+ *
+ * Spawned directly rather than through the runner, then recorded by hand with
+ * an owner pid that is not this process — which is exactly the state a crashed
+ * Platform leaves behind, and the only way to reproduce it without killing the
+ * test runner.
+ */
+const spawnedOrphans = new Set();
+
+// Belt and braces: whatever a test does or fails to do, no stand-in process
+// outlives the suite. A leaked one would be indistinguishable from the very
+// leak these tests exist to prevent.
+after(() => {
+  for (const child of spawnedOrphans) {
+    try {
+      child.kill("SIGKILL");
+    } catch {}
+  }
+});
+
+async function orphan(stateDirectory, workloadId) {
+  const { directory, file } = await script(`setInterval(() => {}, 1000);`);
+  const { spawn } = await import("node:child_process");
+  const process_ = spawn(process.execPath, [file], {
+    cwd: directory,
+    stdio: ["ignore", "ignore", "ignore"],
+    detached: false,
+  });
+  // Never holds the test runner's event loop open: it stands in for a process
+  // this Node process does not own.
+  process_.unref();
+  spawnedOrphans.add(process_);
+  process_.once("exit", () => spawnedOrphans.delete(process_));
+  await mkdir(stateDirectory, { recursive: true });
+  await writeFile(
+    join(stateDirectory, `${workloadId}.json`),
+    JSON.stringify({
+      workloadId,
+      pid: process_.pid,
+      executable: process.execPath,
+      startedAt: new Date().toISOString(),
+      // A pid that cannot be alive: the previous Platform is gone.
+      ownerPid: 2147483646,
+    }),
+  );
+  return process_;
+}
+
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
+
+test("a process left by a crashed Platform is stopped before its workload restarts", async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), "zelavis-agent-state-"));
+  // `run` starts everything as "test-project", which is the workload whose
+  // leftover would hold the port a replacement needs.
+  const leftover = await orphan(stateDirectory, "test-project");
+
+  assert.equal(alive(leftover.pid), true);
+
+  const runner = createLocalAgentProcessRunner({ stateDirectory, graceMs: 500 });
+  const replacement = await run(runner, `setInterval(() => {}, 1000);`);
+
+  // Starting the same workload is the moment a leftover does damage: it still
+  // holds the port and still answers requests the Platform believes it serves.
+  assert.equal(alive(leftover.pid), false);
+  assert.equal(replacement.running, true);
+
+  await replacement.stop({ graceMs: 500 });
+});
+
+test("processes of a workload that is never restarted are swept too", async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), "zelavis-agent-state-"));
+  // A Project the operator stopped and never started again. Reclaiming only
+  // the workload being started would leave this running forever — which is the
+  // shape the leak was found in: daemons still running days after the crash.
+  const forgotten = await orphan(stateDirectory, "some-other-project");
+
+  const runner = createLocalAgentProcessRunner({ stateDirectory, graceMs: 500 });
+  const unrelated = await run(runner, `setInterval(() => {}, 1000);`);
+
+  assert.equal(alive(forgotten.pid), false);
+
+  await unrelated.stop({ graceMs: 500 });
+});
+
+test("reclaim leaves another live Platform's processes alone", async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), "zelavis-agent-state-"));
+  const other = await orphan(stateDirectory, "other-project");
+
+  // Rewrite the record so its owner is this very process — a Platform that is
+  // demonstrably still running. Killing a live installation's Projects is not
+  // how "two Platforms on one data directory" should be discovered.
+  const [name] = await readdir(stateDirectory);
+  const record = JSON.parse(await readFile(join(stateDirectory, name), "utf8"));
+  await writeFile(
+    join(stateDirectory, name),
+    JSON.stringify({ ...record, ownerPid: process.pid }),
+  );
+
+  const runner = createLocalAgentProcessRunner({ stateDirectory, graceMs: 500 });
+  assert.equal(await runner.reclaim(), 0);
+  assert.equal(alive(other.pid), true);
+
+  other.kill("SIGKILL");
+});
+
+test("a recycled pid is not signalled", async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), "zelavis-agent-state-"));
+  const survivor = await orphan(stateDirectory, "recycled");
+
+  // The same live pid, recorded as having started a day ago. That is what pid
+  // reuse looks like from here: the recorded process died, the id was handed to
+  // something else, and signalling on the id alone would kill a stranger.
+  const [name] = await readdir(stateDirectory);
+  const record = JSON.parse(await readFile(join(stateDirectory, name), "utf8"));
+  await writeFile(
+    join(stateDirectory, name),
+    JSON.stringify({
+      ...record,
+      startedAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+    }),
+  );
+
+  const runner = createLocalAgentProcessRunner({ stateDirectory, graceMs: 500 });
+  assert.equal(await runner.reclaim(), 0);
+  assert.equal(alive(survivor.pid), true);
+
+  // The record is dropped rather than kept: it describes nothing this Platform
+  // can act on, now or later.
+  assert.deepEqual(await readdir(stateDirectory), []);
+
+  survivor.kill("SIGKILL");
+});
+
+test("a process that renamed itself is still recognised", async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), "zelavis-agent-state-"));
+
+  // Daemons rewrite their own argv: php-fpm reports itself as
+  // `php-fpm: master process (...)` and nginx as `nginx: master process ...`,
+  // neither containing the path that was executed. Matching on the command line
+  // left a real php-fpm running through a reclaim.
+  const { directory, file } = await script(
+    `process.title = "totally-different-name"; setInterval(() => {}, 1000);`,
+  );
+  const { spawn } = await import("node:child_process");
+  const renamed = spawn(process.execPath, [file], {
+    cwd: directory,
+    stdio: ["ignore", "ignore", "ignore"],
+  });
+  renamed.unref();
+  spawnedOrphans.add(renamed);
+
+  await mkdir(stateDirectory, { recursive: true });
+  await writeFile(
+    join(stateDirectory, "renamed.json"),
+    JSON.stringify({
+      workloadId: "renamed",
+      pid: renamed.pid,
+      executable: process.execPath,
+      startedAt: new Date().toISOString(),
+      ownerPid: 2147483646,
+    }),
+  );
+
+  const runner = createLocalAgentProcessRunner({ stateDirectory, graceMs: 500 });
+  assert.equal(await runner.reclaim(), 1);
+  assert.equal(alive(renamed.pid), false);
+});
+
+test("a record is removed when its process exits normally", async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), "zelavis-agent-state-"));
+  const runner = createLocalAgentProcessRunner({ stateDirectory });
+
+  const child = await run(runner, `process.exit(0);`);
+  await child.exit;
+  // The removal is fire-and-forget on the exit path.
+  await new Promise((wait) => setTimeout(wait, 100));
+
+  // A record left behind would have a later Platform chasing a dead pid — or a
+  // pid the operating system has since handed to something else.
+  assert.deepEqual(await readdir(stateDirectory), []);
+});
+
+test("a runner with no state directory records nothing and reclaims nothing", async () => {
+  const runner = createLocalAgentProcessRunner();
+  assert.equal(await runner.reclaim(), 0);
+
+  const child = await run(runner, `process.exit(0);`);
+  await child.exit;
 });

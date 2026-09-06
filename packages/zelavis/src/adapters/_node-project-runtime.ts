@@ -181,7 +181,13 @@ export function createNodeProcessProjectRuntime(
   );
   const logLimit = options.logLimit ?? DEFAULT_LOG_LIMIT;
   const runnerPath = fileURLToPath(new URL("./_node-project-runner.js", import.meta.url));
-  const agent = options.agent ?? createLocalAgentProcessRunner();
+  const agent =
+    options.agent ??
+    createLocalAgentProcessRunner({
+      // Beside the Projects it runs, so a Platform restarted against the same
+      // data directory finds what the previous one left behind.
+      stateDirectory: join(projectsDirectory, ".agent-processes"),
+    });
   const processes = new Map<string, NodeProjectProcess>();
   /**
    * Per-runtime Gateway signing secrets.

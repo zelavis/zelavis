@@ -1467,8 +1467,14 @@ export async function createProjectManager(options: {
               snapshot.status !== "starting"
             ) {
               // Placement was decided once for the whole fleet above, so this
-              // starts locally rather than re-planning per Project.
-              await startLocally(project.id).catch(() => undefined);
+              // starts locally rather than re-planning per Project — but it
+              // still takes the Project's lifecycle lock. Reconciliation runs
+              // concurrently with whatever an operator is doing, and a start
+              // interleaved with another start or a stop leaves the System
+              // Store describing a process that is not what is running.
+              await withProjectLifecycle(project.id, () =>
+                startLocally(project.id),
+              ).catch(() => undefined);
             }
           },
         );

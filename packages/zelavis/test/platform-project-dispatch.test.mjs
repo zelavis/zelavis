@@ -260,3 +260,87 @@ test("a planner that fails does not leave the installation stopped", async () =>
 
   assert.deepEqual(started, ["shop"]);
 });
+
+
+test("reconciliation takes each Project's lifecycle lock", async () => {
+  const store = createMemorySystemStore();
+  await seed(store, [{ id: "shop", name: "shop", start: true }]);
+
+  const calls = [];
+  let releaseStart;
+  const held = new Promise((resolve) => {
+    releaseStart = resolve;
+  });
+  // Reconciliation's own `status` call is the signal that it has reached the
+  // driver. Waiting a fixed number of milliseconds instead made the test pass
+  // with the bug present, because the stop landed before the start began.
+  let reconcileArrived;
+  const arrived = new Promise((resolve) => {
+    reconcileArrived = resolve;
+  });
+
+  const driver = {
+    name: "slow-driver",
+    capabilities: () => ({
+      independentRuntimeVersion: false,
+      movable: false,
+      liveMigration: false,
+      secureIsolation: false,
+      resourceLimits: false,
+      persistentFilesystem: true,
+      statelessRuntimeReplicas: false,
+      managedStorage: false,
+      managedDatabase: false,
+      databaseReplication: false,
+      tenantPlacement: false,
+      databaseSharding: false,
+      runtimeOwnership: "platform-process",
+      survivesControlPlaneRestart: false,
+      description: "test",
+    }),
+    async prepare() {},
+    async start() {
+      calls.push("start:begin");
+      reconcileArrived();
+      await held;
+      calls.push("start:end");
+      return { status: "running", url: "http://127.0.0.1:1" };
+    },
+    async stop() {
+      calls.push("stop");
+      return { status: "stopped" };
+    },
+    async status() {
+      return { status: "stopped" };
+    },
+    async logs() {
+      return [];
+    },
+    async destroy() {},
+    async close() {},
+  };
+
+  const manager = await createProjectManager({
+    projectRecipes: PROJECT_RECIPES,
+    store,
+    runtime: driver,
+    autoReconcile: false,
+  });
+
+  const reconciling = manager.reconcile();
+  // Ask for the stop while the start is demonstrably in flight.
+  await arrived;
+  const stopping = manager.stop("shop");
+  await new Promise((wait) => setTimeout(wait, 20));
+
+  releaseStart();
+  await reconciling;
+  await stopping;
+  await manager.close();
+
+  // Reconciliation runs concurrently with whatever an operator is doing. When
+  // it started Projects outside the lifecycle queue, a stop landed in the
+  // middle of a start and the stored record described a process that was not
+  // the one running.
+  assert.deepEqual(calls, ["start:begin", "start:end", "stop"]);
+});

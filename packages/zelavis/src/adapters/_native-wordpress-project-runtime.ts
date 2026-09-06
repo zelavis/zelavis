@@ -337,9 +337,30 @@ async function availablePort(): Promise<number> {
   });
 }
 
-async function waitForPort(port: number, timeoutMs: number): Promise<void> {
+/**
+ * Waits for a port to accept connections, and for the right reason.
+ *
+ * `isRunning` is not optional decoration. A port accepting connections proves
+ * something is listening, not that it is the process just started — and this
+ * driver reuses a persisted port, so a stale listener left by a crashed
+ * Platform makes the check pass immediately. That was the observed failure: a
+ * Project reported running while its new nginx logged
+ * `bind() ... Address already in use` and traffic went to the old process.
+ * Reclamation clears the leftover first; this makes the wait tell the truth
+ * even if one is ever missed.
+ */
+async function waitForPort(
+  port: number,
+  timeoutMs: number,
+  isRunning?: () => boolean,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    if (isRunning && !isRunning()) {
+      throw new Error(
+        `Native service for port ${port} exited before it began listening.`,
+      );
+    }
     const connected = await new Promise<boolean>((resolveConnection) => {
       const socket = new Socket();
       socket.setTimeout(1_000);
@@ -354,9 +375,16 @@ async function waitForPort(port: number, timeoutMs: number): Promise<void> {
   throw new Error(`Native service on port ${port} did not become ready.`);
 }
 
-async function waitForPath(path: string, timeoutMs: number): Promise<void> {
+async function waitForPath(
+  path: string,
+  timeoutMs: number,
+  isRunning?: () => boolean,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    if (isRunning && !isRunning()) {
+      throw new Error(`Native service exited before creating ${path}.`);
+    }
     try {
       await access(path);
       return;
@@ -537,7 +565,11 @@ export function createNativeWordPressProjectRuntime(
   const projectsDirectory = resolve(options.directory);
   const startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
   const processes = new Map<string, NativeWordPressProcesses>();
-  const agent = options.agent ?? createLocalAgentProcessRunner();
+  const agent =
+    options.agent ??
+    createLocalAgentProcessRunner({
+      stateDirectory: join(projectsDirectory, ".agent-processes"),
+    });
 
   const projectDirectory = (id: string) => join(projectsDirectory, id);
   const runtimeDirectory = (id: string) => join(projectDirectory(id), ".zelavis");
@@ -793,7 +825,11 @@ export function createNativeWordPressProjectRuntime(
             { onOutput: capture(project.id, "mariadb") },
           );
         }
-        await waitForPort(config.databasePort, startupTimeoutMs);
+        await waitForPort(
+          config.databasePort,
+          startupTimeoutMs,
+          () => state.database?.running !== false,
+        );
         if (!config.databaseInitialized) {
           const socket = join(socketDirectory(config), "mariadb.sock");
           const sql = [
@@ -820,7 +856,11 @@ export function createNativeWordPressProjectRuntime(
             { onOutput: capture(project.id, "php-fpm") },
           );
         }
-        await waitForPath(phpSocket, startupTimeoutMs);
+        await waitForPath(
+          phpSocket,
+          startupTimeoutMs,
+          () => state.phpFpm?.running !== false,
+        );
         if (!state.nginx?.running) {
           state.nginx = await agent.start(
             {
@@ -840,7 +880,11 @@ export function createNativeWordPressProjectRuntime(
             { onOutput: capture(project.id, "nginx") },
           );
         }
-        await waitForPort(config.httpPort, startupTimeoutMs);
+        await waitForPort(
+          config.httpPort,
+          startupTimeoutMs,
+          () => state.nginx?.running !== false,
+        );
         return { status: "running", url: `http://127.0.0.1:${config.httpPort}`, startedAt: new Date().toISOString() };
       } catch (error) {
         await driver.stop(project.id);
