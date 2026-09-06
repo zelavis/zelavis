@@ -140,6 +140,19 @@ export interface ZelavisProjectRuntimeDriver {
   ): Promise<void>;
   start(project: ZelavisProjectRecord): Promise<ZelavisProjectRuntimeSnapshot>;
   stop(projectId: string): Promise<ZelavisProjectRuntimeSnapshot>;
+  /**
+   * Takes back Projects this host is still running.
+   *
+   * Called once by the host while it composes, before anything is reconciled.
+   * A driver whose processes die with the Platform has nothing to adopt and
+   * omits it; one running behind an Agent that outlived the Platform finds its
+   * Projects still serving and takes them over rather than restarting them.
+   *
+   * Restarting is not a harmless alternative: it drops the connections the
+   * Project is currently serving, and for a Project with a persisted port it
+   * collides with the copy that is still listening.
+   */
+  adopt?(): Promise<void>;
   status(projectId: string): Promise<ZelavisProjectRuntimeSnapshot>;
   logs(projectId: string): Promise<readonly ZelavisProjectLogEntry[]>;
   destroy(projectId: string): Promise<void>;
@@ -1446,6 +1459,19 @@ export async function createProjectManager(options: {
               return;
             }
             if (project.desiredState !== "running") {
+              // Adoption can hand back a Project the operator has since
+              // stopped: it kept running because nothing was there to stop it,
+              // and the Platform now has the handle it was missing. Leaving it
+              // running would make "stopped" mean "stopped, unless it happened
+              // to survive a crash".
+              const running = await runtime.status(project.id);
+              if (running.status === "running" || running.status === "starting") {
+                // `stop` takes the lifecycle lock itself. Wrapping it here
+                // deadlocks: the queue is per Project, and the outer entry
+                // would wait for an inner one that cannot start until it
+                // returns.
+                await manager.stop(project.id).catch(() => undefined);
+              }
               return;
             }
             if (placement.blocked.has(project.id)) {

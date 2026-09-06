@@ -405,12 +405,18 @@ an exported type is never mistaken for an operational distributed feature.
   and are reclaimed by the next Platform, which then starts cleanly with no
   port conflict. Trust rests on filesystem permissions — a 0700 directory and a
   0600 socket — with a shared token as the second lock.
-- [ ] Re-attach to Projects an earlier Platform started. The Agent keeps them
-  running, but a new Platform gets a new client with no handles: it cannot
-  receive their output, observe readiness, or stop them through the contract,
-  so it reclaims them and starts fresh. Closing this needs the Agent to replay
-  buffered output and the drivers to re-derive readiness from it — and it is
-  what would let `survivesControlPlaneRestart` finally be true.
+- [x] Re-attach to Projects an earlier Platform started. The Agent keeps a
+  bounded tail of each process's output, hands a reconnecting client the
+  processes for a workload along with what it missed, and the Node driver
+  re-derives readiness from that replay — the bound address exists nowhere else,
+  because the Project announced it while no Platform was connected. Adoption
+  runs before reclamation while the host composes, so a Project still serving is
+  taken over rather than killed and restarted; what is left afterwards is what
+  nothing can drive. `survivesControlPlaneRestart` is now read from the runner
+  rather than hardcoded `false` in three drivers, and is true behind an Agent.
+  A Project whose readiness line has aged out of the buffer is reported running
+  without an address rather than routed to a guessed one, and reconciliation
+  stops an adopted Project whose desired state is stopped.
 - [ ] Native reports its current `process` isolation boundary honestly. Stable
   per-Project Unix identities, filesystem/PID/network namespace policy, cgroup
   v2 limits, systemd supervision, capability/seccomp/MAC confinement, quotas,

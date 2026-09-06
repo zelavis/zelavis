@@ -84,6 +84,21 @@ export interface ZelavisAgentProcessStartOptions {
   readonly onExit?: (exit: ZelavisAgentProcessExit) => void;
 }
 
+/**
+ * A process the Agent is already running, offered back to a new client.
+ *
+ * `replay` is what makes re-attachment possible rather than merely detectable.
+ * A driver decides a Project is ready by reading its output — the Zelavis
+ * runtime announces the address it bound on stdout — and a Platform that was
+ * not connected when that line was written has no other way to learn it. The
+ * Agent keeps a bounded tail of each process's output for exactly this.
+ */
+export interface ZelavisAgentAttachedProcess {
+  readonly process: ZelavisAgentProcess;
+  /** Output the Agent buffered while no client was listening, oldest first. */
+  readonly replay: readonly ZelavisAgentProcessOutput[];
+}
+
 export interface ZelavisAgentProcess {
   readonly workloadId: string;
   /** False once the process has exited. */
@@ -96,6 +111,16 @@ export interface ZelavisAgentProcess {
    * reports "stopped" is not describing a process that is still running.
    */
   stop(options?: { readonly graceMs?: number }): Promise<ZelavisAgentProcessExit>;
+  /**
+   * Directs this process's output to a listener chosen after the fact.
+   *
+   * `start` takes its listener up front because the caller knows it then.
+   * An attached process does not have that luxury: it already exists, and the
+   * driver taking it over has to say where its output should go now.
+   *
+   * Present only on a runner that can attach.
+   */
+  listen?(listener: (output: ZelavisAgentProcessOutput) => void): void;
 }
 
 export interface ZelavisAgentProcessRunner {
@@ -129,6 +154,28 @@ export interface ZelavisAgentProcessRunner {
    * may omit it.
    */
   reclaim?(workloadId?: string): Promise<number>;
+  /**
+   * Takes back processes this runner is still running for a workload.
+   *
+   * The counterpart to `reclaim`, and the reason both exist: a Platform that
+   * restarts finds processes it did not start, and killing them is only the
+   * right answer when it cannot do anything else with them. An Agent that
+   * outlived the Platform can hand them back instead, and a Project that never
+   * stopped serving should not be restarted as though it had.
+   *
+   * Returns nothing for a runner that cannot outlive its caller — the local
+   * one, where a process's pipes died with the Platform that owned them.
+   * Attaching is therefore always attempted and never assumed.
+   */
+  attach?(workloadId: string): Promise<readonly ZelavisAgentAttachedProcess[]>;
+  /**
+   * Whether processes this runner starts survive the Platform restarting.
+   *
+   * Drives the driver capability of the same name, which was a hardcoded
+   * `false` in three places. It is a property of where processes actually run,
+   * not of the driver that asked for them.
+   */
+  readonly survivesControlPlaneRestart?: boolean;
   /** Stops everything this runner started. */
   close(): Promise<void>;
 }

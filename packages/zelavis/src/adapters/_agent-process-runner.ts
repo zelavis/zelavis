@@ -351,6 +351,10 @@ export function createLocalAgentProcessRunner(
 
   return {
     name: "local-process",
+    // A child's pipes belong to this process. When it goes, they go, and
+    // nothing can take the child over — which is why `attach` is absent here
+    // rather than returning an empty list and implying it looked.
+    survivesControlPlaneRestart: false,
     reclaim,
 
     async start(command: ZelavisAgentProcessCommand, startOptions: ZelavisAgentProcessStartOptions = {}) {

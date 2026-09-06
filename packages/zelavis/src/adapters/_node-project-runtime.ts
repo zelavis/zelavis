@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -155,6 +155,25 @@ const INHERITED_PROJECT_ENVIRONMENT = Object.freeze([
   "PATHEXT",
 ]);
 
+/**
+ * The address a Project announced, if this line is its readiness event.
+ *
+ * Shared by starting and attaching: a Platform that reconnects to a Project
+ * already running learns the address the same way it would have learned it
+ * live, by reading the line the Project wrote. Anything else is ordinary
+ * output.
+ */
+function readyUrl(line: string): string | undefined {
+  try {
+    const event = JSON.parse(line) as { type?: unknown; url?: unknown };
+    return event.type === "ready" && typeof event.url === "string"
+      ? event.url
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function projectProcessEnvironment(): Record<string, string> {
   const environment: Record<string, string> = {};
   for (const name of INHERITED_PROJECT_ENVIRONMENT) {
@@ -252,7 +271,7 @@ export function createNodeProcessProjectRuntime(
     tenantPlacement: false,
     databaseSharding: false,
     runtimeOwnership: "platform-process" as const,
-    survivesControlPlaneRestart: false,
+    survivesControlPlaneRestart: agent.survivesControlPlaneRestart === true,
     description:
       "Runs each trusted project in a separate Node.js process and data directory. This is operational isolation, not a security sandbox.",
   };
@@ -288,6 +307,91 @@ export function createNodeProcessProjectRuntime(
         )}\n`,
         { encoding: "utf8", mode: 0o600 },
       );
+    },
+    /**
+     * Takes back Projects the Agent is still running.
+     *
+     * Called once while the host composes, before anything is reconciled. A
+     * Project that never stopped serving must not be restarted as though it
+     * had: restarting drops connections, and with a port the Project persists
+     * it would collide with the copy that is still listening.
+     *
+     * Readiness is re-derived from the output the Agent buffered, which is the
+     * only place the bound address exists — the Project announced it while no
+     * Platform was connected. A Project whose readiness line has aged out of
+     * the buffer is left as it is found rather than guessed at; the next
+     * reconcile treats it as not running and starts it, which is wrong only in
+     * the sense that it is what happens today.
+     */
+    async adopt() {
+      if (!agent.attach) return;
+
+      let directories: string[];
+      try {
+        directories = (
+          await readdir(projectsDirectory, { withFileTypes: true })
+        )
+          .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+          .map((entry) => entry.name);
+      } catch {
+        return;
+      }
+
+      for (const projectId of directories) {
+        const attached = await agent.attach(projectId).catch(() => []);
+        for (const { process: child, replay } of attached) {
+          const state: NodeProjectProcess = {
+            process: child,
+            logs: [],
+            snapshot: { status: "running" },
+            stopping: false,
+          };
+          processes.set(projectId, state);
+
+          for (const { stream, line } of replay) {
+            const url = readyUrl(line);
+            if (url) {
+              state.snapshot = { status: "running", url };
+              continue;
+            }
+            appendLog(state, stream, line);
+          }
+
+          appendLog(
+            state,
+            "system",
+            state.snapshot.url
+              ? `Re-attached to a running Project at ${state.snapshot.url}.`
+              : "Re-attached to a running Project whose address is no longer in the Agent's buffer.",
+          );
+
+          child.listen?.(({ stream, line }) => {
+            const url = readyUrl(line);
+            if (url) {
+              state.snapshot = { status: "running", url };
+              appendLog(state, "system", `Project ready at ${url}.`);
+              return;
+            }
+            appendLog(state, stream, line);
+          });
+
+          void child.exit.then(({ code, signal, requested }) => {
+            const stoppedAt = new Date().toISOString();
+            state.snapshot =
+              requested || state.stopping || code === 0
+                ? { status: "stopped", stoppedAt }
+                : {
+                    status: "failed",
+                    stoppedAt,
+                    error: formatProjectProcessExitError({
+                      code,
+                      signal: signal as NodeJS.Signals | null,
+                      logs: state.logs,
+                    }),
+                  };
+          });
+        }
+      }
     },
     async start(project) {
       if (closed) {
@@ -373,21 +477,17 @@ export function createNodeProcessProjectRuntime(
             // The readiness handshake: the child announces the address it
             // actually bound, because it was started on port 0 and the
             // Platform cannot know the port until it says so.
-            try {
-              const event = JSON.parse(line) as { type?: unknown; url?: unknown };
-              if (event.type === "ready" && typeof event.url === "string") {
-                const snapshot: ZelavisProjectRuntimeSnapshot = {
-                  status: "running",
-                  url: event.url,
-                  startedAt: new Date().toISOString(),
-                };
-                state.snapshot = snapshot;
-                appendLog(state, "system", `Project ready at ${event.url}.`);
-                finish(undefined, snapshot);
-                return;
-              }
-            } catch {
-              // Ordinary application output is retained as a project log.
+            const url = readyUrl(line);
+            if (url) {
+              const snapshot: ZelavisProjectRuntimeSnapshot = {
+                status: "running",
+                url,
+                startedAt: new Date().toISOString(),
+              };
+              state.snapshot = snapshot;
+              appendLog(state, "system", `Project ready at ${url}.`);
+              finish(undefined, snapshot);
+              return;
             }
             appendLog(state, "stdout", line);
           },

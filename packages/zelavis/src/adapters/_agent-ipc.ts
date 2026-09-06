@@ -37,15 +37,29 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { join } from "node:path";
 
 import type {
+  ZelavisAgentAttachedProcess,
   ZelavisAgentProcess,
   ZelavisAgentProcessCommand,
   ZelavisAgentProcessExit,
+  ZelavisAgentProcessOutput,
   ZelavisAgentProcessRunner,
   ZelavisAgentProcessStartOptions,
 } from "../core/agent/process-command.js";
 
 /** One message is one line, and a line is bounded on both sides. */
 const MAX_MESSAGE_LENGTH = 1024 * 1024;
+
+/**
+ * How much of a process's output the Agent keeps for a client that is not there.
+ *
+ * Enough to carry a readiness handshake and the context around a failure, and
+ * bounded because a Project that runs for a month with nobody attached must not
+ * become the Agent's memory problem. The oldest lines are dropped first, which
+ * is the right end to lose: a readiness line is emitted at startup, so a
+ * process noisy enough to push it out has been running long enough that a
+ * driver polling its port learns the same thing.
+ */
+const MAX_REPLAY_LINES = 500;
 
 const TOKEN_FILE = "token";
 const SOCKET_FILE = "agent.sock";
@@ -195,7 +209,14 @@ export async function createAgentProcessServer(
    */
   const processes = new Map<
     string,
-    { child: ZelavisAgentProcess; socket: Socket; workloadId: string }
+    {
+      child: ZelavisAgentProcess;
+      /** The connection currently driving it, or none while detached. */
+      socket: Socket | undefined;
+      workloadId: string;
+      command: ZelavisAgentProcessCommand;
+      output: ZelavisAgentProcessOutput[];
+    }
   >();
   const connections = new Set<Socket>();
   let nextProcessId = 0;
@@ -231,23 +252,59 @@ export async function createAgentProcessServer(
       try {
         if (message.type === "start") {
           const processId = `p${(nextProcessId += 1)}`;
-          const child = await options.runner.start(
-            message.command as ZelavisAgentProcessCommand,
-            {
-              onOutput: (output) =>
-                send(socket, { type: "output", processId, ...output }),
-              onExit: (exit) => {
-                processes.delete(processId);
-                send(socket, { type: "exit", processId, exit });
-              },
+          const command = message.command as ZelavisAgentProcessCommand;
+          const child = await options.runner.start(command, {
+            onOutput: (output) => {
+              const entry = processes.get(processId);
+              if (entry) {
+                entry.output.push(output);
+                if (entry.output.length > MAX_REPLAY_LINES) {
+                  entry.output.splice(0, entry.output.length - MAX_REPLAY_LINES);
+                }
+                // Only the connection currently driving it. A detached process
+                // still accumulates output; it has nowhere to send it.
+                if (entry.socket) {
+                  send(entry.socket, { type: "output", processId, ...output });
+                }
+              }
             },
-          );
+            onExit: (exit) => {
+              const entry = processes.get(processId);
+              processes.delete(processId);
+              if (entry?.socket) send(entry.socket, { type: "exit", processId, exit });
+            },
+          });
           processes.set(processId, {
             child,
             socket,
-            workloadId: (message.command as ZelavisAgentProcessCommand).workloadId,
+            workloadId: command.workloadId,
+            command,
+            output: [],
           });
           send(socket, { id, type: "started", processId });
+          return;
+        }
+
+        if (message.type === "attach") {
+          const workloadId = String(message.workloadId);
+          const attached: unknown[] = [];
+
+          for (const [processId, entry] of processes) {
+            if (entry.workloadId !== workloadId) continue;
+            // Already driven by a live connection: handing the same process to
+            // two Platforms would give both a handle to stop it and neither a
+            // complete view of its output.
+            if (entry.socket && !entry.socket.destroyed) continue;
+
+            entry.socket = socket;
+            attached.push({
+              processId,
+              command: entry.command,
+              replay: entry.output.slice(),
+            });
+          }
+
+          send(socket, { id, type: "attached", processes: attached });
           return;
         }
 
@@ -274,7 +331,7 @@ export async function createAgentProcessServer(
           // running is the leak, not the feature.
           let count = 0;
           for (const [processId, entry] of [...processes]) {
-            if (!entry.socket.destroyed) continue;
+            if (entry.socket && !entry.socket.destroyed) continue;
             if (workloadId !== undefined && entry.workloadId !== workloadId) continue;
             processes.delete(processId);
             await entry.child.stop().catch(() => undefined);
@@ -477,47 +534,80 @@ export async function createAgentProcessClient(
     });
   });
 
+  /** Builds the caller-facing handle for a process id the Agent gave us. */
+  function track(
+    processId: string,
+    workloadId: string,
+    startOptions: ZelavisAgentProcessStartOptions,
+  ): ZelavisAgentProcess {
+    let settled: ZelavisAgentProcessExit | undefined;
+    let settleExit: (exit: ZelavisAgentProcessExit) => void;
+    const exit = new Promise<ZelavisAgentProcessExit>((resolveExit) => {
+      settleExit = (value) => {
+        if (settled) return;
+        settled = value;
+        startOptions.onExit?.(value);
+        resolveExit(value);
+      };
+    });
+
+    listeners.set(processId, {
+      ...(startOptions.onOutput ? { onOutput: startOptions.onOutput } : {}),
+      settle: (value) => settleExit(value),
+    });
+
+    return {
+      workloadId,
+      get running() {
+        return !settled;
+      },
+      exit,
+      async stop(stopOptions) {
+        if (settled) return settled;
+        await request({
+          type: "stop",
+          processId,
+          ...(stopOptions?.graceMs === undefined
+            ? {}
+            : { graceMs: stopOptions.graceMs }),
+        });
+        return exit;
+      },
+      listen(onOutput: (output: ZelavisAgentProcessOutput) => void) {
+        const existing = listeners.get(processId);
+        if (existing) existing.onOutput = onOutput;
+      },
+    } satisfies ZelavisAgentProcess;
+  }
+
   return {
     name: "agent-ipc",
+    // A process the Agent runs outlives the Platform that asked for it, which
+    // is the whole reason to run the Agent separately.
+    survivesControlPlaneRestart: true,
 
     async start(command, startOptions = {}) {
       const started = await request({ type: "start", command });
-      const processId = String(started.processId);
+      return track(String(started.processId), command.workloadId, startOptions);
+    },
 
-      let settled: ZelavisAgentProcessExit | undefined;
-      let settleExit: (exit: ZelavisAgentProcessExit) => void;
-      const exit = new Promise<ZelavisAgentProcessExit>((resolveExit) => {
-        settleExit = (value) => {
-          if (settled) return;
-          settled = value;
-          startOptions.onExit?.(value);
-          resolveExit(value);
+    async attach(workloadId) {
+      const result = await request({ type: "attach", workloadId });
+      const entries = Array.isArray(result.processes) ? result.processes : [];
+
+      return entries.map((entry) => {
+        const value = entry as {
+          processId: string;
+          replay?: readonly ZelavisAgentProcessOutput[];
         };
+        return {
+          // No listeners yet: the caller supplies them by re-registering
+          // through `onOutput` on the handle it gets back, and the replay it
+          // is handed here is what it missed.
+          process: track(String(value.processId), workloadId, {}),
+          replay: value.replay ?? [],
+        } satisfies ZelavisAgentAttachedProcess;
       });
-
-      listeners.set(processId, {
-        ...(startOptions.onOutput ? { onOutput: startOptions.onOutput } : {}),
-        settle: (value) => settleExit(value),
-      });
-
-      return {
-        workloadId: command.workloadId,
-        get running() {
-          return !settled;
-        },
-        exit,
-        async stop(stopOptions) {
-          if (settled) return settled;
-          await request({
-            type: "stop",
-            processId,
-            ...(stopOptions?.graceMs === undefined
-              ? {}
-              : { graceMs: stopOptions.graceMs }),
-          });
-          return exit;
-        },
-      } satisfies ZelavisAgentProcess;
     },
 
     async reclaim(workloadId) {
