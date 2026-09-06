@@ -3,6 +3,7 @@ import {
   formatBootstrapStatus,
   readBootstrapStatus,
 } from "./bootstrap.js";
+import { runAgentCommand } from "./agent.js";
 import { promptSecret, readAllStdin } from "./prompt.js";
 import {
   formatActivationResult,
@@ -65,12 +66,16 @@ Usage:
   zelavis bootstrap --email <email> [--display-name <name>] [--password-stdin] [--url <url>]
   zelavis bootstrap status [--url <url>]
   zelavis extensions [--for <service>] [--url <url>]
+  zelavis agent [--data-dir <path>]
 
 Commands:
   serve                     Run the long-lived Zelavis Platform OS.
   bootstrap                 Create the first Platform owner account.
   bootstrap status          Report whether an owner still has to be created.
   extensions                List services that extend another, by what they extend.
+  agent                     Run the Zelavis Agent, which executes Project
+                            processes. Supervise it yourself: it is meant to
+                            outlive the Platform that drives it.
   services list             List runtime service registry entries.
   services install          Mark a registered service as installed.
   services disable          Mark an installed service as available.
@@ -413,6 +418,17 @@ export async function runCli(
           }),
         ),
       );
+      return;
+    }
+    if (parsed.command === "agent") {
+      await runAgentCommand({
+        ...(parsed.dataDirectory ?? process.env.ZELAVIS_DATA_DIR
+          ? {
+              dataDirectory: (parsed.dataDirectory ??
+                process.env.ZELAVIS_DATA_DIR) as string,
+            }
+          : {}),
+      });
       return;
     }
     if (parsed.command === "bootstrap") {
