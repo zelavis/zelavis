@@ -14,11 +14,21 @@ set -euo pipefail
 REPO_ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 IMAGE="${ZELAVIS_PROVISIONING_IMAGE:-node:24-bookworm}"
 
+# Which identity the Platform runs as. Both are real deployments and both broke
+# in different ways, so both are checked: "user" is an operator's own account
+# with package authority, "root" is Zelavis installed as a system service.
+IDENTITY="${ZELAVIS_PROVISIONING_IDENTITY:-user}"
+if [[ "${IDENTITY}" != "user" && "${IDENTITY}" != "root" ]]; then
+  echo "ZELAVIS_PROVISIONING_IDENTITY must be \"user\" or \"root\"." >&2
+  exit 2
+fi
+
 # The repository is mounted read-only and copied inside. A writable mount would
 # have the container's `pnpm install` write Linux-built `node_modules` into the
 # host's checkout, which breaks the host's own install until it is redone.
 docker run --rm \
   -v "${REPO_ROOT}:/src:ro" \
+  -e "IDENTITY=${IDENTITY}" \
   "${IMAGE}" \
   bash -euo pipefail -c '
     apt-get update -qq >/dev/null
@@ -50,10 +60,17 @@ docker run --rm \
       echo "  $binary absent"
     done
 
-    su node -s /bin/bash -c "
+    if [ "$IDENTITY" = "root" ]; then
       cd /build
       pnpm install --frozen-lockfile >/dev/null
       pnpm --filter zelavis build >/dev/null
       node packages/zelavis/scripts/check-wordpress-provisioning.mjs
-    "
+    else
+      su node -s /bin/bash -c "
+        cd /build
+        pnpm install --frozen-lockfile >/dev/null
+        pnpm --filter zelavis build >/dev/null
+        node packages/zelavis/scripts/check-wordpress-provisioning.mjs
+      "
+    fi
   '
