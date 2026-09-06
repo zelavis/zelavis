@@ -1,9 +1,14 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, Socket } from "node:net";
 import { userInfo } from "node:os";
 import { join, resolve } from "node:path";
+import { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
+import type {
+  ZelavisAgentProcess,
+  ZelavisAgentProcessRunner,
+} from "../core/agent/process-command.js";
 import {
   ZelavisProjectRuntimeError,
   type ZelavisProjectRecipeLock,
@@ -19,6 +24,13 @@ import {
 export interface NativeWordPressProjectRuntimeOptions {
   directory: string;
   startupTimeoutMs?: number;
+  /**
+   * Agent that executes nginx, php-fpm, and the database.
+   *
+   * Defaults to the local runner. Three supervised processes rather than one,
+   * all issued as the same command through the same contract.
+   */
+  agent?: ZelavisAgentProcessRunner;
 }
 
 interface NativeWordPressConfig {
@@ -38,9 +50,9 @@ interface NativeWordPressConfig {
 }
 
 interface NativeWordPressProcesses {
-  database?: ChildProcess;
-  nginx?: ChildProcess;
-  phpFpm?: ChildProcess;
+  database?: ZelavisAgentProcess;
+  nginx?: ZelavisAgentProcess;
+  phpFpm?: ZelavisAgentProcess;
   logs: ZelavisProjectLogEntry[];
 }
 
@@ -73,6 +85,30 @@ const APT_WORDPRESS_PACKAGES = Object.freeze([
 ]);
 const BREW_WORDPRESS_PACKAGES = Object.freeze(["nginx", "php", "mariadb"]);
 
+/**
+ * Environment handed to a native process this driver starts.
+ *
+ * Both the supervised daemons and the one-shot setup commands get this, and
+ * neither gets the Platform's own environment: inheriting `process.env` would
+ * hand a Project's web server — and every `tar`, `php`, and MariaDB invocation
+ * beside it — the control plane's bootstrap token, provider credentials, and
+ * signing keys.
+ *
+ * `HOME` is forwarded because the MariaDB tools need somewhere to write and
+ * read their option files, and a missing `HOME` makes them fail in ways that
+ * read as a database problem rather than a configuration one. The one class of
+ * command that genuinely needs more is host package installation, which opts
+ * in explicitly.
+ */
+function nativeProcessEnvironment(): Record<string, string> {
+  const environment: Record<string, string> = {};
+  for (const name of ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ"]) {
+    const value = process.env[name];
+    if (value !== undefined) environment[name] = value;
+  }
+  return environment;
+}
+
 function isMissingFileError(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
 }
@@ -80,12 +116,29 @@ function isMissingFileError(error: unknown): boolean {
 async function run(
   executable: string,
   args: readonly string[],
-  options: { cwd?: string; allowFailure?: boolean } = {},
+  options: {
+    cwd?: string;
+    allowFailure?: boolean;
+    /**
+     * Run with the Platform's own environment.
+     *
+     * Only for host package managers. `brew` and `apt` are configured through
+     * environment variables an operator sets — a prefix, a mirror, a proxy, a
+     * non-interactive flag — and stripping those turns "install the packages
+     * this host needs" into a failure the operator cannot explain. They also
+     * run as the operator provisioning their own machine, not as Project code,
+     * which is the distinction that makes this safe where it would not be for
+     * anything a Project can influence.
+     */
+    inheritEnvironment?: boolean;
+  } = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolveRun, rejectRun) => {
     const child = spawn(executable, [...args], {
       cwd: options.cwd,
-      env: process.env,
+      env: options.inheritEnvironment
+        ? { ...process.env }
+        : nativeProcessEnvironment(),
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -127,7 +180,14 @@ async function resolveExecutable(
 
 async function executableAvailable(executable: string): Promise<boolean> {
   try {
-    return (await run(executable, ["--version"], { allowFailure: true })).code === 0;
+    // `brew` is one of the executables probed here and reports its version
+    // from its own installation, which it locates through its environment.
+    return (
+      await run(executable, ["--version"], {
+        allowFailure: true,
+        inheritEnvironment: true,
+      })
+    ).code === 0;
   } catch {
     return false;
   }
@@ -138,7 +198,7 @@ async function provisionNativeWordPressPackages(): Promise<void> {
     const apt = process.getuid?.() === 0
       ? { executable: "apt-get", prefix: [] as string[] }
       : await executableAvailable("sudo") &&
-          (await run("sudo", ["-n", "true"], { allowFailure: true })).code === 0
+          (await run("sudo", ["-n", "true"], { allowFailure: true, inheritEnvironment: true })).code === 0
         ? { executable: "sudo", prefix: ["-n", "apt-get"] }
         : undefined;
     if (!apt) {
@@ -147,14 +207,18 @@ async function provisionNativeWordPressPackages(): Promise<void> {
       );
     }
     try {
-      await run(apt.executable, [...apt.prefix, "update"]);
-      await run(apt.executable, [
-        ...apt.prefix,
-        "install",
-        "-y",
-        "--no-install-recommends",
-        ...APT_WORDPRESS_PACKAGES,
-      ]);
+      await run(apt.executable, [...apt.prefix, "update"], { inheritEnvironment: true });
+      await run(
+        apt.executable,
+        [
+          ...apt.prefix,
+          "install",
+          "-y",
+          "--no-install-recommends",
+          ...APT_WORDPRESS_PACKAGES,
+        ],
+        { inheritEnvironment: true },
+      );
     } catch (cause) {
       throw new ZelavisProjectRuntimeError(
         "Zelavis could not install the native WordPress dependencies through APT. Check the host package repositories and Agent package-install permissions.",
@@ -166,7 +230,9 @@ async function provisionNativeWordPressPackages(): Promise<void> {
 
   if (process.platform === "darwin" && await executableAvailable("brew")) {
     try {
-      await run("brew", ["install", ...BREW_WORDPRESS_PACKAGES]);
+      await run("brew", ["install", ...BREW_WORDPRESS_PACKAGES], {
+        inheritEnvironment: true,
+      });
     } catch (cause) {
       throw new ZelavisProjectRuntimeError(
         "Zelavis could not install the native WordPress dependencies through Homebrew. Check the Homebrew installation and retry the Project start.",
@@ -188,8 +254,11 @@ async function brewFormulaExecutable(
   if (process.platform !== "darwin" || !await executableAvailable("brew")) {
     return undefined;
   }
+  // Homebrew resolves its own prefix from its environment, so asking it where
+  // a formula lives is one of the calls that needs that environment.
   const prefix = await run("brew", ["--prefix", formula], {
     allowFailure: true,
+    inheritEnvironment: true,
   });
   const directory = prefix.stdout.trim();
   return prefix.code === 0 && directory ? join(directory, relativePath) : undefined;
@@ -317,20 +386,6 @@ function versionAtLeast(actual: string, minimum: readonly [number, number]): boo
   const major = Number(match[1]);
   const minor = Number(match[2]);
   return major > minimum[0] || (major === minimum[0] && minor >= minimum[1]);
-}
-
-async function stopChild(child: ChildProcess | undefined): Promise<void> {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return;
-  child.kill("SIGTERM");
-  await new Promise<void>((resolveExit) => {
-    const timeout = setTimeout(() => {
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-    }, 5_000);
-    child.once("exit", () => {
-      clearTimeout(timeout);
-      resolveExit();
-    });
-  });
 }
 
 function wordpressConfig(config: NativeWordPressConfig): string {
@@ -482,6 +537,7 @@ export function createNativeWordPressProjectRuntime(
   const projectsDirectory = resolve(options.directory);
   const startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
   const processes = new Map<string, NativeWordPressProcesses>();
+  const agent = options.agent ?? createLocalAgentProcessRunner();
 
   const projectDirectory = (id: string) => join(projectsDirectory, id);
   const runtimeDirectory = (id: string) => join(projectDirectory(id), ".zelavis");
@@ -504,9 +560,10 @@ export function createNativeWordPressProjectRuntime(
     processes.set(projectId, state);
   }
 
-  function capture(projectId: string, child: ChildProcess, label: string) {
-    child.stdout?.on("data", (chunk: Buffer) => appendLog(projectId, "stdout", `[${label}] ${chunk.toString("utf8")}`));
-    child.stderr?.on("data", (chunk: Buffer) => appendLog(projectId, "stderr", `[${label}] ${chunk.toString("utf8")}`));
+  /** Labels a process's output, so three of them share one Project log. */
+  function capture(projectId: string, label: string) {
+    return ({ stream, line }: { stream: "stdout" | "stderr"; line: string }) =>
+      appendLog(projectId, stream, `[${label}] ${line}`);
   }
 
   const capabilities = Object.freeze({
@@ -717,16 +774,24 @@ export function createNativeWordPressProjectRuntime(
             "--skip-test-db",
           ]);
         }
-        if (!state.database || state.database.exitCode !== null) {
-          state.database = spawn(config.mariadbd, [
-            `--datadir=${databaseDirectory(project.id)}`,
-            `--socket=${join(socketDirectory(config), "mariadb.sock")}`,
-            `--port=${config.databasePort}`,
-            "--bind-address=127.0.0.1",
-            `--pid-file=${join(runtimeDirectory(project.id), "mariadb.pid")}`,
-            `--log-error=${join(runtimeDirectory(project.id), "mariadb.log")}`,
-          ], { stdio: ["ignore", "pipe", "pipe"] });
-          capture(project.id, state.database, "mariadb");
+        if (!state.database?.running) {
+          state.database = await agent.start(
+            {
+              workloadId: project.id,
+              executable: config.mariadbd,
+              args: [
+                `--datadir=${databaseDirectory(project.id)}`,
+                `--socket=${join(socketDirectory(config), "mariadb.sock")}`,
+                `--port=${config.databasePort}`,
+                "--bind-address=127.0.0.1",
+                `--pid-file=${join(runtimeDirectory(project.id), "mariadb.pid")}`,
+                `--log-error=${join(runtimeDirectory(project.id), "mariadb.log")}`,
+              ],
+              cwd: runtimeDirectory(project.id),
+              env: nativeProcessEnvironment(),
+            },
+            { onOutput: capture(project.id, "mariadb") },
+          );
         }
         await waitForPort(config.databasePort, startupTimeoutMs);
         if (!config.databaseInitialized) {
@@ -743,31 +808,37 @@ export function createNativeWordPressProjectRuntime(
         }
         const phpSocket = join(socketDirectory(config), "php-fpm.sock");
         await rm(phpSocket, { force: true });
-        if (!state.phpFpm || state.phpFpm.exitCode !== null) {
-          state.phpFpm = spawn(config.phpFpm, [
-            "-F",
-            "-y",
-            join(runtimeDirectory(project.id), "php-fpm.conf"),
-          ], {
-            cwd: siteDirectory(project.id),
-            stdio: ["ignore", "pipe", "pipe"],
-          });
-          capture(project.id, state.phpFpm, "php-fpm");
+        if (!state.phpFpm?.running) {
+          state.phpFpm = await agent.start(
+            {
+              workloadId: project.id,
+              executable: config.phpFpm,
+              args: ["-F", "-y", join(runtimeDirectory(project.id), "php-fpm.conf")],
+              cwd: siteDirectory(project.id),
+              env: nativeProcessEnvironment(),
+            },
+            { onOutput: capture(project.id, "php-fpm") },
+          );
         }
         await waitForPath(phpSocket, startupTimeoutMs);
-        if (!state.nginx || state.nginx.exitCode !== null) {
-          state.nginx = spawn(config.nginx, [
-            "-c",
-            join(runtimeDirectory(project.id), "nginx.conf"),
-            "-p",
-            runtimeDirectory(project.id),
-            "-g",
-            "daemon off;",
-          ], {
-            cwd: runtimeDirectory(project.id),
-            stdio: ["ignore", "pipe", "pipe"],
-          });
-          capture(project.id, state.nginx, "nginx");
+        if (!state.nginx?.running) {
+          state.nginx = await agent.start(
+            {
+              workloadId: project.id,
+              executable: config.nginx,
+              args: [
+                "-c",
+                join(runtimeDirectory(project.id), "nginx.conf"),
+                "-p",
+                runtimeDirectory(project.id),
+                "-g",
+                "daemon off;",
+              ],
+              cwd: runtimeDirectory(project.id),
+              env: nativeProcessEnvironment(),
+            },
+            { onOutput: capture(project.id, "nginx") },
+          );
         }
         await waitForPort(config.httpPort, startupTimeoutMs);
         return { status: "running", url: `http://127.0.0.1:${config.httpPort}`, startedAt: new Date().toISOString() };
@@ -778,16 +849,18 @@ export function createNativeWordPressProjectRuntime(
     },
     async stop(projectId) {
       const state = processes.get(projectId);
-      await stopChild(state?.nginx);
-      await stopChild(state?.phpFpm);
-      await stopChild(state?.database);
+      // In dependency order: nginx stops serving before php-fpm goes away, and
+      // php-fpm releases its connections before the database does.
+      for (const process of [state?.nginx, state?.phpFpm, state?.database]) {
+        await process?.stop().catch(() => undefined);
+      }
       processes.delete(projectId);
       return { status: "stopped", stoppedAt: new Date().toISOString() };
     },
     async status(projectId) {
       const state = processes.get(projectId);
       const config = await readConfig(projectId).catch(() => undefined);
-      return state?.nginx?.exitCode === null && config
+      return state?.nginx?.running && config
         ? { status: "running", url: `http://127.0.0.1:${config.httpPort}` }
         : { status: "stopped" };
     },
