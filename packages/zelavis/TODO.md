@@ -417,6 +417,24 @@ an exported type is never mistaken for an operational distributed feature.
   A Project whose readiness line has aged out of the buffer is reported running
   without an address rather than routed to a guessed one, and reconciliation
   stops an adopted Project whose desired state is stopped.
+- [x] WordPress provisioning is proven, not assumed. From a bare Debian host
+  with nginx, PHP and MariaDB absent, the driver installs them through apt and
+  brings a WordPress Project up in about twenty seconds — the site answering
+  WordPress's own redirect to `wp-admin/install.php`, which it only does once
+  `wp-config.php` exists and the database is reachable. Every earlier WordPress
+  run had been on a host that already had the packages, so the provisioning
+  half of the promise had never once executed. A committed container script
+  runs it in CI and on a laptop, and refuses to run where the packages are
+  already present rather than passing and looking like evidence.
+- [ ] Run the native WordPress stack as root. MariaDB refuses to start as root
+  unless told which user to drop to, and `mariadb-server-core` creates no
+  account to drop to — so a Platform running as root provisions its packages
+  successfully and then cannot start the Project. Running as an ordinary user
+  with `sudo -n` package authority works and is the safer arrangement, but the
+  root branch in `provisionNativeWordPressPackages` invites a configuration
+  that cannot work. Either the daemons need a non-root account to drop to, or
+  root has to be refused with an explanation instead of failing at the first
+  port wait.
 - [ ] Native reports its current `process` isolation boundary honestly. Stable
   per-Project Unix identities, filesystem/PID/network namespace policy, cgroup
   v2 limits, systemd supervision, capability/seccomp/MAC confinement, quotas,

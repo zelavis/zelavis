@@ -492,9 +492,17 @@ events { worker_connections 1024; }
 http {
   access_log ${nginxQuoted(join(input.runtimeDirectory, "nginx-access.log"))};
   error_log ${nginxQuoted(join(input.runtimeDirectory, "nginx-error.log"))};
+  # Every temp path nginx may create, not only the ones this config uses.
+  # A path left unset falls back to the prefix nginx was compiled with —
+  # /var/lib/nginx on Debian — which the Platform's user cannot write, and
+  # nginx creates the directory for every module it was built with whether the
+  # config mentions it or not. Homebrew's nginx hid this by defaulting to a
+  # prefix the user owns, so it only appeared on Linux.
   client_body_temp_path ${nginxQuoted(join(input.runtimeDirectory, "nginx-client-temp"))};
   proxy_temp_path ${nginxQuoted(join(input.runtimeDirectory, "nginx-proxy-temp"))};
   fastcgi_temp_path ${nginxQuoted(join(input.runtimeDirectory, "nginx-fastcgi-temp"))};
+  uwsgi_temp_path ${nginxQuoted(join(input.runtimeDirectory, "nginx-uwsgi-temp"))};
+  scgi_temp_path ${nginxQuoted(join(input.runtimeDirectory, "nginx-scgi-temp"))};
   default_type application/octet-stream;
   types {
     text/html html htm;
