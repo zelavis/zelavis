@@ -141,7 +141,11 @@ export function createServerFrontendProjectRuntime(
   const root = resolve(options.directory);
   const startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
   const processes = new Map<string, FrontendProcess>();
-  const agent = options.agent ?? createLocalAgentProcessRunner();
+  const agent =
+    options.agent ??
+    createLocalAgentProcessRunner({
+      stateDirectory: join(root, ".agent-processes"),
+    });
   const prepared = new Map<string, PreparedFrontend>();
 
   const projectDirectory = (projectId: string) => join(root, projectId);

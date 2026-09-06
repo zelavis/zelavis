@@ -105,6 +105,30 @@ export interface ZelavisAgentProcessRunner {
     command: ZelavisAgentProcessCommand,
     options?: ZelavisAgentProcessStartOptions,
   ): Promise<ZelavisAgentProcess>;
+  /**
+   * Stops processes a previous Platform left running, and reports how many.
+   *
+   * A Platform killed outright — SIGKILL, an OOM kill, a power loss — runs no
+   * shutdown, so its Project processes keep going. They keep their ports, keep
+   * answering requests, and keep their database files open, while the Platform
+   * that replaces them has no memory of them at all. The observed result is a
+   * Project reported as running whose new process could not bind its port,
+   * with traffic served by the stale one.
+   *
+   * Stopped rather than adopted, and that is a property of what a process is
+   * rather than a shortcut: a child's output arrives over pipes owned by the
+   * process that spawned it, so once that process is gone there is nothing to
+   * reattach to. A reclaimed process could never report readiness or stream
+   * logs again.
+   *
+   * `start` reclaims the workload it is about to start, so callers need no
+   * ordering discipline. Calling it directly sweeps everything, which is what a
+   * host wants at boot for Projects it is not about to start.
+   *
+   * Optional: a runner that keeps no durable record has nothing to reclaim and
+   * may omit it.
+   */
+  reclaim?(workloadId?: string): Promise<number>;
   /** Stops everything this runner started. */
   close(): Promise<void>;
 }
