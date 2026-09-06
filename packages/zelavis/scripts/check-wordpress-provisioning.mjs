@@ -28,12 +28,19 @@ import { WORDPRESS_VERSION } from "../dist/wordpress/index.js";
  * Platform does not have.
  */
 const REQUIRED_BINARIES = [
-  { label: "nginx", candidates: ["nginx"] },
+  { label: "nginx", candidates: ["nginx"], formula: "nginx", relative: "bin/nginx" },
   {
     label: "php-fpm",
     candidates: ["php-fpm", "php-fpm8.5", "php-fpm8.4", "php-fpm8.3", "php-fpm8.2"],
+    formula: "php",
+    relative: "sbin/php-fpm",
   },
-  { label: "mariadbd", candidates: ["mariadbd"] },
+  {
+    label: "mariadbd",
+    candidates: ["mariadbd"],
+    formula: "mariadb",
+    relative: "bin/mariadbd",
+  },
 ];
 
 function run(command, args) {
@@ -49,10 +56,31 @@ async function present(binary) {
   return ok;
 }
 
-async function anyPresent(candidates) {
-  for (const candidate of candidates) {
+/**
+ * Finds a binary the way the driver does, not the way a shell does.
+ *
+ * `command -v` is not enough on either platform. Debian ships PHP-FPM as
+ * `php-fpm8.2`, and Homebrew installs binaries under a formula prefix that is
+ * often not on PATH at all — `php-fpm` is absent from PATH on a Mac that has
+ * the `php` formula installed. A check that only asked the shell would report
+ * a failure the Platform does not have, and worse, would call a host "bare"
+ * when it is fully equipped.
+ */
+async function anyPresent(binary) {
+  for (const candidate of binary.candidates) {
     if (await present(candidate)) return candidate;
   }
+
+  if (process.platform === "darwin" && binary.formula) {
+    const prefix = await run("brew", ["--prefix", binary.formula]);
+    const directory = prefix.stdout.trim();
+    if (prefix.ok && directory) {
+      const path = join(directory, binary.relative);
+      const found = await run("test", ["-x", path]);
+      if (found.ok) return path;
+    }
+  }
+
   return undefined;
 }
 
@@ -63,26 +91,43 @@ function fail(message) {
 
 const installed = [];
 for (const binary of REQUIRED_BINARIES) {
-  if (await anyPresent(binary.candidates)) installed.push(binary.label);
+  if (await anyPresent(binary)) installed.push(binary.label);
 }
 
 if (installed.length > 0) {
   console.error(
     `This check only means something on a host that is missing WordPress's ` +
       `dependencies, and this one already has: ${installed.join(", ")}. ` +
-      `Run it in a container.`,
+      (process.platform === "darwin"
+        ? `Uninstall them first — on a disposable machine, not one you work on.`
+        : `Run it in a container.`),
   );
   process.exit(2);
 }
 
-// Root, or able to become it without a prompt — the two shapes provisioning
-// knows how to install packages in. Both are exercised: an installation run as
-// a system service is root, and one run as an operator's own account is not,
-// and the daemons have to come up either way.
+// What "able to install packages" means depends on the package manager.
+//
+// Homebrew refuses to run as root and needs no elevation at all, so on macOS
+// the requirement is simply that brew exists. apt needs root or passwordless
+// sudo, and both are real deployments: an operator's own account, and Zelavis
+// installed as a system service.
+const darwin = process.platform === "darwin";
 const asRoot = process.getuid?.() === 0;
 const canSudo = !asRoot && (await run("sudo", ["-n", "true"])).ok;
 
-if (!asRoot && !canSudo) {
+if (darwin) {
+  if (asRoot) {
+    console.error(
+      "Homebrew refuses to run as root, so this check cannot provision as root " +
+        "on macOS. Run it as the user who owns the Homebrew installation.",
+    );
+    process.exit(2);
+  }
+  if (!(await run("brew", ["--version"])).ok) {
+    console.error("Homebrew is not installed, so there is nothing to provision with.");
+    process.exit(2);
+  }
+} else if (!asRoot && !canSudo) {
   console.error(
     "Provisioning installs host packages, so this check needs package " +
       "authority: run it as root or as a user with passwordless sudo, in a " +
@@ -91,7 +136,13 @@ if (!asRoot && !canSudo) {
   process.exit(2);
 }
 
-console.log(`Running as ${asRoot ? "root" : "an unprivileged user with sudo"}.`);
+const identity = darwin
+  ? "the Homebrew owner"
+  : asRoot
+    ? "root"
+    : "an unprivileged user with sudo";
+
+console.log(`Running as ${identity} on ${process.platform}.`);
 
 console.log("Host is missing nginx, php-fpm and mariadbd. Starting a WordPress Project.");
 
@@ -143,7 +194,7 @@ if (snapshot) {
 // The packages are the point. A Project that started without them would mean
 // the check proved nothing about provisioning.
 for (const binary of REQUIRED_BINARIES) {
-  const found = await anyPresent(binary.candidates);
+  const found = await anyPresent(binary);
   if (found) {
     console.log(`  installed: ${found}`);
   } else {
