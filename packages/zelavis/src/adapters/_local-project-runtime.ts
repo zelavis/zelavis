@@ -104,6 +104,13 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
 
   return {
     name: "local-project",
+    async adopt() {
+      // Each driver knows which of its own Projects the Agent still runs; the
+      // router only has to ask all of them.
+      for (const driver of [node, wordpress, serverFrontend]) {
+        await driver?.adopt?.();
+      }
+    },
     runtimeKinds: Object.freeze(["native"]),
     defaultRuntimeKind: "native",
     startupConcurrency: 1,

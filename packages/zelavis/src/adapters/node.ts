@@ -274,13 +274,20 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
               stateDirectory: join(runtimeOptions.directory, ".agent-processes"),
             });
 
-        // Anything a crashed Platform left running is stopped before this one
-        // starts. Reconciliation reclaims the Projects it restarts, but a
-        // Project the operator has since stopped is never started again — and
-        // so would never be reclaimed at all.
-        await runtimeOptions.agent.reclaim?.().catch(() => undefined);
-
         projectRuntime = createLocalProjectRuntime(runtimeOptions);
+
+        // Order matters. Adopt first, so a Project the Agent is still running
+        // is taken over rather than killed; reclaim second, so what is left
+        // afterwards is what nothing can drive. Reclaiming first would stop
+        // every Project on the host and then start them again, which is the
+        // opposite of what running the Agent separately is for.
+        await projectRuntime.adopt?.().catch(() => undefined);
+
+        // What remains is unowned: processes from a crashed Platform that no
+        // driver claimed. Reconciliation would reclaim the Projects it
+        // restarts, but a Project the operator has since stopped is never
+        // started again — and so would never be reclaimed at all.
+        await runtimeOptions.agent.reclaim?.().catch(() => undefined);
       }
       const fileStorage =
         options.files === false
