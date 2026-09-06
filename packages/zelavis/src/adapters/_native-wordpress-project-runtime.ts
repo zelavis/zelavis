@@ -136,7 +136,7 @@ function nativeProcessEnvironment(): Record<string, string> {
  */
 async function resolveRuntimeAccount(
   configured: string | undefined,
-): Promise<{ name: string; uid: number; gid: number } | undefined> {
+): Promise<{ name: string; group: string; uid: number; gid: number } | undefined> {
   if (process.getuid?.() !== 0) return undefined;
 
   // A configured account is used or refused; it is not quietly replaced with a
@@ -146,9 +146,13 @@ async function resolveRuntimeAccount(
   for (const name of candidates) {
     const uid = await run("id", ["-u", name], { allowFailure: true });
     const gid = await run("id", ["-g", name], { allowFailure: true });
-    if (uid.code === 0 && gid.code === 0) {
+    // The group's name, not the user's. They coincide on Debian and do not on
+    // macOS, and PHP-FPM wants the name.
+    const group = await run("id", ["-gn", name], { allowFailure: true });
+    if (uid.code === 0 && gid.code === 0 && group.code === 0) {
       return {
         name,
+        group: group.stdout.trim(),
         uid: Number(uid.stdout.trim()),
         gid: Number(gid.stdout.trim()),
       };
@@ -501,9 +505,20 @@ function phpFpmConfig(input: {
   socketDirectory: string;
   siteDirectory: string;
   username: string;
+  /**
+   * The account's actual primary group, which is not its username.
+   *
+   * On Debian `www-data` belongs to `www-data` and the two are
+   * interchangeable; on macOS an ordinary user belongs to `staff`. Assuming
+   * they match made PHP-FPM refuse to start with "cannot get gid for group",
+   * on every Mac, for as long as nobody ran WordPress on one.
+   */
+  group: string;
 }): string {
-  if (!/^[a-zA-Z0-9_.-]+$/.test(input.username)) {
-    throw new Error("The native host username cannot be represented in PHP-FPM configuration.");
+  for (const value of [input.username, input.group]) {
+    if (!/^[a-zA-Z0-9_.-]+$/.test(value)) {
+      throw new Error("The native host account cannot be represented in PHP-FPM configuration.");
+    }
   }
   return `[global]
 pid = ${input.runtimeDirectory}/php-fpm.pid
@@ -512,7 +527,7 @@ daemonize = no
 
 [wordpress]
 user = ${input.username}
-group = ${input.username}
+group = ${input.group}
 listen = ${input.socketDirectory}/php-fpm.sock
 ; The socket is created by the PHP-FPM master, which is still root when the
 ; Platform is. Without these it lands root-owned and nginx's workers — which
@@ -520,7 +535,7 @@ listen = ${input.socketDirectory}/php-fpm.sock
 ; to a socket they cannot open. Comments here are ";", not "#": PHP-FPM parses
 ; this with the INI parser, which rejects a "#" line as a null entry.
 listen.owner = ${input.username}
-listen.group = ${input.username}
+listen.group = ${input.group}
 listen.mode = 0600
 pm = dynamic
 pm.max_children = 8
@@ -664,6 +679,18 @@ export function createNativeWordPressProjectRuntime(
    * directory, a socket directory or a site they do not own, and they are no
    * longer the same user as the Platform that created those.
    */
+  /**
+   * The primary group of whoever is running the Platform.
+   *
+   * `os.userInfo()` reports a gid but no group name, and PHP-FPM's `group`
+   * directive wants the name.
+   */
+  async function currentGroupName(): Promise<string> {
+    const group = await run("id", ["-gn"], { allowFailure: true });
+    const name = group.stdout.trim();
+    return group.code === 0 && name ? name : userInfo().username;
+  }
+
   async function handOver(path: string) {
     const owner = await account();
     if (!owner) return;
@@ -871,6 +898,7 @@ export function createNativeWordPressProjectRuntime(
           socketDirectory: socketDirectory(config),
           siteDirectory: siteDirectory(project.id),
           username: (await account())?.name ?? userInfo().username,
+          group: (await account())?.group ?? (await currentGroupName()),
         }),
         { mode: 0o600 },
       );
