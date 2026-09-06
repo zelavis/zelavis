@@ -132,9 +132,6 @@ async function restrictDirectoryPermissions(path: string): Promise<void> {
   }
 }
 
-/** Largest partial stdout line retained while looking for a readiness event. */
-export const MAX_CHILD_LINE_BYTES = 64 * 1024;
-
 /** Largest single log message retained per Project. */
 export const MAX_CHILD_LOG_MESSAGE_BYTES = 8 * 1024;
 

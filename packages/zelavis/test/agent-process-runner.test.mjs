@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import {
   createLocalAgentProcessRunner,
-  MAX_AGENT_PROCESS_LINE_BYTES,
+  MAX_AGENT_PROCESS_LINE_LENGTH,
 } from "../dist/adapters/_agent-process-runner.js";
 
 async function script(source) {
@@ -67,25 +67,83 @@ test("output reaches the caller as complete lines", async () => {
   ]);
 });
 
-test("a line that never ends is dropped rather than buffered", async () => {
+test("an over-long line is truncated once, however the stream is chunked", async () => {
   const runner = createLocalAgentProcessRunner();
   const { output, listeners } = startOptions();
 
   const child = await run(
     runner,
-    `process.stdout.write("x".repeat(${MAX_AGENT_PROCESS_LINE_BYTES + 1024}));
+    `process.stdout.write("x".repeat(${MAX_AGENT_PROCESS_LINE_LENGTH + 1024}));
      process.stdout.write("\\nafter\\n");`,
     listeners,
   );
   await child.exit;
 
   const lines = output.map((entry) => entry.line);
-  assert.ok(
-    lines.some((line) => /Discarded an over-long stdout line/.test(line)),
-    `no overflow notice in ${JSON.stringify(lines)}`,
+
+  // Exactly one entry for the long line, not one per chunk the operating
+  // system happened to deliver — and it appears whether the cap is reached
+  // mid-line or on a line that arrived complete. Checking only the held
+  // remainder made this depend on chunk boundaries, which passed locally and
+  // failed on CI.
+  const truncated = lines.filter((line) => line.startsWith("x"));
+  assert.equal(truncated.length, 1, JSON.stringify(lines.map((l) => l.slice(0, 40))));
+  assert.match(truncated[0], /… \(truncated, line exceeded \d+ characters\)$/);
+  assert.equal(
+    truncated[0].indexOf("…"),
+    MAX_AGENT_PROCESS_LINE_LENGTH,
+    "the head of the line is kept",
   );
-  // The stream recovers: what follows the discarded line is still delivered.
-  assert.ok(lines.includes("after"));
+
+  // The stream recovers: what follows the truncated line is delivered whole.
+  assert.ok(lines.includes("after"), JSON.stringify(lines.map((l) => l.slice(0, 40))));
+});
+
+test("the same over-long line trickled in small writes gives the same result", async () => {
+  const runner = createLocalAgentProcessRunner();
+  const { output, listeners } = startOptions();
+
+  // Forces the other path: the cap is reached while the line is still partial,
+  // across many reads, rather than on one chunk that already contains the
+  // terminator. Both must produce one truncated entry and then "after".
+  const child = await run(
+    runner,
+    `const chunk = "x".repeat(4096);
+     let written = 0;
+     const timer = setInterval(() => {
+       process.stdout.write(chunk);
+       written += 1;
+       if (written === 20) {
+         clearInterval(timer);
+         process.stdout.write("\\nafter\\n");
+       }
+     }, 1);`,
+    listeners,
+  );
+  await child.exit;
+
+  const lines = output.map((entry) => entry.line);
+  const truncated = lines.filter((line) => line.startsWith("x"));
+
+  assert.equal(truncated.length, 1, JSON.stringify(lines.map((l) => l.slice(0, 40))));
+  assert.match(truncated[0], /… \(truncated, line exceeded \d+ characters\)$/);
+  assert.ok(lines.includes("after"), JSON.stringify(lines.map((l) => l.slice(0, 40))));
+});
+
+test("a line within the cap is delivered untouched", async () => {
+  const runner = createLocalAgentProcessRunner();
+  const { output, listeners } = startOptions();
+
+  const child = await run(
+    runner,
+    `process.stdout.write("y".repeat(${MAX_AGENT_PROCESS_LINE_LENGTH}) + "\\n");`,
+    listeners,
+  );
+  await child.exit;
+
+  assert.equal(output.length, 1);
+  assert.equal(output[0].line.length, MAX_AGENT_PROCESS_LINE_LENGTH);
+  assert.doesNotMatch(output[0].line, /truncated/);
 });
 
 test("an exit is reported with its code, and marked unrequested", async () => {

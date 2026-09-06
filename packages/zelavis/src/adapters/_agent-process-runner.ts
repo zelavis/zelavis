@@ -29,8 +29,14 @@ import type {
   ZelavisAgentProcessStartOptions,
 } from "../core/agent/process-command.js";
 
-/** Largest partial line held while waiting for its terminator. */
-export const MAX_AGENT_PROCESS_LINE_BYTES = 64 * 1024;
+/**
+ * Longest line delivered to a caller.
+ *
+ * Measured in characters rather than bytes — it is a bound on memory held per
+ * stream, not an exact byte budget, and a multi-byte character is not worth a
+ * decoder to count precisely.
+ */
+export const MAX_AGENT_PROCESS_LINE_LENGTH = 64 * 1024;
 
 const DEFAULT_GRACE_MS = 5_000;
 
@@ -65,26 +71,59 @@ function hasExited(child: ChildProcess): boolean {
 }
 
 /**
- * Splits a stream into complete lines, dropping one that never ends.
+ * Splits a stream into lines, bounding how long one may be.
  *
  * A child that writes megabytes without a newline would otherwise grow this
- * buffer without bound. Readiness events are small, so a partial line past the
- * cap is not one and is discarded rather than held.
+ * buffer without bound. The bound applies to what is delivered, not only to
+ * what is held: an over-long line is emitted truncated, once, and the rest of
+ * it is discarded up to its terminator.
+ *
+ * Delivering the head rather than dropping the line matters — a stack trace
+ * past the cap is still worth its first 64KB — and treating the cap the same
+ * way whether it is reached mid-line or on a completed line matters more.
+ * Checking only the held remainder made the result depend on where the
+ * operating system happened to break the stream into chunks, so identical
+ * child output produced a truncation on one machine and a 70KB line on
+ * another.
  */
-function lineReader(
-  emit: (line: string) => void,
-  onOverflow: () => void,
-): (chunk: Buffer) => void {
+function lineReader(emit: (line: string) => void): (chunk: Buffer) => void {
   let buffer = "";
+  // True while the remainder of an already-truncated line is being skipped.
+  let skippingRest = false;
+
+  const bounded = (line: string) =>
+    line.length > MAX_AGENT_PROCESS_LINE_LENGTH
+      ? `${line.slice(0, MAX_AGENT_PROCESS_LINE_LENGTH)}… (truncated, line exceeded ${MAX_AGENT_PROCESS_LINE_LENGTH} characters)`
+      : line;
+
   return (chunk: Buffer) => {
     buffer += chunk.toString("utf8");
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    if (buffer.length > MAX_AGENT_PROCESS_LINE_BYTES) {
-      buffer = "";
-      onOverflow();
+
+    for (
+      let terminator = buffer.indexOf("\n");
+      terminator !== -1;
+      terminator = buffer.indexOf("\n")
+    ) {
+      const line = buffer.slice(0, terminator);
+      buffer = buffer.slice(terminator + 1);
+      if (skippingRest) {
+        skippingRest = false;
+        continue;
+      }
+      emit(bounded(line));
     }
-    for (const line of lines) emit(line);
+
+    if (skippingRest) {
+      // Still inside the discarded tail; no terminator arrived in this chunk.
+      buffer = "";
+      return;
+    }
+
+    if (buffer.length > MAX_AGENT_PROCESS_LINE_LENGTH) {
+      emit(bounded(buffer));
+      buffer = "";
+      skippingRest = true;
+    }
   };
 }
 
@@ -118,14 +157,7 @@ export function createLocalAgentProcessRunner(
       let settled: ZelavisAgentProcessExit | undefined;
 
       const emit = (stream: "stdout" | "stderr") =>
-        lineReader(
-          (line) => startOptions.onOutput?.({ stream, line }),
-          () =>
-            startOptions.onOutput?.({
-              stream,
-              line: `Discarded an over-long ${stream} line (> ${MAX_AGENT_PROCESS_LINE_BYTES} bytes).`,
-            }),
-        );
+        lineReader((line) => startOptions.onOutput?.({ stream, line }));
 
       child.stdout?.on("data", emit("stdout"));
       child.stderr?.on("data", emit("stderr"));
