@@ -633,8 +633,14 @@ driven by what the existing dependents call, not by what is easiest to port.
   sharded from creation and growing moves placements rather than rehashing
   tenants. Tenant scoping is structural — the tenant is part of every namespace
   and lens key — rather than a predicate a caller can forget.
-- [ ] Durable, versioned partition maps and range movement. The map is
-  currently constructed in memory and never persisted or changed at runtime.
+- [x] Durable, versioned partition maps. The stored map is authoritative, so
+  reopening with a different shard list cannot re-place ranges out from under
+  the data on them. Changes are validated for complete, non-overlapping
+  coverage, must advance the version, and are refused while tenants stand on a
+  range that would move.
+- [ ] Range movement: relocating the records of the tenants on a range so an
+  occupied range can be re-placed. Until then a change may only move empty
+  ranges, and `topology.plan` reports which tenants block one.
 - [x] Event and projection surfaces on the `dbnew` log. Domain events are a
   reading of the object log rather than a second log beside it, so there is no
   way to record a document change that did not happen. Projection checkpoints

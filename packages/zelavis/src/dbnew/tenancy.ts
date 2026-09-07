@@ -6,6 +6,11 @@ export const SCHEMA_NAMESPACE = "zv.schema";
 export const ACTIVE_SCHEMA_NAMESPACE = "zv.schema.active";
 export const CHECKPOINT_NAMESPACE = "zv.checkpoint";
 
+/** Records that a tenant holds data on this shard, so a shard can name its occupants. */
+export const TENANT_NAMESPACE = "zv.tenant";
+export const TENANT_COLUMN = "zv.tenant";
+export const TENANT_MARKER = "\u0000tenant";
+
 /**
  * Which tenant a stored record belongs to, from where it was written.
  *

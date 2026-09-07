@@ -113,5 +113,18 @@ export class BackupFormatUnsupported extends Schema.TaggedError<BackupFormatUnsu
   { format: Schema.String },
 ) {}
 
+export class PartitionMapInvalid extends Schema.TaggedError<PartitionMapInvalid>()(
+  "PartitionMapInvalid",
+  { version: Schema.Number, reason: Schema.String },
+) {}
+
+/** A placement change would move a range that tenants are standing on. */
+export class RangeNotEmpty extends Schema.TaggedError<RangeNotEmpty>()("RangeNotEmpty", {
+  range: Schema.Number,
+  from: Schema.String,
+  to: Schema.String,
+  tenants: Schema.Array(Schema.String),
+}) {}
+
 /** Every failure the store contract can raise. */
 export type DbError = StoreError | WriterFenced | ForeignCursor | PartitionUnavailable;

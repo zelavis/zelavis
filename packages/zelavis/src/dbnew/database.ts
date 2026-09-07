@@ -6,10 +6,14 @@ import { projectionsFor, type ProjectionsApi } from "./projections.js";
 import { schemasFor, type SchemasApi } from "./schemas.js";
 import { timeSeriesFor, type TimeSeriesApi } from "./time-series.js";
 import { backupsFor, type BackupsApi } from "./backup.js";
+import { initPartitionMap, topologyFor, type TopologyApi } from "./topology-store.js";
 import type { ObjectStoreApi } from "./store.js";
 import { shardFor, shardsOf, type PartitionMap, type ShardId, type TenantId } from "./topology.js";
 
 /** Everything scoped to one tenant, on the shard the map places it. */
+/** Holds the partition map. Reserved, so it never collides with a placed shard. */
+export const TOPOLOGY_SHARD = "zv.topology";
+
 export interface TenantApi {
   readonly documents: DocumentsApi;
   readonly events: DomainEventsApi;
@@ -33,9 +37,19 @@ export interface DatabaseApi {
   readonly shardOf: (tenant: TenantId) => ShardId;
 
   readonly partitionMap: PartitionMap;
+
+  /** Inspect and change where ranges are placed. */
+  readonly topology: TopologyApi;
 }
 
 export interface MakeDatabaseOptions {
+  /**
+   * The map to adopt the first time an App opens.
+   *
+   * Ignored afterwards: the stored map is authoritative, so a caller passing a
+   * different shard list on a later open cannot silently re-place ranges out
+   * from under the data already sitting on them.
+   */
   readonly partitionMap: PartitionMap;
   /** Recorded on every emitted event so a reader can tell writers apart. */
   readonly nodeId?: string;
@@ -54,8 +68,15 @@ export interface MakeDatabaseOptions {
 export const makeDatabase = Effect.fn("makeDatabase")(function* (
   options: MakeDatabaseOptions,
 ) {
-  const { partitionMap } = options;
   const nodeId = options.nodeId ?? "local";
+
+  // The topology lives in a store of its own rather than inside a shard: which
+  // shard would hold it is exactly the question it answers. Keeping it in a
+  // store means a map change is a logged, versioned, fenced write like any
+  // other, rather than a file rewritten in place.
+  const topologyStore = yield* options.openShard(TOPOLOGY_SHARD);
+  const partitionMap = yield* initPartitionMap(topologyStore, options.partitionMap);
+
   const shards = new Map<ShardId, ObjectStoreApi>();
   for (const shard of shardsOf(partitionMap)) {
     shards.set(shard, yield* options.openShard(shard));
@@ -74,6 +95,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
 
   return {
     partitionMap,
+    topology: topologyFor(topologyStore, partitionMap, shards),
     shardOf: (tenant) => shardFor(partitionMap, tenant),
     forTenant: (tenant) => {
       const store = storeFor(tenant);

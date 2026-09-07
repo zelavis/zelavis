@@ -5,6 +5,7 @@ import {
   isReservedCollectionName,
   RESERVED_COLLECTION_PREFIX,
 } from "./naming.js";
+import { TENANT_COLUMN, TENANT_MARKER, TENANT_NAMESPACE } from "./tenancy.js";
 import {
   CollectionExists,
   SchemaViolation,
@@ -331,6 +332,20 @@ export const documentsFor = (
             edges: [],
           }, { namespace: collectionNs(tenant), key: input.name }),
         );
+        // Record that this tenant occupies the shard. Placement decisions need
+        // to know which tenants a shard actually holds, and deriving that by
+        // scanning every namespace would mean reading the whole store.
+        if ((yield* lookup(TENANT_NAMESPACE, tenant)) === undefined) {
+          const markerSeq = yield* nextSeq;
+          yield* write((txn) =>
+            txn.put(markerSeq, encode({ tenant }), {
+              terms: [],
+              columns: [[TENANT_COLUMN, TENANT_MARKER]],
+              measures: [],
+              edges: [],
+            }, { namespace: TENANT_NAMESPACE, key: tenant }),
+          );
+        }
         return collection;
       }),
 
