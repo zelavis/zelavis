@@ -120,12 +120,6 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
           topology,
           physicalDrivers,
         });
-        if (
-          isProjectRuntime &&
-          databaseOptions.directory === undefined &&
-          !databaseOptions.readonly
-        ) {
-        }
         nextSubsystems.database = {
           nodeId: "local",
           driver: shardedDriver,

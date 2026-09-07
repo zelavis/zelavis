@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, type Scope } from "effect";
 import type { DbError } from "./errors.js";
 import { documentsFor, type DocumentsApi } from "./documents.js";
 import { domainEventsFor, type DomainEventsApi } from "./domain-events.js";
@@ -56,8 +56,16 @@ export interface MakeDatabaseOptions {
   readonly partitionMap: PartitionMap;
   /** Recorded on every emitted event so a reader can tell writers apart. */
   readonly nodeId?: string;
-  /** Opens one physical shard. Scoped, so shards close with the database. */
-  readonly openShard: (shard: ShardId) => Effect.Effect<ObjectStoreApi, DbError, never>;
+  /**
+   * Opens one physical shard.
+   *
+   * Requires a `Scope`, because a shard is an acquired resource that has to be
+   * released: the database's lifetime is the shards' lifetime, and saying so in
+   * the type is what stops a caller opening one that nothing will close.
+   */
+  readonly openShard: (
+    shard: ShardId,
+  ) => Effect.Effect<ObjectStoreApi, DbError, Scope.Scope>;
 }
 
 /**

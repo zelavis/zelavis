@@ -84,6 +84,10 @@
       "types": "./dist/dbnew/adapters/node-sqlite.d.ts",
       "import": "./dist/dbnew/adapters/node-sqlite.js"
     },
+    "./dbnew/node": {
+      "types": "./dist/dbnew/adapters/node-database.d.ts",
+      "import": "./dist/dbnew/adapters/node-database.js"
+    },
     "./dbnew/schema": {
       "types": "./dist/dbnew/schema/index.d.ts",
       "import": "./dist/dbnew/schema/index.js"

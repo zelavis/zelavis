@@ -680,8 +680,18 @@ driven by what the existing dependents call, not by what is easiest to port.
   one belonging to another tenant, and does not break when a range moves. Note
   a semantic change: schemas, projections and time series are tenant-scoped
   here, where the replaced surface kept them outside the tenant boundary.
-- [ ] Cut the 26 database endpoints and the nine `src` dependents over, then
-  delete `src/app/db`, its adapters, its tests, and the `zelavis/app/db*`
+- [x] Schema and system-view routes address a Tenant, so changing the backing
+  store no longer also changes a URL. The dashboard passes the admin Tenant it
+  already used elsewhere.
+- [x] `zelavis/dbnew/node` opens a sharded database for a promise-based host and
+  closes it on shutdown, so the platform can construct one.
+- [ ] Point `defineDatabaseService` at the `dbnew` runtime API. The handler
+  bodies still differ: `findById` returns `undefined` rather than `null`,
+  `service.capabilities` has no equivalent, `timeseries` is `timeSeries`, and
+  backups are reached through the Tenant.
+- [ ] Construct the database from the Node and Bun adapters and register its
+  `close()` with runtime shutdown.
+- [ ] Delete `src/app/db`, its adapters, its tests, and the `zelavis/app/db*`
   export subpaths.
 
 
