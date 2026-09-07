@@ -628,8 +628,13 @@ driven by what the existing dependents call, not by what is easiest to port.
   duplicate-id rejection on insert.
 - [ ] Ordering, comparison and range filters served from the lens rather than
   applied after it.
-- [ ] `forTenant` as partition selection, so the declared partition key does the
-  work the topology router does today.
+- [x] `forTenant` as partition selection. Tenants hash to one of a fixed number
+  of virtual ranges, and ranges are placed on physical shards, so an App is
+  sharded from creation and growing moves placements rather than rehashing
+  tenants. Tenant scoping is structural — the tenant is part of every namespace
+  and lens key — rather than a predicate a caller can forget.
+- [ ] Durable, versioned partition maps and range movement. The map is
+  currently constructed in memory and never persisted or changed at runtime.
 - [ ] Event and projection surfaces re-expressed on the `dbnew` log, including
   the opaque shard-aware cursor contract.
 - [ ] Collection schemas, validation, and stored schema versions.

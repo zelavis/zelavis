@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Effect } from "effect";
-import { makeDocuments, ObjectStore } from "../dist/dbnew/index.js";
+import { documentsFor } from "../dist/dbnew/index.js";
 import { makeNodeSqliteStore } from "../dist/dbnew/adapters/node-sqlite.js";
 
 const withDocs = (t, body) => {
@@ -14,7 +14,7 @@ const withDocs = (t, body) => {
     Effect.scoped(
       Effect.gen(function* () {
         const store = yield* makeNodeSqliteStore("acme", dir);
-        const docs = yield* Effect.provideService(makeDocuments(), ObjectStore, store);
+        const docs = documentsFor(store, "t1");
         return yield* body(docs, store);
       }),
     ),

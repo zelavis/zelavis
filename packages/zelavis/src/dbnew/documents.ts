@@ -9,7 +9,8 @@ import {
 import type { DbError } from "./errors.js";
 import type { Seq } from "./model.js";
 import { and, equals, or, type Query } from "./query.js";
-import { ObjectStore, type Txn } from "./store.js";
+import type { ObjectStoreApi, Txn } from "./store.js";
+import type { TenantId } from "./topology.js";
 
 export type Json = string | number | boolean | null | Json[] | { [k: string]: Json };
 export type JsonObject = { [k: string]: Json };
@@ -53,15 +54,28 @@ export interface FindDocumentsInput {
   readonly offset?: number;
 }
 
+/** Marks a stored collection record, distinct from any collection name. */
+const COLLECTION_MARKER = "\u0000collection";
+
 const NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 
 /** `zv` is reserved for internals, exactly as in the collection layer it replaces. */
 const RESERVED_PREFIX = "zv";
-const COLLECTION_NS = "zv.collection";
-const documentNs = (collection: string) => `doc.${collection}`;
 
-/** The column posting that selects a whole collection. */
-const COLLECTION_COLUMN = "zv.collection";
+/**
+ * Tenant scoping is structural, not a filter.
+ *
+ * Several tenants share a physical shard, so their records share one `Seq`
+ * space. Rather than appending a tenant predicate to every query — which is a
+ * thing a caller can forget, and which silently returns another tenant's rows
+ * when they do — the tenant is part of every namespace and every lens key. A
+ * query built for one tenant addresses a key space the others are not in.
+ */
+const collectionNs = (tenant: TenantId) => `zv.collection/${tenant}`;
+const documentNs = (tenant: TenantId, collection: string) => `doc/${tenant}/${collection}`;
+const collectionColumn = (tenant: TenantId) => `zv.collection/${tenant}`;
+const columnFor = (tenant: TenantId, collection: string, path: string) =>
+  `${tenant}/${collection}.${path}`;
 
 const validateName = (name: string): Effect.Effect<void, InvalidCollectionName> => {
   if (!NAME_PATTERN.test(name)) {
@@ -99,8 +113,6 @@ const readPath = (data: JsonObject, path: string): Json | undefined => {
 const isScalar = (value: Json | undefined): value is string | number | boolean =>
   typeof value === "string" || typeof value === "number" || typeof value === "boolean";
 
-const columnFor = (collection: string, path: string) => `${collection}.${path}`;
-
 /**
  * Flatten a document into column postings.
  *
@@ -111,13 +123,14 @@ const columnFor = (collection: string, path: string) => `${collection}.${path}`;
  * identically, which is a match nobody intends.
  */
 const columnsFor = (
+  tenant: TenantId,
   collection: string,
   data: JsonObject,
 ): Array<readonly [string, string]> => {
-  const out: Array<readonly [string, string]> = [[COLLECTION_COLUMN, collection]];
+  const out: Array<readonly [string, string]> = [[collectionColumn(tenant), collection]];
   const walk = (value: Json, path: string): void => {
     if (isScalar(value)) {
-      out.push([columnFor(collection, path), String(value)]);
+      out.push([columnFor(tenant, collection, path), String(value)]);
       return;
     }
     if (value === null || Array.isArray(value)) return;
@@ -164,15 +177,16 @@ const matches = (data: JsonObject, filter: DocumentFilter): boolean => {
  * split is deliberate and visible rather than a silent full scan.
  */
 const planQuery = (
+  tenant: TenantId,
   collection: string,
   where: ReadonlyArray<DocumentFilter>,
 ): { readonly query: Query; readonly residual: ReadonlyArray<DocumentFilter> } => {
-  const clauses: Query[] = [equals(COLLECTION_COLUMN, collection)];
+  const clauses: Query[] = [equals(collectionColumn(tenant), collection)];
   const residual: DocumentFilter[] = [];
   for (const filter of where) {
     const op = filter.op ?? "eq";
     if (op === "eq" && isScalar(filter.value as Json)) {
-      clauses.push(equals(columnFor(collection, filter.path), String(filter.value)));
+      clauses.push(equals(columnFor(tenant, collection, filter.path), String(filter.value)));
     } else if (op === "in" && Array.isArray(filter.value) && filter.value.length > 0) {
       const members = filter.value.filter(isScalar);
       if (members.length !== filter.value.length) {
@@ -180,7 +194,7 @@ const planQuery = (
         continue;
       }
       clauses.push(
-        or(...members.map((v) => equals(columnFor(collection, filter.path), String(v)))),
+        or(...members.map((v) => equals(columnFor(tenant, collection, filter.path), String(v)))),
       );
     } else {
       residual.push(filter);
@@ -221,8 +235,13 @@ export interface DocumentsApi {
   }) => Effect.Effect<boolean, DocumentConflict>;
 }
 
-export const makeDocuments = Effect.fn("makeDocuments")(function* () {
-  const store = yield* ObjectStore;
+/**
+ * The document API for one tenant on one shard.
+ *
+ * Takes the store directly rather than from context because a tenant's shard is
+ * chosen by the partition map at call time, not by what happens to be provided.
+ */
+export const documentsFor = (store: ObjectStoreApi, tenant: TenantId): DocumentsApi => {
 
   // A store failure is not something a caller can act on: a fenced writer or an
   // unreadable file is the runtime's problem, not a decision. Converting them to
@@ -237,7 +256,7 @@ export const makeDocuments = Effect.fn("makeDocuments")(function* () {
 
   const loadCollection = (name: string) =>
     Effect.gen(function* () {
-      const seq = yield* lookup(COLLECTION_NS, name);
+      const seq = yield* lookup(collectionNs(tenant), name);
       if (seq === undefined) return undefined;
       const object = yield* readObject(seq);
       return object === undefined ? undefined : decode<Collection>(object.bytes);
@@ -255,10 +274,10 @@ export const makeDocuments = Effect.fn("makeDocuments")(function* () {
     write((txn) =>
       txn.put(seq, encode(doc), {
         terms: [],
-        columns: columnsFor(doc.collection, doc.data),
+        columns: columnsFor(tenant, doc.collection, doc.data),
         measures: [],
         edges: [],
-      }, { namespace: documentNs(doc.collection), key: doc.id }),
+      }, { namespace: documentNs(tenant, doc.collection), key: doc.id }),
     );
 
   return {
@@ -277,10 +296,10 @@ export const makeDocuments = Effect.fn("makeDocuments")(function* () {
         yield* write((txn) =>
           txn.put(seq, encode(collection), {
             terms: [],
-            columns: [[COLLECTION_COLUMN, COLLECTION_NS]],
+            columns: [[collectionColumn(tenant), COLLECTION_MARKER]],
             measures: [],
             edges: [],
-          }, { namespace: COLLECTION_NS, key: input.name }),
+          }, { namespace: collectionNs(tenant), key: input.name }),
         );
         return collection;
       }),
@@ -288,7 +307,7 @@ export const makeDocuments = Effect.fn("makeDocuments")(function* () {
     listCollections: () =>
       Effect.gen(function* () {
         const seqs = yield* Stream.runCollect(
-          resolveQuery(equals(COLLECTION_COLUMN, COLLECTION_NS)),
+          resolveQuery(equals(collectionColumn(tenant), COLLECTION_MARKER)),
         );
         const out: Collection[] = [];
         for (const seq of seqs) {
@@ -304,7 +323,7 @@ export const makeDocuments = Effect.fn("makeDocuments")(function* () {
       Effect.gen(function* () {
         yield* requireCollection(input.collection);
         const id = input.id ?? crypto.randomUUID();
-        const clash = yield* lookup(documentNs(input.collection), id);
+        const clash = yield* lookup(documentNs(tenant, input.collection), id);
         if (clash !== undefined) {
           return yield* new DocumentConflict({
             collection: input.collection,
@@ -328,13 +347,13 @@ export const makeDocuments = Effect.fn("makeDocuments")(function* () {
 
     findById: (input) =>
       Effect.gen(function* () {
-        const seq = yield* lookup(documentNs(input.collection), input.id);
+        const seq = yield* lookup(documentNs(tenant, input.collection), input.id);
         return seq === undefined ? undefined : yield* readDocument(seq);
       }),
 
     findMany: (input) =>
       Effect.gen(function* () {
-        const { query, residual } = planQuery(input.collection, input.where ?? []);
+        const { query, residual } = planQuery(tenant, input.collection, input.where ?? []);
         const seqs = yield* Stream.runCollect(resolveQuery(query));
         let docs: Document[] = [];
         for (const seq of seqs) {
@@ -355,7 +374,7 @@ export const makeDocuments = Effect.fn("makeDocuments")(function* () {
 
     update: (input) =>
       Effect.gen(function* () {
-        const seq = yield* lookup(documentNs(input.collection), input.id);
+        const seq = yield* lookup(documentNs(tenant, input.collection), input.id);
         const current = seq === undefined ? undefined : yield* readDocument(seq);
         if (seq === undefined || current === undefined) {
           return yield* new DocumentNotFound({ collection: input.collection, id: input.id });
@@ -383,7 +402,7 @@ export const makeDocuments = Effect.fn("makeDocuments")(function* () {
 
     delete: (input) =>
       Effect.gen(function* () {
-        const seq = yield* lookup(documentNs(input.collection), input.id);
+        const seq = yield* lookup(documentNs(tenant, input.collection), input.id);
         if (seq === undefined) return false;
         if (input.expectedVersion !== undefined) {
           const current = yield* readDocument(seq);
@@ -399,4 +418,4 @@ export const makeDocuments = Effect.fn("makeDocuments")(function* () {
         return true;
       }),
   } satisfies DocumentsApi;
-});
+};
