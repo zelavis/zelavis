@@ -16,6 +16,12 @@ Use this skill for changes in:
 - **Router**: React Router v7 in SPA mode (`ssr: false`) — not TanStack Router
 - **Styling**: Tailwind CSS v4 + shadcn/ui (Base UI components)
 - **Build**: Vite via `@react-router/dev`
+- **Verifying a UI change**: `pnpm --filter @zelavis/ui build`. `build:plugin`
+  only typechecks the plugin — it does not regenerate
+  `src/generated/dashboard-assets.ts`, which is the bundle the Platform serves.
+  The package `test` script runs `build:plugin`, so a dashboard change can
+  typecheck and pass every test while the running dashboard still executes the
+  previous bundle. Commit the regenerated assets with the source change.
 - **Generated types**: `.react-router/types/app/routes/+types/` — do not hand-edit
 - **Route files**: `app/routes/` — edit these, typegen runs automatically
 
