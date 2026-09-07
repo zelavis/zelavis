@@ -687,15 +687,27 @@ driven by what the existing dependents call, not by what is easiest to port.
   closes it on shutdown, so the platform can construct one.
 - [x] `/database/health` no longer advertises capability flags, which had no
   `dbnew` equivalent and reported constants either way.
-- [ ] Point `defineDatabaseService` at the `dbnew` runtime API. The handler
-  bodies still differ: `findById` returns `undefined` rather than `null`,
-  `timeseries` is `timeSeries`, and backups are reached through the Tenant.
+The rest is one change rather than four. Pointing the service at `dbnew` forces
+its construction sites, and those force removing `app/db`, whose tests assert a
+service it would no longer have. Split across commits it leaves the tree broken
+between them, so it lands together:
+
+- [ ] Port `defineDatabaseService` onto the `dbnew` runtime API. Handler bodies
+  differ in three places — `findById` returns `undefined` rather than `null`,
+  `timeseries` is `timeSeries`, backups are reached through the Tenant — and the
+  error rules match `app/db` error classes, so they need rewriting against the
+  tagged errors `dbnew` rejects with.
+- [ ] Build the database at both construction sites: `resolveDatabaseCoreService`
+  in `src/index.ts` and `resolveDatabase` in `src/app/app-service.ts`. The
+  instance reaches further than the service — a `Zelavis` class member with its
+  own lifetime, the `core.database` subsystem slot, and two `isDatabaseApi`
+  guards, one of which still tests for the removed `capabilities` field.
+- [ ] Register the database's `close()` with runtime shutdown.
+- [ ] Delete `src/app/db`, its adapters, and the `zelavis/app/db*` export
+  subpaths. Seven test files exercise it structurally and go with it; what they
+  cover is already asserted against `dbnew`.
 - [ ] Report real topology on `/database/health` — shard count and partition map
-  version — once the endpoint is backed by `dbnew`.
-- [ ] Construct the database from the Node and Bun adapters and register its
-  `close()` with runtime shutdown.
-- [ ] Delete `src/app/db`, its adapters, its tests, and the `zelavis/app/db*`
-  export subpaths.
+  version — which only becomes truthful once `dbnew` serves the endpoint.
 
 
 Independent of parity, and needed before an official recipe mounts `dbnew`:
