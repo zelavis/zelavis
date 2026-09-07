@@ -71,5 +71,10 @@ export class DocumentConflict extends Schema.TaggedError<DocumentConflict>()("Do
   reason: Schema.String,
 }) {}
 
+export class ProjectionNotFound extends Schema.TaggedError<ProjectionNotFound>()(
+  "ProjectionNotFound",
+  { name: Schema.String },
+) {}
+
 /** Every failure the store contract can raise. */
 export type DbError = StoreError | WriterFenced | ForeignCursor | PartitionUnavailable;

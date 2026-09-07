@@ -179,7 +179,7 @@ export const makeNodeSqliteStore = (partition: PartitionKey, directory: string) 
             " VALUES (?, ?, ?, ?, ?, ?, ?)",
         ),
         readEvents: db.prepare(
-          "SELECT position, generation, seq, kind, version, body, manifest FROM events" +
+          "SELECT position, generation, seq, kind, version, body, manifest, at FROM events" +
             " WHERE position > ? ORDER BY position LIMIT ?",
         ),
         headEvent: db.prepare("SELECT MAX(position) AS position FROM events"),
@@ -261,11 +261,13 @@ export const makeNodeSqliteStore = (partition: PartitionKey, directory: string) 
         version: number;
         body: Uint8Array | null;
         manifest: string | null;
+        at: number;
       }): DbEvent => {
         const common = {
           cursor: encodeCursor(partition, row.position),
           partition,
           generation: row.generation,
+          at: row.at,
           seq: asSeq(row.seq),
           version: row.version,
         };
@@ -419,7 +421,7 @@ export const makeNodeSqliteStore = (partition: PartitionKey, directory: string) 
                         : { ...event.manifest, identity: event.identity },
                     )
                   : null,
-                Date.now(),
+                event.at,
               );
               if (event._tag === "ObjectPut") {
                 project(event.seq, event.version, event.bytes, event.manifest, event.identity);

@@ -635,8 +635,13 @@ driven by what the existing dependents call, not by what is easiest to port.
   and lens key — rather than a predicate a caller can forget.
 - [ ] Durable, versioned partition maps and range movement. The map is
   currently constructed in memory and never persisted or changed at runtime.
-- [ ] Event and projection surfaces re-expressed on the `dbnew` log, including
-  the opaque shard-aware cursor contract.
+- [x] Event and projection surfaces on the `dbnew` log. Domain events are a
+  reading of the object log rather than a second log beside it, so there is no
+  way to record a document change that did not happen. Projection checkpoints
+  live in the shard whose log they track, which makes them shard-aware without
+  bookkeeping.
+- [ ] Event idempotency keys. The API being replaced accepts one on append;
+  `dbnew` has no append, so the equivalent guard has no home yet.
 - [ ] Collection schemas, validation, and stored schema versions.
 - [ ] Time series definitions, points, and checkpoints.
 - [ ] Backup and restore format.

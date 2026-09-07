@@ -17,4 +17,6 @@ export * as Postings from "./postings.js";
 export * from "./store.js";
 export * from "./documents.js";
 export * from "./topology.js";
+export * from "./domain-events.js";
+export * from "./projections.js";
 export * from "./database.js";

@@ -1,8 +1,17 @@
 import { Effect } from "effect";
 import type { DbError } from "./errors.js";
 import { documentsFor, type DocumentsApi } from "./documents.js";
+import { domainEventsFor, type DomainEventsApi } from "./domain-events.js";
+import { projectionsFor, type ProjectionsApi } from "./projections.js";
 import type { ObjectStoreApi } from "./store.js";
 import { shardFor, shardsOf, type PartitionMap, type ShardId, type TenantId } from "./topology.js";
+
+/** Everything scoped to one tenant, on the shard the map places it. */
+export interface TenantApi {
+  readonly documents: DocumentsApi;
+  readonly events: DomainEventsApi;
+  readonly projections: ProjectionsApi;
+}
 
 export interface DatabaseApi {
   /**
@@ -12,7 +21,7 @@ export interface DatabaseApi {
    * shard, which is what keeps a cross-model query a local intersection. The
    * shard it lives on is a placement decision, not something the caller states.
    */
-  readonly forTenant: (tenant: TenantId) => DocumentsApi;
+  readonly forTenant: (tenant: TenantId) => TenantApi;
 
   /** Which shard currently holds a tenant. Placement detail, exposed for operators. */
   readonly shardOf: (tenant: TenantId) => ShardId;
@@ -22,6 +31,8 @@ export interface DatabaseApi {
 
 export interface MakeDatabaseOptions {
   readonly partitionMap: PartitionMap;
+  /** Recorded on every emitted event so a reader can tell writers apart. */
+  readonly nodeId?: string;
   /** Opens one physical shard. Scoped, so shards close with the database. */
   readonly openShard: (shard: ShardId) => Effect.Effect<ObjectStoreApi, DbError, never>;
 }
@@ -38,6 +49,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
   options: MakeDatabaseOptions,
 ) {
   const { partitionMap } = options;
+  const nodeId = options.nodeId ?? "local";
   const shards = new Map<ShardId, ObjectStoreApi>();
   for (const shard of shardsOf(partitionMap)) {
     shards.set(shard, yield* options.openShard(shard));
@@ -57,6 +69,14 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
   return {
     partitionMap,
     shardOf: (tenant) => shardFor(partitionMap, tenant),
-    forTenant: (tenant) => documentsFor(storeFor(tenant), tenant),
+    forTenant: (tenant) => {
+      const store = storeFor(tenant);
+      const events = domainEventsFor(store, tenant, nodeId);
+      return {
+        documents: documentsFor(store, tenant),
+        events,
+        projections: projectionsFor(store, events, tenant),
+      };
+    },
   } satisfies DatabaseApi;
 });

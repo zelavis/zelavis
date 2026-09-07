@@ -68,8 +68,8 @@ test("tenants sharing a shard cannot see each other's data", async (t) => {
   // One shard on purpose: this is the case where isolation could leak.
   await withDb(t, ["only"], (db) =>
     Effect.gen(function* () {
-      const acme = db.forTenant("acme");
-      const globex = db.forTenant("globex");
+      const acme = db.forTenant("acme").documents;
+      const globex = db.forTenant("globex").documents;
       assert.equal(db.shardOf("acme"), "only");
       assert.equal(db.shardOf("globex"), "only");
 
@@ -109,13 +109,13 @@ test("a tenant's data lives wholly on one shard", async (t) => {
       assert.ok(used.size > 1, "tenants spread across shards");
 
       for (const name of names.slice(0, 8)) {
-        const docs = db.forTenant(name);
+        const docs = db.forTenant(name).documents;
         yield* docs.createCollection({ name: "notes" });
         yield* docs.insert({ collection: "notes", id: "n1", data: { who: name } });
       }
 
       for (const name of names.slice(0, 8)) {
-        const docs = db.forTenant(name);
+        const docs = db.forTenant(name).documents;
         const found = yield* docs.findMany({ collection: "notes" });
         assert.deepEqual(found.map((d) => d.data.who), [name], `${name} sees only its own`);
       }

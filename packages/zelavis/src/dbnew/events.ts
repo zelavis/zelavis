@@ -16,6 +16,8 @@ export type EventCursor = string & { readonly [CursorBrand]: true };
 export interface ObjectPut {
   readonly _tag: "ObjectPut";
   readonly cursor: EventCursor;
+  /** When the write was accepted, in epoch milliseconds. */
+  readonly at: number;
   readonly partition: PartitionKey;
   readonly generation: number;
   readonly seq: Seq;
@@ -28,6 +30,7 @@ export interface ObjectPut {
 export interface ObjectRetracted {
   readonly _tag: "ObjectRetracted";
   readonly cursor: EventCursor;
+  readonly at: number;
   readonly partition: PartitionKey;
   readonly generation: number;
   readonly seq: Seq;
@@ -57,6 +60,7 @@ export const DbEventWire = Schema.Union([
     cursor: Schema.String,
     partition: Schema.String,
     generation: Schema.Number,
+    at: Schema.Number,
     seq: Schema.Number,
     version: Schema.Number,
     bytes: Schema.Uint8Array,
@@ -69,6 +73,7 @@ export const DbEventWire = Schema.Union([
     cursor: Schema.String,
     partition: Schema.String,
     generation: Schema.Number,
+    at: Schema.Number,
     seq: Schema.Number,
     version: Schema.Number,
   }),
