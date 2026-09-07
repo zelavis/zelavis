@@ -205,8 +205,8 @@ importers:
   packages/zelavis/product-services/zelavis-ui:
     dependencies:
       '@assistant-ui/core':
-        specifier: 0.3.16
-        version: 0.3.16(@assistant-ui/store@0.3.12(@assistant-ui/tap@0.9.16(@types/react@19.2.18)(react@19.2.5))(@types/react@19.2.18)(react@19.2.5))(@assistant-ui/tap@0.9.16(@types/react@19.2.18)(react@19.2.5))(@types/react@19.2.18)(assistant-cloud@0.1.43)(react@19.2.5)(zustand@5.0.15(@types/react@19.2.18)(immer@11.1.18)(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5)))
+        specifier: 0.3.17
+        version: 0.3.17(@assistant-ui/store@0.3.12(@assistant-ui/tap@0.9.16(@types/react@19.2.18)(react@19.2.5))(@types/react@19.2.18)(react@19.2.5))(@assistant-ui/tap@0.9.16(@types/react@19.2.18)(react@19.2.5))(@types/react@19.2.18)(assistant-cloud@0.1.43)(react@19.2.5)
       '@assistant-ui/react':
         specifier: 0.15.18
         version: 0.15.18(@types/react-dom@19.2.7(@types/react@19.2.18))(@types/react@19.2.18)(immer@11.1.18)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5))
@@ -501,25 +501,6 @@ packages:
 
   '@asamuzakjp/nwsapi@2.3.9':
     resolution: {integrity: sha512-n8GuYSrI9bF7FFZ/SjhwevlHc8xaVlb/7HmHelnc/PZXBD2ZR49NnN9sMMuDdEGPeeRQ5d0hqlSlEpgCX3Wl0Q==}
-
-  '@assistant-ui/core@0.3.16':
-    resolution: {integrity: sha512-fZ9ud+z7hEjegu6NrHyMEcQKCdij2KRcqpLsyOYzHE9LhnBv59Q29jU287EkD0NZE0SG4YTo5/klzz7C/lKA+Q==}
-    peerDependencies:
-      '@assistant-ui/store': ^0.3.0
-      '@assistant-ui/tap': ^0.9.0
-      '@types/react': '*'
-      assistant-cloud: ^0.1.42
-      react: 19.2.5
-      zustand: ^5.0.11
-    peerDependenciesMeta:
-      '@types/react':
-        optional: true
-      assistant-cloud:
-        optional: true
-      react:
-        optional: true
-      zustand:
-        optional: true
 
   '@assistant-ui/core@0.3.17':
     resolution: {integrity: sha512-qWiFVxFsnR4iBt6lZX8KFzf6gnL7uo5PQLgxZlbkUZn6dIzQByzmeFZfKp6vnVaPFN0B4qtc2hyCnDnWmtl7bw==}
@@ -3645,17 +3626,6 @@ packages:
 
   assistant-cloud@0.1.43:
     resolution: {integrity: sha512-dq9kvqTCBwZtIzypi0zYZpylCtd6Hd/DTANeoesUjMhZ3vMjqtLaLW8Ce8mbD07f8MBrT0iUvd6fTJRU8cV97A==}
-
-  assistant-stream@0.3.40:
-    resolution: {integrity: sha512-gAQZC80N6jfTH5eIbCmAM94DKpEgmnLnIZmk3UtmrpogePGuCFX73u5brASvDYnekZK/71Ed9mwvCzFWIyzdZg==}
-    peerDependencies:
-      ioredis: ^5.10.1 || ^6.0.0
-      redis: ^5.12.1
-    peerDependenciesMeta:
-      ioredis:
-        optional: true
-      redis:
-        optional: true
 
   assistant-stream@0.3.41:
     resolution: {integrity: sha512-YyX9jPnxhKmzoJVzRNxcxfb66JbxTi+lwIyvq/N7hq1+6yaXYAeIfHU9PvAXWYfAS4zowJKj3rgCDGFtgpBMdw==}
@@ -7378,21 +7348,6 @@ snapshots:
 
   '@asamuzakjp/nwsapi@2.3.9': {}
 
-  '@assistant-ui/core@0.3.16(@assistant-ui/store@0.3.12(@assistant-ui/tap@0.9.16(@types/react@19.2.18)(react@19.2.5))(@types/react@19.2.18)(react@19.2.5))(@assistant-ui/tap@0.9.16(@types/react@19.2.18)(react@19.2.5))(@types/react@19.2.18)(assistant-cloud@0.1.43)(react@19.2.5)(zustand@5.0.15(@types/react@19.2.18)(immer@11.1.18)(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5)))':
-    dependencies:
-      '@assistant-ui/store': 0.3.12(@assistant-ui/tap@0.9.16(@types/react@19.2.18)(react@19.2.5))(@types/react@19.2.18)(react@19.2.5)
-      '@assistant-ui/tap': 0.9.16(@types/react@19.2.18)(react@19.2.5)
-      assistant-stream: 0.3.40
-      nanoid: 3.3.18
-    optionalDependencies:
-      '@types/react': 19.2.18
-      assistant-cloud: 0.1.43
-      react: 19.2.5
-      zustand: 5.0.15(@types/react@19.2.18)(immer@11.1.18)(react@19.2.5)(use-sync-external-store@1.6.0(react@19.2.5))
-    transitivePeerDependencies:
-      - ioredis
-      - redis
-
   '@assistant-ui/core@0.3.17(@assistant-ui/store@0.3.12(@assistant-ui/tap@0.9.16(@types/react@19.2.18)(react@19.2.5))(@types/react@19.2.18)(react@19.2.5))(@assistant-ui/tap@0.9.16(@types/react@19.2.18)(react@19.2.5))(@types/react@19.2.18)(assistant-cloud@0.1.43)(react@19.2.5)':
     dependencies:
       '@assistant-ui/store': 0.3.12(@assistant-ui/tap@0.9.16(@types/react@19.2.18)(react@19.2.5))(@types/react@19.2.18)(react@19.2.5)
@@ -10566,12 +10521,6 @@ snapshots:
     transitivePeerDependencies:
       - ioredis
       - redis
-
-  assistant-stream@0.3.40:
-    dependencies:
-      '@standard-schema/spec': 1.1.0
-      nanoid: 3.3.18
-      secure-json-parse: 4.1.0
 
   assistant-stream@0.3.41:
     dependencies:

@@ -66,7 +66,7 @@
     "build:service-page-styles": "node scripts/generate-service-page-styles.mjs"
   },
   "dependencies": {
-    "@assistant-ui/core": "0.3.16",
+    "@assistant-ui/core": "0.3.17",
     "@assistant-ui/react": "0.15.18",
     "@assistant-ui/react-markdown": "^0.14.14",
     "@assistant-ui/store": "0.3.12",
