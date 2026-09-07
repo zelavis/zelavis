@@ -144,7 +144,7 @@ export async function clientLoader({ request }: Route.ClientLoaderArgs) {
     hasDatabaseService
       ? listDatabaseCollections(runtime, ZELAVIS_APP_ADMIN_TENANT_ID)
       : [],
-    hasDatabaseService ? listDatabaseSchemaCollections(runtime) : [],
+    hasDatabaseService ? listDatabaseSchemaCollections(runtime, ZELAVIS_APP_ADMIN_TENANT_ID) : [],
   ]);
 
   return {

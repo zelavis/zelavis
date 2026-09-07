@@ -263,6 +263,8 @@ export async function createDatabase(
           tenantId,
           context.nodeId,
         ),
+        schemas: database.schemas,
+        systemViews: database.systemViews,
       });
       tenantApis.set(tenantId, tenant);
       return tenant;

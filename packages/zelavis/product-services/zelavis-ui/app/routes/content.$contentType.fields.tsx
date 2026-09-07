@@ -87,7 +87,7 @@ const builderViewSearchSchema = {
 
 export async function clientLoader({ params, request }: Route.ClientLoaderArgs) {
   const runtime = await getActiveRuntimeConfig(request);
-  const schemas = await listDatabaseSchemaVersions(runtime, params.contentType);
+  const schemas = await listDatabaseSchemaVersions(runtime, params.contentType, ZELAVIS_APP_ADMIN_TENANT_ID);
   return { schemas, contentType: params.contentType };
 }
 
@@ -293,6 +293,7 @@ function ContentTypeFieldsRoute() {
     try {
       const nextVersion = (activeSchema.version ?? 0) + 1;
       await createDatabaseSchema(runtime, {
+        tenantId: ZELAVIS_APP_ADMIN_TENANT_ID,
         collection: contentType,
         version: nextVersion,
         activate: true,
@@ -319,6 +320,7 @@ function ContentTypeFieldsRoute() {
       const parsed = parseSchemaJsonDraft(schemaJsonDraft);
       const nextVersion = (activeSchema.version ?? 0) + 1;
       await createDatabaseSchema(runtime, {
+        tenantId: ZELAVIS_APP_ADMIN_TENANT_ID,
         collection: contentType,
         version: nextVersion,
         activate: true,
@@ -343,7 +345,11 @@ function ContentTypeFieldsRoute() {
     setMessage(undefined);
     setError(undefined);
     try {
-      await activateDatabaseSchemaVersion(runtime, { collection: contentType, version });
+      await activateDatabaseSchemaVersion(runtime, {
+        tenantId: ZELAVIS_APP_ADMIN_TENANT_ID,
+        collection: contentType,
+        version,
+      });
       revalidator.revalidate();
       setMessage(`Activated schema v${version}.`);
     } catch (caught) {
@@ -879,7 +885,7 @@ function TypeSettingsPanel(props: {
     setMessage(undefined);
     setError(undefined);
     try {
-      const sourceSchemas = await listDatabaseSchemaVersions(props.runtime, props.contentType);
+      const sourceSchemas = await listDatabaseSchemaVersions(props.runtime, props.contentType, ZELAVIS_APP_ADMIN_TENANT_ID);
       const activeSchema =
         sourceSchemas.find((schema) => schema.active) ?? sourceSchemas.at(-1);
       const created = await createDatabaseCollection(props.runtime, {

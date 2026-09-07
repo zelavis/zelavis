@@ -270,8 +270,9 @@ test("databaseService can save and activate collection schemas", async () => {
   const created = await saveSchema.handler({
     service: database,
     params: { collection: "products" },
-    query: new URLSearchParams(),
+    query: new URLSearchParams({ tenantId: "acme" }),
     body: {
+      tenantId: "acme",
       version: 1,
       activate: true,
       fields: [
@@ -285,8 +286,9 @@ test("databaseService can save and activate collection schemas", async () => {
   const updated = await saveSchema.handler({
     service: database,
     params: { collection: "products" },
-    query: new URLSearchParams(),
+    query: new URLSearchParams({ tenantId: "acme" }),
     body: {
+      tenantId: "acme",
       version: 2,
       fields: [
         { name: "name", field: { _tag: "TextField", label: "Name", required: true } },
@@ -300,8 +302,8 @@ test("databaseService can save and activate collection schemas", async () => {
   const activated = await activateSchema.handler({
     service: database,
     params: { collection: "products" },
-    query: new URLSearchParams(),
-    body: { version: 2 },
+    query: new URLSearchParams({ tenantId: "acme" }),
+    body: { tenantId: "acme", version: 2 },
     headers: {},
     request: undefined,
   });
@@ -309,7 +311,7 @@ test("databaseService can save and activate collection schemas", async () => {
   const listed = await listVersions.handler({
     service: database,
     params: { collection: "products" },
-    query: new URLSearchParams(),
+    query: new URLSearchParams({ tenantId: "acme" }),
     body: undefined,
     headers: {},
     request: undefined,

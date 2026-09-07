@@ -2204,10 +2204,15 @@ export async function createDatabaseCollection(
   return collection;
 }
 
-export async function listDatabaseSchemaCollections(config: RuntimeConfig) {
+export async function listDatabaseSchemaCollections(
+  config: RuntimeConfig,
+  tenantId: string,
+) {
   const result = await readJson<{
     collections: DatabaseSchemaCollectionSummary[];
-  }>(`${config.api.basePath}/database/schemas/collections`);
+  }>(
+    `${config.api.basePath}/database/schemas/collections?tenantId=${encodeURIComponent(tenantId)}`,
+  );
 
   return result.collections;
 }
@@ -2215,12 +2220,13 @@ export async function listDatabaseSchemaCollections(config: RuntimeConfig) {
 export async function listDatabaseSchemaVersions(
   config: RuntimeConfig,
   collection: string,
+  tenantId: string,
 ) {
   const result = await readJson<{
     collection: string;
     schemas: DatabaseStoredCollectionSchema[];
   }>(
-    `${config.api.basePath}/database/schemas/${encodeURIComponent(collection)}`,
+    `${config.api.basePath}/database/schemas/${encodeURIComponent(collection)}?tenantId=${encodeURIComponent(tenantId)}`,
   );
 
   return result.schemas;
@@ -2233,6 +2239,7 @@ export async function createDatabaseSchema(
     version: number;
     activate?: boolean;
     fields: CollectionFieldEntry[];
+    tenantId: string;
   },
 ) {
   return readJson<DatabaseStoredCollectionSchema>(
@@ -2240,6 +2247,7 @@ export async function createDatabaseSchema(
     {
       method: "POST",
       body: JSON.stringify({
+        tenantId: input.tenantId,
         version: input.version,
         activate: input.activate ?? false,
         fields: input.fields,
@@ -2253,13 +2261,14 @@ export async function activateDatabaseSchemaVersion(
   input: {
     collection: string;
     version: number;
+    tenantId: string;
   },
 ) {
   return readJson<DatabaseStoredCollectionSchema>(
     `${config.api.basePath}/database/schemas/${encodeURIComponent(input.collection)}/activate`,
     {
       method: "POST",
-      body: JSON.stringify({ version: input.version }),
+      body: JSON.stringify({ tenantId: input.tenantId, version: input.version }),
     },
   );
 }

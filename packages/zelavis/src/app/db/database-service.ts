@@ -43,6 +43,11 @@ function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+/** Reads the Tenant a write-shaped schema request addresses. */
+function tenantOf(service: DatabaseApi, input: Record<string, unknown>) {
+  return service.forTenant(readTenantId(input.tenantId));
+}
+
 function readTenantId(value: unknown): string {
   const tenantId = readString(value);
   if (!tenantId) throw new TypeError("A Tenant ID is required.");
@@ -235,7 +240,7 @@ export function defineDatabaseService(
                     pageLabel: "Database",
                     search: { databaseTable: collection.name },
                   })),
-                  ...service.systemViews.list().map((view) => ({
+                  ...service.forTenant(tenantId).systemViews.list().map((view) => ({
                     title: `System · ${view.title}`,
                     path: "/database",
                     pageLabel: "Database",
@@ -299,7 +304,13 @@ export function defineDatabaseMaintenanceService(
           method: "GET",
           path: "/system/views",
           access: { permissions: ["database.inspect"] },
-          handler: ({ service }) => ({ body: { views: service.systemViews.list() } }),
+          handler: ({ service, query }) => ({
+            body: {
+              views: service
+                .forTenant(readTenantId(query.get("tenantId")))
+                .systemViews.list(),
+            },
+          }),
         },
         {
           id: "database.system-views.query",
@@ -318,7 +329,9 @@ export function defineDatabaseMaintenanceService(
           handler: async ({ service, params, query }) => {
             try {
               return {
-                body: await service.systemViews.query({
+                body: await service
+                  .forTenant(readTenantId(query.get("tenantId")))
+                  .systemViews.query({
                   name: params.view as DatabaseSystemViewName,
                   tenantId: readTenantId(query.get("tenantId")),
                   limit: readQueryNumber(query.get("limit")),
@@ -738,9 +751,11 @@ export function defineDatabaseSchemasService(
               200: { description: "List of schemas" },
             },
           },
-          handler: ({ service }) => ({
+          handler: ({ service, query }) => ({
             body: {
-              collections: service.schemas.listCollections(),
+              collections: service
+                .forTenant(readTenantId(query.get("tenantId")))
+                .schemas.listCollections(),
             },
           }),
         },
@@ -759,10 +774,12 @@ export function defineDatabaseSchemasService(
               200: { description: "List of schema versions" },
             },
           },
-          handler: ({ service, params }) => ({
+          handler: ({ service, params, query }) => ({
             body: {
               collection: params.collection,
-              schemas: service.schemas.listVersions(params.collection),
+              schemas: service
+                .forTenant(readTenantId(query.get("tenantId")))
+                .schemas.listVersions(params.collection),
             },
           }),
         },
@@ -806,7 +823,7 @@ export function defineDatabaseSchemasService(
               }
               return {
                 status: 201,
-                body: await service.schemas.save({
+                body: await tenantOf(service, input).schemas.save({
                   collection: params.collection,
                   version: readRequiredNumber(input.version, "Schema version"),
                   activate: input.activate === true,
@@ -848,7 +865,7 @@ export function defineDatabaseSchemasService(
             const input = readBodyObject(body);
             try {
               return {
-                body: await service.schemas.activate(
+                body: await tenantOf(service, input).schemas.activate(
                   params.collection,
                   readRequiredNumber(input.version, "Schema version"),
                 ),
@@ -888,7 +905,7 @@ export function defineDatabaseSchemasService(
             const input = readBodyObject(body);
             try {
               return {
-                body: service.schemas.validate(
+                body: tenantOf(service, input).schemas.validate(
                   params.collection,
                   readJsonObject(input.data),
                 ),

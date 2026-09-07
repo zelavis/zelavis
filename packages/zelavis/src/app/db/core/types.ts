@@ -29,6 +29,15 @@ export interface TenantDatabaseApi {
   events: DatabaseEventsApi;
   timeseries: DatabaseTenantTimeSeriesApi;
   documents: DatabaseDocumentsApi;
+  /**
+   * Reached through the Tenant so callers already address them that way.
+   *
+   * This driver still stores both for the whole logical database, so the Tenant
+   * selects nothing yet. `zelavis/dbnew` owns them per Tenant, and moving the
+   * routes first means the change of backing store is not also a change of URL.
+   */
+  schemas: DatabaseSchemasApi;
+  systemViews: DatabaseSystemViewsApi;
 }
 
 export interface DatabaseApi {
