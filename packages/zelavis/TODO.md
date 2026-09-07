@@ -651,7 +651,14 @@ driven by what the existing dependents call, not by what is easiest to port.
 - [ ] Schema migration between versions. Activating a new version changes what
   is accepted from that point on; documents written under an older version are
   left as they were.
-- [ ] Time series definitions, points, and checkpoints.
+- [x] Time series definitions, points, and checkpoints. A series is a
+  projection over the same log with the same checkpoint, rather than a second
+  ingestion path. Points carry a coarse time bucket so a bounded range asks for
+  the buckets it spans instead of scanning the series.
+- [ ] Time-bucket indexing wide enough for long ranges. A range spanning more
+  than 400 buckets currently falls back to scanning the whole series.
+- [ ] Tag filtering on range and aggregate. Tags are indexed as postings but no
+  query surface reads them yet.
 - [ ] Backup and restore format.
 - [ ] Shard topology, so an official App routes virtual ranges across several
   physical shards from creation rather than gaining sharding later.

@@ -50,6 +50,9 @@ export interface ProjectionsApi {
  * meaningful against the log that issued it, so storing it anywhere else would
  * invite comparing positions from different shards as if they were one order.
  */
+/** Projections registered on a caller's behalf, listed by their own surface. */
+const INTERNAL_PREFIX = "zv.";
+
 const CHECKPOINT_NS = "zv.checkpoint";
 const checkpointKey = (tenant: TenantId, name: string) => `${tenant}/${name}`;
 
@@ -145,7 +148,9 @@ export const projectionsFor = (
       }),
 
     list: () =>
-      Effect.forEach([...definitions.values()], (definition) =>
+      Effect.forEach(
+        [...definitions.values()].filter((d) => !d.name.startsWith(INTERNAL_PREFIX)),
+        (definition) =>
         Effect.map(readCheckpoint(definition.name), (checkpoint) => ({
           name: definition.name,
           ...(definition.description === undefined ? {} : { description: definition.description }),

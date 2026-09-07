@@ -93,5 +93,10 @@ export class SchemaViolation extends Schema.TaggedError<SchemaViolation>()("Sche
   issues: Schema.Array(Schema.Struct({ path: Schema.String, message: Schema.String })),
 }) {}
 
+export class TimeSeriesNotFound extends Schema.TaggedError<TimeSeriesNotFound>()(
+  "TimeSeriesNotFound",
+  { name: Schema.String },
+) {}
+
 /** Every failure the store contract can raise. */
 export type DbError = StoreError | WriterFenced | ForeignCursor | PartitionUnavailable;

@@ -4,6 +4,7 @@ import { documentsFor, type DocumentsApi } from "./documents.js";
 import { domainEventsFor, type DomainEventsApi } from "./domain-events.js";
 import { projectionsFor, type ProjectionsApi } from "./projections.js";
 import { schemasFor, type SchemasApi } from "./schemas.js";
+import { timeSeriesFor, type TimeSeriesApi } from "./time-series.js";
 import type { ObjectStoreApi } from "./store.js";
 import { shardFor, shardsOf, type PartitionMap, type ShardId, type TenantId } from "./topology.js";
 
@@ -13,6 +14,7 @@ export interface TenantApi {
   readonly events: DomainEventsApi;
   readonly projections: ProjectionsApi;
   readonly schemas: SchemasApi;
+  readonly timeSeries: TimeSeriesApi;
 }
 
 export interface DatabaseApi {
@@ -75,11 +77,13 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
       const store = storeFor(tenant);
       const events = domainEventsFor(store, tenant, nodeId);
       const schemas = schemasFor(store, tenant);
+      const projections = projectionsFor(store, events, tenant);
       return {
         documents: documentsFor(store, tenant, schemas),
         events,
-        projections: projectionsFor(store, events, tenant),
+        projections,
         schemas,
+        timeSeries: timeSeriesFor(store, projections, tenant),
       };
     },
   } satisfies DatabaseApi;

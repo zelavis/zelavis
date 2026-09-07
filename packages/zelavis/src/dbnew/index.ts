@@ -23,4 +23,5 @@ export * from "./topology.js";
 export * from "./domain-events.js";
 export * from "./projections.js";
 export * from "./schemas.js";
+export * from "./time-series.js";
 export * from "./database.js";
