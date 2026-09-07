@@ -1,0 +1,167 @@
+import { Effect } from "effect";
+import type { DatabaseApi, TenantApi } from "./database.js";
+import type { Collection, Document, FindDocumentsInput, JsonObject } from "./documents.js";
+import type { DomainEvent, ReadDomainEventsInput } from "./domain-events.js";
+import type { TenantBackupV1 } from "./backup.js";
+import type { CollectionSchema, CollectionSchemaSummary, SchemaValidationResult, StoredCollectionSchema } from "./schema/index.js";
+import type { ProjectionSummary } from "./projections.js";
+import type { QuerySystemViewInput, SystemView, SystemViewResult } from "./system-views.js";
+import type {
+  AggregateInput,
+  RangeInput,
+  TimeSeriesPoint,
+  TimeSeriesSummary,
+} from "./time-series.js";
+import type { TenantId } from "./topology.js";
+
+/**
+ * The Promise-facing surface for the HTTP runtime.
+ *
+ * Request handlers are async functions, so an Effect has to be run somewhere.
+ * Doing it once here keeps that boundary in a single place instead of scattering
+ * `runPromise` through every route, and keeps the rest of the database in the
+ * error channel where failures are typed.
+ *
+ * A failure surfaces as a rejected promise carrying the tagged error, so a route
+ * can still map `DocumentConflict` to 409 or `CollectionNotFound` to 404 without
+ * knowing anything about Effect.
+ */
+export interface TenantRuntimeApi {
+  readonly documents: {
+    readonly createCollection: (input: {
+      name: string;
+      surface?: Collection["surface"];
+      metadata?: Record<string, unknown>;
+    }) => Promise<Collection>;
+    readonly listCollections: () => Promise<ReadonlyArray<Collection>>;
+    readonly collectionExists: (name: string) => Promise<boolean>;
+    readonly insert: (input: {
+      collection: string;
+      id?: string;
+      data: JsonObject;
+    }) => Promise<Document>;
+    readonly findById: (input: {
+      collection: string;
+      id: string;
+    }) => Promise<Document | undefined>;
+    readonly findMany: (input: FindDocumentsInput) => Promise<ReadonlyArray<Document>>;
+    readonly update: (input: {
+      collection: string;
+      id: string;
+      data: JsonObject;
+      mode?: "merge" | "replace";
+      expectedVersion?: number;
+    }) => Promise<Document>;
+    readonly delete: (input: {
+      collection: string;
+      id: string;
+      expectedVersion?: number;
+    }) => Promise<boolean>;
+  };
+  readonly events: {
+    readonly read: (input?: ReadDomainEventsInput) => Promise<ReadonlyArray<DomainEvent>>;
+  };
+  readonly schemas: {
+    readonly save: (schema: CollectionSchema) => Promise<StoredCollectionSchema>;
+    readonly listCollections: () => Promise<ReadonlyArray<CollectionSchemaSummary>>;
+    readonly listVersions: (
+      collection: string,
+    ) => Promise<ReadonlyArray<StoredCollectionSchema>>;
+    readonly getVersion: (
+      collection: string,
+      version: number,
+    ) => Promise<StoredCollectionSchema | undefined>;
+    readonly getActive: (collection: string) => Promise<StoredCollectionSchema | undefined>;
+    readonly activate: (
+      collection: string,
+      version: number,
+    ) => Promise<StoredCollectionSchema>;
+    readonly validate: (
+      collection: string,
+      data: JsonObject,
+    ) => Promise<SchemaValidationResult>;
+  };
+  readonly projections: {
+    readonly list: () => Promise<ReadonlyArray<ProjectionSummary>>;
+    readonly run: (name: string) => Promise<{ name: string; applied: number }>;
+    readonly rebuild: (name: string) => Promise<{ name: string; applied: number }>;
+  };
+  readonly timeSeries: {
+    readonly list: () => Promise<ReadonlyArray<TimeSeriesSummary>>;
+    readonly range: (
+      series: string,
+      input?: RangeInput,
+    ) => Promise<ReadonlyArray<TimeSeriesPoint>>;
+    readonly aggregate: (series: string, input: AggregateInput) => Promise<number>;
+    readonly ingest: (series: string) => Promise<{ name: string; points: number }>;
+  };
+  readonly backups: {
+    readonly exportTenant: () => Promise<TenantBackupV1>;
+    readonly restoreTenant: (backup: TenantBackupV1) => Promise<{ events: number }>;
+  };
+  readonly systemViews: {
+    readonly list: () => ReadonlyArray<SystemView>;
+    readonly query: (input: QuerySystemViewInput) => Promise<SystemViewResult>;
+  };
+}
+
+export interface DatabaseRuntimeApi {
+  readonly forTenant: (tenant: TenantId) => TenantRuntimeApi;
+  readonly shardOf: (tenant: TenantId) => string;
+  readonly context: { readonly nodeId: string };
+}
+
+const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect);
+
+const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
+  documents: {
+    createCollection: (input) => run(tenant.documents.createCollection(input)),
+    listCollections: () => run(tenant.documents.listCollections()),
+    collectionExists: (name) => run(tenant.documents.collectionExists(name)),
+    insert: (input) => run(tenant.documents.insert(input)),
+    findById: (input) => run(tenant.documents.findById(input)),
+    findMany: (input) => run(tenant.documents.findMany(input)),
+    update: (input) => run(tenant.documents.update(input)),
+    delete: (input) => run(tenant.documents.delete(input)),
+  },
+  events: {
+    read: (input) => run(tenant.events.read(input)),
+  },
+  schemas: {
+    save: (schema) => run(tenant.schemas.save(schema)),
+    listCollections: () => run(tenant.schemas.listCollections()),
+    listVersions: (collection) => run(tenant.schemas.listVersions(collection)),
+    getVersion: (collection, version) => run(tenant.schemas.getVersion(collection, version)),
+    getActive: (collection) => run(tenant.schemas.getActive(collection)),
+    activate: (collection, version) => run(tenant.schemas.activate(collection, version)),
+    validate: (collection, data) => run(tenant.schemas.validate(collection, data)),
+  },
+  projections: {
+    list: () => run(tenant.projections.list()),
+    run: (name) => run(tenant.projections.run(name)),
+    rebuild: (name) => run(tenant.projections.rebuild(name)),
+  },
+  timeSeries: {
+    list: () => run(tenant.timeSeries.list()),
+    range: (series, input) => run(tenant.timeSeries.get(series).range(input)),
+    aggregate: (series, input) => run(tenant.timeSeries.get(series).aggregate(input)),
+    ingest: (series) => run(tenant.timeSeries.ingest(series)),
+  },
+  backups: {
+    exportTenant: () => run(tenant.backups.exportTenant()),
+    restoreTenant: (backup) => run(tenant.backups.restoreTenant(backup)),
+  },
+  systemViews: {
+    list: () => tenant.systemViews.list(),
+    query: (input) => run(tenant.systemViews.query(input)),
+  },
+});
+
+export const runtimeApiFor = (
+  database: DatabaseApi,
+  options?: { readonly nodeId?: string },
+): DatabaseRuntimeApi => ({
+  forTenant: (tenant) => tenantRuntime(database.forTenant(tenant)),
+  shardOf: (tenant) => database.shardOf(tenant),
+  context: { nodeId: options?.nodeId ?? "local" },
+});
