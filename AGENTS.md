@@ -14,7 +14,7 @@ Zelavis is a unified, self-hostable App Platform. It replaces — and combines �
 | Workers / Functions platforms | Project-scoped workloads: functions, jobs, schedules, and webhooks hosted by the long-running Zelavis runtime |
 | Claude / Codex chat | AI chat area built into the dashboard for interacting with Zelavis and building via AI |
 
-The difference from Firebase/Supabase is depth and ownership: Zelavis is fully self-hostable, runtime-neutral, and built to scale beyond a single database engine. The database layer is the deepest differentiator — `zelavis/app/db` extends SQL with a Document DB model (event-sourced, tenant-aware, per-collection tables) while keeping the storage engine swappable (SQLite, libSQL, and future engines). Official Zelavis Apps are locally physically sharded from creation: one logical App database routes stable virtual shard ranges across several SQLite files even when every placement is on one Node. Tenant placement, replication, failover, shard movement, and exceptional Tenant subdivision build on that same topology instead of introducing a second distributed architecture later. The event log is the natural replication stream and `tenant_id` is the normal first partition key. That is the same role Vitess plays for MySQL, but Zelavis is not coupled to any single SQL engine. Replicas do not imply multiple writable owners; multi-writer consistency requires a separate explicit data specification.
+The difference from Firebase/Supabase is depth and ownership: Zelavis is fully self-hostable, runtime-neutral, and built to scale beyond a single database engine. The database layer is the deepest differentiator — `zelavis/dbnew` is a multi-model object store (event-sourced, tenant-aware, one payload projected through document, column, measure, and graph lenses) on a swappable storage engine. Only a Node SQLite driver ships today; libSQL and other engines are future work rather than a current capability. Official Zelavis Apps are locally physically sharded from creation: one logical App database routes stable virtual shard ranges across several SQLite files even when every placement is on one Node. Tenant placement, replication, failover, shard movement, and exceptional Tenant subdivision build on that same topology instead of introducing a second distributed architecture later. The event log is the natural replication stream and `tenant_id` is the normal first partition key. That is the same role Vitess plays for MySQL, but Zelavis is not coupled to any single SQL engine. Replicas do not imply multiple writable owners; multi-writer consistency requires a separate explicit data specification.
 
 Zelavis should be able to host websites itself on user-controlled infrastructure. Managed deployment providers may be optional targets through plugins, but they are not the default hosting model and must not replace native Zelavis website hosting.
 
@@ -30,7 +30,7 @@ Dashboard/product structure:
 
 Core platform work centers on the unified `zelavis` package and its public
 subpaths: `zelavis/core`, `zelavis/runtime`, `zelavis/fabric`, `zelavis/app`,
-`zelavis/app/db`, `zelavis/app/auth`, and `zelavis/app/workloads`. The dashboard
+`zelavis/dbnew`, `zelavis/app/auth`, and `zelavis/app/workloads`. The dashboard
 remains the focused `@zelavis/ui` package bundled by `zelavis`.
 
 The repo still contains domain packages such as `@zelavis/ecommerce`, but they are optional layers on top of the platform primitives, not the main product definition.
@@ -99,9 +99,9 @@ current automatically.
 - **System Services** are trusted Platform OS capabilities. Do not call every
   bundled project service a core service.
 - **System Store** is Platform OS persistence. Local adapters default to
-  `.zelavis/system/zelavis.sqlite`. It must stay separate from `zelavis/app/db`
+  `.zelavis/system/zelavis.sqlite`. It must stay separate from `zelavis/dbnew`
   project databases and must never appear in a project's Database UI.
-- The Platform process does not mount an app-facing `zelavis/app/db` service by
+- The Platform process does not mount an app-facing `zelavis/dbnew` service by
   default. Each Zelavis App project owns its logical database below
   `.zelavis/projects/<projectId>/.zelavis/data`; the official recipe maps its
   virtual shard ranges across several physical SQLite shard files even on one
@@ -230,7 +230,7 @@ writable owners. Provider adapters supply capacity but never define Zelavis.
 Every official `zelavis/app` Project uses the App Data Fabric topology from
 creation. A single-node App still routes Tenant data through a versioned
 partition map containing many virtual shard ranges and several physical SQLite
-shards; the placements merely happen to share one Node. `zelavis/app/db` may
+shards; the placements merely happen to share one Node. `zelavis/dbnew` may
 support a one-shard topology as an embeddable low-level instance, but the
 official App recipe must not bypass the topology router or expose a physical
 driver as its application API. Scaling out changes shard placement, replicas,
@@ -302,36 +302,41 @@ renders the selected project's navigation under `/zelavis/projects/:projectId`.
 
 ## Database Architecture Rules
 
-`zelavis/app/db` is a document-first database core backed by SQL-capable
-drivers. Its event log is the source of truth for writes and the natural future
-replication stream.
+`zelavis/dbnew` is the database. A payload is written once and projected through
+document, column, measure, and graph lenses that hold only pointers back to a
+shared, partition-local identifier space, so a predicate spanning several data
+models is one set intersection rather than an exchange between engines. Its
+event log is the source of truth for writes and the replication stream.
 
 Key rules:
 
-- Every registered collection has its own table. Do not reintroduce a shared
-  `documents` table.
-- All document writes go through the documents API and append events before
-  projecting into the collection table. Do not write to registered collection
-  tables directly with raw SQL.
-- Collection tables are created inside the `collection.created` event
-  transaction.
+- Writes go through the documents API. There is no raw SQL surface and one must
+  not be reintroduced: it was the last way to reach storage without the
+  guarantees the documents API exists to provide.
+- Append to the log before projecting into the lenses. A crash must leave an
+  event whose projection can be replayed, never a lens row with no event behind
+  it. `rebuildLenses` re-derives every lens from the log alone and is the check
+  that this holds.
+- Locality is declared, not inferred. Everything sharing a `PartitionKey` lives
+  on one node, which is what keeps the intersection cheap. Tenant scoping is
+  structural — the tenant is part of every namespace and lens key — never a
+  predicate a caller can omit.
+- Identifiers are dense and partition-local. Global identity is
+  `(PartitionKey, Seq)`; a globally unique id would make posting sets sparse and
+  destroy scan locality.
+- Queries are data, not closures. A closure cannot cross a node boundary, so a
+  router that accepts one can only ever answer locally.
 - `DatabaseCollection.surface` is a first-class field. Use
   `surface: "content-studio"` for Content Studio content types and
   `surface: "database"` for raw database tables. Do not bury `surface` inside
   `metadata`.
-- Every collection table row has `tenant_id`. The database driver already
-  declares `tenantRouting: true`; `tenant_id` is the intended shard key.
-- SQLite-compatible adapters such as better-sqlite3, Bun SQLite, and libSQL
-  should inherit shared behavior through `createSqliteCompatibleDriver`.
-- Async SQLite gateway transactions must serialize unrelated top-level callers.
-  Never treat a process-global `inTransaction` flag as proof that a concurrent
-  caller is nested inside the current transaction. Event stream revisions must
-  also have a physical uniqueness invariant as a final corruption barrier.
-- `sql.execute()` must protect registered collection tables from direct DML/DDL
-  writes and indirect trigger-based writes, and point callers to the documents
-  API. `sql.query()` may read them.
-- Do not expose `sql.execute()` through an endpoint unless collection-table
-  write protection is preserved.
+- Schemas, projections, time series, events, and system views are all
+  Tenant-scoped. A surface reaching them without a Tenant would show one Tenant
+  another's definitions.
+- Dashboard system views are built from the Tenant APIs, never from storage, so
+  a view cannot name a physical table or survive into another Tenant's data.
+- Names beginning with `zv` are reserved for Zelavis internals and must be
+  rejected as collection names.
 
 Bundle storage keys are authority boundaries. Validate the Project/system
 owner, service identity, bundle identifier, storage prefix, and relative asset
@@ -346,7 +351,7 @@ part of the collection event pipeline. Names beginning with `zv_` are reserved
 for Zelavis internals and must be rejected as collection names.
 
 Dashboard system views must be logical, shard-aware capabilities exposed by
-`zelavis/app/db`; they must never select a physical shard's internal table or
+`zelavis/dbnew`; they must never select a physical shard's internal table or
 raw SQL endpoint. Until those logical views exist, keep physical `zv_*` tables
 out of the dashboard entirely.
 

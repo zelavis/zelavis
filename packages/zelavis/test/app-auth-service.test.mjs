@@ -8,7 +8,7 @@ import {
   hashPassword,
   verifyPassword,
 } from "../dist/app/auth/index.js";
-import { createDatabase } from "../dist/app/db/index.js";
+import { openTemporaryDatabase } from "./_database.mjs";
 import {
   createBasicAuthenticator,
   createJwtAuthenticator,
@@ -430,8 +430,8 @@ test("accounts and administrators can inspect and revoke device sessions", async
   assert.equal((await auth.sessions.findById(current.session.id)).status, "revoked");
 });
 
-test("App Auth repositories persist accounts and sessions through the Tenant database boundary", async () => {
-  const database = await createDatabase();
+test("App Auth repositories persist accounts and sessions through the Tenant database boundary", async (t) => {
+  const { api: database } = await openTemporaryDatabase(t);
   const repositories = createDatabaseAuthRepositories(database, { tenantId: "tenant_auth" });
   const first = await createAuth({ repositories, projectId: "petshop" });
   await first.accounts.create({ id: "persistent", username: "persistent" });
@@ -448,8 +448,8 @@ test("App Auth repositories persist accounts and sessions through the Tenant dat
   assert.equal((await second.sessions.resolveToken(issued.token)).accountId, "persistent");
 });
 
-test("App Auth attempt mutations use database optimistic concurrency", async () => {
-  const database = await createDatabase();
+test("App Auth attempt mutations use database optimistic concurrency", async (t) => {
+  const { api: database } = await openTemporaryDatabase(t);
   const first = createDatabaseAuthRepositories(database, { tenantId: "tenant_atomic" });
   const second = createDatabaseAuthRepositories(database, { tenantId: "tenant_atomic" });
   const keyHash = "atomic-subject";

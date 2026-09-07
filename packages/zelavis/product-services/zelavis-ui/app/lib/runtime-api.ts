@@ -2272,9 +2272,12 @@ export async function activateDatabaseSchemaVersion(
   );
 }
 
-export async function listDatabaseTimeSeries(config: RuntimeConfig) {
+export async function listDatabaseTimeSeries(
+  config: RuntimeConfig,
+  tenantId: string,
+) {
   const result = await readJson<{ series: DatabaseTimeSeriesSummary[] }>(
-    `${config.api.basePath}/database/timeseries/series`,
+    `${config.api.basePath}/database/timeseries/series?tenantId=${encodeURIComponent(tenantId)}`,
   );
 
   return result.series;

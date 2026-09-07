@@ -3,7 +3,12 @@
   "compilerOptions": {
     "declaration": true,
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    // The SDK surface now names database types, and those declarations reach
+    // modules written for a host runtime. The imports are type-only, so no
+    // host code enters an SDK bundle; only this pass needs the globals to
+    // resolve, which the full build already gets from the wider `include`.
+    "types": ["node"]
   },
   // Emits just enough of `zelavis` for the product-service packages to compile
   // against, before the full build compiles `zelavis` against them in turn.

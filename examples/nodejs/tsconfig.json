@@ -26,9 +26,6 @@
       "zelavis/app/auth": [
         "../../packages/zelavis/src/app/auth/index.ts"
       ],
-      "zelavis/app/db": [
-        "../../packages/zelavis/src/app/db/index.ts"
-      ],
       "zelavis/runtime": [
         "../../packages/zelavis/src/core/runtime/index.ts"
       ],
@@ -37,6 +34,9 @@
       ],
       "zelavis/runtimes/node": [
         "../../packages/zelavis/src/runtimes/node.ts"
+      ],
+      "zelavis/dbnew": [
+        "../../packages/zelavis/src/dbnew/index.ts"
       ]
     },
     "types": [

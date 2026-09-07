@@ -6,11 +6,9 @@ import {
   type AuthServiceOptions,
 } from "./auth/index.js";
 import {
-  createDatabase,
   defineDatabaseService,
-  type CreateDatabaseOptions,
-  type DatabaseApi,
-} from "./db/index.js";
+  type DatabaseRuntimeApi,
+} from "../dbnew/index.js";
 import {
   type ZelavisAnyRuntimeServiceInput,
 } from "../core/index.js";
@@ -22,17 +20,17 @@ import {
 import { ZELAVIS_VERSION } from "../version.js";
 
 export interface ZelavisAppServiceOptions {
-  database?: CreateDatabaseOptions | DatabaseApi;
+  database?: DatabaseRuntimeApi;
   auth?: false | AuthServiceOptions;
   workloads?: false | WorkloadsServiceOptions;
 }
 
-function isDatabaseApi(value: unknown): value is DatabaseApi {
+export function isDatabaseRuntimeApi(value: unknown): value is DatabaseRuntimeApi {
   return Boolean(
     value &&
       typeof value === "object" &&
       "forTenant" in value &&
-      "capabilities" in value,
+      "topology" in value,
   );
 }
 
@@ -54,19 +52,29 @@ function collectAuthMethodPlugins(
   );
 }
 
-async function resolveDatabase(
+/**
+ * The database a Zelavis App project runs on.
+ *
+ * There is no implicit fallback any more: the store is durable and belongs to
+ * a directory the host chose, so an App that reaches setup without one is a
+ * misconfigured Project rather than a Project that should quietly get a
+ * throwaway database nothing can find again.
+ */
+function resolveDatabase(
   context: ZelavisServiceSetupContext,
   option: ZelavisAppServiceOptions["database"],
-) {
-  if (isDatabaseApi(option)) {
+): DatabaseRuntimeApi {
+  if (isDatabaseRuntimeApi(option)) {
     return option;
   }
 
-  if (isDatabaseApi(context.core.database)) {
+  if (isDatabaseRuntimeApi(context.core.database)) {
     return context.core.database;
   }
 
-  return createDatabase(option);
+  throw new Error(
+    "The Zelavis App recipe requires a database. Configure the runtime's database subsystem with a storage directory, or pass one to zelavisAppService({ database }).",
+  );
 }
 
 export function zelavisAppService(options: ZelavisAppServiceOptions = {}) {
@@ -98,7 +106,7 @@ export function zelavisAppService(options: ZelavisAppServiceOptions = {}) {
     },
     async setup(context: ZelavisServiceSetupContext) {
       const runtimeServices: ZelavisAnyRuntimeServiceInput[] = [];
-      const database = await resolveDatabase(context, options.database);
+      const database = resolveDatabase(context, options.database);
       runtimeServices.push(defineDatabaseService(database));
 
       if (options.auth !== false) {

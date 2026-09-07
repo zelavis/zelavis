@@ -12,7 +12,7 @@ import type {
   TimeSeriesPoint,
   TimeSeriesSummary,
 } from "./time-series.js";
-import type { TenantId } from "./topology.js";
+import { shardsOf, type ShardId, type TenantId } from "./topology.js";
 
 /**
  * The Promise-facing surface for the HTTP runtime.
@@ -109,6 +109,19 @@ export interface DatabaseRuntimeApi {
   readonly forTenant: (tenant: TenantId) => TenantRuntimeApi;
   readonly shardOf: (tenant: TenantId) => string;
   readonly context: { readonly nodeId: string };
+  /**
+   * What a health or operator surface may report about placement.
+   *
+   * A flattened reading of the partition map rather than the map itself: an
+   * endpoint should be able to say how many shards are open and which map
+   * version is in force without handing callers the placement table, which is
+   * an operator concern reached through the topology API.
+   */
+  readonly topology: {
+    readonly shards: ReadonlyArray<ShardId>;
+    readonly virtualRanges: number;
+    readonly partitionMapVersion: number;
+  };
 }
 
 const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise(effect);
@@ -164,4 +177,9 @@ export const runtimeApiFor = (
   forTenant: (tenant) => tenantRuntime(database.forTenant(tenant)),
   shardOf: (tenant) => database.shardOf(tenant),
   context: { nodeId: options?.nodeId ?? "local" },
+  topology: {
+    shards: shardsOf(database.partitionMap),
+    virtualRanges: database.partitionMap.virtualRanges,
+    partitionMapVersion: database.partitionMap.version,
+  },
 });

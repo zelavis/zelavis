@@ -687,28 +687,24 @@ driven by what the existing dependents call, not by what is easiest to port.
   closes it on shutdown, so the platform can construct one.
 - [x] `/database/health` no longer advertises capability flags, which had no
   `dbnew` equivalent and reported constants either way.
-The rest is one change rather than four. Pointing the service at `dbnew` forces
-its construction sites, and those force removing `app/db`, whose tests assert a
-service it would no longer have. Split across commits it leaves the tree broken
-between them, so it lands together:
+The cutover landed. `zelavis/app/db` is gone: the database service is built on
+the `dbnew` runtime API, both construction sites open a sharded database through
+`zelavis/dbnew/node`, and its `close()` runs on runtime shutdown.
 
-- [ ] Port `defineDatabaseService` onto the `dbnew` runtime API. Handler bodies
-  differ in three places — `findById` returns `undefined` rather than `null`,
-  `timeseries` is `timeSeries`, backups are reached through the Tenant — and the
-  error rules match `app/db` error classes, so they need rewriting against the
-  tagged errors `dbnew` rejects with.
-- [ ] Build the database at both construction sites: `resolveDatabaseCoreService`
-  in `src/index.ts` and `resolveDatabase` in `src/app/app-service.ts`. The
-  instance reaches further than the service — a `Zelavis` class member with its
-  own lifetime, the `core.database` subsystem slot, and two `isDatabaseApi`
-  guards, one of which still tests for the removed `capabilities` field.
-- [ ] Register the database's `close()` with runtime shutdown.
-- [ ] Delete `src/app/db`, its adapters, and the `zelavis/app/db*` export
-  subpaths. Seven test files exercise it structurally and go with it; what they
-  cover is already asserted against `dbnew`.
+- [x] `defineDatabaseService` ported onto the `dbnew` runtime API, with error
+  rules matching tagged errors rather than error classes. Route shapes did not
+  change, because the Tenant was added to the schema and system-view routes
+  ahead of the move.
+- [x] Both construction sites build the database, and the two `isDatabaseApi`
+  guards test the `dbnew` shape.
+- [x] `src/app/db` and the `zelavis/app/db*` export subpaths removed, along with
+  the seven test files that exercised it structurally.
+- [ ] A libSQL driver for `dbnew`. Removing `app/db` took `@zelavis/app-db-libsql`
+  with it, since it was built on the driver contract that went. Only the Node
+  SQLite driver ships now, so engine swappability is a claim the code no longer
+  backs until this exists.
 - [ ] Report real topology on `/database/health` — shard count and partition map
-  version — which only becomes truthful once `dbnew` serves the endpoint.
-
+  version — now that `dbnew` serves it.
 
 Independent of parity, and needed before an official recipe mounts `dbnew`:
 

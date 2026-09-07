@@ -2,34 +2,10 @@ import {
   createMappedJsonErrorResponse,
   type ZelavisServerErrorStatusRule,
   type ZelavisRuntimeService,
-} from "../../core/index.js";
-import type { DatabaseApi } from "./core/types.js";
-import type {
-  DatabaseCollectionSurface,
-  DatabaseDocumentFilter,
-  DatabaseDocumentSort,
-} from "./contracts/documents.js";
-import type { DatabaseJsonObject } from "./contracts/json.js";
-import type {
-  DatabaseTimeSeriesAggregateOperation,
-  DatabaseTimeSeriesRangeInput,
-} from "./contracts/api.js";
-import type { DatabaseEventCursor } from "./contracts/events.js";
-import type {
-  DatabaseSystemViewName,
-  DatabaseTenantBackupV1,
-} from "./contracts/maintenance.js";
-import {
-  DatabaseEventIdempotencyConflictError,
-} from "./contracts/events.js";
-import {
-  DatabaseConflictError,
-  DatabaseDomainError,
-  DatabaseNotFoundError,
-  DatabaseRevisionMismatchError,
-  DatabaseSchemaValidationError,
-  DatabaseValidationError,
-} from "./core/errors.js";
+} from "../core/index.js";
+import type { DatabaseRuntimeApi } from "./runtime-api.js";
+import type { CollectionSurface, DocumentFilter, DocumentSort, JsonObject } from "./documents.js";
+import type { AggregateOperation, RangeInput } from "./time-series.js";
 
 function readBodyObject(body: unknown): Record<string, unknown> {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -44,7 +20,7 @@ function readString(value: unknown): string | undefined {
 }
 
 /** Reads the Tenant a write-shaped schema request addresses. */
-function tenantOf(service: DatabaseApi, input: Record<string, unknown>) {
+function tenantOf(service: DatabaseRuntimeApi, input: Record<string, unknown>) {
   return service.forTenant(readTenantId(input.tenantId));
 }
 
@@ -54,31 +30,31 @@ function readTenantId(value: unknown): string {
   return tenantId;
 }
 
-const VALID_COLLECTION_SURFACES = new Set<DatabaseCollectionSurface>([
+const VALID_COLLECTION_SURFACES = new Set<CollectionSurface>([
   "content-studio",
   "database",
 ]);
 
-function readCollectionSurface(value: unknown): DatabaseCollectionSurface | undefined {
-  return typeof value === "string" && VALID_COLLECTION_SURFACES.has(value as DatabaseCollectionSurface)
-    ? (value as DatabaseCollectionSurface)
+function readCollectionSurface(value: unknown): CollectionSurface | undefined {
+  return typeof value === "string" && VALID_COLLECTION_SURFACES.has(value as CollectionSurface)
+    ? (value as CollectionSurface)
     : undefined;
 }
 
-function readJsonObject(value: unknown): DatabaseJsonObject {
+function readJsonObject(value: unknown): JsonObject {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError("A JSON object is required.");
   }
 
-  return value as DatabaseJsonObject;
+  return value as JsonObject;
 }
 
-function readFilters(value: unknown): DatabaseDocumentFilter[] {
-  return Array.isArray(value) ? (value as DatabaseDocumentFilter[]) : [];
+function readFilters(value: unknown): DocumentFilter[] {
+  return Array.isArray(value) ? (value as DocumentFilter[]) : [];
 }
 
-function readSort(value: unknown): DatabaseDocumentSort[] {
-  return Array.isArray(value) ? (value as DatabaseDocumentSort[]) : [];
+function readSort(value: unknown): DocumentSort[] {
+  return Array.isArray(value) ? (value as DocumentSort[]) : [];
 }
 
 function readNumber(value: unknown, fallback: number): number {
@@ -111,9 +87,7 @@ function readOptionalTimeSeriesBoundary(
   throw new TypeError(`${name} must be a number or non-empty string.`);
 }
 
-function readTimeSeriesOrder(
-  value: unknown,
-): DatabaseTimeSeriesRangeInput["order"] {
+function readTimeSeriesOrder(value: unknown): RangeInput["order"] {
   if (value === undefined || value === null || value === "") {
     return undefined;
   }
@@ -125,9 +99,7 @@ function readTimeSeriesOrder(
   throw new TypeError('order must be either "asc" or "desc".');
 }
 
-function readTimeSeriesAggregateOperation(
-  value: unknown,
-): DatabaseTimeSeriesAggregateOperation {
+function readTimeSeriesAggregateOperation(value: unknown): AggregateOperation {
   if (
     value === "avg" ||
     value === "sum" ||
@@ -151,39 +123,136 @@ function readRequiredNumber(value: unknown, name: string): number {
   return value;
 }
 
+type TaggedFailure = { readonly _tag: string } & Record<string, unknown>;
+
+/**
+ * Finds the tagged failure a rejection carries.
+ *
+ * The database fails in Effect's error channel with schema-tagged errors, and
+ * the runtime boundary turns that channel into a rejected promise. What arrives
+ * is usually the tagged error itself, but a failure crossing an extra boundary
+ * can arrive wrapped, so the small set of wrappers is unwrapped here rather
+ * than every route learning about them.
+ */
+function taggedFailureOf(error: unknown, depth = 0): TaggedFailure | undefined {
+  if (!error || typeof error !== "object" || depth > 3) return undefined;
+  const candidate = error as Record<string, unknown>;
+  if (typeof candidate._tag === "string") return candidate as TaggedFailure;
+  return (
+    taggedFailureOf(candidate.cause, depth + 1) ??
+    taggedFailureOf(candidate.error, depth + 1)
+  );
+}
+
+const CONFLICT_TAGS = new Set([
+  "CollectionExists",
+  "DocumentConflict",
+  "SchemaVersionExists",
+]);
+
+const NOT_FOUND_TAGS = new Set([
+  "CollectionNotFound",
+  "DocumentNotFound",
+  "ProjectionNotFound",
+  "SchemaNotFound",
+  "TimeSeriesNotFound",
+  "UnknownSystemView",
+]);
+
+const BAD_REQUEST_TAGS = new Set([
+  "BackupFormatUnsupported",
+  "BackupTenantMismatch",
+  "InvalidCollectionName",
+  "PartitionMapInvalid",
+  "RangeNotEmpty",
+  "SchemaViolation",
+  "TenantNotEmpty",
+]);
+
+/**
+ * A caller-facing sentence for a tagged failure.
+ *
+ * A schema-tagged error carries structured fields and an empty `message`, and
+ * a 4xx body is the useful half of an API, so the fields are rendered here
+ * rather than shipping `{"error": ""}` to whoever made the request.
+ */
+function describeTaggedFailure(failure: TaggedFailure): string {
+  switch (failure._tag) {
+    case "CollectionExists":
+      return `Collection "${failure.name}" already exists.`;
+    case "CollectionNotFound":
+      return `Collection "${failure.name}" does not exist.`;
+    case "InvalidCollectionName":
+      return `Collection name "${failure.name}" is invalid: ${failure.reason}.`;
+    case "DocumentNotFound":
+      return `Document "${failure.id}" does not exist in collection "${failure.collection}".`;
+    case "DocumentConflict":
+      return `Document "${failure.id}" in collection "${failure.collection}" conflicts: ${failure.reason}.`;
+    case "ProjectionNotFound":
+      return `Projection "${failure.name}" is not defined.`;
+    case "SchemaVersionExists":
+      return `Schema version ${failure.version} for collection "${failure.collection}" already exists.`;
+    case "SchemaNotFound":
+      return `Schema version ${failure.version} for collection "${failure.collection}" does not exist.`;
+    case "SchemaViolation": {
+      const issues = Array.isArray(failure.issues)
+        ? (failure.issues as ReadonlyArray<{ path: string; message: string }>)
+            .map((issue) => `${issue.path}: ${issue.message}`)
+            .join("; ")
+        : "";
+      return `Document does not satisfy schema version ${failure.schemaVersion} of collection "${failure.collection}"${issues ? `: ${issues}` : "."}`;
+    }
+    case "TimeSeriesNotFound":
+      return `Time series "${failure.name}" is not defined.`;
+    case "UnknownSystemView":
+      return `Unknown logical database system view "${failure.name}".`;
+    case "BackupTenantMismatch":
+      return `This backup belongs to Tenant "${failure.received}", not "${failure.expected}".`;
+    case "BackupFormatUnsupported":
+      return `Unsupported backup format "${failure.format}".`;
+    case "TenantNotEmpty":
+      return `Tenant "${failure.tenant}" already holds data; restoring would orphan it.`;
+    case "PartitionMapInvalid":
+      return `Partition map version ${failure.version} is invalid: ${failure.reason}.`;
+    case "RangeNotEmpty":
+      return `Range ${failure.range} cannot move from "${failure.from}" to "${failure.to}" while tenants stand on it.`;
+    default:
+      return failure._tag;
+  }
+}
+
 const databaseErrorRules: readonly ZelavisServerErrorStatusRule[] = [
   {
-    matches: (error) =>
-      error instanceof TypeError ||
-      error instanceof DatabaseValidationError ||
-      error instanceof DatabaseSchemaValidationError,
+    matches: (error) => error instanceof TypeError,
     status: 400,
   },
   {
-    matches: (error) => error instanceof DatabaseNotFoundError,
-    status: 404,
-  },
-  {
-    matches: (error) =>
-      error instanceof DatabaseEventIdempotencyConflictError ||
-      error instanceof DatabaseRevisionMismatchError ||
-      error instanceof DatabaseConflictError,
+    matches: (error) => CONFLICT_TAGS.has(taggedFailureOf(error)?._tag ?? ""),
     status: 409,
   },
   {
-    matches: (error) => error instanceof DatabaseDomainError,
+    matches: (error) => NOT_FOUND_TAGS.has(taggedFailureOf(error)?._tag ?? ""),
+    status: 404,
+  },
+  {
+    matches: (error) => BAD_REQUEST_TAGS.has(taggedFailureOf(error)?._tag ?? ""),
     status: 400,
   },
 ];
 
 function databaseErrorResponse(error: unknown, fallback = 500) {
-  return createMappedJsonErrorResponse(error, databaseErrorRules, fallback);
+  const failure = taggedFailureOf(error);
+  return createMappedJsonErrorResponse(
+    failure ? Object.assign(new Error(describeTaggedFailure(failure)), { _tag: failure._tag }) : error,
+    databaseErrorRules,
+    fallback,
+  );
 }
 
-export type DatabaseServiceDefinition = ZelavisRuntimeService<DatabaseApi>;
+export type DatabaseServiceDefinition = ZelavisRuntimeService<DatabaseRuntimeApi>;
 
 export function defineDatabaseService(
-  database: DatabaseApi,
+  database: DatabaseRuntimeApi,
 ): DatabaseServiceDefinition {
   return {
     name: "@zelavis/db",
@@ -232,7 +301,7 @@ export function defineDatabaseService(
             return {
               body: {
                 items: [
-                  ...collections
+                  ...[...collections]
                   .sort((left, right) => left.name.localeCompare(right.name))
                   .map((collection) => ({
                     title: collection.name,
@@ -263,10 +332,16 @@ export function defineDatabaseService(
               200: { description: "Health check response" },
             },
           },
+          // Shard count and partition-map version are the two facts an operator
+          // needs to tell one topology from another, and they are honest only
+          // now that a real sharded database answers this route.
           handler: ({ service }) => ({
             body: {
               status: "ok",
               nodeId: service.context.nodeId,
+              shards: service.topology.shards.length,
+              virtualRanges: service.topology.virtualRanges,
+              partitionMapVersion: service.topology.partitionMapVersion,
             },
           }),
         },
@@ -282,8 +357,8 @@ export function defineDatabaseService(
 }
 
 export function defineDatabaseMaintenanceService(
-  database: DatabaseApi,
-): ZelavisRuntimeService<DatabaseApi> {
+  database: DatabaseRuntimeApi,
+): ZelavisRuntimeService<DatabaseRuntimeApi> {
   return {
     name: "maintenance",
     basePath: "maintenance",
@@ -331,10 +406,9 @@ export function defineDatabaseMaintenanceService(
                 body: await service
                   .forTenant(readTenantId(query.get("tenantId")))
                   .systemViews.query({
-                  name: params.view as DatabaseSystemViewName,
-                  tenantId: readTenantId(query.get("tenantId")),
+                  name: params.view,
                   limit: readQueryNumber(query.get("limit")),
-                  after: query.get("after") as DatabaseEventCursor | null ?? undefined,
+                  after: query.get("after") ?? undefined,
                 }),
               };
             } catch (error) {
@@ -360,7 +434,7 @@ export function defineDatabaseMaintenanceService(
             try {
               const input = readBodyObject(body);
               return {
-                body: await service.backups.exportTenant(readTenantId(input.tenantId)),
+                body: await tenantOf(service, input).backups.exportTenant(),
               };
             } catch (error) {
               return databaseErrorResponse(error, 400);
@@ -387,10 +461,15 @@ export function defineDatabaseMaintenanceService(
               if (!input.backup || typeof input.backup !== "object" || Array.isArray(input.backup)) {
                 throw new TypeError("A database backup object is required.");
               }
+              const backup = input.backup as { tenantId?: unknown };
+              // Restore is reached through the Tenant now, so the request has
+              // to name one. A caller that states it keeps the mismatch guard
+              // meaningful; one that does not gets the Tenant the backup was
+              // taken from, which is what the replaced route did.
               return {
-                body: await service.backups.restoreTenant(
-                  input.backup as unknown as DatabaseTenantBackupV1,
-                ),
+                body: await service
+                  .forTenant(readTenantId(input.tenantId ?? backup.tenantId))
+                  .backups.restoreTenant(backup as never),
               };
             } catch (error) {
               return databaseErrorResponse(error, 400);
@@ -403,8 +482,8 @@ export function defineDatabaseMaintenanceService(
 }
 
 export function defineDatabaseDocumentsService(
-  database: DatabaseApi,
-): ZelavisRuntimeService<DatabaseApi> {
+  database: DatabaseRuntimeApi,
+): ZelavisRuntimeService<DatabaseRuntimeApi> {
   return {
     name: "documents",
     basePath: "documents",
@@ -730,8 +809,8 @@ export function defineDatabaseDocumentsService(
 }
 
 export function defineDatabaseSchemasService(
-  database: DatabaseApi,
-): ZelavisRuntimeService<DatabaseApi> {
+  database: DatabaseRuntimeApi,
+): ZelavisRuntimeService<DatabaseRuntimeApi> {
   return {
     name: "schemas",
     basePath: "schemas",
@@ -750,9 +829,9 @@ export function defineDatabaseSchemasService(
               200: { description: "List of schemas" },
             },
           },
-          handler: ({ service, query }) => ({
+          handler: async ({ service, query }) => ({
             body: {
-              collections: service
+              collections: await service
                 .forTenant(readTenantId(query.get("tenantId")))
                 .schemas.listCollections(),
             },
@@ -773,10 +852,10 @@ export function defineDatabaseSchemasService(
               200: { description: "List of schema versions" },
             },
           },
-          handler: ({ service, params, query }) => ({
+          handler: async ({ service, params, query }) => ({
             body: {
               collection: params.collection,
-              schemas: service
+              schemas: await service
                 .forTenant(readTenantId(query.get("tenantId")))
                 .schemas.listVersions(params.collection),
             },
@@ -900,11 +979,11 @@ export function defineDatabaseSchemasService(
               400: { description: "Validation failed" },
             },
           },
-          handler: ({ service, params, body }) => {
+          handler: async ({ service, params, body }) => {
             const input = readBodyObject(body);
             try {
               return {
-                body: tenantOf(service, input).schemas.validate(
+                body: await tenantOf(service, input).schemas.validate(
                   params.collection,
                   readJsonObject(input.data),
                 ),
@@ -920,8 +999,8 @@ export function defineDatabaseSchemasService(
 }
 
 export function defineDatabaseTimeSeriesService(
-  database: DatabaseApi,
-): ZelavisRuntimeService<DatabaseApi> {
+  database: DatabaseRuntimeApi,
+): ZelavisRuntimeService<DatabaseRuntimeApi> {
   return {
     name: "timeseries",
     basePath: "timeseries",
@@ -936,15 +1015,30 @@ export function defineDatabaseTimeSeriesService(
             operationId: "listTimeSeries",
             summary: "List time series",
             tags: ["timeseries"],
+            queryParams: {
+              tenantId: { type: "string", required: true, description: "Tenant ID" },
+            },
             responses: {
               200: { description: "List of time series" },
+              400: { description: "Bad request" },
             },
           },
-          handler: async ({ service }) => ({
-            body: {
-              series: await service.timeseries.list(),
-            },
-          }),
+          // A series belongs to a Tenant here, where the replaced database kept
+          // definitions outside the Tenant boundary. Listing therefore has to
+          // say whose series it wants.
+          handler: async ({ service, query }) => {
+            try {
+              return {
+                body: {
+                  series: await service
+                    .forTenant(readTenantId(query.get("tenantId")))
+                    .timeSeries.list(),
+                },
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
         },
         {
           id: "database.timeseries.range",
@@ -985,7 +1079,7 @@ export function defineDatabaseTimeSeriesService(
                 body: {
                   points: await service
                     .forTenant(tenantId)
-                    .timeseries.get(params.series).range({
+                    .timeSeries.range(params.series, {
                     start: readOptionalTimeSeriesBoundary(input.start, "start"),
                     end: readOptionalTimeSeriesBoundary(input.end, "end"),
                     limit: readNumber(input.limit, 100),
@@ -1036,7 +1130,7 @@ export function defineDatabaseTimeSeriesService(
                 body: {
                   value: await service
                     .forTenant(tenantId)
-                    .timeseries.get(params.series).aggregate({
+                    .timeSeries.aggregate(params.series, {
                     op: readTimeSeriesAggregateOperation(input.op),
                     start: readOptionalTimeSeriesBoundary(input.start, "start"),
                     end: readOptionalTimeSeriesBoundary(input.end, "end"),

@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
-import { createDatabase } from "../dist/app/db/index.js";
+import { temporaryDatabaseDirectory } from "./_database.mjs";
 import {
   createInMemoryBundleStore,
   Zelavis,
@@ -65,8 +65,12 @@ function createStoredZip(files) {
   return new Uint8Array(Buffer.concat([...localParts, centralDirectory, end]));
 }
 
-test("zelavis exposes fetch handlers without requiring a mount adapter", async () => {
-  const runtime = await zelavis({ frontend: zelavisUiFrontend });
+test("zelavis exposes fetch handlers without requiring a mount adapter", async (t) => {
+  const runtime = await zelavis({
+    frontend: zelavisUiFrontend,
+    subsystems: { database: { directory: temporaryDatabaseDirectory(t) } },
+  });
+  t.after(() => runtime.close());
 
   const response = await runtime.fetch(
     new Request("http://localhost/zelavis/api/v1/runtime/config"),
@@ -94,8 +98,12 @@ test("zelavis exposes fetch handlers without requiring a mount adapter", async (
   assert.deepEqual(payload.serviceRegistry, []);
 });
 
-test("zelavis includes core services by default", async () => {
-  const runtime = await zelavis({ frontend: zelavisUiFrontend });
+test("zelavis includes core services by default", async (t) => {
+  const runtime = await zelavis({
+    frontend: zelavisUiFrontend,
+    subsystems: { database: { directory: temporaryDatabaseDirectory(t) } },
+  });
+  t.after(() => runtime.close());
   const routes = runtime.routes;
 
   assert.equal(runtime.services["@zelavis/ui"].name, "@zelavis/ui");
@@ -1116,13 +1124,15 @@ test("zelavis can disable the database core service", async () => {
   );
 });
 
-test("zelavis can disable the auth core service", async () => {
+test("zelavis can disable the auth core service", async (t) => {
   const runtime = await zelavis({
     frontend: zelavisUiFrontend,
     subsystems: {
       auth: false,
+      database: { directory: temporaryDatabaseDirectory(t) },
     },
   });
+  t.after(() => runtime.close());
 
   assert.equal(runtime.services["zelavis/auth"], undefined);
   assert.equal(runtime.services["@zelavis/db"].name, "@zelavis/db");
@@ -1158,14 +1168,16 @@ test("the frontend cannot be switched off in code", async () => {
   )).text(), /No frontend installed/u);
 });
 
-test("zelavis uses a configurable root path for dashboard and APIs", async () => {
+test("zelavis uses a configurable root path for dashboard and APIs", async (t) => {
   const runtime = await zelavis({
     frontend: zelavisUiFrontend,
     rootPath: "/admin",
     api: {
       version: "v2",
     },
+    subsystems: { database: { directory: temporaryDatabaseDirectory(t) } },
   });
+  t.after(() => runtime.close());
   const routes = runtime.routes;
 
   // Dashboard mounting points still appear in the route table — the

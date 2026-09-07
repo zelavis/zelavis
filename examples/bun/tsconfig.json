@@ -17,23 +17,20 @@
       "@zelavis/ecommerce-stripe": [
         "../../plugins/ecommerce/plugins/stripe/src/index.ts"
       ],
-      "bun:sqlite": [
-        "../../packages/zelavis/src/app/db/adapters/bun-sqlite.d.ts"
-      ],
       "zelavis": [
         "../../packages/zelavis/src/index.ts"
       ],
       "zelavis/app/auth": [
         "../../packages/zelavis/src/app/auth/index.ts"
       ],
-      "zelavis/app/db": [
-        "../../packages/zelavis/src/app/db/index.ts"
-      ],
       "zelavis/runtime": [
         "../../packages/zelavis/src/core/runtime/index.ts"
       ],
       "zelavis/adapters/bun": [
         "../../packages/zelavis/src/adapters/bun.ts"
+      ],
+      "zelavis/dbnew": [
+        "../../packages/zelavis/src/dbnew/index.ts"
       ]
     },
     "types": [

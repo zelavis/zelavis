@@ -345,7 +345,19 @@ function ProjectsRoute() {
                       <dt className="text-muted-foreground">Runtime</dt>
                       <dd className="truncate font-medium">
                         <span className="capitalize">{project.runtimeKind}</span>
-                        {` · ${project.runtime.url ?? project.runtime.driver}`}
+                        {" · "}
+                        {project.runtime.url ? (
+                          <a
+                            href={project.runtime.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
+                          >
+                            {project.runtime.url}
+                          </a>
+                        ) : (
+                          project.runtime.driver
+                        )}
                       </dd>
                     </div>
                     <div className="flex items-center justify-between gap-3">

@@ -148,8 +148,10 @@ Core package and public surfaces:
   Public `zelavis/core`, `zelavis/runtime`, `zelavis/fabric`,
   `zelavis/workload`, `zelavis/artifact`, and `zelavis/provider` surfaces.
 - [packages/zelavis/src/app](packages/zelavis/src/app)
-  Public `zelavis/app`, `zelavis/app/auth`, `zelavis/app/db`, and
-  `zelavis/app/workloads` surfaces.
+  Public `zelavis/app`, `zelavis/app/auth`, and `zelavis/app/workloads`
+  surfaces.
+- [packages/zelavis/src/dbnew](packages/zelavis/src/dbnew)
+  Public `zelavis/dbnew` multi-model object store and its Node opener.
 - [packages/zelavis/src/platform](packages/zelavis/src/platform)
   Trusted Platform control-plane and Marketplace product services.
 - [packages/zelavis/product-services/zelavis-ui](packages/zelavis/product-services/zelavis-ui)
@@ -159,12 +161,10 @@ Core package and public surfaces:
 
 Database adapters:
 
-- `zelavis/app/db/adapters/bun-sqlite`
-  The built-in Bun SQLite entry point.
-- `zelavis/app/db/adapters/node-sqlite`
-  The built-in Node.js SQLite entry point.
-- [packages/zelavis/adapters/libsql](packages/zelavis/adapters/libsql)
-  A libSQL adapter package for `zelavis/app/db`.
+- `zelavis/dbnew/node`
+  Opens a sharded database for a Node host and closes it on shutdown.
+- `zelavis/dbnew/node-sqlite`
+  The `node:sqlite` object store one shard is built on.
 
 Auth plugins:
 
@@ -268,7 +268,7 @@ That moves the dashboard and APIs together:
 /admin/api/v1/workloads
 ```
 
-Use scoped packages such as `zelavis/core`, `zelavis/app/db`, and `zelavis/app/auth` when building lower-level primitives, adapters, plugins, or tests that need direct package APIs.
+Use scoped packages such as `zelavis/core`, `zelavis/dbnew`, and `zelavis/app/auth` when building lower-level primitives, adapters, plugins, or tests that need direct package APIs.
 
 ## Core Services
 

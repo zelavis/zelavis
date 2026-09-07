@@ -1,9 +1,9 @@
 import type {
-  DatabaseApi,
-  DatabaseJson,
-  DatabaseJsonObject,
-  TenantDatabaseApi,
-} from "zelavis/app/db";
+  DatabaseRuntimeApi,
+  Json as DatabaseJson,
+  JsonObject as DatabaseJsonObject,
+  TenantRuntimeApi,
+} from "zelavis/dbnew";
 import type {
   CouponRepository,
   CustomerRepository,
@@ -102,14 +102,14 @@ type StoredCommerceEntity = DatabaseJsonObject;
 class DatabaseRepositorySupport {
   private readonly ensuredCollections = new Set<string>();
 
-  constructor(private readonly database: TenantDatabaseApi) {}
+  constructor(private readonly database: TenantRuntimeApi) {}
 
   async ensureCollection(name: string): Promise<void> {
     if (this.ensuredCollections.has(name)) {
       return;
     }
 
-    if (!(await this.database.documents.collectionExists({ name }))) {
+    if (!(await this.database.documents.collectionExists(name))) {
       await this.database.documents.createCollection({
         name,
         surface: "database",
@@ -610,7 +610,7 @@ class DatabaseSubscriptionRepository implements SubscriptionRepository {
 }
 
 export function createDatabaseEcommerceRepositories(
-  database: DatabaseApi,
+  database: DatabaseRuntimeApi,
   options: CreateDatabaseEcommerceRepositoriesOptions,
 ): EcommerceRepositories {
   const collections = {

@@ -5,7 +5,6 @@
     "@zelavis/example-nextjs": "0.1.0",
     "@zelavis/app-auth-email-password": "1.0.0",
     "@zelavis/app-auth-username-password": "1.0.0",
-    "@zelavis/app-db-libsql": "1.0.0",
     "@zelavis/ecommerce": "0.1.0-alpha.1",
     "@zelavis/ecommerce-paypal": "0.1.0-alpha.1",
     "@zelavis/ecommerce-stripe": "0.1.0-alpha.1",

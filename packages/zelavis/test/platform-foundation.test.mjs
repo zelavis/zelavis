@@ -968,7 +968,9 @@ test("Node adapter creates independently persisted Zelavis App runtimes", async 
       { code: "ENOENT" },
     );
     await Promise.all(
-      ["pshard-0001", "pshard-0002", "pshard-0003", "pshard-0004"].map(
+      // Four physical shards plus the reserved store the partition map itself
+      // lives in, which is what makes a map change a logged, fenced write.
+      ["shard-0", "shard-1", "shard-2", "shard-3", "zv.topology"].map(
         (shardId) =>
           access(
             join(

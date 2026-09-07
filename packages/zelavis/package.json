@@ -52,30 +52,6 @@
       "types": "./dist/app/auth/index.d.ts",
       "import": "./dist/app/auth/index.js"
     },
-    "./app/db": {
-      "types": "./dist/app/db/index.d.ts",
-      "import": "./dist/app/db/index.js"
-    },
-    "./app/db/adapter-core": {
-      "types": "./dist/app/db/adapter-core/index.d.ts",
-      "import": "./dist/app/db/adapter-core/index.js"
-    },
-    "./app/db/schema": {
-      "types": "./dist/dbnew/schema/index.d.ts",
-      "import": "./dist/dbnew/schema/index.js"
-    },
-    "./app/db/topology": {
-      "types": "./dist/app/db/topology/index.d.ts",
-      "import": "./dist/app/db/topology/index.js"
-    },
-    "./app/db/adapters/node-sqlite": {
-      "types": "./dist/app/db/adapters/node-sqlite.d.ts",
-      "import": "./dist/app/db/adapters/node-sqlite.js"
-    },
-    "./app/db/adapters/bun-sqlite": {
-      "types": "./dist/app/db/adapters/bun-sqlite.d.ts",
-      "import": "./dist/app/db/adapters/bun-sqlite.js"
-    },
     "./dbnew": {
       "types": "./dist/dbnew/index.d.ts",
       "import": "./dist/dbnew/index.js"
