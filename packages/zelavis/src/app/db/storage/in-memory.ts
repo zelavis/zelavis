@@ -27,7 +27,7 @@ import {
   encodeDatabaseEventCursor,
 } from "../contracts/events.js";
 import type { DatabaseJson, DatabaseJsonObject } from "../contracts/json.js";
-import type { StoredCollectionSchema } from "../schema/index.js";
+import type { StoredCollectionSchema } from "../../../dbnew/schema/index.js";
 import { defineDatabaseDriver } from "../core/define-database-driver.js";
 import {
   DatabaseConflictError,

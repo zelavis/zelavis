@@ -61,8 +61,8 @@
       "import": "./dist/app/db/adapter-core/index.js"
     },
     "./app/db/schema": {
-      "types": "./dist/app/db/schema/index.d.ts",
-      "import": "./dist/app/db/schema/index.js"
+      "types": "./dist/dbnew/schema/index.d.ts",
+      "import": "./dist/dbnew/schema/index.js"
     },
     "./app/db/topology": {
       "types": "./dist/app/db/topology/index.d.ts",
@@ -83,6 +83,10 @@
     "./dbnew/node-sqlite": {
       "types": "./dist/dbnew/adapters/node-sqlite.d.ts",
       "import": "./dist/dbnew/adapters/node-sqlite.js"
+    },
+    "./dbnew/schema": {
+      "types": "./dist/dbnew/schema/index.d.ts",
+      "import": "./dist/dbnew/schema/index.js"
     },
     "./app/workloads": {
       "types": "./dist/app/workloads/index.d.ts",

@@ -1,6 +1,13 @@
 import { Effect, Stream } from "effect";
+import type { Json, JsonObject } from "./json.js";
+import {
+  COLLECTION_NAME_PATTERN,
+  isReservedCollectionName,
+  RESERVED_COLLECTION_PREFIX,
+} from "./naming.js";
 import {
   CollectionExists,
+  SchemaViolation,
   CollectionNotFound,
   DocumentConflict,
   DocumentNotFound,
@@ -9,11 +16,11 @@ import {
 import type { DbError } from "./errors.js";
 import type { Seq } from "./model.js";
 import { and, equals, or, type Query } from "./query.js";
+import type { SchemasApi } from "./schemas.js";
 import type { ObjectStoreApi, Txn } from "./store.js";
 import type { TenantId } from "./topology.js";
 
-export type Json = string | number | boolean | null | Json[] | { [k: string]: Json };
-export type JsonObject = { [k: string]: Json };
+export type { Json, JsonObject } from "./json.js";
 
 export type CollectionSurface = "content-studio" | "database";
 
@@ -57,10 +64,6 @@ export interface FindDocumentsInput {
 /** Marks a stored collection record, distinct from any collection name. */
 const COLLECTION_MARKER = "\u0000collection";
 
-const NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*$/;
-
-/** `zv` is reserved for internals, exactly as in the collection layer it replaces. */
-const RESERVED_PREFIX = "zv";
 
 /**
  * Tenant scoping is structural, not a filter.
@@ -78,7 +81,7 @@ const columnFor = (tenant: TenantId, collection: string, path: string) =>
   `${tenant}/${collection}.${path}`;
 
 const validateName = (name: string): Effect.Effect<void, InvalidCollectionName> => {
-  if (!NAME_PATTERN.test(name)) {
+  if (!COLLECTION_NAME_PATTERN.test(name)) {
     return Effect.fail(
       new InvalidCollectionName({
         name,
@@ -87,9 +90,12 @@ const validateName = (name: string): Effect.Effect<void, InvalidCollectionName> 
       }),
     );
   }
-  if (name.startsWith(`${RESERVED_PREFIX}_`) || name.startsWith(`${RESERVED_PREFIX}.`)) {
+  if (isReservedCollectionName(name)) {
     return Effect.fail(
-      new InvalidCollectionName({ name, reason: `the "${RESERVED_PREFIX}" prefix is reserved` }),
+      new InvalidCollectionName({
+        name,
+        reason: `the "${RESERVED_COLLECTION_PREFIX}" prefix is reserved`,
+      }),
     );
   }
   return Effect.void;
@@ -215,7 +221,7 @@ export interface DocumentsApi {
     readonly collection: string;
     readonly id?: string;
     readonly data: JsonObject;
-  }) => Effect.Effect<Document, CollectionNotFound | DocumentConflict>;
+  }) => Effect.Effect<Document, CollectionNotFound | DocumentConflict | SchemaViolation>;
   readonly findById: (input: {
     readonly collection: string;
     readonly id: string;
@@ -227,7 +233,7 @@ export interface DocumentsApi {
     readonly data: JsonObject;
     readonly mode?: "merge" | "replace";
     readonly expectedVersion?: number;
-  }) => Effect.Effect<Document, DocumentNotFound | DocumentConflict>;
+  }) => Effect.Effect<Document, DocumentNotFound | DocumentConflict | SchemaViolation>;
   readonly delete: (input: {
     readonly collection: string;
     readonly id: string;
@@ -241,7 +247,31 @@ export interface DocumentsApi {
  * Takes the store directly rather than from context because a tenant's shard is
  * chosen by the partition map at call time, not by what happens to be provided.
  */
-export const documentsFor = (store: ObjectStoreApi, tenant: TenantId): DocumentsApi => {
+export const documentsFor = (
+  store: ObjectStoreApi,
+  tenant: TenantId,
+  schemas?: SchemasApi,
+): DocumentsApi => {
+  /**
+   * Reject the whole write when the data does not satisfy the active schema.
+   *
+   * All-or-nothing rather than partial: a document that half-matched would put
+   * the lenses in a state no schema describes, and every reader after it would
+   * have to cope with a shape that was never valid.
+   */
+  const enforceSchema = (collection: string, data: JsonObject) =>
+    Effect.gen(function* () {
+      if (schemas === undefined) return;
+      const result = yield* schemas.validate(collection, data);
+      if (!result.valid) {
+        return yield* new SchemaViolation({
+          collection,
+          schemaVersion: result.schemaVersion,
+          issues: result.issues,
+        });
+      }
+    });
+
 
   // A store failure is not something a caller can act on: a fenced writer or an
   // unreadable file is the runtime's problem, not a decision. Converting them to
@@ -322,6 +352,7 @@ export const documentsFor = (store: ObjectStoreApi, tenant: TenantId): Documents
     insert: (input) =>
       Effect.gen(function* () {
         yield* requireCollection(input.collection);
+        yield* enforceSchema(input.collection, input.data);
         const id = input.id ?? crypto.randomUUID();
         const clash = yield* lookup(documentNs(tenant, input.collection), id);
         if (clash !== undefined) {
@@ -390,6 +421,7 @@ export const documentsFor = (store: ObjectStoreApi, tenant: TenantId): Documents
           (input.mode ?? "merge") === "replace"
             ? input.data
             : { ...current.data, ...input.data };
+        yield* enforceSchema(input.collection, data);
         const next: Document = {
           ...current,
           data,

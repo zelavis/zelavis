@@ -9,7 +9,10 @@
  *
  * Locality is declared, not inferred: see `PartitionKey`.
  */
+export * from "./json.js";
+export * from "./naming.js";
 export * from "./model.js";
+export * as Schema from "./schema/index.js";
 export * from "./errors.js";
 export * from "./query.js";
 export * from "./events.js";
@@ -19,4 +22,5 @@ export * from "./documents.js";
 export * from "./topology.js";
 export * from "./domain-events.js";
 export * from "./projections.js";
+export * from "./schemas.js";
 export * from "./database.js";

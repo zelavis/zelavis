@@ -17,7 +17,7 @@ import type {
   DatabaseEventPayload,
   ReadDatabaseEventsInput,
 } from "./events.js";
-import type { StoredCollectionSchema } from "../schema/index.js";
+import type { StoredCollectionSchema } from "../../../dbnew/schema/index.js";
 import type { SqlDatabase } from "./sql.js";
 
 type TenantScoped<TInput> = Omit<

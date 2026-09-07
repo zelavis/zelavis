@@ -21,7 +21,7 @@ import type {
   CollectionSchemaSummary,
   SchemaValidationResult,
   StoredCollectionSchema,
-} from "../schema/index.js";
+} from "../../../dbnew/schema/index.js";
 
 export interface DatabaseContext {
   config: Record<string, unknown>;

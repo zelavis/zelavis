@@ -1,16 +1,9 @@
 import { Schema } from "effect";
-import {
-  DATABASE_COLLECTION_NAME_PATTERN,
-  DATABASE_RESERVED_COLLECTION_NAMES,
-} from "../contracts/documents.js";
+import { isValidCollectionName } from "../naming.js";
 
 export const CollectionName = Schema.String.check(
   Schema.makeFilter(
-    (n) =>
-      DATABASE_COLLECTION_NAME_PATTERN.test(n) &&
-      !DATABASE_RESERVED_COLLECTION_NAMES.has(n)
-        ? undefined
-        : "Collection name is invalid or reserved",
+    (n) => (isValidCollectionName(n) ? undefined : "Collection name is invalid or reserved"),
     { title: "CollectionName" },
   ),
 ).pipe(Schema.brand("CollectionName"));

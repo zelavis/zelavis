@@ -1,7 +1,7 @@
 import type { DatabaseJsonObject } from "./json.js";
 import type { DatabaseEvent, DatabaseEventCursor } from "./events.js";
 import type { DatabaseTenantId } from "./documents.js";
-import type { StoredCollectionSchema } from "../schema/index.js";
+import type { StoredCollectionSchema } from "../../../dbnew/schema/index.js";
 
 export const ZELAVIS_DATABASE_BACKUP_V1 = "zelavis.database-backup.v1" as const;
 

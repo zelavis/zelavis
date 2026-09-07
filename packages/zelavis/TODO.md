@@ -642,7 +642,15 @@ driven by what the existing dependents call, not by what is easiest to port.
   bookkeeping.
 - [ ] Event idempotency keys. The API being replaced accepts one on append;
   `dbnew` has no append, so the equivalent guard has no home yet.
-- [ ] Collection schemas, validation, and stored schema versions.
+- [x] Collection schemas, validation, and stored schema versions. The schema
+  module moved into `dbnew` rather than being rewritten: it is a field-type
+  language, not part of the SQL core, and duplicating 700 lines of field
+  definitions would only invite the two copies to drift. Stored versions are
+  immutable, activation is explicit, and a collection without a schema accepts
+  anything, as a raw database collection does today.
+- [ ] Schema migration between versions. Activating a new version changes what
+  is accepted from that point on; documents written under an older version are
+  left as they were.
 - [ ] Time series definitions, points, and checkpoints.
 - [ ] Backup and restore format.
 - [ ] Shard topology, so an official App routes virtual ranges across several

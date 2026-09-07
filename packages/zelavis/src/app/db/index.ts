@@ -17,5 +17,5 @@ export * from "./services/schema-service.js";
 export * from "./services/time-series-service.js";
 export * from "./storage/in-memory.js";
 export * from "./adapter-core/index.js";
-export * from "./schema/index.js";
+export * from "../../dbnew/schema/index.js";
 export * from "./topology/index.js";

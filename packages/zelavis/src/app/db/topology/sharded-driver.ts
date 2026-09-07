@@ -3,7 +3,7 @@ import type {
   DatabaseSchemaStorageDriver,
   DatabaseTimeSeriesStorageDriver,
 } from "../contracts/driver.js";
-import type { StoredCollectionSchema } from "../schema/index.js";
+import type { StoredCollectionSchema } from "../../../dbnew/schema/index.js";
 import {
   decodeDatabaseEventCursor,
   encodeDatabaseEventCursor,

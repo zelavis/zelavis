@@ -9,7 +9,7 @@ import type {
 } from "../contracts/events.js";
 import { encodeDatabaseEventCursor } from "../contracts/events.js";
 import type { DatabaseJson, DatabaseJsonObject } from "../contracts/json.js";
-import type { StoredCollectionSchema } from "../schema/index.js";
+import type { StoredCollectionSchema } from "../../../dbnew/schema/index.js";
 import type { DatabaseTimeSeriesPoint } from "../contracts/api.js";
 import { parseOptionalJson, parseRequiredJson } from "./helpers.js";
 

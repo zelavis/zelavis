@@ -29,7 +29,7 @@ import type {
   FindDocumentsInput,
   ListCollectionsInput,
 } from "../contracts/documents.js";
-import type { StoredCollectionSchema } from "../schema/index.js";
+import type { StoredCollectionSchema } from "../../../dbnew/schema/index.js";
 import type { DatabaseJsonObject } from "../contracts/json.js";
 import type { DatabaseDriver } from "../contracts/driver.js";
 import type {

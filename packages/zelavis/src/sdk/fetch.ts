@@ -42,7 +42,7 @@ export type {
   CollectionFieldEntry,
   CollectionSchema,
   CollectionSchemaSummary,
-} from "../app/db/schema/index.js";
+} from "../dbnew/schema/index.js";
 
 export type ZelavisSdkSurfaceTarget = "fetch" | "browser" | "node";
 export type ZelavisSdkRuntimeName = "node" | "bun" | "deno";

@@ -7,7 +7,7 @@ import {
   type SchemaValidationResult,
   type StoredCollectionSchema,
   validateDocumentData,
-} from "../schema/index.js";
+} from "../../../dbnew/schema/index.js";
 import { DatabaseNotFoundError } from "../core/errors.js";
 
 export class SchemaService implements DatabaseSchemasApi {

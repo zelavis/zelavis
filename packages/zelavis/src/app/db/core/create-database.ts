@@ -1,5 +1,5 @@
 import type { DatabaseDriver } from "../contracts/driver.js";
-import type { CollectionSchema } from "../schema/index.js";
+import type { CollectionSchema } from "../../../dbnew/schema/index.js";
 import { DocumentService } from "../services/document-service.js";
 import { EventService } from "../services/event-service.js";
 import {

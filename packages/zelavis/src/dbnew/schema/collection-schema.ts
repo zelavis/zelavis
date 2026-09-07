@@ -1,5 +1,5 @@
 import { Schema, SchemaIssue } from "effect";
-import type { DatabaseJsonObject } from "../contracts/json.js";
+import type { JsonObject } from "../json.js";
 import {
   type CollectionField,
   type CollectionFieldEntry,
@@ -385,7 +385,7 @@ function fieldToValueSchema(field: CollectionField): Schema.Schema<unknown> {
 
 export function validateDocumentData(
   fields: readonly CollectionFieldEntry[],
-  data: DatabaseJsonObject,
+  data: JsonObject,
 ): { valid: boolean; issues: readonly SchemaValidationIssue[] } {
   const allIssues: SchemaValidationIssue[] = [];
 

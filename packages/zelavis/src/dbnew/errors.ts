@@ -76,5 +76,22 @@ export class ProjectionNotFound extends Schema.TaggedError<ProjectionNotFound>()
   { name: Schema.String },
 ) {}
 
+export class SchemaVersionExists extends Schema.TaggedError<SchemaVersionExists>()(
+  "SchemaVersionExists",
+  { collection: Schema.String, version: Schema.Number },
+) {}
+
+export class SchemaNotFound extends Schema.TaggedError<SchemaNotFound>()("SchemaNotFound", {
+  collection: Schema.String,
+  version: Schema.Number,
+}) {}
+
+/** A write did not satisfy the collection's active schema. */
+export class SchemaViolation extends Schema.TaggedError<SchemaViolation>()("SchemaViolation", {
+  collection: Schema.String,
+  schemaVersion: Schema.Number,
+  issues: Schema.Array(Schema.Struct({ path: Schema.String, message: Schema.String })),
+}) {}
+
 /** Every failure the store contract can raise. */
 export type DbError = StoreError | WriterFenced | ForeignCursor | PartitionUnavailable;
