@@ -675,8 +675,11 @@ driven by what the existing dependents call, not by what is easiest to port.
   rather than refusing.
 - [ ] Shard topology, so an official App routes virtual ranges across several
   physical shards from creation rather than gaining sharding later.
-- [ ] Logical, shard-aware dashboard system views that never select a physical
-  shard's internal table.
+- [x] Logical, shard-aware dashboard system views. Built from the tenant APIs
+  rather than from storage, so a view cannot name a physical table, cannot read
+  one belonging to another tenant, and does not break when a range moves. Note
+  a semantic change: schemas, projections and time series are tenant-scoped
+  here, where the replaced surface kept them outside the tenant boundary.
 - [ ] Cut the 26 database endpoints and the nine `src` dependents over, then
   delete `src/app/db`, its adapters, its tests, and the `zelavis/app/db*`
   export subpaths.

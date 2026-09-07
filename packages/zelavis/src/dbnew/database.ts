@@ -7,6 +7,7 @@ import { schemasFor, type SchemasApi } from "./schemas.js";
 import { timeSeriesFor, type TimeSeriesApi } from "./time-series.js";
 import { backupsFor, type BackupsApi } from "./backup.js";
 import { initPartitionMap, topologyFor, type TopologyApi } from "./topology-store.js";
+import { systemViewsFor, type SystemViewsApi } from "./system-views.js";
 import type { ObjectStoreApi } from "./store.js";
 import { shardFor, shardsOf, type PartitionMap, type ShardId, type TenantId } from "./topology.js";
 
@@ -21,6 +22,8 @@ export interface TenantApi {
   readonly schemas: SchemasApi;
   readonly timeSeries: TimeSeriesApi;
   readonly backups: BackupsApi;
+  /** The dashboard read surface, built from the APIs above rather than storage. */
+  readonly systemViews: SystemViewsApi;
 }
 
 export interface DatabaseApi {
@@ -102,13 +105,16 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
       const events = domainEventsFor(store, tenant, nodeId);
       const schemas = schemasFor(store, tenant);
       const projections = projectionsFor(store, events, tenant);
+      const documents = documentsFor(store, tenant, schemas);
+      const timeSeries = timeSeriesFor(store, projections, tenant);
       return {
-        documents: documentsFor(store, tenant, schemas),
+        documents,
         events,
         projections,
         schemas,
-        timeSeries: timeSeriesFor(store, projections, tenant),
+        timeSeries,
         backups: backupsFor(store, tenant),
+        systemViews: systemViewsFor({ documents, events, schemas, projections, timeSeries }),
       };
     },
   } satisfies DatabaseApi;

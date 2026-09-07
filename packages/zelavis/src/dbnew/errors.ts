@@ -126,5 +126,10 @@ export class RangeNotEmpty extends Schema.TaggedError<RangeNotEmpty>()("RangeNot
   tenants: Schema.Array(Schema.String),
 }) {}
 
+export class UnknownSystemView extends Schema.TaggedError<UnknownSystemView>()(
+  "UnknownSystemView",
+  { name: Schema.String },
+) {}
+
 /** Every failure the store contract can raise. */
 export type DbError = StoreError | WriterFenced | ForeignCursor | PartitionUnavailable;
