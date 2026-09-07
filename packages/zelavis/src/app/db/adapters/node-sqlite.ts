@@ -9,7 +9,6 @@ import {
   type DatabaseDriver,
   type GatewayRunResult,
   type SqliteGateway,
-  type SqlParameter,
 } from "../index.js";
 
 type BetterSqlite3Database = InstanceType<typeof Database>;
@@ -168,8 +167,6 @@ export function createBetterSqlite3DatabaseDriver(
   return createSqliteCompatibleDriver({
     name: "better-sqlite3",
     gateway,
-    toSqlParameter: (parameter: SqlParameter) => toBindParameter(parameter),
-    fromSqlValue: fromRowValue,
     ready: () => schemaReady,
   });
 }

@@ -18,7 +18,6 @@ import type {
   ReadDatabaseEventsInput,
 } from "./events.js";
 import type { StoredCollectionSchema } from "../../../dbnew/schema/index.js";
-import type { SqlDatabase } from "./sql.js";
 
 type TenantScoped<TInput> = Omit<
   TInput,
@@ -144,5 +143,4 @@ export interface DatabaseDriver {
   projections: DatabaseProjectionDriver;
   schemas?: DatabaseSchemaStorageDriver;
   timeseries?: DatabaseTimeSeriesStorageDriver;
-  sql?: SqlDatabase;
 }

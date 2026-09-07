@@ -11,7 +11,6 @@ import {
   type DatabaseDriver,
   type GatewayRunResult,
   type SqliteGateway,
-  type SqlParameter,
 } from "../index.js";
 
 type BunSqliteDatabase = Database;
@@ -182,8 +181,6 @@ export function createBunSqliteDatabaseDriver(
   return createSqliteCompatibleDriver({
     name: "bun-sqlite",
     gateway,
-    toSqlParameter: (parameter: SqlParameter) => toBindParameter(parameter),
-    fromSqlValue: fromRowValue,
     ready: () => schemaReady,
   });
 }

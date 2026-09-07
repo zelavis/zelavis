@@ -20,7 +20,6 @@ import {
   type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
 import { officialProjectRecipes } from "../project-recipes.js";
-import { migrateLegacyAppDatabase } from "./_legacy-app-database-migration.js";
 
 export interface BunAdapterDatabaseOptions {
   directory?: string;
@@ -126,19 +125,6 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
           databaseOptions.directory === undefined &&
           !databaseOptions.readonly
         ) {
-          await migrateLegacyAppDatabase({
-            legacyFilename: join(dataDirectory, "zelavis.sqlite"),
-            systemStore,
-            targetDriver: shardedDriver,
-            physicalDrivers,
-            openLegacyDriver: (filename) =>
-              createBunSqliteDatabaseDriver({
-                filename,
-                create: false,
-                readwrite: true,
-              }),
-            tenantAliases: { default: "zelavis-app" },
-          });
         }
         nextSubsystems.database = {
           nodeId: "local",

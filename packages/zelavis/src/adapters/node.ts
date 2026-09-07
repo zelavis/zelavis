@@ -33,7 +33,6 @@ import {
   type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
 import { officialProjectRecipes } from "../project-recipes.js";
-import { migrateLegacyAppDatabase } from "./_legacy-app-database-migration.js";
 import { createBuiltinDeploymentBackends } from "../backends/index.js";
 export {
   createNodeFileArtifactStore,
@@ -176,18 +175,6 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           databaseOptions.directory === undefined &&
           !databaseOptions.readonly
         ) {
-          await migrateLegacyAppDatabase({
-            legacyFilename: join(dataDirectory, "zelavis.sqlite"),
-            systemStore,
-            targetDriver: shardedDriver,
-            physicalDrivers,
-            openLegacyDriver: (filename) =>
-              createBetterSqlite3DatabaseDriver({
-                filename,
-                fileMustExist: true,
-              }),
-            tenantAliases: { default: "zelavis-app" },
-          });
         }
         nextSubsystems.database = {
           nodeId: "local",

@@ -2,7 +2,6 @@ import { defineDatabaseDriver } from "../core/define-database-driver.js";
 import {
   DatabaseWriterFencedError,
   DatabaseConflictError,
-  DatabaseDomainError,
   DatabaseNotFoundError,
   DatabaseRevisionMismatchError,
   DatabaseValidationError,
@@ -40,14 +39,6 @@ import type {
   DatabaseTimeSeriesStoredAggregateInput,
   DatabaseTimeSeriesStoredRangeInput,
 } from "../contracts/driver.js";
-import type {
-  SqlDatabase,
-  SqlExecuteInput,
-  SqlExecuteResult,
-  SqlParameter,
-  SqlQueryInput,
-  SqlQueryResult,
-} from "../contracts/sql.js";
 import type { SqliteGateway } from "./gateway.js";
 import { buildDocumentQueryFragment } from "./json-query.js";
 import {
@@ -86,17 +77,6 @@ export interface CreateSqliteCompatibleDriverOptions {
   defaultNodeId?: string;
   /** Gateway translating to the underlying SQLite-compatible client. */
   gateway: SqliteGateway;
-  /**
-   * Adapter-specific coercion for raw SQL parameters. Used by the
-   * `SqlDatabase` pass-through (`driver.sql.query` / `driver.sql.execute`).
-   * Defaults to a pass-through.
-   */
-  toSqlParameter?: (parameter: SqlParameter) => unknown;
-  /**
-   * Adapter-specific coercion for raw SQL row values. Used by the
-   * `SqlDatabase` pass-through. Defaults to returning the value unchanged.
-   */
-  fromSqlValue?: (value: unknown) => unknown;
   /**
    * Optional async hook the driver awaits before each operation. Useful for
    * adapters such as libSQL that initialise their schema lazily.
@@ -354,16 +334,6 @@ function parseSingleWriteTarget(tokens: readonly SqlToken[]): string | null {
   return null;
 }
 
-function definesSqlTrigger(tokens: readonly SqlToken[]): boolean {
-  let index = skipCtePrefix(tokens);
-  if (index === null || !sqlKeyword(tokens[index], "CREATE")) return false;
-  index += 1;
-  if (
-    sqlKeyword(tokens[index], "TEMP") ||
-    sqlKeyword(tokens[index], "TEMPORARY")
-  ) index += 1;
-  return sqlKeyword(tokens[index], "TRIGGER");
-}
 
 function splitSqlStatements(tokens: readonly SqlToken[]): SqlToken[][] {
   const statements: SqlToken[][] = [];
@@ -425,8 +395,6 @@ export function createSqliteCompatibleDriver(
     name,
     gateway,
     defaultNodeId = "local",
-    toSqlParameter = (value: SqlParameter) => value,
-    fromSqlValue = (value: unknown) => value,
     ready = async () => {},
   } = options;
 
@@ -1298,62 +1266,6 @@ export function createSqliteCompatibleDriver(
     },
   };
 
-  const sql: SqlDatabase = {
-    async query(input: SqlQueryInput): Promise<SqlQueryResult> {
-      return withReady(async () => {
-        const params = (input.parameters ?? []).map(toSqlParameter);
-        const rows = await gateway.all<Record<string, unknown>>(
-          input.statement,
-          params,
-        );
-        return {
-          rows: rows.map(
-            (row) =>
-              Object.fromEntries(
-                Object.entries(row).map(([key, value]) => [
-                  key,
-                  fromSqlValue(value),
-                ]),
-              ) as Record<string, never>,
-          ),
-        } as SqlQueryResult;
-      });
-    },
-
-    async execute(input: SqlExecuteInput): Promise<SqlExecuteResult> {
-      return withReady(async () => {
-        const statements = splitSqlStatements(tokenizeSql(input.statement));
-        if (statements[0] && definesSqlTrigger(statements[0])) {
-          throw new DatabaseDomainError(
-            "SQL trigger definitions are not permitted through sql.execute(). Use Zelavis document projections and event workflows.",
-          );
-        }
-        if (statements.length !== 1) {
-          throw new DatabaseValidationError(
-            "sql.execute() accepts exactly one SQL statement.",
-          );
-        }
-        const targetTable = parseSingleWriteTarget(statements[0]!);
-        if (targetTable !== null) {
-          const collection = await gateway.get<{ name: string }>(
-            `SELECT name FROM zv_collections WHERE name = ? LIMIT 1`,
-            [targetTable],
-          );
-          if (collection) {
-            throw new DatabaseDomainError(
-              `Direct SQL writes to collection table "${targetTable}" are not permitted. Use the documents API.`,
-            );
-          }
-        }
-        const params = (input.parameters ?? []).map(toSqlParameter);
-        const result = await gateway.run(input.statement, params);
-        return {
-          rowsAffected: result.changes,
-          lastInsertId: result.lastInsertRowid,
-        };
-      });
-    },
-  };
 
   return defineDatabaseDriver({
     name,
@@ -1368,7 +1280,6 @@ export function createSqliteCompatibleDriver(
     projections,
     schemas,
     timeseries,
-    sql,
     async claimWriterGeneration(generation: number) {
       if (!Number.isInteger(generation) || generation < 0) {
         throw new TypeError("A writer generation must be a non-negative integer.");

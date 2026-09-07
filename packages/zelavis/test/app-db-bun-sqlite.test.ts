@@ -166,51 +166,6 @@ test("Bun project adapter recovers a legacy App database into Tenant shards", as
   }
 });
 
-test("bun:sqlite persists logical data while SQL stays on the physical driver", async () => {
-  const temp = createTempDatabasePath();
-
-  try {
-    const firstDriver = createBunSqliteDatabaseDriver({ filename: temp.filename });
-    const first = await createDatabase({ driver: firstDriver });
-    await first.forTenant("default").documents.createCollection({ name: "products" });
-    await first.forTenant("default").documents.insert({
-      collection: "products",
-      id: "shirt_1",
-      data: {
-        name: "Persisted shirt",
-        price: 30,
-      },
-    });
-
-    const reopenedDriver = createBunSqliteDatabaseDriver({ filename: temp.filename });
-    const reopened = await createDatabase({ driver: reopenedDriver });
-    const found = await reopened.forTenant("default").documents.findById({
-      collection: "products",
-      id: "shirt_1",
-    });
-
-    expect(found?.data.name).toBe("Persisted shirt");
-    expect(reopened.sql).toBeUndefined();
-    expect(reopenedDriver.sql).toBeDefined();
-
-    const tables = await reopenedDriver.sql?.query({
-      statement: "SELECT name FROM sqlite_master WHERE type = 'table'",
-    });
-    const tableNames = new Set(tables?.rows.map((row) => row.name));
-    expect(tableNames.has("products")).toBe(true);
-    expect(tableNames.has("documents")).toBe(false);
-
-    const query = await reopenedDriver.sql?.query({
-      statement: 'SELECT COUNT(*) AS count FROM "products" WHERE tenant_id = ?',
-      parameters: ["default"],
-    });
-
-    expect(query?.rows).toEqual([{ count: 1 }]);
-  } finally {
-    rmSync(temp.directory, { recursive: true, force: true });
-  }
-});
-
 test("bun:sqlite database preserves schemas and active versions across reopen", async () => {
   const temp = createTempDatabasePath();
 
