@@ -250,8 +250,8 @@ depends on it.
 Before any official recipe could mount it, it must route through the topology
 rather than expose a physical driver, and it needs a cross-partition
 scatter/gather contract, snapshots — rebuilding currently replays all history
-rather than live objects — and durability testing, since `synchronous=NORMAL` is
-configured rather than proven. Postings are also still stored one row per
+rather than live objects — and durability testing, since `synchronous=NORMAL`
+is configured rather than proven. Postings are also still stored one row per
 posting; holding them as bitmap blobs would remove the scan that now dominates
 a wide query, but requires immutable segments and compaction.
 
