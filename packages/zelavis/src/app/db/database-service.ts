@@ -266,7 +266,6 @@ export function defineDatabaseService(
           handler: ({ service }) => ({
             body: {
               status: "ok",
-              capabilities: service.capabilities,
               nodeId: service.context.nodeId,
             },
           }),

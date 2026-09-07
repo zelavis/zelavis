@@ -139,9 +139,7 @@ function Overview() {
           label="Database"
           value={databaseHealth?.nodeId ?? 'checking'}
           detail={
-            databaseHealth
-              ? `documents ${databaseHealth.capabilities.documents ? 'on' : 'off'}, tenant routing ${databaseHealth.capabilities.tenantRouting ? 'on' : 'off'}`
-              : 'waiting for /database/health'
+            databaseHealth ? databaseHealth.status : 'waiting for /database/health'
           }
           icon={Database}
         />

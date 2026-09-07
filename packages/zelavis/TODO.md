@@ -685,10 +685,13 @@ driven by what the existing dependents call, not by what is easiest to port.
   already used elsewhere.
 - [x] `zelavis/dbnew/node` opens a sharded database for a promise-based host and
   closes it on shutdown, so the platform can construct one.
+- [x] `/database/health` no longer advertises capability flags, which had no
+  `dbnew` equivalent and reported constants either way.
 - [ ] Point `defineDatabaseService` at the `dbnew` runtime API. The handler
   bodies still differ: `findById` returns `undefined` rather than `null`,
-  `service.capabilities` has no equivalent, `timeseries` is `timeSeries`, and
-  backups are reached through the Tenant.
+  `timeseries` is `timeSeries`, and backups are reached through the Tenant.
+- [ ] Report real topology on `/database/health` — shard count and partition map
+  version — once the endpoint is backed by `dbnew`.
 - [ ] Construct the database from the Node and Bun adapters and register its
   `close()` with runtime shutdown.
 - [ ] Delete `src/app/db`, its adapters, its tests, and the `zelavis/app/db*`

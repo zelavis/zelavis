@@ -616,7 +616,6 @@ declare global {
 
 export interface DatabaseHealth {
   status: string;
-  capabilities: Record<string, boolean>;
   nodeId: string;
 }
 
