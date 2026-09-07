@@ -15,3 +15,4 @@ export * from "./query.js";
 export * from "./events.js";
 export * as Postings from "./postings.js";
 export * from "./store.js";
+export * from "./documents.js";

@@ -616,11 +616,18 @@ intended to coexist. Each capability's old implementation is removed once its
 replacement is in use, and the package is not left carrying both. The order is
 driven by what the existing dependents call, not by what is easiest to port.
 
-- [ ] Collections and the document API over `ObjectStore`, with the lens
-  manifest derived from a collection's schema. The dashboard and app services
-  are written against this surface, so nothing else can move first.
-- [ ] Document revisions and conflict semantics, matching what the current
-  documents API guarantees.
+- [x] Collections and the document API over `ObjectStore`. Documents are stored
+  objects whose scalar fields become column postings, so `eq` and `in` filters
+  are answered from the lens; ordering comparisons are applied to the candidates
+  afterwards rather than pretending to be indexed.
+- [x] Stable identity: `(namespace, key)` binds an application's own document id
+  to the dense partition-local `Seq`, uniquely and inside the write
+  transaction. Events carry it so a follower agrees with its leader about which
+  record an event concerns.
+- [x] Optimistic concurrency through `expectedVersion` on update and delete, and
+  duplicate-id rejection on insert.
+- [ ] Ordering, comparison and range filters served from the lens rather than
+  applied after it.
 - [ ] `forTenant` as partition selection, so the declared partition key does the
   work the topology router does today.
 - [ ] Event and projection surfaces re-expressed on the `dbnew` log, including

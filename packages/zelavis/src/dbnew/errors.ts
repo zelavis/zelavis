@@ -45,5 +45,31 @@ export class ForeignCursor extends Schema.TaggedError<ForeignCursor>()("ForeignC
   received: Schema.String,
 }) {}
 
+export class InvalidCollectionName extends Schema.TaggedError<InvalidCollectionName>()(
+  "InvalidCollectionName",
+  { name: Schema.String, reason: Schema.String },
+) {}
+
+export class CollectionExists extends Schema.TaggedError<CollectionExists>()("CollectionExists", {
+  name: Schema.String,
+}) {}
+
+export class CollectionNotFound extends Schema.TaggedError<CollectionNotFound>()(
+  "CollectionNotFound",
+  { name: Schema.String },
+) {}
+
+export class DocumentNotFound extends Schema.TaggedError<DocumentNotFound>()("DocumentNotFound", {
+  collection: Schema.String,
+  id: Schema.String,
+}) {}
+
+/** Duplicate insert, or a failed optimistic-concurrency guard. */
+export class DocumentConflict extends Schema.TaggedError<DocumentConflict>()("DocumentConflict", {
+  collection: Schema.String,
+  id: Schema.String,
+  reason: Schema.String,
+}) {}
+
 /** Every failure the store contract can raise. */
 export type DbError = StoreError | WriterFenced | ForeignCursor | PartitionUnavailable;

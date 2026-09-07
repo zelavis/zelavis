@@ -31,6 +31,18 @@ export type PartitionKey = string;
 
 export const PartitionKeyFromString = Schema.String;
 
+/**
+ * A caller-facing name for a record, unique within its namespace.
+ *
+ * Kept separate from the manifest because it is identity, not a projection: it
+ * survives every rewrite of the object, and it is what a follower needs to
+ * agree with a leader about which record an event concerns.
+ */
+export interface ObjectIdentity {
+  readonly namespace: string;
+  readonly key: string;
+}
+
 /** A stored record: an identifier and its encoded bytes. */
 export interface DbObject {
   readonly seq: Seq;

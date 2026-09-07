@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import type { IndexManifest, PartitionKey, Seq } from "./model.js";
+import type { IndexManifest, ObjectIdentity, PartitionKey, Seq } from "./model.js";
 
 declare const CursorBrand: unique symbol;
 
@@ -22,6 +22,7 @@ export interface ObjectPut {
   readonly version: number;
   readonly bytes: Uint8Array;
   readonly manifest: IndexManifest;
+  readonly identity?: ObjectIdentity;
 }
 
 export interface ObjectRetracted {
@@ -60,6 +61,9 @@ export const DbEventWire = Schema.Union([
     version: Schema.Number,
     bytes: Schema.Uint8Array,
     manifest: ManifestWire,
+    identity: Schema.optional(
+      Schema.Struct({ namespace: Schema.String, key: Schema.String }),
+    ),
   }),
   Schema.TaggedStruct("ObjectRetracted", {
     cursor: Schema.String,

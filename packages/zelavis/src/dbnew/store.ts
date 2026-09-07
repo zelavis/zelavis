@@ -1,6 +1,6 @@
 import { Context, Effect, Stream } from "effect";
 import type { DbError } from "./errors.js";
-import type { DbObject, IndexManifest, PartitionKey, Seq } from "./model.js";
+import type { DbObject, IndexManifest, ObjectIdentity, PartitionKey, Seq } from "./model.js";
 import type { DbEvent, EventCursor, ReadEventsOptions } from "./events.js";
 import type { Query } from "./query.js";
 
@@ -17,6 +17,7 @@ export interface Txn {
     seq: Seq,
     bytes: Uint8Array,
     manifest: IndexManifest,
+    identity?: ObjectIdentity,
   ) => Effect.Effect<void, DbError>;
 
   /** Remove an object and every posting its manifest recorded. */
@@ -76,6 +77,19 @@ export interface ObjectStoreApi {
   ) => Effect.Effect<A, E | DbError, R>;
 
   readonly read: (seq: Seq) => Effect.Effect<DbObject | undefined, DbError>;
+
+  /**
+   * Resolve a caller's own identifier to the dense one.
+   *
+   * A `Seq` is an internal, partition-local allocation; applications address
+   * records by names of their own. Binding the two here keeps that mapping
+   * unique and transactional, rather than leaving each layer above to invent
+   * its own index and its own uniqueness rule.
+   */
+  readonly lookup: (
+    namespace: string,
+    key: string,
+  ) => Effect.Effect<Seq | undefined, DbError>;
 
   /**
    * Resolve a query to identifiers in ascending order.

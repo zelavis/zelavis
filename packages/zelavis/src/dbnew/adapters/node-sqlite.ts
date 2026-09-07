@@ -4,7 +4,13 @@ import { DatabaseSync } from "node:sqlite";
 import { Context, Effect, Layer, LayerMap, Stream } from "effect";
 import { ForeignCursor, StoreError, WriterFenced } from "../errors.js";
 import type { DbEvent, EventCursor, ReadEventsOptions } from "../events.js";
-import { asSeq, type IndexManifest, type PartitionKey, type Seq } from "../model.js";
+import {
+  asSeq,
+  type IndexManifest,
+  type ObjectIdentity,
+  type PartitionKey,
+  type Seq,
+} from "../model.js";
 import * as Postings from "../postings.js";
 import type { Query } from "../query.js";
 import { ObjectStore, type EventsApi, type ObjectStoreApi, type Txn } from "../store.js";
@@ -48,6 +54,15 @@ const SCHEMA = `
     edge_type TEXT NOT NULL, src INTEGER NOT NULL, dst INTEGER NOT NULL,
     PRIMARY KEY (edge_type, src, dst)
   ) WITHOUT ROWID;
+
+  CREATE TABLE IF NOT EXISTS keys (
+    namespace TEXT NOT NULL,
+    key TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    PRIMARY KEY (namespace, key)
+  ) WITHOUT ROWID;
+
+  CREATE INDEX IF NOT EXISTS keys_by_seq ON keys (seq);
 
   CREATE TABLE IF NOT EXISTS manifests (
     seq INTEGER PRIMARY KEY,
@@ -138,6 +153,9 @@ export const makeNodeSqliteStore = (partition: PartitionKey, directory: string) 
         ),
         delMeasure: db.prepare("DELETE FROM lens_measure WHERE column_name = ? AND seq = ?"),
         delEdge: db.prepare("DELETE FROM lens_edge WHERE edge_type = ? AND src = ? AND dst = ?"),
+        putKey: db.prepare("INSERT OR REPLACE INTO keys VALUES (?, ?, ?)"),
+        getKey: db.prepare("SELECT seq FROM keys WHERE namespace = ? AND key = ?"),
+        delKeyBySeq: db.prepare("DELETE FROM keys WHERE seq = ?"),
         putManifest: db.prepare("INSERT OR REPLACE INTO manifests VALUES (?, ?)"),
         getManifest: db.prepare("SELECT data FROM manifests WHERE seq = ?"),
         delManifest: db.prepare("DELETE FROM manifests WHERE seq = ?"),
@@ -180,6 +198,7 @@ export const makeNodeSqliteStore = (partition: PartitionKey, directory: string) 
           db.prepare("DELETE FROM lens_measure"),
           db.prepare("DELETE FROM lens_edge"),
           db.prepare("DELETE FROM manifests"),
+          db.prepare("DELETE FROM keys"),
           db.prepare("DELETE FROM objects"),
         ],
         readSeq: db.prepare("SELECT value FROM meta WHERE key = 'next_seq'"),
@@ -220,9 +239,13 @@ export const makeNodeSqliteStore = (partition: PartitionKey, directory: string) 
         version: number,
         bytes: Uint8Array,
         manifest: IndexManifest,
+        identity?: ObjectIdentity,
       ): void => {
         unproject(seq);
         st.putObject.run(seq, version, bytes);
+        if (identity !== undefined) {
+          st.putKey.run(identity.namespace, identity.key, seq);
+        }
         for (const [field, t] of manifest.terms) st.putTerm.run(field, t, seq);
         for (const [column, value] of manifest.columns) st.putColumn.run(column, value, seq);
         for (const [column, value] of manifest.measures) st.putMeasure.run(column, seq, value);
@@ -246,14 +269,18 @@ export const makeNodeSqliteStore = (partition: PartitionKey, directory: string) 
           seq: asSeq(row.seq),
           version: row.version,
         };
-        return row.kind === "put"
-          ? {
-              _tag: "ObjectPut",
-              ...common,
-              bytes: row.body ?? new Uint8Array(),
-              manifest: JSON.parse(row.manifest ?? "{}") as IndexManifest,
-            }
-          : { _tag: "ObjectRetracted", ...common };
+        if (row.kind !== "put") return { _tag: "ObjectRetracted", ...common };
+        const stored = JSON.parse(row.manifest ?? "{}") as IndexManifest & {
+          identity?: ObjectIdentity;
+        };
+        const { identity, ...manifest } = stored;
+        return {
+          _tag: "ObjectPut",
+          ...common,
+          bytes: row.body ?? new Uint8Array(),
+          manifest: manifest as IndexManifest,
+          ...(identity === undefined ? {} : { identity }),
+        };
       };
 
       // Rows stream straight into a bitmap. Nothing accumulates a JavaScript
@@ -300,7 +327,7 @@ export const makeNodeSqliteStore = (partition: PartitionKey, directory: string) 
         Effect.try({ try: () => void db.exec(sql), catch: fail(sql) });
 
       const txn: Txn = {
-        put: (seq, bytes, manifest) =>
+        put: (seq, bytes, manifest, identity) =>
           Effect.try({
             try: () => {
               assertCurrent();
@@ -316,10 +343,10 @@ export const makeNodeSqliteStore = (partition: PartitionKey, directory: string) 
                 "put",
                 version,
                 bytes,
-                JSON.stringify(manifest),
+                JSON.stringify(identity === undefined ? manifest : { ...manifest, identity }),
                 Date.now(),
               );
-              project(seq, version, bytes, manifest);
+              project(seq, version, bytes, manifest, identity);
             },
             catch: fail("txn.put"),
           }),
@@ -340,6 +367,7 @@ export const makeNodeSqliteStore = (partition: PartitionKey, directory: string) 
                 Date.now(),
               );
               unproject(seq);
+              st.delKeyBySeq.run(seq);
               st.delObject.run(seq);
             },
             catch: fail("txn.retract"),
@@ -384,13 +412,20 @@ export const makeNodeSqliteStore = (partition: PartitionKey, directory: string) 
                 event._tag === "ObjectPut" ? "put" : "retract",
                 event.version,
                 event._tag === "ObjectPut" ? event.bytes : null,
-                event._tag === "ObjectPut" ? JSON.stringify(event.manifest) : null,
+                event._tag === "ObjectPut"
+                  ? JSON.stringify(
+                      event.identity === undefined
+                        ? event.manifest
+                        : { ...event.manifest, identity: event.identity },
+                    )
+                  : null,
                 Date.now(),
               );
               if (event._tag === "ObjectPut") {
-                project(event.seq, event.version, event.bytes, event.manifest);
+                project(event.seq, event.version, event.bytes, event.manifest, event.identity);
               } else {
                 unproject(event.seq);
+                st.delKeyBySeq.run(event.seq);
                 st.delObject.run(event.seq);
               }
             },
@@ -422,14 +457,20 @@ export const makeNodeSqliteStore = (partition: PartitionKey, directory: string) 
                 if (rows.length === 0) break;
                 for (const row of rows) {
                   if (row.kind === "put") {
+                    const stored = JSON.parse(row.manifest ?? "{}") as IndexManifest & {
+                      identity?: ObjectIdentity;
+                    };
+                    const { identity, ...manifest } = stored;
                     project(
                       asSeq(row.seq),
                       row.version,
                       row.body ?? new Uint8Array(),
-                      JSON.parse(row.manifest ?? "{}") as IndexManifest,
+                      manifest as IndexManifest,
+                      identity,
                     );
                   } else {
                     unproject(asSeq(row.seq));
+                    st.delKeyBySeq.run(asSeq(row.seq));
                     st.delObject.run(row.seq);
                   }
                   after = row.position;
@@ -444,6 +485,19 @@ export const makeNodeSqliteStore = (partition: PartitionKey, directory: string) 
             }
           },
           catch: fail("rebuildLenses"),
+        }),
+
+        lookup: Effect.fn("ObjectStore.lookup")(function* (
+          namespace: string,
+          key: string,
+        ) {
+          return yield* Effect.try({
+            try: () => {
+              const row = st.getKey.get(namespace, key) as { seq: number } | undefined;
+              return row === undefined ? undefined : asSeq(row.seq);
+            },
+            catch: fail("lookup"),
+          });
         }),
 
         nextSeq: Effect.try({
