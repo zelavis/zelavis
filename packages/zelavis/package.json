@@ -64,6 +64,10 @@
       "types": "./dist/dbnew/adapters/node-database.d.ts",
       "import": "./dist/dbnew/adapters/node-database.js"
     },
+    "./dbnew/libsql": {
+      "types": "./dist/dbnew/adapters/libsql.d.ts",
+      "import": "./dist/dbnew/adapters/libsql.js"
+    },
     "./dbnew/schema": {
       "types": "./dist/dbnew/schema/index.d.ts",
       "import": "./dist/dbnew/schema/index.js"
@@ -171,6 +175,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.4.0",
+    "libsql": "^0.5.29",
     "typescript": "^7.0.2"
   },
   "keywords": [
@@ -184,5 +189,13 @@
   },
   "optionalDependencies": {
     "@zelavis/ui": "workspace:*"
+  },
+  "peerDependencies": {
+    "libsql": "^0.5.29"
+  },
+  "peerDependenciesMeta": {
+    "libsql": {
+      "optional": true
+    }
   }
 }

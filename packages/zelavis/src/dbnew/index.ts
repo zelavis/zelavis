@@ -18,6 +18,7 @@ export * from "./query.js";
 export * from "./events.js";
 export * as Postings from "./postings.js";
 export * from "./store.js";
+export * from "./gateway.js";
 export * from "./documents.js";
 export * from "./topology.js";
 export * from "./domain-events.js";

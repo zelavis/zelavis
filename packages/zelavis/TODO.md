@@ -699,10 +699,13 @@ the `dbnew` runtime API, both construction sites open a sharded database through
   guards test the `dbnew` shape.
 - [x] `src/app/db` and the `zelavis/app/db*` export subpaths removed, along with
   the seven test files that exercised it structurally.
-- [ ] A libSQL driver for `dbnew`. Removing `app/db` took `@zelavis/app-db-libsql`
-  with it, since it was built on the driver contract that went. Only the Node
-  SQLite driver ships now, so engine swappability is a claim the code no longer
-  backs until this exists.
+- [x] A libSQL driver for `dbnew`, over the same store logic as the built-in
+  one. Both engines meet a synchronous gateway, so retraction, manifests, events
+  and postings exist once rather than per driver.
+- [ ] Remote-only libSQL. The driver uses the synchronous binding, which covers
+  local files and embedded replicas; a database reachable only over the network
+  needs transaction serialization designed before an asynchronous gateway is
+  safe to offer.
 - [ ] Report real topology on `/database/health` — shard count and partition map
   version — now that `dbnew` serves it.
 
