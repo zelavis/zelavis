@@ -76,6 +76,14 @@
       "types": "./dist/app/db/adapters/bun-sqlite.d.ts",
       "import": "./dist/app/db/adapters/bun-sqlite.js"
     },
+    "./dbnew": {
+      "types": "./dist/dbnew/index.d.ts",
+      "import": "./dist/dbnew/index.js"
+    },
+    "./dbnew/node-sqlite": {
+      "types": "./dist/dbnew/adapters/node-sqlite.d.ts",
+      "import": "./dist/dbnew/adapters/node-sqlite.js"
+    },
     "./app/workloads": {
       "types": "./dist/app/workloads/index.d.ts",
       "import": "./dist/app/workloads/index.js"
