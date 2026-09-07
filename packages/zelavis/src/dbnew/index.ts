@@ -24,4 +24,6 @@ export * from "./domain-events.js";
 export * from "./projections.js";
 export * from "./schemas.js";
 export * from "./time-series.js";
+export * from "./tenancy.js";
+export * from "./backup.js";
 export * from "./database.js";

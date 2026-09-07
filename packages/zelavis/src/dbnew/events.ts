@@ -79,6 +79,17 @@ export const DbEventWire = Schema.Union([
   }),
 ]);
 
+/**
+ * An event as it is applied, without the cursor it was read at.
+ *
+ * A cursor is a position in the log that issued it and means nothing in the log
+ * it is being applied to, so a follower is not given one to misuse: its own
+ * position comes from where the event lands locally.
+ */
+export type AppliedEvent =
+  | Omit<ObjectPut, "cursor">
+  | Omit<ObjectRetracted, "cursor">;
+
 export interface ReadEventsOptions {
   readonly after?: EventCursor;
   readonly limit?: number;

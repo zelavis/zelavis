@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Context, Effect, Layer, LayerMap, Stream } from "effect";
 import { ForeignCursor, StoreError, WriterFenced } from "../errors.js";
-import type { DbEvent, EventCursor, ReadEventsOptions } from "../events.js";
+import type { AppliedEvent, DbEvent, EventCursor, ReadEventsOptions } from "../events.js";
 import {
   asSeq,
   type IndexManifest,
@@ -400,7 +400,7 @@ export const makeNodeSqliteStore = (partition: PartitionKey, directory: string) 
           catch: fail("events.head"),
         }),
 
-        apply: (event: DbEvent) =>
+        apply: (event: AppliedEvent) =>
           Effect.try({
             try: () => {
               // Idempotent by (seq, version): a follower may safely re-consume

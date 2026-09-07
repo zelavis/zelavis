@@ -1,7 +1,7 @@
 import { Context, Effect, Stream } from "effect";
 import type { DbError } from "./errors.js";
 import type { DbObject, IndexManifest, ObjectIdentity, PartitionKey, Seq } from "./model.js";
-import type { DbEvent, EventCursor, ReadEventsOptions } from "./events.js";
+import type { AppliedEvent, DbEvent, EventCursor, ReadEventsOptions } from "./events.js";
 import type { Query } from "./query.js";
 
 /**
@@ -45,7 +45,7 @@ export interface EventsApi {
    * interruption. This is the follower half of replication and does not make
    * the follower writable.
    */
-  readonly apply: (event: DbEvent) => Effect.Effect<void, DbError>;
+  readonly apply: (event: AppliedEvent) => Effect.Effect<void, DbError>;
 }
 
 export interface ObjectStoreApi {

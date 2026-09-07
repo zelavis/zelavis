@@ -98,5 +98,20 @@ export class TimeSeriesNotFound extends Schema.TaggedError<TimeSeriesNotFound>()
   { name: Schema.String },
 ) {}
 
+export class BackupTenantMismatch extends Schema.TaggedError<BackupTenantMismatch>()(
+  "BackupTenantMismatch",
+  { expected: Schema.String, received: Schema.String },
+) {}
+
+/** Restoring over live data would orphan whatever the tenant already holds. */
+export class TenantNotEmpty extends Schema.TaggedError<TenantNotEmpty>()("TenantNotEmpty", {
+  tenant: Schema.String,
+}) {}
+
+export class BackupFormatUnsupported extends Schema.TaggedError<BackupFormatUnsupported>()(
+  "BackupFormatUnsupported",
+  { format: Schema.String },
+) {}
+
 /** Every failure the store contract can raise. */
 export type DbError = StoreError | WriterFenced | ForeignCursor | PartitionUnavailable;

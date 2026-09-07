@@ -5,6 +5,7 @@ import { domainEventsFor, type DomainEventsApi } from "./domain-events.js";
 import { projectionsFor, type ProjectionsApi } from "./projections.js";
 import { schemasFor, type SchemasApi } from "./schemas.js";
 import { timeSeriesFor, type TimeSeriesApi } from "./time-series.js";
+import { backupsFor, type BackupsApi } from "./backup.js";
 import type { ObjectStoreApi } from "./store.js";
 import { shardFor, shardsOf, type PartitionMap, type ShardId, type TenantId } from "./topology.js";
 
@@ -15,6 +16,7 @@ export interface TenantApi {
   readonly projections: ProjectionsApi;
   readonly schemas: SchemasApi;
   readonly timeSeries: TimeSeriesApi;
+  readonly backups: BackupsApi;
 }
 
 export interface DatabaseApi {
@@ -84,6 +86,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
         projections,
         schemas,
         timeSeries: timeSeriesFor(store, projections, tenant),
+        backups: backupsFor(store, tenant),
       };
     },
   } satisfies DatabaseApi;

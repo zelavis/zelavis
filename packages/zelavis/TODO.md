@@ -659,7 +659,14 @@ driven by what the existing dependents call, not by what is easiest to port.
   than 400 buckets currently falls back to scanning the whole series.
 - [ ] Tag filtering on range and aggregate. Tags are indexed as postings but no
   query surface reads them yet.
-- [ ] Backup and restore format.
+- [x] Backup and restore format. A backup is the tenant's slice of the log
+  rather than a separate rendering of collections, schemas and documents, so
+  restoring replays through the same idempotent apply path replication uses.
+  Sequences are remapped on restore, since a backup's numbers mean nothing in
+  the shard it lands in. Restoring under a different tenant name, or over live
+  data, is refused rather than silently producing unreachable records.
+- [ ] Restore into a tenant that already holds data, by purging or merging
+  rather than refusing.
 - [ ] Shard topology, so an official App routes virtual ranges across several
   physical shards from creation rather than gaining sharding later.
 - [ ] Logical, shard-aware dashboard system views that never select a physical
