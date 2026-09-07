@@ -609,6 +609,43 @@ an exported type is never mistaken for an operational distributed feature.
 - [ ] Add provider implementations as optional adapters or plugins rather than
   dependencies of the core implementation.
 
+## Replacing `zelavis/app/db` with `zelavis/dbnew`
+
+`dbnew` replaces the document-first SQL database entirely; the two are not
+intended to coexist. Each capability's old implementation is removed once its
+replacement is in use, and the package is not left carrying both. The order is
+driven by what the existing dependents call, not by what is easiest to port.
+
+- [ ] Collections and the document API over `ObjectStore`, with the lens
+  manifest derived from a collection's schema. The dashboard and app services
+  are written against this surface, so nothing else can move first.
+- [ ] Document revisions and conflict semantics, matching what the current
+  documents API guarantees.
+- [ ] `forTenant` as partition selection, so the declared partition key does the
+  work the topology router does today.
+- [ ] Event and projection surfaces re-expressed on the `dbnew` log, including
+  the opaque shard-aware cursor contract.
+- [ ] Collection schemas, validation, and stored schema versions.
+- [ ] Time series definitions, points, and checkpoints.
+- [ ] Backup and restore format.
+- [ ] Shard topology, so an official App routes virtual ranges across several
+  physical shards from creation rather than gaining sharding later.
+- [ ] Logical, shard-aware dashboard system views that never select a physical
+  shard's internal table.
+- [ ] Cut the 26 database endpoints and the nine `src` dependents over, then
+  delete `src/app/db`, its adapters, its tests, and the `zelavis/app/db*`
+  export subpaths.
+
+
+Independent of parity, and needed before an official recipe mounts `dbnew`:
+
+- [ ] Snapshots, so rebuilding replays live objects rather than all history.
+- [ ] Durability testing under interruption; `synchronous=NORMAL` is currently
+  configured rather than proven.
+- [ ] Postings stored as bitmap blobs, removing the b-tree scan that now
+  dominates a wide query. Requires immutable segments and compaction.
+- [ ] An explicit cross-partition scatter/gather contract.
+
 ## Later
 
 - [ ] Remote, separately supervised Zelavis Agents.

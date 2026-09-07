@@ -70,7 +70,7 @@ placements; it does not introduce sharding for the first time.
 | Agent operations | `zelavis/agent` plus `zelavis/core` contracts | A stable Agent identity, operation-bound HMAC authority, durable journal, atomic leases, bounded execution, restart recovery, redacted audit summaries, and permission-gated read endpoints are implemented. The Node executor still runs in-process when explicitly assembled; separately supervised IPC, release-signed scripts, cancellation/process-group supervision, and registered installation operations remain. |
 | Project storage | `zelavis` Node/Bun adapters | Project data is isolated below `.zelavis/projects/<id>/.zelavis`; official App data uses one persisted logical topology backed by four local physical SQLite shards by default. Platform state stays in the System Store. |
 | App Data Fabric | `zelavis/app/db` | Versioned desired topology, observed placements, deterministic virtual ranges, single-writer route validation, and a composite tenant-routing driver are operational locally. Writer fence enforcement and durable topology operations remain future work. |
-| Multi-model object store | `zelavis/dbnew` | A separate store from `zelavis/app/db`, not mounted by any Project recipe. One payload is projected through document, column, measure, and graph lenses over a shared partition-local identifier space, with its own event log, writer generations, and bitmap postings. Its relationship to the App Data Fabric is an open decision. |
+| Multi-model object store | `zelavis/dbnew` | The intended replacement for `zelavis/app/db`, not yet mounted by any Project recipe. One payload is projected through document, column, measure, and graph lenses over a shared partition-local identifier space, with its own event log, writer generations, and bitmap postings. It does not yet reach parity, so both are present; they are not intended to coexist. |
 | Fabric | `src/core/fabric/index.ts` | Read-only inventory/endpoints plus deterministic capability-, pressure-, topology-, and capacity-aware Project replica placement planning. |
 | Fabric integration | `src/index.ts` | Fabric placements are derived from Project runtime status and currently use generation `1`. |
 | Project proxy | `src/index.ts` | Project API traffic requires an active scoped Fabric placement and eligible node, then forwards to `project.runtime.url`. |
@@ -238,22 +238,41 @@ position can be mistaken for a logical global order, and opening a partition
 claims a writer generation that fences the previous holder even when both sit on
 one Node.
 
-What this does not yet settle is how it relates to `zelavis/app/db`, and that
-decision should be made before either grows a dependency on the other. Three
-shapes are open: `dbnew` becomes a storage engine beneath the existing
-document API while `app/db` keeps the topology router; it becomes a second
-app-facing capability for the workloads a document model serves poorly, such as
-search, traversal, and aggregation; or it eventually supersedes `app/db`. The
-current implementation commits to none of them, and no migration step below
-depends on it.
+`dbnew` is intended to replace `zelavis/app/db` entirely. The two are not a
+layered pair and not a choice offered to applications: when the replacement
+lands, the document-first SQL core, its drivers, its endpoints, and its
+dashboard views are removed rather than deprecated. Nothing is dual-written, and
+no compatibility alias is kept, in line with the pre-release policy of removing
+stale shapes cleanly.
 
-Before any official recipe could mount it, it must route through the topology
-rather than expose a physical driver, and it needs a cross-partition
-scatter/gather contract, snapshots — rebuilding currently replays all history
-rather than live objects — and durability testing, since `synchronous=NORMAL`
-is configured rather than proven. Postings are also still stored one row per
-posting; holding them as bitmap blobs would remove the scan that now dominates
-a wide query, but requires immutable segments and compaction.
+Removal is the last step of that work rather than the first, because the
+capability gap is still wide. `zelavis/app/db` is roughly 8,000 lines across 41
+files behind 26 endpoints, with nine dependents inside `src`, thirteen dashboard
+files, and seven test files. `dbnew` is about 600 lines and currently has no
+collections, schemas, document API, revisions, SQL surface, projections, time
+series, Tenant routing, shard topology, backup format, or dashboard views. A
+platform whose database layer had been deleted ahead of its replacement would
+not run, so the sequence is parity first, cutover second, deletion third.
+
+Parity is approached in the order the dependents need it. Collections and the
+document API come first, since the dashboard and app services are written
+against them, and documents map onto objects with the lens manifest derived from
+the collection's schema. Tenant routing follows, which is where the declared
+partition key does the work the topology router does today. Then the event and
+projection surfaces, whose shape `dbnew` already has; then schemas, time series,
+and the backup format; then the shard topology, so an App still routes virtual
+ranges across several physical shards from creation rather than gaining sharding
+later; and last the dashboard's logical, shard-aware system views. Only once a
+capability has a replacement in use does its old implementation come out.
+
+Two properties must hold before any official recipe mounts it: it routes through
+the topology rather than exposing a physical driver, and cross-partition work
+goes through an explicit scatter/gather contract rather than happening silently.
+Independently of the replacement, `dbnew` still needs snapshots — rebuilding
+currently replays all history rather than live objects — durability testing,
+since `synchronous=NORMAL` is configured rather than proven, and postings stored
+as bitmap blobs, which would remove the scan that now dominates a wide query but
+requires immutable segments and compaction.
 
 ## Migration order
 
