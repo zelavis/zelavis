@@ -70,6 +70,7 @@ placements; it does not introduce sharding for the first time.
 | Agent operations | `zelavis/agent` plus `zelavis/core` contracts | A stable Agent identity, operation-bound HMAC authority, durable journal, atomic leases, bounded execution, restart recovery, redacted audit summaries, and permission-gated read endpoints are implemented. The Node executor still runs in-process when explicitly assembled; separately supervised IPC, release-signed scripts, cancellation/process-group supervision, and registered installation operations remain. |
 | Project storage | `zelavis` Node/Bun adapters | Project data is isolated below `.zelavis/projects/<id>/.zelavis`; official App data uses one persisted logical topology backed by four local physical SQLite shards by default. Platform state stays in the System Store. |
 | App Data Fabric | `zelavis/app/db` | Versioned desired topology, observed placements, deterministic virtual ranges, single-writer route validation, and a composite tenant-routing driver are operational locally. Writer fence enforcement and durable topology operations remain future work. |
+| Multi-model object store | `zelavis/dbnew` | A separate store from `zelavis/app/db`, not mounted by any Project recipe. One payload is projected through document, column, measure, and graph lenses over a shared partition-local identifier space, with its own event log, writer generations, and bitmap postings. Its relationship to the App Data Fabric is an open decision. |
 | Fabric | `src/core/fabric/index.ts` | Read-only inventory/endpoints plus deterministic capability-, pressure-, topology-, and capacity-aware Project replica placement planning. |
 | Fabric integration | `src/index.ts` | Fabric placements are derived from Project runtime status and currently use generation `1`. |
 | Project proxy | `src/index.ts` | Project API traffic requires an active scoped Fabric placement and eligible node, then forwards to `project.runtime.url`. |
@@ -213,6 +214,46 @@ The local participants remove Assistant threads, domain bindings, shared bundle
 assets, and finally driver-owned runtime/project data. New Project-keyed
 Platform stores must join that participant plan rather than relying on a broad
 directory delete or leaving orphaned control-plane records.
+
+### Multi-model object store
+
+`zelavis/dbnew` is a document, column, measure, and graph store in which a
+payload is written once and projected through index lenses that hold only
+pointers back to a shared, partition-local identifier space. Because every lens
+addresses the same space, a predicate spanning several data models is one set
+intersection rather than an exchange between separate engines. A design study
+measured the alternative: three specialist stores must move roughly 1,363
+identifiers between themselves for every row such a query returns, a ratio that
+held across a fivefold change in scale. The lenses cost 1.79x the payload in
+derived storage over the same range.
+
+Several of its properties were chosen to match the canonical topology rather
+than to be retrofitted into it later. Locality is declared, so everything
+sharing a partition key is guaranteed to live together and Tenant is the natural
+partition key. Identifiers are dense and partition-local, and global identity is
+the pair, so a single-partition deployment is a placement fact rather than an
+architectural commitment. The event log is the source of truth and the natural
+replication stream, cursors are opaque and carry their partition so no physical
+position can be mistaken for a logical global order, and opening a partition
+claims a writer generation that fences the previous holder even when both sit on
+one Node.
+
+What this does not yet settle is how it relates to `zelavis/app/db`, and that
+decision should be made before either grows a dependency on the other. Three
+shapes are open: `dbnew` becomes a storage engine beneath the existing
+document API while `app/db` keeps the topology router; it becomes a second
+app-facing capability for the workloads a document model serves poorly, such as
+search, traversal, and aggregation; or it eventually supersedes `app/db`. The
+current implementation commits to none of them, and no migration step below
+depends on it.
+
+Before any official recipe could mount it, it must route through the topology
+rather than expose a physical driver, and it needs a cross-partition
+scatter/gather contract, snapshots — rebuilding currently replays all history
+rather than live objects — and durability testing, since `synchronous=NORMAL` is
+configured rather than proven. Postings are also still stored one row per
+posting; holding them as bitmap blobs would remove the scan that now dominates
+a wide query, but requires immutable segments and compaction.
 
 ## Migration order
 
