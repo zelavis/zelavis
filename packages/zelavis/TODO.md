@@ -742,12 +742,17 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   empty value, so a larger block decompresses more to read nothing) and a 4 MiB
   iterator prefetch. LMDB's `useWritemap` aborts the process inside its own
   free-list handling and is not used.
-- [ ] Benchmark past the page cache. Every measurement still fits in memory,
-  which is where an LSM tree and a B+tree stop behaving alike, and it is the
-  regime RocksDB is built for.
-- [ ] Decide whether LMDB should be the default rather than a proof of concept.
-  It is faster than SQLite on every measured axis, but it is a native optional
-  dependency where SQLite ships with Node.
+- [x] Benchmarked past the page cache (`scripts/bench-cold.mjs`), and it
+  reverses the in-memory reading. RocksDB barely notices a cold cache — 1.2x on
+  a posting scan — while SQLite takes 17x and libSQL 22x. LMDB stays fastest in
+  absolute terms cold but degrades 2.8x, and its point reads degrade 10x because
+  a cold mapped page is a fault to disk. RocksDB also holds the same data in
+  82 MB against LMDB's 547 MB, so its working set leaves memory nearly seven
+  times later.
+- [ ] Decide the default. LMDB is fastest while the working set fits in memory
+  and SQLite ships inside Node with no native build, but the cold-cache run says
+  the engine that survives growth is RocksDB. That is a choice about which
+  regime the default should be right for, not about which engine is faster.
 - [ ] Benchmark past the page cache. Every measurement so far fits in memory,
   which is exactly where an LSM engine and a b-tree stop behaving alike.
 - [ ] Postings stored as bitmap blobs, removing the b-tree scan that now
