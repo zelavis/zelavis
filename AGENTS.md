@@ -316,7 +316,7 @@ Key rules:
 - Storage is an ordered key-value engine. Lenses are key ranges, a posting is a
   key with no value, and a transaction is one atomic batch with reads overlaying
   it. An engine implements `get`, `scan`, `write` and `close`; nothing above it
-  knows which engine it is. SQLite (default), libSQL, RocksDB and LMDB ship today; all but SQLite are optional peer dependencies.
+  knows which engine it is. SQLite (default), libSQL, RocksDB and LMDB ship today; all but SQLite are optional peer dependencies, selected with `engine` when a database is opened. SQLite is the default because it is the only one needing no native build; LMDB is fastest while the working set fits in memory, and RocksDB stores roughly six times more per byte and barely slows when it does not.
 - Append to the log before projecting into the lenses. A crash must leave an
   event whose projection can be replayed, never a lens row with no event behind
   it. `rebuildLenses` re-derives every lens from the log alone and is the check

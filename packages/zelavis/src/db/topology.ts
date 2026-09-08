@@ -13,6 +13,20 @@ export type ShardId = string;
  */
 export const DEFAULT_VIRTUAL_RANGES = 256;
 
+/**
+ * The physical shards an App is created with.
+ *
+ * Four on one Node, because sharding is the topology from creation rather than
+ * something added under load: scaling out later moves placements instead of
+ * introducing partitioning for the first time.
+ */
+export const DEFAULT_LOCAL_SHARDS: ReadonlyArray<ShardId> = Object.freeze([
+  "shard-0",
+  "shard-1",
+  "shard-2",
+  "shard-3",
+]);
+
 export interface RangePlacement {
   /** Inclusive. */
   readonly from: number;

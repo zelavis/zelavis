@@ -4,12 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Effect, Stream } from "effect";
-import { and, asSeq, equals, term, runtimeApiFor } from "../dist/db/index.js";
-import {
-  makeLibsqlStore,
-  makeLibsqlDatabase,
-  openLibsqlDatabase,
-} from "../dist/db/engines/libsql.js";
+import { and, asSeq, equals, term } from "../dist/db/index.js";
+import { makeLibsqlStore } from "../dist/db/engines/libsql.js";
+import { openNodeDatabase } from "../dist/db/node-host.js";
 import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
 
 const enc = new TextEncoder();
@@ -113,12 +110,12 @@ test("libsql: retraction, rebuild and identity behave as on the built-in driver"
 
 test("libsql backs a full sharded database through the same runtime api", async (t) => {
   const dir = tempDir(t);
-  await Effect.runPromise(
-    Effect.scoped(
-      Effect.gen(function* () {
-        const db = yield* makeLibsqlDatabase({ directory: dir, nodeId: "libsql-node" });
-        const api = runtimeApiFor(db, { nodeId: "libsql-node" });
-        yield* Effect.promise(async () => {
+  await (async () => {
+        const opened = await openNodeDatabase({
+          directory: dir, nodeId: "libsql-node", engine: { name: "libsql" },
+        });
+        const api = opened.api;
+        {
           const tenant = api.forTenant("acme");
           await tenant.documents.createCollection({ name: "posts" });
           await tenant.documents.insert({
@@ -134,16 +131,18 @@ test("libsql backs a full sharded database through the same runtime api", async 
 
           const backup = await tenant.backups.exportTenant();
           assert.ok(backup.events.length > 0, "the log is readable for backup");
-        });
-        assert.equal(db.partitionMap.placements.length, 4, "sharded from creation");
-      }),
-    ),
-  );
+        }
+        assert.equal(opened.partitionMap.placements.length, 4, "sharded from creation");
+        assert.equal(opened.engine, "libsql");
+        await opened.close();
+  })();
 });
 
-test("openLibsqlDatabase gives a host the same shape openNodeDatabase does", async (t) => {
+test("the host opens libsql through engine selection", async (t) => {
   const dir = tempDir(t);
-  const opened = await openLibsqlDatabase({ directory: dir, nodeId: "libsql-host" });
+  const opened = await openNodeDatabase({
+    directory: dir, nodeId: "libsql-host", engine: { name: "libsql" },
+  });
   assert.equal(opened.api.context.nodeId, "libsql-host");
   assert.equal(opened.partitionMap.placements.length, 4);
 
@@ -153,7 +152,7 @@ test("openLibsqlDatabase gives a host the same shape openNodeDatabase does", asy
   await opened.close();
 
   // The stored partition map is durable across a close, as on the built-in driver.
-  const again = await openLibsqlDatabase({ directory: dir });
+  const again = await openNodeDatabase({ directory: dir, engine: { name: "libsql" } });
   t.after(() => again.close());
   assert.equal(again.api.shardOf("acme"), opened.api.shardOf("acme"));
   const found = await again.api.forTenant("acme").documents.findById({

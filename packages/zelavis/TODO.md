@@ -749,10 +749,14 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   a cold mapped page is a fault to disk. RocksDB also holds the same data in
   82 MB against LMDB's 547 MB, so its working set leaves memory nearly seven
   times later.
-- [ ] Decide the default. LMDB is fastest while the working set fits in memory
-  and SQLite ships inside Node with no native build, but the cold-cache run says
-  the engine that survives growth is RocksDB. That is a choice about which
-  regime the default should be right for, not about which engine is faster.
+- [x] Engine selection on the host, defaulting to SQLite. A default that can
+  fail to install is not a default, and SQLite is the only engine needing
+  nothing: LMDB is the one to choose while the working set fits in memory
+  (roughly 42M objects on 64 GB) and RocksDB the one that keeps working past
+  that, at about a sixth of the space.
+- [ ] Compaction for the event log. Storage grows with history rather than with
+  live objects, so it, not the engine, decides when a working set outgrows
+  memory — which makes it worth more than any engine choice above.
 - [ ] Benchmark past the page cache. Every measurement so far fits in memory,
   which is exactly where an LSM engine and a b-tree stop behaving alike.
 - [ ] Postings stored as bitmap blobs, removing the b-tree scan that now

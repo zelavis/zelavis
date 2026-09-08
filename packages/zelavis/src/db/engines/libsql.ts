@@ -1,16 +1,12 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { Effect, Exit, Scope } from "effect";
+import { Effect, type Scope } from "effect";
 import { StoreError } from "../errors.js";
 import type { KvEngine } from "../kv.js";
 import { claimGeneration, storeOverKv } from "../kv-store.js";
 import { sqliteKvEngineOver, type SqliteHandle } from "./sqlite-kv.js";
 import type { PartitionKey } from "../model.js";
 import type { ObjectStoreApi } from "../store.js";
-import { makeDatabase, TOPOLOGY_SHARD, type DatabaseApi } from "../database.js";
-import { runtimeApiFor, type DatabaseRuntimeApi } from "../runtime-api.js";
-import { partitionMapFor, type PartitionMap, type ShardId } from "../topology.js";
-import { DEFAULT_LOCAL_SHARDS } from "../node-host.js";
 
 /**
  * The subset of `libsql`'s Database this driver uses.
@@ -124,56 +120,3 @@ export const makeLibsqlStore = (
     const engine = yield* makeLibsqlEngine(partition, options);
     return storeOverKv(partition, engine, yield* claimGeneration(engine));
   });
-
-export interface OpenLibsqlDatabaseOptions extends LibsqlStoreOptions {
-  readonly shards?: ReadonlyArray<ShardId>;
-  readonly virtualRanges?: number;
-  readonly nodeId?: string;
-}
-
-export interface OpenLibsqlDatabase {
-  readonly database: DatabaseApi;
-  readonly api: DatabaseRuntimeApi;
-  readonly partitionMap: PartitionMap;
-  readonly close: () => Promise<void>;
-}
-
-/** The libSQL counterpart of `openNodeDatabase`, with the same lifetime rules. */
-export const makeLibsqlDatabase = Effect.fn("makeLibsqlDatabase")(function* (
-  options: OpenLibsqlDatabaseOptions,
-) {
-  const fallback = partitionMapFor(options.shards ?? DEFAULT_LOCAL_SHARDS, {
-    ...(options.virtualRanges === undefined ? {} : { virtualRanges: options.virtualRanges }),
-  });
-  return yield* makeDatabase({
-    partitionMap: fallback,
-    ...(options.nodeId === undefined ? {} : { nodeId: options.nodeId }),
-    openShard: (shard) => makeLibsqlStore(shard, options),
-  });
-});
-
-/**
- * The libSQL counterpart of `openNodeDatabase`.
- *
- * Same lifetime rules: the scope is created here and closed by the host's
- * shutdown hook, because the platform holds databases through `close()` rather
- * than from inside a scoped effect.
- */
-export const openLibsqlDatabase = async (
-  options: OpenLibsqlDatabaseOptions,
-): Promise<OpenLibsqlDatabase> => {
-  const scope = await Effect.runPromise(Scope.make());
-  const database = await Effect.runPromise(
-    Scope.provide(makeLibsqlDatabase(options), scope),
-  );
-  return {
-    database,
-    api: runtimeApiFor(database, {
-      ...(options.nodeId === undefined ? {} : { nodeId: options.nodeId }),
-    }),
-    partitionMap: database.partitionMap,
-    close: () => Effect.runPromise(Scope.close(scope, Exit.succeed(undefined))),
-  };
-};
-
-export { TOPOLOGY_SHARD };
