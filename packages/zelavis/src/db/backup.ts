@@ -10,7 +10,7 @@ import type { ObjectStoreApi } from "./store.js";
 import { COLLECTION_NAMESPACE_PREFIX, isDerivedNamespace, tenantOf } from "./tenancy.js";
 import type { TenantId } from "./topology.js";
 
-export const ZELAVIS_DBNEW_BACKUP_V1 = "zelavis.dbnew-backup.v1" as const;
+export const ZELAVIS_DB_BACKUP_V1 = "zelavis.db-backup.v1" as const;
 
 export interface BackupEvent {
   readonly kind: "put" | "retract";
@@ -24,7 +24,7 @@ export interface BackupEvent {
 }
 
 export interface TenantBackupV1 {
-  readonly format: typeof ZELAVIS_DBNEW_BACKUP_V1;
+  readonly format: typeof ZELAVIS_DB_BACKUP_V1;
   readonly exportedAt: string;
   readonly tenantId: TenantId;
   readonly events: ReadonlyArray<BackupEvent>;
@@ -102,7 +102,7 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
       }
 
       return {
-        format: ZELAVIS_DBNEW_BACKUP_V1,
+        format: ZELAVIS_DB_BACKUP_V1,
         exportedAt: new Date().toISOString(),
         tenantId: tenant,
         events,
@@ -111,7 +111,7 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
 
   restoreTenant: (backup) =>
     Effect.gen(function* () {
-      if (backup.format !== ZELAVIS_DBNEW_BACKUP_V1) {
+      if (backup.format !== ZELAVIS_DB_BACKUP_V1) {
         return yield* new BackupFormatUnsupported({ format: String(backup.format) });
       }
       if (backup.tenantId !== tenant) {

@@ -14,7 +14,7 @@ Zelavis is a unified, self-hostable App Platform. It replaces — and combines �
 | Workers / Functions platforms | Project-scoped workloads: functions, jobs, schedules, and webhooks hosted by the long-running Zelavis runtime |
 | Claude / Codex chat | AI chat area built into the dashboard for interacting with Zelavis and building via AI |
 
-The difference from Firebase/Supabase is depth and ownership: Zelavis is fully self-hostable, runtime-neutral, and built to scale beyond a single database engine. The database layer is the deepest differentiator — `zelavis/dbnew` is a multi-model object store (event-sourced, tenant-aware, one payload projected through document, column, measure, and graph lenses) on a swappable storage engine. Node SQLite and libSQL drivers ship today, both over the same store logic through a synchronous gateway; other engines are future work. Official Zelavis Apps are locally physically sharded from creation: one logical App database routes stable virtual shard ranges across several SQLite files even when every placement is on one Node. Tenant placement, replication, failover, shard movement, and exceptional Tenant subdivision build on that same topology instead of introducing a second distributed architecture later. The event log is the natural replication stream and `tenant_id` is the normal first partition key. That is the same role Vitess plays for MySQL, but Zelavis is not coupled to any single SQL engine. Replicas do not imply multiple writable owners; multi-writer consistency requires a separate explicit data specification.
+The difference from Firebase/Supabase is depth and ownership: Zelavis is fully self-hostable, runtime-neutral, and built to scale beyond a single database engine. The database layer is the deepest differentiator — `zelavis/db` is a multi-model object store (event-sourced, tenant-aware, one payload projected through document, column, measure, and graph lenses) on a swappable storage engine. Node SQLite and libSQL drivers ship today, both over the same store logic through a synchronous gateway; other engines are future work. Official Zelavis Apps are locally physically sharded from creation: one logical App database routes stable virtual shard ranges across several SQLite files even when every placement is on one Node. Tenant placement, replication, failover, shard movement, and exceptional Tenant subdivision build on that same topology instead of introducing a second distributed architecture later. The event log is the natural replication stream and `tenant_id` is the normal first partition key. That is the same role Vitess plays for MySQL, but Zelavis is not coupled to any single SQL engine. Replicas do not imply multiple writable owners; multi-writer consistency requires a separate explicit data specification.
 
 Zelavis should be able to host websites itself on user-controlled infrastructure. Managed deployment providers may be optional targets through plugins, but they are not the default hosting model and must not replace native Zelavis website hosting.
 
@@ -30,7 +30,7 @@ Dashboard/product structure:
 
 Core platform work centers on the unified `zelavis` package and its public
 subpaths: `zelavis/core`, `zelavis/runtime`, `zelavis/fabric`, `zelavis/app`,
-`zelavis/dbnew`, `zelavis/app/auth`, and `zelavis/app/workloads`. The dashboard
+`zelavis/db`, `zelavis/app/auth`, and `zelavis/app/workloads`. The dashboard
 remains the focused `@zelavis/ui` package bundled by `zelavis`.
 
 The repo still contains domain packages such as `@zelavis/ecommerce`, but they are optional layers on top of the platform primitives, not the main product definition.
@@ -99,9 +99,9 @@ current automatically.
 - **System Services** are trusted Platform OS capabilities. Do not call every
   bundled project service a core service.
 - **System Store** is Platform OS persistence. Local adapters default to
-  `.zelavis/system/zelavis.sqlite`. It must stay separate from `zelavis/dbnew`
+  `.zelavis/system/zelavis.sqlite`. It must stay separate from `zelavis/db`
   project databases and must never appear in a project's Database UI.
-- The Platform process does not mount an app-facing `zelavis/dbnew` service by
+- The Platform process does not mount an app-facing `zelavis/db` service by
   default. Each Zelavis App project owns its logical database below
   `.zelavis/projects/<projectId>/.zelavis/data`; the official recipe maps its
   virtual shard ranges across several physical SQLite shard files even on one
@@ -118,7 +118,7 @@ current automatically.
   business logic stays inside the Project.
 - Trusted product-specific control-plane services live under
   `packages/zelavis/src/platform`. First-party product surfaces are their own
-  packages under `packages/zelavis/product-services/*`: `@zelavis/ui` owns
+  packages under `packages/zelavis/services/*`: `@zelavis/ui` owns
   dashboard delivery, `@zelavis/marketplace` owns the marketplace. These
   internal services assemble the public core primitives into the Zelavis
   product and are not separate public framework brands.
@@ -230,7 +230,7 @@ writable owners. Provider adapters supply capacity but never define Zelavis.
 Every official `zelavis/app` Project uses the App Data Fabric topology from
 creation. A single-node App still routes Tenant data through a versioned
 partition map containing many virtual shard ranges and several physical SQLite
-shards; the placements merely happen to share one Node. `zelavis/dbnew` may
+shards; the placements merely happen to share one Node. `zelavis/db` may
 support a one-shard topology as an embeddable low-level instance, but the
 official App recipe must not bypass the topology router or expose a physical
 driver as its application API. Scaling out changes shard placement, replicas,
@@ -302,7 +302,7 @@ renders the selected project's navigation under `/zelavis/projects/:projectId`.
 
 ## Database Architecture Rules
 
-`zelavis/dbnew` is the database. A payload is written once and projected through
+`zelavis/db` is the database. A payload is written once and projected through
 document, column, measure, and graph lenses that hold only pointers back to a
 shared, partition-local identifier space, so a predicate spanning several data
 models is one set intersection rather than an exchange between engines. Its
@@ -351,7 +351,7 @@ part of the collection event pipeline. Names beginning with `zv_` are reserved
 for Zelavis internals and must be rejected as collection names.
 
 Dashboard system views must be logical, shard-aware capabilities exposed by
-`zelavis/dbnew`; they must never select a physical shard's internal table or
+`zelavis/db`; they must never select a physical shard's internal table or
 raw SQL endpoint. Until those logical views exist, keep physical `zv_*` tables
 out of the dashboard entirely.
 
@@ -533,7 +533,7 @@ those grants, while endpoints remain the authority layer.
   contracts or a private dispatcher.
 - `packages/zelavis/src/platform` owns trusted product-specific control-plane
   and Marketplace services.
-- `packages/zelavis/product-services/zelavis-ui` contains the admin/dashboard UI used by the runtime package.
+- `packages/zelavis/services/zelavis-ui` contains the admin/dashboard UI used by the runtime package.
 - `packages/zelavis/adapters/*` contains optional framework, runtime, database,
   or external-system adapters distributed with the package workspace.
 - `plugins/*` contains official optional capability and provider plugins,
@@ -636,12 +636,12 @@ When creating a new core package, service package, or plugin package:
 
 ## UI Package Rules
 
-`packages/zelavis/product-services/zelavis-ui` is a special package with extra constraints:
+`packages/zelavis/services/zelavis-ui` is a special package with extra constraints:
 
 - It uses **React Router v7** (SPA mode, `ssr: false`) — not TanStack Router or TanStack Start.
 - Styling is Tailwind CSS v4 + shadcn/ui (Base UI components).
 - Generated route types live in `.react-router/types/`. Do not hand-edit them.
-- Route source files are under `packages/zelavis/product-services/zelavis-ui/app/routes/`. Edit these; typegen runs automatically.
+- Route source files are under `packages/zelavis/services/zelavis-ui/app/routes/`. Edit these; typegen runs automatically.
 - The dashboard sidebar uses a slide-based navigation model. Treat each slide as a distinct sidebar panel.
 - Nested sidebar slide headers use a larger standard gap before the next menu content. Sidebar panels with pinned/fixed action rows use `SidebarFixedActionMenu`; pass `afterHeader` when fixed actions sit directly under the slide back/title header.
 - Build dashboard features as mobile-slot-ready modules. Route files may compose those modules into a wide desktop page, while mobile sidebar slides can later mount the same modules into named slots such as `overview`, `main`, `create`, `edit`, `inspect`, and `settings`.
@@ -684,7 +684,7 @@ When working on UI behavior:
 
 Treat these carefully:
 
-- `packages/zelavis/product-services/zelavis-ui/.react-router/types/` is generated. Do not hand-edit it.
+- `packages/zelavis/services/zelavis-ui/.react-router/types/` is generated. Do not hand-edit it.
 - `packages/*/dist/*` is build output.
 - `website/.astro/*` and `website/dist/*` are generated site output.
 

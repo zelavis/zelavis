@@ -2,7 +2,7 @@ import type {
   DatabaseRuntimeApi,
   JsonObject,
   TenantRuntimeApi,
-} from "../../../dbnew/index.js";
+} from "../../../db/index.js";
 import type {
   AccountRepository,
   AuthAttemptRepository,

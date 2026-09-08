@@ -8,7 +8,7 @@ import {
 import {
   defineDatabaseService,
   type DatabaseRuntimeApi,
-} from "../dbnew/index.js";
+} from "../db/index.js";
 import {
   type ZelavisAnyRuntimeServiceInput,
 } from "../core/index.js";

@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Effect, Layer, Stream } from "effect";
-import { and, asSeq, edge, equals, term } from "../dist/dbnew/index.js";
-import { DbRoot, Partitions } from "../dist/dbnew/adapters/node-sqlite.js";
-import { ObjectStore } from "../dist/dbnew/index.js";
+import { and, asSeq, edge, equals, term } from "../dist/db/index.js";
+import { DbRoot, Partitions } from "../dist/db/engines/node-sqlite.js";
+import { ObjectStore } from "../dist/db/index.js";
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -29,8 +29,8 @@ const run = (directory, program) =>
     ),
   );
 
-test("dbnew: one payload, many lenses, resolved through a shared seq space", async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "zv-dbnew-"));
+test("db: one payload, many lenses, resolved through a shared seq space", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "zv-db-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
 
   const rows = [
@@ -81,8 +81,8 @@ test("dbnew: one payload, many lenses, resolved through a shared seq space", asy
   }));
 });
 
-test("dbnew: retraction leaves no posting behind", async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "zv-dbnew-"));
+test("db: retraction leaves no posting behind", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "zv-db-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
 
   const before = site(1, "eu-west", [17], ["atlas"]);

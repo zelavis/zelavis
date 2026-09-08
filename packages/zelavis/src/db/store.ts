@@ -119,5 +119,5 @@ export interface ObjectStoreApi {
  * once per database.
  */
 export class ObjectStore extends Context.Service<ObjectStore, ObjectStoreApi>()(
-  "zelavis/dbnew/ObjectStore",
+  "zelavis/db/ObjectStore",
 ) {}

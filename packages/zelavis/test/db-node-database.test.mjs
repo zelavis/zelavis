@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { DEFAULT_LOCAL_SHARDS, openNodeDatabase, shardFilePath } from "../dist/dbnew/adapters/node-database.js";
+import { DEFAULT_LOCAL_SHARDS, openNodeDatabase, shardFilePath } from "../dist/db/node-host.js";
 
 const tempDir = (t) => {
   const dir = mkdtempSync(join(tmpdir(), "zv-open-"));

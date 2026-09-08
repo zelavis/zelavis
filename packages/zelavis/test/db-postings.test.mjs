@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Postings } from "../dist/dbnew/index.js";
+import { Postings } from "../dist/db/index.js";
 
 const rnd = (seed) => () =>
   ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) >>> 0) / 0x80000000;

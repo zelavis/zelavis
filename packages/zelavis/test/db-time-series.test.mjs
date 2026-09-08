@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Effect } from "effect";
-import { makeDatabase, partitionMapFor } from "../dist/dbnew/index.js";
-import { makeNodeSqliteStore } from "../dist/dbnew/adapters/node-sqlite.js";
+import { makeDatabase, partitionMapFor } from "../dist/db/index.js";
+import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
 
 const DAY = 86_400_000;
 const BASE = Date.UTC(2026, 0, 1);

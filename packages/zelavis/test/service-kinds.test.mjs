@@ -34,7 +34,7 @@ test("every composed service reports the kind it is", async () => {
 test("the dashboard's manifest declares the frontend it is", async () => {
   const manifest = JSON.parse(
     await readFile(
-      new URL("../product-services/zelavis-ui/package.json", import.meta.url),
+      new URL("../services/zelavis-ui/package.json", import.meta.url),
       "utf8",
     ),
   );
@@ -63,7 +63,7 @@ test("the marketplace's declared kind is the one it reports", async () => {
   const manifest = JSON.parse(
     await readFile(
       new URL(
-        "../product-services/zelavis-marketplace/package.json",
+        "../services/zelavis-marketplace/package.json",
         import.meta.url,
       ),
       "utf8",

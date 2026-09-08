@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openNodeDatabase } from "../dist/dbnew/adapters/node-database.js";
+import { openNodeDatabase } from "../dist/db/node-host.js";
 
 /**
  * A throwaway shard directory for one test.

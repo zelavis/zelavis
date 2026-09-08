@@ -1,9 +1,9 @@
 import { join } from "node:path";
 import { Effect, Exit, Scope } from "effect";
-import { makeDatabase, TOPOLOGY_SHARD, type DatabaseApi } from "../database.js";
-import { runtimeApiFor, type DatabaseRuntimeApi } from "../runtime-api.js";
-import { partitionMapFor, type PartitionMap, type ShardId } from "../topology.js";
-import { makeNodeSqliteStore } from "./node-sqlite.js";
+import { makeDatabase, TOPOLOGY_SHARD, type DatabaseApi } from "./database.js";
+import { runtimeApiFor, type DatabaseRuntimeApi } from "./runtime-api.js";
+import { partitionMapFor, type PartitionMap, type ShardId } from "./topology.js";
+import { makeNodeSqliteStore } from "./engines/node-sqlite.js";
 
 /** Matches the physical shard count the official local App topology uses. */
 export const DEFAULT_LOCAL_SHARDS: ReadonlyArray<ShardId> = Object.freeze([

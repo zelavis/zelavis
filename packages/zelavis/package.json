@@ -52,25 +52,25 @@
       "types": "./dist/app/auth/index.d.ts",
       "import": "./dist/app/auth/index.js"
     },
-    "./dbnew": {
-      "types": "./dist/dbnew/index.d.ts",
-      "import": "./dist/dbnew/index.js"
+    "./db": {
+      "types": "./dist/db/index.d.ts",
+      "import": "./dist/db/index.js"
     },
-    "./dbnew/node-sqlite": {
-      "types": "./dist/dbnew/adapters/node-sqlite.d.ts",
-      "import": "./dist/dbnew/adapters/node-sqlite.js"
+    "./db/node-sqlite": {
+      "types": "./dist/db/engines/node-sqlite.d.ts",
+      "import": "./dist/db/engines/node-sqlite.js"
     },
-    "./dbnew/node": {
-      "types": "./dist/dbnew/adapters/node-database.d.ts",
-      "import": "./dist/dbnew/adapters/node-database.js"
+    "./db/node": {
+      "types": "./dist/db/node-host.d.ts",
+      "import": "./dist/db/node-host.js"
     },
-    "./dbnew/libsql": {
-      "types": "./dist/dbnew/adapters/libsql.d.ts",
-      "import": "./dist/dbnew/adapters/libsql.js"
+    "./db/libsql": {
+      "types": "./dist/db/engines/libsql.d.ts",
+      "import": "./dist/db/engines/libsql.js"
     },
-    "./dbnew/schema": {
-      "types": "./dist/dbnew/schema/index.d.ts",
-      "import": "./dist/dbnew/schema/index.js"
+    "./db/schema": {
+      "types": "./dist/db/schema/index.d.ts",
+      "import": "./dist/db/schema/index.js"
     },
     "./app/workloads": {
       "types": "./dist/app/workloads/index.d.ts",

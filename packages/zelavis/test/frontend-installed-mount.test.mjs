@@ -11,7 +11,7 @@ import { embeddedDashboardShell } from "@zelavis/ui/dashboard-assets";
 async function dashboardManifest() {
   return JSON.parse(
     await readFile(
-      new URL("../product-services/zelavis-ui/package.json", import.meta.url),
+      new URL("../services/zelavis-ui/package.json", import.meta.url),
       "utf8",
     ),
   );

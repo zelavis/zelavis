@@ -1,13 +1,13 @@
 ---
 name: zelavis-dashboard-ui
-description: Use when working on the Zelavis dashboard UI in packages/zelavis/product-services/zelavis-ui, including React Router v7 routes, the slide-based sidebar, mounted /zelavis dev behavior, and embedded-runtime dashboard mounting.
+description: Use when working on the Zelavis dashboard UI in packages/zelavis/services/zelavis-ui, including React Router v7 routes, the slide-based sidebar, mounted /zelavis dev behavior, and embedded-runtime dashboard mounting.
 ---
 
 # Zelavis Dashboard UI
 
 Use this skill for changes in:
 
-- `packages/zelavis/product-services/zelavis-ui`
+- `packages/zelavis/services/zelavis-ui`
 - embedded dashboard behavior in `packages/zelavis`
 - dashboard routing, settings, theme, and navigation
 

@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Effect } from "effect";
-import { makeDatabase, partitionMapFor, runtimeApiFor } from "../dist/dbnew/index.js";
-import { makeNodeSqliteStore } from "../dist/dbnew/adapters/node-sqlite.js";
+import { makeDatabase, partitionMapFor, runtimeApiFor } from "../dist/db/index.js";
+import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
 
 // The runtime boundary is used from plain async code, exactly as a route handler
 // would, so these tests deliberately contain no Effect beyond opening the store.

@@ -1,5 +1,5 @@
 /**
- * `zelavis/dbnew` — a multi-model object store.
+ * `zelavis/db` — a multi-model object store.
  *
  * One payload is written once and projected through several index lenses that
  * hold pointers back to a shared, partition-local identifier space. Because

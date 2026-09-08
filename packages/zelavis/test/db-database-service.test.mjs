@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createServiceRuntime } from "../dist/core/index.js";
-import { defineDatabaseService } from "../dist/dbnew/index.js";
+import { defineDatabaseService } from "../dist/db/index.js";
 import { openTemporaryDatabase } from "./_database.mjs";
 
 const call = (route, { service, params = {}, query = "", body } = {}) =>
@@ -24,7 +24,7 @@ const routeOf = (service, id) => {
   return found;
 };
 
-test("the database service mounts the same routes on the dbnew runtime API", async (t) => {
+test("the database service mounts the same routes on the db runtime API", async (t) => {
   const { api } = await openTemporaryDatabase(t);
   const runtime = await createServiceRuntime({
     services: [defineDatabaseService(api)],

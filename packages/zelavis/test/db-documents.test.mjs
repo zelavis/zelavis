@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Effect } from "effect";
-import { documentsFor } from "../dist/dbnew/index.js";
-import { makeNodeSqliteStore } from "../dist/dbnew/adapters/node-sqlite.js";
+import { documentsFor } from "../dist/db/index.js";
+import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
 
 const withDocs = (t, body) => {
   const dir = mkdtempSync(join(tmpdir(), "zv-docs-"));

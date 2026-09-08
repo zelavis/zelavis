@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Effect, Stream } from "effect";
-import { and, asSeq, equals, term } from "../dist/dbnew/index.js";
-import { makeNodeSqliteStore } from "../dist/dbnew/adapters/node-sqlite.js";
+import { and, asSeq, equals, term } from "../dist/db/index.js";
+import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
 
 const enc = new TextEncoder();
 
@@ -35,7 +35,7 @@ const ingest = (store) =>
 
 
 const tempDir = (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "zv-dbnew-log-"));
+  const dir = mkdtempSync(join(tmpdir(), "zv-db-log-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 };

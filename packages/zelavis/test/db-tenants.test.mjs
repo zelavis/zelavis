@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Effect } from "effect";
-import { makeDatabase, partitionMapFor, shardFor, shardsOf, virtualRangeFor } from "../dist/dbnew/index.js";
-import { makeNodeSqliteStore } from "../dist/dbnew/adapters/node-sqlite.js";
+import { makeDatabase, partitionMapFor, shardFor, shardsOf, virtualRangeFor } from "../dist/db/index.js";
+import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
 
 const withDb = (t, shards, body, options) => {
   const dir = mkdtempSync(join(tmpdir(), "zv-tenant-"));

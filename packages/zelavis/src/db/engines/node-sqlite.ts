@@ -10,7 +10,7 @@ import type { StoreGateway } from "../gateway.js";
 
 /** Where partition files live. Supplied by the host runtime. */
 export class DbRoot extends Context.Service<DbRoot, { readonly directory: string }>()(
-  "zelavis/dbnew/DbRoot",
+  "zelavis/db/DbRoot",
 ) {
   static readonly layer = (directory: string) =>
     Layer.effect(DbRoot, Effect.succeed({ directory }));
@@ -54,7 +54,7 @@ export const nodeSqliteStoreLayer = (partition: PartitionKey) =>
  * corruption risk rather than merely a leak. `LayerMap` ties each entry to a
  * scope, so eviction runs the release that actually closes the file.
  */
-export class Partitions extends LayerMap.Service<Partitions>()("zelavis/dbnew/Partitions", {
+export class Partitions extends LayerMap.Service<Partitions>()("zelavis/db/Partitions", {
   lookup: (partition: PartitionKey) => nodeSqliteStoreLayer(partition),
   idleTimeToLive: "5 minutes",
 }) {}

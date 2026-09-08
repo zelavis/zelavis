@@ -4,13 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Effect, Stream } from "effect";
-import { and, asSeq, equals, term, runtimeApiFor } from "../dist/dbnew/index.js";
+import { and, asSeq, equals, term, runtimeApiFor } from "../dist/db/index.js";
 import {
   makeLibsqlStore,
   makeLibsqlDatabase,
   openLibsqlDatabase,
-} from "../dist/dbnew/adapters/libsql.js";
-import { makeNodeSqliteStore } from "../dist/dbnew/adapters/node-sqlite.js";
+} from "../dist/db/engines/libsql.js";
+import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
 
 const enc = new TextEncoder();
 const row = (seq, region, words) => ({

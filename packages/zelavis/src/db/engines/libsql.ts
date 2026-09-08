@@ -9,7 +9,7 @@ import type { ObjectStoreApi } from "../store.js";
 import { makeDatabase, TOPOLOGY_SHARD, type DatabaseApi } from "../database.js";
 import { runtimeApiFor, type DatabaseRuntimeApi } from "../runtime-api.js";
 import { partitionMapFor, type PartitionMap, type ShardId } from "../topology.js";
-import { DEFAULT_LOCAL_SHARDS } from "./node-database.js";
+import { DEFAULT_LOCAL_SHARDS } from "../node-host.js";
 
 /**
  * The subset of `libsql`'s Database this driver uses.

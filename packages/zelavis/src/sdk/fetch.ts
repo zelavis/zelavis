@@ -2,7 +2,7 @@ import type { AuthApi } from "../app/auth/index.js";
 import type {
   DatabaseRuntimeApi,
   JsonObject as DatabaseJsonObject,
-} from "../dbnew/index.js";
+} from "../db/index.js";
 import {
   requireActivePluginContext,
   getActivePluginContext,
@@ -23,7 +23,7 @@ export {
   AuthValidationError,
   authService,
 } from "../app/auth/index.js";
-// The database is reached through `zelavis/dbnew`, not re-exported here: its
+// The database is reached through `zelavis/db`, not re-exported here: its
 // store is a host resource that opens files, and an SDK bundle a browser can
 // load must not carry one.
 export type {
@@ -31,7 +31,7 @@ export type {
   CollectionFieldEntry,
   CollectionSchema,
   CollectionSchemaSummary,
-} from "../dbnew/schema/index.js";
+} from "../db/schema/index.js";
 
 export type ZelavisSdkSurfaceTarget = "fetch" | "browser" | "node";
 export type ZelavisSdkRuntimeName = "node" | "bun" | "deno";

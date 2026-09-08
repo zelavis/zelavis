@@ -4,7 +4,7 @@ import {
   createServiceRuntime,
   generateOpenApiSpec,
 } from "../dist/core/index.js";
-import { defineDatabaseService } from "../dist/dbnew/index.js";
+import { defineDatabaseService } from "../dist/db/index.js";
 import { openTemporaryDatabase, temporaryDatabaseDirectory } from "./_database.mjs";
 import { zelavis } from "../dist/index.js";
 import { zelavisUiFrontend } from "@zelavis/ui/frontend";

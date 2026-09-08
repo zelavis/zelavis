@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Effect } from "effect";
-import { makeDatabase, partitionMapFor, ZELAVIS_DBNEW_BACKUP_V1 } from "../dist/dbnew/index.js";
-import { makeNodeSqliteStore } from "../dist/dbnew/adapters/node-sqlite.js";
+import { makeDatabase, partitionMapFor, ZELAVIS_DB_BACKUP_V1 } from "../dist/db/index.js";
+import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
 
 const fields = [
   { name: "title", field: { _tag: "TextField", label: "Title", required: true } },
@@ -54,7 +54,7 @@ test("backup: exports a tenant's log and restores it elsewhere", async (t) => {
       yield* populate(source);
 
       const backup = yield* source.backups.exportTenant();
-      assert.equal(backup.format, ZELAVIS_DBNEW_BACKUP_V1);
+      assert.equal(backup.format, ZELAVIS_DB_BACKUP_V1);
       assert.equal(backup.tenantId, "acme");
       assert.ok(backup.events.length > 0);
       assert.ok(Date.parse(backup.exportedAt) > 0);

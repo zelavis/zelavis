@@ -831,7 +831,7 @@ When this document and the repository disagree, follow the repository:
 - `packages/zelavis/README.md` — public package authoring documentation.
 - `plugins/ecommerce/src/ecommerce-plugin.ts` — first-party SDK usage,
   including a service added from `setup` rather than at module scope.
-- `packages/zelavis/product-services/zelavis-auth/src/index.ts` — a smaller
+- `packages/zelavis/services/zelavis-auth/src/index.ts` — a smaller
   first-party plugin: one menu, one page, no routes of its own.
 
 When this guide and the repository disagree, the repository wins.

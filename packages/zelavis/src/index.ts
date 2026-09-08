@@ -21,8 +21,8 @@ import {
 import {
   defineDatabaseService,
   type DatabaseRuntimeApi,
-} from "./dbnew/index.js";
-import type { OpenNodeDatabaseOptions } from "./dbnew/adapters/node-database.js";
+} from "./db/index.js";
+import type { OpenNodeDatabaseOptions } from "./db/node-host.js";
 import {
   createFabricService,
   createJsonErrorResponse,
@@ -218,7 +218,7 @@ export * from "./storage/s3.js";
 export type {
   DatabaseRuntimeApi,
   JsonObject as DatabaseJsonObject,
-} from "./dbnew/index.js";
+} from "./db/index.js";
 export {
   type ZelavisAnyRuntimeServiceInput,
   type ZelavisServerErrorHandler,
@@ -296,7 +296,7 @@ export type ZelavisWorkloadsOptions =
 /**
  * How the Platform gets its database.
  *
- * `dbnew` has no in-memory store, so there is no longer a database a runtime
+ * `zelavis/db` has no in-memory store, so there is no longer a database a runtime
  * can conjure without being told where to put it. Either the host names a
  * directory, or it hands over an already-open instance whose lifetime it owns;
  * anything else means this runtime has no database.
@@ -1191,7 +1191,7 @@ async function resolveDatabaseCoreService(
     return { api: resolved };
   }
 
-  const { openNodeDatabase } = await import("./dbnew/adapters/node-database.js");
+  const { openNodeDatabase } = await import("./db/node-host.js");
   const opened = await openNodeDatabase(resolved);
   return { api: opened.api, close: opened.close };
 }
