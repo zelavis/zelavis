@@ -66,6 +66,17 @@ export const makeLmdbEngine = (
             path: `${directory}/${partition}`,
             keyEncoding: "binary",
             encoding: "binary",
+            // LMDB commits with a synchronous flush by default, which is
+            // stricter than the others: SQLite runs at synchronous=NORMAL and
+            // RocksDB does not fsync per write. Matching them makes this a
+            // comparison of engines rather than of durability settings.
+            overlappingSync: true,
+            // `useWritemap` is deliberately not set. It writes directly into
+            // the mapped region and is the obvious throughput knob, but it
+            // tripped an assertion inside LMDB's own free-list handling
+            // (mdb_freelist_save) on this workload. A tuning option that
+            // aborts the process is not a tuning option.
+            noMemInit: true,
           }),
         catch: (cause) => new StoreError({ op: "lmdb.open", cause }),
       }),

@@ -21,7 +21,7 @@ interface RocksIterator {
 }
 
 interface RocksDatabase {
-  open(callback: (error?: Error) => void): void;
+  open(options: Record<string, unknown>, callback: (error?: Error) => void): void;
   close(callback: (error?: Error) => void): void;
   get(
     key: Uint8Array,
@@ -84,7 +84,22 @@ export const makeRocksdbEngine = (
         try: async () => {
           mkdirSync(directory, { recursive: true });
           const db = open(join(directory, partition));
-          await promisify<void>((done) => db.open((error) => done(error)));
+          // Only the block cache is raised. Larger blocks were tried and made
+          // everything slower: a posting is a key with an empty value, so a
+          // bigger block means decompressing more bytes to read nothing, and
+          // point reads suffered worst. The cache is what keeps a repeated scan
+          // off disk and costs nothing per read. The binding exposes no
+          // memtable size, so the write path stays where it is.
+          await promisify<void>((done) =>
+            db.open(
+              {
+                createIfMissing: true,
+                cacheSize: 64 * 1024 * 1024,
+                maxOpenFiles: 1000,
+              },
+              (error) => done(error),
+            ),
+          );
           return db;
         },
         catch: (cause) => new StoreError({ op: "rocksdb.open", cause }),
@@ -132,6 +147,10 @@ export const makeRocksdbEngine = (
                 ...(end === undefined ? {} : { lt: buf(end) }),
                 keyAsBuffer: true,
                 valueAsBuffer: true,
+                // A modest prefetch. Four megabytes was tried and cost more in
+                // buffering than it saved in boundary crossings.
+                highWaterMark: 256 * 1024,
+                fillCache: true,
               });
               try {
                 for (;;) {

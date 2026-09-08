@@ -736,9 +736,15 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   engine that does, but tuning erased its speed lead over SQLite entirely.
   SQLite needs nothing installed and is the fastest at point reads after LMDB.
   libSQL trails and carries the largest files.
-- [ ] Tune the other engines before treating the comparison as final. SQLite now
-  runs with mmap, a 64 MiB cache and 8 KiB pages while RocksDB and LMDB are on
-  defaults, which is the previous unfairness inverted rather than removed.
+- [x] Tuned every engine, so the comparison is between engines rather than
+  between one engine's defaults and another's architecture. Two knobs made
+  things worse and were reverted: RocksDB with 16 KiB blocks (a posting has an
+  empty value, so a larger block decompresses more to read nothing) and a 4 MiB
+  iterator prefetch. LMDB's `useWritemap` aborts the process inside its own
+  free-list handling and is not used.
+- [ ] Benchmark past the page cache. Every measurement still fits in memory,
+  which is where an LSM tree and a B+tree stop behaving alike, and it is the
+  regime RocksDB is built for.
 - [ ] Decide whether LMDB should be the default rather than a proof of concept.
   It is faster than SQLite on every measured axis, but it is a native optional
   dependency where SQLite ships with Node.
