@@ -79,6 +79,21 @@ export interface ObjectStoreApi {
   readonly reindexLenses: Effect.Effect<number, DbError>;
 
   /**
+   * Fold the live postings into immutable blobs.
+   *
+   * A posting stored as a bare key costs one b-tree entry to read, so a wide
+   * predicate costs as many as it matches however good the set algebra above
+   * it is. A blob covers 65536 identifiers, which turns that into one read per
+   * 65536. Writes keep their cheap shape: blobs are never edited, so what is
+   * written after a seal lands in the live tier beside them and what is removed
+   * from one leaves a tombstone.
+   */
+  readonly sealPostings: Effect.Effect<
+    { readonly segments: number; readonly postings: number },
+    DbError
+  >;
+
+  /**
    * Drop history, keeping the most recent `keep` events.
    *
    * Storage grows with writes rather than with live objects, so this is what

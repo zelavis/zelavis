@@ -44,6 +44,15 @@ export interface MaintenanceApi {
 
   /** Re-derive every shard's postings from its stored manifests. */
   readonly reindex: Effect.Effect<ReadonlyArray<ShardReindex>, DbError>;
+
+  /**
+   * Fold every shard's postings into immutable blobs.
+   *
+   * The read-side counterpart to compaction: compaction stops storage growing
+   * with history, sealing stops a wide query costing one b-tree entry per
+   * object it matches.
+   */
+  readonly seal: Effect.Effect<ReadonlyArray<ShardSeal>, DbError>;
 }
 
 export interface ShardMaintenance {
@@ -62,6 +71,12 @@ export interface ShardCompaction {
 export interface ShardReindex {
   readonly shard: ShardId;
   readonly records: number;
+}
+
+export interface ShardSeal {
+  readonly shard: ShardId;
+  readonly segments: number;
+  readonly postings: number;
 }
 
 export interface DatabaseApi {
@@ -181,6 +196,10 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     reindex: Effect.map(
       acrossShards((store) => store.reindexLenses),
       (results) => results.map(([shard, records]) => ({ shard, records })),
+    ),
+    seal: Effect.map(
+      acrossShards((store) => store.sealPostings),
+      (results) => results.map(([shard, result]) => ({ shard, ...result })),
     ),
   };
 

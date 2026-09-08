@@ -30,6 +30,8 @@ export const Tag = {
   IdentityBySeq: 0x08,
   Meta: 0x09,
   Event: 0x0a,
+  Segment: 0x0b,
+  Tombstone: 0x0c,
 } as const;
 
 export type Tag = (typeof Tag)[keyof typeof Tag];
@@ -168,6 +170,52 @@ export const eventKey = (position: number): Uint8Array =>
 
 export const eventPrefix = (): Uint8Array => Uint8Array.from([Tag.Event]);
 
+/**
+ * A sealed or retracted posting, addressed by the live key it shadows.
+ *
+ * Both tiers are built by *prefixing* a live posting key rather than by
+ * re-encoding its fields, which keeps the lens tag inside the key. Terms,
+ * columns and edges therefore stay as disjoint under `Segment` as they are
+ * under their own tags, and every lens gets both tiers without a key function
+ * of its own — including any lens added later.
+ */
+const under = (tag: Tag, key: Uint8Array): Uint8Array => {
+  const out = new Uint8Array(key.length + 1);
+  out[0] = tag;
+  out.set(key, 1);
+  return out;
+};
+
+/** `[Segment][live prefix][index]` — one blob per 65536 identifiers. */
+export const segmentKey = (livePrefix: Uint8Array, index: number): Uint8Array => {
+  const head = under(Tag.Segment, livePrefix);
+  const out = new Uint8Array(head.length + 4);
+  out.set(head);
+  const at: number[] = [];
+  writeU32(at, index);
+  out.set(Uint8Array.from(at), head.length);
+  return out;
+};
+
+export const segmentPrefix = (livePrefix: Uint8Array): Uint8Array =>
+  under(Tag.Segment, livePrefix);
+
+export const segmentIndexOf = (key: Uint8Array): number => readU32(key, key.length - 4);
+
+/**
+ * A posting removed from a lens that a sealed blob still claims.
+ *
+ * Sealed blobs are immutable, so a retraction cannot reach into one. It leaves
+ * a tombstone instead, and the read subtracts it. Only postings below the seal
+ * high-water mark need one: anything newer exists only in the live tier, where
+ * deleting the key is enough.
+ */
+export const tombstoneKey = (postingKey: Uint8Array): Uint8Array =>
+  under(Tag.Tombstone, postingKey);
+
+export const tombstonePrefix = (livePrefix: Uint8Array): Uint8Array =>
+  under(Tag.Tombstone, livePrefix);
+
 /** The trailing identifier of a posting key, whatever precedes it. */
 export const seqOf = (key: Uint8Array): number => readU32(key, key.length - 4);
 
@@ -194,14 +242,16 @@ export const compareKeys = (a: Uint8Array, b: Uint8Array): number => {
 /**
  * The half-open range a prefix selects.
  *
- * Membership is a range test, never a byte-prefix test. A string escapes a
- * literal `0x00` as `0x00 0xFF`, which shares its first byte with the
- * terminator — so the encoding of `("a\0b")` really does begin with the
- * encoding of `("a")`, and a byte-prefix check would match it. The range
- * excludes it correctly, because `0xFF` sorts above the incremented bound.
+ * Membership is a range test, never a byte-prefix test. The escape scheme above
+ * is what currently keeps the two from disagreeing — no escaped byte begins
+ * with the terminator, so no longer key can start with a shorter key's
+ * encoding. That is a property of the encoding, not of the question being
+ * asked, and it was already once written the other way: with `0x00` escaped as
+ * `0x00 0xFF`, the encoding of `("a\0b")` did begin with the encoding of
+ * `("a")`, and a byte-prefix check matched it while the range test did not.
  *
  * This is why no `hasPrefix` helper exists: it would be right often enough to
- * look correct and wrong exactly where it matters.
+ * look correct, and wrong again the moment the encoding changes underneath it.
  */
 export const prefixRange = (
   prefix: Uint8Array,

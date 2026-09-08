@@ -186,6 +186,39 @@ export const or = (a: Postings, b: Postings): Postings => {
   return { kind: "array", ids: out.slice(0, n) };
 };
 
+/**
+ * Everything in `a` that is not in `b`.
+ *
+ * The read side of the sealed tier: a blob cannot be edited, so a posting
+ * removed from a lens it was sealed into is subtracted here instead. `b` is
+ * the tombstone set and is normally tiny, but the cost is driven by `a` in the
+ * array case either way, so probing `b` is what keeps it proportional to the
+ * answer rather than to the seal.
+ */
+export const andNot = (a: Postings, b: Postings): Postings => {
+  if (size(b) === 0) return a;
+
+  if (a.kind === "bitset" && b.kind === "bitset") {
+    const words = wordsFor(a.universe);
+    for (let i = 0; i < words.length; i++) {
+      words[i] = a.words[i]! & ~(i < b.words.length ? b.words[i]! : 0);
+    }
+    const result: Postings = { kind: "bitset", words, universe: a.universe };
+    return preferBitset(popcount(words), a.universe) ? result : toArray(result);
+  }
+
+  if (a.kind === "array") return filterByMembership(a.ids, (id) => !has(b, id));
+
+  // A dense side minus a sparse one: clear the bits rather than walking the
+  // universe, so the cost is the tombstone count, not the seal's width.
+  const words = Uint32Array.from(a.words);
+  for (const id of iterate(b)) {
+    if (id < a.universe) words[id >>> 5]! &= ~(1 << (id & 31));
+  }
+  const result: Postings = { kind: "bitset", words, universe: a.universe };
+  return preferBitset(popcount(words), a.universe) ? result : toArray(result);
+};
+
 export const toArray = (p: Postings): Postings & { kind: "array" } => {
   if (p.kind === "array") return p;
   const out = new Uint32Array(popcount(p.words));

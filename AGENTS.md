@@ -321,6 +321,12 @@ Key rules:
   event whose projection can be replayed, never a lens row with no event behind
   it. `rebuildLenses` re-derives every lens from the log alone and is the check
   that this holds.
+- A posting is a key in the live tier or a bit in a sealed blob, and a read is
+  the union of both minus the tombstones. Blobs are immutable: `db.maintenance`
+  seals the live postings into segments of 65536 identifiers, and anything
+  removed afterwards leaves a tombstone rather than editing one. So a removal
+  path must go through the store's own helpers — deleting a posting key
+  directly leaves whatever a blob still claims.
 - The log is the source of truth up to the compaction point, not forever.
   Payloads, manifests and identities are the snapshot, so `db.maintenance`
   compacts by truncating the log — after which storage tracks live objects

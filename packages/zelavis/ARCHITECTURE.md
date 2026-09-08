@@ -268,11 +268,11 @@ capability has a replacement in use does its old implementation come out.
 Two properties must hold before any official recipe mounts it: it routes through
 the topology rather than exposing a physical driver, and cross-partition work
 goes through an explicit scatter/gather contract rather than happening silently.
-Independently of the replacement, `dbnew` still needs snapshots — rebuilding
-currently replays all history rather than live objects — durability testing,
-since `synchronous=NORMAL` is configured rather than proven, and postings stored
-as bitmap blobs, which would remove the scan that now dominates a wide query but
-requires immutable segments and compaction.
+Independently of the replacement, the database still needs durability testing,
+since `synchronous=NORMAL` is configured rather than proven. Compaction and
+sealed postings have since landed: `db.maintenance` truncates the log — the
+state is already a snapshot — and folds the live postings into immutable blobs,
+which removes the scan that used to dominate a wide query.
 
 ## Migration order
 

@@ -4,13 +4,15 @@ import type { AppliedEvent, DbEvent, EventCursor } from "./events.js";
 import {
   columnKey, columnPrefix, edgeKey, edgePrefix, eventKey, eventPrefix,
   identityBySeqKey, identityKey, manifestKey, measureKey, measurePrefix,
-  metaKey, payloadKey, positionOf, seqOf, Tag, termKey, termPrefix,
+  compareKeys, metaKey, payloadKey, positionOf, segmentIndexOf, segmentKey, segmentPrefix,
+  seqOf, Tag, termKey, termPrefix, tombstoneKey, tombstonePrefix,
 } from "./keys.js";
 import type { KvEngine, KvWrite } from "./kv.js";
 import {
   asSeq, type IndexManifest, type ObjectIdentity, type PartitionKey, type Seq,
 } from "./model.js";
 import * as Postings from "./postings.js";
+import { decodeSegment, encodeSegment, SEGMENT_SPAN, segmentOf } from "./segments.js";
 import type { Query } from "./query.js";
 import type { EventsApi, ObjectStoreApi, Txn } from "./store.js";
 
@@ -57,6 +59,21 @@ const META_NEXT_POSITION = "next_position";
 const META_GENERATION = "generation";
 /** The position everything at or below has been compacted away. */
 const META_COMPACTED_TO = "compacted_to";
+/**
+ * Whether any blob exists, which is the write path's only question about them.
+ *
+ * It is deliberately not a high-water mark over identifiers. That would let a
+ * removal above the mark skip its tombstone, and two things make the mark
+ * unsound: the allocator's counter only moves for callers that let it assign
+ * identifiers, and an edge posting is keyed by the identifier it *points at*,
+ * which no mark over allocated identifiers bounds. A tombstone for something
+ * no blob claims costs one empty key and is swept at the next seal; a missing
+ * one returns a row that is not there, so the cheap side is the safe one.
+ */
+const META_SEALED = "sealed";
+
+/** Writes per batch while sealing, which also bounds the memory it holds. */
+const SEAL_BATCH = 4096;
 
 /**
  * What a rebuild drops and re-derives.
@@ -66,7 +83,18 @@ const META_COMPACTED_TO = "compacted_to";
  * payloads, manifests and identities are already a snapshot, so the log is
  * history rather than the only way back to a working index.
  */
-const DERIVED_TAGS = [Tag.Term, Tag.Column, Tag.Measure, Tag.Edge] as const;
+const DERIVED_TAGS = [
+  Tag.Term, Tag.Column, Tag.Measure, Tag.Edge, Tag.Segment, Tag.Tombstone,
+] as const;
+
+/**
+ * The lenses whose postings can be sealed into blobs.
+ *
+ * Measures are absent on purpose: a measure key carries a value, so it is a
+ * stored number rather than a posting, and folding it into a set would lose
+ * exactly the thing it exists to hold.
+ */
+const SEALABLE_TAGS = [Tag.Term, Tag.Column, Tag.Edge] as const;
 
 /** State a rebuild keeps, and compaction relies on. */
 const STATE_TAGS = [Tag.Payload, Tag.Manifest, Tag.Identity, Tag.IdentityBySeq] as const;
@@ -144,15 +172,44 @@ export const storeOverKv = (
 
   type View = ReturnType<typeof pendingView>;
 
-  const unproject = (view: View, seq: Seq) =>
+  /**
+   * Drop a posting from both tiers.
+   *
+   * The live key goes; a blob cannot be edited, so once anything has been
+   * sealed the removal leaves a tombstone for the read to subtract instead.
+   */
+  const dropPosting = (view: View, key: Uint8Array, sealed: boolean): void => {
+    view.del(key);
+    if (sealed) view.put(tombstoneKey(key), EMPTY);
+  };
+
+  /** Write a posting, cancelling any tombstone a previous version left. */
+  const addPosting = (
+    view: View, key: Uint8Array, value: Uint8Array, sealed: boolean,
+  ): void => {
+    view.put(key, value);
+    // An update that keeps a term retracts and re-adds it in one transaction.
+    // Without this the tombstone written a moment ago would hide the posting
+    // just written — the batch is keyed, so the later call is the one that
+    // lands.
+    if (sealed) view.del(tombstoneKey(key));
+  };
+
+  const unproject = (view: View, seq: Seq, sealed: boolean) =>
     Effect.gen(function* () {
       const stored = yield* view.get(manifestKey(seq));
       if (stored === undefined) return;
       const manifest = unjson<IndexManifest>(stored);
-      for (const [field, term] of manifest.terms) view.del(termKey(field, term, seq));
-      for (const [column, value] of manifest.columns) view.del(columnKey(column, value, seq));
+      for (const [field, term] of manifest.terms) {
+        dropPosting(view, termKey(field, term, seq), sealed);
+      }
+      for (const [column, value] of manifest.columns) {
+        dropPosting(view, columnKey(column, value, seq), sealed);
+      }
       for (const [column] of manifest.measures) view.del(measureKey(column, seq));
-      for (const [edgeType, to] of manifest.edges) view.del(edgeKey(edgeType, seq, to));
+      for (const [edgeType, to] of manifest.edges) {
+        dropPosting(view, edgeKey(edgeType, seq, to), sealed);
+      }
       view.del(manifestKey(seq));
 
       const identity = yield* view.get(identityBySeqKey(seq));
@@ -169,16 +226,23 @@ export const storeOverKv = (
     version: number,
     body: Uint8Array,
     manifest: IndexManifest,
+    sealed: boolean,
     identity?: ObjectIdentity,
   ) =>
     Effect.gen(function* () {
-      yield* unproject(view, seq);
+      yield* unproject(view, seq, sealed);
       view.put(payloadKey(seq), encodePayload(version, body));
       // A posting is a key with no value: the key itself is the fact.
-      for (const [field, term] of manifest.terms) view.put(termKey(field, term, seq), EMPTY);
-      for (const [column, value] of manifest.columns) view.put(columnKey(column, value, seq), EMPTY);
+      for (const [field, term] of manifest.terms) {
+        addPosting(view, termKey(field, term, seq), EMPTY, sealed);
+      }
+      for (const [column, value] of manifest.columns) {
+        addPosting(view, columnKey(column, value, seq), EMPTY, sealed);
+      }
       for (const [column, value] of manifest.measures) view.put(measureKey(column, seq), f64(value));
-      for (const [edgeType, to] of manifest.edges) view.put(edgeKey(edgeType, seq, to), EMPTY);
+      for (const [edgeType, to] of manifest.edges) {
+        addPosting(view, edgeKey(edgeType, seq, to), EMPTY, sealed);
+      }
       view.put(manifestKey(seq), json(manifest));
       if (identity !== undefined) {
         view.put(identityKey(identity.namespace, identity.key), u32(seq));
@@ -199,6 +263,7 @@ export const storeOverKv = (
       const pending = new Map<string, KvWrite>();
       const view = pendingView(pending);
       let position = yield* readMeta(META_NEXT_POSITION);
+      const sealed = (yield* readMeta(META_SEALED)) > 0;
 
       const append = (event: StoredEvent): void => {
         position += 1;
@@ -215,7 +280,7 @@ export const storeOverKv = (
               body: Buffer.from(bytes).toString("base64"), manifest,
               ...(identity === undefined ? {} : { identity }),
             });
-            yield* project(view, seq, version, bytes, manifest, identity);
+            yield* project(view, seq, version, bytes, manifest, sealed, identity);
           }),
 
         retract: (seq) =>
@@ -226,7 +291,7 @@ export const storeOverKv = (
             append({
               generation, seq, kind: "retract", version: version + 1, at: Date.now(),
             });
-            yield* unproject(view, seq);
+            yield* unproject(view, seq, sealed);
             view.del(payloadKey(seq));
           }),
       };
@@ -238,13 +303,39 @@ export const storeOverKv = (
       return result;
     });
 
+  /**
+   * A posting list, read from both tiers.
+   *
+   * Sealed blobs carry everything up to the last seal, the live keys carry
+   * everything written since, and tombstones carry what was removed from a
+   * blob that cannot be edited. The union minus the tombstones is the answer.
+   *
+   * Both scans are ascending in identifier order — segments are keyed by index
+   * and live postings by their trailing identifier — so each side folds
+   * straight into a builder and a wide list never becomes a JavaScript array.
+   */
   const postingsUnder = (prefix: Uint8Array) =>
     Effect.gen(function* () {
-      const builder = new Postings.PostingsBuilder();
-      // Folded from the stream, so a wide posting list never becomes an array.
+      const sealed = new Postings.PostingsBuilder();
+      yield* Stream.runForEach(engine.scan(segmentPrefix(prefix)), (entry) =>
+        Effect.sync(() => {
+          const base = segmentIndexOf(entry.key) * SEGMENT_SPAN;
+          decodeSegment(entry.value, base, (id) => sealed.add(id));
+        }));
+
+      const live = new Postings.PostingsBuilder();
       yield* Stream.runForEach(engine.scan(prefix), (entry) =>
-        Effect.sync(() => builder.add(seqOf(entry.key))));
-      return builder.build();
+        Effect.sync(() => live.add(seqOf(entry.key))));
+
+      const present = Postings.or(sealed.build(), live.build());
+
+      // Tombstones exist only where something sealed was later removed, so the
+      // common case is an empty range scan rather than a set operation.
+      const removed = new Postings.PostingsBuilder();
+      yield* Stream.runForEach(engine.scan(tombstonePrefix(prefix)), (entry) =>
+        Effect.sync(() => removed.add(seqOf(entry.key))));
+
+      return Postings.andNot(present, removed.build());
     });
 
   const evaluate = (query: Query): Effect.Effect<Postings.Postings, StoreError> => {
@@ -347,14 +438,49 @@ export const storeOverKv = (
                   at: event.at,
                 },
           );
+          const sealed = (yield* readMeta(META_SEALED)) > 0;
           if (event._tag === "ObjectPut") {
-            yield* project(view, event.seq, event.version, event.bytes, event.manifest, event.identity);
+            yield* project(view, event.seq, event.version, event.bytes, event.manifest,
+              sealed, event.identity);
           } else {
-            yield* unproject(view, event.seq);
+            yield* unproject(view, event.seq, sealed);
             view.del(payloadKey(event.seq));
           }
         })),
   };
+
+  /**
+   * Re-derive the postings from the manifests.
+   *
+   * Works whether or not the log has been compacted, because a manifest records
+   * exactly what its object contributed. It cannot detect a corrupt manifest,
+   * which is what a full replay is for.
+   */
+  const reindexLenses = Effect.gen(function* () {
+    const pending = new Map<string, KvWrite>();
+    const view = pendingView(pending);
+    for (const tag of DERIVED_TAGS) {
+      yield* Stream.runForEach(engine.scan(Uint8Array.from([tag])), (entry) =>
+        Effect.sync(() => view.del(entry.key)));
+    }
+    // The blobs went with the rest, so what is left is an unsealed live tier.
+    view.put(metaKey(META_SEALED), u32(0));
+    let count = 0;
+    const manifests: Array<{ seq: Seq; manifest: IndexManifest }> = [];
+    yield* Stream.runForEach(engine.scan(Uint8Array.from([Tag.Manifest])), (entry) =>
+      Effect.sync(() => {
+        manifests.push({ seq: asSeq(readU32(entry.key, 1)), manifest: unjson(entry.value) });
+      }));
+    for (const { seq, manifest } of manifests) {
+      for (const [field, term] of manifest.terms) view.put(termKey(field, term, seq), EMPTY);
+      for (const [column, value] of manifest.columns) view.put(columnKey(column, value, seq), EMPTY);
+      for (const [column, value] of manifest.measures) view.put(measureKey(column, seq), f64(value));
+      for (const [edgeType, to] of manifest.edges) view.put(edgeKey(edgeType, seq, to), EMPTY);
+      count += 1;
+    }
+    yield* engine.write([...pending.values()]);
+    return count;
+  });
 
   return {
     partition,
@@ -381,12 +507,16 @@ export const storeOverKv = (
         yield* Stream.runForEach(engine.scan(Uint8Array.from([tag])), (entry) =>
           Effect.sync(() => view.del(entry.key)));
       }
+      // The sealed tier was just dropped with the rest, so the replay rebuilds
+      // into an unsealed store: no blob can claim a posting, and no tombstone
+      // is needed for one.
+      view.put(metaKey(META_SEALED), u32(0));
       for (const { event } of stored) {
         if (event.kind === "put") {
           yield* project(view, asSeq(event.seq), event.version, bodyOf(event),
-            event.manifest ?? emptyManifest(), event.identity);
+            event.manifest ?? emptyManifest(), false, event.identity);
         } else {
-          yield* unproject(view, asSeq(event.seq));
+          yield* unproject(view, asSeq(event.seq), false);
           view.del(payloadKey(asSeq(event.seq)));
         }
       }
@@ -394,35 +524,100 @@ export const storeOverKv = (
       return stored.length;
     }),
 
+    reindexLenses,
+
     /**
-     * Re-derive the postings from the manifests.
+     * Fold the live postings into immutable blobs, one per 65536 identifiers.
      *
-     * Works whether or not the log has been compacted, because a manifest
-     * records exactly what its object contributed. It cannot detect a corrupt
-     * manifest, which is what a full replay is for.
+     * A posting written as a bare key is the cheapest write and the most
+     * expensive read: a term matching half a million objects costs half a
+     * million b-tree entries every time it is asked for. Sealing trades that
+     * for eight blob reads, and keeps the cheap write by never editing a blob —
+     * anything written after the seal lands in the live tier beside it, and
+     * anything removed from a sealed blob leaves a tombstone the read
+     * subtracts.
+     *
+     * Sealing an already-sealed store re-derives the live tier from the
+     * manifests first and folds the whole thing again. That is more work than
+     * merging blob with blob, but it means the sealed tier is always a
+     * wholesale function of state rather than the result of a sequence of
+     * merges that has to have been right every time.
+     *
+     * Two orderings carry the correctness. The sealed flag is written before
+     * any blob, so a removal arriving mid-seal writes a tombstone it might not
+     * have needed rather than skipping one it did. And each blob lands in the
+     * same batch as the deletion of the live keys it replaces, so an
+     * interrupted seal leaves some lens keys sealed and the rest live — which
+     * the read already handles, because it reads both.
      */
-    reindexLenses: Effect.gen(function* () {
-      const pending = new Map<string, KvWrite>();
-      const view = pendingView(pending);
-      for (const tag of DERIVED_TAGS) {
+    sealPostings: Effect.gen(function* () {
+      // The live tier is only complete when nothing has been sealed out of it.
+      if ((yield* readMeta(META_SEALED)) > 0) yield* reindexLenses;
+
+      // Written before the first blob, so a removal arriving mid-seal writes a
+      // tombstone it might not have needed rather than skipping one it did.
+      yield* engine.write([{ op: "put", key: metaKey(META_SEALED), value: u32(1) }]);
+
+      let batch: KvWrite[] = [];
+      let segments = 0;
+      let postings = 0;
+      // One blob's worth of identifiers is the whole working set, and one
+      // blob's worth of deletions is the most a batch overshoots by: the fold
+      // holds a segment at a time, so a store with far more postings than
+      // memory still seals.
+      let ids: number[] = [];
+      let openPrefix: Uint8Array | undefined;
+      let openSegment = -1;
+
+      const flush = () => {
+        if (openPrefix === undefined || ids.length === 0) return;
+        batch.push({
+          op: "put",
+          key: segmentKey(openPrefix, openSegment),
+          value: encodeSegment(ids, openSegment * SEGMENT_SPAN),
+        });
+        segments += 1;
+        postings += ids.length;
+        ids = [];
+      };
+
+      for (const tag of SEALABLE_TAGS) {
         yield* Stream.runForEach(engine.scan(Uint8Array.from([tag])), (entry) =>
-          Effect.sync(() => view.del(entry.key)));
+          Effect.gen(function* () {
+            const id = seqOf(entry.key);
+            // Every posting key ends in the identifier it records, so what
+            // precedes it is the lens the posting belongs to — the same slice
+            // for terms, columns and edges alike.
+            const prefix = entry.key.subarray(0, entry.key.length - 4);
+            const segment = segmentOf(id);
+            if (openPrefix === undefined
+              || segment !== openSegment
+              || compareKeys(prefix, openPrefix) !== 0) {
+              flush();
+              // The batch is only cut where a segment ends. Cutting it mid-blob
+              // would write the identifiers so far under the segment's key and
+              // then write the rest under the same key, and the second put
+              // would replace the first rather than add to it — a seal that
+              // silently loses postings.
+              if (batch.length >= SEAL_BATCH) {
+                yield* engine.write(batch);
+                batch = [];
+              }
+              openPrefix = Uint8Array.from(prefix);
+              openSegment = segment;
+            }
+            ids.push(id);
+            batch.push({ op: "delete", key: entry.key });
+          }));
+        flush();
       }
-      let count = 0;
-      const manifests: Array<{ seq: Seq; manifest: IndexManifest }> = [];
-      yield* Stream.runForEach(engine.scan(Uint8Array.from([Tag.Manifest])), (entry) =>
-        Effect.sync(() => {
-          manifests.push({ seq: asSeq(readU32(entry.key, 1)), manifest: unjson(entry.value) });
-        }));
-      for (const { seq, manifest } of manifests) {
-        for (const [field, term] of manifest.terms) view.put(termKey(field, term, seq), EMPTY);
-        for (const [column, value] of manifest.columns) view.put(columnKey(column, value, seq), EMPTY);
-        for (const [column, value] of manifest.measures) view.put(measureKey(column, seq), f64(value));
-        for (const [edgeType, to] of manifest.edges) view.put(edgeKey(edgeType, seq, to), EMPTY);
-        count += 1;
-      }
-      yield* engine.write([...pending.values()]);
-      return count;
+
+      // Tombstones only ever shadowed the blobs just replaced.
+      yield* Stream.runForEach(engine.scan(Uint8Array.from([Tag.Tombstone])), (entry) =>
+        Effect.sync(() => batch.push({ op: "delete", key: entry.key })));
+
+      if (batch.length > 0) yield* engine.write(batch);
+      return { segments, postings };
     }),
 
     /**

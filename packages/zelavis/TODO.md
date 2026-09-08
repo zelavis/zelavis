@@ -765,8 +765,22 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
 - [x] Benchmark past the page cache. Every warm measurement fit in memory,
   which is exactly where an LSM engine and a b-tree stop behaving alike; cold,
   RocksDB degrades 1.2× against SQLite's 16.8×, libSQL's 21.6× and LMDB's 2.8×.
-- [ ] Postings stored as bitmap blobs, removing the b-tree scan that now
-  dominates a wide query. Requires immutable segments and compaction.
+- [x] Postings stored as bitmap blobs, reachable as `db.maintenance.seal`. A
+  posting written as a bare key is the cheapest write and the most expensive
+  read: a term matching every object costs one b-tree entry per object, every
+  time. Sealing folds the live postings into immutable blobs of 65536
+  identifiers each — dense bitmap or sparse offset list, chosen per segment —
+  and keeps the cheap write by never editing one: what is written after a seal
+  lands in the live tier beside it, and what is removed leaves a tombstone the
+  read subtracts. At 200k objects and 600k postings: a wide term 304 ms → 24 ms
+  (12.6×), a wide column 78 ms → 6 ms (13.4×), and a selective predicate
+  intersected with an unselective one 278 ms → 1.5 ms (189×), which is the case
+  it exists for. File size at rest is unchanged, because SQLite keeps freed
+  pages rather than returning them.
+- [ ] Seal incrementally rather than by rebuilding. Sealing an already-sealed
+  store re-derives the live tier from the manifests and folds everything again,
+  which is correct by construction but O(all postings) each time. Merging blob
+  with blob would make a periodic seal proportional to what changed.
 - [ ] An explicit cross-partition scatter/gather contract.
 
 ## Later
