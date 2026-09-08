@@ -326,7 +326,10 @@ Key rules:
   seals the live postings into segments of 65536 identifiers, and anything
   removed afterwards leaves a tombstone rather than editing one. So a removal
   path must go through the store's own helpers — deleting a posting key
-  directly leaves whatever a blob still claims.
+  directly leaves whatever a blob still claims. Sealing merges rather than
+  rebuilds, touching only the segments a live posting or tombstone falls in, so
+  the blobs accumulate across seals; `reindexLenses` is what re-derives them
+  from the manifests when that accumulation needs checking.
 - The log is the source of truth up to the compaction point, not forever.
   Payloads, manifests and identities are the snapshot, so `db.maintenance`
   compacts by truncating the log — after which storage tracks live objects

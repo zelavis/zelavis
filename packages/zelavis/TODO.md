@@ -777,10 +777,13 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   intersected with an unselective one 278 ms → 1.5 ms (189×), which is the case
   it exists for. File size at rest is unchanged, because SQLite keeps freed
   pages rather than returning them.
-- [ ] Seal incrementally rather than by rebuilding. Sealing an already-sealed
-  store re-derives the live tier from the manifests and folds everything again,
-  which is correct by construction but O(all postings) each time. Merging blob
-  with blob would make a periodic seal proportional to what changed.
+- [x] Seal incrementally rather than by rebuilding. A segment is read, merged
+  and written back only where a live posting or a tombstone falls inside it, so
+  a periodic seal costs what changed rather than what is stored; a first seal is
+  the same operation against blobs that do not exist yet. Re-sealing after
+  touching 1% of 200k objects: 0.09s over 2006 segments, against 4.11s over
+  18413 for the first — and the rebuild it replaced re-derived every posting
+  before folding, so it could not have been faster than a first seal.
 - [ ] An explicit cross-partition scatter/gather contract.
 
 ## Later

@@ -77,3 +77,58 @@ export const decodeSegment = (bytes: Uint8Array, base: number, emit: (id: number
     emit(base + view.getUint16(at, true));
   }
 };
+
+/**
+ * One segment's identifiers, as a working buffer.
+ *
+ * Sealing incrementally is a read-modify-write on a blob: decode what is
+ * there, add what the live tier has collected, subtract what the tombstones
+ * removed, re-encode. A bitmap is the shape that makes all three constant-time
+ * regardless of how full the segment is, and it is 8 KB whatever happens —
+ * bounded, so a store far larger than memory still seals.
+ */
+export class SegmentBuffer {
+  private readonly bits = new Uint8Array(DENSE_BYTES);
+  private count = 0;
+
+  reset(): void {
+    this.bits.fill(0);
+    this.count = 0;
+  }
+
+  add(offset: number): void {
+    const at = offset >>> 3;
+    const mask = 1 << (offset & 7);
+    if ((this.bits[at]! & mask) === 0) {
+      this.bits[at]! |= mask;
+      this.count += 1;
+    }
+  }
+
+  remove(offset: number): void {
+    const at = offset >>> 3;
+    const mask = 1 << (offset & 7);
+    if ((this.bits[at]! & mask) !== 0) {
+      this.bits[at]! &= ~mask;
+      this.count -= 1;
+    }
+  }
+
+  get size(): number {
+    return this.count;
+  }
+
+  /** The identifiers held, ascending. */
+  ids(base: number): number[] {
+    const out: number[] = [];
+    for (let byte = 0; byte < DENSE_BYTES; byte++) {
+      let bits = this.bits[byte]!;
+      while (bits !== 0) {
+        const lsb = bits & -bits;
+        out.push(base + (byte << 3) + (31 - Math.clz32(lsb)));
+        bits ^= lsb;
+      }
+    }
+    return out;
+  }
+}

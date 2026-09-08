@@ -12,7 +12,9 @@ import {
   asSeq, type IndexManifest, type ObjectIdentity, type PartitionKey, type Seq,
 } from "./model.js";
 import * as Postings from "./postings.js";
-import { decodeSegment, encodeSegment, SEGMENT_SPAN, segmentOf } from "./segments.js";
+import {
+  decodeSegment, encodeSegment, SEGMENT_SPAN, SegmentBuffer, segmentOf,
+} from "./segments.js";
 import type { Query } from "./query.js";
 import type { EventsApi, ObjectStoreApi, Txn } from "./store.js";
 
@@ -537,84 +539,129 @@ export const storeOverKv = (
      * anything removed from a sealed blob leaves a tombstone the read
      * subtracts.
      *
-     * Sealing an already-sealed store re-derives the live tier from the
-     * manifests first and folds the whole thing again. That is more work than
-     * merging blob with blob, but it means the sealed tier is always a
-     * wholesale function of state rather than the result of a sequence of
-     * merges that has to have been right every time.
+     * Sealing is incremental: a segment is read, merged and written back only
+     * when a live posting or a tombstone falls inside it, so a periodic seal
+     * costs what changed rather than what is stored. A first seal is the same
+     * operation against blobs that do not exist yet.
      *
-     * Two orderings carry the correctness. The sealed flag is written before
+     * That makes each seal a merge rather than a rebuild, so the blobs are the
+     * accumulated result of every seal so far rather than a fresh function of
+     * state. `reindexLenses` is what re-derives them from the manifests when
+     * that accumulation needs checking or repairing.
+     *
+     * Three orderings carry the correctness. The sealed flag is written before
      * any blob, so a removal arriving mid-seal writes a tombstone it might not
-     * have needed rather than skipping one it did. And each blob lands in the
-     * same batch as the deletion of the live keys it replaces, so an
-     * interrupted seal leaves some lens keys sealed and the rest live — which
-     * the read already handles, because it reads both.
+     * have needed rather than skipping one it did. Each blob lands in the same
+     * batch as the deletion of the live keys it absorbed, so an interrupted
+     * seal leaves some lens keys sealed and the rest live — which the read
+     * already handles, because it reads both. And the additions land before the
+     * removals are read: both passes can touch one segment, so a removal that
+     * read the blob as it was before the additions would write back a blob
+     * missing them.
+     *
+     * The counts describe the segments this seal wrote, not what it added: a
+     * merged segment reports everything it now holds.
      */
     sealPostings: Effect.gen(function* () {
-      // The live tier is only complete when nothing has been sealed out of it.
-      if ((yield* readMeta(META_SEALED)) > 0) yield* reindexLenses;
-
       // Written before the first blob, so a removal arriving mid-seal writes a
       // tombstone it might not have needed rather than skipping one it did.
       yield* engine.write([{ op: "put", key: metaKey(META_SEALED), value: u32(1) }]);
 
+      const buffer = new SegmentBuffer();
       let batch: KvWrite[] = [];
       let segments = 0;
       let postings = 0;
-      // One blob's worth of identifiers is the whole working set, and one
-      // blob's worth of deletions is the most a batch overshoots by: the fold
-      // holds a segment at a time, so a store with far more postings than
-      // memory still seals.
-      let ids: number[] = [];
       let openPrefix: Uint8Array | undefined;
       let openSegment = -1;
 
+      /**
+       * Write back the segment the buffer holds.
+       *
+       * A segment that ends up empty has its blob deleted rather than written
+       * as an empty one, so a lens emptied by retractions costs nothing rather
+       * than a key per segment it once spanned.
+       */
       const flush = () => {
-        if (openPrefix === undefined || ids.length === 0) return;
-        batch.push({
-          op: "put",
-          key: segmentKey(openPrefix, openSegment),
-          value: encodeSegment(ids, openSegment * SEGMENT_SPAN),
-        });
-        segments += 1;
-        postings += ids.length;
-        ids = [];
+        if (openPrefix === undefined) return;
+        const key = segmentKey(openPrefix, openSegment);
+        if (buffer.size === 0) {
+          batch.push({ op: "delete", key });
+        } else {
+          const base = openSegment * SEGMENT_SPAN;
+          batch.push({ op: "put", key, value: encodeSegment(buffer.ids(base), base) });
+          segments += 1;
+          postings += buffer.size;
+        }
+        openPrefix = undefined;
+        openSegment = -1;
       };
 
+      /**
+       * Move to the segment a posting key belongs to, loading its blob.
+       *
+       * Every posting key ends in the identifier it records, so what precedes
+       * it is the lens — the same slice for terms, columns and edges alike.
+       */
+      const openFor = (key: Uint8Array, id: number) =>
+        Effect.gen(function* () {
+          const prefix = key.subarray(0, key.length - 4);
+          const segment = segmentOf(id);
+          if (openPrefix !== undefined
+            && segment === openSegment
+            && compareKeys(prefix, openPrefix) === 0) return;
+
+          flush();
+          // The batch is only ever cut where a segment ends. Cutting it
+          // mid-blob would write the identifiers so far under the segment's
+          // key and then the rest under the same key, the second put replacing
+          // the first — a seal that silently loses postings.
+          if (batch.length >= SEAL_BATCH) {
+            yield* engine.write(batch);
+            batch = [];
+          }
+          openPrefix = Uint8Array.from(prefix);
+          openSegment = segment;
+          buffer.reset();
+          const existing = yield* engine.get(segmentKey(openPrefix, segment));
+          if (existing !== undefined) {
+            decodeSegment(existing, 0, (offset) => buffer.add(offset));
+          }
+        });
+
+      // Live postings fold into the blob that covers them; blobs no live
+      // posting touches are never read, which is what makes a periodic seal
+      // proportional to what changed rather than to what is stored.
       for (const tag of SEALABLE_TAGS) {
         yield* Stream.runForEach(engine.scan(Uint8Array.from([tag])), (entry) =>
           Effect.gen(function* () {
             const id = seqOf(entry.key);
-            // Every posting key ends in the identifier it records, so what
-            // precedes it is the lens the posting belongs to — the same slice
-            // for terms, columns and edges alike.
-            const prefix = entry.key.subarray(0, entry.key.length - 4);
-            const segment = segmentOf(id);
-            if (openPrefix === undefined
-              || segment !== openSegment
-              || compareKeys(prefix, openPrefix) !== 0) {
-              flush();
-              // The batch is only cut where a segment ends. Cutting it mid-blob
-              // would write the identifiers so far under the segment's key and
-              // then write the rest under the same key, and the second put
-              // would replace the first rather than add to it — a seal that
-              // silently loses postings.
-              if (batch.length >= SEAL_BATCH) {
-                yield* engine.write(batch);
-                batch = [];
-              }
-              openPrefix = Uint8Array.from(prefix);
-              openSegment = segment;
-            }
-            ids.push(id);
+            yield* openFor(entry.key, id);
+            buffer.add(id % SEGMENT_SPAN);
             batch.push({ op: "delete", key: entry.key });
           }));
         flush();
       }
+      // Both passes can reach the same segment, and pass two rewrites whatever
+      // it reads — so pass one's blobs have to have landed, or the additions
+      // they carry are dropped by the write that follows.
+      if (batch.length > 0) {
+        yield* engine.write(batch);
+        batch = [];
+      }
 
-      // Tombstones only ever shadowed the blobs just replaced.
+      // Tombstones clear bits the blobs still claim. A tombstone written
+      // conservatively — for a posting no blob held — clears nothing and is
+      // dropped all the same.
       yield* Stream.runForEach(engine.scan(Uint8Array.from([Tag.Tombstone])), (entry) =>
-        Effect.sync(() => batch.push({ op: "delete", key: entry.key })));
+        Effect.gen(function* () {
+          // A tombstone key is a posting key with one byte in front of it.
+          const posting = entry.key.subarray(1);
+          const id = seqOf(posting);
+          yield* openFor(posting, id);
+          buffer.remove(id % SEGMENT_SPAN);
+          batch.push({ op: "delete", key: entry.key });
+        }));
+      flush();
 
       if (batch.length > 0) yield* engine.write(batch);
       return { segments, postings };

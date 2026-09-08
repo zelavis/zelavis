@@ -243,3 +243,82 @@ test("a lens wider than one write batch seals whole", async (t) => {
     }),
   );
 });
+
+test("a re-seal touches only the segments something changed in", async (t) => {
+  await withStore(t, (store) =>
+    Effect.gen(function* () {
+      // Many distinct lenses, so a rebuild and a merge differ by a lot.
+      for (let seq = 1; seq <= 3000; seq++) {
+        yield* write(store, seq, `r${seq % 3}`, ["atlas", `t${seq % 500}`]);
+      }
+      const first = yield* store.sealPostings;
+      assert.ok(first.segments > 500, "the first seal writes every lens");
+
+      // One object changes. Under a rebuild the next seal would fold all of
+      // them again; a merge should reach only the lenses this object is in.
+      yield* write(store, 42, "r0", ["atlas", "t42", "cobalt"]);
+
+      const second = yield* store.sealPostings;
+      assert.ok(
+        second.segments <= 8,
+        `a re-seal rewrote ${second.segments} segments for a one-object change`,
+      );
+
+      // And the ones it did not touch still answer.
+      assert.equal((yield* seqs(store, term("title", "atlas"))).length, 3000);
+      assert.equal((yield* seqs(store, term("title", "t7"))).length, 6);
+      assert.deepEqual(yield* seqs(store, term("title", "cobalt")), [42]);
+      assert.equal((yield* seqs(store, equals("region", "r1"))).length, 1000);
+    }),
+  );
+});
+
+test("a seal that both adds to and removes from one segment keeps both", async (t) => {
+  await withStore(t, (store) =>
+    Effect.gen(function* () {
+      for (let seq = 1; seq <= 20; seq++) yield* write(store, seq, "eu-west", ["atlas"]);
+      yield* store.sealPostings;
+
+      // Both land in the same blob: one as a live posting, one as a tombstone.
+      // The removal pass rewrites whatever it reads, so if it read the segment
+      // as it stood before the addition, the addition would be written away.
+      yield* write(store, 21, "eu-west", ["atlas"]);
+      yield* store.transact((txn) => txn.retract(asSeq(3)));
+
+      yield* store.sealPostings;
+
+      const atlas = yield* seqs(store, term("title", "atlas"));
+      assert.ok(atlas.includes(21), "the addition survived the removal pass");
+      assert.ok(!atlas.includes(3), "the removal still applied");
+      assert.equal(atlas.length, 20);
+
+      // Nothing is left in either overlay: it is all in the blob now.
+      const again = yield* store.sealPostings;
+      assert.equal(again.segments, 0, "a seal with nothing to do writes nothing");
+      assert.deepEqual(yield* seqs(store, term("title", "atlas")), atlas);
+    }),
+  );
+});
+
+test("a lens emptied by retraction loses its blob rather than keeping an empty one", async (t) => {
+  await withStore(t, (store) =>
+    Effect.gen(function* () {
+      for (let seq = 1; seq <= 10; seq++) yield* write(store, seq, "eu-west", ["atlas"]);
+      yield* store.sealPostings;
+
+      for (let seq = 1; seq <= 10; seq++) {
+        yield* store.transact((txn) => txn.retract(asSeq(seq)));
+      }
+      const swept = yield* store.sealPostings;
+      assert.equal(swept.segments, 0, "an empty segment is deleted, not written");
+      assert.deepEqual(yield* seqs(store, term("title", "atlas")), []);
+      assert.deepEqual(yield* seqs(store, equals("region", "eu-west")), []);
+
+      // And the lens still works when something comes back to it.
+      yield* write(store, 11, "eu-west", ["atlas"]);
+      assert.deepEqual(yield* seqs(store, term("title", "atlas")), [11]);
+      yield* store.sealPostings;
+      assert.deepEqual(yield* seqs(store, term("title", "atlas")), [11]);
+    }),
+  );
+});

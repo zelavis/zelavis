@@ -104,6 +104,36 @@ try {
 
   const blobs = await phase(measure);
   report(live, blobs, sealed, sealMs, liveBytes, sealedBytes);
+
+  // The point of an incremental seal: a periodic one should cost what changed,
+  // not what is stored.
+  const churn = Math.max(1, Math.round(N / 100));
+  await phase((store) =>
+    Effect.gen(function* () {
+      for (let seq = 1; seq <= churn; seq++) {
+        yield* store.transact((txn) =>
+          txn.put(
+            asSeq(seq),
+            enc.encode(JSON.stringify({ seq, touched: true })),
+            {
+              terms: [["kind", "post"], ["tag", `t${seq % 5000}`], ["state", "edited"]],
+              columns: [["region", `r${seq % 4}`]],
+              measures: [],
+              edges: [],
+            },
+            { namespace: "doc/bench/posts", key: `p${seq}` },
+          ));
+      }
+    }));
+
+  const reStarted = Date.now();
+  const reSealed = await phase((store) => store.sealPostings);
+  const reMs = Date.now() - reStarted;
+  console.log(
+    `\nre-seal after touching ${churn} of ${N} objects: ${(reMs / 1000).toFixed(2)}s ` +
+    `over ${reSealed.segments} segments, against ${(sealMs / 1000).toFixed(2)}s ` +
+    `over ${sealed.segments} for the first seal`,
+  );
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }
