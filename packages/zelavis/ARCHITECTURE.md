@@ -267,7 +267,10 @@ capability has a replacement in use does its old implementation come out.
 
 Two properties must hold before any official recipe mounts it: it routes through
 the topology rather than exposing a physical driver, and cross-partition work
-goes through an explicit scatter/gather contract rather than happening silently.
+goes through an explicit scatter/gather contract rather than happening
+silently. That contract is `db.scatter`: it fans out per shard for lens queries
+and per tenant for document queries, reports what each leg cost, and refuses a
+query whose meaning does not survive the trip rather than answering it wrongly.
 Independently of the replacement, compaction and sealed postings have since
 landed: `db.maintenance` truncates the log — the
 state is already a snapshot — and folds the live postings into immutable blobs,

@@ -31,6 +31,7 @@ export * from "./tenancy.js";
 export * from "./backup.js";
 export * from "./topology-store.js";
 export * from "./system-views.js";
+export * from "./scatter.js";
 export * from "./runtime-api.js";
 export * from "./database.js";
 export * from "./database-service.js";

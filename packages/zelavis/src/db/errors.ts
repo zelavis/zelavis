@@ -28,6 +28,18 @@ export class CrossPartitionQuery extends Schema.TaggedError<CrossPartitionQuery>
 ) {}
 
 /**
+ * A scatter was pointed at a shard the partition map does not have.
+ *
+ * Reading the shards that do exist and staying quiet about the one that does
+ * not would answer a narrower question than the caller asked, and look exactly
+ * like the answer to the question they asked.
+ */
+export class UnknownShard extends Schema.TaggedError<UnknownShard>()("UnknownShard", {
+  shard: Schema.String,
+  known: Schema.Array(Schema.String),
+}) {}
+
+/**
  * A write arrived from a writer that is no longer current.
  *
  * Placement changes do not become safe merely because the stale and current

@@ -147,6 +147,15 @@ export interface ObjectStoreApi {
   ) => Effect.Effect<Seq | undefined, DbError>;
 
   /**
+   * The caller's own name for a dense identifier, if it has one.
+   *
+   * The reverse of `lookup`. A `Seq` means nothing outside its partition, so
+   * anything handing an identifier to a caller who is looking at more than one
+   * partition has to turn it back into a name first.
+   */
+  readonly identityOf: (seq: Seq) => Effect.Effect<ObjectIdentity | undefined, DbError>;
+
+  /**
    * Resolve a query to identifiers in ascending order.
    *
    * A Stream rather than an array: a prefix match can cover a large fraction of

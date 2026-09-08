@@ -6,8 +6,9 @@ import { projectionsFor, type ProjectionsApi } from "./projections.js";
 import { schemasFor, type SchemasApi } from "./schemas.js";
 import { timeSeriesFor, type TimeSeriesApi } from "./time-series.js";
 import { backupsFor, type BackupsApi } from "./backup.js";
-import { initPartitionMap, topologyFor, type TopologyApi } from "./topology-store.js";
+import { initPartitionMap, tenantsOn, topologyFor, type TopologyApi } from "./topology-store.js";
 import { systemViewsFor, type SystemViewsApi } from "./system-views.js";
+import { scatterOver, type ScatterApi } from "./scatter.js";
 import type { ObjectStoreApi } from "./store.js";
 import { shardFor, shardsOf, type PartitionMap, type ShardId, type TenantId } from "./topology.js";
 
@@ -99,6 +100,17 @@ export interface DatabaseApi {
 
   /** Compaction and reindexing, per shard. */
   readonly maintenance: MaintenanceApi;
+
+  /**
+   * Questions that span partitions.
+   *
+   * Separate from `forTenant` because it is a different bargain, not a wider
+   * version of the same one: the cost is the widest predicate on every
+   * partition touched, nothing can be intersected across them, and the answer
+   * has no ordering that means anything. A caller reaching for this should be
+   * choosing it.
+   */
+  readonly scatter: ScatterApi;
 }
 
 export interface MakeDatabaseOptions {
@@ -203,9 +215,20 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     ),
   };
 
+  const documentsFor_ = (tenant: TenantId): DocumentsApi => {
+    const store = storeFor(tenant);
+    return documentsFor(store, tenant, schemasFor(store, tenant));
+  };
+
   return {
     partitionMap,
     maintenance,
+    scatter: scatterOver({
+      shards,
+      tenantsOn,
+      shardOf: (tenant) => shardFor(partitionMap, tenant),
+      documentsFor: documentsFor_,
+    }),
     topology: topologyFor(topologyStore, partitionMap, shards),
     shardOf: (tenant) => shardFor(partitionMap, tenant),
     forTenant: (tenant) => {

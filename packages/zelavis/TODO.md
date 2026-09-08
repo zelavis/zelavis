@@ -792,7 +792,18 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   touching 1% of 200k objects: 0.09s over 2006 segments, against 4.11s over
   18413 for the first — and the rebuild it replaced re-derived every posting
   before folding, so it could not have been faster than a first seal.
-- [ ] An explicit cross-partition scatter/gather contract.
+- [x] An explicit cross-partition scatter/gather contract, as `db.scatter`. A
+  separate surface rather than a wider `forTenant`, because it is a different
+  bargain: the cost is the widest predicate on every partition touched, nothing
+  can be intersected across them, and the result has no ordering that means
+  anything — so it merges by tenant and identifier, an order that exists
+  everywhere rather than one that claims relevance. Every result carries its
+  legs, so what it cost is visible per part. Two things it refuses rather than
+  answers: a query naming a partition-local identifier — an edge means a
+  different object on every shard, so scattering one returns rows that look
+  like matches and are not — and a shard the map does not have, since reading
+  the rest quietly would answer a narrower question in the shape of the asked
+  one.
 
 ## Later
 

@@ -727,6 +727,10 @@ export const storeOverKv = (
       Effect.map(engine.get(identityKey(namespace, key)), (bytes) =>
         bytes === undefined ? undefined : asSeq(readU32(bytes))),
 
+    identityOf: (seq) =>
+      Effect.map(engine.get(identityBySeqKey(seq)), (bytes) =>
+        bytes === undefined ? undefined : unjson<ObjectIdentity>(bytes)),
+
     nextSeq: Effect.gen(function* () {
       const next = (yield* readMeta(META_NEXT_SEQ)) + 1;
       yield* engine.write([{ op: "put", key: metaKey(META_NEXT_SEQ), value: u32(next) }]);

@@ -344,6 +344,12 @@ Key rules:
   cursor fails with `CursorCompacted`, `rebuildLenses` refuses with
   `LogCompacted`, and the state-reading equivalents (`reindexLenses` for
   postings, a state-derived export for backups) are what still work.
+- Crossing partitions is a separate API, never a fallback. `forTenant` is
+  single-partition by construction; `db.scatter` is the only thing that fans
+  out, and it reports what each leg cost. A `Seq` names an object only together
+  with its partition, so anything crossing that boundary carries both — and a
+  query naming a bare identifier, an edge above all, is refused rather than run
+  somewhere it means something else.
 - Locality is declared, not inferred. Everything sharing a `PartitionKey` lives
   on one node, which is what keeps the intersection cheap. Tenant scoping is
   structural — the tenant is part of every namespace and lens key — never a
