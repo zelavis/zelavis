@@ -729,8 +729,13 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   methods, nothing above it changed. The single keyspace cost nothing, because
   the key tags already give each lens the disjoint range column families would
   have provided.
-- [ ] Measure the engines against each other. Three ship; nothing has compared
-  them on the workload they exist for.
+- [x] Measured the engines against each other (`scripts/bench-engines.mjs`).
+  At 100k objects: SQLite ingests 1.7x faster and reads points 3x faster;
+  RocksDB scans 24% faster, answers the cross-model query 27% faster, and takes
+  5x less disk. libSQL trails both and carries 18% more disk than SQLite from
+  the hex keys its binding forces.
+- [ ] Benchmark past the page cache. Every measurement so far fits in memory,
+  which is exactly where an LSM engine and a b-tree stop behaving alike.
 - [ ] Postings stored as bitmap blobs, removing the b-tree scan that now
   dominates a wide query. Requires immutable segments and compaction.
 - [ ] An explicit cross-partition scatter/gather contract.
