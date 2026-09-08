@@ -33,9 +33,34 @@ export interface SqliteHandle {
  */
 export type KeyEncoding = "blob" | "hex";
 
+/**
+ * SQLite ships conservative defaults for a shared machine, not for a database
+ * that owns its file. Each of these is a deliberate departure.
+ *
+ * `page_size` is set before the table exists, because changing it afterwards
+ * needs a VACUUM. Larger pages mean fewer of them per range scan, and posting
+ * scans are the hot path.
+ *
+ * `mmap_size` is the significant one. Without it every read copies through the
+ * page cache into a buffer; with it SQLite reads straight from a mapped file,
+ * which is the same mechanism that makes a memory-mapped engine fast. Two
+ * hundred and fifty-six megabytes is a ceiling rather than an allocation.
+ *
+ * `cache_size` is negative, which SQLite reads as kibibytes rather than pages,
+ * so this is 64 MiB regardless of page size. The default is two.
+ *
+ * `wal_autocheckpoint` is raised because the default checkpoints every thousand
+ * pages, which interrupts bulk ingest to fold the log back into the file.
+ */
 const kvSchema = (encoding: KeyEncoding) => `
+  PRAGMA page_size = 8192;
   PRAGMA journal_mode = WAL;
   PRAGMA synchronous = NORMAL;
+  PRAGMA mmap_size = 268435456;
+  PRAGMA cache_size = -65536;
+  PRAGMA temp_store = MEMORY;
+  PRAGMA wal_autocheckpoint = 4000;
+  PRAGMA busy_timeout = 5000;
   CREATE TABLE IF NOT EXISTS kv (
     key ${encoding === "hex" ? "TEXT" : "BLOB"} PRIMARY KEY,
     value BLOB NOT NULL
