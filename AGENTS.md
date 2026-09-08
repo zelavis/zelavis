@@ -312,7 +312,10 @@ Key rules:
 
 - Writes go through the documents API. There is no raw SQL surface and one must
   not be reintroduced: it was the last way to reach storage without the
-  guarantees the documents API exists to provide.
+  guarantees the documents API exists to provide. Being the only door is also
+  where the at-most-once guard lives: a write may carry an `idempotencyKey`, and
+  its receipt is written in the same transaction as the change, so there is no
+  moment where the write has happened and the key has not been noted.
 - Storage is an ordered key-value engine. Lenses are key ranges, a posting is a
   key with no value, and a transaction is one atomic batch with reads overlaying
   it. An engine implements `get`, `scan`, `write` and `close`; nothing above it

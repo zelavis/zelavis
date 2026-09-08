@@ -661,8 +661,19 @@ driven by what the existing dependents call, not by what is easiest to port.
   way to record a document change that did not happen. Projection checkpoints
   live in the shard whose log they track, which makes them shard-aware without
   bookkeeping.
-- [ ] Event idempotency keys. The API being replaced accepts one on append;
-  `dbnew` has no append, so the equivalent guard has no home yet.
+- [x] Idempotency keys, on the document writes rather than on an append. The
+  API being replaced took one when appending an event; there is no append here,
+  because writes reach the log only through the documents API — so the guard
+  belongs where the write enters. `insert`, `update` and `delete` take an
+  optional key, and a retry carrying it is answered with what the first attempt
+  returned instead of being applied again. The receipt is written in the same
+  transaction as the change it describes: recorded afterwards, there would be a
+  window in which the write had happened and the key had not been noted, which
+  is exactly the window a retry falls into. A key offered for a different
+  request is refused rather than answered, an attempt that failed spends no key,
+  and receipts are swept by `forgetIdempotencyKeys` — they grow with requests
+  rather than with data, and how long a retry may arrive is the caller's
+  question.
 - [x] Collection schemas, validation, and stored schema versions. The schema
   module moved into `dbnew` rather than being rewritten: it is a field-type
   language, not part of the SQL core, and duplicating 700 lines of field

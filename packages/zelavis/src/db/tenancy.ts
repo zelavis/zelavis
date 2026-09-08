@@ -7,6 +7,15 @@ export const ACTIVE_SCHEMA_NAMESPACE = "zv.schema.active";
 export const CHECKPOINT_NAMESPACE = "zv.checkpoint";
 
 /**
+ * Records what a completed write with an idempotency key did.
+ *
+ * Tenant-scoped like everything else, because the keys are the caller's own
+ * strings and two tenants picking the same one is ordinary rather than an
+ * error.
+ */
+export const IDEMPOTENCY_NAMESPACE_PREFIX = "zv.idempotency/";
+
+/**
  * Marks a tenant on this shard as being relocated off it.
  *
  * Lives on the shard being left rather than in the topology, because the check
@@ -30,6 +39,9 @@ export const TENANT_MARKER = "\u0000tenant";
 export const tenantOf = (namespace: string, key: string): TenantId | undefined => {
   if (namespace.startsWith(COLLECTION_NAMESPACE_PREFIX)) {
     return namespace.slice(COLLECTION_NAMESPACE_PREFIX.length);
+  }
+  if (namespace.startsWith(IDEMPOTENCY_NAMESPACE_PREFIX)) {
+    return namespace.slice(IDEMPOTENCY_NAMESPACE_PREFIX.length);
   }
   if (namespace.startsWith(DOCUMENT_NAMESPACE_PREFIX)) {
     const rest = namespace.slice(DOCUMENT_NAMESPACE_PREFIX.length);

@@ -28,6 +28,22 @@ export class CrossPartitionQuery extends Schema.TaggedError<CrossPartitionQuery>
 ) {}
 
 /**
+ * An idempotency key came back attached to a different request.
+ *
+ * A key stands for one operation and the outcome it had. Answering a different
+ * request with that outcome would be worse than doing the work twice: the
+ * caller would be told something happened that did not.
+ */
+export class IdempotencyKeyReused extends Schema.TaggedError<IdempotencyKeyReused>()(
+  "IdempotencyKeyReused",
+  {
+    tenant: Schema.String,
+    key: Schema.String,
+    detail: Schema.String,
+  },
+) {}
+
+/**
  * A write arrived for a tenant whose records are being relocated.
  *
  * A move copies a tenant to another shard and then changes where it routes.

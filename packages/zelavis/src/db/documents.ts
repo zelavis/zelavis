@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Effect, Stream } from "effect";
 import type { Json, JsonObject } from "./json.js";
 import {
@@ -5,13 +6,17 @@ import {
   isReservedCollectionName,
   RESERVED_COLLECTION_PREFIX,
 } from "./naming.js";
-import { MOVE_FENCE_NAMESPACE, TENANT_COLUMN, TENANT_MARKER, TENANT_NAMESPACE } from "./tenancy.js";
+import {
+  IDEMPOTENCY_NAMESPACE_PREFIX, MOVE_FENCE_NAMESPACE, TENANT_COLUMN, TENANT_MARKER,
+  TENANT_NAMESPACE,
+} from "./tenancy.js";
 import {
   CollectionExists,
   SchemaViolation,
   CollectionNotFound,
   DocumentConflict,
   DocumentNotFound,
+  IdempotencyKeyReused,
   InvalidCollectionName,
   TenantMoving,
 } from "./errors.js";
@@ -65,6 +70,47 @@ export interface FindDocumentsInput {
 
 /** Marks a stored collection record, distinct from any collection name. */
 const COLLECTION_MARKER = "\u0000collection";
+
+/**
+ * What a keyed write did, so a retry can be answered instead of repeated.
+ *
+ * The fingerprint is of the request rather than of the result: two callers
+ * asking for the same thing should share an outcome, and one caller reusing a
+ * key for something else should be told so.
+ */
+interface Receipt {
+  readonly key: string;
+  readonly fingerprint: string;
+  /** The request in words, so a reuse can say what the key was first spent on. */
+  readonly request: string;
+  readonly result: unknown;
+  readonly at: string;
+}
+
+const idempotencyNs = (tenant: TenantId) => `${IDEMPOTENCY_NAMESPACE_PREFIX}${tenant}`;
+
+/** Marks a receipt, so this tenant's can be found without reading the shard. */
+const idempotencyColumn = (tenant: TenantId) => `${IDEMPOTENCY_NAMESPACE_PREFIX}${tenant}`;
+const RECEIPT_MARKER = "\u0000receipt";
+
+/**
+ * A stable fingerprint of a request.
+ *
+ * Keys are sorted at every level, because two callers writing the same fields
+ * in a different order are making the same request and a retry that reordered
+ * them would otherwise look like a different one.
+ */
+const canonical = (value: unknown): string => {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(",")}}`;
+};
+
+const fingerprintOf = (request: unknown): string =>
+  createHash("sha256").update(canonical(request)).digest("hex");
 
 
 /**
@@ -221,11 +267,19 @@ export interface DocumentsApi {
   readonly collectionExists: (name: string) => Effect.Effect<boolean>;
   readonly insert: (input: {
     readonly collection: string;
+    /**
+     * Do this at most once.
+     *
+     * A retry carrying the same key is answered with what the first attempt
+     * returned instead of being applied again. Supply `id` alongside it: a
+     * generated one differs on every attempt, which is a different request.
+     */
+    readonly idempotencyKey?: string;
     readonly id?: string;
     readonly data: JsonObject;
   }) => Effect.Effect<
     Document,
-    CollectionNotFound | DocumentConflict | SchemaViolation | TenantMoving
+    CollectionNotFound | DocumentConflict | SchemaViolation | TenantMoving | IdempotencyKeyReused
   >;
   readonly findById: (input: {
     readonly collection: string;
@@ -234,19 +288,38 @@ export interface DocumentsApi {
   readonly findMany: (input: FindDocumentsInput) => Effect.Effect<ReadonlyArray<Document>>;
   readonly update: (input: {
     readonly collection: string;
+    /** Do this at most once; see `insert`. */
+    readonly idempotencyKey?: string;
     readonly id: string;
     readonly data: JsonObject;
     readonly mode?: "merge" | "replace";
     readonly expectedVersion?: number;
   }) => Effect.Effect<
     Document,
-    DocumentNotFound | DocumentConflict | SchemaViolation | TenantMoving
+    DocumentNotFound | DocumentConflict | SchemaViolation | TenantMoving | IdempotencyKeyReused
   >;
   readonly delete: (input: {
     readonly collection: string;
+    /** Do this at most once; see `insert`. */
+    readonly idempotencyKey?: string;
     readonly id: string;
     readonly expectedVersion?: number;
-  }) => Effect.Effect<boolean, DocumentConflict | TenantMoving>;
+  }) => Effect.Effect<boolean, DocumentConflict | TenantMoving | IdempotencyKeyReused>;
+
+  /**
+   * Forget completed idempotency keys, returning how many were dropped.
+   *
+   * Receipts grow with requests rather than with data, and nothing expires them
+   * on its own: how long a retry may arrive is the caller's question, not the
+   * database's. Forgetting a key makes a retry carrying it an ordinary write
+   * again — which for an insert means a duplicate-id conflict rather than a
+   * duplicate document, so the cost of pruning too early is a refusal, not a
+   * repeat.
+   */
+  readonly forgetIdempotencyKeys: (input?: {
+    /** Keep receipts recorded at or after this instant. Omit to forget all. */
+    readonly before?: string;
+  }) => Effect.Effect<number>;
 }
 
 /**
@@ -292,6 +365,61 @@ export const documentsFor = (
   const write = (f: (txn: Txn) => Effect.Effect<void, DbError>): Effect.Effect<void> =>
     Effect.orDie(store.transact(f));
 
+  /**
+   * What a key was used for last time, if it has been used.
+   *
+   * A key that comes back attached to a different request is refused rather
+   * than answered: replying with the stored outcome would tell a caller that
+   * something happened which did not.
+   */
+  const receiptFor = (key: string, fingerprint: string, request: string) =>
+    Effect.gen(function* () {
+      const seq = yield* lookup(idempotencyNs(tenant), key);
+      if (seq === undefined) return undefined;
+      const object = yield* readObject(seq);
+      if (object === undefined) return undefined;
+      const receipt = decode<Receipt>(object.bytes);
+      if (receipt.fingerprint !== fingerprint) {
+        return yield* new IdempotencyKeyReused({
+          tenant,
+          key,
+          detail: `first used for ${receipt.request}, now offered for ${request}`,
+        });
+      }
+      return receipt;
+    });
+
+  /**
+   * Apply a change and, if the caller gave a key, record what it did — together.
+   *
+   * One transaction for both. Recording the receipt afterwards would leave a
+   * window in which the write had happened and the key had not been noted,
+   * which is exactly the window a retry falls into and the one direction of
+   * failure a key exists to prevent.
+   */
+  const commitOnce = <A>(
+    key: string | undefined,
+    fingerprint: string,
+    request: string,
+    result: A,
+    change: (txn: Txn) => Effect.Effect<void, DbError>,
+  ): Effect.Effect<A> =>
+    Effect.gen(function* () {
+      if (key === undefined) {
+        yield* write(change);
+        return result;
+      }
+      const seq = yield* nextSeq;
+      yield* write((txn) =>
+        Effect.gen(function* () {
+          yield* change(txn);
+          yield* rememberKey(txn, {
+            key, fingerprint, request, result, at: new Date().toISOString(),
+          }, seq);
+        }));
+      return result;
+    });
+
   const loadCollection = (name: string) =>
     Effect.gen(function* () {
       const seq = yield* lookup(collectionNs(tenant), name);
@@ -326,15 +454,32 @@ export const documentsFor = (
     return yield* new TenantMoving({ tenant, from, to });
   });
 
-  const writeDocument = (doc: Document, seq: Seq) =>
-    write((txn) =>
-      txn.put(seq, encode(doc), {
-        terms: [],
-        columns: columnsFor(tenant, doc.collection, doc.data),
-        measures: [],
-        edges: [],
-      }, { namespace: documentNs(tenant, doc.collection), key: doc.id }),
-    );
+  const documentPut = (txn: Txn, doc: Document, seq: Seq) =>
+    txn.put(seq, encode(doc), {
+      terms: [],
+      columns: columnsFor(tenant, doc.collection, doc.data),
+      measures: [],
+      edges: [],
+    }, { namespace: documentNs(tenant, doc.collection), key: doc.id });
+
+  /**
+   * A completed write, remembered under the key the caller gave it.
+   *
+   * Written in the same transaction as the change it describes. Recording it
+   * afterwards would leave a window where the write had happened and the key
+   * had not been noted — precisely the window a retry falls into, and the one
+   * direction of failure the key exists to prevent.
+   */
+  const rememberKey = (txn: Txn, receipt: Receipt, seq: Seq) =>
+    txn.put(seq, encode(receipt), {
+      terms: [],
+      // Marked so a tenant's receipts can be swept without walking the shard;
+      // they are the one thing here that accumulates with requests rather than
+      // with data, so there has to be a way to let them go.
+      columns: [[idempotencyColumn(tenant), RECEIPT_MARKER]],
+      measures: [],
+      edges: [],
+    }, { namespace: idempotencyNs(tenant), key: receipt.key });
 
   return {
     createCollection: (input) =>
@@ -393,8 +538,18 @@ export const documentsFor = (
     insert: (input) =>
       Effect.gen(function* () {
         yield* assertNotMoving;
+        const request = `insert into "${input.collection}"`;
+        const fingerprint = fingerprintOf({
+          op: "insert", collection: input.collection, id: input.id, data: input.data,
+        });
+        if (input.idempotencyKey !== undefined) {
+          const seen = yield* receiptFor(input.idempotencyKey, fingerprint, request);
+          if (seen !== undefined) return seen.result as Document;
+        }
         yield* requireCollection(input.collection);
         yield* enforceSchema(input.collection, input.data);
+        // A generated id would differ on every retry, so a keyed insert without
+        // one would store a second document and hand back the first.
         const id = input.id ?? crypto.randomUUID();
         const clash = yield* lookup(documentNs(tenant, input.collection), id);
         if (clash !== undefined) {
@@ -414,8 +569,8 @@ export const documentsFor = (
           version: 1,
         };
         const seq = yield* nextSeq;
-        yield* writeDocument(doc, seq);
-        return doc;
+        return yield* commitOnce(input.idempotencyKey, fingerprint, request, doc,
+          (txn) => documentPut(txn, doc, seq));
       }),
 
     findById: (input) =>
@@ -448,6 +603,15 @@ export const documentsFor = (
     update: (input) =>
       Effect.gen(function* () {
         yield* assertNotMoving;
+        const request = `update "${input.collection}/${input.id}"`;
+        const fingerprint = fingerprintOf({
+          op: "update", collection: input.collection, id: input.id, data: input.data,
+          mode: input.mode, expectedVersion: input.expectedVersion,
+        });
+        if (input.idempotencyKey !== undefined) {
+          const seen = yield* receiptFor(input.idempotencyKey, fingerprint, request);
+          if (seen !== undefined) return seen.result as Document;
+        }
         const seq = yield* lookup(documentNs(tenant, input.collection), input.id);
         const current = seq === undefined ? undefined : yield* readDocument(seq);
         if (seq === undefined || current === undefined) {
@@ -471,14 +635,26 @@ export const documentsFor = (
           updatedAt: new Date().toISOString(),
           version: current.version + 1,
         };
-        yield* writeDocument(next, seq);
-        return next;
+        return yield* commitOnce(input.idempotencyKey, fingerprint, request, next,
+          (txn) => documentPut(txn, next, seq));
       }),
 
     delete: (input) =>
       Effect.gen(function* () {
         yield* assertNotMoving;
+        const request = `delete "${input.collection}/${input.id}"`;
+        const fingerprint = fingerprintOf({
+          op: "delete", collection: input.collection, id: input.id,
+          expectedVersion: input.expectedVersion,
+        });
+        if (input.idempotencyKey !== undefined) {
+          const seen = yield* receiptFor(input.idempotencyKey, fingerprint, request);
+          if (seen !== undefined) return seen.result as boolean;
+        }
         const seq = yield* lookup(documentNs(tenant, input.collection), input.id);
+        // Nothing happened, so there is nothing to remember: a later retry that
+        // finds the document present should delete it rather than replay a
+        // "no" from when it was already gone.
         if (seq === undefined) return false;
         if (input.expectedVersion !== undefined) {
           const current = yield* readDocument(seq);
@@ -490,8 +666,26 @@ export const documentsFor = (
             });
           }
         }
-        yield* write((txn) => txn.retract(seq));
-        return true;
+        return yield* commitOnce(input.idempotencyKey, fingerprint, request, true,
+          (txn) => txn.retract(seq));
+      }),
+
+    forgetIdempotencyKeys: (input) =>
+      Effect.gen(function* () {
+        const seqs = yield* Stream.runCollect(
+          resolveQuery(equals(idempotencyColumn(tenant), RECEIPT_MARKER)),
+        );
+        let forgotten = 0;
+        for (const seq of seqs) {
+          if (input?.before !== undefined) {
+            const object = yield* readObject(seq);
+            if (object === undefined) continue;
+            if (decode<Receipt>(object.bytes).at >= input.before) continue;
+          }
+          yield* write((txn) => txn.retract(seq));
+          forgotten += 1;
+        }
+        return forgotten;
       }),
   } satisfies DocumentsApi;
 };
