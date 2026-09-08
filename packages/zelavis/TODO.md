@@ -680,9 +680,18 @@ driven by what the existing dependents call, not by what is easiest to port.
   definitions would only invite the two copies to drift. Stored versions are
   immutable, activation is explicit, and a collection without a schema accepts
   anything, as a raw database collection does today.
-- [ ] Schema migration between versions. Activating a new version changes what
-  is accepted from that point on; documents written under an older version are
-  left as they were.
+- [x] Schema migration between versions, as `tenant.migrations`. Activating a
+  version still changes only what is accepted next and leaves what was written
+  alone — a schema change must never silently rewrite data — and migration is
+  the deliberate other half. Instructions are data (`Rename`, `Set`, `Default`,
+  `Drop`) rather than a function, for the same reason a query is: a closure
+  cannot be inspected, logged, or reviewed before it runs. `plan` reports what
+  separates two versions and which differences the caller still has to answer;
+  a removal is not one, because validation rejects unknown keys and a field the
+  new version does not name can only be discarded. The decision is
+  all-or-nothing though the writes are not: every document is transformed and
+  checked before anything is activated or written, so a migration that would
+  leave documents invalid refuses rather than getting halfway.
 - [x] Time series definitions, points, and checkpoints. A series is a
   projection over the same log with the same checkpoint, rather than a second
   ingestion path. Points carry a coarse time bucket so a bounded range asks for

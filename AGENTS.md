@@ -363,6 +363,10 @@ Key rules:
   with its partition, so anything crossing that boundary carries both — and a
   query naming a bare identifier, an edge above all, is refused rather than run
   somewhere it means something else.
+- A schema version governs what is accepted next, never what is already
+  stored: activating one rewrites nothing. `tenant.migrations` is the separate,
+  explicit operation that brings stored documents forward, and its instructions
+  are data rather than functions — inspectable, and reviewable before they run.
 - Locality is declared, not inferred. Everything sharing a `PartitionKey` lives
   on one node, which is what keeps the intersection cheap. Tenant scoping is
   structural — the tenant is part of every namespace and lens key — never a

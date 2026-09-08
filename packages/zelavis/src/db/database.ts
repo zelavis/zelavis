@@ -10,6 +10,7 @@ import { initPartitionMap, tenantsOn, topologyFor, type TopologyApi } from "./to
 import { systemViewsFor, type SystemViewsApi } from "./system-views.js";
 import { scatterOver, type ScatterApi } from "./scatter.js";
 import { movementOver, type MovementApi } from "./movement.js";
+import { migrationsFor, type MigrationsApi } from "./migrations.js";
 import type { ObjectStoreApi } from "./store.js";
 import { shardFor, shardsOf, type PartitionMap, type ShardId, type TenantId } from "./topology.js";
 
@@ -24,6 +25,15 @@ export interface TenantApi {
   readonly schemas: SchemasApi;
   readonly timeSeries: TimeSeriesApi;
   readonly backups: BackupsApi;
+
+  /**
+   * Bring documents forward from one schema version to another.
+   *
+   * Separate from `schemas` because activating a version and rewriting what was
+   * written under the old one are different decisions: the first changes what
+   * is accepted next, the second changes what is already there.
+   */
+  readonly migrations: MigrationsApi;
   /** The dashboard read surface, built from the APIs above rather than storage. */
   readonly systemViews: SystemViewsApi;
 }
@@ -271,6 +281,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
         schemas,
         timeSeries,
         backups: backupsFor(store, tenant),
+        migrations: migrationsFor(documents, schemas, tenant),
         systemViews: systemViewsFor({ documents, events, schemas, projections, timeSeries }),
       };
     },

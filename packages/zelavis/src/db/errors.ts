@@ -28,6 +28,24 @@ export class CrossPartitionQuery extends Schema.TaggedError<CrossPartitionQuery>
 ) {}
 
 /**
+ * A migration was asked for that the caller has not finished describing.
+ *
+ * Raised before anything is activated or written. A new required field, a field
+ * whose type changed, one that became required — none of these can be filled in
+ * from the schemas alone, and guessing would write data nobody asked for.
+ */
+export class SchemaMigrationBlocked extends Schema.TaggedError<SchemaMigrationBlocked>()(
+  "SchemaMigrationBlocked",
+  {
+    tenant: Schema.String,
+    collection: Schema.String,
+    from: Schema.Number,
+    to: Schema.Number,
+    unresolved: Schema.Array(Schema.String),
+  },
+) {}
+
+/**
  * An idempotency key came back attached to a different request.
  *
  * A key stands for one operation and the outcome it had. Answering a different
