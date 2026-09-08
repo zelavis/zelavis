@@ -180,23 +180,29 @@ export const storeOverKv = (
   const bodyOf = (stored: StoredEvent): Uint8Array =>
     stored.body === undefined ? EMPTY : new Uint8Array(Buffer.from(stored.body, "base64"));
 
-  const commit = <A, E, R>(f: (view: View, txn: Txn) => Effect.Effect<A, E, R>) =>
+  const commit = <A, E, R>(
+    f: (view: View, txn: Txn, append: (event: StoredEvent) => void) => Effect.Effect<A, E, R>,
+  ) =>
     Effect.gen(function* () {
       const pending = new Map<string, KvWrite>();
       const view = pendingView(pending);
       let position = yield* readMeta(META_NEXT_POSITION);
+
+      const append = (event: StoredEvent): void => {
+        position += 1;
+        view.put(eventKey(position), json(event));
+      };
 
       const txn: Txn = {
         put: (seq, bytes, manifest, identity) =>
           Effect.gen(function* () {
             yield* assertCurrent;
             const version = (yield* versionOf(view, seq)) + 1;
-            position += 1;
-            view.put(eventKey(position), json({
+            append({
               generation, seq, kind: "put", version, at: Date.now(),
               body: Buffer.from(bytes).toString("base64"), manifest,
               ...(identity === undefined ? {} : { identity }),
-            } satisfies StoredEvent));
+            });
             yield* project(view, seq, version, bytes, manifest, identity);
           }),
 
@@ -205,16 +211,15 @@ export const storeOverKv = (
             yield* assertCurrent;
             const version = yield* versionOf(view, seq);
             if (version === 0) return;
-            position += 1;
-            view.put(eventKey(position), json({
+            append({
               generation, seq, kind: "retract", version: version + 1, at: Date.now(),
-            } satisfies StoredEvent));
+            });
             yield* unproject(view, seq);
             view.del(payloadKey(seq));
           }),
       };
 
-      const result = yield* f(view, txn);
+      const result = yield* f(view, txn, append);
       view.put(metaKey(META_NEXT_POSITION), u32(position));
       // One batch: the whole transaction lands, or none of it does.
       yield* engine.write([...pending.values()]);
@@ -293,11 +298,35 @@ export const storeOverKv = (
       position === 0 ? undefined : encodeCursor(partition, position)),
 
     apply: (event: AppliedEvent) =>
-      commit((view) =>
+      commit((view, _txn, append) =>
         Effect.gen(function* () {
           // Idempotent by version, so a follower may re-consume a range.
           const seen = yield* versionOf(view, asSeq(event.seq));
           if (seen >= event.version) return;
+          // The follower records the event in its own log as well as projecting
+          // it. Without that a replica holds the right rows and an empty
+          // history, so anything reading the log there — a projection, a
+          // rebuild, a backup — sees nothing to replay.
+          append(
+            event._tag === "ObjectPut"
+              ? {
+                  generation: event.generation,
+                  seq: event.seq,
+                  kind: "put",
+                  version: event.version,
+                  at: event.at,
+                  body: Buffer.from(event.bytes).toString("base64"),
+                  manifest: event.manifest,
+                  ...(event.identity === undefined ? {} : { identity: event.identity }),
+                }
+              : {
+                  generation: event.generation,
+                  seq: event.seq,
+                  kind: "retract",
+                  version: event.version,
+                  at: event.at,
+                },
+          );
           if (event._tag === "ObjectPut") {
             yield* project(view, event.seq, event.version, event.bytes, event.manifest, event.identity);
           } else {

@@ -6,7 +6,7 @@ import test from "node:test";
 import { Effect, Stream } from "effect";
 import { compareKeys, termKey, termPrefix, seqOf } from "../dist/db/keys.js";
 import { memoryKvEngine } from "../dist/db/engines/memory-kv.js";
-import { makeSqliteKvEngine } from "../dist/db/engines/sqlite-kv.js";
+import { makeNodeSqliteEngine } from "../dist/db/engines/node-sqlite.js";
 
 const bytes = (s) => new TextEncoder().encode(s);
 const text = (b) => new TextDecoder().decode(b);
@@ -16,7 +16,7 @@ const key = (...parts) => Uint8Array.from(parts);
 // disagrees with the store, which is the whole point of having an interface.
 const engines = [
   ["memory", () => Effect.succeed(memoryKvEngine())],
-  ["sqlite", (dir) => makeSqliteKvEngine("kv", dir)],
+  ["sqlite", (dir) => makeNodeSqliteEngine("kv", dir)],
 ];
 
 const run = (t, make, body) => {

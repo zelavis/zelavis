@@ -313,6 +313,10 @@ Key rules:
 - Writes go through the documents API. There is no raw SQL surface and one must
   not be reintroduced: it was the last way to reach storage without the
   guarantees the documents API exists to provide.
+- Storage is an ordered key-value engine. Lenses are key ranges, a posting is a
+  key with no value, and a transaction is one atomic batch with reads overlaying
+  it. An engine implements `get`, `scan`, `write` and `close`; nothing above it
+  knows which engine it is. SQLite and libSQL ship today.
 - Append to the log before projecting into the lenses. A crash must leave an
   event whose projection can be replayed, never a lens row with no event behind
   it. `rebuildLenses` re-derives every lens from the log alone and is the check

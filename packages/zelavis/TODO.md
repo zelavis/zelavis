@@ -721,8 +721,10 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   is a key with no value, and a transaction is one atomic batch with reads
   overlaying it. The object-store, event-log and document contracts all run
   against it unchanged.
-- [ ] Retire `sqlite-store.ts` and the SQL gateway once the key-value path is
-  the one the platform opens. Both exist today; only one should.
+- [x] The SQL store and its gateway are gone. Every engine is a `KvEngine`;
+  there is one store.
+- [ ] Report the libsql Buffer-parameter panic upstream. Binding a Buffer to a
+  SELECT crashes the process in libsql 0.5.29, so its keys travel as hex text.
 - [ ] A RocksDB engine. Now a driver rather than a redesign: it implements
   `KvEngine` and nothing above it changes. The `rocksdb` npm package exposes one
   keyspace and no column families, so lens namespaces come from the key tags;

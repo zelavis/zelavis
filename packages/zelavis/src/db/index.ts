@@ -18,7 +18,6 @@ export * from "./query.js";
 export * from "./events.js";
 export * as Postings from "./postings.js";
 export * from "./store.js";
-export * from "./gateway.js";
 export * from "./keys.js";
 export * from "./kv.js";
 export * from "./kv-store.js";

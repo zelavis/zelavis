@@ -1,6 +1,10 @@
 import { Effect, Stream } from "effect";
 import type { KvEngine, KvEntry, KvWrite } from "../kv.js";
 import { compareKeys, prefixEnd } from "../keys.js";
+import { claimGeneration, storeOverKv } from "../kv-store.js";
+import type { PartitionKey } from "../model.js";
+import type { ObjectStoreApi } from "../store.js";
+import type { StoreError } from "../errors.js";
 
 /**
  * A reference engine, sorted in memory.
@@ -77,3 +81,12 @@ export const memoryKvEngine = (): KvEngine => {
     }),
   };
 };
+
+/** The whole store with nothing on disk, for tests and ephemeral workloads. */
+export const makeMemoryStore = (
+  partition: PartitionKey,
+): Effect.Effect<ObjectStoreApi, StoreError> =>
+  Effect.gen(function* () {
+    const engine = memoryKvEngine();
+    return storeOverKv(partition, engine, yield* claimGeneration(engine));
+  });
