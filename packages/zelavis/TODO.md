@@ -725,10 +725,12 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   there is one store.
 - [ ] Report the libsql Buffer-parameter panic upstream. Binding a Buffer to a
   SELECT crashes the process in libsql 0.5.29, so its keys travel as hex text.
-- [ ] A RocksDB engine. Now a driver rather than a redesign: it implements
-  `KvEngine` and nothing above it changes. The `rocksdb` npm package exposes one
-  keyspace and no column families, so lens namespaces come from the key tags;
-  `abstract-level` is the closer-fitting binding.
+- [x] A RocksDB engine, and it was a driver rather than a redesign: four
+  methods, nothing above it changed. The single keyspace cost nothing, because
+  the key tags already give each lens the disjoint range column families would
+  have provided.
+- [ ] Measure the engines against each other. Three ship; nothing has compared
+  them on the workload they exist for.
 - [ ] Postings stored as bitmap blobs, removing the b-tree scan that now
   dominates a wide query. Requires immutable segments and compaction.
 - [ ] An explicit cross-partition scatter/gather contract.

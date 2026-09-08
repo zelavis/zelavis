@@ -45,6 +45,7 @@ allowBuilds:
   lightningcss: true
   msgpackr-extract: true
   msw: true
+  rocksdb: true
   sharp: true
   unrs-resolver: true
 
