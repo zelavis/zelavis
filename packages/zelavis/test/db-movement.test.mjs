@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { Effect } from "effect";
+import { Effect, Fiber } from "effect";
 import { makeDatabase, partitionMapFor, shardFor } from "../dist/db/index.js";
 import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
 
@@ -145,14 +145,15 @@ test("the shard a tenant left stops holding it, and stops claiming it", async (t
   );
 });
 
-test("a tenant cannot be written while its records are being copied", async (t) => {
+test("a fenced tenant refuses every kind of write and none of the reads", async (t) => {
   await withDatabase(t, (db, stores) =>
     Effect.gen(function* () {
       yield* seed(db, ["acme", "bravo", "cosmo", "delta"]);
       const tenant = ["acme", "bravo", "cosmo", "delta"].find((t2) => db.shardOf(t2) === "s0");
 
-      // Stand the tenant in mid-move by hand: fenced and copying, which is
-      // exactly where a process that died during a rebalance would leave it.
+      // Stand the tenant behind the fence by hand. A real move only fences for
+      // the last catch-up, which is too short to catch in the act, so the state
+      // is set up rather than raced for.
       const source = stores.get("s0");
       const enc = new TextEncoder();
       const seq = yield* source.nextSeq;
@@ -231,7 +232,11 @@ test("an interrupted move is resumed rather than repaired", async (t) => {
 
       const finished = yield* db.movement.resume;
       assert.equal(finished.length, 1);
-      assert.equal(finished[0].resumed, false, "it had not got past copying");
+      // A resume never takes the unfenced path: it has no record of the
+      // identifier mapping or the log position the interrupted copy reached, so
+      // it fences first and copies again from the start.
+      assert.equal(finished[0].resumed, true);
+      assert.equal(finished[0].rounds, 0, "a resumed copy does not chase a moving target");
       assert.equal(db.shardOf(tenant), "s1");
       assert.deepEqual(yield* snapshot(db, tenant), before);
       assert.deepEqual(yield* db.movement.pending, []);
@@ -330,6 +335,65 @@ test("a move whose routing already landed is finished, not copied again", async 
       assert.equal(db.shardOf(tenant), "s1");
       assert.deepEqual(yield* snapshot(db, tenant), before);
       assert.deepEqual(yield* db.movement.pending, []);
+    }),
+  );
+});
+
+test("a tenant can be written while it is being moved", async (t) => {
+  await withDatabase(t, (db) =>
+    Effect.gen(function* () {
+      const tenants = ["acme", "bravo", "cosmo", "delta"];
+      yield* seed(db, tenants);
+      const tenant = tenants.find((t2) => db.shardOf(t2) === "s0");
+
+      // Enough that the copy is not over before the first concurrent write
+      // gets a turn.
+      const docs = () => db.forTenant(tenant).documents;
+      for (let i = 0; i < 200; i++) {
+        yield* docs().insert({ collection: "posts", id: `bulk${i}`, data: { title: `b${i}` } });
+      }
+
+      const accepted = [];
+      let refused = 0;
+
+      // The move runs while writes keep arriving. Before this change every one
+      // of them would have been refused: the fence went on before the copy and
+      // stayed on until routing moved.
+      const moving = yield* Effect.forkChild(db.movement.rebalance(allOn("s1", 2)));
+
+      for (let i = 0; i < 400; i++) {
+        const outcome = yield* Effect.result(
+          docs().insert({ collection: "posts", id: `live${i}`, data: { title: `w${i}` } }));
+        if (outcome._tag === "Success") accepted.push(`live${i}`);
+        else {
+          assert.equal(outcome.failure._tag, "TenantMoving");
+          refused += 1;
+        }
+      }
+
+      const result = yield* Fiber.join(moving);
+      const move = result.moves.find((m) => m.tenant === tenant);
+      assert.ok(move !== undefined, "the tenant moved");
+
+      assert.ok(accepted.length > 0,
+        "every write was refused, so the move still takes the tenant offline");
+
+      // The ones that were accepted are on the shard the tenant now lives on —
+      // which is the whole claim: writes taken during the copy are not lost
+      // behind it.
+      const found = yield* docs().findMany({ collection: "posts" });
+      const ids = new Set(found.map((doc) => doc.id));
+      const missing = accepted.filter((id) => !ids.has(id));
+      assert.deepEqual(missing, [],
+        `${missing.length} of ${accepted.length} writes accepted during the move were lost`);
+
+      assert.equal(db.shardOf(tenant), "s1");
+      assert.ok(move.settled <= move.copied,
+        "the fenced part of the move is smaller than the unfenced part");
+      t.diagnostic(
+        `copied ${move.copied}, caught up ${move.caughtUp} over ${move.rounds} rounds, ` +
+        `settled ${move.settled} behind the fence; ${accepted.length} writes accepted, ` +
+        `${refused} refused`);
     }),
   );
 });

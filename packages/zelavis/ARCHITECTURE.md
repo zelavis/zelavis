@@ -268,8 +268,10 @@ capability has a replacement in use does its old implementation come out.
 Two properties must hold before any official recipe mounts it: it routes through
 the topology rather than exposing a physical driver, and cross-partition work
 goes through an explicit scatter/gather contract rather than happening
-silently. Relocation is `db.movement`: it copies a tenant to its new shard behind a write
-fence, moves the routing, then empties the old one, so an occupied range can be
+silently. Relocation is `db.movement`: it copies a tenant to its new shard while the
+tenant is still being written to, catches the copy up from the source log,
+fences writes for the last catch-up alone, moves the routing, then empties the
+old shard, so an occupied range can be
 re-placed without a map change stranding the records it points away from. The
 cross-partition contract is `db.scatter`: it fans out per shard for lens queries
 and per tenant for document queries, reports what each leg cost, and refuses a

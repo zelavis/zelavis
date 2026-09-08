@@ -14,9 +14,11 @@ not matter.
 Relocation is deliberately not a transaction, since there is no atomic write
 across two shards. It is a sequence whose every intermediate state is one a
 reader can safely be in, recorded as it goes so an interruption resumes rather
-than needing repair: fence writes on the shard being left, copy the tenant,
-move the routing, then drop the source. A tenant is unwritable for the length
-of the copy and never unreadable.
+than needing repair: copy the tenant while it is still being written to, catch
+the copy up from the source log in rounds, fence writes for the last round
+alone, move the routing, then drop the source. The tenant is never unreadable,
+and it is unwritable only for that last round — proportional to what arrived
+during the round before it rather than to how much the tenant holds.
 
 Routing is now read from the topology on every call rather than from the map a
 database opened with, so `forTenant`, `shardOf`, `partitionMap` and the health

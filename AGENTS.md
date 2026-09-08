@@ -345,9 +345,13 @@ Key rules:
   `LogCompacted`, and the state-reading equivalents (`reindexLenses` for
   postings, a state-derived export for backups) are what still work.
 - A partition map carries routing and no data, so changing where an occupied
-  range points is a relocation, not a map edit. `db.movement` moves the records
-  first and the routing second, and every step is recorded so an interrupted one
-  resumes; `topology.update` still refuses an occupied range. Routing is read
+  range points is a relocation, not a map edit. `db.movement` copies the records
+  unfenced, catches the copy up from the source log, fences writes only for the
+  last catch-up, and moves routing last; every step is recorded so an
+  interrupted one resumes. Routing is one record for every tenant in a
+  rebalance, so it moves once, after all of them are copied — applying it while
+  one was still uncopied would route a tenant to a shard that does not hold it.
+  `topology.update` still refuses an occupied range; `topology.update` still refuses an occupied range. Routing is read
   from the topology on every call — never cached from the map a handle opened
   with, which would go on reading the shard the records left.
 - Crossing partitions is a separate API, never a fallback. `forTenant` is

@@ -647,9 +647,15 @@ driven by what the existing dependents call, not by what is easiest to port.
   the data and nothing can change it while it is fenced. `topology.update` keeps
   refusing an occupied range; relocation is what makes such a change possible
   rather than what makes the refusal go away.
-- [ ] Move without a write outage. The fence holds for the whole copy, which is
-  fine for a small tenant and not for a large one. Tailing the source log from
-  the point the copy was taken would shrink it to the catch-up.
+- [x] Move without a write outage. The copy is taken unfenced from a noted log
+  position and then caught up from the source log in rounds, each replaying only
+  what arrived during the one before it; writes are fenced for the last round
+  alone. Catching up keys events by identity rather than identifier, because a
+  restore assigns the target its own dense identifiers — the name a caller gave
+  a record is the one thing that means the same on both shards. Under continuous
+  write load: 238 records copied and 271 events caught up unfenced, 22 settled
+  behind the fence, and 326 of 400 concurrent writes accepted where every one of
+  them used to be refused.
 - [x] Event and projection surfaces on the `dbnew` log. Domain events are a
   reading of the object log rather than a second log beside it, so there is no
   way to record a document change that did not happen. Projection checkpoints
