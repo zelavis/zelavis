@@ -717,11 +717,16 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
 - [x] An ordered key-value engine interface, with SQLite and in-memory
   implementations and a conformance suite both must pass. Lenses become key
   ranges, which is what lets an engine without column families back the store.
-- [ ] Port the store logic from SQL onto `KvEngine`, so a key-value engine can
-  back it at all. The engine interface exists; the store is still SQL.
-- [ ] A RocksDB engine. The `rocksdb` npm package exposes one keyspace and no
-  column families, so lens namespaces come from the key tags rather than from
-  the engine; `abstract-level` is the closer-fitting binding.
+- [x] The store logic ported onto `KvEngine`. Lenses are key ranges, a posting
+  is a key with no value, and a transaction is one atomic batch with reads
+  overlaying it. The object-store, event-log and document contracts all run
+  against it unchanged.
+- [ ] Retire `sqlite-store.ts` and the SQL gateway once the key-value path is
+  the one the platform opens. Both exist today; only one should.
+- [ ] A RocksDB engine. Now a driver rather than a redesign: it implements
+  `KvEngine` and nothing above it changes. The `rocksdb` npm package exposes one
+  keyspace and no column families, so lens namespaces come from the key tags;
+  `abstract-level` is the closer-fitting binding.
 - [ ] Postings stored as bitmap blobs, removing the b-tree scan that now
   dominates a wide query. Requires immutable segments and compaction.
 - [ ] An explicit cross-partition scatter/gather contract.
