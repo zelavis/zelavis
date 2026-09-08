@@ -754,11 +754,17 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   nothing: LMDB is the one to choose while the working set fits in memory
   (roughly 42M objects on 64 GB) and RocksDB the one that keeps working past
   that, at about a sixth of the space.
-- [ ] Compaction for the event log. Storage grows with history rather than with
-  live objects, so it, not the engine, decides when a working set outgrows
-  memory — which makes it worth more than any engine choice above.
-- [ ] Benchmark past the page cache. Every measurement so far fits in memory,
-  which is exactly where an LSM engine and a b-tree stop behaving alike.
+- [x] Compaction for the event log, reachable as `db.maintenance`. Payloads,
+  manifests and identities already are the snapshot and postings are derivable
+  from manifests, so compaction is log truncation: storage then tracks live
+  objects rather than every write ever taken, which moves the point where a
+  working set outgrows memory further than any engine choice above. A cursor
+  from before the cut is refused rather than silently continued, backups
+  export from state once history no longer reaches back far enough, and a full
+  replay refuses on a cut log while `reindex` re-derives postings from state.
+- [x] Benchmark past the page cache. Every warm measurement fit in memory,
+  which is exactly where an LSM engine and a b-tree stop behaving alike; cold,
+  RocksDB degrades 1.2× against SQLite's 16.8×, libSQL's 21.6× and LMDB's 2.8×.
 - [ ] Postings stored as bitmap blobs, removing the b-tree scan that now
   dominates a wide query. Requires immutable segments and compaction.
 - [ ] An explicit cross-partition scatter/gather contract.

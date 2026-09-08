@@ -69,6 +69,46 @@ export interface ObjectStoreApi {
    */
   readonly rebuildLenses: Effect.Effect<number, DbError>;
 
+  /**
+   * Re-derive the postings from the stored manifests.
+   *
+   * The operation that still works after compaction, because it reads state
+   * rather than history. It cannot detect a corrupt manifest; a full replay is
+   * what does that.
+   */
+  readonly reindexLenses: Effect.Effect<number, DbError>;
+
+  /**
+   * Drop history, keeping the most recent `keep` events.
+   *
+   * Storage grows with writes rather than with live objects, so this is what
+   * decides when a tenant outgrows memory. Cursors older than the point
+   * returned here stop being continuable.
+   */
+  readonly compact: (options?: {
+    readonly keep?: number;
+  }) => Effect.Effect<{ readonly removed: number; readonly compactedTo: number }, DbError>;
+
+  /** The position everything at or below has been compacted away. */
+  readonly compactedTo: Effect.Effect<number, DbError>;
+
+  /**
+   * Every record that still exists, with what it contributed.
+   *
+   * The snapshot in the plainest form. A backup uses it where the log no longer
+   * reaches back far enough to rebuild the tenant from history.
+   */
+  readonly liveRecords: Effect.Effect<
+    ReadonlyArray<{
+      readonly seq: Seq;
+      readonly version: number;
+      readonly bytes: Uint8Array;
+      readonly manifest: IndexManifest;
+      readonly identity: ObjectIdentity;
+    }>,
+    DbError
+  >;
+
   /** Allocate the next dense identifier in this partition. */
   readonly nextSeq: Effect.Effect<Seq, DbError>;
 

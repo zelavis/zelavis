@@ -321,6 +321,14 @@ Key rules:
   event whose projection can be replayed, never a lens row with no event behind
   it. `rebuildLenses` re-derives every lens from the log alone and is the check
   that this holds.
+- The log is the source of truth up to the compaction point, not forever.
+  Payloads, manifests and identities are the snapshot, so `db.maintenance`
+  compacts by truncating the log — after which storage tracks live objects
+  rather than every write ever taken. Anything reading history must therefore
+  handle being cut off rather than assume it can reach the beginning: an old
+  cursor fails with `CursorCompacted`, `rebuildLenses` refuses with
+  `LogCompacted`, and the state-reading equivalents (`reindexLenses` for
+  postings, a state-derived export for backups) are what still work.
 - Locality is declared, not inferred. Everything sharing a `PartitionKey` lives
   on one node, which is what keeps the intersection cheap. Tenant scoping is
   structural — the tenant is part of every namespace and lens key — never a

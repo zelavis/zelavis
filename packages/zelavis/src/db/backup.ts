@@ -37,11 +37,16 @@ export interface RestoreResult {
 
 export interface BackupsApi {
   /**
-   * Export a tenant as the slice of the log that produced it.
+   * Export a tenant.
    *
-   * The log is already the source of truth, so a backup is a copy of it rather
-   * than a separate rendering of collections, schemas and documents that would
-   * have to be kept in step with how they are actually stored.
+   * Taken from the log where the log is whole, because a copy of it needs no
+   * separate rendering of collections, schemas and documents to keep in step
+   * with how they are stored. Where compaction has removed the beginning, the
+   * export is synthesized from current state instead: one put per live record,
+   * carrying the version it holds now. That loses the history compaction
+   * already discarded and nothing else — but it is why the export cannot simply
+   * read whatever events remain, which would restore a tenant missing every
+   * record whose creation was compacted away.
    */
   readonly exportTenant: () => Effect.Effect<TenantBackupV1>;
   /**
@@ -64,9 +69,39 @@ export interface BackupsApi {
 const toBase64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 const fromBase64 = (value: string) => new Uint8Array(Buffer.from(value, "base64"));
 
-export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi => ({
+export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi => {
+  /** One put per live record, for a log that no longer reaches back far enough. */
+  const exportFromState = () =>
+    Effect.gen(function* () {
+      const events: BackupEvent[] = [];
+      for (const record of yield* store.liveRecords) {
+        const owner = tenantOf(record.identity.namespace, record.identity.key);
+        if (owner !== tenant) continue;
+        if (isDerivedNamespace(record.identity.namespace)) continue;
+        events.push({
+          kind: "put",
+          seq: record.seq,
+          version: record.version,
+          at: Date.now(),
+          body: toBase64(record.bytes),
+          manifest: record.manifest,
+          identity: record.identity,
+        });
+      }
+      return {
+        format: ZELAVIS_DB_BACKUP_V1,
+        exportedAt: new Date().toISOString(),
+        tenantId: tenant,
+        events,
+      };
+    }).pipe(Effect.orDie);
+
+  return {
   exportTenant: () =>
     Effect.gen(function* () {
+      const compactedTo = yield* store.compactedTo;
+      if (compactedTo > 0) return yield* exportFromState();
+
       // A retraction carries no identity, so ownership is remembered from the
       // put that established each sequence and applied to the delete that
       // follows it.
@@ -168,6 +203,9 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
       Effect.catchTag("StoreError", (cause) => Effect.die(cause)),
       Effect.catchTag("WriterFenced", (cause) => Effect.die(cause)),
       Effect.catchTag("ForeignCursor", (cause) => Effect.die(cause)),
+      Effect.catchTag("CursorCompacted", (cause) => Effect.die(cause)),
+      Effect.catchTag("LogCompacted", (cause) => Effect.die(cause)),
       Effect.catchTag("PartitionUnavailable", (cause) => Effect.die(cause)),
     ),
-});
+  };
+};

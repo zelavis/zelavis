@@ -131,5 +131,24 @@ export class UnknownSystemView extends Schema.TaggedError<UnknownSystemView>()(
   { name: Schema.String },
 ) {}
 
+/** A cursor points into history that compaction has removed. */
+export class CursorCompacted extends Schema.TaggedError<CursorCompacted>()("CursorCompacted", {
+  partition: Schema.String,
+  requested: Schema.Number,
+  compactedTo: Schema.Number,
+}) {}
+
+/** A full replay was asked for on a log that no longer holds its beginning. */
+export class LogCompacted extends Schema.TaggedError<LogCompacted>()("LogCompacted", {
+  partition: Schema.String,
+  compactedTo: Schema.Number,
+}) {}
+
 /** Every failure the store contract can raise. */
-export type DbError = StoreError | WriterFenced | ForeignCursor | PartitionUnavailable;
+export type DbError =
+  | StoreError
+  | WriterFenced
+  | ForeignCursor
+  | CursorCompacted
+  | LogCompacted
+  | PartitionUnavailable;

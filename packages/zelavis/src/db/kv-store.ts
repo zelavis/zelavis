@@ -1,5 +1,5 @@
 import { Effect, Stream } from "effect";
-import { ForeignCursor, StoreError, WriterFenced } from "./errors.js";
+import { CursorCompacted, ForeignCursor, LogCompacted, StoreError, WriterFenced } from "./errors.js";
 import type { AppliedEvent, DbEvent, EventCursor } from "./events.js";
 import {
   columnKey, columnPrefix, edgeKey, edgePrefix, eventKey, eventPrefix,
@@ -55,12 +55,24 @@ const keyId = (key: Uint8Array): string => {
 const META_NEXT_SEQ = "next_seq";
 const META_NEXT_POSITION = "next_position";
 const META_GENERATION = "generation";
+/** The position everything at or below has been compacted away. */
+const META_COMPACTED_TO = "compacted_to";
 
-/** Every lens, for the truncation a rebuild performs before replaying. */
-const LENS_TAGS = [
-  Tag.Payload, Tag.Manifest, Tag.Term, Tag.Column,
-  Tag.Measure, Tag.Edge, Tag.Identity, Tag.IdentityBySeq,
-] as const;
+/**
+ * What a rebuild drops and re-derives.
+ *
+ * Postings hold nothing a manifest does not already say, so they can be
+ * reconstructed from state alone. That is what makes compaction possible: the
+ * payloads, manifests and identities are already a snapshot, so the log is
+ * history rather than the only way back to a working index.
+ */
+const DERIVED_TAGS = [Tag.Term, Tag.Column, Tag.Measure, Tag.Edge] as const;
+
+/** State a rebuild keeps, and compaction relies on. */
+const STATE_TAGS = [Tag.Payload, Tag.Manifest, Tag.Identity, Tag.IdentityBySeq] as const;
+
+/** Everything a full replay from the log clears first. */
+const LENS_TAGS = [...STATE_TAGS, ...DERIVED_TAGS] as const;
 
 interface StoredEvent {
   readonly generation: number;
@@ -266,9 +278,17 @@ export const storeOverKv = (
 
   const readEvents = (
     options?: { readonly after?: EventCursor; readonly limit?: number },
-  ): Effect.Effect<ReadonlyArray<DbEvent>, StoreError | ForeignCursor> =>
+  ): Effect.Effect<ReadonlyArray<DbEvent>, StoreError | ForeignCursor | CursorCompacted> =>
       Effect.gen(function* () {
           const after = options?.after === undefined ? 0 : decodeCursor(partition, options.after);
+          const compactedTo = yield* readMeta(META_COMPACTED_TO);
+          // A cursor from before the compaction point cannot be continued: the
+          // events between it and here are gone. Saying so is the difference
+          // between a follower knowing it must re-seed and one silently missing
+          // writes it will never see again.
+          if (options?.after !== undefined && after < compactedTo) {
+            return yield* new CursorCompacted({ partition, requested: after, compactedTo });
+          }
           const limit = options?.limit ?? 1024;
           const out: DbEvent[] = [];
           yield* Stream.runForEach(engine.scan(eventPrefix()), (entry) =>
@@ -282,7 +302,7 @@ export const storeOverKv = (
         // decodeCursor throws on a foreign cursor, which is a caller error
         // rather than a defect, so it is returned to the error channel.
         Effect.catchDefect(
-          (cause: unknown): Effect.Effect<never, StoreError | ForeignCursor> =>
+          (cause: unknown): Effect.Effect<never, StoreError | ForeignCursor | CursorCompacted> =>
             Effect.fail(
               cause instanceof ForeignCursor
                 ? cause
@@ -342,6 +362,11 @@ export const storeOverKv = (
     events,
 
     rebuildLenses: Effect.gen(function* () {
+      const compactedTo = yield* readMeta(META_COMPACTED_TO);
+      // Replaying a truncated log would rebuild a partial index and report a
+      // count as though it were whole. `reindexLenses` is the operation that
+      // still works here, because it reads state rather than history.
+      if (compactedTo > 0) return yield* new LogCompacted({ partition, compactedTo });
       const stored: Array<{ position: number; event: StoredEvent }> = [];
       yield* Stream.runForEach(engine.scan(eventPrefix()), (entry) =>
         Effect.sync(() => {
@@ -367,6 +392,93 @@ export const storeOverKv = (
       }
       yield* engine.write([...pending.values()]);
       return stored.length;
+    }),
+
+    /**
+     * Re-derive the postings from the manifests.
+     *
+     * Works whether or not the log has been compacted, because a manifest
+     * records exactly what its object contributed. It cannot detect a corrupt
+     * manifest, which is what a full replay is for.
+     */
+    reindexLenses: Effect.gen(function* () {
+      const pending = new Map<string, KvWrite>();
+      const view = pendingView(pending);
+      for (const tag of DERIVED_TAGS) {
+        yield* Stream.runForEach(engine.scan(Uint8Array.from([tag])), (entry) =>
+          Effect.sync(() => view.del(entry.key)));
+      }
+      let count = 0;
+      const manifests: Array<{ seq: Seq; manifest: IndexManifest }> = [];
+      yield* Stream.runForEach(engine.scan(Uint8Array.from([Tag.Manifest])), (entry) =>
+        Effect.sync(() => {
+          manifests.push({ seq: asSeq(readU32(entry.key, 1)), manifest: unjson(entry.value) });
+        }));
+      for (const { seq, manifest } of manifests) {
+        for (const [field, term] of manifest.terms) view.put(termKey(field, term, seq), EMPTY);
+        for (const [column, value] of manifest.columns) view.put(columnKey(column, value, seq), EMPTY);
+        for (const [column, value] of manifest.measures) view.put(measureKey(column, seq), f64(value));
+        for (const [edgeType, to] of manifest.edges) view.put(edgeKey(edgeType, seq, to), EMPTY);
+        count += 1;
+      }
+      yield* engine.write([...pending.values()]);
+      return count;
+    }),
+
+    /**
+     * Drop history that no longer describes anything reachable.
+     *
+     * Storage grows with writes rather than with live objects: a record updated
+     * ten times keeps ten events forever, so a busy tenant outgrows memory on
+     * history rather than on size. Compaction removes that, and the state left
+     * behind is a complete snapshot — payloads, manifests and identities — so
+     * nothing that a query or a reindex needs is in the part being removed.
+     *
+     * What is lost is the ability to replay from before the cut, which is why
+     * cursors older than it are rejected rather than quietly continued.
+     */
+    compact: (options) =>
+      Effect.gen(function* () {
+        const keep = options?.keep ?? 0;
+        const positions: number[] = [];
+        yield* Stream.runForEach(engine.scan(eventPrefix()), (entry) =>
+          Effect.sync(() => positions.push(positionOf(entry.key))));
+        positions.sort((a, b) => a - b);
+        const cut = positions.length - keep;
+        if (cut <= 0) return { removed: 0, compactedTo: yield* readMeta(META_COMPACTED_TO) };
+        const compactedTo = positions[cut - 1]!;
+        const writes: KvWrite[] = positions
+          .slice(0, cut)
+          .map((position) => ({ op: "delete" as const, key: eventKey(position) }));
+        writes.push({ op: "put", key: metaKey(META_COMPACTED_TO), value: u32(compactedTo) });
+        yield* engine.write(writes);
+        return { removed: cut, compactedTo };
+      }),
+
+    compactedTo: readMeta(META_COMPACTED_TO),
+
+    liveRecords: Effect.gen(function* () {
+      // Driven by the identity index, because a record without a caller-facing
+      // name is derived state rather than something a backup should carry.
+      const identities: Array<{ seq: Seq; identity: ObjectIdentity }> = [];
+      yield* Stream.runForEach(engine.scan(Uint8Array.from([Tag.IdentityBySeq])), (entry) =>
+        Effect.sync(() => {
+          identities.push({ seq: asSeq(readU32(entry.key, 1)), identity: unjson(entry.value) });
+        }));
+      const out = [];
+      for (const { seq, identity } of identities) {
+        const payload = yield* engine.get(payloadKey(seq));
+        const manifest = yield* engine.get(manifestKey(seq));
+        if (payload === undefined) continue;
+        out.push({
+          seq,
+          version: readU32(payload),
+          bytes: payload.subarray(4),
+          manifest: manifest === undefined ? emptyManifest() : unjson<IndexManifest>(manifest),
+          identity,
+        });
+      }
+      return out;
     }),
 
     lookup: (namespace, key) =>

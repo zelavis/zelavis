@@ -26,6 +26,44 @@ export interface TenantApi {
   readonly systemViews: SystemViewsApi;
 }
 
+/**
+ * Storage upkeep, addressed per shard.
+ *
+ * Compaction is the operation that decides whether a tenant's storage tracks
+ * its live objects or every write it has ever taken, so it belongs on the
+ * database rather than only on the store an operator cannot reach.
+ */
+export interface MaintenanceApi {
+  /** What each shard holds and how far its log has been cut. */
+  readonly status: Effect.Effect<ReadonlyArray<ShardMaintenance>, DbError>;
+
+  /** Cut every shard's log back to its most recent `keep` events. */
+  readonly compact: (options?: {
+    readonly keep?: number;
+  }) => Effect.Effect<ReadonlyArray<ShardCompaction>, DbError>;
+
+  /** Re-derive every shard's postings from its stored manifests. */
+  readonly reindex: Effect.Effect<ReadonlyArray<ShardReindex>, DbError>;
+}
+
+export interface ShardMaintenance {
+  readonly shard: ShardId;
+  readonly records: number;
+  readonly bytes: number;
+  readonly compactedTo: number;
+}
+
+export interface ShardCompaction {
+  readonly shard: ShardId;
+  readonly removed: number;
+  readonly compactedTo: number;
+}
+
+export interface ShardReindex {
+  readonly shard: ShardId;
+  readonly records: number;
+}
+
 export interface DatabaseApi {
   /**
    * The logical boundary applications work against.
@@ -43,6 +81,9 @@ export interface DatabaseApi {
 
   /** Inspect and change where ranges are placed. */
   readonly topology: TopologyApi;
+
+  /** Compaction and reindexing, per shard. */
+  readonly maintenance: MaintenanceApi;
 }
 
 export interface MakeDatabaseOptions {
@@ -104,8 +145,48 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     return store;
   };
 
+  // The topology store is a store like any other: it takes writes, so it grows
+  // like any other, and upkeep that skipped it would leave the one store an
+  // operator never thinks about as the one that never gets compacted.
+  const everyStore = (): ReadonlyArray<readonly [ShardId, ObjectStoreApi]> => [
+    [TOPOLOGY_SHARD, topologyStore],
+    ...shards,
+  ];
+
+  const acrossShards = <A>(
+    run: (store: ObjectStoreApi) => Effect.Effect<A, DbError>,
+  ): Effect.Effect<ReadonlyArray<readonly [ShardId, A]>, DbError> =>
+    Effect.forEach(everyStore(), ([shard, store]) =>
+      Effect.map(run(store), (result) => [shard, result] as const),
+    );
+
+  const maintenance: MaintenanceApi = {
+    status: Effect.map(
+      acrossShards((store) =>
+        Effect.all({ records: store.liveRecords, compactedTo: store.compactedTo }),
+      ),
+      (results) =>
+        results.map(([shard, { records, compactedTo }]) => ({
+          shard,
+          records: records.length,
+          bytes: records.reduce((total, record) => total + record.bytes.byteLength, 0),
+          compactedTo,
+        })),
+    ),
+    compact: (options) =>
+      Effect.map(
+        acrossShards((store) => store.compact(options)),
+        (results) => results.map(([shard, result]) => ({ shard, ...result })),
+      ),
+    reindex: Effect.map(
+      acrossShards((store) => store.reindexLenses),
+      (results) => results.map(([shard, records]) => ({ shard, records })),
+    ),
+  };
+
   return {
     partitionMap,
+    maintenance,
     topology: topologyFor(topologyStore, partitionMap, shards),
     shardOf: (tenant) => shardFor(partitionMap, tenant),
     forTenant: (tenant) => {
