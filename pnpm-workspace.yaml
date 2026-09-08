@@ -43,6 +43,7 @@ allowBuilds:
   better-sqlite3: true
   esbuild: true
   lightningcss: true
+  lmdb: true
   msgpackr-extract: true
   msw: true
   rocksdb: true

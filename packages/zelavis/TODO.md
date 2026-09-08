@@ -730,10 +730,14 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   the key tags already give each lens the disjoint range column families would
   have provided.
 - [x] Measured the engines against each other (`scripts/bench-engines.mjs`).
-  At 100k objects: SQLite ingests 1.7x faster and reads points 3x faster;
-  RocksDB scans 24% faster, answers the cross-model query 27% faster, and takes
-  5x less disk. libSQL trails both and carries 18% more disk than SQLite from
-  the hex keys its binding forces.
+  At 100k objects LMDB wins every speed metric — 6x SQLite on the cross-model
+  query, 4.7x on posting scans, 3x on point reads — and pays for it in disk.
+  RocksDB stores the same data in a fifth of the space and is the only engine
+  that does. SQLite sits between them and needs nothing installed. libSQL trails
+  both and carries the hex keys its binding forces.
+- [ ] Decide whether LMDB should be the default rather than a proof of concept.
+  It is faster than SQLite on every measured axis, but it is a native optional
+  dependency where SQLite ships with Node.
 - [ ] Benchmark past the page cache. Every measurement so far fits in memory,
   which is exactly where an LSM engine and a b-tree stop behaving alike.
 - [ ] Postings stored as bitmap blobs, removing the b-tree scan that now

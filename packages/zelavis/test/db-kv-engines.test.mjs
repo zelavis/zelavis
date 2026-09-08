@@ -8,6 +8,7 @@ import { compareKeys, termKey, termPrefix, seqOf } from "../dist/db/keys.js";
 import { memoryKvEngine } from "../dist/db/engines/memory-kv.js";
 import { makeNodeSqliteEngine } from "../dist/db/engines/node-sqlite.js";
 import { makeRocksdbEngine } from "../dist/db/engines/rocksdb.js";
+import { makeLmdbEngine } from "../dist/db/engines/lmdb.js";
 
 const bytes = (s) => new TextEncoder().encode(s);
 const text = (b) => new TextDecoder().decode(b);
@@ -19,6 +20,7 @@ const engines = [
   ["memory", () => Effect.succeed(memoryKvEngine())],
   ["sqlite", (dir) => makeNodeSqliteEngine("kv", dir)],
   ["rocksdb", (dir) => makeRocksdbEngine("kv", dir)],
+  ["lmdb", (dir) => makeLmdbEngine("kv", dir)],
 ];
 
 const run = (t, make, body) => {

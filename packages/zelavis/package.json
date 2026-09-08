@@ -72,6 +72,10 @@
       "types": "./dist/db/engines/rocksdb.d.ts",
       "import": "./dist/db/engines/rocksdb.js"
     },
+    "./db/lmdb": {
+      "types": "./dist/db/engines/lmdb.d.ts",
+      "import": "./dist/db/engines/lmdb.js"
+    },
     "./db/schema": {
       "types": "./dist/db/schema/index.d.ts",
       "import": "./dist/db/schema/index.js"
@@ -180,6 +184,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.4.0",
     "libsql": "^0.5.29",
+    "lmdb": "^3.4.3",
     "rocksdb": "^5.2.1",
     "typescript": "^7.0.2"
   },
@@ -197,13 +202,17 @@
   },
   "peerDependencies": {
     "libsql": "^0.5.29",
-    "rocksdb": "^5.2.1"
+    "rocksdb": "^5.2.1",
+    "lmdb": "^3.4.3"
   },
   "peerDependenciesMeta": {
     "libsql": {
       "optional": true
     },
     "rocksdb": {
+      "optional": true
+    },
+    "lmdb": {
       "optional": true
     }
   }
