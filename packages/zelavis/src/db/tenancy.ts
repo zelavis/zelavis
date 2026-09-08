@@ -6,6 +6,15 @@ export const SCHEMA_NAMESPACE = "zv.schema";
 export const ACTIVE_SCHEMA_NAMESPACE = "zv.schema.active";
 export const CHECKPOINT_NAMESPACE = "zv.checkpoint";
 
+/**
+ * Marks a tenant on this shard as being relocated off it.
+ *
+ * Lives on the shard being left rather than in the topology, because the check
+ * that has to see it is the write path, and the write path already has the
+ * store in its hand.
+ */
+export const MOVE_FENCE_NAMESPACE = "zv.moving";
+
 /** Records that a tenant holds data on this shard, so a shard can name its occupants. */
 export const TENANT_NAMESPACE = "zv.tenant";
 export const TENANT_COLUMN = "zv.tenant";

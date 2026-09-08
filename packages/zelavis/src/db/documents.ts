@@ -5,7 +5,7 @@ import {
   isReservedCollectionName,
   RESERVED_COLLECTION_PREFIX,
 } from "./naming.js";
-import { TENANT_COLUMN, TENANT_MARKER, TENANT_NAMESPACE } from "./tenancy.js";
+import { MOVE_FENCE_NAMESPACE, TENANT_COLUMN, TENANT_MARKER, TENANT_NAMESPACE } from "./tenancy.js";
 import {
   CollectionExists,
   SchemaViolation,
@@ -13,6 +13,7 @@ import {
   DocumentConflict,
   DocumentNotFound,
   InvalidCollectionName,
+  TenantMoving,
 } from "./errors.js";
 import type { DbError } from "./errors.js";
 import type { Seq } from "./model.js";
@@ -215,14 +216,17 @@ export interface DocumentsApi {
     readonly name: string;
     readonly surface?: CollectionSurface;
     readonly metadata?: Record<string, unknown>;
-  }) => Effect.Effect<Collection, InvalidCollectionName | CollectionExists>;
+  }) => Effect.Effect<Collection, InvalidCollectionName | CollectionExists | TenantMoving>;
   readonly listCollections: () => Effect.Effect<ReadonlyArray<Collection>>;
   readonly collectionExists: (name: string) => Effect.Effect<boolean>;
   readonly insert: (input: {
     readonly collection: string;
     readonly id?: string;
     readonly data: JsonObject;
-  }) => Effect.Effect<Document, CollectionNotFound | DocumentConflict | SchemaViolation>;
+  }) => Effect.Effect<
+    Document,
+    CollectionNotFound | DocumentConflict | SchemaViolation | TenantMoving
+  >;
   readonly findById: (input: {
     readonly collection: string;
     readonly id: string;
@@ -234,12 +238,15 @@ export interface DocumentsApi {
     readonly data: JsonObject;
     readonly mode?: "merge" | "replace";
     readonly expectedVersion?: number;
-  }) => Effect.Effect<Document, DocumentNotFound | DocumentConflict | SchemaViolation>;
+  }) => Effect.Effect<
+    Document,
+    DocumentNotFound | DocumentConflict | SchemaViolation | TenantMoving
+  >;
   readonly delete: (input: {
     readonly collection: string;
     readonly id: string;
     readonly expectedVersion?: number;
-  }) => Effect.Effect<boolean, DocumentConflict>;
+  }) => Effect.Effect<boolean, DocumentConflict | TenantMoving>;
 }
 
 /**
@@ -301,6 +308,24 @@ export const documentsFor = (
   const readDocument = (seq: Seq) =>
     Effect.map(readObject(seq), (o) => (o === undefined ? undefined : decode<Document>(o.bytes)));
 
+  /**
+   * Refuse a write to a tenant that is being relocated off this shard.
+   *
+   * One point lookup ahead of each write. That is a real cost on a hot path for
+   * an operation that happens rarely, and it is the price of the alternative
+   * being a write that lands in records nobody will read again — a move would
+   * otherwise have to take the tenant offline for reads as well, just to keep
+   * the two copies from diverging.
+   */
+  const assertNotMoving = Effect.gen(function* () {
+    const seq = yield* lookup(MOVE_FENCE_NAMESPACE, tenant);
+    if (seq === undefined) return;
+    const fence = yield* readObject(seq);
+    if (fence === undefined) return;
+    const { from, to } = decode<{ from: string; to: string }>(fence.bytes);
+    return yield* new TenantMoving({ tenant, from, to });
+  });
+
   const writeDocument = (doc: Document, seq: Seq) =>
     write((txn) =>
       txn.put(seq, encode(doc), {
@@ -314,6 +339,7 @@ export const documentsFor = (
   return {
     createCollection: (input) =>
       Effect.gen(function* () {
+        yield* assertNotMoving;
         yield* validateName(input.name);
         const existing = yield* loadCollection(input.name);
         if (existing !== undefined) return yield* new CollectionExists({ name: input.name });
@@ -366,6 +392,7 @@ export const documentsFor = (
 
     insert: (input) =>
       Effect.gen(function* () {
+        yield* assertNotMoving;
         yield* requireCollection(input.collection);
         yield* enforceSchema(input.collection, input.data);
         const id = input.id ?? crypto.randomUUID();
@@ -420,6 +447,7 @@ export const documentsFor = (
 
     update: (input) =>
       Effect.gen(function* () {
+        yield* assertNotMoving;
         const seq = yield* lookup(documentNs(tenant, input.collection), input.id);
         const current = seq === undefined ? undefined : yield* readDocument(seq);
         if (seq === undefined || current === undefined) {
@@ -449,6 +477,7 @@ export const documentsFor = (
 
     delete: (input) =>
       Effect.gen(function* () {
+        yield* assertNotMoving;
         const seq = yield* lookup(documentNs(tenant, input.collection), input.id);
         if (seq === undefined) return false;
         if (input.expectedVersion !== undefined) {

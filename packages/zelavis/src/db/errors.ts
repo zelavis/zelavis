@@ -28,6 +28,21 @@ export class CrossPartitionQuery extends Schema.TaggedError<CrossPartitionQuery>
 ) {}
 
 /**
+ * A write arrived for a tenant whose records are being relocated.
+ *
+ * A move copies a tenant to another shard and then changes where it routes.
+ * Between those two moments a write to the shard being left would land in
+ * records nobody reads again, so it is refused instead. Reads are unaffected:
+ * the source still holds the data until routing moves, and the target holds it
+ * afterwards.
+ */
+export class TenantMoving extends Schema.TaggedError<TenantMoving>()("TenantMoving", {
+  tenant: Schema.String,
+  from: Schema.String,
+  to: Schema.String,
+}) {}
+
+/**
  * A scatter was pointed at a shard the partition map does not have.
  *
  * Reading the shards that do exist and staying quiet about the one that does

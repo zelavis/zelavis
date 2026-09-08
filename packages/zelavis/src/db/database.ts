@@ -9,6 +9,7 @@ import { backupsFor, type BackupsApi } from "./backup.js";
 import { initPartitionMap, tenantsOn, topologyFor, type TopologyApi } from "./topology-store.js";
 import { systemViewsFor, type SystemViewsApi } from "./system-views.js";
 import { scatterOver, type ScatterApi } from "./scatter.js";
+import { movementOver, type MovementApi } from "./movement.js";
 import type { ObjectStoreApi } from "./store.js";
 import { shardFor, shardsOf, type PartitionMap, type ShardId, type TenantId } from "./topology.js";
 
@@ -93,10 +94,25 @@ export interface DatabaseApi {
   /** Which shard currently holds a tenant. Placement detail, exposed for operators. */
   readonly shardOf: (tenant: TenantId) => ShardId;
 
+  /**
+   * The map in force now, not the one this database opened with.
+   *
+   * A relocation changes where tenants live, so a snapshot taken at open would
+   * describe the layout as it used to be while reads went somewhere else.
+   */
   readonly partitionMap: PartitionMap;
 
   /** Inspect and change where ranges are placed. */
   readonly topology: TopologyApi;
+
+  /**
+   * Relocate tenants so an occupied range can be re-placed.
+   *
+   * `topology.update` refuses to move a range tenants are standing on, because
+   * a map carries routing and no data. This is what makes such a change
+   * possible at all: it moves the records first, then the routing.
+   */
+  readonly movement: MovementApi;
 
   /** Compaction and reindexing, per shard. */
   readonly maintenance: MaintenanceApi;
@@ -161,13 +177,25 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     shards.set(shard, yield* options.openShard(shard));
   }
 
+  const topology = topologyFor(topologyStore, partitionMap, shards);
+
+  /**
+   * Where a tenant lives *now*.
+   *
+   * Read from the topology on every call rather than from the map this database
+   * opened with. A relocation exists to change that answer, and a handle that
+   * kept routing by the map it started with would go on reading the shard the
+   * records were moved off.
+   */
+  const shardOf = (tenant: TenantId): ShardId => shardFor(topology.current(), tenant);
+
   const storeFor = (tenant: TenantId): ObjectStoreApi => {
-    const shard = shardFor(partitionMap, tenant);
+    const shard = shardOf(tenant);
     const store = shards.get(shard);
     if (store === undefined) {
       // shardsOf covers every placement, so this is a corrupt map rather than
       // a tenant we simply have not seen.
-      throw new Error(`Partition map version ${partitionMap.version} places tenant on unopened shard "${shard}".`);
+      throw new Error(`Partition map version ${topology.current().version} places tenant on unopened shard "${shard}".`);
     }
     return store;
   };
@@ -221,16 +249,14 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
   };
 
   return {
-    partitionMap,
+    get partitionMap() {
+      return topology.current();
+    },
     maintenance,
-    scatter: scatterOver({
-      shards,
-      tenantsOn,
-      shardOf: (tenant) => shardFor(partitionMap, tenant),
-      documentsFor: documentsFor_,
-    }),
-    topology: topologyFor(topologyStore, partitionMap, shards),
-    shardOf: (tenant) => shardFor(partitionMap, tenant),
+    scatter: scatterOver({ shards, tenantsOn, shardOf, documentsFor: documentsFor_ }),
+    movement: movementOver({ topologyStore, topology, shards }),
+    topology,
+    shardOf,
     forTenant: (tenant) => {
       const store = storeFor(tenant);
       const events = domainEventsFor(store, tenant, nodeId);

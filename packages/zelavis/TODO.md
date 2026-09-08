@@ -638,9 +638,18 @@ driven by what the existing dependents call, not by what is easiest to port.
   the data on them. Changes are validated for complete, non-overlapping
   coverage, must advance the version, and are refused while tenants stand on a
   range that would move.
-- [ ] Range movement: relocating the records of the tenants on a range so an
-  occupied range can be re-placed. Until then a change may only move empty
-  ranges, and `topology.plan` reports which tenants block one.
+- [x] Range movement, as `db.movement.rebalance`. Not a transaction — there is
+  no atomic write across two shards — but a sequence whose every intermediate
+  state is one a reader can safely be in, recorded as it goes so an interruption
+  resumes rather than needing repair: fence writes on the shard being left, copy
+  the tenant, move the routing, then drop the source. A tenant is unwritable for
+  the length of the copy and never unreadable, because the source still holds
+  the data and nothing can change it while it is fenced. `topology.update` keeps
+  refusing an occupied range; relocation is what makes such a change possible
+  rather than what makes the refusal go away.
+- [ ] Move without a write outage. The fence holds for the whole copy, which is
+  fine for a small tenant and not for a large one. Tailing the source log from
+  the point the copy was taken would shrink it to the catch-up.
 - [x] Event and projection surfaces on the `dbnew` log. Domain events are a
   reading of the object log rather than a second log beside it, so there is no
   way to record a document change that did not happen. Projection checkpoints

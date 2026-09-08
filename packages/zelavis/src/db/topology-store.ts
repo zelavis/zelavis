@@ -122,6 +122,22 @@ export interface TopologyApi {
   readonly update: (
     next: PartitionMap,
   ) => Effect.Effect<PartitionMap, PartitionMapInvalid | RangeNotEmpty>;
+
+  /**
+   * Store a new map whose moved ranges have already been relocated.
+   *
+   * The occupancy check `update` makes is skipped here, and only relocation may
+   * call this: at the moment routing moves, the source still holds the records
+   * — that is the point of the ordering, since the copy has to be complete and
+   * verifiable before anything reads from the target. The check would see those
+   * records and refuse the very change the copy was made for.
+   *
+   * Everything else `update` checks still applies: the map has to be whole and
+   * its version has to advance.
+   */
+  readonly applyAfterMove: (
+    next: PartitionMap,
+  ) => Effect.Effect<PartitionMap, PartitionMapInvalid>;
 }
 
 export const topologyFor = (
@@ -153,19 +169,27 @@ export const topologyFor = (
       return moves;
     });
 
+  const store = (next: PartitionMap) =>
+    Effect.gen(function* () {
+      const invalid = validatePartitionMap(next);
+      if (invalid !== undefined) return yield* invalid;
+      if (next.version <= map.version) {
+        return yield* new PartitionMapInvalid({
+          version: next.version,
+          reason: `version must advance past ${map.version}`,
+        });
+      }
+      yield* writePartitionMap(topologyStore, next);
+      map = next;
+      return next;
+    });
+
   return {
     current: () => map,
     plan,
+    applyAfterMove: store,
     update: (next) =>
       Effect.gen(function* () {
-        const invalid = validatePartitionMap(next);
-        if (invalid !== undefined) return yield* invalid;
-        if (next.version <= map.version) {
-          return yield* new PartitionMapInvalid({
-            version: next.version,
-            reason: `version must advance past ${map.version}`,
-          });
-        }
         const occupied = (yield* plan(next)).filter((move) => move.tenants.length > 0);
         if (occupied.length > 0) {
           const first = occupied[0]!;
@@ -176,9 +200,7 @@ export const topologyFor = (
             tenants: occupied.flatMap((move) => move.tenants),
           });
         }
-        yield* writePartitionMap(topologyStore, next);
-        map = next;
-        return next;
+        return yield* store(next);
       }),
   } satisfies TopologyApi;
 };

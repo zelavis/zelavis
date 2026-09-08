@@ -268,7 +268,10 @@ capability has a replacement in use does its old implementation come out.
 Two properties must hold before any official recipe mounts it: it routes through
 the topology rather than exposing a physical driver, and cross-partition work
 goes through an explicit scatter/gather contract rather than happening
-silently. That contract is `db.scatter`: it fans out per shard for lens queries
+silently. Relocation is `db.movement`: it copies a tenant to its new shard behind a write
+fence, moves the routing, then empties the old one, so an occupied range can be
+re-placed without a map change stranding the records it points away from. The
+cross-partition contract is `db.scatter`: it fans out per shard for lens queries
 and per tenant for document queries, reports what each leg cost, and refuses a
 query whose meaning does not survive the trip rather than answering it wrongly.
 Independently of the replacement, compaction and sealed postings have since
