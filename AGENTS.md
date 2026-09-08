@@ -330,6 +330,12 @@ Key rules:
   rebuilds, touching only the segments a live posting or tombstone falls in, so
   the blobs accumulate across seals; `reindexLenses` is what re-derives them
   from the manifests when that accumulation needs checking.
+- One transaction is one batch, and that is the whole durability story: a
+  killed process loses no commit that returned, a write-ahead log truncated by
+  a power cut costs a suffix rather than leaving holes, and an interrupted
+  maintenance pass is a state the reader already handles rather than damage to
+  repair. `test/db-durability.test.mjs` holds the store to all three by killing
+  real processes; anything that makes a write span two batches breaks it.
 - The log is the source of truth up to the compaction point, not forever.
   Payloads, manifests and identities are the snapshot, so `db.maintenance`
   compacts by truncating the log — after which storage tracks live objects

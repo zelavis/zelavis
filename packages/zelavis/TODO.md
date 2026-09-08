@@ -712,8 +712,16 @@ the `dbnew` runtime API, both construction sites open a sharded database through
 Independent of parity, and needed before an official recipe mounts `dbnew`:
 
 - [ ] Snapshots, so rebuilding replays live objects rather than all history.
-- [ ] Durability testing under interruption; `synchronous=NORMAL` is currently
-  configured rather than proven.
+- [x] Durability testing under interruption. `synchronous=NORMAL` in WAL mode
+  does not fsync each commit, which trades two guarantees against each other,
+  and both are now asserted rather than assumed. A `SIGKILL`ed writer loses no
+  transaction that had already returned — proven on all four engines, and the
+  test detects a single lost commit in 306. A write-ahead log truncated
+  mid-frame, which is what a power cut leaves, costs a suffix and never a hole:
+  what recovers is always the first *n* objects, never a set with gaps. And an
+  interrupted seal is a state rather than damage — some lens keys sealed, the
+  rest still live, every query answering as before, and finishing it is just
+  running it again.
 - [x] An ordered key-value engine interface, with SQLite and in-memory
   implementations and a conformance suite both must pass. Lenses become key
   ranges, which is what lets an engine without column families back the store.
