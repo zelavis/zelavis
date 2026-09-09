@@ -29,8 +29,8 @@
       "zelavis/adapters/bun": [
         "../../packages/zelavis/src/adapters/bun.ts"
       ],
-      "zelavis/dbnew": [
-        "../../packages/zelavis/src/dbnew/index.ts"
+      "zelavis/db": [
+        "../../packages/zelavis/src/db/index.ts"
       ]
     },
     "types": [

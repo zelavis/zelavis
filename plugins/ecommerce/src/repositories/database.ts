@@ -3,7 +3,7 @@ import type {
   Json as DatabaseJson,
   JsonObject as DatabaseJsonObject,
   TenantRuntimeApi,
-} from "zelavis/dbnew";
+} from "zelavis/db";
 import type {
   CouponRepository,
   CustomerRepository,

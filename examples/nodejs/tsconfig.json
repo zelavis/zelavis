@@ -35,8 +35,8 @@
       "zelavis/runtimes/node": [
         "../../packages/zelavis/src/runtimes/node.ts"
       ],
-      "zelavis/dbnew": [
-        "../../packages/zelavis/src/dbnew/index.ts"
+      "zelavis/db": [
+        "../../packages/zelavis/src/db/index.ts"
       ]
     },
     "types": [

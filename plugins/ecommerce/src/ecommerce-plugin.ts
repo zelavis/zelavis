@@ -15,7 +15,7 @@ import type {
   Product,
   SubscriptionInterval,
 } from "./domain/entities.js";
-import type { DatabaseRuntimeApi } from "zelavis/dbnew";
+import type { DatabaseRuntimeApi } from "zelavis/db";
 import type { CreateSubscriptionInput } from "./contracts/payment-provider.js";
 import type { CreateCouponInput } from "./services/coupon-service.js";
 import type { CreateCustomerInput } from "./services/customer-service.js";
