@@ -53,13 +53,18 @@ allowBuilds:
   lmdb: true
   msgpackr-extract: true
   msw: true
-  # rocksdb is not a dependency of this workspace. It ships no prebuilt
-  # binary for the Node here, so it compiles from source, and its bundled
-  # C++ does not build on Linux CI. Left installed-but-unbuilt it is worse
-  # than absent: importing it aborts the process with `std::bad_alloc`,
-  # which no guard in JavaScript can catch. It stays an optional peer, and
-  # this entry lets a host that installs it deliberately still build it.
-  rocksdb: true
+  # rocksdb is never built here. It ships no prebuilt binary for the Node
+  # this repository runs, so pnpm compiles it from source, and its bundled
+  # C++ does not build on Linux — which fails `pnpm install` itself. Denied
+  # rather than omitted, because pnpm refuses an install that silently
+  # ignores a build script.
+  #
+  # It is still installed, because pnpm resolves it through the optional
+  # peer dependency, so the tests have to cope with a module that is present
+  # and unusable. They probe it in a child process: importing an unbuilt
+  # rocksdb aborts with `std::bad_alloc` from inside the library, and a
+  # process that dies cannot be caught by any guard in JavaScript.
+  rocksdb: false
   sharp: true
   unrs-resolver: true
 

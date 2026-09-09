@@ -28,13 +28,11 @@ import { fileURLToPath } from "node:url";
 import { Effect, Stream } from "effect";
 import { asSeq, equals, term } from "../dist/db/index.js";
 import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
+import { engineAvailable } from "./_engine-available.mjs";
 
 const WRITER = fileURLToPath(new URL("./fixtures/durability-writer.mjs", import.meta.url));
 const SEALER = fileURLToPath(new URL("./fixtures/durability-sealer.mjs", import.meta.url));
 const decoder = new TextDecoder();
-
-const has = (specifier) =>
-  import(specifier).then(() => true, () => false);
 
 const receiptsIn = (path) => {
   let text = "";
@@ -129,9 +127,9 @@ const assertCoherent = (store) =>
 
 const engines = [
   ["sqlite", true],
-  ["libsql", await has("libsql")],
-  ["rocksdb", await has("rocksdb")],
-  ["lmdb", await has("lmdb")],
+  ["libsql", engineAvailable("libsql")],
+  ["rocksdb", engineAvailable("rocksdb")],
+  ["lmdb", engineAvailable("lmdb")],
 ];
 
 for (const [engine, available] of engines) {

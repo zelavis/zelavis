@@ -9,6 +9,7 @@ import { memoryKvEngine } from "../dist/db/engines/memory-kv.js";
 import { makeNodeSqliteEngine } from "../dist/db/engines/node-sqlite.js";
 import { makeRocksdbEngine } from "../dist/db/engines/rocksdb.js";
 import { makeLmdbEngine } from "../dist/db/engines/lmdb.js";
+import { engineAvailable } from "./_engine-available.mjs";
 
 const bytes = (s) => new TextEncoder().encode(s);
 const text = (b) => new TextDecoder().decode(b);
@@ -16,20 +17,11 @@ const key = (...parts) => Uint8Array.from(parts);
 
 // Every engine runs the same suite. A driver that disagrees with another here
 // disagrees with the store, which is the whole point of having an interface.
-/**
- * Whether an engine's native module is installed and built here.
- *
- * The native engines are optional peers, so a checkout without one is an
- * ordinary state rather than a broken one — and an engine that cannot load
- * should take itself out of the suite rather than fail every assertion in it.
- */
-const available = (specifier) => import(specifier).then(() => true, () => false);
-
 const engines = [
   ["memory", () => Effect.succeed(memoryKvEngine()), true],
   ["sqlite", (dir) => makeNodeSqliteEngine("kv", dir), true],
-  ["rocksdb", (dir) => makeRocksdbEngine("kv", dir), await available("rocksdb")],
-  ["lmdb", (dir) => makeLmdbEngine("kv", dir), await available("lmdb")],
+  ["rocksdb", (dir) => makeRocksdbEngine("kv", dir), engineAvailable("rocksdb")],
+  ["lmdb", (dir) => makeLmdbEngine("kv", dir), engineAvailable("lmdb")],
 ];
 
 const run = (t, make, body) => {
