@@ -57,7 +57,7 @@ const snapshot = (db, tenant) =>
     const docs = db.forTenant(tenant).documents;
     const found = yield* docs.findMany({ collection: "posts" });
     return {
-      collections: (yield* docs.listCollections()).map((c) => c.name),
+      collections: (yield* docs.listCollections).map((c) => c.name),
       docs: found
         .map((d) => `${d.id}:${d.data.title}:v${d.version}`)
         .sort(),
@@ -260,7 +260,7 @@ test("a copy interrupted halfway is not restored alongside its own wreckage", as
       // Put half a copy on the target, as an attempt that died mid-restore
       // would. Resuming has to discard it: replaying the rest alongside would
       // leave a tenant that is partly the old copy and looks whole.
-      const partial = yield* db.forTenant(tenant).backups.exportTenant();
+      const partial = yield* db.forTenant(tenant).backups.exportTenant;
       const target = stores.get("s1");
       const enc = new TextEncoder();
       for (const event of partial.events.slice(0, 2)) {

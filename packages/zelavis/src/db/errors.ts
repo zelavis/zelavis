@@ -39,8 +39,8 @@ export class SchemaMigrationBlocked extends Schema.TaggedError<SchemaMigrationBl
   {
     tenant: Schema.String,
     collection: Schema.String,
-    from: Schema.Number,
-    to: Schema.Number,
+    from: Schema.Finite,
+    to: Schema.Finite,
     unresolved: Schema.Array(Schema.String),
   },
 ) {}
@@ -96,8 +96,8 @@ export class UnknownShard extends Schema.TaggedError<UnknownShard>()("UnknownSha
  */
 export class WriterFenced extends Schema.TaggedError<WriterFenced>()("WriterFenced", {
   partition: Schema.String,
-  claimed: Schema.Number,
-  current: Schema.Number,
+  claimed: Schema.Finite,
+  current: Schema.Finite,
 }) {}
 
 /** A cursor was issued by a different partition than the one being read. */
@@ -139,18 +139,18 @@ export class ProjectionNotFound extends Schema.TaggedError<ProjectionNotFound>()
 
 export class SchemaVersionExists extends Schema.TaggedError<SchemaVersionExists>()(
   "SchemaVersionExists",
-  { collection: Schema.String, version: Schema.Number },
+  { collection: Schema.String, version: Schema.Finite },
 ) {}
 
 export class SchemaNotFound extends Schema.TaggedError<SchemaNotFound>()("SchemaNotFound", {
   collection: Schema.String,
-  version: Schema.Number,
+  version: Schema.Finite,
 }) {}
 
 /** A write did not satisfy the collection's active schema. */
 export class SchemaViolation extends Schema.TaggedError<SchemaViolation>()("SchemaViolation", {
   collection: Schema.String,
-  schemaVersion: Schema.Number,
+  schemaVersion: Schema.Finite,
   issues: Schema.Array(Schema.Struct({ path: Schema.String, message: Schema.String })),
 }) {}
 
@@ -176,12 +176,12 @@ export class BackupFormatUnsupported extends Schema.TaggedError<BackupFormatUnsu
 
 export class PartitionMapInvalid extends Schema.TaggedError<PartitionMapInvalid>()(
   "PartitionMapInvalid",
-  { version: Schema.Number, reason: Schema.String },
+  { version: Schema.Finite, reason: Schema.String },
 ) {}
 
 /** A placement change would move a range that tenants are standing on. */
 export class RangeNotEmpty extends Schema.TaggedError<RangeNotEmpty>()("RangeNotEmpty", {
-  range: Schema.Number,
+  range: Schema.Finite,
   from: Schema.String,
   to: Schema.String,
   tenants: Schema.Array(Schema.String),
@@ -195,14 +195,14 @@ export class UnknownSystemView extends Schema.TaggedError<UnknownSystemView>()(
 /** A cursor points into history that compaction has removed. */
 export class CursorCompacted extends Schema.TaggedError<CursorCompacted>()("CursorCompacted", {
   partition: Schema.String,
-  requested: Schema.Number,
-  compactedTo: Schema.Number,
+  requested: Schema.Finite,
+  compactedTo: Schema.Finite,
 }) {}
 
 /** A full replay was asked for on a log that no longer holds its beginning. */
 export class LogCompacted extends Schema.TaggedError<LogCompacted>()("LogCompacted", {
   partition: Schema.String,
-  compactedTo: Schema.Number,
+  compactedTo: Schema.Finite,
 }) {}
 
 /** Every failure the store contract can raise. */

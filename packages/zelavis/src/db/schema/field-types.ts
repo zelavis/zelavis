@@ -9,8 +9,8 @@ export const TextFieldSchema = Schema.TaggedStruct("TextField", {
   placeholder: Schema.optionalKey(Schema.String),
   helpText: Schema.optionalKey(Schema.String),
   group: Schema.optionalKey(Schema.String),
-  minLength: Schema.optionalKey(Schema.Number),
-  maxLength: Schema.optionalKey(Schema.Number),
+  minLength: Schema.optionalKey(Schema.Finite),
+  maxLength: Schema.optionalKey(Schema.Finite),
   pattern: Schema.optionalKey(Schema.String),
 });
 export type TextField = Schema.Schema.Type<typeof TextFieldSchema>;
@@ -22,9 +22,9 @@ export const LongTextFieldSchema = Schema.TaggedStruct("LongTextField", {
   placeholder: Schema.optionalKey(Schema.String),
   helpText: Schema.optionalKey(Schema.String),
   group: Schema.optionalKey(Schema.String),
-  rows: Schema.optionalKey(Schema.Number),
-  minLength: Schema.optionalKey(Schema.Number),
-  maxLength: Schema.optionalKey(Schema.Number),
+  rows: Schema.optionalKey(Schema.Finite),
+  minLength: Schema.optionalKey(Schema.Finite),
+  maxLength: Schema.optionalKey(Schema.Finite),
 });
 export type LongTextField = Schema.Schema.Type<typeof LongTextFieldSchema>;
 
@@ -45,8 +45,8 @@ export const NumberFieldSchema = Schema.TaggedStruct("NumberField", {
   placeholder: Schema.optionalKey(Schema.String),
   helpText: Schema.optionalKey(Schema.String),
   group: Schema.optionalKey(Schema.String),
-  min: Schema.optionalKey(Schema.Number),
-  max: Schema.optionalKey(Schema.Number),
+  min: Schema.optionalKey(Schema.Finite),
+  max: Schema.optionalKey(Schema.Finite),
   integer: Schema.optionalKey(Schema.Boolean),
 });
 export type NumberField = Schema.Schema.Type<typeof NumberFieldSchema>;
@@ -58,8 +58,8 @@ export const IntegerFieldSchema = Schema.TaggedStruct("IntegerField", {
   placeholder: Schema.optionalKey(Schema.String),
   helpText: Schema.optionalKey(Schema.String),
   group: Schema.optionalKey(Schema.String),
-  min: Schema.optionalKey(Schema.Number),
-  max: Schema.optionalKey(Schema.Number),
+  min: Schema.optionalKey(Schema.Finite),
+  max: Schema.optionalKey(Schema.Finite),
 });
 export type IntegerField = Schema.Schema.Type<typeof IntegerFieldSchema>;
 
@@ -102,8 +102,8 @@ export const MultiSelectFieldSchema = Schema.TaggedStruct("MultiSelectField", {
   helpText: Schema.optionalKey(Schema.String),
   group: Schema.optionalKey(Schema.String),
   options: Schema.Array(Schema.String),
-  minItems: Schema.optionalKey(Schema.Number),
-  maxItems: Schema.optionalKey(Schema.Number),
+  minItems: Schema.optionalKey(Schema.Finite),
+  maxItems: Schema.optionalKey(Schema.Finite),
 });
 export type MultiSelectField = Schema.Schema.Type<typeof MultiSelectFieldSchema>;
 
@@ -114,7 +114,7 @@ export const ImageFieldSchema = Schema.TaggedStruct("ImageField", {
   helpText: Schema.optionalKey(Schema.String),
   group: Schema.optionalKey(Schema.String),
   accept: Schema.optionalKey(Schema.Array(Schema.String)),
-  maxSize: Schema.optionalKey(Schema.Number),
+  maxSize: Schema.optionalKey(Schema.Finite),
 });
 export type ImageField = Schema.Schema.Type<typeof ImageFieldSchema>;
 
@@ -125,7 +125,7 @@ export const AudioFieldSchema = Schema.TaggedStruct("AudioField", {
   helpText: Schema.optionalKey(Schema.String),
   group: Schema.optionalKey(Schema.String),
   accept: Schema.optionalKey(Schema.Array(Schema.String)),
-  maxSize: Schema.optionalKey(Schema.Number),
+  maxSize: Schema.optionalKey(Schema.Finite),
 });
 export type AudioField = Schema.Schema.Type<typeof AudioFieldSchema>;
 
@@ -136,7 +136,7 @@ export const VideoFieldSchema = Schema.TaggedStruct("VideoField", {
   helpText: Schema.optionalKey(Schema.String),
   group: Schema.optionalKey(Schema.String),
   accept: Schema.optionalKey(Schema.Array(Schema.String)),
-  maxSize: Schema.optionalKey(Schema.Number),
+  maxSize: Schema.optionalKey(Schema.Finite),
 });
 export type VideoField = Schema.Schema.Type<typeof VideoFieldSchema>;
 
@@ -147,7 +147,7 @@ export const FileFieldSchema = Schema.TaggedStruct("FileField", {
   helpText: Schema.optionalKey(Schema.String),
   group: Schema.optionalKey(Schema.String),
   accept: Schema.optionalKey(Schema.Array(Schema.String)),
-  maxSize: Schema.optionalKey(Schema.Number),
+  maxSize: Schema.optionalKey(Schema.Finite),
 });
 export type FileField = Schema.Schema.Type<typeof FileFieldSchema>;
 
@@ -169,7 +169,7 @@ export const JsonFieldSchema = Schema.TaggedStruct("JsonField", {
   placeholder: Schema.optionalKey(Schema.String),
   helpText: Schema.optionalKey(Schema.String),
   group: Schema.optionalKey(Schema.String),
-  rows: Schema.optionalKey(Schema.Number),
+  rows: Schema.optionalKey(Schema.Finite),
 });
 export type JsonField = Schema.Schema.Type<typeof JsonFieldSchema>;
 
@@ -252,8 +252,8 @@ export const RepeaterFieldSchema: Schema.Codec<RepeaterField> =
     helpText: Schema.optionalKey(Schema.String),
     group: Schema.optionalKey(Schema.String),
     fields: Schema.Array(CollectionFieldEntrySchema),
-    minItems: Schema.optionalKey(Schema.Number),
-    maxItems: Schema.optionalKey(Schema.Number),
+    minItems: Schema.optionalKey(Schema.Finite),
+    maxItems: Schema.optionalKey(Schema.Finite),
   });
 
 export const CollectionFieldSchema: Schema.Codec<CollectionField> =

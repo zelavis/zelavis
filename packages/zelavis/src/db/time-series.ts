@@ -96,7 +96,7 @@ export interface IngestResult {
 
 export interface TimeSeriesApi {
   readonly define: (definition: TimeSeriesDefinition) => Effect.Effect<void>;
-  readonly list: () => Effect.Effect<ReadonlyArray<TimeSeriesSummary>>;
+  readonly list: Effect.Effect<ReadonlyArray<TimeSeriesSummary>>;
   readonly get: (name: string) => TimeSeriesHandle;
   /** Consume events appended since the last ingest into points. */
   readonly ingest: (name: string) => Effect.Effect<IngestResult, TimeSeriesNotFound>;
@@ -367,17 +367,16 @@ export const timeSeriesFor = (
         });
       }),
 
-    list: () =>
-      Effect.succeed(
-        [...definitions.values()]
-          .map((definition) => ({
-            name: definition.name,
-            ...(definition.description === undefined ? {} : { description: definition.description }),
-            ...(definition.version === undefined ? {} : { version: definition.version }),
-            bucket: definition.bucket ?? ("day" as BucketSize),
-          }))
-          .sort((a, b) => a.name.localeCompare(b.name)),
-      ),
+    list: Effect.sync(() =>
+      [...definitions.values()]
+        .map((definition) => ({
+          name: definition.name,
+          ...(definition.description === undefined ? {} : { description: definition.description }),
+          ...(definition.version === undefined ? {} : { version: definition.version }),
+          bucket: definition.bucket ?? ("day" as BucketSize),
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    ),
 
     get: (name) => ({
       range: (input) =>

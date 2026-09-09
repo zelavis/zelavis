@@ -34,7 +34,7 @@ const original = (tenant) =>
     yield* tenant.documents.update({
       collection: "posts", id: "p1", data: { title: "Atlas revised" },
     });
-    return yield* tenant.backups.exportTenant();
+    return yield* tenant.backups.exportTenant;
   });
 
 const titles = (tenant) =>
@@ -82,7 +82,7 @@ test("a purge leaves the tenant as the backup describes it", async (t) => {
       // replacement, not a union.
       assert.deepEqual(yield* titles(tenant), ["p1:Atlas revised:v2", "p2:Beacon:v1"]);
       assert.deepEqual(
-        (yield* tenant.documents.listCollections()).map((c) => c.name), ["posts"]);
+        (yield* tenant.documents.listCollections).map((c) => c.name), ["posts"]);
     }),
   );
 });
@@ -108,7 +108,7 @@ test("a purge clears what an export would have carried, and no less", async (t) 
       yield* tenant.backups.restoreTenant(backup, { into: "purge" });
 
       assert.deepEqual(
-        (yield* tenant.documents.listCollections()).map((c) => c.name), ["posts"]);
+        (yield* tenant.documents.listCollections).map((c) => c.name), ["posts"]);
       assert.deepEqual(yield* tenant.schemas.listVersions("notes"), []);
       assert.deepEqual(yield* titles(tenant), ["p1:Atlas revised:v2", "p2:Beacon:v1"]);
     }),
@@ -249,7 +249,7 @@ test("a backup taken after a restore round-trips again", async (t) => {
       });
 
       yield* tenant.backups.restoreTenant(backup, { into: "purge" });
-      const again = yield* tenant.backups.exportTenant();
+      const again = yield* tenant.backups.exportTenant;
 
       // Restoring what a restore produced has to give the same tenant, or the
       // format loses something each time it goes round.

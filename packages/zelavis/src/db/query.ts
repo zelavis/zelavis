@@ -42,7 +42,7 @@ export type Query = TermQuery | EqualsQuery | EdgeQuery | AndQuery | OrQuery;
 export const Query: Schema.Codec<Query> = Schema.Union([
   Schema.TaggedStruct("Term", { field: Schema.String, term: Schema.String }),
   Schema.TaggedStruct("Equals", { column: Schema.String, value: Schema.String }),
-  Schema.TaggedStruct("Edge", { edgeType: Schema.String, from: Schema.Number }),
+  Schema.TaggedStruct("Edge", { edgeType: Schema.String, from: Schema.Finite }),
   Schema.TaggedStruct("And", {
     of: Schema.Array(Schema.suspend((): Schema.Codec<Query> => Query)),
   }),

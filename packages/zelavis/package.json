@@ -152,7 +152,8 @@
     "build:sdk": "pnpm run build:sdk:browser && pnpm run build:sdk:node",
     "build:sdk:browser": "tsc -p tsconfig.sdk.browser.json",
     "build:sdk:node": "tsc -p tsconfig.sdk.node.json",
-    "typecheck": "pnpm run build:bootstrap && pnpm --filter @zelavis/marketplace build && pnpm --filter @zelavis/auth build && tsc -p tsconfig.json --noEmit",
+    "typecheck": "pnpm run build:bootstrap && pnpm --filter @zelavis/marketplace build && pnpm --filter @zelavis/auth build && tsc -p tsconfig.json --noEmit && pnpm run diagnostics:effect",
+    "diagnostics:effect": "effect-tsgo diagnostics --project tsconfig.json --strict --severity error,warning,message",
     "test": "pnpm --filter @zelavis/ui build:plugin && pnpm run build && node --test test/*.test.mjs",
     "update:wordpress": "node scripts/update-wordpress-release.mjs",
     "build:bootstrap": "tsc -p tsconfig.bootstrap.json"
@@ -177,10 +178,11 @@
     "@zelavis/auth": "workspace:*",
     "@zelavis/marketplace": "workspace:*",
     "better-sqlite3": "^13.0.3",
-    "effect": "4.0.0-rc.111",
+    "effect": "4.0.0-rc.112",
     "jose": "^6.2.10"
   },
   "devDependencies": {
+    "@effect/tsgo": "^0.43.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.4.0",
     "libsql": "^0.5.29",

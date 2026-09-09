@@ -132,7 +132,7 @@ test("projections: run advances a checkpoint, rebuild replays from the start", a
       assert.equal(rebuilt.applied, 3);
       assert.deepEqual(seen, ["Atlas", "Beacon", "Cobalt"], "replay is deterministic");
 
-      const listed = yield* projections.list();
+      const listed = yield* projections.list;
       assert.equal(listed.length, 1);
       assert.equal(listed[0].name, "titles");
       assert.deepEqual(listed[0].sourceCollections, ["posts"]);

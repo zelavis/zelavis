@@ -146,12 +146,15 @@ importers:
         specifier: ^13.0.3
         version: 13.0.3
       effect:
-        specifier: 4.0.0-rc.111
-        version: 4.0.0-rc.111
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112
       jose:
         specifier: ^6.2.10
         version: 6.2.10
     devDependencies:
+      '@effect/tsgo':
+        specifier: ^0.43.0
+        version: 0.43.0
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13
@@ -371,8 +374,8 @@ importers:
   plugins/ecommerce:
     dependencies:
       effect:
-        specifier: 4.0.0-rc.111
-        version: 4.0.0-rc.111
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112
     devDependencies:
       typescript:
         specifier: ^7.0.2
@@ -1092,6 +1095,45 @@ packages:
 
   '@dotenvx/primitives@0.8.0':
     resolution: {integrity: sha512-VYJy0uhFm9zTJ1TxBaW/pA8bjbOM/OttaNMwZ1RHG4JKyRG7DhSdiqD1ipQoAyoD22olUtxbP78W9xY3Wd11bg==}
+
+  '@effect/tsgo-darwin-arm64@0.43.0':
+    resolution: {integrity: sha512-IG/JjY2n2YbUCQUwTLss9dF/VLe/m9tXQsyUHxhqFWW0Ih/3AJN3zIEnKu1JH19eQASFgsnm5zJQXHpVmiMRng==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@effect/tsgo-darwin-x64@0.43.0':
+    resolution: {integrity: sha512-diUSga2Zhl7gp6TDJzw+JQ1CGOi1SvVS1gBWWS3AQExlYZaku3eQmtIQ6LJSfxTDBkVtk30zFuqT7/uqvXJkFA==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@effect/tsgo-linux-arm64@0.43.0':
+    resolution: {integrity: sha512-5HZ2G8zeIUYxG9DL0zgoibjd/EgHjK2BrTS28DMdmwd0+uRpMhCRPHnfGxurTDEprcCavAOfvKx+32EKe4HWhA==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@effect/tsgo-linux-arm@0.43.0':
+    resolution: {integrity: sha512-NCcggB9V3C3J0/mrP6K/O8EzoOj0ua6p85WZA4nNj/3mFXh8H3eTc4LPwdsVCiIi66u0qNNefFJjV2uNgDP6Qw==}
+    cpu: [arm]
+    os: [linux]
+
+  '@effect/tsgo-linux-x64@0.43.0':
+    resolution: {integrity: sha512-prRQeThBFCLngHdPMiF+FzcvdEhh7tqFkZ7mZct87FYJNCNaWjO8I6wJsjRY3SOyV7gaMRZrTTpV54sCdErQvQ==}
+    cpu: [x64]
+    os: [linux]
+
+  '@effect/tsgo-win32-arm64@0.43.0':
+    resolution: {integrity: sha512-O25TBiemFMEdtHscIJMmQ7NMPnIWPLWkuvudeSAB/VTmsfHoIgCsldC1vGDq3xP7wJDlxNPblZpCDpbnEO9s0Q==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@effect/tsgo-win32-x64@0.43.0':
+    resolution: {integrity: sha512-Ic3hLnr8v8DBZ9Hx4VflSXJZSJh/Ak8PY/Tnz8nNWONtIpvBWTzFMXFmrib2h2O8N61FoAR/KG1S2M6mEqsExg==}
+    cpu: [x64]
+    os: [win32]
+
+  '@effect/tsgo@0.43.0':
+    resolution: {integrity: sha512-Xpe9UNrQ4JGNXbk2YHE8r6Z575pswKcU4HS53CSHcT8obGAN14KmMh4a+A29Ky6TDdKaI4nwalkRwSizJi+9tw==}
+    hasBin: true
 
   '@emnapi/core@1.10.0':
     resolution: {integrity: sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw==}
@@ -4258,8 +4300,8 @@ packages:
   ee-first@1.1.1:
     resolution: {integrity: sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==}
 
-  effect@4.0.0-rc.111:
-    resolution: {integrity: sha512-ASd5L58EIR0CUNueZNKKjSsyOCd+2alxOAIaTcHaqkJkPsaYSsw5Cg/cfANk5K4Jr2YsX756xvX11shzqsreWA==}
+  effect@4.0.0-rc.112:
+    resolution: {integrity: sha512-wXxwuh1Ywnv4cPRM3Wfa0vDwuOHnZ1TsTgHJkG9XgzND6inhBH9n1vBxhg3iIXOia/OrpmvVmd3lrD4vq6bF3A==}
 
   electron-to-chromium@1.5.413:
     resolution: {integrity: sha512-F1XPKvt7HVfly5WND90ec16nFsdr4g5x/cVUP3EqjeyXynupabGDqpMa84wwvuYGDnldXLBz6DLXyZXWO9TPvw==}
@@ -8331,6 +8373,37 @@ snapshots:
 
   '@dotenvx/primitives@0.8.0': {}
 
+  '@effect/tsgo-darwin-arm64@0.43.0':
+    optional: true
+
+  '@effect/tsgo-darwin-x64@0.43.0':
+    optional: true
+
+  '@effect/tsgo-linux-arm64@0.43.0':
+    optional: true
+
+  '@effect/tsgo-linux-arm@0.43.0':
+    optional: true
+
+  '@effect/tsgo-linux-x64@0.43.0':
+    optional: true
+
+  '@effect/tsgo-win32-arm64@0.43.0':
+    optional: true
+
+  '@effect/tsgo-win32-x64@0.43.0':
+    optional: true
+
+  '@effect/tsgo@0.43.0':
+    optionalDependencies:
+      '@effect/tsgo-darwin-arm64': 0.43.0
+      '@effect/tsgo-darwin-x64': 0.43.0
+      '@effect/tsgo-linux-arm': 0.43.0
+      '@effect/tsgo-linux-arm64': 0.43.0
+      '@effect/tsgo-linux-x64': 0.43.0
+      '@effect/tsgo-win32-arm64': 0.43.0
+      '@effect/tsgo-win32-x64': 0.43.0
+
   '@emnapi/core@1.10.0':
     dependencies:
       '@emnapi/wasi-threads': 1.2.1
@@ -11422,9 +11495,8 @@ snapshots:
 
   ee-first@1.1.1: {}
 
-  effect@4.0.0-rc.111:
+  effect@4.0.0-rc.112:
     dependencies:
-      '@standard-schema/spec': 1.1.0
       fast-check: 4.9.0
       msgpackr: 2.0.5
 
@@ -11641,7 +11713,7 @@ snapshots:
       '@next/eslint-plugin-next': 16.3.3(eslint@10.10.0(jiti@2.7.0))
       eslint: 10.10.0(jiti@2.7.0)
       eslint-import-resolver-node: 0.3.10
-      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.68.0(eslint@10.10.0(jiti@2.7.0))(typescript@7.0.2))(eslint@10.10.0(jiti@2.7.0)))(eslint@10.10.0(jiti@2.7.0))
+      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0)(eslint@10.10.0(jiti@2.7.0))
       eslint-plugin-import: 2.32.0(@typescript-eslint/parser@8.68.0(eslint@10.10.0(jiti@2.7.0))(typescript@7.0.2))(eslint-import-resolver-typescript@3.10.1)(eslint@10.10.0(jiti@2.7.0))
       eslint-plugin-jsx-a11y: 6.10.2(eslint@10.10.0(jiti@2.7.0))
       eslint-plugin-react: 7.37.5(eslint@10.10.0(jiti@2.7.0))
@@ -11664,7 +11736,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.68.0(eslint@10.10.0(jiti@2.7.0))(typescript@7.0.2))(eslint@10.10.0(jiti@2.7.0)))(eslint@10.10.0(jiti@2.7.0)):
+  eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0)(eslint@10.10.0(jiti@2.7.0)):
     dependencies:
       '@nolyfill/is-core-module': 1.0.39
       debug: 4.4.3
@@ -11679,14 +11751,14 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  eslint-module-utils@2.14.0(@typescript-eslint/parser@8.68.0(eslint@10.10.0(jiti@2.7.0))(typescript@7.0.2))(eslint-import-resolver-node@0.3.10)(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.68.0(eslint@10.10.0(jiti@2.7.0))(typescript@7.0.2))(eslint@10.10.0(jiti@2.7.0)))(eslint@10.10.0(jiti@2.7.0)))(eslint@10.10.0(jiti@2.7.0)):
+  eslint-module-utils@2.14.0(@typescript-eslint/parser@8.68.0(eslint@10.10.0(jiti@2.7.0))(typescript@7.0.2))(eslint-import-resolver-node@0.3.10)(eslint-import-resolver-typescript@3.10.1)(eslint@10.10.0(jiti@2.7.0)):
     dependencies:
       debug: 3.2.7
     optionalDependencies:
       '@typescript-eslint/parser': 8.68.0(eslint@10.10.0(jiti@2.7.0))(typescript@7.0.2)
       eslint: 10.10.0(jiti@2.7.0)
       eslint-import-resolver-node: 0.3.10
-      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.68.0(eslint@10.10.0(jiti@2.7.0))(typescript@7.0.2))(eslint@10.10.0(jiti@2.7.0)))(eslint@10.10.0(jiti@2.7.0))
+      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0)(eslint@10.10.0(jiti@2.7.0))
     transitivePeerDependencies:
       - supports-color
 
@@ -11701,7 +11773,7 @@ snapshots:
       doctrine: 2.1.0
       eslint: 10.10.0(jiti@2.7.0)
       eslint-import-resolver-node: 0.3.10
-      eslint-module-utils: 2.14.0(@typescript-eslint/parser@8.68.0(eslint@10.10.0(jiti@2.7.0))(typescript@7.0.2))(eslint-import-resolver-node@0.3.10)(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.68.0(eslint@10.10.0(jiti@2.7.0))(typescript@7.0.2))(eslint@10.10.0(jiti@2.7.0)))(eslint@10.10.0(jiti@2.7.0)))(eslint@10.10.0(jiti@2.7.0))
+      eslint-module-utils: 2.14.0(@typescript-eslint/parser@8.68.0(eslint@10.10.0(jiti@2.7.0))(typescript@7.0.2))(eslint-import-resolver-node@0.3.10)(eslint-import-resolver-typescript@3.10.1)(eslint@10.10.0(jiti@2.7.0))
       hasown: 2.0.4
       is-core-module: 2.16.2
       is-glob: 4.0.3

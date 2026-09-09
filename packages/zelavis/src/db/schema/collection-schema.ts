@@ -47,7 +47,7 @@ export interface SchemaValidationResult {
 
 export const StoredCollectionSchemaCodec = Schema.Struct({
   collection: Schema.String,
-  version: Schema.Number,
+  version: Schema.Finite,
   active: Schema.Boolean,
   fields: Schema.Array(CollectionFieldEntrySchema),
 });
@@ -59,7 +59,7 @@ const FileReferenceSchema = Schema.Struct({
   path: Schema.String,
   href: Schema.String,
   metadataHref: Schema.String,
-  size: Schema.optionalKey(Schema.Number),
+  size: Schema.optionalKey(Schema.Finite),
   updatedAt: Schema.optionalKey(Schema.String),
   contentType: Schema.optionalKey(Schema.String),
   metadata: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
@@ -231,11 +231,11 @@ function fieldToValueSchema(field: CollectionField): Schema.Schema<unknown> {
   }
 
   if (field._tag === "NumberField") {
-    return addNumberConstraints(Schema.Number, field);
+    return addNumberConstraints(Schema.Finite, field);
   }
 
   if (field._tag === "IntegerField") {
-    return addNumberConstraints(Schema.Number, { ...field, integer: true });
+    return addNumberConstraints(Schema.Finite, { ...field, integer: true });
   }
 
   if (field._tag === "BooleanField") {
@@ -407,7 +407,7 @@ export function validateDocumentData(
   }
 
   const structSchema = Schema.Struct(shape as any) as unknown as Schema.ConstraintDecoder<unknown>;
-  const result = Schema.decodeUnknownResult(structSchema)(data, { errors: "all" });
+  const result = Schema.decodeResult(structSchema)(data, { errors: "all" });
 
   if (result._tag === "Failure") {
     allIssues.push(...formatSchemaIssues(result.failure.issue));

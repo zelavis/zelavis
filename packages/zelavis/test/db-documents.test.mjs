@@ -32,7 +32,7 @@ test("collections: create, list, reject reserved and malformed names", async (t)
       assert.equal(posts.surface, "database", "surface defaults to database");
 
       yield* docs.createCollection({ name: "pages", surface: "content-studio" });
-      const all = yield* docs.listCollections();
+      const all = yield* docs.listCollections;
       assert.deepEqual(all.map((c) => c.name), ["pages", "posts"], "sorted by name");
 
       assert.equal(yield* docs.collectionExists("posts"), true);
@@ -214,7 +214,7 @@ test("documents survive a lens rebuild from the event log", async (t) => {
       assert.deepEqual(found.map((d) => d.id), ["p2"], "postings rebuilt");
       const byId = yield* docs.findById({ collection: "posts", id: "p1" });
       assert.equal(byId.data.tag, "atlas", "identity rebuilt");
-      assert.equal((yield* docs.listCollections()).length, 1, "collections rebuilt");
+      assert.equal((yield* docs.listCollections).length, 1, "collections rebuilt");
     }),
   );
 });

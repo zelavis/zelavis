@@ -42,10 +42,10 @@ export interface PartitionMap {
 }
 
 export const PartitionMapWire = Schema.Struct({
-  version: Schema.Number,
-  virtualRanges: Schema.Number,
+  version: Schema.Finite,
+  virtualRanges: Schema.Finite,
   placements: Schema.Array(
-    Schema.Struct({ from: Schema.Number, to: Schema.Number, shard: Schema.String }),
+    Schema.Struct({ from: Schema.Finite, to: Schema.Finite, shard: Schema.String }),
   ),
 });
 

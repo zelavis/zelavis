@@ -67,7 +67,7 @@ test("schemas: save, version, activate", async (t) => {
       yield* schemas.save({ collection: "pages", version: 7, fields: postFields });
       assert.deepEqual((yield* schemas.listVersions("pages")).map((v) => v.version), [7]);
 
-      const summaries = yield* schemas.listCollections();
+      const summaries = yield* schemas.listCollections;
       assert.deepEqual(summaries.map((s) => s.collection), ["pages", "posts"]);
       assert.deepEqual(summaries.find((s) => s.collection === "posts"), {
         collection: "posts", activeVersion: 2, versions: [1, 2],
@@ -114,6 +114,8 @@ test("validation: writes are rejected against the active schema", async (t) => {
 
       assert.ok(yield* rejected({ title: 42 }), "wrong type rejected");
       assert.ok(yield* rejected({ title: "way too long a title" }), "maxLength enforced");
+      assert.ok(yield* rejected({ title: "ok", views: Number.NaN }), "NaN rejected");
+      assert.ok(yield* rejected({ title: "ok", views: Number.POSITIVE_INFINITY }), "infinity rejected");
       assert.ok(yield* rejected({ title: "ok", stray: true }), "unknown field rejected");
 
       // Nothing partial was written by any rejected insert.
@@ -169,7 +171,7 @@ test("schemas are per tenant", async (t) => {
       yield* acme.schemas.save({ collection: "posts", version: 1, fields: postFields });
 
       assert.equal(yield* globex.schemas.getActive("posts"), undefined, "not visible to another tenant");
-      assert.deepEqual(yield* globex.schemas.listCollections(), []);
+      assert.deepEqual(yield* globex.schemas.listCollections, []);
 
       // Constrained for one tenant, unconstrained for the other.
       const strict = yield* acme.documents.insert({ collection: "posts", data: { stray: 1 } }).pipe(

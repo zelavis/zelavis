@@ -50,8 +50,8 @@ export type DbEvent = ObjectPut | ObjectRetracted;
 const ManifestWire = Schema.Struct({
   terms: Schema.Array(Schema.Tuple([Schema.String, Schema.String])),
   columns: Schema.Array(Schema.Tuple([Schema.String, Schema.String])),
-  measures: Schema.Array(Schema.Tuple([Schema.String, Schema.Number])),
-  edges: Schema.Array(Schema.Tuple([Schema.String, Schema.Number])),
+  measures: Schema.Array(Schema.Tuple([Schema.String, Schema.Finite])),
+  edges: Schema.Array(Schema.Tuple([Schema.String, Schema.Finite])),
 });
 
 /** The adapter-neutral replication contract. */
@@ -59,10 +59,10 @@ export const DbEventWire = Schema.Union([
   Schema.TaggedStruct("ObjectPut", {
     cursor: Schema.String,
     partition: Schema.String,
-    generation: Schema.Number,
-    at: Schema.Number,
-    seq: Schema.Number,
-    version: Schema.Number,
+    generation: Schema.Finite,
+    at: Schema.Finite,
+    seq: Schema.Finite,
+    version: Schema.Finite,
     bytes: Schema.Uint8Array,
     manifest: ManifestWire,
     identity: Schema.optional(
@@ -72,10 +72,10 @@ export const DbEventWire = Schema.Union([
   Schema.TaggedStruct("ObjectRetracted", {
     cursor: Schema.String,
     partition: Schema.String,
-    generation: Schema.Number,
-    at: Schema.Number,
-    seq: Schema.Number,
-    version: Schema.Number,
+    generation: Schema.Finite,
+    at: Schema.Finite,
+    seq: Schema.Finite,
+    version: Schema.Finite,
   }),
 ]);
 

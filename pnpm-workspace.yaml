@@ -69,3 +69,11 @@ minimumReleaseAgeExclude:
   - astro@7.1.1
   - nanoid@3.3.18
   - svgo@4.0.2
+  - '@effect/tsgo-darwin-arm64@0.43.0'
+  - '@effect/tsgo-darwin-x64@0.43.0'
+  - '@effect/tsgo-linux-arm64@0.43.0'
+  - '@effect/tsgo-linux-arm@0.43.0'
+  - '@effect/tsgo-linux-x64@0.43.0'
+  - '@effect/tsgo-win32-arm64@0.43.0'
+  - '@effect/tsgo-win32-x64@0.43.0'
+  - '@effect/tsgo@0.43.0'

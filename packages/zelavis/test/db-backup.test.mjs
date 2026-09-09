@@ -53,7 +53,7 @@ test("backup: exports a tenant's log and restores it elsewhere", async (t) => {
       const source = db.forTenant("acme");
       yield* populate(source);
 
-      const backup = yield* source.backups.exportTenant();
+      const backup = yield* source.backups.exportTenant;
       assert.equal(backup.format, ZELAVIS_DB_BACKUP_V1);
       assert.equal(backup.tenantId, "acme");
       assert.ok(backup.events.length > 0);
@@ -68,7 +68,7 @@ test("backup: exports a tenant's log and restores it elsewhere", async (t) => {
       assert.equal(result.events, backup.events.length);
 
       // Documents, collections and schemas all come back.
-      assert.deepEqual((yield* target.documents.listCollections()).map((c) => c.name), ["posts"]);
+      assert.deepEqual((yield* target.documents.listCollections).map((c) => c.name), ["posts"]);
       const docs = yield* target.documents.findMany({ collection: "posts" });
       assert.deepEqual(docs.map((d) => d.id).sort(), ["p1", "p2"], "deleted document stays deleted");
       const p1 = yield* target.documents.findById({ collection: "posts", id: "p1" });
@@ -95,7 +95,7 @@ test("backup: restoring into a populated shard does not disturb its other tenant
       const source = db.forTenant("acme");
       yield* populate(source);
 
-      const backup = yield* source.backups.exportTenant();
+      const backup = yield* source.backups.exportTenant;
 
       // A different tenant already occupying sequence numbers in the destination.
       const other = spare.forTenant("globex");
@@ -129,7 +129,7 @@ test("backup: refuses a foreign format, a mismatched tenant, and a populated one
       yield* globex.documents.createCollection({ name: "secrets" });
       yield* globex.documents.insert({ collection: "secrets", id: "s1", data: { title: "Private" } });
 
-      const backup = yield* acme.backups.exportTenant();
+      const backup = yield* acme.backups.exportTenant;
       const serialized = JSON.stringify(backup);
       assert.ok(!serialized.includes("secrets"), "another tenant's collection is absent");
       assert.ok(!serialized.includes("Private"), "another tenant's data is absent");
@@ -170,7 +170,7 @@ test("backup: derived state is rebuilt rather than carried", async (t) => {
       yield* source.projections.run("count");
       assert.equal(applied, 2);
 
-      const backup = yield* source.backups.exportTenant();
+      const backup = yield* source.backups.exportTenant;
       assert.ok(
         !JSON.stringify(backup).includes("zv.checkpoint"),
         "a checkpoint is a position in one shard's log and is not carried",

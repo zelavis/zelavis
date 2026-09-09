@@ -263,7 +263,7 @@ export interface DocumentsApi {
     readonly surface?: CollectionSurface;
     readonly metadata?: Record<string, unknown>;
   }) => Effect.Effect<Collection, InvalidCollectionName | CollectionExists | TenantMoving>;
-  readonly listCollections: () => Effect.Effect<ReadonlyArray<Collection>>;
+  readonly listCollections: Effect.Effect<ReadonlyArray<Collection>>;
   readonly collectionExists: (name: string) => Effect.Effect<boolean>;
   readonly insert: (input: {
     readonly collection: string;
@@ -429,8 +429,10 @@ export const documentsFor = (
     });
 
   const requireCollection = (name: string) =>
-    Effect.flatMap(loadCollection(name), (found) =>
-      found === undefined ? Effect.fail(new CollectionNotFound({ name })) : Effect.succeed(found),
+    Effect.filterOrFail(
+      loadCollection(name),
+      (found): found is Collection => found !== undefined,
+      () => new CollectionNotFound({ name }),
     );
 
   const readDocument = (seq: Seq) =>
@@ -520,18 +522,17 @@ export const documentsFor = (
         return collection;
       }),
 
-    listCollections: () =>
-      Effect.gen(function* () {
-        const seqs = yield* Stream.runCollect(
-          resolveQuery(equals(collectionColumn(tenant), COLLECTION_MARKER)),
-        );
-        const out: Collection[] = [];
-        for (const seq of seqs) {
-          const object = yield* readObject(seq);
-          if (object !== undefined) out.push(decode<Collection>(object.bytes));
-        }
-        return out.sort((a, b) => a.name.localeCompare(b.name));
-      }),
+    listCollections: Effect.gen(function* () {
+      const seqs = yield* Stream.runCollect(
+        resolveQuery(equals(collectionColumn(tenant), COLLECTION_MARKER)),
+      );
+      const out: Collection[] = [];
+      for (const seq of seqs) {
+        const object = yield* readObject(seq);
+        if (object !== undefined) out.push(decode<Collection>(object.bytes));
+      }
+      return out.sort((a, b) => a.name.localeCompare(b.name));
+    }),
 
     collectionExists: (name) => Effect.map(loadCollection(name), (c) => c !== undefined),
 

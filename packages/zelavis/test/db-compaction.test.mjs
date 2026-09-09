@@ -169,7 +169,7 @@ test("a backup taken after compaction still restores the whole tenant", async (t
       const cut = yield* db.maintenance.compact();
       assert.ok(cut.some((shard) => shard.removed > 0), "there was history to drop");
 
-      return yield* tenant.backups.exportTenant();
+      return yield* tenant.backups.exportTenant;
     }),
   );
 
@@ -184,7 +184,7 @@ test("a backup taken after compaction still restores the whole tenant", async (t
       const result = yield* tenant.backups.restoreTenant(JSON.parse(JSON.stringify(backup)));
       assert.ok(result.events > 0);
 
-      assert.deepEqual((yield* tenant.documents.listCollections()).map((c) => c.name), ["posts"]);
+      assert.deepEqual((yield* tenant.documents.listCollections).map((c) => c.name), ["posts"]);
       const docs = yield* tenant.documents.findMany({ collection: "posts" });
       assert.deepEqual(docs.map((d) => d.id).sort(), ["p1", "p2"], "the deleted one stays deleted");
       const p1 = yield* tenant.documents.findById({ collection: "posts", id: "p1" });

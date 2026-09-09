@@ -36,7 +36,7 @@ export interface ProjectionRunResult {
 
 export interface ProjectionsApi {
   readonly register: (definition: ProjectionDefinition) => Effect.Effect<void>;
-  readonly list: () => Effect.Effect<ReadonlyArray<ProjectionSummary>>;
+  readonly list: Effect.Effect<ReadonlyArray<ProjectionSummary>>;
   /** Apply everything after the stored checkpoint, then advance it. */
   readonly run: (name: string) => Effect.Effect<ProjectionRunResult, ProjectionNotFound>;
   /** Discard derived state and replay the whole log into it. */
@@ -147,22 +147,22 @@ export const projectionsFor = (
         definitions.set(definition.name, definition);
       }),
 
-    list: () =>
+    list: Effect.suspend(() =>
       Effect.forEach(
         [...definitions.values()].filter((d) => !d.name.startsWith(INTERNAL_PREFIX)),
         (definition) =>
-        Effect.map(readCheckpoint(definition.name), (checkpoint) => ({
-          name: definition.name,
-          ...(definition.description === undefined ? {} : { description: definition.description }),
-          ...(definition.source?.collections === undefined
-            ? {}
-            : { sourceCollections: definition.source.collections }),
-          ...(definition.source?.eventTypes === undefined
-            ? {}
-            : { sourceEventTypes: definition.source.eventTypes }),
-          ...(checkpoint === undefined ? {} : { checkpoint }),
-        })),
-      ),
+          Effect.map(readCheckpoint(definition.name), (checkpoint) => ({
+            name: definition.name,
+            ...(definition.description === undefined ? {} : { description: definition.description }),
+            ...(definition.source?.collections === undefined
+              ? {}
+              : { sourceCollections: definition.source.collections }),
+            ...(definition.source?.eventTypes === undefined
+              ? {}
+              : { sourceEventTypes: definition.source.eventTypes }),
+            ...(checkpoint === undefined ? {} : { checkpoint }),
+          })),
+      )),
 
     run: (name) =>
       Effect.gen(function* () {

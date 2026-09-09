@@ -129,7 +129,7 @@ const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise
 const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
   documents: {
     createCollection: (input) => run(tenant.documents.createCollection(input)),
-    listCollections: () => run(tenant.documents.listCollections()),
+    listCollections: () => run(tenant.documents.listCollections),
     collectionExists: (name) => run(tenant.documents.collectionExists(name)),
     insert: (input) => run(tenant.documents.insert(input)),
     findById: (input) => run(tenant.documents.findById(input)),
@@ -142,7 +142,7 @@ const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
   },
   schemas: {
     save: (schema) => run(tenant.schemas.save(schema)),
-    listCollections: () => run(tenant.schemas.listCollections()),
+    listCollections: () => run(tenant.schemas.listCollections),
     listVersions: (collection) => run(tenant.schemas.listVersions(collection)),
     getVersion: (collection, version) => run(tenant.schemas.getVersion(collection, version)),
     getActive: (collection) => run(tenant.schemas.getActive(collection)),
@@ -150,18 +150,18 @@ const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
     validate: (collection, data) => run(tenant.schemas.validate(collection, data)),
   },
   projections: {
-    list: () => run(tenant.projections.list()),
+    list: () => run(tenant.projections.list),
     run: (name) => run(tenant.projections.run(name)),
     rebuild: (name) => run(tenant.projections.rebuild(name)),
   },
   timeSeries: {
-    list: () => run(tenant.timeSeries.list()),
+    list: () => run(tenant.timeSeries.list),
     range: (series, input) => run(tenant.timeSeries.get(series).range(input)),
     aggregate: (series, input) => run(tenant.timeSeries.get(series).aggregate(input)),
     ingest: (series) => run(tenant.timeSeries.ingest(series)),
   },
   backups: {
-    exportTenant: () => run(tenant.backups.exportTenant()),
+    exportTenant: () => run(tenant.backups.exportTenant),
     restoreTenant: (backup) => run(tenant.backups.restoreTenant(backup)),
   },
   systemViews: {

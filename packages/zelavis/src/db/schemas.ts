@@ -43,7 +43,7 @@ export interface SchemasApi {
   readonly save: (
     schema: CollectionSchema,
   ) => Effect.Effect<StoredCollectionSchema, SchemaVersionExists>;
-  readonly listCollections: () => Effect.Effect<ReadonlyArray<CollectionSchemaSummary>>;
+  readonly listCollections: Effect.Effect<ReadonlyArray<CollectionSchemaSummary>>;
   readonly listVersions: (
     collection: string,
   ) => Effect.Effect<ReadonlyArray<StoredCollectionSchema>>;
@@ -154,26 +154,25 @@ export const schemasFor = (store: ObjectStoreApi, tenant: TenantId): SchemasApi 
     getVersion,
     getActive,
 
-    listCollections: () =>
-      Effect.gen(function* () {
-        const stored = yield* allStored;
-        const byCollection = new Map<string, number[]>();
-        for (const schema of stored) {
-          const versions = byCollection.get(schema.collection) ?? [];
-          versions.push(schema.version);
-          byCollection.set(schema.collection, versions);
-        }
-        const summaries: CollectionSchemaSummary[] = [];
-        for (const [collection, versions] of byCollection) {
-          const active = yield* activeVersionOf(collection);
-          summaries.push({
-            collection,
-            activeVersion: active ?? null,
-            versions: versions.sort((a, b) => a - b),
-          });
-        }
-        return summaries.sort((a, b) => a.collection.localeCompare(b.collection));
-      }),
+    listCollections: Effect.gen(function* () {
+      const stored = yield* allStored;
+      const byCollection = new Map<string, number[]>();
+      for (const schema of stored) {
+        const versions = byCollection.get(schema.collection) ?? [];
+        versions.push(schema.version);
+        byCollection.set(schema.collection, versions);
+      }
+      const summaries: CollectionSchemaSummary[] = [];
+      for (const [collection, versions] of byCollection) {
+        const active = yield* activeVersionOf(collection);
+        summaries.push({
+          collection,
+          activeVersion: active ?? null,
+          versions: versions.sort((a, b) => a - b),
+        });
+      }
+      return summaries.sort((a, b) => a.collection.localeCompare(b.collection));
+    }),
 
     activate: (collection, version) =>
       Effect.gen(function* () {

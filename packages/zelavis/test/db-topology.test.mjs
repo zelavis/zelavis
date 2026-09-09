@@ -148,7 +148,7 @@ test("a map change is accepted when the ranges it moves are empty", async (t) =>
       Effect.gen(function* () {
         assert.equal(db.partitionMap.version, 2, "the stored version is reloaded");
         assert.equal(db.partitionMap.placements.length, 1);
-        const found = yield* db.forTenant("acme").documents.listCollections();
+        const found = yield* db.forTenant("acme").documents.listCollections;
         assert.deepEqual(found.map((c) => c.name), ["posts"], "data survived the change");
       }),
     ),

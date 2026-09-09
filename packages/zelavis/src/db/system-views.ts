@@ -112,7 +112,7 @@ export const systemViewsFor = (sources: SystemViewSources): SystemViewsApi => ({
     Effect.gen(function* () {
       switch (input.name) {
         case "collections": {
-          const collections = yield* sources.documents.listCollections();
+          const collections = yield* sources.documents.listCollections;
           return page(
             collections.map((collection) => ({
               id: collection.name,
@@ -152,7 +152,7 @@ export const systemViewsFor = (sources: SystemViewSources): SystemViewsApi => ({
         }
 
         case "schemas": {
-          const summaries = yield* sources.schemas.listCollections();
+          const summaries = yield* sources.schemas.listCollections;
           return page(
             summaries.map((summary) => ({
               id: summary.collection,
@@ -167,7 +167,7 @@ export const systemViewsFor = (sources: SystemViewSources): SystemViewsApi => ({
         }
 
         case "projections": {
-          const summaries = yield* sources.projections.list();
+          const summaries = yield* sources.projections.list;
           return page(
             summaries.map((summary) => ({
               id: summary.name,
@@ -184,7 +184,7 @@ export const systemViewsFor = (sources: SystemViewSources): SystemViewsApi => ({
         }
 
         case "time-series": {
-          const summaries = yield* sources.timeSeries.list();
+          const summaries = yield* sources.timeSeries.list;
           return page(
             summaries.map((summary) => ({
               id: summary.name,

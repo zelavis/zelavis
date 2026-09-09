@@ -89,8 +89,8 @@ test("tenants sharing a shard cannot see each other's data", async (t) => {
 
       // Listing collections is tenant-scoped too.
       yield* acme.createCollection({ name: "acme-only" });
-      assert.deepEqual((yield* acme.listCollections()).map((c) => c.name), ["acme-only", "posts"]);
-      assert.deepEqual((yield* globex.listCollections()).map((c) => c.name), ["posts"]);
+      assert.deepEqual((yield* acme.listCollections).map((c) => c.name), ["acme-only", "posts"]);
+      assert.deepEqual((yield* globex.listCollections).map((c) => c.name), ["posts"]);
       assert.equal(yield* globex.collectionExists("acme-only"), false);
 
       // Deleting one tenant's document leaves the other's alone.

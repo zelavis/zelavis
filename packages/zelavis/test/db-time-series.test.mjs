@@ -84,7 +84,7 @@ test("time series: ingest maps events to points, range and aggregate read them",
         yield* ts.aggregate({ op: "sum", start: BASE + DAY, end: BASE + 2 * DAY }),
         50, "aggregate respects the window");
 
-      const listed = yield* timeSeries.list();
+      const listed = yield* timeSeries.list;
       assert.deepEqual(listed.map((s) => s.name), ["views"]);
       assert.equal(listed[0].bucket, "day", "day buckets by default");
     }),
@@ -143,7 +143,7 @@ test("time series: points do not feed back into the event log", async (t) => {
       assert.equal((yield* timeSeries.get("views").range()).length, 1);
 
       // The internal projection stays out of the projection listing.
-      assert.deepEqual(yield* projections.list(), []);
+      assert.deepEqual(yield* projections.list, []);
     }),
   );
 });

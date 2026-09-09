@@ -91,7 +91,7 @@ export interface BackupsApi {
    * read whatever events remain, which would restore a tenant missing every
    * record whose creation was compacted away.
    */
-  readonly exportTenant: () => Effect.Effect<TenantBackupV1>;
+  readonly exportTenant: Effect.Effect<TenantBackupV1>;
   /**
    * Replay a backup into this tenant.
    *
@@ -162,8 +162,7 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
   }).pipe(Effect.orDie);
 
   return {
-  exportTenant: () =>
-    Effect.gen(function* () {
+    exportTenant: Effect.gen(function* () {
       const compactedTo = yield* store.compactedTo;
       if (compactedTo > 0) return yield* exportFromState();
 
@@ -313,12 +312,14 @@ export const backupsFor = (store: ObjectStoreApi, tenant: TenantId): BackupsApi 
 
       return { tenantId: tenant, events: applied, removed, superseded };
     }).pipe(
-      Effect.catchTag("StoreError", (cause) => Effect.die(cause)),
-      Effect.catchTag("WriterFenced", (cause) => Effect.die(cause)),
-      Effect.catchTag("ForeignCursor", (cause) => Effect.die(cause)),
-      Effect.catchTag("CursorCompacted", (cause) => Effect.die(cause)),
-      Effect.catchTag("LogCompacted", (cause) => Effect.die(cause)),
-      Effect.catchTag("PartitionUnavailable", (cause) => Effect.die(cause)),
+      Effect.catchTags({
+        StoreError: Effect.die,
+        WriterFenced: Effect.die,
+        ForeignCursor: Effect.die,
+        CursorCompacted: Effect.die,
+        LogCompacted: Effect.die,
+        PartitionUnavailable: Effect.die,
+      }),
     ),
   };
 };

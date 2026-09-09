@@ -14,7 +14,7 @@ export type Seq = number & { readonly [SeqBrand]: true };
 
 export const asSeq = (value: number): Seq => value as Seq;
 
-export const SeqFromNumber = Schema.Number;
+export const SeqFromNumber = Schema.Finite;
 
 /**
  * The declared locality unit.
