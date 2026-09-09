@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { openNodeDatabase, shardFilePath, DEFAULT_LOCAL_SHARDS } from "../dist/db/node-host.js";
+import { engineAvailable } from "./_engine-available.mjs";
 
 const tempDir = (t) => {
   const dir = mkdtempSync(join(tmpdir(), "zv-engine-"));
@@ -39,8 +40,15 @@ test("the default engine is sqlite, and needs nothing installed", async (t) => {
   assert.ok(existsSync(shardFilePath(dir, DEFAULT_LOCAL_SHARDS[0])));
 });
 
-for (const name of ["sqlite", "libsql", "rocksdb", "lmdb"]) {
-  test(`the host opens on ${name}`, async (t) => {
+// A native engine that is not installed, or installed and not built, is an
+// ordinary state here: the engines are optional peers.
+const engines = ["sqlite", "libsql", "rocksdb", "lmdb"].map((name) => [
+  name,
+  name === "sqlite" || engineAvailable(name),
+]);
+
+for (const [name, installed] of engines) {
+  test(`the host opens on ${name}`, { skip: installed ? false : `${name} is not installed` }, async (t) => {
     const dir = tempDir(t);
     const opened = await openNodeDatabase({ directory: dir, engine: { name } });
     t.after(() => opened.close());
