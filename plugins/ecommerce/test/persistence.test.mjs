@@ -372,3 +372,35 @@ test("commerce persists customers, products and orders across runtimes", async (
   assert.equal(deleteResponse.status, 200);
   assert.equal(files.has("uploads/hello.txt"), false);
 });
+
+test("a database the plugin cannot recognise stops it starting", async () => {
+  const { ecommercePlugin } = await import("../dist/ecommerce-plugin.js");
+
+  // Called directly, because the Platform builds the database from
+  // configuration and never hands a plugin an arbitrary object — the way this
+  // goes wrong is the Platform's API changing under a guard that no longer
+  // recognises it, which is exactly what happened when `capabilities` was
+  // removed and this plugin quietly switched to memory.
+  const contextWith = (database) => ({
+    service: { name: "@zelavis/ecommerce" },
+    registry: [],
+    rootPath: "/zelavis",
+    api: { version: "v1", basePath: "/zelavis/api/v1" },
+    platform: {},
+    core: { database },
+    runtimeServices: [],
+    addService() {},
+    addServices() {},
+  });
+
+  await assert.rejects(
+    () => ecommercePlugin.setup(contextWith({ schemas: {}, capabilities: [] })),
+    /does not recognise/,
+    "a database it cannot use must stop it, not downgrade it to memory",
+  );
+
+  // A host deliberately running without one is a different thing, and still
+  // supported: in-memory repositories, no complaint.
+  await assert.doesNotReject(() => ecommercePlugin.setup(contextWith(false)));
+  await assert.doesNotReject(() => ecommercePlugin.setup(contextWith(undefined)));
+});

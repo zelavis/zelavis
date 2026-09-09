@@ -149,14 +149,34 @@ function createNotFoundResponse(label: string, value: string) {
   return createJsonErrorResponse(404, new Error(`${label} ${value} was not found.`));
 }
 
+/**
+ * The setup context types the database as `unknown`, so recognising it is this
+ * plugin's job.
+ *
+ * Checked on `forTenant` alone, which is the whole of what this plugin uses and
+ * the one member the Platform cannot remove without breaking every consumer.
+ * The previous version also required `schemas` and `capabilities`: `schemas`
+ * moved under `forTenant` and `capabilities` was removed outright, so the guard
+ * had been answering "no" to every database it was handed.
+ */
 function isDatabaseRuntimeApi(value: unknown): value is DatabaseRuntimeApi {
   return Boolean(
     value &&
       typeof value === "object" &&
-      "forTenant" in value &&
-      "schemas" in value &&
-      "capabilities" in value,
+      typeof (value as Partial<DatabaseRuntimeApi>).forTenant === "function",
   );
+}
+
+/**
+ * A host that deliberately runs without a database.
+ *
+ * Distinct from one whose database this plugin failed to recognise. Both used
+ * to take the same path — in-memory repositories — so a guard that drifted out
+ * of step with the Platform did not fail, it quietly stopped storing anything,
+ * and every write returned 201 on its way to being forgotten.
+ */
+function hasNoDatabase(value: unknown): boolean {
+  return value === undefined || value === null || value === false;
 }
 
 /** The capability a payment gateway declares to be discovered by this plugin. */
@@ -509,10 +529,22 @@ export const ecommercePlugin = Object.freeze({
       .filter((entry) => entry.status === "installed" && isEcommercePaymentService(entry.service))
       .map((entry) => entry.service.service as EcommerceService);
 
+    const database = context.core.database;
+    if (!hasNoDatabase(database) && !isDatabaseRuntimeApi(database)) {
+      // Refusing to start is the right failure. Falling back to memory here
+      // would answer every write with a success and lose all of it, which is
+      // the same shape as working.
+      throw new TypeError(
+        `${context.service.name} was given a database it does not recognise. ` +
+          "It stores customers, products and orders, so it will not start on " +
+          "memory it would silently lose.",
+      );
+    }
+
     const commerce = await createEcommerce({
       services: paymentServices,
-      repositories: isDatabaseRuntimeApi(context.core.database)
-        ? createDatabaseEcommerceRepositories(context.core.database, {
+      repositories: isDatabaseRuntimeApi(database)
+        ? createDatabaseEcommerceRepositories(database, {
             tenantId: `service:${context.service.name}`,
           })
         : undefined,
