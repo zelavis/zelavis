@@ -154,6 +154,9 @@ importers:
         specifier: ^6.2.10
         version: 6.2.10
     devDependencies:
+      '@effect/language-service':
+        specifier: ^0.87.2
+        version: 0.87.2
       '@effect/tsgo':
         specifier: ^0.43.0
         version: 0.43.0
@@ -1049,6 +1052,10 @@ packages:
 
   '@dotenvx/primitives@0.8.0':
     resolution: {integrity: sha512-VYJy0uhFm9zTJ1TxBaW/pA8bjbOM/OttaNMwZ1RHG4JKyRG7DhSdiqD1ipQoAyoD22olUtxbP78W9xY3Wd11bg==}
+
+  '@effect/language-service@0.87.2':
+    resolution: {integrity: sha512-CfiSoaVQO8pZgaMZGw5VvMvRGybsJ2LaSDoLYaqiVGvo/YYPYVR2GzUKY0h1NtIweq/+SQ5XLrvtzPIttWQ0GQ==}
+    hasBin: true
 
   '@effect/tsgo-darwin-arm64@0.43.0':
     resolution: {integrity: sha512-IG/JjY2n2YbUCQUwTLss9dF/VLe/m9tXQsyUHxhqFWW0Ih/3AJN3zIEnKu1JH19eQASFgsnm5zJQXHpVmiMRng==}
@@ -8113,6 +8120,8 @@ snapshots:
       yocto-spinner: 1.2.2
 
   '@dotenvx/primitives@0.8.0': {}
+
+  '@effect/language-service@0.87.2': {}
 
   '@effect/tsgo-darwin-arm64@0.43.0':
     optional: true
