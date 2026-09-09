@@ -12,6 +12,13 @@ packages:
   - "website"
 
 overrides:
+  # Every codemirror sub-package resolved its own older copy of these two
+  # while the dashboard's direct dependency resolved a newer one, so an
+  # `EditorView` from one copy was not the `EditorView` the other's types
+  # named and the editor stopped typechecking. They are peer dependencies
+  # of the whole family: there has to be exactly one of each.
+  '@codemirror/state': ^6.7.4
+  '@codemirror/view': ^6.43.11
   '@hono/node-server': ^1.19.15
   axios: ^1.18.0
   body-parser@1: ^1.20.6
