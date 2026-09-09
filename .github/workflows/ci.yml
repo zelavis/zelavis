@@ -12,6 +12,16 @@ on:
     branches:
       - main
   pull_request:
+  # So a run can be started by hand — after a quota reset, a runner outage, or
+  # any other time the interesting question is whether CI works at all.
+  workflow_dispatch:
+
+# One run per branch. Pushing again supersedes the run in flight rather than
+# leaving it to finish work nobody will read, which is both faster feedback and
+# less runner time.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   runtime:
