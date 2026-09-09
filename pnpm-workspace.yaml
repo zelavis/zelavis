@@ -53,16 +53,13 @@ allowBuilds:
   lmdb: true
   msgpackr-extract: true
   msw: true
-  # Denied rather than omitted: pnpm refuses an install that silently ignores a
-  # build script, so the decision has to be written down either way.
-  #
-  # rocksdb ships no prebuilt binary for the Node this repository runs, so pnpm
-  # compiles it from source, and its bundled C++ does not build against the
-  # toolchain on Linux CI — which failed `pnpm install` itself, before any of
-  # this repository's own code ran. It stays an optional peer: a host that wants
-  # the engine installs and builds it deliberately, and the tests skip it when
-  # it is absent.
-  rocksdb: false
+  # rocksdb is not a dependency of this workspace. It ships no prebuilt
+  # binary for the Node here, so it compiles from source, and its bundled
+  # C++ does not build on Linux CI. Left installed-but-unbuilt it is worse
+  # than absent: importing it aborts the process with `std::bad_alloc`,
+  # which no guard in JavaScript can catch. It stays an optional peer, and
+  # this entry lets a host that installs it deliberately still build it.
+  rocksdb: true
   sharp: true
   unrs-resolver: true
 
