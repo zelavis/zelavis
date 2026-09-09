@@ -363,6 +363,11 @@ Key rules:
   with its partition, so anything crossing that boundary carries both — and a
   query naming a bare identifier, an edge above all, is refused rather than run
   somewhere it means something else.
+- A restore says what to do about data already there — refuse, purge, or merge
+  — and never guesses. Whatever the mode, the identities inside a backup must
+  name the tenant being restored into: they are lens keys, and a merge looks
+  them up, so a mislabelled backup would write over the tenant they really
+  belong to on the same shard.
 - A schema version governs what is accepted next, never what is already
   stored: activating one rewrites nothing. `tenant.migrations` is the separate,
   explicit operation that brings stored documents forward, and its instructions

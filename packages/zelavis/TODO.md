@@ -711,8 +711,16 @@ driven by what the existing dependents call, not by what is easiest to port.
   Sequences are remapped on restore, since a backup's numbers mean nothing in
   the shard it lands in. Restoring under a different tenant name, or over live
   data, is refused rather than silently producing unreachable records.
-- [ ] Restore into a tenant that already holds data, by purging or merging
-  rather than refusing.
+- [x] Restore into a tenant that already holds data. `restoreTenant` takes a
+  mode: `empty` still refuses and stays the default, since it is the only one
+  that cannot lose anything; `purge` discards what the tenant holds — selected
+  by the rule an export uses, so it clears exactly what a backup carries — and
+  leaves the tenant as the backup describes it; `merge` writes the backup over
+  records sharing a name and leaves the rest alone, lifting the restored
+  versions above the local ones so a put that is not newer is not dropped as
+  stale. A backup whose identities name another tenant is now refused whatever
+  its label says, because a merge looks those names up and would otherwise write
+  over the tenant they really belong to.
 - [ ] Shard topology, so an official App routes virtual ranges across several
   physical shards from creation rather than gaining sharding later.
 - [x] Logical, shard-aware dashboard system views. Built from the tenant APIs
