@@ -336,14 +336,6 @@ an exported type is never mistaken for an operational distributed feature.
 
 ## Prepared, Not Operational Yet
 
-- [ ] Ecommerce persistence against the new database. The plugin's own tests
-  were still importing the deleted `app/db`, so they had not run since the
-  cutover; ported to the `database: { directory }` subsystem they now load and
-  fail on behaviour rather than on imports. A product written through one
-  runtime is not found by a second runtime over the same directory, and no
-  collection is created for the plugin's tenant. Closing the first runtime
-  first changes nothing, so it is not writer fencing — the cutover left this
-  plugin behind.
 - [ ] Compatibility dates are carried by runtimes, artifacts, and providers,
   but no behavior gates have been introduced yet. Add gates only when behavior
   must change incompatibly.
