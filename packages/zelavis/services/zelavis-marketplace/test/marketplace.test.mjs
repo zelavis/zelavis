@@ -23,7 +23,11 @@ test("the page is a complete document that styles itself from the Platform", () 
   // It is loaded into a frame of its own rather than injected into the
   // dashboard, so a fragment would render as a broken page rather than fail.
   assert.match(MARKETPLACE_PAGE, /^<!doctype html>/);
-  assert.match(MARKETPLACE_PAGE, /<h1>Services<\/h1>/);
+
+  // The heading is declared to the Platform's page component rather than
+  // written as markup, which is what lets the page inherit the installation's
+  // chrome instead of drawing its own.
+  assert.match(MARKETPLACE_PAGE, /<zv-page[^>]*heading="Marketplace"/);
 
   // Links the Platform's design tokens rather than shipping a palette, so the
   // page follows whatever the installation looks like.

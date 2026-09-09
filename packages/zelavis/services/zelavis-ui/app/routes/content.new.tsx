@@ -56,6 +56,7 @@ function NewContentTypeRoute() {
         },
       });
       await createDatabaseSchema(runtime, {
+        tenantId: ZELAVIS_APP_ADMIN_TENANT_ID,
         collection: collection.name,
         version: 1,
         activate: true,

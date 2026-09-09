@@ -33,7 +33,7 @@ export const handle = {
 export async function clientLoader({ params, request }: Route.ClientLoaderArgs) {
   const runtime = await getActiveRuntimeConfig(request);
   const [schemas, entry, media] = await Promise.all([
-    listDatabaseSchemaVersions(runtime, params.contentType),
+    listDatabaseSchemaVersions(runtime, params.contentType, ZELAVIS_APP_ADMIN_TENANT_ID),
     getDatabaseDocument(runtime, {
       tenantId: ZELAVIS_APP_ADMIN_TENANT_ID,
       collection: params.contentType,

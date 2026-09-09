@@ -187,7 +187,8 @@ function Content() {
     setError(undefined);
 
     try {
-      const sourceSchemas = await listDatabaseSchemaVersions(runtime, sourceName);
+      const sourceSchemas = await listDatabaseSchemaVersions(
+        runtime, sourceName, ZELAVIS_APP_ADMIN_TENANT_ID);
       const activeSchema =
         sourceSchemas.find((schema) => schema.active) ?? sourceSchemas.at(-1);
 
@@ -203,6 +204,7 @@ function Content() {
 
       if (activeSchema) {
         await createDatabaseSchema(runtime, {
+          tenantId: ZELAVIS_APP_ADMIN_TENANT_ID,
           collection: created.name,
           version: 1,
           activate: true,

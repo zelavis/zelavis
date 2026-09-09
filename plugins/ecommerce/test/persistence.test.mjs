@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { loadEcommercePlugin } from "./load-plugin.mjs";
 
@@ -15,10 +18,15 @@ const PLATFORM_OWNER_CONTEXT = {
  * context, and receives platform resources — is covered there against a
  * fixture that belongs to nobody.
  */
-test("commerce persists customers, products and orders across runtimes", async () => {
+test("commerce persists customers, products and orders across runtimes", async (t) => {
   const { Zelavis, defineAdapter, zelavis: createZelavis } =
     await import("../../../packages/zelavis/dist/index.js");
-  const { createDatabase } = await import("../../../packages/zelavis/dist/app/db/index.js");
+
+  // One directory, shared by both runtimes: persisting across runtimes is the
+  // whole claim, and two directories would let a runtime that stored nothing
+  // pass by starting empty each time.
+  const directory = mkdtempSync(join(tmpdir(), "zv-ecommerce-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
 
   const kv = new Map();
   const files = new Map();
@@ -202,10 +210,9 @@ test("commerce persists customers, products and orders across runtimes", async (
   assert.equal(listPaymentProvidersResponse.status, 200);
   assert.deepEqual(paymentProviders.providers, []);
 
-  const databaseBacked = await createDatabase();
   const firstRuntime = await createZelavis({
     subsystems: {
-      database: databaseBacked,
+      database: { directory },
     },
     serviceRegistry: {
       catalog: [
@@ -253,7 +260,7 @@ test("commerce persists customers, products and orders across runtimes", async (
 
   const secondRuntime = await createZelavis({
     subsystems: {
-      database: databaseBacked,
+      database: { directory },
     },
     serviceRegistry: {
       catalog: [

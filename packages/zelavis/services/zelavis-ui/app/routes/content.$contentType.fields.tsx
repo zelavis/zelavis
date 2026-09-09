@@ -900,6 +900,7 @@ function TypeSettingsPanel(props: {
 
       if (activeSchema) {
         await createDatabaseSchema(props.runtime, {
+          tenantId: ZELAVIS_APP_ADMIN_TENANT_ID,
           collection: created.name,
           version: 1,
           activate: true,
