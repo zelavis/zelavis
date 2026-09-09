@@ -19,11 +19,10 @@ import {
   type AuthApi,
 } from "./app/auth/index.js";
 import {
-  createDatabase,
   defineDatabaseService,
-  type CreateDatabaseOptions,
-  type DatabaseApi,
-} from "./app/db/index.js";
+  type DatabaseRuntimeApi,
+} from "./db/index.js";
+import type { OpenNodeDatabaseOptions } from "./db/node-host.js";
 import {
   createFabricService,
   createJsonErrorResponse,
@@ -217,10 +216,9 @@ import { createServiceStore } from "./platform/service-store.js";
 export * from "./storage/s3.js";
 
 export type {
-  CreateDatabaseOptions,
-  DatabaseApi,
-  DatabaseJsonObject,
-} from "./app/db/index.js";
+  DatabaseRuntimeApi,
+  JsonObject as DatabaseJsonObject,
+} from "./db/index.js";
 export {
   type ZelavisAnyRuntimeServiceInput,
   type ZelavisServerErrorHandler,
@@ -295,11 +293,21 @@ export type ZelavisWorkloadsOptions =
 
 
 
+/**
+ * How the Platform gets its database.
+ *
+ * `zelavis/db` has no in-memory store, so there is no longer a database a runtime
+ * can conjure without being told where to put it. Either the host names a
+ * directory, or it hands over an already-open instance whose lifetime it owns;
+ * anything else means this runtime has no database.
+ */
 export type ZelavisDatabaseOptions =
-  | boolean
-  | CreateDatabaseOptions
-  | DatabaseApi
-  | Promise<DatabaseApi>;
+  | false
+  | ZelavisDatabaseStorageOptions
+  | DatabaseRuntimeApi
+  | Promise<DatabaseRuntimeApi>;
+
+export type ZelavisDatabaseStorageOptions = OpenNodeDatabaseOptions;
 
 export type ZelavisFabricOptions = boolean | FabricServiceOptions;
 
@@ -1148,32 +1156,44 @@ function createServiceSetupPlatformContext(
 }
 
 
-function isDatabaseApi(value: unknown): value is DatabaseApi {
+function isDatabaseRuntimeApi(value: unknown): value is DatabaseRuntimeApi {
   return Boolean(
     value &&
     typeof value === "object" &&
     "forTenant" in value &&
-    "capabilities" in value,
+    "topology" in value,
   );
 }
 
+interface ResolvedDatabaseSubsystem {
+  readonly api: DatabaseRuntimeApi;
+  /** Present only when this runtime opened the shards and therefore owns them. */
+  readonly close?: () => Promise<void>;
+}
+
+/**
+ * Opens the Platform's database, or adopts one it was handed.
+ *
+ * The opener lives behind a dynamic import because it is the one part of the
+ * database that is host-specific — it reaches for `node:sqlite` and the
+ * filesystem — and the composition entry point stays runtime-neutral. A host
+ * that opens its own instance never loads it.
+ */
 async function resolveDatabaseCoreService(
   option: ZelavisDatabaseOptions | undefined,
-): Promise<DatabaseApi | undefined> {
-  const databaseOption = option ?? true;
-
-  if (databaseOption === false) {
+): Promise<ResolvedDatabaseSubsystem | undefined> {
+  if (option === undefined || option === false) {
     return undefined;
   }
 
-  if (databaseOption === true) {
-    return createDatabase();
+  const resolved = await option;
+  if (isDatabaseRuntimeApi(resolved)) {
+    return { api: resolved };
   }
 
-  const resolvedDatabaseOption = await databaseOption;
-  return isDatabaseApi(resolvedDatabaseOption)
-    ? resolvedDatabaseOption
-    : await createDatabase(resolvedDatabaseOption);
+  const { openNodeDatabase } = await import("./db/node-host.js");
+  const opened = await openNodeDatabase(resolved);
+  return { api: opened.api, close: opened.close };
 }
 
 /**
@@ -3652,11 +3672,13 @@ export async function zelavis(
   const hasAppService = serviceRegistry.some(
     (entry) => entry.status === "installed" && entry.service.kind === "app",
   );
-  const databaseApi = await resolveDatabaseCoreService(options.subsystems?.database);
-  const databaseService = databaseApi && !hasAppService
-    ? defineDatabaseService(databaseApi)
+  const databaseSubsystem = await resolveDatabaseCoreService(
+    options.subsystems?.database,
+  );
+  const databaseService = databaseSubsystem && !hasAppService
+    ? defineDatabaseService(databaseSubsystem.api)
     : undefined;
-  const resolvedDatabaseApi = databaseApi;
+  const resolvedDatabaseApi = databaseSubsystem?.api;
   const authService = hasAppService
       ? undefined
       : await resolveAuthCoreService(
@@ -3982,6 +4004,9 @@ export async function zelavis(
   const close = (): Promise<void> => {
     closePromise ??= (async () => {
       await projects?.close();
+      // The shards are a scoped resource this runtime acquired, so closing it
+      // has to release them. Closing twice is already safe.
+      await databaseSubsystem?.close?.();
       // Release the local store handle too. Optional and idempotent, so custom
       // and embeddable stores that do not implement it are unaffected; without
       // it a repeatedly constructed embedded runtime retains database handles
@@ -4396,14 +4421,14 @@ export class Zelavis {
   private closed = false;
   private closePromise?: Promise<void>;
   private resolvedAuthApi?: AuthApi;
-  private resolvedDatabaseApi?: DatabaseApi;
+  private resolvedDatabaseApi?: DatabaseRuntimeApi;
   private resolvedPlatformContext: ZelavisPlatformContext = {
     presets: [],
     resources: {},
     metadata: {},
   };
   readonly auth: AuthApi;
-  readonly db: DatabaseApi;
+  readonly db: DatabaseRuntimeApi;
 
   constructor(options: ZelavisOptions = {}) {
     assertNoInternalConstructorOptions(options);
@@ -4528,14 +4553,14 @@ export class Zelavis {
     return service;
   }
 
-  async resolveDatabaseApi(): Promise<DatabaseApi> {
+  async resolveDatabaseApi(): Promise<DatabaseRuntimeApi> {
     if (this.resolvedDatabaseApi) {
       return this.resolvedDatabaseApi;
     }
 
     const runtime = await this.runtime();
     const service = runtime.services["@zelavis/db"]?.service;
-    assertResolvedServiceApi<DatabaseApi>(service, "@zelavis/db");
+    assertResolvedServiceApi<DatabaseRuntimeApi>(service, "@zelavis/db");
     this.resolvedDatabaseApi = service;
     return service;
   }

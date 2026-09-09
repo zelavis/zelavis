@@ -8,6 +8,11 @@
     "outDir": "dist",
     "rootDir": "src",
     "strict": true,
+    "plugins": [
+      {
+        "name": "@effect/language-service"
+      }
+    ],
     // Enabled so dead helpers cannot accumulate. `noUnusedParameters` is
     // deliberately not enabled: `ZelavisServerFetchHandler<TService>` carries a
     // public generic that callers supply even though the declaration body does

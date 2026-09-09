@@ -1,7 +1,5 @@
 ---
 "zelavis": minor
-"@zelavis/app-auth-username-password": minor
-"@zelavis/app-auth-email-password": minor
 "@zelavis/app-auth-oidc": minor
 "@zelavis/ecommerce": minor
 "@zelavis/ecommerce-stripe": minor

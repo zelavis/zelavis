@@ -1,8 +1,5 @@
 ---
 "zelavis": major
-"@zelavis/app-auth-email-password": major
-"@zelavis/app-auth-username-password": major
-"@zelavis/app-db-libsql": major
 "@zelavis/ecommerce": major
 "@zelavis/ecommerce-paypal": major
 "@zelavis/ecommerce-stripe": major

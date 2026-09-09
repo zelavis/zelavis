@@ -92,12 +92,6 @@ import {
   AuthNotFoundError,
   AuthValidationError,
 } from "../app/auth/index.js";
-import {
-  DatabaseConflictError,
-  DatabaseNotFoundError,
-  DatabaseRevisionMismatchError,
-  DatabaseValidationError,
-} from "../app/db/index.js";
 import type { ZelavisSystemStoreValue } from "../system-store.js";
 
 export type ZelavisRuntimeEngine = "node" | "bun" | "deno";
@@ -120,26 +114,39 @@ export function toIsoDate(value: Date | undefined): string | undefined {
   return value ? value.toISOString() : undefined;
 }
 
+/**
+ * The database fails with schema-tagged errors rather than error classes, so a
+ * rule that reaches a database failure here matches its tag. Only the two the
+ * Platform's own routes can provoke are listed; the database service maps the
+ * full set on its own routes.
+ */
+function databaseFailureTag(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const candidate = error as { _tag?: unknown; cause?: unknown };
+  return typeof candidate._tag === "string"
+    ? candidate._tag
+    : databaseFailureTag(candidate.cause);
+}
+
 export const zelavisErrorRules: readonly ZelavisServerErrorStatusRule[] = [
   {
     matches: (error) =>
       error instanceof TypeError ||
       error instanceof AuthValidationError ||
-      error instanceof DatabaseValidationError ||
       error instanceof ZelavisValidationError,
     status: 400,
   },
   {
     matches: (error) =>
-      error instanceof DatabaseNotFoundError ||
-      error instanceof AuthNotFoundError,
+      error instanceof AuthNotFoundError ||
+      databaseFailureTag(error) === "DocumentNotFound" ||
+      databaseFailureTag(error) === "CollectionNotFound",
     status: 404,
   },
   {
     matches: (error) =>
-      error instanceof DatabaseRevisionMismatchError ||
-      error instanceof DatabaseConflictError ||
-      error instanceof ZelavisConflictError,
+      error instanceof ZelavisConflictError ||
+      databaseFailureTag(error) === "DocumentConflict",
     status: 409,
   },
   {

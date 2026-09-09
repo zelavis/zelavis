@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import {
   Zelavis,
 } from "../../../packages/zelavis/dist/index.js";
-import { createDatabase } from "../../../packages/zelavis/dist/app/db/index.js";
 import { loadEcommercePlugin } from "./load-plugin.mjs";
 
 test("ecommercePlugin defines standard Zelavis plugin structure with OpenAPI specs", async () => {
@@ -17,7 +19,7 @@ test("ecommercePlugin defines standard Zelavis plugin structure with OpenAPI spe
   assert.equal(ecommercePlugin.menu.title, "Ecommerce");
 });
 
-test("ecommercePlugin registers and exposes recurring subscription endpoints", async () => {
+test("ecommercePlugin registers and exposes recurring subscription endpoints", async (t) => {
   const dummyStripeProvider = {
     name: "@zelavis/ecommerce-stripe-test",
     kind: "provider",
@@ -68,14 +70,15 @@ test("ecommercePlugin registers and exposes recurring subscription endpoints", a
     },
   };
 
-  const database = await createDatabase();
+  const directory = mkdtempSync(join(tmpdir(), "zv-ecommerce-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const zelavis = new Zelavis({
     adapter: {
       name: "ecommerce-test-adapter",
       async resolve() {
         return {
           subsystems: {
-            database,
+            database: { directory },
           },
           serviceRegistry: {
             catalog: [
@@ -180,8 +183,17 @@ test("ecommercePlugin registers and exposes recurring subscription endpoints", a
   assert.equal(cancelledSub.status, "cancelled");
   assert.equal(cancelledSub.cancelAtPeriodEnd, true);
 
-  // Verify database collections were created with surface: "database"
-  const collections = await database.forTenant("service:@zelavis/ecommerce").documents.listCollections();
+  // Asked of the runtime rather than of a second database handle: opening the
+  // same shards again would claim the next writer generation and fence the
+  // runtime that is still running.
+  const collectionsResponse = await zelavis.fetch(
+    new Request(
+      "http://localhost/zelavis/api/v1/database/documents/collections" +
+        `?tenantId=${encodeURIComponent("service:@zelavis/ecommerce")}`,
+    ),
+  );
+  assert.equal(collectionsResponse.status, 200);
+  const { collections } = await collectionsResponse.json();
   const subCollection = collections.find((col) => col.name === "commerce_subscriptions");
   assert.ok(subCollection, "commerce_subscriptions collection should exist");
   assert.equal(subCollection.surface, "database", "surface must be 'database', not hidden in metadata");

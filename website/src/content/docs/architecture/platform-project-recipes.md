@@ -46,7 +46,7 @@ The published `zelavis` Platform product is assembled from trusted product
 services in `packages/zelavis/src/platform` plus its dashboard service in:
 
 ```text
-packages/zelavis/product-services
+packages/zelavis/services
 ```
 
 The product-specific `zelavis/platform` and `zelavis/marketplace` service

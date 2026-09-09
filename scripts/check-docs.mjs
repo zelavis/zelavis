@@ -9,7 +9,7 @@ const targets = [
   "packages/zelavis/README.md",
   "packages/zelavis/ARCHITECTURE.md",
   "packages/zelavis/TODO.md",
-  "packages/zelavis/product-services/zelavis-ui/README.md",
+  "packages/zelavis/services/zelavis-ui/README.md",
 ];
 
 const stalePatterns = [

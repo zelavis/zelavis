@@ -52,29 +52,33 @@
       "types": "./dist/app/auth/index.d.ts",
       "import": "./dist/app/auth/index.js"
     },
-    "./app/db": {
-      "types": "./dist/app/db/index.d.ts",
-      "import": "./dist/app/db/index.js"
+    "./db": {
+      "types": "./dist/db/index.d.ts",
+      "import": "./dist/db/index.js"
     },
-    "./app/db/adapter-core": {
-      "types": "./dist/app/db/adapter-core/index.d.ts",
-      "import": "./dist/app/db/adapter-core/index.js"
+    "./db/node-sqlite": {
+      "types": "./dist/db/engines/node-sqlite.d.ts",
+      "import": "./dist/db/engines/node-sqlite.js"
     },
-    "./app/db/schema": {
-      "types": "./dist/app/db/schema/index.d.ts",
-      "import": "./dist/app/db/schema/index.js"
+    "./db/node": {
+      "types": "./dist/db/node-host.d.ts",
+      "import": "./dist/db/node-host.js"
     },
-    "./app/db/topology": {
-      "types": "./dist/app/db/topology/index.d.ts",
-      "import": "./dist/app/db/topology/index.js"
+    "./db/libsql": {
+      "types": "./dist/db/engines/libsql.d.ts",
+      "import": "./dist/db/engines/libsql.js"
     },
-    "./app/db/adapters/node-sqlite": {
-      "types": "./dist/app/db/adapters/node-sqlite.d.ts",
-      "import": "./dist/app/db/adapters/node-sqlite.js"
+    "./db/rocksdb": {
+      "types": "./dist/db/engines/rocksdb.d.ts",
+      "import": "./dist/db/engines/rocksdb.js"
     },
-    "./app/db/adapters/bun-sqlite": {
-      "types": "./dist/app/db/adapters/bun-sqlite.d.ts",
-      "import": "./dist/app/db/adapters/bun-sqlite.js"
+    "./db/lmdb": {
+      "types": "./dist/db/engines/lmdb.d.ts",
+      "import": "./dist/db/engines/lmdb.js"
+    },
+    "./db/schema": {
+      "types": "./dist/db/schema/index.d.ts",
+      "import": "./dist/db/schema/index.js"
     },
     "./app/workloads": {
       "types": "./dist/app/workloads/index.d.ts",
@@ -148,7 +152,8 @@
     "build:sdk": "pnpm run build:sdk:browser && pnpm run build:sdk:node",
     "build:sdk:browser": "tsc -p tsconfig.sdk.browser.json",
     "build:sdk:node": "tsc -p tsconfig.sdk.node.json",
-    "typecheck": "pnpm run build:bootstrap && pnpm --filter @zelavis/marketplace build && pnpm --filter @zelavis/auth build && tsc -p tsconfig.json --noEmit",
+    "typecheck": "pnpm run build:bootstrap && pnpm --filter @zelavis/marketplace build && pnpm --filter @zelavis/auth build && tsc -p tsconfig.json --noEmit && pnpm run diagnostics:effect",
+    "diagnostics:effect": "effect-tsgo diagnostics --project tsconfig.json --strict --severity error,warning,message",
     "test": "pnpm --filter @zelavis/ui build:plugin && pnpm run build && node --test test/*.test.mjs",
     "update:wordpress": "node scripts/update-wordpress-release.mjs",
     "build:bootstrap": "tsc -p tsconfig.bootstrap.json"
@@ -177,8 +182,12 @@
     "jose": "^6.2.10"
   },
   "devDependencies": {
+    "@effect/tsgo": "^0.43.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.4.0",
+    "libsql": "^0.5.29",
+    "lmdb": "^3.4.3",
+    "rocksdb": "^5.2.1",
     "typescript": "^7.0.2"
   },
   "keywords": [
@@ -192,5 +201,21 @@
   },
   "optionalDependencies": {
     "@zelavis/ui": "workspace:*"
+  },
+  "peerDependencies": {
+    "libsql": "^0.5.29",
+    "rocksdb": "^5.2.1",
+    "lmdb": "^3.4.3"
+  },
+  "peerDependenciesMeta": {
+    "libsql": {
+      "optional": true
+    },
+    "rocksdb": {
+      "optional": true
+    },
+    "lmdb": {
+      "optional": true
+    }
   }
 }

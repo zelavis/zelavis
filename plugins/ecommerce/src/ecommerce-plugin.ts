@@ -15,7 +15,7 @@ import type {
   Product,
   SubscriptionInterval,
 } from "./domain/entities.js";
-import type { DatabaseApi } from "zelavis/app/db";
+import type { DatabaseRuntimeApi } from "zelavis/db";
 import type { CreateSubscriptionInput } from "./contracts/payment-provider.js";
 import type { CreateCouponInput } from "./services/coupon-service.js";
 import type { CreateCustomerInput } from "./services/customer-service.js";
@@ -149,7 +149,7 @@ function createNotFoundResponse(label: string, value: string) {
   return createJsonErrorResponse(404, new Error(`${label} ${value} was not found.`));
 }
 
-function isDatabaseApi(value: unknown): value is DatabaseApi {
+function isDatabaseRuntimeApi(value: unknown): value is DatabaseRuntimeApi {
   return Boolean(
     value &&
       typeof value === "object" &&
@@ -511,7 +511,7 @@ export const ecommercePlugin = Object.freeze({
 
     const commerce = await createEcommerce({
       services: paymentServices,
-      repositories: isDatabaseApi(context.core.database)
+      repositories: isDatabaseRuntimeApi(context.core.database)
         ? createDatabaseEcommerceRepositories(context.core.database, {
             tenantId: `service:${context.service.name}`,
           })

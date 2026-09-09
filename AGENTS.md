@@ -14,7 +14,7 @@ Zelavis is a unified, self-hostable App Platform. It replaces — and combines �
 | Workers / Functions platforms | Project-scoped workloads: functions, jobs, schedules, and webhooks hosted by the long-running Zelavis runtime |
 | Claude / Codex chat | AI chat area built into the dashboard for interacting with Zelavis and building via AI |
 
-The difference from Firebase/Supabase is depth and ownership: Zelavis is fully self-hostable, runtime-neutral, and built to scale beyond a single database engine. The database layer is the deepest differentiator — `zelavis/app/db` extends SQL with a Document DB model (event-sourced, tenant-aware, per-collection tables) while keeping the storage engine swappable (SQLite, libSQL, and future engines). Official Zelavis Apps are locally physically sharded from creation: one logical App database routes stable virtual shard ranges across several SQLite files even when every placement is on one Node. Tenant placement, replication, failover, shard movement, and exceptional Tenant subdivision build on that same topology instead of introducing a second distributed architecture later. The event log is the natural replication stream and `tenant_id` is the normal first partition key. That is the same role Vitess plays for MySQL, but Zelavis is not coupled to any single SQL engine. Replicas do not imply multiple writable owners; multi-writer consistency requires a separate explicit data specification.
+The difference from Firebase/Supabase is depth and ownership: Zelavis is fully self-hostable, runtime-neutral, and built to scale beyond a single database engine. The database layer is the deepest differentiator — `zelavis/db` is a multi-model object store (event-sourced, tenant-aware, one payload projected through document, column, measure, and graph lenses) on a swappable storage engine. SQLite, libSQL, RocksDB and LMDB drivers ship today, all over the same store logic through an ordered key-value interface. Official Zelavis Apps are locally physically sharded from creation: one logical App database routes stable virtual shard ranges across several SQLite files even when every placement is on one Node. Tenant placement, replication, failover, shard movement, and exceptional Tenant subdivision build on that same topology instead of introducing a second distributed architecture later. The event log is the natural replication stream and `tenant_id` is the normal first partition key. That is the same role Vitess plays for MySQL, but Zelavis is not coupled to any single SQL engine. Replicas do not imply multiple writable owners; multi-writer consistency requires a separate explicit data specification.
 
 Zelavis should be able to host websites itself on user-controlled infrastructure. Managed deployment providers may be optional targets through plugins, but they are not the default hosting model and must not replace native Zelavis website hosting.
 
@@ -30,7 +30,7 @@ Dashboard/product structure:
 
 Core platform work centers on the unified `zelavis` package and its public
 subpaths: `zelavis/core`, `zelavis/runtime`, `zelavis/fabric`, `zelavis/app`,
-`zelavis/app/db`, `zelavis/app/auth`, and `zelavis/app/workloads`. The dashboard
+`zelavis/db`, `zelavis/app/auth`, and `zelavis/app/workloads`. The dashboard
 remains the focused `@zelavis/ui` package bundled by `zelavis`.
 
 The repo still contains domain packages such as `@zelavis/ecommerce`, but they are optional layers on top of the platform primitives, not the main product definition.
@@ -99,9 +99,9 @@ current automatically.
 - **System Services** are trusted Platform OS capabilities. Do not call every
   bundled project service a core service.
 - **System Store** is Platform OS persistence. Local adapters default to
-  `.zelavis/system/zelavis.sqlite`. It must stay separate from `zelavis/app/db`
+  `.zelavis/system/zelavis.sqlite`. It must stay separate from `zelavis/db`
   project databases and must never appear in a project's Database UI.
-- The Platform process does not mount an app-facing `zelavis/app/db` service by
+- The Platform process does not mount an app-facing `zelavis/db` service by
   default. Each Zelavis App project owns its logical database below
   `.zelavis/projects/<projectId>/.zelavis/data`; the official recipe maps its
   virtual shard ranges across several physical SQLite shard files even on one
@@ -118,7 +118,7 @@ current automatically.
   business logic stays inside the Project.
 - Trusted product-specific control-plane services live under
   `packages/zelavis/src/platform`. First-party product surfaces are their own
-  packages under `packages/zelavis/product-services/*`: `@zelavis/ui` owns
+  packages under `packages/zelavis/services/*`: `@zelavis/ui` owns
   dashboard delivery, `@zelavis/marketplace` owns the marketplace. These
   internal services assemble the public core primitives into the Zelavis
   product and are not separate public framework brands.
@@ -230,7 +230,7 @@ writable owners. Provider adapters supply capacity but never define Zelavis.
 Every official `zelavis/app` Project uses the App Data Fabric topology from
 creation. A single-node App still routes Tenant data through a versioned
 partition map containing many virtual shard ranges and several physical SQLite
-shards; the placements merely happen to share one Node. `zelavis/app/db` may
+shards; the placements merely happen to share one Node. `zelavis/db` may
 support a one-shard topology as an embeddable low-level instance, but the
 official App recipe must not bypass the topology router or expose a physical
 driver as its application API. Scaling out changes shard placement, replicas,
@@ -302,36 +302,96 @@ renders the selected project's navigation under `/zelavis/projects/:projectId`.
 
 ## Database Architecture Rules
 
-`zelavis/app/db` is a document-first database core backed by SQL-capable
-drivers. Its event log is the source of truth for writes and the natural future
-replication stream.
+`zelavis/db` is the database. A payload is written once and projected through
+document, column, measure, and graph lenses that hold only pointers back to a
+shared, partition-local identifier space, so a predicate spanning several data
+models is one set intersection rather than an exchange between engines. Its
+event log is the source of truth for writes and the replication stream.
 
 Key rules:
 
-- Every registered collection has its own table. Do not reintroduce a shared
-  `documents` table.
-- All document writes go through the documents API and append events before
-  projecting into the collection table. Do not write to registered collection
-  tables directly with raw SQL.
-- Collection tables are created inside the `collection.created` event
-  transaction.
+- Writes go through the documents API. There is no raw SQL surface and one must
+  not be reintroduced: it was the last way to reach storage without the
+  guarantees the documents API exists to provide. Being the only door is also
+  where the at-most-once guard lives: a write may carry an `idempotencyKey`, and
+  its receipt is written in the same transaction as the change, so there is no
+  moment where the write has happened and the key has not been noted.
+- Storage is an ordered key-value engine. Lenses are key ranges, a posting is a
+  key with no value, and a transaction is one atomic batch with reads overlaying
+  it. An engine implements `get`, `scan`, `write` and `close`; nothing above it
+  knows which engine it is. SQLite (default), libSQL, RocksDB and LMDB ship today; all but SQLite are optional peer dependencies, selected with `engine` when a database is opened. SQLite is the default because it is the only one needing no native build; LMDB is fastest while the working set fits in memory, and RocksDB stores roughly six times more per byte and barely slows when it does not.
+- Append to the log before projecting into the lenses. A crash must leave an
+  event whose projection can be replayed, never a lens row with no event behind
+  it. `rebuildLenses` re-derives every lens from the log alone and is the check
+  that this holds.
+- A posting is a key in the live tier or a bit in a sealed blob, and a read is
+  the union of both minus the tombstones. Blobs are immutable: `db.maintenance`
+  seals the live postings into segments of 65536 identifiers, and anything
+  removed afterwards leaves a tombstone rather than editing one. So a removal
+  path must go through the store's own helpers — deleting a posting key
+  directly leaves whatever a blob still claims. Sealing merges rather than
+  rebuilds, touching only the segments a live posting or tombstone falls in, so
+  the blobs accumulate across seals; `reindexLenses` is what re-derives them
+  from the manifests when that accumulation needs checking.
+- One transaction is one batch, and that is the whole durability story: a
+  killed process loses no commit that returned, a write-ahead log truncated by
+  a power cut costs a suffix rather than leaving holes, and an interrupted
+  maintenance pass is a state the reader already handles rather than damage to
+  repair. `test/db-durability.test.mjs` holds the store to all three by killing
+  real processes; anything that makes a write span two batches breaks it.
+- The log is the source of truth up to the compaction point, not forever.
+  Payloads, manifests and identities are the snapshot, so `db.maintenance`
+  compacts by truncating the log — after which storage tracks live objects
+  rather than every write ever taken. Anything reading history must therefore
+  handle being cut off rather than assume it can reach the beginning: an old
+  cursor fails with `CursorCompacted`, `rebuildLenses` refuses with
+  `LogCompacted`, and the state-reading equivalents (`reindexLenses` for
+  postings, a state-derived export for backups) are what still work.
+- A partition map carries routing and no data, so changing where an occupied
+  range points is a relocation, not a map edit. `db.movement` copies the records
+  unfenced, catches the copy up from the source log, fences writes only for the
+  last catch-up, and moves routing last; every step is recorded so an
+  interrupted one resumes. Routing is one record for every tenant in a
+  rebalance, so it moves once, after all of them are copied — applying it while
+  one was still uncopied would route a tenant to a shard that does not hold it.
+  `topology.update` still refuses an occupied range; `topology.update` still refuses an occupied range. Routing is read
+  from the topology on every call — never cached from the map a handle opened
+  with, which would go on reading the shard the records left.
+- Crossing partitions is a separate API, never a fallback. `forTenant` is
+  single-partition by construction; `db.scatter` is the only thing that fans
+  out, and it reports what each leg cost. A `Seq` names an object only together
+  with its partition, so anything crossing that boundary carries both — and a
+  query naming a bare identifier, an edge above all, is refused rather than run
+  somewhere it means something else.
+- A restore says what to do about data already there — refuse, purge, or merge
+  — and never guesses. Whatever the mode, the identities inside a backup must
+  name the tenant being restored into: they are lens keys, and a merge looks
+  them up, so a mislabelled backup would write over the tenant they really
+  belong to on the same shard.
+- A schema version governs what is accepted next, never what is already
+  stored: activating one rewrites nothing. `tenant.migrations` is the separate,
+  explicit operation that brings stored documents forward, and its instructions
+  are data rather than functions — inspectable, and reviewable before they run.
+- Locality is declared, not inferred. Everything sharing a `PartitionKey` lives
+  on one node, which is what keeps the intersection cheap. Tenant scoping is
+  structural — the tenant is part of every namespace and lens key — never a
+  predicate a caller can omit.
+- Identifiers are dense and partition-local. Global identity is
+  `(PartitionKey, Seq)`; a globally unique id would make posting sets sparse and
+  destroy scan locality.
+- Queries are data, not closures. A closure cannot cross a node boundary, so a
+  router that accepts one can only ever answer locally.
 - `DatabaseCollection.surface` is a first-class field. Use
   `surface: "content-studio"` for Content Studio content types and
   `surface: "database"` for raw database tables. Do not bury `surface` inside
   `metadata`.
-- Every collection table row has `tenant_id`. The database driver already
-  declares `tenantRouting: true`; `tenant_id` is the intended shard key.
-- SQLite-compatible adapters such as better-sqlite3, Bun SQLite, and libSQL
-  should inherit shared behavior through `createSqliteCompatibleDriver`.
-- Async SQLite gateway transactions must serialize unrelated top-level callers.
-  Never treat a process-global `inTransaction` flag as proof that a concurrent
-  caller is nested inside the current transaction. Event stream revisions must
-  also have a physical uniqueness invariant as a final corruption barrier.
-- `sql.execute()` must protect registered collection tables from direct DML/DDL
-  writes and indirect trigger-based writes, and point callers to the documents
-  API. `sql.query()` may read them.
-- Do not expose `sql.execute()` through an endpoint unless collection-table
-  write protection is preserved.
+- Schemas, projections, time series, events, and system views are all
+  Tenant-scoped. A surface reaching them without a Tenant would show one Tenant
+  another's definitions.
+- Dashboard system views are built from the Tenant APIs, never from storage, so
+  a view cannot name a physical table or survive into another Tenant's data.
+- Names beginning with `zv` are reserved for Zelavis internals and must be
+  rejected as collection names.
 
 Bundle storage keys are authority boundaries. Validate the Project/system
 owner, service identity, bundle identifier, storage prefix, and relative asset
@@ -346,7 +406,7 @@ part of the collection event pipeline. Names beginning with `zv_` are reserved
 for Zelavis internals and must be rejected as collection names.
 
 Dashboard system views must be logical, shard-aware capabilities exposed by
-`zelavis/app/db`; they must never select a physical shard's internal table or
+`zelavis/db`; they must never select a physical shard's internal table or
 raw SQL endpoint. Until those logical views exist, keep physical `zv_*` tables
 out of the dashboard entirely.
 
@@ -528,7 +588,7 @@ those grants, while endpoints remain the authority layer.
   contracts or a private dispatcher.
 - `packages/zelavis/src/platform` owns trusted product-specific control-plane
   and Marketplace services.
-- `packages/zelavis/product-services/zelavis-ui` contains the admin/dashboard UI used by the runtime package.
+- `packages/zelavis/services/zelavis-ui` contains the admin/dashboard UI used by the runtime package.
 - `packages/zelavis/adapters/*` contains optional framework, runtime, database,
   or external-system adapters distributed with the package workspace.
 - `plugins/*` contains official optional capability and provider plugins,
@@ -631,12 +691,12 @@ When creating a new core package, service package, or plugin package:
 
 ## UI Package Rules
 
-`packages/zelavis/product-services/zelavis-ui` is a special package with extra constraints:
+`packages/zelavis/services/zelavis-ui` is a special package with extra constraints:
 
 - It uses **React Router v7** (SPA mode, `ssr: false`) — not TanStack Router or TanStack Start.
 - Styling is Tailwind CSS v4 + shadcn/ui (Base UI components).
 - Generated route types live in `.react-router/types/`. Do not hand-edit them.
-- Route source files are under `packages/zelavis/product-services/zelavis-ui/app/routes/`. Edit these; typegen runs automatically.
+- Route source files are under `packages/zelavis/services/zelavis-ui/app/routes/`. Edit these; typegen runs automatically.
 - The dashboard sidebar uses a slide-based navigation model. Treat each slide as a distinct sidebar panel.
 - Nested sidebar slide headers use a larger standard gap before the next menu content. Sidebar panels with pinned/fixed action rows use `SidebarFixedActionMenu`; pass `afterHeader` when fixed actions sit directly under the slide back/title header.
 - Build dashboard features as mobile-slot-ready modules. Route files may compose those modules into a wide desktop page, while mobile sidebar slides can later mount the same modules into named slots such as `overview`, `main`, `create`, `edit`, `inspect`, and `settings`.
@@ -679,11 +739,31 @@ When working on UI behavior:
 
 Treat these carefully:
 
-- `packages/zelavis/product-services/zelavis-ui/.react-router/types/` is generated. Do not hand-edit it.
+- `packages/zelavis/services/zelavis-ui/.react-router/types/` is generated. Do not hand-edit it.
 - `packages/*/dist/*` is build output.
 - `website/.astro/*` and `website/dist/*` are generated site output.
 
 Do not manually edit generated files unless the user explicitly asks for it and the generating source cannot reasonably be changed instead.
+
+## Verification
+
+- **Verify from the repository root, never from a package.** `pnpm run verify`
+  is the command: it builds every shippable workspace project, typechecks all of
+  them, and runs the tests. A package-scoped `pnpm run build` proves only that
+  the package still compiles against itself — it says nothing about the plugins,
+  services, and examples that consume it, which is exactly where a change to a
+  shared API breaks something. Root verification takes seconds; there is no
+  version of "too slow to bother" that justifies skipping it.
+- **Build and typecheck are not the same check.** Some packages build through a
+  bundler that never runs `tsc`, so a type error can survive a green build and
+  be caught only by `pnpm run typecheck`. Run both, which is what `verify` does.
+- **Select workspace projects by exclusion, not inclusion.** Scripts that name
+  the projects they cover go stale the moment someone adds one, and the gap is
+  invisible — the command still succeeds, having quietly checked less. Prefer
+  `pnpm -r --if-present <script>` with `--filter '!<name>'` for the few
+  deliberate exceptions, so a new package is covered by default.
+- Check `pnpm-workspace.yaml` when adding a project. A directory that is not a
+  workspace package is invisible to every root command, whatever its scripts say.
 
 ## Code Change Expectations
 

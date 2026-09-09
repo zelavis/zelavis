@@ -1,6 +1,5 @@
 ---
 "zelavis": minor
-"@zelavis/cli": minor
 ---
 
 Ship the public `zelavis` executable for running the long-lived Platform OS and

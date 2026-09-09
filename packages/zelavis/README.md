@@ -721,7 +721,7 @@ runtime and UI dev server together and wires dashboard requests to the live UI
 build.
 
 `pnpm dev` builds the unified package and product services under
-`packages/zelavis/product-services`. The official native Project recipe lives
+`packages/zelavis/services`. The official native Project recipe lives
 in this package under `src/app` and is exported as `zelavis/app`. Each created
 Project locks its exact recipe/runtime version so parent Platform upgrades do
 not silently upgrade child Apps.

@@ -10,7 +10,7 @@ Use this skill for changes in:
 - `packages/zelavis/src/core`
 - `packages/zelavis/src/app`
 - `packages/zelavis/src/platform`
-- `packages/zelavis/product-services/*`
+- `packages/zelavis/services/*`
 - `packages/zelavis/adapters/*`
 - `plugins/*` when an official optional provider or capability plugin consumes
   the unified package's public contracts
@@ -26,7 +26,7 @@ before editing.
   `@zelavis/core` packages. Their responsibilities are now public subpaths of
   `zelavis`.
 - Ship first-party product surfaces as their own packages under
-  `packages/zelavis/product-services/*` — `@zelavis/ui`, `@zelavis/marketplace`
+  `packages/zelavis/services/*` — `@zelavis/ui`, `@zelavis/marketplace`
   and `@zelavis/auth` today. A product service owns a face, never an authority:
   `@zelavis/auth` is the settings page for core auth, and removing it costs the
   page rather than the ability to sign in. A product service is built the way a

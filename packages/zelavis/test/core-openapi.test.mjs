@@ -4,7 +4,8 @@ import {
   createServiceRuntime,
   generateOpenApiSpec,
 } from "../dist/core/index.js";
-import { createDatabase, defineDatabaseService } from "../dist/app/db/index.js";
+import { defineDatabaseService } from "../dist/db/index.js";
+import { openTemporaryDatabase, temporaryDatabaseDirectory } from "./_database.mjs";
 import { zelavis } from "../dist/index.js";
 import { zelavisUiFrontend } from "@zelavis/ui/frontend";
 
@@ -133,10 +134,10 @@ test("generateOpenApiSpec converts routes with spec into OpenAPI paths and opera
   assert.equal(getOp.responses["404"].description, "Item not found");
 });
 
-test("database service generates complete OpenAPI spec with typed operations", async () => {
-  const database = await createDatabase();
+test("database service generates complete OpenAPI spec with typed operations", async (t) => {
+  const database = await openTemporaryDatabase(t);
   const runtime = await createServiceRuntime({
-    services: [defineDatabaseService(database)],
+    services: [defineDatabaseService(database.api)],
     prefix: "/api",
   });
 
@@ -182,9 +183,10 @@ test("database service generates complete OpenAPI spec with typed operations", a
   assert.equal(timeseriesRangePath.post.operationId, "queryTimeSeriesRange");
 });
 
-test("Zelavis runtime exposes /zelavis/api/v1/runtime/openapi.json", async () => {
+test("Zelavis runtime exposes /zelavis/api/v1/runtime/openapi.json", async (t) => {
   const app = await zelavis({
     frontend: zelavisUiFrontend,
+    subsystems: { database: { directory: temporaryDatabaseDirectory(t) } },
   });
 
   try {

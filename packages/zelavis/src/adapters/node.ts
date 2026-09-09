@@ -1,8 +1,4 @@
 import { join, resolve } from "node:path";
-import { createBetterSqlite3DatabaseDriver } from "../app/db/adapters/node-sqlite.js";
-import {
-  createShardedDatabaseDriver,
-} from "../app/db/topology/index.js";
 import {
   defineAdapter,
   type ZelavisOptions,
@@ -13,7 +9,6 @@ import {
 import { createAgentProcessClient } from "./_agent-ipc.js";
 import { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
 import { createLocalSqliteSystemStore } from "./_sqlite-system-store.js";
-import { resolveLocalDatabaseTopology } from "./_database-topology-store.js";
 import {
   createLocalProjectRuntime,
   type LocalProjectRuntimeOptions,
@@ -33,7 +28,6 @@ import {
   type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
 import { officialProjectRecipes } from "../project-recipes.js";
-import { migrateLegacyAppDatabase } from "./_legacy-app-database-migration.js";
 import { createBuiltinDeploymentBackends } from "../backends/index.js";
 export {
   createNodeFileArtifactStore,
@@ -41,13 +35,17 @@ export {
 } from "./_node-artifact-store.js";
 
 export interface NodeAdapterDatabaseOptions {
+  /** Directory holding one SQLite file per shard. */
   directory?: string;
-  logicalDatabaseId?: string;
-  virtualShardCount?: number;
-  physicalShardCount?: number;
-  readonly?: boolean;
-  fileMustExist?: boolean;
-  pragma?: readonly string[];
+  /**
+   * Adopted only the first time a Project opens.
+   *
+   * The stored partition map is authoritative afterwards, so a later start
+   * naming a different shard list cannot re-place ranges out from under the
+   * data already on them.
+   */
+  shards?: readonly string[];
+  virtualRanges?: number;
 }
 
 export type NodeAdapterServiceOptions = LocalRuntimeServiceOptions & {
@@ -145,53 +143,18 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           : createLocalSqliteSystemStore({ filename: systemStoreFilename });
 
       if (databaseOptions !== false) {
-        const topology = await resolveLocalDatabaseTopology({
-          systemStore,
-          logicalDatabaseId: databaseOptions.logicalDatabaseId,
-          nodeId: "local",
-          engine: "sqlite",
-          virtualShardCount: databaseOptions.virtualShardCount,
-          physicalShardCount: databaseOptions.physicalShardCount,
-        });
-        const shardDirectory = databaseOptions.directory
-          ? resolve(databaseOptions.directory)
-          : join(dataDirectory, "data", "primary", "shards");
-        const physicalDrivers = new Map(
-          topology.desired.physicalShards.map((shard) => [
-            shard.id,
-            createBetterSqlite3DatabaseDriver({
-              filename: join(shardDirectory, `${shard.id}.sqlite`),
-              readonly: databaseOptions.readonly,
-              fileMustExist: databaseOptions.fileMustExist,
-              pragma: databaseOptions.pragma,
-            }),
-          ]),
-        );
-        const shardedDriver = createShardedDatabaseDriver({
-          topology,
-          physicalDrivers,
-        });
-        if (
-          isProjectRuntime &&
-          databaseOptions.directory === undefined &&
-          !databaseOptions.readonly
-        ) {
-          await migrateLegacyAppDatabase({
-            legacyFilename: join(dataDirectory, "zelavis.sqlite"),
-            systemStore,
-            targetDriver: shardedDriver,
-            physicalDrivers,
-            openLegacyDriver: (filename) =>
-              createBetterSqlite3DatabaseDriver({
-                filename,
-                fileMustExist: true,
-              }),
-            tenantAliases: { default: "zelavis-app" },
-          });
-        }
+        // The topology is no longer resolved here: the partition map lives in
+        // the database's own store, versioned and fenced like any other write,
+        // so a second copy in the System Store could only disagree with it.
         nextSubsystems.database = {
+          directory: databaseOptions.directory
+            ? resolve(databaseOptions.directory)
+            : join(dataDirectory, "data", "primary", "shards"),
           nodeId: "local",
-          driver: shardedDriver,
+          ...(databaseOptions.shards ? { shards: databaseOptions.shards } : {}),
+          ...(databaseOptions.virtualRanges === undefined
+            ? {}
+            : { virtualRanges: databaseOptions.virtualRanges }),
         };
       }
 

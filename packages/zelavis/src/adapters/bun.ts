@@ -6,11 +6,7 @@ import {
   type ZelavisServiceRegistryEntry,
   type ZelavisServiceSetupContext,
 } from "../index.js";
-import {
-  createShardedDatabaseDriver,
-} from "../app/db/topology/index.js";
 import { createBunSqliteSystemStore } from "./_bun-sqlite-system-store.js";
-import { resolveLocalDatabaseTopology } from "./_database-topology-store.js";
 import { createLocalFileStorage, createMemoryKeyValueStore } from "./_shared.js";
 import {
   normalizeDataDirectory,
@@ -20,15 +16,13 @@ import {
   type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
 import { officialProjectRecipes } from "../project-recipes.js";
-import { migrateLegacyAppDatabase } from "./_legacy-app-database-migration.js";
 
 export interface BunAdapterDatabaseOptions {
+  /** Directory holding one SQLite file per shard. */
   directory?: string;
-  logicalDatabaseId?: string;
-  virtualShardCount?: number;
-  physicalShardCount?: number;
-  readonly?: boolean;
-  create?: boolean;
+  /** Adopted only the first time a Project opens; the stored map wins afterwards. */
+  shards?: readonly string[];
+  virtualRanges?: number;
 }
 
 export interface BunAdapterFileStorageOptions {
@@ -93,56 +87,18 @@ export function bunAdapter(options: BunAdapterOptions = {}) {
           : await createBunSqliteSystemStore({ filename: systemStoreFilename });
 
       if (databaseOptions !== false) {
-        const { createBunSqliteDatabaseDriver } = await import(
-          "../app/db/adapters/bun-sqlite.js"
-        );
-        const topology = await resolveLocalDatabaseTopology({
-          systemStore,
-          logicalDatabaseId: databaseOptions.logicalDatabaseId,
-          nodeId: "local",
-          engine: "sqlite",
-          virtualShardCount: databaseOptions.virtualShardCount,
-          physicalShardCount: databaseOptions.physicalShardCount,
-        });
-        const shardDirectory = databaseOptions.directory
-          ? resolve(databaseOptions.directory)
-          : join(dataDirectory, "data", "primary", "shards");
-        const physicalDrivers = new Map(
-          topology.desired.physicalShards.map((shard) => [
-            shard.id,
-            createBunSqliteDatabaseDriver({
-              filename: join(shardDirectory, `${shard.id}.sqlite`),
-              readonly: databaseOptions.readonly,
-              create: databaseOptions.create,
-            }),
-          ]),
-        );
-        const shardedDriver = createShardedDatabaseDriver({
-          topology,
-          physicalDrivers,
-        });
-        if (
-          isProjectRuntime &&
-          databaseOptions.directory === undefined &&
-          !databaseOptions.readonly
-        ) {
-          await migrateLegacyAppDatabase({
-            legacyFilename: join(dataDirectory, "zelavis.sqlite"),
-            systemStore,
-            targetDriver: shardedDriver,
-            physicalDrivers,
-            openLegacyDriver: (filename) =>
-              createBunSqliteDatabaseDriver({
-                filename,
-                create: false,
-                readwrite: true,
-              }),
-            tenantAliases: { default: "zelavis-app" },
-          });
-        }
+        // One store implementation, built on `node:sqlite`, which Bun provides.
+        // A second Bun-specific driver would be a second physical format for
+        // the same logical database.
         nextSubsystems.database = {
+          directory: databaseOptions.directory
+            ? resolve(databaseOptions.directory)
+            : join(dataDirectory, "data", "primary", "shards"),
           nodeId: "local",
-          driver: shardedDriver,
+          ...(databaseOptions.shards ? { shards: databaseOptions.shards } : {}),
+          ...(databaseOptions.virtualRanges === undefined
+            ? {}
+            : { virtualRanges: databaseOptions.virtualRanges }),
         };
       }
 

@@ -336,6 +336,14 @@ an exported type is never mistaken for an operational distributed feature.
 
 ## Prepared, Not Operational Yet
 
+- [ ] Ecommerce persistence against the new database. The plugin's own tests
+  were still importing the deleted `app/db`, so they had not run since the
+  cutover; ported to the `database: { directory }` subsystem they now load and
+  fail on behaviour rather than on imports. A product written through one
+  runtime is not found by a second runtime over the same directory, and no
+  collection is created for the plugin's tenant. Closing the first runtime
+  first changes nothing, so it is not writer fencing — the cutover left this
+  plugin behind.
 - [ ] Compatibility dates are carried by runtimes, artifacts, and providers,
   but no behavior gates have been introduced yet. Add gates only when behavior
   must change incompatibly.
@@ -608,6 +616,256 @@ an exported type is never mistaken for an operational distributed feature.
   tests with them.
 - [ ] Add provider implementations as optional adapters or plugins rather than
   dependencies of the core implementation.
+
+## Replacing `zelavis/app/db` with `zelavis/dbnew`
+
+`dbnew` replaces the document-first SQL database entirely; the two are not
+intended to coexist. Each capability's old implementation is removed once its
+replacement is in use, and the package is not left carrying both. The order is
+driven by what the existing dependents call, not by what is easiest to port.
+
+- [x] Collections and the document API over `ObjectStore`. Documents are stored
+  objects whose scalar fields become column postings, so `eq` and `in` filters
+  are answered from the lens; ordering comparisons are applied to the candidates
+  afterwards rather than pretending to be indexed.
+- [x] Stable identity: `(namespace, key)` binds an application's own document id
+  to the dense partition-local `Seq`, uniquely and inside the write
+  transaction. Events carry it so a follower agrees with its leader about which
+  record an event concerns.
+- [x] Optimistic concurrency through `expectedVersion` on update and delete, and
+  duplicate-id rejection on insert.
+- [ ] Ordering, comparison and range filters served from the lens rather than
+  applied after it.
+- [x] `forTenant` as partition selection. Tenants hash to one of a fixed number
+  of virtual ranges, and ranges are placed on physical shards, so an App is
+  sharded from creation and growing moves placements rather than rehashing
+  tenants. Tenant scoping is structural — the tenant is part of every namespace
+  and lens key — rather than a predicate a caller can forget.
+- [x] Durable, versioned partition maps. The stored map is authoritative, so
+  reopening with a different shard list cannot re-place ranges out from under
+  the data on them. Changes are validated for complete, non-overlapping
+  coverage, must advance the version, and are refused while tenants stand on a
+  range that would move.
+- [x] Range movement, as `db.movement.rebalance`. Not a transaction — there is
+  no atomic write across two shards — but a sequence whose every intermediate
+  state is one a reader can safely be in, recorded as it goes so an interruption
+  resumes rather than needing repair: fence writes on the shard being left, copy
+  the tenant, move the routing, then drop the source. A tenant is unwritable for
+  the length of the copy and never unreadable, because the source still holds
+  the data and nothing can change it while it is fenced. `topology.update` keeps
+  refusing an occupied range; relocation is what makes such a change possible
+  rather than what makes the refusal go away.
+- [x] Move without a write outage. The copy is taken unfenced from a noted log
+  position and then caught up from the source log in rounds, each replaying only
+  what arrived during the one before it; writes are fenced for the last round
+  alone. Catching up keys events by identity rather than identifier, because a
+  restore assigns the target its own dense identifiers — the name a caller gave
+  a record is the one thing that means the same on both shards. Under continuous
+  write load: 238 records copied and 271 events caught up unfenced, 22 settled
+  behind the fence, and 326 of 400 concurrent writes accepted where every one of
+  them used to be refused.
+- [x] Event and projection surfaces on the `dbnew` log. Domain events are a
+  reading of the object log rather than a second log beside it, so there is no
+  way to record a document change that did not happen. Projection checkpoints
+  live in the shard whose log they track, which makes them shard-aware without
+  bookkeeping.
+- [x] Idempotency keys, on the document writes rather than on an append. The
+  API being replaced took one when appending an event; there is no append here,
+  because writes reach the log only through the documents API — so the guard
+  belongs where the write enters. `insert`, `update` and `delete` take an
+  optional key, and a retry carrying it is answered with what the first attempt
+  returned instead of being applied again. The receipt is written in the same
+  transaction as the change it describes: recorded afterwards, there would be a
+  window in which the write had happened and the key had not been noted, which
+  is exactly the window a retry falls into. A key offered for a different
+  request is refused rather than answered, an attempt that failed spends no key,
+  and receipts are swept by `forgetIdempotencyKeys` — they grow with requests
+  rather than with data, and how long a retry may arrive is the caller's
+  question.
+- [x] Collection schemas, validation, and stored schema versions. The schema
+  module moved into `dbnew` rather than being rewritten: it is a field-type
+  language, not part of the SQL core, and duplicating 700 lines of field
+  definitions would only invite the two copies to drift. Stored versions are
+  immutable, activation is explicit, and a collection without a schema accepts
+  anything, as a raw database collection does today.
+- [x] Schema migration between versions, as `tenant.migrations`. Activating a
+  version still changes only what is accepted next and leaves what was written
+  alone — a schema change must never silently rewrite data — and migration is
+  the deliberate other half. Instructions are data (`Rename`, `Set`, `Default`,
+  `Drop`) rather than a function, for the same reason a query is: a closure
+  cannot be inspected, logged, or reviewed before it runs. `plan` reports what
+  separates two versions and which differences the caller still has to answer;
+  a removal is not one, because validation rejects unknown keys and a field the
+  new version does not name can only be discarded. The decision is
+  all-or-nothing though the writes are not: every document is transformed and
+  checked before anything is activated or written, so a migration that would
+  leave documents invalid refuses rather than getting halfway.
+- [x] Time series definitions, points, and checkpoints. A series is a
+  projection over the same log with the same checkpoint, rather than a second
+  ingestion path. Points carry a coarse time bucket so a bounded range asks for
+  the buckets it spans instead of scanning the series.
+- [x] Time-bucket indexing wide enough for long ranges. A point is indexed at
+  five widths, each eight times the last, so a range is covered by whole coarse
+  blocks in the middle and finer ones at its edges — the standard interval
+  cover. Ten years of days costs under thirty clauses where it used to exceed
+  the limit and fall back to scanning the series; the clause cap survives only
+  as a backstop against a range of a million years. The cost is one posting per
+  level on each point written, which sealing folds into blobs. Points are
+  derived, so an existing series takes the new index by being rebuilt.
+- [x] Tag filtering on range and aggregate. A tag is an ordinary column lens,
+  so a filter is the same set intersection a multi-model predicate is: every
+  named tag must match, a tag given several values matches any of them, and both
+  compose with the time window rather than replacing it. It is worth most
+  exactly where the window gives up — past the bucket-clause limit the window
+  names the whole series, and the tag narrows it again, so the query costs the
+  tag rather than the series.
+- [x] Backup and restore format. A backup is the tenant's slice of the log
+  rather than a separate rendering of collections, schemas and documents, so
+  restoring replays through the same idempotent apply path replication uses.
+  Sequences are remapped on restore, since a backup's numbers mean nothing in
+  the shard it lands in. Restoring under a different tenant name, or over live
+  data, is refused rather than silently producing unreachable records.
+- [x] Restore into a tenant that already holds data. `restoreTenant` takes a
+  mode: `empty` still refuses and stays the default, since it is the only one
+  that cannot lose anything; `purge` discards what the tenant holds — selected
+  by the rule an export uses, so it clears exactly what a backup carries — and
+  leaves the tenant as the backup describes it; `merge` writes the backup over
+  records sharing a name and leaves the rest alone, lifting the restored
+  versions above the local ones so a put that is not newer is not dropped as
+  stale. A backup whose identities name another tenant is now refused whatever
+  its label says, because a merge looks those names up and would otherwise write
+  over the tenant they really belong to.
+- [ ] Shard topology, so an official App routes virtual ranges across several
+  physical shards from creation rather than gaining sharding later.
+- [x] Logical, shard-aware dashboard system views. Built from the tenant APIs
+  rather than from storage, so a view cannot name a physical table, cannot read
+  one belonging to another tenant, and does not break when a range moves. Note
+  a semantic change: schemas, projections and time series are tenant-scoped
+  here, where the replaced surface kept them outside the tenant boundary.
+- [x] Schema and system-view routes address a Tenant, so changing the backing
+  store no longer also changes a URL. The dashboard passes the admin Tenant it
+  already used elsewhere.
+- [x] `zelavis/dbnew/node` opens a sharded database for a promise-based host and
+  closes it on shutdown, so the platform can construct one.
+- [x] `/database/health` no longer advertises capability flags, which had no
+  `dbnew` equivalent and reported constants either way.
+The cutover landed. `zelavis/app/db` is gone: the database service is built on
+the `dbnew` runtime API, both construction sites open a sharded database through
+`zelavis/dbnew/node`, and its `close()` runs on runtime shutdown.
+
+- [x] `defineDatabaseService` ported onto the `dbnew` runtime API, with error
+  rules matching tagged errors rather than error classes. Route shapes did not
+  change, because the Tenant was added to the schema and system-view routes
+  ahead of the move.
+- [x] Both construction sites build the database, and the two `isDatabaseApi`
+  guards test the `dbnew` shape.
+- [x] `src/app/db` and the `zelavis/app/db*` export subpaths removed, along with
+  the seven test files that exercised it structurally.
+- [x] A libSQL driver for `dbnew`, over the same store logic as the built-in
+  one. Both engines meet a synchronous gateway, so retraction, manifests, events
+  and postings exist once rather than per driver.
+- [ ] Remote-only libSQL. The driver uses the synchronous binding, which covers
+  local files and embedded replicas; a database reachable only over the network
+  needs transaction serialization designed before an asynchronous gateway is
+  safe to offer.
+- [ ] Report real topology on `/database/health` — shard count and partition map
+  version — now that `dbnew` serves it.
+
+Independent of parity, and needed before an official recipe mounts `dbnew`:
+
+- [ ] Snapshots, so rebuilding replays live objects rather than all history.
+- [x] Durability testing under interruption. `synchronous=NORMAL` in WAL mode
+  does not fsync each commit, which trades two guarantees against each other,
+  and both are now asserted rather than assumed. A `SIGKILL`ed writer loses no
+  transaction that had already returned — proven on all four engines, and the
+  test detects a single lost commit in 306. A write-ahead log truncated
+  mid-frame, which is what a power cut leaves, costs a suffix and never a hole:
+  what recovers is always the first *n* objects, never a set with gaps. And an
+  interrupted seal is a state rather than damage — some lens keys sealed, the
+  rest still live, every query answering as before, and finishing it is just
+  running it again.
+- [x] An ordered key-value engine interface, with SQLite and in-memory
+  implementations and a conformance suite both must pass. Lenses become key
+  ranges, which is what lets an engine without column families back the store.
+- [x] The store logic ported onto `KvEngine`. Lenses are key ranges, a posting
+  is a key with no value, and a transaction is one atomic batch with reads
+  overlaying it. The object-store, event-log and document contracts all run
+  against it unchanged.
+- [x] The SQL store and its gateway are gone. Every engine is a `KvEngine`;
+  there is one store.
+- [ ] Report the libsql Buffer-parameter panic upstream. Binding a Buffer to a
+  SELECT crashes the process in libsql 0.5.29, so its keys travel as hex text.
+- [x] A RocksDB engine, and it was a driver rather than a redesign: four
+  methods, nothing above it changed. The single keyspace cost nothing, because
+  the key tags already give each lens the disjoint range column families would
+  have provided.
+- [x] Measured the engines against each other (`scripts/bench-engines.mjs`).
+  At 100k objects, with SQLite tuned: LMDB is roughly 4x faster than everything
+  else on scans and the cross-model query and 3x on point reads, paying for it
+  in disk. RocksDB stores the same data in a fifth of the space and is the only
+  engine that does, but tuning erased its speed lead over SQLite entirely.
+  SQLite needs nothing installed and is the fastest at point reads after LMDB.
+  libSQL trails and carries the largest files.
+- [x] Tuned every engine, so the comparison is between engines rather than
+  between one engine's defaults and another's architecture. Two knobs made
+  things worse and were reverted: RocksDB with 16 KiB blocks (a posting has an
+  empty value, so a larger block decompresses more to read nothing) and a 4 MiB
+  iterator prefetch. LMDB's `useWritemap` aborts the process inside its own
+  free-list handling and is not used.
+- [x] Benchmarked past the page cache (`scripts/bench-cold.mjs`), and it
+  reverses the in-memory reading. RocksDB barely notices a cold cache — 1.2x on
+  a posting scan — while SQLite takes 17x and libSQL 22x. LMDB stays fastest in
+  absolute terms cold but degrades 2.8x, and its point reads degrade 10x because
+  a cold mapped page is a fault to disk. RocksDB also holds the same data in
+  82 MB against LMDB's 547 MB, so its working set leaves memory nearly seven
+  times later.
+- [x] Engine selection on the host, defaulting to SQLite. A default that can
+  fail to install is not a default, and SQLite is the only engine needing
+  nothing: LMDB is the one to choose while the working set fits in memory
+  (roughly 42M objects on 64 GB) and RocksDB the one that keeps working past
+  that, at about a sixth of the space.
+- [x] Compaction for the event log, reachable as `db.maintenance`. Payloads,
+  manifests and identities already are the snapshot and postings are derivable
+  from manifests, so compaction is log truncation: storage then tracks live
+  objects rather than every write ever taken, which moves the point where a
+  working set outgrows memory further than any engine choice above. A cursor
+  from before the cut is refused rather than silently continued, backups
+  export from state once history no longer reaches back far enough, and a full
+  replay refuses on a cut log while `reindex` re-derives postings from state.
+- [x] Benchmark past the page cache. Every warm measurement fit in memory,
+  which is exactly where an LSM engine and a b-tree stop behaving alike; cold,
+  RocksDB degrades 1.2× against SQLite's 16.8×, libSQL's 21.6× and LMDB's 2.8×.
+- [x] Postings stored as bitmap blobs, reachable as `db.maintenance.seal`. A
+  posting written as a bare key is the cheapest write and the most expensive
+  read: a term matching every object costs one b-tree entry per object, every
+  time. Sealing folds the live postings into immutable blobs of 65536
+  identifiers each — dense bitmap or sparse offset list, chosen per segment —
+  and keeps the cheap write by never editing one: what is written after a seal
+  lands in the live tier beside it, and what is removed leaves a tombstone the
+  read subtracts. At 200k objects and 600k postings: a wide term 304 ms → 24 ms
+  (12.6×), a wide column 78 ms → 6 ms (13.4×), and a selective predicate
+  intersected with an unselective one 278 ms → 1.5 ms (189×), which is the case
+  it exists for. File size at rest is unchanged, because SQLite keeps freed
+  pages rather than returning them.
+- [x] Seal incrementally rather than by rebuilding. A segment is read, merged
+  and written back only where a live posting or a tombstone falls inside it, so
+  a periodic seal costs what changed rather than what is stored; a first seal is
+  the same operation against blobs that do not exist yet. Re-sealing after
+  touching 1% of 200k objects: 0.09s over 2006 segments, against 4.11s over
+  18413 for the first — and the rebuild it replaced re-derived every posting
+  before folding, so it could not have been faster than a first seal.
+- [x] An explicit cross-partition scatter/gather contract, as `db.scatter`. A
+  separate surface rather than a wider `forTenant`, because it is a different
+  bargain: the cost is the widest predicate on every partition touched, nothing
+  can be intersected across them, and the result has no ordering that means
+  anything — so it merges by tenant and identifier, an order that exists
+  everywhere rather than one that claims relevance. Every result carries its
+  legs, so what it cost is visible per part. Two things it refuses rather than
+  answers: a query naming a partition-local identifier — an edge means a
+  different object on every shard, so scattering one returns rows that look
+  like matches and are not — and a shard the map does not have, since reading
+  the rest quietly would answer a narrower question in the shape of the asked
+  one.
 
 ## Later
 

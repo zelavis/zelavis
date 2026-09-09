@@ -1,4 +1,8 @@
-import type { DatabaseApi, DatabaseJsonObject, TenantDatabaseApi } from "../../db/index.js";
+import type {
+  DatabaseRuntimeApi,
+  JsonObject,
+  TenantRuntimeApi,
+} from "../../../db/index.js";
 import type {
   AccountRepository,
   AuthAttemptRepository,
@@ -16,10 +20,6 @@ import type {
   Credential,
   Session,
 } from "../domain/entities.js";
-import {
-  DatabaseConflictError,
-  DatabaseRevisionMismatchError,
-} from "../../db/index.js";
 
 type AuthEntity =
   | Account
@@ -29,7 +29,7 @@ type AuthEntity =
   | (AuthAuthorizationFlow & { id: string })
   | (AuthAttemptState & { id: string });
 
-function serialize(entity: AuthEntity): DatabaseJsonObject {
+function serialize(entity: AuthEntity): JsonObject {
   const updatedAt = "updatedAt" in entity
     ? entity.updatedAt
     : "occurredAt" in entity
@@ -41,7 +41,7 @@ function serialize(entity: AuthEntity): DatabaseJsonObject {
   };
 }
 
-function deserialize<T extends AuthEntity>(data: DatabaseJsonObject): T {
+function deserialize<T extends AuthEntity>(data: JsonObject): T {
   if (typeof data.entity !== "string") throw new TypeError("Stored Auth entity is invalid.");
   const entity = JSON.parse(data.entity) as Record<string, unknown>;
   for (const field of ["createdAt", "updatedAt", "expiresAt", "blockedUntil", "occurredAt"]) {
@@ -53,17 +53,24 @@ function deserialize<T extends AuthEntity>(data: DatabaseJsonObject): T {
   return entity as unknown as T;
 }
 
+function isDocumentConflict(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { _tag?: unknown; cause?: unknown };
+  if (candidate._tag === "DocumentConflict") return true;
+  return isDocumentConflict(candidate.cause);
+}
+
 class AuthDocumentStore {
   private readonly ensured = new Set<string>();
   private readonly ensuring = new Map<string, Promise<void>>();
-  constructor(private readonly database: TenantDatabaseApi) {}
+  constructor(private readonly database: TenantRuntimeApi) {}
 
   async ensure(collection: string) {
     if (this.ensured.has(collection)) return;
     const active = this.ensuring.get(collection);
     if (active) return active;
     const operation = (async () => {
-      if (!(await this.database.documents.collectionExists({ name: collection }))) {
+      if (!(await this.database.documents.collectionExists(collection))) {
         await this.database.documents.createCollection({
           name: collection,
           surface: "database",
@@ -144,10 +151,10 @@ class AuthDocumentStore {
         });
         return next;
       } catch (error) {
-        if (
-          error instanceof DatabaseRevisionMismatchError ||
-          error instanceof DatabaseConflictError
-        ) continue;
+        // The store fails with schema-tagged errors rather than classes, and
+        // a lost optimistic-concurrency race and a duplicate insert are the
+        // same tag: both mean another writer got there first, so both retry.
+        if (isDocumentConflict(error)) continue;
         throw error;
       }
     }
@@ -156,7 +163,7 @@ class AuthDocumentStore {
 }
 
 export function createDatabaseAuthRepositories(
-  database: DatabaseApi,
+  database: DatabaseRuntimeApi,
   options: { tenantId?: string } = {},
 ): AuthRepositories {
   const store = new AuthDocumentStore(database.forTenant(options.tenantId ?? "service:zelavis-auth"));

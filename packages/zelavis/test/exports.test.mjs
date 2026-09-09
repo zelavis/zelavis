@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { temporaryDatabaseDirectory } from "./_database.mjs";
 import { loadExamplePlugin } from "./fixtures/example-plugin.mjs";
 
 const PLATFORM_OWNER_CONTEXT = {
@@ -22,12 +23,12 @@ test("zelavis package exports runtime APIs and local host adapters", async () =>
   const provider = await import("zelavis/provider");
   const app = await import("zelavis/app");
   const appAuth = await import("zelavis/app/auth");
-  const appDatabase = await import("zelavis/app/db");
+  const database = await import("zelavis/db");
   const appWorkloads = await import("zelavis/app/workloads");
   const wordpress = await import("zelavis/wordpress");
   const backends = await import("zelavis/backends");
   const agent = await import("zelavis/agent");
-  const nodeSqlite = await import("zelavis/app/db/adapters/node-sqlite");
+  const nodeDatabase = await import("zelavis/db/node");
   const adapters = await import("zelavis/adapters");
   const nodeAdapter = await import("zelavis/adapters/node");
   const bunAdapter = await import("zelavis/adapters/bun");
@@ -67,7 +68,8 @@ test("zelavis package exports runtime APIs and local host adapters", async () =>
   assert.equal(typeof app.zelavisAppService, "function");
   assert.equal(app.zelavisApp.version, runtime.ZELAVIS_VERSION);
   assert.equal(typeof appAuth.createAuth, "function");
-  assert.equal(typeof appDatabase.createDatabase, "function");
+  assert.equal(typeof database.defineDatabaseService, "function");
+  assert.equal(typeof database.makeDatabase, "function");
   assert.equal(typeof appWorkloads.workloadsService, "function");
   assert.equal(wordpress.wordpressApp.kind, "app");
   assert.equal(wordpress.wordpressApp.name, "zelavis/wordpress");
@@ -76,7 +78,7 @@ test("zelavis package exports runtime APIs and local host adapters", async () =>
   assert.equal(typeof backends.createDeploymentBackendManager, "function");
   assert.equal(typeof agent.createAgentOperationManager, "function");
   assert.equal(typeof agent.signAgentAuthority, "function");
-  assert.equal(typeof nodeSqlite.createBetterSqlite3Database, "function");
+  assert.equal(typeof nodeDatabase.openNodeDatabase, "function");
 
   // Local runtime adapters via the barrel
   assert.equal(typeof adapters.zelavisNode, "function");
@@ -167,10 +169,19 @@ test("Zelavis accepts a node env adapter and exposes a Node HTTP server through 
   }
 });
 
-test("Zelavis exposes default core APIs", async () => {
+test("Zelavis exposes default core APIs", async (t) => {
   const { Zelavis } = await import("zelavis");
+  const { nodeAdapter } = await import("zelavis/adapters/node");
 
-  const zelavis = new Zelavis();
+  // A Project runtime, because the database is durable and belongs to a
+  // directory: there is no database a bare `new Zelavis()` could conjure.
+  const zelavis = new Zelavis({
+    adapter: nodeAdapter({
+      role: "project",
+      dataDirectory: temporaryDatabaseDirectory(t),
+    }),
+  });
+  t.after(() => zelavis.close());
   const appDatabase = zelavis.db.forTenant("zelavis-app");
 
   await appDatabase.documents.createCollection({ name: "posts" });
@@ -186,10 +197,9 @@ test("Zelavis exposes default core APIs", async () => {
   assert.equal(found.data.title, "Hello");
   const database = await zelavis.resolveDatabaseApi();
   const runtime = await zelavis.runtime();
-  assert.equal(
-    database.forTenant("zelavis-app").documents,
-    runtime.services["@zelavis/db"].service.forTenant("zelavis-app").documents,
-  );
+  // The same instance, not merely an equivalent one. A Tenant handle is built
+  // per call now, so identity has to be asserted where it actually lives.
+  assert.equal(database, runtime.services["@zelavis/db"].service);
   assert.equal(zelavis.db.context.nodeId, "local");
   assert.equal(typeof zelavis.auth.accounts.create, "function");
 });
@@ -267,7 +277,6 @@ test("Zelavis applies adapter resolve output as platform resources, metadata, an
 test("Zelavis platform resources back dashboard settings, storage service, and plugin persistence", async () => {
   const { Zelavis, defineAdapter, zelavis: createZelavis } =
     await import("zelavis");
-  const { createDatabase } = await import("../dist/app/db/index.js");
 
   const kv = new Map();
   const files = new Map();

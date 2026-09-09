@@ -1,9 +1,8 @@
 import type { AuthApi } from "../app/auth/index.js";
 import type {
-  CreateDatabaseOptions,
-  DatabaseApi,
-  DatabaseJsonObject,
-} from "../app/db/index.js";
+  DatabaseRuntimeApi,
+  JsonObject as DatabaseJsonObject,
+} from "../db/index.js";
 import {
   requireActivePluginContext,
   getActivePluginContext,
@@ -17,38 +16,28 @@ import type {
 } from "../core/runtime/contracts.js";
 import type { ZelavisServiceMenuDefinition } from "../core/service/definition.js";
 
-export type {
-  AuthApi,
-  CreateDatabaseOptions,
-  DatabaseApi,
-  DatabaseJsonObject,
-};
+export type { AuthApi, DatabaseRuntimeApi, DatabaseJsonObject };
 export {
   AuthDomainError,
   AuthNotFoundError,
   AuthValidationError,
   authService,
 } from "../app/auth/index.js";
-export {
-  createDatabase,
-  DatabaseConflictError,
-  DatabaseNotFoundError,
-  DatabaseRevisionMismatchError,
-  DatabaseValidationError,
-  defineDatabaseService,
-} from "../app/db/index.js";
+// The database is reached through `zelavis/db`, not re-exported here: its
+// store is a host resource that opens files, and an SDK bundle a browser can
+// load must not carry one.
 export type {
   CollectionField,
   CollectionFieldEntry,
   CollectionSchema,
   CollectionSchemaSummary,
-} from "../app/db/schema/index.js";
+} from "../db/schema/index.js";
 
 export type ZelavisSdkSurfaceTarget = "fetch" | "browser" | "node";
 export type ZelavisSdkRuntimeName = "node" | "bun" | "deno";
 export type ZelavisSdkServiceName =
   | "zelavis/app/auth"
-  | "zelavis/app/db"
+  | "zelavis/db"
   | "zelavis/app/workloads"
   | "zelavis/runtime"
   | "@zelavis/ui";
@@ -140,7 +129,7 @@ export const fetchSdkSurface: ZelavisSdkSurfaceManifest = {
     contracts: true,
     fetchClient: true,
     localDatabaseCore: true,
-    services: ["zelavis/app/auth", "zelavis/app/db"],
+    services: ["zelavis/app/auth", "zelavis/db"],
   },
   excludes: {
     ui: true,

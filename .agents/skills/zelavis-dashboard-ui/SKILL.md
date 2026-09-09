@@ -1,13 +1,13 @@
 ---
 name: zelavis-dashboard-ui
-description: Use when working on the Zelavis dashboard UI in packages/zelavis/product-services/zelavis-ui, including React Router v7 routes, the slide-based sidebar, mounted /zelavis dev behavior, and embedded-runtime dashboard mounting.
+description: Use when working on the Zelavis dashboard UI in packages/zelavis/services/zelavis-ui, including React Router v7 routes, the slide-based sidebar, mounted /zelavis dev behavior, and embedded-runtime dashboard mounting.
 ---
 
 # Zelavis Dashboard UI
 
 Use this skill for changes in:
 
-- `packages/zelavis/product-services/zelavis-ui`
+- `packages/zelavis/services/zelavis-ui`
 - embedded dashboard behavior in `packages/zelavis`
 - dashboard routing, settings, theme, and navigation
 
@@ -16,6 +16,12 @@ Use this skill for changes in:
 - **Router**: React Router v7 in SPA mode (`ssr: false`) — not TanStack Router
 - **Styling**: Tailwind CSS v4 + shadcn/ui (Base UI components)
 - **Build**: Vite via `@react-router/dev`
+- **Verifying a UI change**: `pnpm --filter @zelavis/ui build`. `build:plugin`
+  only typechecks the plugin — it does not regenerate
+  `src/generated/dashboard-assets.ts`, which is the bundle the Platform serves.
+  The package `test` script runs `build:plugin`, so a dashboard change can
+  typecheck and pass every test while the running dashboard still executes the
+  previous bundle. Commit the regenerated assets with the source change.
 - **Generated types**: `.react-router/types/app/routes/+types/` — do not hand-edit
 - **Route files**: `app/routes/` — edit these, typegen runs automatically
 
