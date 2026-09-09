@@ -16,11 +16,20 @@ const key = (...parts) => Uint8Array.from(parts);
 
 // Every engine runs the same suite. A driver that disagrees with another here
 // disagrees with the store, which is the whole point of having an interface.
+/**
+ * Whether an engine's native module is installed and built here.
+ *
+ * The native engines are optional peers, so a checkout without one is an
+ * ordinary state rather than a broken one — and an engine that cannot load
+ * should take itself out of the suite rather than fail every assertion in it.
+ */
+const available = (specifier) => import(specifier).then(() => true, () => false);
+
 const engines = [
-  ["memory", () => Effect.succeed(memoryKvEngine())],
-  ["sqlite", (dir) => makeNodeSqliteEngine("kv", dir)],
-  ["rocksdb", (dir) => makeRocksdbEngine("kv", dir)],
-  ["lmdb", (dir) => makeLmdbEngine("kv", dir)],
+  ["memory", () => Effect.succeed(memoryKvEngine()), true],
+  ["sqlite", (dir) => makeNodeSqliteEngine("kv", dir), true],
+  ["rocksdb", (dir) => makeRocksdbEngine("kv", dir), await available("rocksdb")],
+  ["lmdb", (dir) => makeLmdbEngine("kv", dir), await available("lmdb")],
 ];
 
 const run = (t, make, body) => {
@@ -37,8 +46,8 @@ const run = (t, make, body) => {
 const collect = (engine, prefix) =>
   Effect.map(Stream.runCollect(engine.scan(prefix)), (c) => [...c]);
 
-for (const [name, make] of engines) {
-  test(`${name}: get returns what was written, and nothing else`, async (t) => {
+for (const [name, make, installed] of engines) {
+  test(`${name}: get returns what was written, and nothing else`, { skip: installed ? false : `${name} is not installed` }, async (t) => {
     await run(t, make, (engine) =>
       Effect.gen(function* () {
         yield* engine.write([{ op: "put", key: key(1, 2), value: bytes("hello") }]);
@@ -55,7 +64,7 @@ for (const [name, make] of engines) {
     );
   });
 
-  test(`${name}: scans return a prefix range in ascending key order`, async (t) => {
+  test(`${name}: scans return a prefix range in ascending key order`, { skip: installed ? false : `${name} is not installed` }, async (t) => {
     await run(t, make, (engine) =>
       Effect.gen(function* () {
         // Written out of order on purpose; the engine owns the ordering.
@@ -82,7 +91,7 @@ for (const [name, make] of engines) {
     );
   });
 
-  test(`${name}: a batch lands whole, and later writes see earlier ones`, async (t) => {
+  test(`${name}: a batch lands whole, and later writes see earlier ones`, { skip: installed ? false : `${name} is not installed` }, async (t) => {
     await run(t, make, (engine) =>
       Effect.gen(function* () {
         yield* engine.write([
@@ -106,7 +115,7 @@ for (const [name, make] of engines) {
     );
   });
 
-  test(`${name}: binary values survive unchanged`, async (t) => {
+  test(`${name}: binary values survive unchanged`, { skip: installed ? false : `${name} is not installed` }, async (t) => {
     await run(t, make, (engine) =>
       Effect.gen(function* () {
         // Payloads are arbitrary bytes, including the ones the key encoding
@@ -122,7 +131,7 @@ for (const [name, make] of engines) {
     );
   });
 
-  test(`${name}: keys order bytewise, including shared prefixes`, async (t) => {
+  test(`${name}: keys order bytewise, including shared prefixes`, { skip: installed ? false : `${name} is not installed` }, async (t) => {
     await run(t, make, (engine) =>
       Effect.gen(function* () {
         const keys = [key(1), key(1, 0), key(1, 255), key(2), key(1, 0, 0)];
