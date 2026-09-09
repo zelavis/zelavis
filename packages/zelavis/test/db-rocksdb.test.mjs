@@ -1,17 +1,26 @@
-// The object-store contract over RocksDB. The engine the lens design was drawn
-// for, running the same assertions as every other engine.
+// The object-store contract over RocksDB. The log-structured engine the lens design was drawn for.
+//
+// The store is built entirely on the key-value interface, and
+// `db-kv-engines.test.mjs` holds every engine to that interface. This is the
+// composition above it: the same lens assertions the other engines pass, run
+// against a store actually opened on rocksdb, so a driver that satisfies the
+// interface and still breaks the store above it fails here.
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { Effect, Layer, Stream } from "effect";
+import { Effect, Stream } from "effect";
 import { and, asSeq, edge, equals, term } from "../dist/db/index.js";
-import { DbRoot, Partitions } from "../dist/db/engines/node-sqlite.js";
-import { ObjectStore } from "../dist/db/index.js";
+import { makeRocksdbStore } from "../dist/db/engines/rocksdb.js";
+import { engineAvailable } from "./_engine-available.mjs";
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
+
+// An optional peer, so a checkout without it is ordinary rather than broken.
+const installed = engineAvailable("rocksdb");
+const skip = installed ? false : "rocksdb is not installed";
 
 const site = (seq, region, plugins, words) => ({
   bytes: enc.encode(JSON.stringify({ seq, region, plugins, title: words.join(" ") })),
@@ -23,97 +32,75 @@ const site = (seq, region, plugins, words) => ({
   },
 });
 
-const run = (directory, program) =>
-  Effect.runPromise(
-    program.pipe(
-      Effect.provide(Partitions.layer),
-      Effect.provide(DbRoot.layer(directory)),
-    ),
-  );
-
-test("rocksdb: one payload, many lenses, resolved through a shared seq space", async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "zv-db-"));
+/** Opens a store on RocksDB itself, rather than on whatever the host defaults to. */
+const withStore = (t, body) => {
+  const dir = mkdtempSync(join(tmpdir(), "zv-rocksdb-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return Effect.runPromise(
+    Effect.scoped(Effect.gen(function* () {
+      return yield* body(yield* makeRocksdbStore("acme", dir));
+    })),
+  );
+};
 
-  const rows = [
-    site(1, "eu-west", [17, 18], ["atlas", "beacon"]),
-    site(2, "eu-west", [17], ["atlas", "cobalt"]),
-    site(3, "us-east", [17], ["atlas", "delta"]),
-    site(4, "eu-west", [99], ["ember"]),
-  ];
-
-  const collect = (query) =>
+test("rocksdb: one payload, many lenses, resolved through a shared seq space", { skip }, async (t) => {
+  await withStore(t, (store) =>
     Effect.gen(function* () {
-      const store = yield* ObjectStore;
-      return yield* Stream.runCollect(store.resolve(query));
-    }).pipe(Effect.provide(Partitions.get("acme")));
+      const rows = [
+        site(1, "eu-west", [17, 18], ["atlas", "beacon"]),
+        site(2, "eu-west", [17], ["atlas", "cobalt"]),
+        site(3, "us-east", [17], ["atlas", "delta"]),
+        site(4, "eu-west", [99], ["ember"]),
+      ];
 
-  await run(dir, Effect.gen(function* () {
-    // ingest: the payload is written once, lenses receive pointers only
-    yield* Effect.gen(function* () {
-      const store = yield* ObjectStore;
+      const collect = (query) =>
+        Effect.map(Stream.runCollect(store.resolve(query)), (c) => [...c]);
+
+      // ingest: the payload is written once, lenses receive pointers only
       yield* store.transact((txn) =>
         Effect.forEach(rows, (row, i) => txn.put(asSeq(i + 1), row.bytes, row.manifest)),
       );
-    }).pipe(Effect.provide(Partitions.get("acme")));
 
-    const doc = yield* collect(term("title", "atlas"));
-    assert.deepEqual([...doc], [1, 2, 3], "document lens");
+      assert.deepEqual(yield* collect(term("title", "atlas")), [1, 2, 3], "document lens");
+      assert.deepEqual(yield* collect(equals("region", "eu-west")), [1, 2, 4], "column lens");
+      assert.deepEqual(yield* collect(edge("uses", 1_000_017)), [], "edge lens is directional");
 
-    const col = yield* collect(equals("region", "eu-west"));
-    assert.deepEqual([...col], [1, 2, 4], "column lens");
+      // the cross-model query: three data models, one intersection
+      const cross = yield* collect(and(term("title", "atlas"), equals("region", "eu-west")));
+      assert.deepEqual(cross, [1, 2], "cross-model intersection");
 
-    const graph = yield* collect(edge("uses", 1_000_017));
-    assert.deepEqual([...graph], [], "edge lens is directional");
+      // payload is untouched until the answer set is small
+      const first = yield* store.read(asSeq(1));
+      assert.equal(JSON.parse(dec.decode(first.bytes)).region, "eu-west");
 
-    // the cross-model query: three data models, one intersection
-    const cross = yield* collect(
-      and(term("title", "atlas"), equals("region", "eu-west")),
-    );
-    assert.deepEqual([...cross], [1, 2], "cross-model intersection");
-
-    // payload is untouched until the answer set is small
-    const store = yield* Effect.provide(ObjectStore, Partitions.get("acme"));
-    const first = yield* store.read(asSeq(1));
-    assert.equal(JSON.parse(dec.decode(first.bytes)).region, "eu-west");
-
-    // aggregation reads the measure vector, never the payloads
-    const visits = yield* store.measure("visits");
-    assert.equal([...cross].reduce((sum, s) => sum + visits[s], 0), 30);
-  }));
+      // aggregation reads the measure vector, never the payloads
+      const visits = yield* store.measure("visits");
+      assert.equal(cross.reduce((sum, s) => sum + visits[s], 0), 30);
+    }),
+  );
 });
 
-test("rocksdb: retraction leaves no posting behind", async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "zv-db-"));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-
-  const before = site(1, "eu-west", [17], ["atlas"]);
-  const after = site(1, "ap-south", [18], ["marble"]);
-
-  const seqs = (query) =>
+test("rocksdb: retraction leaves no posting behind", { skip }, async (t) => {
+  await withStore(t, (store) =>
     Effect.gen(function* () {
-      const store = yield* ObjectStore;
-      return [...(yield* Stream.runCollect(store.resolve(query)))];
-    }).pipe(Effect.provide(Partitions.get("acme")));
+      const before = site(1, "eu-west", [17], ["atlas"]);
+      const after = site(1, "ap-south", [18], ["marble"]);
 
-  await run(dir, Effect.gen(function* () {
-    yield* Effect.gen(function* () {
-      const store = yield* ObjectStore;
+      const seqs = (query) =>
+        Effect.map(Stream.runCollect(store.resolve(query)), (c) => [...c]);
+
       yield* store.transact((txn) => txn.put(asSeq(1), before.bytes, before.manifest));
       // updating must retract every posting the previous version produced
       yield* store.transact((txn) => txn.put(asSeq(1), after.bytes, after.manifest));
-    }).pipe(Effect.provide(Partitions.get("acme")));
 
-    assert.deepEqual(yield* seqs(term("title", "atlas")), [], "stale term retracted");
-    assert.deepEqual(yield* seqs(equals("region", "eu-west")), [], "stale column retracted");
-    assert.deepEqual(yield* seqs(term("title", "marble")), [1], "new term present");
+      assert.deepEqual(yield* seqs(term("title", "atlas")), [], "stale term retracted");
+      assert.deepEqual(yield* seqs(equals("region", "eu-west")), [], "stale column retracted");
+      assert.deepEqual(yield* seqs(term("title", "marble")), [1], "new term present");
 
-    yield* Effect.gen(function* () {
-      const store = yield* ObjectStore;
       yield* store.transact((txn) => txn.retract(asSeq(1)));
-    }).pipe(Effect.provide(Partitions.get("acme")));
 
-    assert.deepEqual(yield* seqs(term("title", "marble")), [], "delete retracts");
-    assert.deepEqual(yield* seqs(equals("region", "ap-south")), [], "delete retracts columns");
-  }));
+      assert.deepEqual(yield* seqs(term("title", "marble")), [], "delete retracts");
+      assert.deepEqual(yield* seqs(equals("region", "ap-south")), [], "delete retracts columns");
+    }),
+  );
 });
