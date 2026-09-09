@@ -698,8 +698,13 @@ driven by what the existing dependents call, not by what is easiest to port.
   the buckets it spans instead of scanning the series.
 - [ ] Time-bucket indexing wide enough for long ranges. A range spanning more
   than 400 buckets currently falls back to scanning the whole series.
-- [ ] Tag filtering on range and aggregate. Tags are indexed as postings but no
-  query surface reads them yet.
+- [x] Tag filtering on range and aggregate. A tag is an ordinary column lens,
+  so a filter is the same set intersection a multi-model predicate is: every
+  named tag must match, a tag given several values matches any of them, and both
+  compose with the time window rather than replacing it. It is worth most
+  exactly where the window gives up — past the bucket-clause limit the window
+  names the whole series, and the tag narrows it again, so the query costs the
+  tag rather than the series.
 - [x] Backup and restore format. A backup is the tenant's slice of the log
   rather than a separate rendering of collections, schemas and documents, so
   restoring replays through the same idempotent apply path replication uses.

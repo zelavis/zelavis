@@ -3,7 +3,7 @@ import type { DomainEvent } from "./domain-events.js";
 import { TimeSeriesNotFound } from "./errors.js";
 import type { JsonObject } from "./json.js";
 import type { ProjectionsApi, ProjectionSource } from "./projections.js";
-import { equals, or, type Query } from "./query.js";
+import { and, equals, or, type Query } from "./query.js";
 import type { ObjectStoreApi } from "./store.js";
 import type { TenantId } from "./topology.js";
 
@@ -56,17 +56,31 @@ export interface TimeSeriesSummary {
   readonly bucket: BucketSize;
 }
 
+/**
+ * Which tags a point must carry.
+ *
+ * Every named tag has to match, and a tag given several values matches any of
+ * them — the shape a caller means by "region eu-west or eu-north, and tier
+ * paid". Both are set operations on the same postings the points were indexed
+ * under, so a filter narrows the work rather than adding to it.
+ *
+ * A tag given no values matches nothing, which is what "one of nothing" says.
+ */
+export type TagFilter = Readonly<Record<string, string | ReadonlyArray<string>>>;
+
 export interface RangeInput {
   readonly start?: Timestamp;
   readonly end?: Timestamp;
   readonly limit?: number;
   readonly order?: "asc" | "desc";
+  readonly tags?: TagFilter;
 }
 
 export interface AggregateInput {
   readonly op: AggregateOperation;
   readonly start?: Timestamp;
   readonly end?: Timestamp;
+  readonly tags?: TagFilter;
 }
 
 export interface TimeSeriesHandle {
@@ -92,6 +106,15 @@ export interface TimeSeriesApi {
 
 const SERIES_COLUMN = "zv.timeseries";
 const BUCKET_COLUMN = "zv.timeseries.bucket";
+
+/**
+ * The column a tag is indexed under.
+ *
+ * Per series and per tag name, so two series using the same tag name for
+ * different things do not share a posting list, and so a filter never has to
+ * say which series it meant twice.
+ */
+const tagColumn = (series: string, tag: string) => `${series}#${tag}`;
 /** Time series are projections; the prefix keeps them out of the projection listing. */
 export const TIME_SERIES_PROJECTION_PREFIX = "zv.timeseries/";
 
@@ -146,7 +169,7 @@ export const timeSeriesFor = (
             [SERIES_COLUMN, seriesKey(tenant, series)],
             [BUCKET_COLUMN, `${seriesKey(tenant, series)}@${bucket}`],
             ...Object.entries(point.tags ?? {}).map(
-              ([tag, value]) => [`${seriesKey(tenant, series)}#${tag}`, value] as const,
+              ([tag, value]) => [tagColumn(seriesKey(tenant, series), tag), value] as const,
             ),
           ],
           measures: [[seriesKey(tenant, series), point.value]],
@@ -166,7 +189,7 @@ export const timeSeriesFor = (
       return out;
     }).pipe(Effect.orDie);
 
-  const planRange = (series: string, start?: number, end?: number): Query => {
+  const planWindow = (series: string, start?: number, end?: number): Query => {
     const all = equals(SERIES_COLUMN, seriesKey(tenant, series));
     if (start === undefined || end === undefined) return all;
     const size = bucketFor(series);
@@ -181,11 +204,46 @@ export const timeSeriesFor = (
     return clauses.length === 1 ? clauses[0]! : or(...clauses);
   };
 
-  const collect = (series: string, start?: Timestamp, end?: Timestamp) =>
+  /**
+   * One clause per named tag, intersected with the window.
+   *
+   * A tag is an ordinary column lens, so this is the same set intersection a
+   * multi-model predicate is — which is why a filtered query over a range too
+   * wide to enumerate still costs the tag rather than the series: the window
+   * falls back to naming the whole series, and the intersection narrows it
+   * again.
+   */
+  const planRange = (
+    series: string,
+    start?: number,
+    end?: number,
+    tags?: TagFilter,
+  ): Query => {
+    const window = planWindow(series, start, end);
+    const entries = Object.entries(tags ?? {});
+    if (entries.length === 0) return window;
+
+    const clauses: Query[] = [window];
+    for (const [tag, value] of entries) {
+      const column = tagColumn(seriesKey(tenant, series), tag);
+      const values = Array.isArray(value) ? value : [value as string];
+      clauses.push(values.length === 1
+        ? equals(column, values[0]!)
+        : or(...values.map((v) => equals(column, v))));
+    }
+    return and(...clauses);
+  };
+
+  const collect = (
+    series: string,
+    start?: Timestamp,
+    end?: Timestamp,
+    tags?: TagFilter,
+  ) =>
     Effect.gen(function* () {
       const from = start === undefined ? undefined : toEpoch(start);
       const to = end === undefined ? undefined : toEpoch(end);
-      const points = yield* pointsMatching(planRange(series, from, to));
+      const points = yield* pointsMatching(planRange(series, from, to, tags));
       // Buckets are coarse, so the exact bounds are applied to what they return.
       return points.filter(
         (p) => (from === undefined || p.timestamp >= from) && (to === undefined || p.timestamp <= to),
@@ -253,7 +311,7 @@ export const timeSeriesFor = (
     get: (name) => ({
       range: (input) =>
         Effect.gen(function* () {
-          const points = yield* collect(name, input?.start, input?.end);
+          const points = yield* collect(name, input?.start, input?.end, input?.tags);
           const ordered = points.sort((a, b) =>
             input?.order === "desc" ? b.timestamp - a.timestamp : a.timestamp - b.timestamp,
           );
@@ -262,7 +320,7 @@ export const timeSeriesFor = (
 
       aggregate: (input) =>
         Effect.gen(function* () {
-          const points = yield* collect(name, input.start, input.end);
+          const points = yield* collect(name, input.start, input.end, input.tags);
           if (input.op === "count") return points.length;
           if (points.length === 0) return 0;
           const values = points.map((p) => p.value);
