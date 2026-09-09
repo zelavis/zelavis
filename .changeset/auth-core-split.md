@@ -1,8 +1,6 @@
 ---
 "zelavis": major
-"@zelavis/app-auth-email-password": major
 "@zelavis/app-auth-oidc": major
-"@zelavis/app-auth-username-password": major
 ---
 
 Name core auth as core, and remove the last way to switch a feature off in code.

@@ -1,8 +1,6 @@
 ---
 "zelavis": minor
-"@zelavis/app-auth-email-password": minor
 "@zelavis/app-auth-oidc": minor
-"@zelavis/app-auth-username-password": minor
 ---
 
 Credential providers reach Platform auth by being installed, and nothing else.

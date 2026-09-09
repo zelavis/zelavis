@@ -1,5 +1,4 @@
 ---
-"@zelavis/cli": patch
 "zelavis": patch
 ---
 
