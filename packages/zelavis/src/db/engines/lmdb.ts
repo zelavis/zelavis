@@ -66,6 +66,20 @@ export const makeLmdbEngine = (
             path: `${directory}/${partition}`,
             keyEncoding: "binary",
             encoding: "binary",
+            // Given explicitly, because the default is not a small number.
+            //
+            // With no `mapSize`, lmdb reserves a large virtual mapping and
+            // turns off `remapChunks`, which is a reasonable default for one
+            // database on a machine of its own. Here there are many: a shard
+            // is an environment, and the test runner runs files in parallel,
+            // so a dozen can be open at once. On a memory-limited Linux host
+            // that many large reservations fail outright — the process aborts
+            // with `std::bad_alloc` from inside the library, which is not a
+            // failure any of this code can catch or report.
+            //
+            // The size is a starting point rather than a ceiling: lmdb grows
+            // the file as it fills, so this costs nothing but the reservation.
+            mapSize: 256 * 1024 * 1024,
             // LMDB commits with a synchronous flush by default, which is
             // stricter than the others: SQLite runs at synchronous=NORMAL and
             // RocksDB does not fsync per write. Matching them makes this a
