@@ -182,6 +182,7 @@
     "jose": "^6.2.10"
   },
   "devDependencies": {
+    "@effect/language-service": "^0.87.2",
     "@effect/tsgo": "^0.43.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.4.0",
