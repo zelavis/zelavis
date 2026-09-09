@@ -745,6 +745,26 @@ Treat these carefully:
 
 Do not manually edit generated files unless the user explicitly asks for it and the generating source cannot reasonably be changed instead.
 
+## Verification
+
+- **Verify from the repository root, never from a package.** `pnpm run verify`
+  is the command: it builds every shippable workspace project, typechecks all of
+  them, and runs the tests. A package-scoped `pnpm run build` proves only that
+  the package still compiles against itself — it says nothing about the plugins,
+  services, and examples that consume it, which is exactly where a change to a
+  shared API breaks something. Root verification takes seconds; there is no
+  version of "too slow to bother" that justifies skipping it.
+- **Build and typecheck are not the same check.** Some packages build through a
+  bundler that never runs `tsc`, so a type error can survive a green build and
+  be caught only by `pnpm run typecheck`. Run both, which is what `verify` does.
+- **Select workspace projects by exclusion, not inclusion.** Scripts that name
+  the projects they cover go stale the moment someone adds one, and the gap is
+  invisible — the command still succeeds, having quietly checked less. Prefer
+  `pnpm -r --if-present <script>` with `--filter '!<name>'` for the few
+  deliberate exceptions, so a new package is covered by default.
+- Check `pnpm-workspace.yaml` when adding a project. A directory that is not a
+  workspace package is invisible to every root command, whatever its scripts say.
+
 ## Code Change Expectations
 
 - Make the smallest coherent change that moves the repo forward.
