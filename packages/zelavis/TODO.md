@@ -696,8 +696,14 @@ driven by what the existing dependents call, not by what is easiest to port.
   projection over the same log with the same checkpoint, rather than a second
   ingestion path. Points carry a coarse time bucket so a bounded range asks for
   the buckets it spans instead of scanning the series.
-- [ ] Time-bucket indexing wide enough for long ranges. A range spanning more
-  than 400 buckets currently falls back to scanning the whole series.
+- [x] Time-bucket indexing wide enough for long ranges. A point is indexed at
+  five widths, each eight times the last, so a range is covered by whole coarse
+  blocks in the middle and finer ones at its edges — the standard interval
+  cover. Ten years of days costs under thirty clauses where it used to exceed
+  the limit and fall back to scanning the series; the clause cap survives only
+  as a backstop against a range of a million years. The cost is one posting per
+  level on each point written, which sealing folds into blobs. Points are
+  derived, so an existing series takes the new index by being rebuilt.
 - [x] Tag filtering on range and aggregate. A tag is an ordinary column lens,
   so a filter is the same set intersection a multi-model predicate is: every
   named tag must match, a tag given several values matches any of them, and both

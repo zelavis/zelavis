@@ -138,13 +138,78 @@ const bucketOf = (timestamp: number, bucket: BucketSize): number =>
   Math.floor(timestamp / widthOf(bucket));
 
 /**
- * Beyond this many buckets a range query stops naming them and reads the whole
- * series instead. A query built from thousands of OR clauses costs more to
- * evaluate than the scan it was meant to avoid.
+ * How many finer buckets make up the next coarser one.
+ *
+ * A point is indexed at every level, so a range is covered by whole coarse
+ * blocks in the middle and finer ones at the edges — the same shape as any
+ * interval cover. Eight keeps the edges cheap: at most seven blocks per level
+ * on each side, whatever the range.
+ */
+const LEVEL_FACTOR = 8;
+
+/**
+ * Levels of bucket, from the series' own width upward.
+ *
+ * Five of them reaches 8^4 base buckets — about eleven years of days, or five
+ * months of hours — in a single clause, and a longer range asks for several of
+ * the top level rather than falling back to the whole series.
+ *
+ * The cost is one posting per level on every point written. Postings are keys
+ * with no value and fold into blobs when a store is sealed, so this trades a
+ * little write amplification for the difference between a bounded query and a
+ * scan.
+ */
+const BUCKET_LEVELS = 5;
+
+/**
+ * The point at which a range gives up naming buckets and reads the series.
+ *
+ * With levels this is a backstop rather than a working limit: a cover needs at
+ * most a couple of dozen clauses for any range a caller would write. It stays
+ * because a query built from thousands of clauses would cost more to evaluate
+ * than the scan it was meant to avoid, and nothing stops a caller asking for a
+ * range of a million years.
  */
 const MAX_BUCKET_CLAUSES = 400;
 
+const widthAt = (level: number) => LEVEL_FACTOR ** level;
+
+/** The block at `level` holding a base bucket. Floors, so it holds for negatives. */
+const blockOf = (bucket: number, level: number) => Math.floor(bucket / widthAt(level));
+
+/**
+ * The fewest whole blocks covering `[first, last]`.
+ *
+ * Greedy from the low end: take the largest block that starts exactly here and
+ * ends no later than the range does, then continue from where it ended. That is
+ * the standard interval cover, and it is exact — every base bucket in the range
+ * falls in one block, and no block reaches outside it.
+ */
+export const coverBuckets = (
+  first: number,
+  last: number,
+): ReadonlyArray<readonly [number, number]> => {
+  const blocks: Array<readonly [number, number]> = [];
+  let at = first;
+  while (at <= last) {
+    let level = 0;
+    while (level + 1 < BUCKET_LEVELS) {
+      const width = widthAt(level + 1);
+      const start = Math.floor(at / width) * width;
+      if (start !== at || at + width - 1 > last) break;
+      level += 1;
+    }
+    blocks.push([level, blockOf(at, level)]);
+    at += widthAt(level);
+  }
+  return blocks;
+};
+
 const seriesKey = (tenant: TenantId, series: string) => `${tenant}/${series}`;
+
+/** `<series>@<level>:<block>` — the level is in the value, so one column holds all of them. */
+const bucketValue = (series: string, level: number, block: number) =>
+  `${series}@${level}:${block}`;
 
 export const timeSeriesFor = (
   store: ObjectStoreApi,
@@ -167,7 +232,13 @@ export const timeSeriesFor = (
           terms: [],
           columns: [
             [SERIES_COLUMN, seriesKey(tenant, series)],
-            [BUCKET_COLUMN, `${seriesKey(tenant, series)}@${bucket}`],
+            // One posting per level, so a range can ask for whole coarse blocks
+            // instead of naming every base bucket it spans.
+            ...Array.from({ length: BUCKET_LEVELS }, (_, level) =>
+              [
+                BUCKET_COLUMN,
+                bucketValue(seriesKey(tenant, series), level, blockOf(bucket, level)),
+              ] as const),
             ...Object.entries(point.tags ?? {}).map(
               ([tag, value]) => [tagColumn(seriesKey(tenant, series), tag), value] as const,
             ),
@@ -195,12 +266,12 @@ export const timeSeriesFor = (
     const size = bucketFor(series);
     const first = bucketOf(start, size);
     const last = bucketOf(end, size);
-    const span = last - first + 1;
-    if (span <= 0 || span > MAX_BUCKET_CLAUSES) return all;
-    const clauses: Query[] = [];
-    for (let bucket = first; bucket <= last; bucket++) {
-      clauses.push(equals(BUCKET_COLUMN, `${seriesKey(tenant, series)}@${bucket}`));
-    }
+    if (last < first) return all;
+    const blocks = coverBuckets(first, last);
+    if (blocks.length > MAX_BUCKET_CLAUSES) return all;
+    const key = seriesKey(tenant, series);
+    const clauses = blocks.map(([level, block]) =>
+      equals(BUCKET_COLUMN, bucketValue(key, level, block)));
     return clauses.length === 1 ? clauses[0]! : or(...clauses);
   };
 
