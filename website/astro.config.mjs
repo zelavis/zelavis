@@ -9,7 +9,7 @@ export default defineConfig({
       starlight({
           title: 'Zelavis Docs',
           customCss: ['./src/styles/theme.css'],
-          description: 'Zelavis is the self-hostable App Platform. Plan, build, and manage apps together, on infrastructure you own.',
+          description: 'Zelavis is the App Platform. Plan, build, and manage apps together, from first ticket to production.',
           favicon: '/favicon.svg',
           head: [
               { tag: 'meta', attrs: { property: 'og:image', content: 'https://zelavis.com/brand/zelavis-social-card.png' } },

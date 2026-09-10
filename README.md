@@ -1,6 +1,6 @@
 # Zelavis
 
-**The App Platform.** Plan, build, and manage apps together, on infrastructure you own.
+**The App Platform.** Plan, build, and manage apps together, from first ticket to production.
 
 ## What Zelavis Is
 

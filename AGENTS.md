@@ -33,15 +33,22 @@ Zelavis should be able to host websites itself on user-controlled infrastructure
 The canonical public tagline is:
 
 > **Zelavis — The App Platform.**
-> Plan, build, and manage apps together, on infrastructure you own.
+> Plan, build, and manage apps together, from first ticket to production.
 
 The headline claims the whole application lifecycle, which is what earns the definite article;
-the subline closes on self-hosting because that is the part competitors cannot copy. Keep these
-surfaces consistent with it and with each other when any one of them changes:
+the subline names the span of that lifecycle, which is the claim no single competing tool covers.
+Keep these surfaces consistent with it and with each other when any one of them changes:
 
 - `README.md` headline.
 - `website/astro.config.mjs` Starlight `description`.
 - `website/src/content/docs/index.mdx` frontmatter `description` and intro line.
+
+The tagline stays deployment-neutral on purpose. Managed Zelavis on zelavis.com is a first-class
+offering alongside self-hosting, so headline and tagline copy must not lead with self-hosting,
+ownership, or "your own infrastructure": that framing reads as DIY-only and quietly excludes the
+managed product. Self-hostability remains a core architectural constraint and a capability worth
+stating plainly in body copy, feature sections, and installation docs. It is simply not the
+headline claim, and it should not be reintroduced into one.
 
 The tagline is deliberately ahead of shipped features, so body copy carries the accuracy load:
 headlines may claim the direction, but feature lists, docs, and dashboard copy must still mark
