@@ -1,19 +1,4 @@
 {
   "mode": "pre",
-  "tag": "alpha",
-  "initialVersions": {
-    "@zelavis/example-nextjs": "0.1.0",
-    "@zelavis/app-auth-email-password": "1.0.0",
-    "@zelavis/app-auth-username-password": "1.0.0",
-    "@zelavis/ecommerce": "0.1.0-alpha.1",
-    "@zelavis/ecommerce-paypal": "0.1.0-alpha.1",
-    "@zelavis/ecommerce-stripe": "0.1.0-alpha.1",
-    "@zelavis/ui": "0.1.0-alpha.1",
-    "zelavis": "1.0.0"
-  },
-  "changesets": [
-    "add-a-tabbed-schema-builder-to-the-datab-c8217a03",
-    "core-prerelease-refresh-1f2a6c4b",
-    "release-cleanup-state-6f3c2d91"
-  ]
+  "tag": "alpha"
 }
