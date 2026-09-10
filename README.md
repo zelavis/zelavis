@@ -1,10 +1,12 @@
 # Zelavis
 
-Build apps and websites. Manage data and content. Own your platform.
+**The App Platform.** Plan, build, and manage apps together, on infrastructure you own.
 
 ## What Zelavis Is
 
 Zelavis is a platform for building and managing apps, websites, data, and content. Run it on your own infrastructure or use managed Zelavis on zelavis.com. Use Zelavis as your backend, host your projects, deploy existing applications, or install software like WordPress.
+
+Project planning and real-time collaboration are committed roadmap direction, not shipped behavior. See the Project Vision section of `AGENTS.md`.
 
 ## Install
 
