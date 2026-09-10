@@ -24,6 +24,9 @@ const open = async () => {
       return (await import("../../dist/db/engines/rocksdb.js")).makeRocksdbStore("acme", directory);
     case "lmdb":
       return (await import("../../dist/db/engines/lmdb.js")).makeLmdbStore("acme", directory);
+    case "rocksdb-js":
+      return (await import("../../dist/db/engines/rocksdb-js.js"))
+        .makeRocksdbJsStore("acme", directory);
     default:
       return (await import("../../dist/db/engines/node-sqlite.js"))
         .makeNodeSqliteStore("acme", directory);

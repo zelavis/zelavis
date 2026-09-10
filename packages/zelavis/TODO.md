@@ -799,6 +799,53 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   LMDB handed one identifier to two objects; SQLite and libSQL were spared only
   because their drivers never interleaved. One permit per store, and reads take
   none (`db-concurrent-commits.test.mjs`).
+- [x] Evaluated `@harperfast/rocksdb-js` as the maintained replacement for the
+  discontinued `rocksdb` binding, as `engines/rocksdb-js.ts` behind no public
+  export. Prebuilt for macOS, Linux (glibc and musl) and Windows on x64 and
+  arm64, so nothing compiles on install; needs Node `^22.18.0 || >=24`; runs a
+  whole store under Bun 1.3; Deno is not claimed. It builds RocksDB 11.8.1
+  where the old binding carried 6.17.3, and has shipped 38 releases since
+  January 2026. Pinned at 2.8.0. It passes the key-value conformance suite,
+  SIGKILL durability, a cut write-ahead log (a suffix lost, never a hole),
+  concurrent writers, the cross-process lock, clean reopen, and refuses a
+  corrupt manifest pointer and a corrupt block on a point read. Commits are
+  RocksDB's default, stated rather than hidden: logged, not fsynced each — a
+  dead process loses nothing, a power cut can lose a suffix.
+- [x] Measured it against the old binding. Warm point reads take 0.31× the
+  time, identity lookups 0.42×, scans 0.75×, the cross-model query 0.80×, and
+  ingest runs 1.28× faster; cold scans 0.94×, the cold cross-model query 0.77×,
+  disk 0.9×. Cold point reads varied 8–16 µs between runs, against the old
+  binding's 15. Scans were half again slower until entries left the adapter in
+  batches of 1,024 instead of one promise each — the binding's own iterator was
+  never the cost.
+- [x] Migration needs no transformation. A store the old binding wrote opens
+  whole under the new one — 2,000 of 2,000 objects, every lens and event — and
+  the old binding still opens the directory afterwards, so the move is not a
+  one-way door. What it needs is to be deliberate: each directory now carries
+  `ZELAVIS-FORMAT.json` (engine, format, key and value encodings, and the
+  binding and RocksDB versions that created it), and an open refuses one whose
+  marker disagrees or that has none, before RocksDB touches it. RocksDB opens
+  any RocksDB directory, and one read with the wrong encodings misreads every
+  key without failing.
+- [ ] Switch the RocksDB engine to `@harperfast/rocksdb-js` and remove
+  `rocksdb`. Blocked on one gap: the binding ends a range scan quietly when
+  RocksDB's iterator fails. A checksum mismatch in a table's first block reads
+  as an empty range, one mid-file as its first half, while a point read of the
+  same block throws. The binding sees the failed status and discards it
+  (`DBIterator::Next`), so no adapter can report it; the old binding threw.
+  `db-rocksdb-js.test.mjs` carries it as a `todo` that has to pass first
+  (HarperFast/rocksdb-js#846).
+- [x] Reported the iterator-status gap upstream as HarperFast/rocksdb-js#846,
+  with a reproduction and the line that discards the status.
+- [x] Compared an in-process addon with a supervised sidecar for native
+  engines. The addon is the lowest-latency fit and the one that ships, and its
+  failure domain is the Project runtime: opening the old binding and then the
+  new one in one process aborted inside libuv's timer and took the process with
+  it, which a sidecar would have contained. A sidecar costs a round trip per
+  operation — the scan batching above shows how much per-entry overhead
+  matters here — and a process to deploy, supervise and upgrade. It earns that
+  only when process isolation, upgrading the engine apart from the runtime, or
+  non-JavaScript Agents are the requirement, not as a default.
 - [x] Measured the engines against each other (`scripts/bench-engines.mjs`).
   At 100k objects, with SQLite tuned: LMDB is roughly 4x faster than everything
   else on scans and the cross-model query and 3x on point reads, paying for it

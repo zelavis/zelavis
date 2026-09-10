@@ -184,6 +184,7 @@
   "devDependencies": {
     "@effect/language-service": "^0.87.2",
     "@effect/tsgo": "^0.43.0",
+    "@harperfast/rocksdb-js": "2.8.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.4.0",
     "libsql": "^0.5.29",
@@ -205,8 +206,8 @@
   },
   "peerDependencies": {
     "libsql": "^0.5.29",
-    "rocksdb": "^5.2.1",
-    "lmdb": "^3.4.3"
+    "lmdb": "^3.4.3",
+    "rocksdb": "^5.2.1"
   },
   "peerDependenciesMeta": {
     "libsql": {
