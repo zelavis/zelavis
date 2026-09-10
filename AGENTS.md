@@ -324,6 +324,10 @@ Key rules:
   event whose projection can be replayed, never a lens row with no event behind
   it. `rebuildLenses` re-derives every lens from the log alone and is the check
   that this holds.
+- A store admits one writer at a time. Every store write reads state and
+  writes it back changed, so two in flight on an asynchronous engine read the
+  same value and one is lost. Reads take no permit. Nothing holding the permit
+  may call another store write, or it waits on itself.
 - A posting is a key in the live tier or a bit in a sealed blob, and a read is
   the union of both minus the tombstones. Blobs are immutable: `db.maintenance`
   seals the live postings into segments of 65536 identifiers, and anything
