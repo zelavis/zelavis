@@ -791,6 +791,14 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   methods, nothing above it changed. The single keyspace cost nothing, because
   the key tags already give each lens the disjoint range column families would
   have provided.
+- [x] Serialized each store's writers. A commit reads the log's next position
+  and writes it back advanced, and `nextSeq`, sealing, compaction and both lens
+  rebuilds do the same with their own state; on an asynchronous engine two in
+  flight read the same value and the second write replaced the first. LMDB and
+  RocksDB each lost 31 of 32 concurrent commits that way without an error, and
+  LMDB handed one identifier to two objects; SQLite and libSQL were spared only
+  because their drivers never interleaved. One permit per store, and reads take
+  none (`db-concurrent-commits.test.mjs`).
 - [x] Measured the engines against each other (`scripts/bench-engines.mjs`).
   At 100k objects, with SQLite tuned: LMDB is roughly 4x faster than everything
   else on scans and the cross-model query and 3x on point reads, paying for it

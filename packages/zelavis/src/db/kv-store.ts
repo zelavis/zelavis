@@ -1,4 +1,4 @@
-import { Effect, Stream } from "effect";
+import { Effect, Semaphore, Stream } from "effect";
 import { CursorCompacted, ForeignCursor, LogCompacted, StoreError, WriterFenced } from "./errors.js";
 import type { AppliedEvent, DbEvent, EventCursor } from "./events.js";
 import {
@@ -144,6 +144,21 @@ export const storeOverKv = (
   const readMeta = (name: string) =>
     Effect.map(engine.get(metaKey(name)), (bytes) => (bytes === undefined ? 0 : readU32(bytes)));
 
+  /**
+   * One writer at a time.
+   *
+   * Every write below reads store state and writes it back changed: a commit
+   * reads the log's next position, `nextSeq` the identifier counter, a seal the
+   * blobs it folds into. On an engine whose reads and writes are asynchronous,
+   * two of those in flight at once read the same value and the second write
+   * replaces the first — a commit that returned and left no trace. LMDB and
+   * RocksDB each lost 31 of 32 concurrent commits that way.
+   *
+   * Reads take no permit: they see committed state, which is all they promise.
+   * Nothing holding the permit calls another operation that takes it.
+   */
+  const exclusive = Semaphore.withPermit(Semaphore.makeUnsafe(1));
+
   const assertCurrent = Effect.gen(function* () {
     const current = yield* readMeta(META_GENERATION);
     if (current !== generation) {
@@ -261,7 +276,7 @@ export const storeOverKv = (
   const commit = <A, E, R>(
     f: (view: View, txn: Txn, append: (event: StoredEvent) => void) => Effect.Effect<A, E, R>,
   ) =>
-    Effect.gen(function* () {
+    exclusive(Effect.gen(function* () {
       const pending = new Map<string, KvWrite>();
       const view = pendingView(pending);
       let position = yield* readMeta(META_NEXT_POSITION);
@@ -303,7 +318,7 @@ export const storeOverKv = (
       // One batch: the whole transaction lands, or none of it does.
       yield* engine.write([...pending.values()]);
       return result;
-    });
+    }));
 
   /**
    * A posting list, read from both tiers.
@@ -458,7 +473,7 @@ export const storeOverKv = (
    * exactly what its object contributed. It cannot detect a corrupt manifest,
    * which is what a full replay is for.
    */
-  const reindexLenses = Effect.gen(function* () {
+  const reindexLenses = exclusive(Effect.gen(function* () {
     const pending = new Map<string, KvWrite>();
     const view = pendingView(pending);
     for (const tag of DERIVED_TAGS) {
@@ -482,14 +497,14 @@ export const storeOverKv = (
     }
     yield* engine.write([...pending.values()]);
     return count;
-  });
+  }));
 
   return {
     partition,
     generation,
     events,
 
-    rebuildLenses: Effect.gen(function* () {
+    rebuildLenses: exclusive(Effect.gen(function* () {
       const compactedTo = yield* readMeta(META_COMPACTED_TO);
       // Replaying a truncated log would rebuild a partial index and report a
       // count as though it were whole. `reindexLenses` is the operation that
@@ -524,7 +539,7 @@ export const storeOverKv = (
       }
       yield* engine.write([...pending.values()]);
       return stored.length;
-    }),
+    })),
 
     reindexLenses,
 
@@ -562,7 +577,7 @@ export const storeOverKv = (
      * The counts describe the segments this seal wrote, not what it added: a
      * merged segment reports everything it now holds.
      */
-    sealPostings: Effect.gen(function* () {
+    sealPostings: exclusive(Effect.gen(function* () {
       // Written before the first blob, so a removal arriving mid-seal writes a
       // tombstone it might not have needed rather than skipping one it did.
       yield* engine.write([{ op: "put", key: metaKey(META_SEALED), value: u32(1) }]);
@@ -665,7 +680,7 @@ export const storeOverKv = (
 
       if (batch.length > 0) yield* engine.write(batch);
       return { segments, postings };
-    }),
+    })),
 
     /**
      * Drop history that no longer describes anything reachable.
@@ -680,7 +695,7 @@ export const storeOverKv = (
      * cursors older than it are rejected rather than quietly continued.
      */
     compact: (options) =>
-      Effect.gen(function* () {
+      exclusive(Effect.gen(function* () {
         const keep = options?.keep ?? 0;
         const positions: number[] = [];
         yield* Stream.runForEach(engine.scan(eventPrefix()), (entry) =>
@@ -695,7 +710,7 @@ export const storeOverKv = (
         writes.push({ op: "put", key: metaKey(META_COMPACTED_TO), value: u32(compactedTo) });
         yield* engine.write(writes);
         return { removed: cut, compactedTo };
-      }),
+      })),
 
     compactedTo: readMeta(META_COMPACTED_TO),
 
@@ -731,11 +746,11 @@ export const storeOverKv = (
       Effect.map(engine.get(identityBySeqKey(seq)), (bytes) =>
         bytes === undefined ? undefined : unjson<ObjectIdentity>(bytes)),
 
-    nextSeq: Effect.gen(function* () {
+    nextSeq: exclusive(Effect.gen(function* () {
       const next = (yield* readMeta(META_NEXT_SEQ)) + 1;
       yield* engine.write([{ op: "put", key: metaKey(META_NEXT_SEQ), value: u32(next) }]);
       return asSeq(next);
-    }),
+    })),
 
     transact: (f) => commit((_view, txn) => f(txn)),
 
