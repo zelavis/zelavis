@@ -187,6 +187,32 @@ an exported type is never mistaken for an operational distributed feature.
   compare-and-delete operations with strictly advancing CAS timestamps;
   first-owner bootstrap uses them for a durable leased claim that prevents
   competing Platform writers from creating multiple owners.
+- [x] Evaluated celld against Fabric (`CELLD_EVALUATION.md`). It is a
+  reference now, a possible Project runtime backend later (one fleet per
+  Project, under Fabric's placement), and never a second scheduler, a storage
+  engine or the public object contract. Its bucket protocol is the useful part:
+  ownership as a compare-and-swap record carrying an epoch, the epoch in the
+  key of whatever the owner replicates, and acknowledgements held until a
+  durability proof covers them.
+- [x] File storage takes conditional writes (`condition: { ifAbsent }` or
+  `{ ifMatch: etag }`), and `probeFileStorageGuarantees` asks a store whether it
+  enforces them, in celld's four steps with read-after-write between them. A
+  store that accepts the condition and ignores it fails by name; one that
+  answers with an error is inconclusive, never conformant. S3 sends
+  `If-None-Match` / `If-Match` and treats a 412, or a 404 for `ifMatch`, as a
+  rejection; anything else stays an error. Local
+  storage creates by hard link, exact across processes, and compares and
+  replaces under a per-object queue, exact within one process.
+- [ ] Require the probe before any object store carries a lease, a fence or an
+  authoritative publication. The file-backed service registry is the first
+  case: it rewrites the whole registry with an unconditional PUT, so two
+  Platforms sharing that storage drop each other's updates.
+- [ ] When placements move into the System Store, make them `{owner, epoch}`
+  records acquired by compare-and-swap and advanced on every activation, the
+  shape celld's `cells/<cell>/own.json` has.
+- [ ] Self-fence an Agent whose lease it cannot renew, at the published expiry
+  rather than by trusting its own clock, and carry a fencing token into its
+  side effects.
 - [x] Credential recovery is provider-owned and endpoint-backed with generic
   start responses, explicit completion, and account-session revocation. The
   built-in email/username password plugins support expiring hashed one-time

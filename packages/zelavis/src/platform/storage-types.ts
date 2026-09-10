@@ -6,6 +6,20 @@
  * Platform composition they are used by.
  */
 
+/**
+ * A precondition on a write, checked by the store in the same step as the
+ * write. `ifAbsent` creates only where nothing is stored; `ifMatch` replaces
+ * only the version whose `etag` the caller read.
+ *
+ * Leases, fencing and anything published as authoritative rest on these. A
+ * store that cannot enforce a condition must refuse the write rather than
+ * perform it unconditionally, and `probeFileStorageGuarantees` checks, against
+ * the store itself, that it does.
+ */
+export type ZelavisFileStorageCondition =
+  | { readonly ifAbsent: true }
+  | { readonly ifMatch: string };
+
 export interface ZelavisFileStoragePutInput {
   path: string;
   body: string | Uint8Array | ArrayBuffer | Blob | ReadableStream<Uint8Array>;
@@ -13,6 +27,8 @@ export interface ZelavisFileStoragePutInput {
   cacheControl?: string;
   contentDisposition?: string;
   metadata?: Record<string, string>;
+  /** Write only if this holds; a condition that fails writes nothing. */
+  condition?: ZelavisFileStorageCondition;
 }
 
 export interface ZelavisFileStorageEntry {
@@ -24,6 +40,8 @@ export interface ZelavisFileStorageEntry {
   contentDisposition?: string;
   metadata?: Record<string, string>;
   checksum?: string;
+  /** An opaque version of the stored bytes; pass it back as `ifMatch`. */
+  etag?: string;
 }
 
 export interface ZelavisFileStorageObject extends ZelavisFileStorageEntry {

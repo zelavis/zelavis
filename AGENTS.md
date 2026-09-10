@@ -227,6 +227,13 @@ provisioning as separate capabilities. A placement is authoritative; a runtime
 URL is only an Agent-reported route target. Replicas do not imply multiple
 writable owners. Provider adapters supply capacity but never define Zelavis.
 
+An object store that carries a lease, a fence, or an authoritative publication
+must pass `probeFileStorageGuarantees` first, and every such write must be
+conditional (`ifAbsent` or `ifMatch`). An "S3-compatible" label proves nothing:
+some stores accept the conditional headers and ignore them. A backend that
+cannot enforce a condition refuses the write; it never performs it
+unconditionally.
+
 Every official `zelavis/app` Project uses the App Data Fabric topology from
 creation. A single-node App still routes Tenant data through a versioned
 partition map containing many virtual shard ranges and several physical SQLite

@@ -214,6 +214,7 @@ import { createPlatformAuthRepositories } from "./platform/auth-repositories.js"
 import { createPlatformAuthBootstrap } from "./platform/auth-bootstrap.js";
 import { createServiceStore } from "./platform/service-store.js";
 export * from "./storage/s3.js";
+export * from "./storage/conditions.js";
 
 export type {
   DatabaseRuntimeApi,
@@ -230,6 +231,7 @@ export {
 export type {
   ZelavisFileReference,
   ZelavisFileStorage,
+  ZelavisFileStorageCondition,
   ZelavisFileStorageEntry,
   ZelavisFileStorageObject,
   ZelavisFileStoragePutInput,
