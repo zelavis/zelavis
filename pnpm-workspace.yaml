@@ -12,6 +12,11 @@ packages:
   - "website"
 
 overrides:
+  # `@astrojs/mdx` depends on an exact `@astrojs/markdown-satteri@0.4.0`, and
+  # 0.4.0 is too old to render `.mdx` at all — it fails `astro build` and
+  # `astro dev` the moment any `.mdx` file is present. The exact pin means no
+  # `^` range reaches the fix, so pin the patched 0.4.1 here instead.
+  '@astrojs/markdown-satteri': 0.4.1
   # Every codemirror sub-package resolved its own older copy of these two
   # while the dashboard's direct dependency resolved a newer one, so an
   # `EditorView` from one copy was not the `EditorView` the other's types
@@ -69,6 +74,7 @@ allowBuilds:
   unrs-resolver: true
 
 minimumReleaseAgeExclude:
+  - '@astrojs/markdown-satteri@0.4.1'
   - esbuild@0.28.2
   - form-data@4.0.6
   - morgan@1.10.2
