@@ -1,0 +1,914 @@
+---
+import MarketingLayout from '../layouts/MarketingLayout.astro';
+
+/**
+ * PLACEHOLDER BENCHMARK DATA — NOT MEASURED.
+ *
+ * These numbers exist so the scroll-animated chart has something to render.
+ * They are invented and must be replaced with results from a real, repeatable
+ * benchmark harness before this page is published as a performance claim.
+ * The section renders a visible "placeholder" note for the same reason; drop
+ * `placeholder: true` once the values below come from an actual run.
+ */
+const benchmarks = {
+	placeholder: true,
+	caption: 'Zelavis App, single node, one logical database across four storage drivers.',
+	unit: 'reads/sec',
+	bars: [
+		{ label: 'SQLite', value: 128_400, pct: 74 },
+		{ label: 'libSQL', value: 141_900, pct: 82 },
+		{ label: 'RocksDB', value: 166_200, pct: 96 },
+		{ label: 'LMDB', value: 172_500, pct: 100 },
+	],
+	stats: [
+		{ value: 38, decimals: 0, suffix: ' ms', label: 'Cold start', note: 'Node adapter, warm disk' },
+		{ value: 1.9, decimals: 1, suffix: ' ms', label: 'p99 read latency', note: 'Document lens' },
+		{ value: 74, decimals: 0, suffix: ' MB', label: 'Resident memory', note: 'Idle runtime' },
+		{ value: 4, decimals: 0, suffix: ' shards', label: 'Sharded from creation', note: 'Every official App' },
+	],
+};
+
+const replaces = [
+	{ name: 'Firebase / Supabase', covers: 'Auth, database, real-time' },
+	{ name: 'WordPress', covers: 'Content types, entries, media' },
+	{ name: 'cPanel / Plesk', covers: 'Server, hosting, domains' },
+	{ name: 'phpMyAdmin', covers: 'Database administration UI' },
+	{ name: 'Workers / Functions', covers: 'Jobs, schedules, webhooks' },
+];
+
+const lifecycle = [
+	{
+		phase: 'Plan',
+		roadmap: true,
+		title: 'Issues, roadmaps, and cycles',
+		body: 'Track the work next to the thing it ships to. Tickets and roadmaps live inside the same project as the database they change.',
+		points: ['Issues and cycles', 'Roadmap views', 'Scoped to a project'],
+	},
+	{
+		phase: 'Build',
+		roadmap: false,
+		title: 'A backend that is already there',
+		body: 'Auth, a multi-model database, storage, content types, and project-scoped workloads ship with the platform. No stitching four vendors together.',
+		points: ['Auth and database', 'Content and media', 'Functions, jobs, schedules'],
+	},
+	{
+		phase: 'Manage',
+		roadmap: false,
+		title: 'Servers, domains, backups, logs',
+		body: 'The dashboard owns machine-level concerns as a first-class area, not an afterthought bolted on beside the app.',
+		points: ['Domains and TLS', 'Backups and logs', 'Marketplace and plugins'],
+	},
+	{
+		phase: 'Together',
+		roadmap: true,
+		title: 'Real-time collaboration',
+		body: 'Presence, shared editing, and comments across dashboard and project surfaces, so the platform is something a team uses at once.',
+		points: ['Presence', 'Shared editing', 'Comments'],
+	},
+];
+
+const serviceSample = `import { zelavis } from "zelavis";
+import { app } from "zelavis/app";
+
+export default zelavis({
+  services: [
+    app({
+      auth: { providers: ["password", "oauth"] },
+      db: { driver: "libsql", shards: 4 },
+    }),
+  ],
+});`;
+---
+
+<MarketingLayout
+	title="Zelavis — The App Platform"
+	description="Plan, build, and manage apps together, from first ticket to production. Auth, database, content, workloads, and hosting in one platform."
+>
+	<!-- ============================ hero ============================ -->
+	<section class="hero">
+		<div class="hero-glow" aria-hidden="true"></div>
+		<div class="hero-grid" aria-hidden="true"></div>
+
+		<div class="wrap hero-inner">
+			<a class="pill" href="/pricing" data-reveal>
+				<span class="pill-dot"></span>
+				Zelavis Plus is available
+				<span class="pill-arrow">→</span>
+			</a>
+
+			<h1 data-reveal style="--delay: 70">
+				The App Platform.{' '}
+				<span class="grad">Plan, build, and manage</span>{' '}
+				apps together.
+			</h1>
+
+			<p class="hero-lede" data-reveal style="--delay: 140">
+				From the first ticket to production. Auth, a multi-model database, content,
+				workloads, and native website hosting — one platform instead of five, running
+				managed on zelavis.com or on hardware you choose.
+			</p>
+
+			<div class="hero-cta" data-reveal style="--delay: 210">
+				<a class="btn btn-primary" href="/getting-started/installation">Start building</a>
+				<a class="btn btn-ghost" href="/docs">Read the docs</a>
+			</div>
+
+			<div class="hero-install" data-reveal style="--delay: 280">
+				<div class="terminal">
+					<span class="prompt">$</span>
+					<code>npm install --global zelavis &amp;&amp; zelavis serve</code>
+					<button
+						class="copy"
+						type="button"
+						aria-label="Copy to clipboard"
+						data-copy="npm install --global zelavis && zelavis serve"
+					>
+						Copy
+					</button>
+				</div>
+				<p class="hero-alt">
+					Prefer a script? <code>curl -fsSL https://zelavis.com/install.sh | sudo sh</code>
+				</p>
+			</div>
+		</div>
+	</section>
+
+	<!-- ======================= replaces the stack ======================= -->
+	<section class="section band">
+		<div class="wrap">
+			<div class="split">
+				<div data-reveal>
+					<p class="eyebrow">One platform instead of five</p>
+					<h2 class="section-title">Stop stitching the stack&nbsp;together.</h2>
+					<p class="section-lede">
+						Most teams run a backend vendor, a CMS, a hosting panel, a database GUI, and a
+						functions platform — five bills, five permission models, five places to look when
+						something breaks. Zelavis covers those categories as one system with one
+						authority model.
+					</p>
+				</div>
+
+				<ul class="replaces" data-reveal style="--delay: 120">
+					{
+						replaces.map((item, i) => (
+							<li class="replaces-row" style={`--delay: ${i * 70}`} data-reveal>
+								<span class="replaces-name">{item.name}</span>
+								<span class="replaces-arrow" aria-hidden="true">→</span>
+								<span class="replaces-covers">{item.covers}</span>
+							</li>
+						))
+					}
+				</ul>
+			</div>
+		</div>
+	</section>
+
+	<!-- ========================== lifecycle ========================== -->
+	<section class="section">
+		<div class="wrap">
+			<div class="section-head" data-reveal>
+				<p class="eyebrow">The whole lifecycle</p>
+				<h2 class="section-title">Four phases, one place.</h2>
+				<p class="section-lede">
+					A project is the operational unit: it owns its runtime, its data directory, and its
+					version. Everything below happens inside that same boundary.
+				</p>
+			</div>
+
+			<div class="phases">
+				{
+					lifecycle.map((item, i) => (
+						<article class="card phase" data-reveal style={`--delay: ${i * 90}`}>
+							<header class="phase-head">
+								<span class="phase-name">{item.phase}</span>
+								{item.roadmap && <span class="badge badge-roadmap">Roadmap</span>}
+							</header>
+							<h3>{item.title}</h3>
+							<p>{item.body}</p>
+							<ul>
+								{item.points.map((point) => (
+									<li>{point}</li>
+								))}
+							</ul>
+						</article>
+					))
+				}
+			</div>
+
+			<p class="phases-note" data-reveal>
+				Phases marked <span class="badge badge-roadmap">Roadmap</span> are committed direction,
+				not shipped behavior.
+			</p>
+		</div>
+	</section>
+
+	<!-- ========================== benchmarks ========================== -->
+	<section class="section band">
+		<div class="wrap">
+			<div class="section-head" data-reveal>
+				<p class="eyebrow">Performance</p>
+				<h2 class="section-title">One store logic. Four&nbsp;engines.</h2>
+				<p class="section-lede">
+					<code>zelavis/db</code> is a multi-model object store on a swappable storage engine —
+					the same event-sourced logic over an ordered key-value interface, whichever driver
+					you point it at.
+				</p>
+			</div>
+
+			<div class="bench card" data-metrics data-reveal>
+				<div class="bench-head">
+					<div>
+						<h3>Read throughput by driver</h3>
+						<p>{benchmarks.caption}</p>
+					</div>
+					<span class="bench-unit">{benchmarks.unit}</span>
+				</div>
+
+				<div class="bars">
+					{
+						benchmarks.bars.map((bar, i) => (
+							<div class="bar-row" style={`--pct: ${bar.pct}%; --delay: ${i * 120}ms`}>
+								<span class="bar-label">{bar.label}</span>
+								<div class="bar-track">
+									<div class="bar-fill" />
+								</div>
+								<span
+									class="bar-value"
+									data-count={String(bar.value)}
+									data-decimals="0"
+								>
+									0
+								</span>
+							</div>
+						))
+					}
+				</div>
+
+				{
+					benchmarks.placeholder && (
+						<p class="bench-disclaimer">
+							<strong>Placeholder data.</strong> These figures are illustrative and have not
+							been measured. Replace them with results from a repeatable benchmark harness
+							before treating this section as a performance claim.
+						</p>
+					)
+				}
+			</div>
+
+			<div class="stats" data-metrics>
+				{
+					benchmarks.stats.map((stat, i) => (
+						<div class="stat" data-reveal style={`--delay: ${i * 90}`}>
+							<span
+								class="stat-value"
+								data-count={String(stat.value)}
+								data-decimals={String(stat.decimals)}
+								data-suffix={stat.suffix}
+							>
+								0
+							</span>
+							<span class="stat-label">{stat.label}</span>
+							<span class="stat-note">{stat.note}</span>
+						</div>
+					))
+				}
+			</div>
+		</div>
+	</section>
+
+	<!-- ============================ code ============================ -->
+	<section class="section">
+		<div class="wrap">
+			<div class="split split-code">
+				<div data-reveal>
+					<p class="eyebrow">Runtime-neutral</p>
+					<h2 class="section-title">A service definition, not a&nbsp;deployment target.</h2>
+					<p class="section-lede">
+						Zelavis is a web-standard <code>fetch(request)</code> runtime. The Node adapter
+						ships today, Bun and other fetch-native hosts call it directly, and nothing in the
+						core assumes a specific provider.
+					</p>
+					<ul class="ticks">
+						<li>Every project locks its exact recipe version</li>
+						<li>Own process, own data directory, per project</li>
+						<li>Auth, database, and workloads mounted by the project that owns them</li>
+					</ul>
+				</div>
+
+				<div class="code-card" data-reveal style="--delay: 120">
+					<div class="code-bar">
+						<span class="dot"></span><span class="dot"></span><span class="dot"></span>
+						<span class="code-file">zelavis.config.ts</span>
+					</div>
+					<pre><code>{serviceSample}</code></pre>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- ========================== deployment ========================== -->
+	<section class="section band">
+		<div class="wrap">
+			<div class="section-head" data-reveal>
+				<p class="eyebrow">Your call</p>
+				<h2 class="section-title">Managed, or your own hardware.</h2>
+				<p class="section-lede">
+					The same platform either way. Start managed and move later, or run it yourself from
+					day one — the runtime, database, dashboard, and hosting are the same build.
+				</p>
+			</div>
+
+			<div class="deploy">
+				<article class="card deploy-card" data-reveal>
+					<h3>Managed on zelavis.com</h3>
+					<p>
+						We run the control plane, backups, and updates. You open the dashboard and start a
+						project.
+					</p>
+					<a class="btn btn-primary btn-sm" href="/pricing">See Zelavis Plus</a>
+				</article>
+
+				<article class="card deploy-card" data-reveal style="--delay: 110">
+					<h3>Self-hosted</h3>
+					<p>
+						APT, <code>.deb</code>, archives, or npm. Production packages bundle a pinned Node
+						runtime so the host does not have to match.
+					</p>
+					<a class="btn btn-ghost btn-sm" href="/getting-started/installation">Installation guide</a>
+				</article>
+			</div>
+		</div>
+	</section>
+
+	<!-- ============================= cta ============================= -->
+	<section class="cta">
+		<div class="wrap cta-inner" data-reveal>
+			<h2>Build the whole thing in one place.</h2>
+			<p>Install it in a minute, or let us run it for you.</p>
+			<div class="hero-cta">
+				<a class="btn btn-primary" href="/getting-started/installation">Get started free</a>
+				<a class="btn btn-ghost" href="/pricing">Compare plans</a>
+			</div>
+		</div>
+	</section>
+</MarketingLayout>
+
+<style>
+	/* ---------- hero ---------- */
+
+	.hero {
+		position: relative;
+		padding-block: clamp(70px, 12vw, 150px) clamp(60px, 9vw, 110px);
+		overflow: hidden;
+	}
+
+	.hero-glow {
+		position: absolute;
+		top: -280px;
+		left: 50%;
+		width: 900px;
+		height: 640px;
+		transform: translateX(-50%);
+		background: radial-gradient(
+			ellipse at center,
+			hsl(26 100% 55% / 0.24),
+			transparent 66%
+		);
+		filter: blur(28px);
+		pointer-events: none;
+		animation: drift 16s ease-in-out infinite alternate;
+	}
+
+	@keyframes drift {
+		from {
+			transform: translateX(-50%) translateY(0) scale(1);
+		}
+		to {
+			transform: translateX(-46%) translateY(24px) scale(1.06);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.hero-glow {
+			animation: none;
+		}
+	}
+
+	.hero-grid {
+		position: absolute;
+		inset: 0;
+		background-image:
+			linear-gradient(hsl(0 0% 100% / 0.035) 1px, transparent 1px),
+			linear-gradient(90deg, hsl(0 0% 100% / 0.035) 1px, transparent 1px);
+		background-size: 64px 64px;
+		mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 78%);
+		pointer-events: none;
+	}
+
+	.hero-inner {
+		position: relative;
+		text-align: center;
+	}
+
+	.pill {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.6rem;
+		border: 1px solid var(--line);
+		background: hsl(0 0% 100% / 0.03);
+		border-radius: 999px;
+		padding: 0.4rem 0.9rem;
+		font-size: 0.85rem;
+		color: var(--text-2);
+		text-decoration: none;
+		transition: border-color 0.25s var(--ease), color 0.25s var(--ease);
+	}
+
+	.pill:hover {
+		border-color: hsl(26 100% 58% / 0.5);
+		color: var(--text);
+	}
+
+	.pill-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--accent);
+		box-shadow: 0 0 0 3px hsl(26 100% 58% / 0.2);
+	}
+
+	.pill-arrow {
+		color: var(--accent);
+	}
+
+	.hero h1 {
+		font-size: clamp(2.6rem, 7.2vw, 5rem);
+		line-height: 1.02;
+		letter-spacing: -0.045em;
+		font-weight: 850;
+		margin: 1.7rem auto 0;
+		max-width: 17ch;
+	}
+
+	.grad {
+		background: linear-gradient(100deg, var(--accent), var(--accent-2));
+		-webkit-background-clip: text;
+		background-clip: text;
+		color: transparent;
+	}
+
+	.hero-lede {
+		color: var(--text-2);
+		font-size: clamp(1.02rem, 1.7vw, 1.2rem);
+		max-width: 58ch;
+		margin: 1.5rem auto 0;
+	}
+
+	.hero-cta {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.75rem;
+		justify-content: center;
+		margin-top: 2rem;
+	}
+
+	.hero-install {
+		margin-top: 2.5rem;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.hero-install .terminal {
+		width: min(560px, 100%);
+	}
+
+	.hero-alt {
+		color: var(--text-3);
+		font-size: 0.85rem;
+		margin: 0;
+	}
+
+	.hero-alt code {
+		font-family: var(--mono);
+		color: var(--text-2);
+	}
+
+	/* ---------- bands + shared ---------- */
+
+	.band {
+		background: linear-gradient(180deg, var(--bg), var(--bg-1) 40%, var(--bg));
+		border-block: 1px solid var(--line-soft);
+	}
+
+	.section-head {
+		max-width: 720px;
+		margin-bottom: 3rem;
+	}
+
+	.split {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: clamp(2rem, 5vw, 4.5rem);
+		align-items: center;
+	}
+
+	@media (max-width: 900px) {
+		.split {
+			grid-template-columns: 1fr;
+		}
+	}
+
+	/* ---------- replaces list ---------- */
+
+	.replaces {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		border: 1px solid var(--line-soft);
+		border-radius: var(--radius);
+		overflow: hidden;
+	}
+
+	.replaces-row {
+		display: flex;
+		align-items: center;
+		gap: 0.85rem;
+		padding: 1rem 1.25rem;
+		border-bottom: 1px solid var(--line-soft);
+		background: var(--bg-1);
+		transition: background 0.25s var(--ease);
+	}
+
+	.replaces-row:last-child {
+		border-bottom: 0;
+	}
+
+	.replaces-row:hover {
+		background: var(--bg-2);
+	}
+
+	.replaces-name {
+		font-weight: 650;
+		font-size: 0.95rem;
+		min-width: 10.5rem;
+	}
+
+	.replaces-arrow {
+		color: var(--accent);
+	}
+
+	.replaces-covers {
+		color: var(--text-3);
+		font-size: 0.9rem;
+	}
+
+	@media (max-width: 520px) {
+		.replaces-row {
+			flex-wrap: wrap;
+			gap: 0.4rem;
+		}
+
+		.replaces-arrow {
+			display: none;
+		}
+	}
+
+	/* ---------- phases ---------- */
+
+	.phases {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+		gap: 1.25rem;
+	}
+
+	.phase-head {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		margin-bottom: 0.9rem;
+	}
+
+	.phase-name {
+		font-size: 0.78rem;
+		font-weight: 750;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--accent);
+	}
+
+	.phase h3 {
+		font-size: 1.12rem;
+		margin: 0 0 0.6rem;
+		letter-spacing: -0.02em;
+	}
+
+	.phase p {
+		color: var(--text-2);
+		font-size: 0.93rem;
+		margin: 0 0 1rem;
+	}
+
+	.phase ul {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		border-top: 1px solid var(--line-soft);
+		padding-top: 0.9rem;
+	}
+
+	.phase li {
+		color: var(--text-3);
+		font-size: 0.86rem;
+		padding-left: 1rem;
+		position: relative;
+		margin-bottom: 0.35rem;
+	}
+
+	.phase li::before {
+		content: '';
+		position: absolute;
+		left: 0;
+		top: 0.6em;
+		width: 5px;
+		height: 5px;
+		border-radius: 50%;
+		background: var(--line);
+	}
+
+	.phases-note {
+		margin-top: 1.75rem;
+		color: var(--text-3);
+		font-size: 0.88rem;
+	}
+
+	/* ---------- benchmarks ---------- */
+
+	.bench {
+		padding: 1.9rem;
+	}
+
+	.bench:hover {
+		transform: none;
+	}
+
+	.bench-head {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 1rem;
+		flex-wrap: wrap;
+		margin-bottom: 1.9rem;
+	}
+
+	.bench-head h3 {
+		margin: 0 0 0.3rem;
+		font-size: 1.1rem;
+		letter-spacing: -0.02em;
+	}
+
+	.bench-head p {
+		margin: 0;
+		color: var(--text-3);
+		font-size: 0.87rem;
+	}
+
+	.bench-unit {
+		font-family: var(--mono);
+		font-size: 0.78rem;
+		color: var(--text-3);
+		border: 1px solid var(--line-soft);
+		border-radius: 999px;
+		padding: 0.2rem 0.7rem;
+		white-space: nowrap;
+	}
+
+	.bars {
+		display: flex;
+		flex-direction: column;
+		gap: 1.1rem;
+	}
+
+	.bar-row {
+		display: grid;
+		grid-template-columns: 5.5rem 1fr 6rem;
+		align-items: center;
+		gap: 1rem;
+	}
+
+	.bar-label {
+		font-size: 0.9rem;
+		font-weight: 600;
+		color: var(--text-2);
+	}
+
+	.bar-track {
+		height: 12px;
+		background: var(--bg-2);
+		border-radius: 999px;
+		overflow: hidden;
+	}
+
+	.bar-fill {
+		height: 100%;
+		width: 0;
+		border-radius: 999px;
+		background: linear-gradient(90deg, var(--accent), var(--accent-2));
+		transition: width 1.15s var(--ease);
+		transition-delay: var(--delay, 0ms);
+	}
+
+	.is-running .bar-fill {
+		width: var(--pct);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.bar-fill {
+			transition: none;
+		}
+	}
+
+	.bar-value {
+		font-family: var(--mono);
+		font-size: 0.9rem;
+		text-align: right;
+		color: var(--text);
+		font-variant-numeric: tabular-nums;
+	}
+
+	@media (max-width: 560px) {
+		.bar-row {
+			grid-template-columns: 4.5rem 1fr 4.5rem;
+			gap: 0.6rem;
+		}
+
+		.bar-value {
+			font-size: 0.78rem;
+		}
+	}
+
+	.bench-disclaimer {
+		margin: 1.75rem 0 0;
+		padding-top: 1.1rem;
+		border-top: 1px solid var(--line-soft);
+		color: var(--text-3);
+		font-size: 0.82rem;
+	}
+
+	.bench-disclaimer strong {
+		color: var(--accent);
+	}
+
+	.stats {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+		gap: 1.25rem;
+		margin-top: 1.25rem;
+	}
+
+	.stat {
+		border: 1px solid var(--line-soft);
+		border-radius: var(--radius);
+		background: var(--bg-1);
+		padding: 1.4rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+	}
+
+	.stat-value {
+		font-size: clamp(1.7rem, 3.4vw, 2.2rem);
+		font-weight: 800;
+		letter-spacing: -0.03em;
+		color: var(--text);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.stat-label {
+		font-size: 0.9rem;
+		color: var(--text-2);
+		font-weight: 600;
+	}
+
+	.stat-note {
+		font-size: 0.8rem;
+		color: var(--text-3);
+	}
+
+	/* ---------- code ---------- */
+
+	.split-code {
+		align-items: start;
+	}
+
+	.ticks {
+		list-style: none;
+		margin: 1.6rem 0 0;
+		padding: 0;
+	}
+
+	.ticks li {
+		position: relative;
+		padding-left: 1.7rem;
+		margin-bottom: 0.65rem;
+		color: var(--text-2);
+		font-size: 0.93rem;
+	}
+
+	.ticks li::before {
+		content: '✓';
+		position: absolute;
+		left: 0;
+		color: var(--accent);
+		font-weight: 700;
+	}
+
+	.code-card {
+		border: 1px solid var(--line-soft);
+		border-radius: var(--radius);
+		background: var(--bg-1);
+		overflow: hidden;
+	}
+
+	.code-bar {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.75rem 1rem;
+		border-bottom: 1px solid var(--line-soft);
+		background: var(--bg-2);
+	}
+
+	.dot {
+		width: 10px;
+		height: 10px;
+		border-radius: 50%;
+		background: var(--line);
+	}
+
+	.code-file {
+		margin-left: 0.6rem;
+		font-family: var(--mono);
+		font-size: 0.78rem;
+		color: var(--text-3);
+	}
+
+	.code-card pre {
+		margin: 0;
+		padding: 1.25rem;
+		overflow-x: auto;
+		font-family: var(--mono);
+		font-size: 0.84rem;
+		line-height: 1.7;
+		color: var(--text-2);
+	}
+
+	/* ---------- deploy ---------- */
+
+	.deploy {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+		gap: 1.25rem;
+	}
+
+	.deploy-card h3 {
+		margin: 0 0 0.6rem;
+		font-size: 1.15rem;
+		letter-spacing: -0.02em;
+	}
+
+	.deploy-card p {
+		color: var(--text-2);
+		font-size: 0.93rem;
+		margin: 0 0 1.35rem;
+	}
+
+	.deploy-card code {
+		font-family: var(--mono);
+		font-size: 0.85em;
+	}
+
+	/* ---------- cta ---------- */
+
+	.cta {
+		padding-block: clamp(80px, 12vw, 140px);
+		text-align: center;
+		border-top: 1px solid var(--line-soft);
+		background:
+			radial-gradient(ellipse 60% 100% at 50% 100%, hsl(26 100% 50% / 0.13), transparent 70%),
+			var(--bg);
+	}
+
+	.cta-inner h2 {
+		font-size: clamp(1.9rem, 4.4vw, 2.9rem);
+		letter-spacing: -0.035em;
+		margin: 0 0 0.75rem;
+		font-weight: 800;
+	}
+
+	.cta-inner p {
+		color: var(--text-2);
+		margin: 0;
+	}
+</style>

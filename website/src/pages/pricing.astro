@@ -1,0 +1,654 @@
+---
+import MarketingLayout from '../layouts/MarketingLayout.astro';
+
+/**
+ * PLACEHOLDER PRICING — set real numbers before launch.
+ *
+ * Every amount, seat count, and quota below is invented so the page has
+ * something to lay out. Pricing is a business decision: replace `monthly`,
+ * `yearly`, and the quota strings with the real Zelavis Plus figures.
+ * `yearly` is the effective per-month amount when billed annually.
+ */
+const plans = [
+	{
+		id: 'community',
+		name: 'Community',
+		tagline: 'Self-host the whole platform.',
+		monthly: 0,
+		yearly: 0,
+		cta: { label: 'Install Zelavis', href: '/getting-started/installation', primary: false },
+		note: 'Free and open source, forever.',
+		features: [
+			'Unlimited projects on your own hardware',
+			'Auth, database, content, and media',
+			'Project-scoped workloads',
+			'Native website hosting',
+			'Community support on GitHub',
+		],
+	},
+	{
+		id: 'plus',
+		name: 'Zelavis Plus',
+		tagline: 'Managed on zelavis.com, run by us.',
+		monthly: 24,
+		yearly: 19,
+		featured: true,
+		cta: { label: 'Start free trial', href: 'https://zelavis.com/signup', primary: true },
+		note: '14-day trial. No card required.',
+		features: [
+			'Everything in Community',
+			'Managed control plane and updates',
+			'Daily backups with point-in-time restore',
+			'Replica placement and failover',
+			'Custom domains with managed TLS',
+			'Priority support, 1 business day',
+		],
+	},
+	{
+		id: 'enterprise',
+		name: 'Enterprise',
+		tagline: 'Your compliance, your placement rules.',
+		monthly: null,
+		yearly: null,
+		cta: { label: 'Talk to us', href: 'mailto:sales@zelavis.com', primary: false },
+		note: 'Annual agreements.',
+		features: [
+			'Everything in Plus',
+			'Single tenant or bring your own cloud',
+			'SSO and audit logging',
+			'Custom shard and tenant placement',
+			'Dedicated support channel and SLA',
+		],
+	},
+];
+
+const matrix = [
+	{ group: 'Platform', rows: [
+		{ label: 'Projects', community: 'Unlimited', plus: 'Unlimited', enterprise: 'Unlimited' },
+		{ label: 'Storage drivers', community: 'SQLite, libSQL, RocksDB, LMDB', plus: 'All drivers', enterprise: 'All drivers' },
+		{ label: 'Native website hosting', community: true, plus: true, enterprise: true },
+		{ label: 'Marketplace and plugins', community: true, plus: true, enterprise: true },
+	] },
+	{ group: 'Operations', rows: [
+		{ label: 'Managed control plane', community: false, plus: true, enterprise: true },
+		{ label: 'Automated backups', community: 'Self-managed', plus: 'Daily + PITR', enterprise: 'Custom schedule' },
+		{ label: 'Replication and failover', community: 'Self-managed', plus: true, enterprise: true },
+		{ label: 'Custom placement rules', community: false, plus: false, enterprise: true },
+	] },
+	{ group: 'Team', rows: [
+		{ label: 'Seats', community: 'Unlimited', plus: 'Per seat', enterprise: 'Unlimited' },
+		{ label: 'SSO', community: false, plus: false, enterprise: true },
+		{ label: 'Audit logging', community: false, plus: 'Basic', enterprise: 'Full' },
+		{ label: 'Support', community: 'Community', plus: '1 business day', enterprise: 'SLA' },
+	] },
+];
+
+const faqs = [
+	{
+		q: 'Is Zelavis still free if I self-host?',
+		a: 'Yes. The platform is open source and the Community plan is the full self-hosted product — every storage driver, native website hosting, workloads, and the Marketplace. Zelavis Plus pays for us to run and operate it for you.',
+	},
+	{
+		q: 'What happens to my data if I leave Plus?',
+		a: 'Projects are portable by design. Every project locks its exact recipe version and owns its own data directory, so a managed project can be exported and started on your own hardware without a rewrite.',
+	},
+	{
+		q: 'Do you charge per project?',
+		a: 'No. Plus is priced per seat, and projects are unlimited on every plan.',
+	},
+	{
+		q: 'When do planning and collaboration arrive?',
+		a: 'Project planning and real-time collaboration are committed roadmap direction rather than shipped features today. They are not part of what any plan bills for right now, and pricing for them will be announced before they ship.',
+	},
+];
+---
+
+<MarketingLayout
+	title="Pricing — Zelavis Plus"
+	description="Self-host Zelavis for free, or run it managed with Zelavis Plus. Compare Community, Plus, and Enterprise."
+>
+	<section class="p-hero">
+		<div class="p-glow" aria-hidden="true"></div>
+		<div class="wrap p-hero-inner">
+			<p class="eyebrow" data-reveal>Pricing</p>
+			<h1 data-reveal style="--delay: 70">
+				Free to self-host.{' '}
+				<span class="grad">Managed when you want it.</span>
+			</h1>
+			<p class="p-lede" data-reveal style="--delay: 140">
+				The platform is the same either way. Zelavis Plus is what you pay for when you would
+				rather not run the control plane, the backups, and the upgrades yourself.
+			</p>
+
+			<div class="toggle" data-reveal style="--delay: 210">
+				<button class="toggle-btn is-active" type="button" data-cycle="monthly">Monthly</button>
+				<button class="toggle-btn" type="button" data-cycle="yearly">
+					Annual <span class="save">−20%</span>
+				</button>
+			</div>
+		</div>
+	</section>
+
+	<section class="p-plans">
+		<div class="wrap plans">
+			{
+				plans.map((plan, i) => (
+					<article
+						class:list={['card plan', { 'is-featured': plan.featured }]}
+						data-reveal
+						style={`--delay: ${i * 100}`}
+					>
+						{plan.featured && <span class="plan-flag">Most popular</span>}
+						<h2>{plan.name}</h2>
+						<p class="plan-tagline">{plan.tagline}</p>
+
+						<div class="plan-price">
+							{plan.monthly === null ? (
+								<span class="price-custom">Custom</span>
+							) : (
+								<>
+									<span class="price-cur">$</span>
+									<span
+										class="price-amount"
+										data-monthly={String(plan.monthly)}
+										data-yearly={String(plan.yearly)}
+									>
+										{plan.monthly}
+									</span>
+									<span class="price-unit">/ seat / month</span>
+								</>
+							)}
+						</div>
+
+						<a
+							class:list={['btn', 'plan-cta', plan.cta.primary ? 'btn-primary' : 'btn-ghost']}
+							href={plan.cta.href}
+						>
+							{plan.cta.label}
+						</a>
+
+						<p class="plan-note">{plan.note}</p>
+
+						<ul class="plan-features">
+							{plan.features.map((feature) => (
+								<li>{feature}</li>
+							))}
+						</ul>
+					</article>
+				))
+			}
+		</div>
+	</section>
+
+	<section class="section">
+		<div class="wrap">
+			<div class="section-head" data-reveal>
+				<h2 class="section-title">Compare every plan.</h2>
+				<p class="section-lede">
+					The self-hosted product is not a trimmed-down build. What Plus and Enterprise add is
+					operations, not capability.
+				</p>
+			</div>
+
+			<div class="matrix-scroll" data-reveal>
+				<table class="matrix">
+					<thead>
+						<tr>
+							<th scope="col">Feature</th>
+							<th scope="col">Community</th>
+							<th scope="col" class="col-plus">Plus</th>
+							<th scope="col">Enterprise</th>
+						</tr>
+					</thead>
+					<tbody>
+						{
+							matrix.map((group) => (
+								<>
+									<tr class="matrix-group">
+										<th scope="rowgroup" colspan="4">{group.group}</th>
+									</tr>
+									{group.rows.map((row) => (
+										<tr>
+											<th scope="row">{row.label}</th>
+											{[row.community, row.plus, row.enterprise].map((cell, idx) => (
+												<td class:list={[{ 'col-plus': idx === 1 }]}>
+													{cell === true ? (
+														<span class="yes" aria-label="Included">✓</span>
+													) : cell === false ? (
+														<span class="no" aria-label="Not included">—</span>
+													) : (
+														cell
+													)}
+												</td>
+											))}
+										</tr>
+									))}
+								</>
+							))
+						}
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</section>
+
+	<section class="section band">
+		<div class="wrap faq-wrap">
+			<div class="section-head" data-reveal>
+				<h2 class="section-title">Questions.</h2>
+			</div>
+			<div class="faqs">
+				{
+					faqs.map((faq, i) => (
+						<details class="faq" data-reveal style={`--delay: ${i * 80}`}>
+							<summary>
+								{faq.q}
+								<span class="faq-icon" aria-hidden="true">+</span>
+							</summary>
+							<p>{faq.a}</p>
+						</details>
+					))
+				}
+			</div>
+		</div>
+	</section>
+
+	<section class="cta">
+		<div class="wrap cta-inner" data-reveal>
+			<h2>Try it before you pay for it.</h2>
+			<p>Self-host in a minute, or start a 14-day Plus trial.</p>
+			<div class="cta-row">
+				<a class="btn btn-primary" href="https://zelavis.com/signup">Start free trial</a>
+				<a class="btn btn-ghost" href="/getting-started/installation">Install yourself</a>
+			</div>
+		</div>
+	</section>
+
+	<script is:inline>
+		(function () {
+			var buttons = document.querySelectorAll('[data-cycle]');
+			var amounts = document.querySelectorAll('.price-amount');
+			buttons.forEach(function (button) {
+				button.addEventListener('click', function () {
+					var cycle = button.getAttribute('data-cycle');
+					buttons.forEach(function (other) {
+						other.classList.toggle('is-active', other === button);
+					});
+					amounts.forEach(function (amount) {
+						var next = amount.getAttribute(cycle === 'yearly' ? 'data-yearly' : 'data-monthly');
+						if (next === null) return;
+						amount.classList.add('is-swapping');
+						amount.textContent = next;
+						setTimeout(function () {
+							amount.classList.remove('is-swapping');
+						}, 240);
+					});
+				});
+			});
+		})();
+	</script>
+</MarketingLayout>
+
+<style>
+	.p-hero {
+		position: relative;
+		padding-block: clamp(56px, 9vw, 100px) clamp(28px, 4vw, 48px);
+		text-align: center;
+		overflow: hidden;
+	}
+
+	.p-glow {
+		position: absolute;
+		top: -240px;
+		left: 50%;
+		width: 820px;
+		height: 520px;
+		transform: translateX(-50%);
+		background: radial-gradient(ellipse at center, hsl(26 100% 55% / 0.2), transparent 68%);
+		filter: blur(30px);
+		pointer-events: none;
+	}
+
+	.p-hero-inner {
+		position: relative;
+	}
+
+	.p-hero h1 {
+		font-size: clamp(2.3rem, 5.6vw, 3.7rem);
+		line-height: 1.06;
+		letter-spacing: -0.04em;
+		font-weight: 850;
+		margin: 0 auto;
+		max-width: 17ch;
+	}
+
+	.grad {
+		background: linear-gradient(100deg, var(--accent), var(--accent-2));
+		-webkit-background-clip: text;
+		background-clip: text;
+		color: transparent;
+	}
+
+	.p-lede {
+		color: var(--text-2);
+		max-width: 56ch;
+		margin: 1.3rem auto 0;
+		font-size: clamp(1rem, 1.5vw, 1.12rem);
+	}
+
+	.toggle {
+		display: inline-flex;
+		gap: 0.25rem;
+		margin-top: 2.2rem;
+		padding: 0.28rem;
+		border: 1px solid var(--line-soft);
+		background: var(--bg-1);
+		border-radius: 999px;
+	}
+
+	.toggle-btn {
+		border: 0;
+		background: transparent;
+		color: var(--text-2);
+		font-family: var(--font);
+		font-size: 0.88rem;
+		font-weight: 600;
+		padding: 0.5rem 1.1rem;
+		border-radius: 999px;
+		cursor: pointer;
+		transition: background 0.25s var(--ease), color 0.25s var(--ease);
+	}
+
+	.toggle-btn.is-active {
+		background: var(--accent);
+		color: hsl(24 60% 8%);
+	}
+
+	.save {
+		font-size: 0.75rem;
+		opacity: 0.85;
+	}
+
+	/* ---------- plans ---------- */
+
+	.p-plans {
+		padding-block: clamp(28px, 5vw, 56px) clamp(40px, 6vw, 72px);
+	}
+
+	.plans {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+		gap: 1.25rem;
+		align-items: start;
+	}
+
+	.plan {
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		padding: 1.9rem;
+	}
+
+	.plan.is-featured {
+		border-color: hsl(26 100% 58% / 0.45);
+		background:
+			radial-gradient(ellipse 100% 70% at 50% 0%, hsl(26 100% 50% / 0.09), transparent 70%),
+			linear-gradient(180deg, var(--bg-1), var(--bg));
+		box-shadow: 0 20px 60px hsl(26 100% 40% / 0.1);
+	}
+
+	.plan-flag {
+		position: absolute;
+		top: -0.7rem;
+		left: 1.9rem;
+		background: var(--accent);
+		color: hsl(24 60% 8%);
+		font-size: 0.7rem;
+		font-weight: 750;
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
+		padding: 0.22rem 0.6rem;
+		border-radius: 999px;
+	}
+
+	.plan h2 {
+		font-size: 1.2rem;
+		margin: 0 0 0.35rem;
+		letter-spacing: -0.02em;
+	}
+
+	.plan-tagline {
+		color: var(--text-3);
+		font-size: 0.9rem;
+		margin: 0 0 1.5rem;
+		min-height: 2.6em;
+	}
+
+	.plan-price {
+		display: flex;
+		align-items: baseline;
+		gap: 0.2rem;
+		margin-bottom: 1.5rem;
+		min-height: 3rem;
+	}
+
+	.price-cur {
+		font-size: 1.3rem;
+		font-weight: 700;
+		color: var(--text-2);
+	}
+
+	.price-amount {
+		font-size: 2.9rem;
+		font-weight: 830;
+		letter-spacing: -0.04em;
+		line-height: 1;
+		font-variant-numeric: tabular-nums;
+		transition: opacity 0.2s var(--ease), transform 0.2s var(--ease);
+	}
+
+	.price-amount.is-swapping {
+		opacity: 0;
+		transform: translateY(-6px);
+	}
+
+	.price-unit,
+	.price-custom {
+		color: var(--text-3);
+		font-size: 0.87rem;
+		margin-left: 0.3rem;
+	}
+
+	.price-custom {
+		font-size: 2rem;
+		font-weight: 800;
+		color: var(--text);
+		letter-spacing: -0.03em;
+		margin-left: 0;
+	}
+
+	.plan-cta {
+		width: 100%;
+	}
+
+	.plan-note {
+		color: var(--text-3);
+		font-size: 0.8rem;
+		text-align: center;
+		margin: 0.7rem 0 0;
+	}
+
+	.plan-features {
+		list-style: none;
+		margin: 1.6rem 0 0;
+		padding: 1.4rem 0 0;
+		border-top: 1px solid var(--line-soft);
+	}
+
+	.plan-features li {
+		position: relative;
+		padding-left: 1.6rem;
+		margin-bottom: 0.7rem;
+		font-size: 0.9rem;
+		color: var(--text-2);
+	}
+
+	.plan-features li::before {
+		content: '✓';
+		position: absolute;
+		left: 0;
+		color: var(--accent);
+		font-weight: 700;
+	}
+
+	/* ---------- matrix ---------- */
+
+	.matrix-scroll {
+		overflow-x: auto;
+		border: 1px solid var(--line-soft);
+		border-radius: var(--radius);
+	}
+
+	.matrix {
+		width: 100%;
+		border-collapse: collapse;
+		min-width: 660px;
+		font-size: 0.9rem;
+	}
+
+	.matrix th,
+	.matrix td {
+		text-align: left;
+		padding: 0.85rem 1.1rem;
+		border-bottom: 1px solid var(--line-soft);
+	}
+
+	.matrix thead th {
+		background: var(--bg-2);
+		font-size: 0.78rem;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: var(--text-3);
+		white-space: nowrap;
+	}
+
+	.matrix tbody th {
+		font-weight: 550;
+		color: var(--text-2);
+	}
+
+	.matrix td {
+		color: var(--text-3);
+	}
+
+	.matrix-group th {
+		background: var(--bg-1);
+		font-size: 0.75rem;
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
+		color: var(--accent);
+	}
+
+	.col-plus {
+		background: hsl(26 100% 58% / 0.045);
+	}
+
+	.yes {
+		color: var(--accent);
+		font-weight: 700;
+	}
+
+	.no {
+		color: var(--text-3);
+	}
+
+	/* ---------- faq ---------- */
+
+	.faq-wrap {
+		max-width: 800px;
+	}
+
+	.faqs {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+
+	.faq {
+		border: 1px solid var(--line-soft);
+		border-radius: var(--radius);
+		background: var(--bg-1);
+		padding: 0 1.3rem;
+		transition: border-color 0.25s var(--ease);
+	}
+
+	.faq[open] {
+		border-color: var(--line);
+	}
+
+	.faq summary {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		cursor: pointer;
+		list-style: none;
+		padding: 1.15rem 0;
+		font-weight: 620;
+		font-size: 0.97rem;
+	}
+
+	.faq summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.faq-icon {
+		color: var(--accent);
+		font-size: 1.3rem;
+		line-height: 1;
+		transition: transform 0.25s var(--ease);
+		flex-shrink: 0;
+	}
+
+	.faq[open] .faq-icon {
+		transform: rotate(45deg);
+	}
+
+	.faq p {
+		margin: 0;
+		padding: 0 0 1.2rem;
+		color: var(--text-2);
+		font-size: 0.92rem;
+		max-width: 68ch;
+	}
+
+	/* ---------- cta ---------- */
+
+	.cta {
+		padding-block: clamp(80px, 12vw, 130px);
+		text-align: center;
+		border-top: 1px solid var(--line-soft);
+		background:
+			radial-gradient(ellipse 60% 100% at 50% 100%, hsl(26 100% 50% / 0.13), transparent 70%),
+			var(--bg);
+	}
+
+	.cta-inner h2 {
+		font-size: clamp(1.9rem, 4.4vw, 2.8rem);
+		letter-spacing: -0.035em;
+		margin: 0 0 0.75rem;
+		font-weight: 800;
+	}
+
+	.cta-inner p {
+		color: var(--text-2);
+		margin: 0 0 2rem;
+	}
+
+	.cta-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.75rem;
+		justify-content: center;
+	}
+</style>

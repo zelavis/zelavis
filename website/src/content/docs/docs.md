@@ -1,5 +1,7 @@
 ---
 title: Zelavis Docs
+sidebar:
+  label: Overview
 description: Public documentation for Zelavis, the App Platform.
 ---
 

@@ -21,6 +21,7 @@ export default defineConfig({
           ],
           social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/zelavis/zelavis' }],
           sidebar: [
+              { label: 'Overview', link: '/docs' },
               {
                   label: 'Getting Started',
                   items: [{ autogenerate: { directory: 'getting-started' } }],
