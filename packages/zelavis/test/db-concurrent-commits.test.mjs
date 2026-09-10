@@ -6,8 +6,12 @@
 // value, and the second write replaces the first: a transaction that returned
 // successfully and left no trace, or one identifier handed to two objects.
 // SQLite hid this by being synchronous. LMDB and RocksDB each lost 31 of 32
-// concurrent commits without an error. The store serializes its writers so
-// that cannot happen.
+// concurrent commits without an error, and RocksDB through `rocksdb-js` refused
+// them as write conflicts instead. The store serializes its writers so neither
+// can happen.
+//
+// The discontinued `rocksdb` binding is absent for the reason given in
+// db-kv-engines.test.mjs: opening it before `rocksdb-js` in one process aborts.
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,8 +31,8 @@ const engines = [
     async (dir) => (await import("../dist/db/engines/libsql.js")).makeLibsqlStore("acme", { directory: dir })],
   ["lmdb", engineAvailable("lmdb"),
     async (dir) => (await import("../dist/db/engines/lmdb.js")).makeLmdbStore("acme", dir)],
-  ["rocksdb", engineAvailable("rocksdb"),
-    async (dir) => (await import("../dist/db/engines/rocksdb.js")).makeRocksdbStore("acme", dir)],
+  ["rocksdb-js", engineAvailable("@harperfast/rocksdb-js"),
+    async (dir) => (await import("../dist/db/engines/rocksdb-js.js")).makeRocksdbJsStore("acme", dir)],
 ];
 
 for (const [engine, available, open] of engines) {
