@@ -352,6 +352,14 @@ Key rules:
   full sweep a seal reads only the groups marked dirty since, and the same
   helpers write those marks — a posting written around them is never sealed
   until the next reindex.
+- A composite index is a column of the ordered lens whose value is the
+  document's tuple, encoded by `orderedTuple` so that string order is tuple
+  order; the store knows nothing of it. A document write reads its collection's
+  indexes inside its transaction, and a backfill reads each document inside the
+  transaction that rewrites it. Both then run under the store's one writer,
+  which is the only thing keeping a write from missing an index created
+  alongside it and a backfill from overwriting a newer write: never move either
+  read out of the transaction.
 - One transaction is one batch, and that is the whole durability story: a
   killed process loses no commit that returned, a write-ahead log truncated by
   a power cut costs a suffix rather than leaving holes, and an interrupted

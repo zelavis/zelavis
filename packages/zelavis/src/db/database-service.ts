@@ -4,7 +4,15 @@ import {
   type ZelavisRuntimeService,
 } from "../core/index.js";
 import type { DatabaseRuntimeApi } from "./runtime-api.js";
-import type { CollectionSurface, DocumentCursor, DocumentFilter, DocumentSort, JsonObject } from "./documents.js";
+import type {
+  CollectionSurface,
+  DocumentCursor,
+  DocumentFilter,
+  DocumentSort,
+  JsonObject,
+  IndexDefinition,
+  IndexField,
+} from "./documents.js";
 import type { AggregateOperation, RangeInput } from "./time-series.js";
 
 function readBodyObject(body: unknown): Record<string, unknown> {
@@ -146,6 +154,7 @@ function taggedFailureOf(error: unknown, depth = 0): TaggedFailure | undefined {
 
 const CONFLICT_TAGS = new Set([
   "CollectionExists",
+  "IndexExists",
   "DocumentConflict",
   "SchemaVersionExists",
 ]);
@@ -165,6 +174,7 @@ const BAD_REQUEST_TAGS = new Set([
   "UnsupportedOrdering",
   "BackupTenantMismatch",
   "InvalidCollectionName",
+  "InvalidIndex",
   "PartitionMapInvalid",
   "RangeNotEmpty",
   "SchemaViolation",
@@ -222,6 +232,10 @@ function describeTaggedFailure(failure: TaggedFailure): string {
       return `This cursor cannot continue the read: ${failure.reason}.`;
     case "UnsupportedOrdering":
       return `This order is not supported: ${failure.reason}.`;
+    case "InvalidIndex":
+      return `Index "${failure.name}" on collection "${failure.collection}" is invalid: ${failure.reason}.`;
+    case "IndexExists":
+      return `Collection "${failure.collection}" already has an index named "${failure.name}": ${failure.reason}.`;
     default:
       return failure._tag;
   }
@@ -545,6 +559,7 @@ export function defineDatabaseDocumentsService(
                   tenantId: { type: "string" },
                   surface: { type: "string" },
                   metadata: { type: "object", additionalProperties: true },
+                  indexes: { type: "array", description: "Composite indexes, each { name, fields }" },
                 },
               },
             },
@@ -579,6 +594,9 @@ export function defineDatabaseDocumentsService(
                     !Array.isArray(input.metadata)
                       ? (input.metadata as Record<string, unknown>)
                       : undefined,
+                  indexes: Array.isArray(input.indexes)
+                    ? (input.indexes as ReadonlyArray<IndexDefinition>)
+                    : undefined,
                 }),
               };
             } catch (error) {
@@ -746,7 +764,7 @@ export function defineDatabaseDocumentsService(
                 properties: {
                   tenantId: { type: "string", description: "Tenant ID" },
                   where: { type: "array", description: "Filters" },
-                  orderBy: { type: "array", description: "At most one sort" },
+                  orderBy: { type: "array", description: "One field, or several that a composite index serves" },
                   limit: { type: "number", description: "Documents per page: 1 to 1000, 50 when omitted" },
                   after: { type: "string", description: "The next cursor from the previous page" },
                 },
@@ -754,7 +772,7 @@ export function defineDatabaseDocumentsService(
             },
             responses: {
               200: { description: "One page, and a next cursor only when more documents follow" },
-              400: { description: "A cursor from another read, more than one sort, or a bad limit" },
+              400: { description: "A cursor from another read, an order no index serves, or a bad limit" },
               404: { description: "Not found" },
             },
           },
@@ -780,6 +798,90 @@ export function defineDatabaseDocumentsService(
               };
             } catch (error) {
               return databaseErrorResponse(error, 404);
+            }
+          },
+        },
+        {
+          id: "database.indexes.create",
+          method: "POST",
+          path: "/:collection/indexes",
+          spec: {
+            operationId: "createIndex",
+            summary: "Add a composite index to a collection",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId", "name", "fields"],
+                properties: {
+                  tenantId: { type: "string", description: "Tenant ID" },
+                  name: { type: "string", description: "Index name" },
+                  fields: { type: "array", description: "Fields in order, each { path, direction?, nulls? }" },
+                },
+              },
+            },
+            responses: {
+              201: { description: "The index, ready to answer reads" },
+              400: { description: "An index definition that cannot be built" },
+              404: { description: "Not found" },
+              409: { description: "The name is taken by an index over other fields" },
+            },
+          },
+          handler: async ({ service, params, body }) => {
+            const input = readBodyObject(body);
+            try {
+              const tenantId = readTenantId(input.tenantId);
+              return {
+                status: 201,
+                body: await service.forTenant(tenantId).documents.createIndex({
+                  collection: params.collection,
+                  name: typeof input.name === "string" ? input.name : "",
+                  fields: Array.isArray(input.fields) ? (input.fields as ReadonlyArray<IndexField>) : [],
+                }),
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "database.indexes.drop",
+          method: "DELETE",
+          path: "/:collection/indexes/:name",
+          spec: {
+            operationId: "dropIndex",
+            summary: "Remove a composite index from a collection",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+              name: { type: "string", required: true, description: "Index name" },
+            },
+            queryParams: {
+              tenantId: { type: "string", required: true, description: "Tenant ID" },
+            },
+            responses: {
+              200: { description: "Whether an index by that name was removed" },
+              400: { description: "Bad request" },
+              404: { description: "Not found" },
+            },
+          },
+          handler: async ({ service, params, query }) => {
+            try {
+              const tenantId = readTenantId(query.get("tenantId"));
+              return {
+                body: {
+                  dropped: await service.forTenant(tenantId).documents.dropIndex({
+                    collection: params.collection,
+                    name: params.name,
+                  }),
+                },
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
             }
           },
         },

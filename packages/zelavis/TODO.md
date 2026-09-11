@@ -917,9 +917,23 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   reports how many postings it `examined`. The first seal, and the first after
   a reindex or a rebuild, still sweeps everything, and a sweep only counts
   once it has finished.
-- [ ] Composite indexes with explicit field order and null semantics. Until
-  then, an order by several fields sorts in memory in `findMany` and is refused
-  by `findPage`.
+- [x] Composite indexes with explicit field order and null semantics. A
+  collection declares them — `createIndex`, or `indexes` on `createCollection`
+  — as fields in order, each with a direction and a null placement, and each
+  lives in the ordered lens as one posting per document whose value is the
+  tuple encoded to sort as a tuple (`orderedTuple`). An index serves its order
+  and exactly its reverse, after any leading fields an equality fixes;
+  `findPage` refuses an order of several fields that no index serves, and
+  `findMany` sorts those in memory. Over 50k documents a first page by two
+  fields takes 6.7 ms (1.2 s sorted in memory), 20 pages 136 ms, and an
+  equality plus an order 9.8 ms against 31.6 ms through one field's lens. An
+  index over existing documents is built by writing each back, about 7k
+  documents/s and one log entry each. Single-field sorts take
+  `nulls: "first"` too.
+- [ ] Read a collection's record once per document write. Each write now reads
+  it inside its transaction for the collection's indexes, on top of the check
+  an insert makes before it: inserts without an index went from 4.7k/s to
+  4.3k/s.
 - [ ] Order and page across shards in `db.scatter`: merge each shard's ordered
   run by value, with a cursor per shard, rather than by shard and identifier.
 - [ ] Unique constraints committed in the same batch as the document, reference

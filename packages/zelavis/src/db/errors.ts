@@ -123,6 +123,20 @@ export class UnsupportedOrdering extends Schema.TaggedError<UnsupportedOrdering>
   { reason: Schema.String },
 ) {}
 
+/** An index definition that cannot be built: a bad name, no fields, or a field given twice. */
+export class InvalidIndex extends Schema.TaggedError<InvalidIndex>()("InvalidIndex", {
+  collection: Schema.String,
+  name: Schema.String,
+  reason: Schema.String,
+}) {}
+
+/** An index name already in use on the collection, over different fields. */
+export class IndexExists extends Schema.TaggedError<IndexExists>()("IndexExists", {
+  collection: Schema.String,
+  name: Schema.String,
+  reason: Schema.String,
+}) {}
+
 export class InvalidCollectionName extends Schema.TaggedError<InvalidCollectionName>()(
   "InvalidCollectionName",
   { name: Schema.String, reason: Schema.String },

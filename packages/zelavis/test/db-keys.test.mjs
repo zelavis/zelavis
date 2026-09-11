@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   compareKeys, compareOrderedValues, decodeIdentity, decodeOrderedKey,
   dstOf, edgeKey, edgePrefix, identityKey, inPrefixRange, orderedColumnPrefix, orderedKey,
-  orderedValuePrefix, prefixEnd, seqOf, termKey, termPrefix,
+  orderedTuple, orderedValuePrefix, prefixEnd, seqOf, termKey, termPrefix,
 } from "../dist/db/keys.js";
 
 const sorted = (keys) => [...keys].sort(compareKeys);
@@ -196,5 +196,42 @@ test("decoding a key held in a shared buffer reads the key and leaves it alone",
     const before = [...view];
     assert.equal(show(decodeOrderedKey(view).value), show(value));
     assert.deepEqual([...view], before, "decoding changed the key");
+  }
+});
+
+test("a composite key sorts field by field, each with its own direction and null placement", () => {
+  const nul = String.fromCharCode(0);
+  const pool = [undefined, null, false, true, -2.5, -0, 0, 1, 10, 1e21, "", "a", `a${nul}`, "ab", "b", "é", "Z"];
+  const spec = [
+    { direction: "asc", nulls: "last" },
+    { direction: "desc", nulls: "first" },
+    { direction: "desc", nulls: "last" },
+  ];
+  let seed = 7;
+  const random = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const tuples = Array.from({ length: 4000 }, () => spec.map(() => pool[Math.floor(random() * pool.length)]));
+  const encode = (tuple) => orderedTuple(tuple.map((value, i) => ({ value, ...spec[i] })));
+  const compareField = (a, b, { direction, nulls }) => {
+    const aNone = a === null || a === undefined;
+    const bNone = b === null || b === undefined;
+    if (aNone || bNone) return aNone === bNone ? 0 : (aNone ? 1 : -1) * (nulls === "first" ? -1 : 1);
+    const order = compareOrderedValues(a, b);
+    return direction === "desc" ? -order : order;
+  };
+  const compareTuple = (a, b) => {
+    for (let i = 0; i < spec.length; i++) {
+      const order = compareField(a[i], b[i], spec[i]);
+      if (order !== 0) return order;
+    }
+    return 0;
+  };
+  for (let i = 0; i + 1 < tuples.length; i++) {
+    const [a, b] = [tuples[i], tuples[i + 1]];
+    const [x, y] = [encode(a), encode(b)];
+    assert.match(x, /^[0-9a-f]+$/);
+    assert.equal(Math.sign(x < y ? -1 : x > y ? 1 : 0), Math.sign(compareTuple(a, b)),
+      `${JSON.stringify(a)} against ${JSON.stringify(b)}`);
+    // The leading fields alone are a prefix of the whole, which is what a seek by them relies on.
+    assert.ok(x.startsWith(orderedTuple(a.slice(0, 2).map((value, j) => ({ value, ...spec[j] })))));
   }
 });
