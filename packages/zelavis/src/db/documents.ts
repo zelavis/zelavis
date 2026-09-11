@@ -20,11 +20,13 @@ import {
   InvalidCollectionName,
   TenantMoving,
   CursorMismatch,
+  IndexExists,
+  InvalidIndex,
   UnsupportedOrdering,
 } from "./errors.js";
 import type { DbError } from "./errors.js";
-import { compareOrderedValues, sameOrderedKind } from "./keys.js";
-import type { OrderedScalar, Seq } from "./model.js";
+import { compareOrderedValues, orderedTuple, sameOrderedKind } from "./keys.js";
+import type { IndexManifest, OrderedScalar, Seq } from "./model.js";
 import { and, equals, or, type Query, type RangeBound } from "./query.js";
 import type { SchemasApi } from "./schemas.js";
 import type { ObjectStoreApi, OrderedCursor, Txn } from "./store.js";
@@ -39,6 +41,8 @@ export interface Collection {
   readonly createdAt: string;
   readonly surface: CollectionSurface;
   readonly metadata?: Record<string, unknown>;
+  /** Composite indexes over the collection's documents; see `CollectionIndex`. */
+  readonly indexes?: ReadonlyArray<CollectionIndex>;
 }
 
 export interface Document<TData extends JsonObject = JsonObject> {
@@ -58,9 +62,50 @@ export interface DocumentFilter {
   readonly value: Json | ReadonlyArray<Json>;
 }
 
+/**
+ * Where documents with no value at a path go: null, absent, or an object or
+ * array, none of which has a place in value order. Last unless `"first"`, in
+ * either direction: the placement is its own choice, not a side effect of the
+ * direction.
+ */
+export type NullPlacement = "first" | "last";
+
 export interface DocumentSort {
   readonly path: string;
   readonly direction?: "asc" | "desc";
+  readonly nulls?: NullPlacement;
+}
+
+/** One field of a composite index: ascending, nulls last, unless given. */
+export interface IndexField {
+  readonly path: string;
+  readonly direction?: "asc" | "desc";
+  readonly nulls?: NullPlacement;
+}
+
+export interface IndexDefinition {
+  /** Letters, numbers, underscores and hyphens, like a collection name. */
+  readonly name: string;
+  /** In order: by the first field, then by the second among equals, and so on. */
+  readonly fields: ReadonlyArray<IndexField>;
+}
+
+/**
+ * A composite index over one collection.
+ *
+ * One ordered run over every document in the collection, keyed by the values
+ * of its fields in the declared order, with each field's direction and null
+ * placement. It serves an order made of its fields — each as declared, or each
+ * with direction and null placement both flipped, which is the index read
+ * backwards — after any leading fields an equality filter fixes. A document
+ * with no value at a field is in the index all the same, where that field's
+ * null placement puts it, so one read covers the collection.
+ */
+export interface CollectionIndex {
+  readonly name: string;
+  readonly fields: ReadonlyArray<Required<IndexField>>;
+  /** Only a ready index answers reads; a building one is still adding the documents written before it. */
+  readonly state: "building" | "ready";
 }
 
 export interface FindDocumentsInput {
@@ -79,7 +124,7 @@ export type DocumentCursor = string & { readonly [DocumentCursorBrand]: true };
 export interface FindPageInput {
   readonly collection: string;
   readonly where?: ReadonlyArray<DocumentFilter>;
-  /** At most one field: ordering by several needs a composite index. */
+  /** One field, or several that a composite index serves: see `CollectionIndex`. */
   readonly orderBy?: ReadonlyArray<DocumentSort>;
   /** Documents per page: 50 unless given, and at most 1000. */
   readonly limit?: number;
@@ -151,6 +196,35 @@ const documentNs = (tenant: TenantId, collection: string) => `doc/${tenant}/${co
 const collectionColumn = (tenant: TenantId) => `zv.collection/${tenant}`;
 const columnFor = (tenant: TenantId, collection: string, path: string) =>
   `${tenant}/${collection}.${path}`;
+
+/**
+ * The ordered-lens column one index keeps its postings in.
+ *
+ * Unique to one creation of the index. A document written before an index was
+ * dropped can keep its postings until it is next written, and an index
+ * recreated under the same name must never read them as its own. A collection
+ * name holds no `:` or `.`, so this never meets a field's column.
+ */
+const indexColumnFor = (tenant: TenantId, collection: string, name: string) =>
+  `${tenant}/${collection}:${name}#${crypto.randomUUID().slice(0, 8)}`;
+
+/** An index as the collection record stores it: with the column its postings are in. */
+interface StoredIndex extends CollectionIndex {
+  readonly column: string;
+}
+
+interface StoredCollection extends Omit<Collection, "indexes"> {
+  readonly indexes?: ReadonlyArray<StoredIndex>;
+}
+
+const publicIndex = (index: StoredIndex): CollectionIndex => ({
+  name: index.name,
+  fields: index.fields,
+  state: index.state,
+});
+
+const publicCollection = (stored: StoredCollection): Collection =>
+  stored.indexes === undefined ? stored : { ...stored, indexes: stored.indexes.map(publicIndex) };
 
 const validateName = (name: string): Effect.Effect<void, InvalidCollectionName> => {
   if (!COLLECTION_NAME_PATTERN.test(name)) {
@@ -224,28 +298,168 @@ const orderable = (value: Json | undefined): OrderedScalar | undefined =>
   value === null || isScalar(value) ? value : undefined;
 
 /**
- * Document order at one path, in a direction.
+ * Document order at one path, in a direction, with a null placement.
  *
  * Values follow the ordered lens's order, reversed for descending. A document
  * whose value there is null or absent — or an object or array, which has no
- * place in the order — comes after every value in both directions, as most
- * interfaces expect of a missing price in either sort. Documents equal on every
- * sort field keep ascending identifier order, which a stable sort preserves;
- * that is the one place this differs from a descending read of the lens, which
- * visits equal values in descending identifier order.
+ * place in the order — comes after every value in both directions, or before
+ * every one with nulls first. Documents equal on every sort field keep
+ * ascending identifier order, which a stable sort preserves; that is the one
+ * place this differs from a backwards read of an index, which visits them in
+ * descending identifier order.
  */
 const compareAt = (
   left: Json | undefined,
   right: Json | undefined,
   direction: "asc" | "desc",
+  nulls: NullPlacement,
 ): number => {
   const a = orderable(left);
   const b = orderable(right);
   const aHas = a !== undefined && a !== null;
   const bHas = b !== undefined && b !== null;
-  if (!aHas || !bHas) return aHas === bHas ? 0 : aHas ? -1 : 1;
+  if (!aHas || !bHas) return aHas === bHas ? 0 : (aHas ? -1 : 1) * (nulls === "first" ? -1 : 1);
   const order = compareOrderedValues(a, b);
   return direction === "desc" ? -order : order;
+};
+
+/** A sort with its defaults filled in. */
+type Sort = Required<DocumentSort>;
+
+const normalizeSorts = (sorts: ReadonlyArray<DocumentSort> | undefined): Array<Sort> =>
+  (sorts ?? []).map((sort) => ({
+    path: sort.path,
+    direction: sort.direction === "desc" ? "desc" : "asc",
+    nulls: sort.nulls === "first" ? "first" : "last",
+  }));
+
+const describeFields = (fields: ReadonlyArray<Required<IndexField>>): string =>
+  fields.map((field) => `${field.path} ${field.direction} nulls ${field.nulls}`).join(", ");
+
+const sameFields = (
+  a: ReadonlyArray<Required<IndexField>>,
+  b: ReadonlyArray<Required<IndexField>>,
+): boolean =>
+  a.length === b.length &&
+  a.every((field, i) =>
+    field.path === b[i]!.path && field.direction === b[i]!.direction && field.nulls === b[i]!.nulls);
+
+/** Enough for any order a page is likely to ask for, and a bound on a key's length. */
+const MAX_INDEX_FIELDS = 8;
+
+/**
+ * An index definition with its defaults filled in, or why it cannot be built.
+ *
+ * Checked field by field at runtime as well as by type, because a definition
+ * also arrives as JSON over HTTP.
+ */
+const normalizeIndex = (
+  collection: string,
+  definition: IndexDefinition,
+): Effect.Effect<{ readonly name: string; readonly fields: Array<Required<IndexField>> }, InvalidIndex> => {
+  const invalid = (reason: string) =>
+    Effect.fail(new InvalidIndex({ collection, name: String(definition.name), reason }));
+  if (typeof definition.name !== "string" || !COLLECTION_NAME_PATTERN.test(definition.name)) {
+    return invalid(
+      "an index name must start with a letter or underscore and contain only letters, numbers, underscores, or hyphens",
+    );
+  }
+  if (!Array.isArray(definition.fields) || definition.fields.length === 0 ||
+    definition.fields.length > MAX_INDEX_FIELDS) {
+    return invalid(`an index takes 1 to ${MAX_INDEX_FIELDS} fields`);
+  }
+  const fields: Array<Required<IndexField>> = [];
+  for (const field of definition.fields) {
+    const path: unknown = field?.path;
+    if (typeof path !== "string" || path === "" || path.split(".").some((segment) => segment === "")) {
+      return invalid(`${JSON.stringify(path) ?? "undefined"} is not a field path`);
+    }
+    if (fields.some((seen) => seen.path === path)) return invalid(`"${path}" appears twice`);
+    const direction = field.direction ?? "asc";
+    if (direction !== "asc" && direction !== "desc") {
+      return invalid(`the direction of "${path}" must be "asc" or "desc"`);
+    }
+    const nulls = field.nulls ?? "last";
+    if (nulls !== "first" && nulls !== "last") {
+      return invalid(`the nulls of "${path}" must be "first" or "last"`);
+    }
+    fields.push({ path, direction, nulls });
+  }
+  return Effect.succeed({ name: definition.name, fields });
+};
+
+/** A document's position in one index. */
+const indexTuple = (index: StoredIndex, data: JsonObject): string =>
+  orderedTuple(index.fields.map((field) => ({
+    value: orderable(readPath(data, field.path)),
+    direction: field.direction,
+    nulls: field.nulls,
+  })));
+
+/**
+ * The fields an equality filter fixes to one scalar, which an index can seek
+ * to rather than filter by. Null is left to the filter: an index files null
+ * with absent, and an equality with null matches only null.
+ */
+const equalityBindings = (where: ReadonlyArray<DocumentFilter>): Map<string, OrderedScalar> => {
+  const out = new Map<string, OrderedScalar>();
+  for (const filter of where) {
+    if ((filter.op ?? "eq") !== "eq" || out.has(filter.path)) continue;
+    const value = orderable(filter.value as Json);
+    if (value !== undefined && value !== null) out.set(filter.path, value);
+  }
+  return out;
+};
+
+interface IndexedOrder {
+  readonly index: StoredIndex;
+  /** Read backwards: every field's direction and null placement flipped. */
+  readonly reverse: boolean;
+  /** The leading fields an equality fixes, encoded; the read stays within it. */
+  readonly prefix: string;
+}
+
+/**
+ * The index that serves an order, if one does.
+ *
+ * An index serves it when, after leading fields an equality filter fixes, its
+ * next fields are the order's — each with the same direction and null
+ * placement, or each with both flipped. Fixing more leading fields narrows
+ * the read, so the index fixing the most wins. A single field has its own
+ * ordered lens, so an index serves it only when it can also seek past a fixed
+ * prefix, which that lens can only filter for.
+ */
+const chooseIndex = (
+  indexes: ReadonlyArray<StoredIndex>,
+  sorts: ReadonlyArray<Sort>,
+  bindings: ReadonlyMap<string, OrderedScalar>,
+): IndexedOrder | undefined => {
+  let best: { readonly order: IndexedOrder; readonly fixed: number } | undefined;
+  for (const index of indexes) {
+    if (index.state !== "ready") continue;
+    const { fields } = index;
+    let bound = 0;
+    while (bound < fields.length && bindings.has(fields[bound]!.path)) bound += 1;
+    for (let fixed = Math.min(bound, fields.length - sorts.length); fixed >= 0; fixed--) {
+      const next = fields.slice(fixed, fixed + sorts.length);
+      const same = next.every((field, i) =>
+        field.path === sorts[i]!.path && field.direction === sorts[i]!.direction && field.nulls === sorts[i]!.nulls);
+      const flipped = next.every((field, i) =>
+        field.path === sorts[i]!.path && field.direction !== sorts[i]!.direction && field.nulls !== sorts[i]!.nulls);
+      if (!same && !flipped) continue;
+      if (sorts.length === 1 && fixed === 0) break;
+      if (best === undefined || fixed > best.fixed) {
+        const prefix = orderedTuple(fields.slice(0, fixed).map((field) => ({
+          value: bindings.get(field.path),
+          direction: field.direction,
+          nulls: field.nulls,
+        })));
+        best = { order: { index, reverse: flipped, prefix }, fixed };
+      }
+      break;
+    }
+  }
+  return best?.order;
 };
 
 /**
@@ -375,9 +589,10 @@ interface Placed {
 
 interface PageShape {
   readonly collection: string;
-  /** The field ordered by, or empty for identifier order. */
-  readonly path: string;
-  readonly direction: "asc" | "desc";
+  /** The order read, empty for identifier order. */
+  readonly order: ReadonlyArray<Sort>;
+  /** The column of the index the read goes through, if it goes through one. */
+  readonly via: string | undefined;
 }
 
 export interface DocumentsApi {
@@ -385,7 +600,9 @@ export interface DocumentsApi {
     readonly name: string;
     readonly surface?: CollectionSurface;
     readonly metadata?: Record<string, unknown>;
-  }) => Effect.Effect<Collection, InvalidCollectionName | CollectionExists | TenantMoving>;
+    /** Indexes to start with; an empty collection has nothing to add to them, so they are ready at once. */
+    readonly indexes?: ReadonlyArray<IndexDefinition>;
+  }) => Effect.Effect<Collection, InvalidCollectionName | CollectionExists | InvalidIndex | TenantMoving>;
   readonly listCollections: Effect.Effect<ReadonlyArray<Collection>>;
   readonly collectionExists: (name: string) => Effect.Effect<boolean>;
   readonly insert: (input: {
@@ -411,18 +628,20 @@ export interface DocumentsApi {
   /**
    * Every matching document, ordered and sliced as asked.
    *
-   * Ordered by one field, it reads the ordered lens rather than sorting; by
-   * several, it sorts in memory, in the same order the lens would give.
+   * Ordered by one field, it reads that field's ordered lens rather than
+   * sorting; by several, it reads a composite index that serves the order, or
+   * failing one sorts in memory, in the order such an index would give.
    */
   readonly findMany: (input: FindDocumentsInput) => Effect.Effect<ReadonlyArray<Document>>;
   /**
    * One page of matching documents, and a cursor for the next.
    *
-   * Ordered by at most one field and read from the ordered lens in either
-   * direction, so a page costs about what it returns rather than a sort of
-   * every match. Without an order, documents come in identifier order. `next`
-   * is present only when another matching document exists, so the last page is
-   * never an empty one.
+   * Ordered by one field from its ordered lens, or by several from a composite
+   * index that serves them, in either direction — so a page costs about what it
+   * returns rather than a sort of every match. An order of several fields that
+   * no index serves is refused rather than sorted. Without an order, documents
+   * come in identifier order. `next` is present only when another matching
+   * document exists, so the last page is never an empty one.
    */
   readonly findPage: (
     input: FindPageInput,
@@ -446,6 +665,28 @@ export interface DocumentsApi {
     readonly id: string;
     readonly expectedVersion?: number;
   }) => Effect.Effect<boolean, DocumentConflict | TenantMoving | IdempotencyKeyReused>;
+
+  /**
+   * Add a composite index to a collection, and return it once it is ready.
+   *
+   * The documents already there are added by writing each back with its new
+   * posting — one log entry per document, a few hundred per transaction — while
+   * other writes carry on, and reads use the index only once all of them are
+   * in it. Asking again for an index that exists over the same fields returns
+   * it, finishing it first if an earlier call was interrupted.
+   */
+  readonly createIndex: (
+    input: IndexDefinition & { readonly collection: string },
+  ) => Effect.Effect<CollectionIndex, CollectionNotFound | IndexExists | InvalidIndex | TenantMoving>;
+
+  /**
+   * Remove an index and clear its postings, which costs a write per document
+   * as building it did. False when the collection has no index by that name.
+   */
+  readonly dropIndex: (input: {
+    readonly collection: string;
+    readonly name: string;
+  }) => Effect.Effect<boolean, CollectionNotFound | TenantMoving>;
 
   /**
    * Forget completed idempotency keys, returning how many were dropped.
@@ -566,15 +807,18 @@ export const documentsFor = (
       const seq = yield* lookup(collectionNs(tenant), name);
       if (seq === undefined) return undefined;
       const object = yield* readObject(seq);
-      return object === undefined ? undefined : decode<Collection>(object.bytes);
+      return object === undefined ? undefined : decode<StoredCollection>(object.bytes);
     });
 
   const requireCollection = (name: string) =>
     Effect.filterOrFail(
       loadCollection(name),
-      (found): found is Collection => found !== undefined,
+      (found): found is StoredCollection => found !== undefined,
       () => new CollectionNotFound({ name }),
     );
+
+  const indexesOf = (collection: string) =>
+    Effect.map(loadCollection(collection), (found) => found?.indexes ?? []);
 
   const readDocument = (seq: Seq) =>
     Effect.map(readObject(seq), (o) => (o === undefined ? undefined : decode<Document>(o.bytes)));
@@ -597,13 +841,44 @@ export const documentsFor = (
     return yield* new TenantMoving({ tenant, from, to });
   });
 
-  const documentPut = (txn: Txn, doc: Document, seq: Seq) =>
-    txn.put(seq, encode(doc), {
+  const transactOrDie = <A>(f: (txn: Txn) => Effect.Effect<A, DbError>): Effect.Effect<A> =>
+    Effect.orDie(store.transact(f));
+
+  const collectionPut = (txn: Txn, seq: Seq, collection: StoredCollection) =>
+    txn.put(seq, encode(collection), {
       terms: [],
-      columns: columnsFor(tenant, doc.collection, doc.data),
+      columns: [[collectionColumn(tenant), COLLECTION_MARKER]],
       measures: [],
       edges: [],
-    }, { namespace: documentNs(tenant, doc.collection), key: doc.id });
+    }, { namespace: collectionNs(tenant), key: collection.name });
+
+  /** Every posting a document contributes: a column per scalar, and a tuple per index. */
+  const manifestFor = (doc: Document, indexes: ReadonlyArray<StoredIndex>): IndexManifest => ({
+    terms: [],
+    columns: [
+      ...columnsFor(tenant, doc.collection, doc.data),
+      ...indexes.map((index) => [index.column, indexTuple(index, doc.data)] as const),
+    ],
+    measures: [],
+    edges: [],
+  });
+
+  /**
+   * Write a document with every posting it contributes, its indexes' included.
+   *
+   * The indexes are read here, inside the transaction, and not by the caller.
+   * A transaction holds the store's one writer, so an index created alongside
+   * this write was either recorded before it — and is included — or after it,
+   * and its backfill finds this document. Read before the transaction, the
+   * write could land between the two and be missing from the index for good.
+   */
+  const documentPut = (txn: Txn, doc: Document, seq: Seq) =>
+    Effect.gen(function* () {
+      const indexes = (yield* loadCollection(doc.collection))?.indexes ?? [];
+      yield* txn.put(seq, encode(doc), manifestFor(doc, indexes), {
+        namespace: documentNs(tenant, doc.collection), key: doc.id,
+      });
+    });
 
   const keeps = (plan: Plan) => (doc: Document | undefined): doc is Document =>
     doc !== undefined && plan.residual.every((filter) => matches(doc.data, filter));
@@ -631,23 +906,23 @@ export const documentsFor = (
    * Two runs make up the order. Documents with a value at the path come from
    * the ordered lens, page by page, filtered by the plan's field clauses as the
    * lens is read — the range stops short of null, which the lens sorts last.
-   * The rest, whose value is null or absent or an object or array, follow in
-   * identifier order in either direction: they are what the plan matches minus
-   * what the value run holds, a subtraction only the final pages of a read pay
-   * for. Every document carries the position just after it, so a page can end
-   * on any document exactly. `take` bounds how many are gathered; undefined
+   * The rest, whose value is null or absent or an object or array, come in
+   * identifier order in either direction, after the values or before them as
+   * the sort's null placement says: they are what the plan matches minus what
+   * the value run holds, a subtraction only the pages reaching them pay for.
+   * Every document carries the position just after it, so a page can end on
+   * any document exactly. `take` bounds how many are gathered; undefined
    * gathers all.
    */
   const inOrder = (
     plan: Plan,
     collection: string,
-    sort: DocumentSort,
+    sort: Sort,
     take: number | undefined,
     from: Position | undefined,
   ): Effect.Effect<Array<Placed>, CursorMismatch> =>
     Effect.gen(function* () {
       const column = columnFor(tenant, collection, sort.path);
-      const direction = sort.direction === "desc" ? "desc" : "asc";
       // From the lowest value there is, `false`, up to where null begins.
       const values = {
         lower: { value: false, inclusive: true },
@@ -657,39 +932,133 @@ export const documentsFor = (
       const out: Array<Placed> = [];
       const full = () => take !== undefined && out.length >= take;
 
-      if (from === undefined || from.phase === "values") {
-        let cursor = from?.phase === "values" ? from.cursor : undefined;
-        for (;;) {
-          if (full()) return out;
-          const limit = take === undefined ? 256 : Math.max(1, Math.min(256, take - out.length));
-          const page = yield* orderedPage({
-            column, direction, limit, ...values,
-            ...(plan.fields === undefined ? {} : { where: plan.fields }),
-            ...(cursor === undefined ? {} : { after: cursor }),
-          });
-          for (const row of page.rows) {
-            if (full()) return out;
-            const doc = yield* readDocument(row.seq);
-            if (keep(doc)) out.push({ document: doc, position: { phase: "values", cursor: row.cursor } });
+      const valueRun = (after: OrderedCursor | undefined) =>
+        Effect.gen(function* () {
+          let cursor = after;
+          for (;;) {
+            if (full()) return;
+            const limit = take === undefined ? 256 : Math.max(1, Math.min(256, take - out.length));
+            const page = yield* orderedPage({
+              column, direction: sort.direction, limit, ...values,
+              ...(plan.fields === undefined ? {} : { where: plan.fields }),
+              ...(cursor === undefined ? {} : { after: cursor }),
+            });
+            for (const row of page.rows) {
+              if (full()) return;
+              const doc = yield* readDocument(row.seq);
+              if (keep(doc)) out.push({ document: doc, position: { phase: "values", cursor: row.cursor } });
+            }
+            if (page.next === undefined) return;
+            cursor = page.next;
           }
-          if (page.next === undefined) break;
-          cursor = page.next;
-        }
-      }
+        });
 
-      const valued = new Set(
-        [...(yield* Stream.runCollect(
-          resolveQuery(and(plan.query, { _tag: "Range", column, ...values })),
-        ))].map(Number),
-      );
-      const after = from?.phase === "rest" ? from.seq : undefined;
-      for (const seq of yield* Stream.runCollect(resolveQuery(plan.query))) {
-        if (full()) break;
-        if (valued.has(Number(seq)) || (after !== undefined && Number(seq) <= after)) continue;
-        const doc = yield* readDocument(seq);
-        if (keep(doc)) out.push({ document: doc, position: { phase: "rest", seq: Number(seq) } });
+      const restRun = (after: number | undefined) =>
+        Effect.gen(function* () {
+          if (full()) return;
+          const valued = new Set(
+            [...(yield* Stream.runCollect(
+              resolveQuery(and(plan.query, { _tag: "Range", column, ...values })),
+            ))].map(Number),
+          );
+          for (const seq of yield* Stream.runCollect(resolveQuery(plan.query))) {
+            if (full()) return;
+            if (valued.has(Number(seq)) || (after !== undefined && Number(seq) <= after)) continue;
+            const doc = yield* readDocument(seq);
+            if (keep(doc)) out.push({ document: doc, position: { phase: "rest", seq: Number(seq) } });
+          }
+        });
+
+      // A position lies in one run: resume there, skipping the runs before it.
+      const runs = sort.nulls === "first" ? (["rest", "values"] as const) : (["values", "rest"] as const);
+      let started = from === undefined;
+      for (const run of runs) {
+        if (!started && from?.phase !== run) continue;
+        started = true;
+        const resume = from?.phase === run ? from : undefined;
+        if (run === "values") yield* valueRun(resume?.phase === "values" ? resume.cursor : undefined);
+        else yield* restRun(resume?.phase === "rest" ? resume.seq : undefined);
       }
       return out;
+    });
+
+  /**
+   * Matching documents in the order of a composite index, from a position onward.
+   *
+   * One run: every document of the collection is in the index, those without a
+   * value at some field included, so there is no second run to subtract. The
+   * read stays within the prefix the equality filters fix, and the plan's field
+   * clauses filter it as it goes.
+   */
+  const inIndexOrder = (
+    plan: Plan,
+    indexed: IndexedOrder,
+    take: number | undefined,
+    from: Position | undefined,
+  ): Effect.Effect<Array<Placed>, CursorMismatch> =>
+    Effect.gen(function* () {
+      const keep = keeps(plan);
+      const out: Array<Placed> = [];
+      const full = () => take !== undefined && out.length >= take;
+      const bounds = indexed.prefix === ""
+        ? {}
+        : {
+          lower: { value: indexed.prefix, inclusive: true },
+          // Past every tuple the prefix begins: hex digits all sort below "g".
+          upper: { value: `${indexed.prefix}g`, inclusive: false },
+        };
+      let cursor = from?.phase === "values" ? from.cursor : undefined;
+      for (;;) {
+        if (full()) return out;
+        const limit = take === undefined ? 256 : Math.max(1, Math.min(256, take - out.length));
+        const page = yield* orderedPage({
+          column: indexed.index.column, direction: indexed.reverse ? "desc" : "asc", limit, ...bounds,
+          ...(plan.fields === undefined ? {} : { where: plan.fields }),
+          ...(cursor === undefined ? {} : { after: cursor }),
+        });
+        for (const row of page.rows) {
+          if (full()) return out;
+          const doc = yield* readDocument(row.seq);
+          if (keep(doc)) out.push({ document: doc, position: { phase: "values", cursor: row.cursor } });
+        }
+        if (page.next === undefined) return out;
+        cursor = page.next;
+      }
+    });
+
+  /** Documents a rewrite puts back per transaction, releasing the writer between them. */
+  const REWRITE_CHUNK = 256;
+
+  /**
+   * Put every document of a collection back with the postings its indexes now
+   * call for: what completes an index built over existing documents, and what
+   * clears a dropped one's postings.
+   *
+   * Each document is read inside the transaction that rewrites it, under the
+   * store's one writer, so a concurrent update is never overwritten with what
+   * was read before it; and its bytes go back unchanged, so its version and
+   * timestamps do not move. Rewriting a document that already has the right
+   * postings writes the same ones again, so an interrupted rewrite is finished
+   * by running it again.
+   */
+  const rewriteDocuments = (collection: string) =>
+    Effect.gen(function* () {
+      const seqs = [...(yield* Stream.runCollect(resolveQuery(equals(collectionColumn(tenant), collection))))];
+      for (let at = 0; at < seqs.length; at += REWRITE_CHUNK) {
+        yield* write((txn) =>
+          Effect.gen(function* () {
+            const indexes = (yield* loadCollection(collection))?.indexes ?? [];
+            for (const seq of seqs.slice(at, at + REWRITE_CHUNK)) {
+              const object = yield* readObject(seq);
+              if (object === undefined) continue;
+              const doc = decode<Document>(object.bytes);
+              if (doc.collection !== collection) continue;
+              yield* txn.put(seq, object.bytes, manifestFor(doc, indexes), {
+                namespace: documentNs(tenant, collection), key: doc.id,
+              });
+            }
+          }));
+      }
     });
 
   /** Matching documents in identifier order, the order `resolve` already has. */
@@ -707,9 +1076,19 @@ export const documentsFor = (
       return out;
     });
 
+  const orderOf = (order: ReadonlyArray<Sort>) =>
+    order.map((sort) => [sort.path, sort.direction, sort.nulls]);
+
+  const describeOrder = (order: unknown): string =>
+    Array.isArray(order) && order.length > 0
+      ? order.map((sort) => (Array.isArray(sort) ? `${String(sort[0])} ${String(sort[1])}` : "?")).join(", ")
+      : "identifier order";
+
   const encodeDocumentCursor = (shape: PageShape, position: Position): DocumentCursor =>
     Buffer.from(
-      JSON.stringify({ v: 1, t: tenant, c: shape.collection, o: shape.path, d: shape.direction, p: position }),
+      JSON.stringify({
+        v: 2, t: tenant, c: shape.collection, o: orderOf(shape.order), x: shape.via ?? null, p: position,
+      }),
       "utf8",
     ).toString("base64url") as DocumentCursor;
 
@@ -726,17 +1105,22 @@ export const documentsFor = (
         return yield* malformed;
       }
       if (typeof parsed !== "object" || parsed === null) return yield* malformed;
-      const { v, t, c, o, d, p } = parsed as Record<string, unknown>;
-      if (v !== 1 || typeof p !== "object" || p === null) return yield* malformed;
-      if (t !== tenant || c !== shape.collection || o !== shape.path || d !== shape.direction) {
+      const { v, t, c, o, x, p } = parsed as Record<string, unknown>;
+      if (v !== 2 || typeof p !== "object" || p === null) return yield* malformed;
+      if (t !== tenant || c !== shape.collection || JSON.stringify(o) !== JSON.stringify(orderOf(shape.order))) {
         return yield* new CursorMismatch({
-          reason: `the cursor continues a different read: ${String(d)} by "${String(o)}" over "${String(c)}"`,
+          reason: `the cursor continues a different read: ${describeOrder(o)} over "${String(c)}"`,
+        });
+      }
+      if (x !== (shape.via ?? null)) {
+        return yield* new CursorMismatch({
+          reason: "the collection's indexes changed since this cursor was issued; start the read again",
         });
       }
       const { phase, seq, cursor: inner } = p as Record<string, unknown>;
-      if (shape.path === "") {
+      if (shape.order.length === 0) {
         if (phase === "seq" && typeof seq === "number") return { phase, seq };
-      } else if (phase === "rest" && typeof seq === "number") {
+      } else if (phase === "rest" && typeof seq === "number" && shape.via === undefined) {
         return { phase, seq };
       } else if (phase === "values" && typeof inner === "string") {
         return { phase, cursor: inner as OrderedCursor };
@@ -770,21 +1154,23 @@ export const documentsFor = (
         yield* validateName(input.name);
         const existing = yield* loadCollection(input.name);
         if (existing !== undefined) return yield* new CollectionExists({ name: input.name });
-        const collection: Collection = {
+        const indexes: Array<StoredIndex> = [];
+        for (const definition of input.indexes ?? []) {
+          const index = yield* normalizeIndex(input.name, definition);
+          if (indexes.some((other) => other.name === index.name)) {
+            return yield* new InvalidIndex({ collection: input.name, name: index.name, reason: "the name is given twice" });
+          }
+          indexes.push({ ...index, state: "ready", column: indexColumnFor(tenant, input.name, index.name) });
+        }
+        const collection: StoredCollection = {
           name: input.name,
           createdAt: new Date().toISOString(),
           surface: input.surface ?? "database",
           ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
+          ...(indexes.length === 0 ? {} : { indexes }),
         };
         const seq = yield* nextSeq;
-        yield* write((txn) =>
-          txn.put(seq, encode(collection), {
-            terms: [],
-            columns: [[collectionColumn(tenant), COLLECTION_MARKER]],
-            measures: [],
-            edges: [],
-          }, { namespace: collectionNs(tenant), key: input.name }),
-        );
+        yield* write((txn) => collectionPut(txn, seq, collection));
         // Record that this tenant occupies the shard. Placement decisions need
         // to know which tenants a shard actually holds, and deriving that by
         // scanning every namespace would mean reading the whole store.
@@ -799,7 +1185,7 @@ export const documentsFor = (
             }, { namespace: TENANT_NAMESPACE, key: tenant }),
           );
         }
-        return collection;
+        return publicCollection(collection);
       }),
 
     listCollections: Effect.gen(function* () {
@@ -809,7 +1195,7 @@ export const documentsFor = (
       const out: Collection[] = [];
       for (const seq of seqs) {
         const object = yield* readObject(seq);
-        if (object !== undefined) out.push(decode<Collection>(object.bytes));
+        if (object !== undefined) out.push(publicCollection(decode<StoredCollection>(object.bytes)));
       }
       return out.sort((a, b) => a.name.localeCompare(b.name));
     }),
@@ -862,18 +1248,24 @@ export const documentsFor = (
 
     findMany: (input) =>
       Effect.gen(function* () {
-        const plan = planQuery(tenant, input.collection, input.where ?? []);
+        const where = input.where ?? [];
+        const plan = planQuery(tenant, input.collection, where);
         const offset = input.offset ?? 0;
+        const take = input.limit === undefined ? undefined : offset + input.limit;
         const slice = (docs: ReadonlyArray<Document>) =>
           input.limit === undefined ? docs.slice(offset) : docs.slice(offset, offset + input.limit);
-        const sorts = input.orderBy ?? [];
-        if (sorts.length === 1) {
-          // One field is served by the ordered lens, in order, without a sort.
-          const found = yield* inOrder(
-            plan, input.collection, sorts[0]!,
-            input.limit === undefined ? undefined : offset + input.limit, undefined,
-          ).pipe(Effect.orDie);
-          return slice(found.map((entry) => entry.document));
+        const sorts = normalizeSorts(input.orderBy);
+        if (sorts.length > 0) {
+          const indexed = chooseIndex(yield* indexesOf(input.collection), sorts, equalityBindings(where));
+          if (indexed !== undefined) {
+            const found = yield* inIndexOrder(plan, indexed, take, undefined).pipe(Effect.orDie);
+            return slice(found.map((entry) => entry.document));
+          }
+          if (sorts.length === 1) {
+            // One field is served by its ordered lens, in order, without a sort.
+            const found = yield* inOrder(plan, input.collection, sorts[0]!, take, undefined).pipe(Effect.orDie);
+            return slice(found.map((entry) => entry.document));
+          }
         }
         const keep = keeps(plan);
         let docs: Document[] = [];
@@ -881,42 +1273,43 @@ export const documentsFor = (
           const doc = yield* readDocument(seq);
           if (keep(doc)) docs.push(doc);
         }
-        // Several fields have no index yet, so they are sorted here — in the
+        // No index serves these fields, so they are sorted here — in the
         // lens's order, so the answer matches what an index would give.
         for (const sort of [...sorts].reverse()) {
-          const direction = sort.direction === "desc" ? "desc" : "asc";
           docs = docs.sort((a, b) =>
-            compareAt(readPath(a.data, sort.path), readPath(b.data, sort.path), direction));
+            compareAt(readPath(a.data, sort.path), readPath(b.data, sort.path), sort.direction, sort.nulls));
         }
         return slice(docs);
       }),
 
     findPage: (input) =>
       Effect.gen(function* () {
-        const sorts = input.orderBy ?? [];
-        if (sorts.length > 1) {
+        const sorts = normalizeSorts(input.orderBy);
+        const where = input.where ?? [];
+        const indexed = sorts.length === 0
+          ? undefined
+          : chooseIndex(yield* indexesOf(input.collection), sorts, equalityBindings(where));
+        if (sorts.length > 1 && indexed === undefined) {
           return yield* new UnsupportedOrdering({
             reason:
-              "a page ordered by more than one field needs a composite index, which the " +
-              "store does not have yet; order by one field, or use findMany",
+              `a page ordered by ${describeFields(sorts)} needs a composite index over those ` +
+              "fields in that order, or in exactly the reverse one; create it with createIndex, " +
+              "or use findMany",
           });
         }
         const limit = input.limit ?? 50;
         if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
           return yield* Effect.die(new RangeError(`findPage takes 1 to 1000 documents per page, not ${limit}.`));
         }
-        const sort = sorts[0];
-        const shape: PageShape = {
-          collection: input.collection,
-          path: sort?.path ?? "",
-          direction: sort?.direction === "desc" ? "desc" : "asc",
-        };
+        const shape: PageShape = { collection: input.collection, order: sorts, via: indexed?.index.column };
         const from = input.after === undefined ? undefined : yield* decodeDocumentCursor(input.after, shape);
-        const plan = planQuery(tenant, input.collection, input.where ?? []);
+        const plan = planQuery(tenant, input.collection, where);
         // One more than the page, to know whether another document follows.
-        const found = sort === undefined
+        const found = sorts.length === 0
           ? yield* inIdentifierOrder(plan, limit + 1, from)
-          : yield* inOrder(plan, input.collection, sort, limit + 1, from);
+          : indexed !== undefined
+            ? yield* inIndexOrder(plan, indexed, limit + 1, from)
+            : yield* inOrder(plan, input.collection, sorts[0]!, limit + 1, from);
         const page = found.slice(0, limit);
         return {
           documents: page.map((entry) => entry.document),
@@ -992,6 +1385,79 @@ export const documentsFor = (
         }
         return yield* commitOnce(input.idempotencyKey, fingerprint, request, true,
           (txn) => txn.retract(seq));
+      }),
+
+    createIndex: (input) =>
+      Effect.gen(function* () {
+        yield* assertNotMoving;
+        const definition = yield* normalizeIndex(input.collection, input);
+        const seq = yield* lookup(collectionNs(tenant), input.collection);
+        if (seq === undefined) return yield* new CollectionNotFound({ name: input.collection });
+        // Recorded first, as building: every write from here on carries it,
+        // and the rewrite below adds every document written before.
+        const recorded = yield* transactOrDie((txn) =>
+          Effect.gen(function* () {
+            const current = yield* loadCollection(input.collection);
+            if (current === undefined) return undefined;
+            const existing = current.indexes?.find((index) => index.name === definition.name);
+            if (existing !== undefined) return existing;
+            const index: StoredIndex = {
+              ...definition,
+              state: "building",
+              column: indexColumnFor(tenant, input.collection, definition.name),
+            };
+            yield* collectionPut(txn, seq, { ...current, indexes: [...(current.indexes ?? []), index] });
+            return index;
+          }));
+        if (recorded === undefined) return yield* new CollectionNotFound({ name: input.collection });
+        if (!sameFields(recorded.fields, definition.fields)) {
+          return yield* new IndexExists({
+            collection: input.collection,
+            name: definition.name,
+            reason: `it is defined over ${describeFields(recorded.fields)}`,
+          });
+        }
+        if (recorded.state === "ready") return publicIndex(recorded);
+        // A building index found here may be one an earlier call did not
+        // finish; rewriting is idempotent, so finishing it is running it again.
+        yield* rewriteDocuments(input.collection);
+        const ready = yield* transactOrDie((txn) =>
+          Effect.gen(function* () {
+            const current = yield* loadCollection(input.collection);
+            const indexes = current?.indexes ?? [];
+            if (current === undefined || !indexes.some((index) => index.column === recorded.column)) return false;
+            yield* collectionPut(txn, seq, {
+              ...current,
+              indexes: indexes.map((index) =>
+                index.column === recorded.column ? { ...index, state: "ready" as const } : index),
+            });
+            return true;
+          }));
+        // Dropped while it was being built: what it was is all there is to say.
+        return ready ? { ...publicIndex(recorded), state: "ready" } : publicIndex(recorded);
+      }),
+
+    dropIndex: (input) =>
+      Effect.gen(function* () {
+        yield* assertNotMoving;
+        const seq = yield* lookup(collectionNs(tenant), input.collection);
+        if (seq === undefined) return yield* new CollectionNotFound({ name: input.collection });
+        const dropped = yield* transactOrDie((txn) =>
+          Effect.gen(function* () {
+            const current = yield* loadCollection(input.collection);
+            const indexes = current?.indexes ?? [];
+            if (current === undefined || !indexes.some((index) => index.name === input.name)) return false;
+            yield* collectionPut(txn, seq, {
+              ...current,
+              indexes: indexes.filter((index) => index.name !== input.name),
+            });
+            return true;
+          }));
+        // Nothing reads the postings once the index is gone — the column was
+        // its alone — and each document's next write would drop them anyway.
+        // Clearing them now is what returns the space.
+        if (dropped) yield* rewriteDocuments(input.collection);
+        return dropped;
       }),
 
     forgetIdempotencyKeys: (input) =>

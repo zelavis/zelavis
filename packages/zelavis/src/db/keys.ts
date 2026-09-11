@@ -316,6 +316,50 @@ export const compareOrderedValues = (a: OrderedValue, b: OrderedValue): number =
   return compareKeys(Uint8Array.from(left), Uint8Array.from(right));
 };
 
+/** One field of a composite key: its value, and how that field sorts. */
+export interface TupleComponent {
+  /** Null or undefined when there is no value to sort by. */
+  readonly value: OrderedValue | undefined;
+  readonly direction: "asc" | "desc";
+  readonly nulls: "first" | "last";
+}
+
+/** A missing value in a composite key: below every value, or above every one. */
+const NoValue = { First: 0x10, Last: 0xf0 } as const;
+
+/**
+ * A tuple of values as a string whose order is the tuple's.
+ *
+ * Each field is encoded as the ordered lens encodes a value, and those
+ * encodings are self-delimiting — a number is fixed-width and a string
+ * terminated — so concatenating them sorts field by field. A descending field
+ * has every byte of its encoding inverted, which reverses its order and keeps
+ * it self-delimiting. A missing value is one byte below or above every
+ * encoded value of either direction, so where nulls go is the field's own
+ * choice rather than a side effect of its direction.
+ *
+ * The bytes are written as lowercase hex, whose character order is byte order,
+ * which makes the tuple an ordinary string in the ordered lens: sealed, paged
+ * and backed up like any other value, and a prefix of fields is a prefix of
+ * the string.
+ */
+export const orderedTuple = (components: ReadonlyArray<TupleComponent>): string => {
+  let hex = "";
+  for (const component of components) {
+    const out: number[] = [];
+    if (component.value === null || component.value === undefined) {
+      out.push(component.nulls === "first" ? NoValue.First : NoValue.Last);
+    } else {
+      writeOrderedValue(out, component.value);
+      if (component.direction === "desc") {
+        for (let i = 0; i < out.length; i++) out[i] = ~out[i]! & 0xff;
+      }
+    }
+    for (const byte of out) hex += byte.toString(16).padStart(2, "0");
+  }
+  return hex;
+};
+
 /** `[tag][seq]` — the payload and its manifest, addressed by identifier. */
 export const payloadKey = (seq: number): Uint8Array =>
   build(Tag.Payload, (out) => writeU32(out, seq));

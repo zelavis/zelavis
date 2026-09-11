@@ -47,6 +47,8 @@ test("the database service mounts the same routes on the db runtime API", async 
       "/api/database/documents/:collection/:id",
       "/api/database/documents/:collection/query",
       "/api/database/documents/:collection/page",
+      "/api/database/documents/:collection/indexes",
+      "/api/database/documents/:collection/indexes/:name",
       "/api/database/documents/:collection/:id",
       "/api/database/documents/:collection/:id",
       "/api/database/schemas/collections",
@@ -331,4 +333,43 @@ test("documents page through a collection in order, and a misused cursor is a 40
   assert.match(twoSorts.body.error, /composite index/);
   assert.equal(tooMany.status, 400);
   assert.match(tooMany.body.error, /limit/);
+});
+
+test("an index created through the service lets a page order by two fields", async (t) => {
+  const { api } = await openTemporaryDatabase(t);
+  const service = defineDatabaseService(api);
+  const params = { collection: "products" };
+  const createIndex = routeOf(service, "database.indexes.create");
+  const page = routeOf(service, "database.documents.page");
+
+  await call(routeOf(service, "database.collections.create"), { service: api, body: { tenantId: "acme", name: "products" } });
+  for (const [id, category, price] of [["a", "tea", 3], ["b", "coffee", 5], ["c", "tea", 1]]) {
+    await call(routeOf(service, "database.documents.insert"), {
+      service: api, params, body: { tenantId: "acme", id, data: { category, price } },
+    });
+  }
+  const orderBy = [{ path: "category" }, { path: "price", direction: "desc" }];
+
+  const refused = await call(page, { service: api, params, body: { tenantId: "acme", orderBy } });
+  const created = await call(createIndex, {
+    service: api, params, body: { tenantId: "acme", name: "by_category_price", fields: orderBy },
+  });
+  const invalid = await call(createIndex, { service: api, params, body: { tenantId: "acme", name: "none", fields: [] } });
+  const taken = await call(createIndex, {
+    service: api, params, body: { tenantId: "acme", name: "by_category_price", fields: [{ path: "price" }] },
+  });
+  const ordered = await call(page, { service: api, params, body: { tenantId: "acme", orderBy } });
+  const dropped = await call(routeOf(service, "database.indexes.drop"), {
+    service: api, params: { ...params, name: "by_category_price" }, query: "tenantId=acme",
+  });
+
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /composite index/);
+  assert.equal(created.status, 201);
+  assert.equal(created.body.state, "ready");
+  assert.equal(invalid.status, 400);
+  assert.match(invalid.body.error, /1 to 8 fields/);
+  assert.equal(taken.status, 409);
+  assert.deepEqual(ordered.body.documents.map((document) => document.id), ["b", "a", "c"]);
+  assert.deepEqual(dropped.body, { dropped: true });
 });

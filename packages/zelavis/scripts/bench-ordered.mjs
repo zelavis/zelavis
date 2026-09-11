@@ -73,6 +73,24 @@ await withStore((store) => Effect.gen(function* () {
   }
   const run = (effect) => () => Effect.runPromise(effect);
   const q = (input) => ({ collection: "items", ...input });
+  // The one query both an index and a single field's lens can answer: first
+  // without the index, then with it.
+  const seek = q({ where: [{ path: "category", value: 3 }], orderBy: [{ path: "price", direction: "desc" }], limit: 50 });
+  const seekByLens = yield* Effect.promise(() => median(5, run(docs.findPage(seek))));
+  const built = performance.now();
+  yield* docs.createIndex({ collection: "items", name: "by_price_name", fields: [{ path: "price" }, { path: "name" }] });
+  yield* docs.createIndex({
+    collection: "items", name: "by_category_price",
+    fields: [{ path: "category" }, { path: "price", direction: "desc" }],
+  });
+  const buildMs = performance.now() - built;
+  const walkTwo = (pages) => Effect.gen(function* () {
+    let after;
+    for (let p = 0; p < pages; p++) {
+      const page = yield* docs.findPage(q({ orderBy: [{ path: "price" }, { path: "name" }], limit: 50, ...(after ? { after } : {}) }));
+      after = page.next;
+    }
+  });
   const walkPages = (pages, direction) => Effect.gen(function* () {
     let after;
     for (let p = 0; p < pages; p++) {
@@ -88,7 +106,10 @@ await withStore((store) => Effect.gen(function* () {
     ["findMany, category = 3 and price < 50%", run(docs.findMany(q({ where: [{ path: "category", value: 3 }, { path: "price", op: "lt", value: 500000 }] })))],
     ["findMany, price < 1% of range", run(docs.findMany(q({ where: [{ path: "price", op: "lt", value: 10000 }] })))],
     ["findMany, price < 50% of range", run(docs.findMany(q({ where: [{ path: "price", op: "lt", value: 500000 }] })))],
-    ["findMany, first 50 by two fields (sorted in memory)", run(docs.findMany(q({ orderBy: [{ path: "price" }, { path: "name" }], limit: 50 })))],
+    ["findPage, first 50 by price then name (index)", run(docs.findPage(q({ orderBy: [{ path: "price" }, { path: "name" }], limit: 50 })))],
+    ["findPage, 20 pages of 50 by price then name (index)", run(walkTwo(20))],
+    ["findPage, category = 3, first 50 by price desc (index)", run(docs.findPage(seek))],
+    ["findMany, first 50 by category then name (in memory)", run(docs.findMany(q({ orderBy: [{ path: "category" }, { path: "name" }], limit: 50 })))],
   ];
   const live = [];
   for (const [, fn] of rows) live.push(yield* Effect.promise(() => median(5, fn)));
@@ -100,4 +121,6 @@ await withStore((store) => Effect.gen(function* () {
   rows.forEach(([label], i) => {
     console.log(`  ${label.padEnd(52)} ${live[i].toFixed(1).padStart(7)}ms ${sealed[i].toFixed(1).padStart(7)}ms`);
   });
+  console.log(`\n  category = 3, first 50 by price desc, before its index: ${seekByLens.toFixed(1)}ms (price's lens, filtered)`);
+  console.log(`  building both indexes over ${N} documents: ${(buildMs / 1000).toFixed(1)}s`);
 }));
