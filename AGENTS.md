@@ -348,7 +348,10 @@ Key rules:
   directly leaves whatever a blob still claims. Sealing merges rather than
   rebuilds, touching only the segments a live posting or tombstone falls in, so
   the blobs accumulate across seals; `reindexLenses` is what re-derives them
-  from the manifests when that accumulation needs checking.
+  from the manifests when that accumulation needs checking. After its first
+  full sweep a seal reads only the groups marked dirty since, and the same
+  helpers write those marks — a posting written around them is never sealed
+  until the next reindex.
 - One transaction is one batch, and that is the whole durability story: a
   killed process loses no commit that returned, a write-ahead log truncated by
   a power cut costs a suffix rather than leaving holes, and an interrupted

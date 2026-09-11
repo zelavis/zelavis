@@ -132,7 +132,12 @@ export interface ObjectStoreApi {
    * from one leaves a tombstone.
    */
   readonly sealPostings: Effect.Effect<
-    { readonly segments: number; readonly postings: number },
+    {
+      readonly segments: number;
+      readonly postings: number;
+      /** Live postings the seal read: every one on a sweep, only changed groups after it. */
+      readonly examined: number;
+    },
     DbError
   >;
 

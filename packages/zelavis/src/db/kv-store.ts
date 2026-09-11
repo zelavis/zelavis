@@ -8,7 +8,7 @@ import {
   identityBySeqKey, identityKey, manifestKey, measureKey, measurePrefix,
   compareKeys, metaKey, payloadKey, positionOf, segmentIndexOf, segmentKey, segmentPrefix,
   seqOf, Tag, termKey, termPrefix, tombstoneKey, tombstonePrefix,
-  decodeOrderedKey, inPrefixRange, orderedColumnPrefix, orderedKey, orderedKindRange,
+  decodeOrderedKey, dirtyKey, inPrefixRange, orderedColumnPrefix, orderedKey, orderedKindRange,
   orderedValuePrefix, prefixEnd, type OrderedValue,
 } from "./keys.js";
 import type { KvEngine, KvScanOptions, KvWrite } from "./kv.js";
@@ -80,6 +80,14 @@ const META_COMPACTED_TO = "compacted_to";
  */
 const META_SEALED = "sealed";
 
+/**
+ * Set once a seal has swept every live posting; cleared by a reindex or a
+ * rebuild. A seal after a sweep visits only the groups marked dirty since. A
+ * seal before one — or after a sweep that was cut short — sweeps again,
+ * because a posting written before the store was sealed carries no mark.
+ */
+const META_SWEPT = "swept";
+
 /** Writes per batch while sealing, which also bounds the memory it holds. */
 const SEAL_BATCH = 4096;
 
@@ -92,7 +100,7 @@ const SEAL_BATCH = 4096;
  * history rather than the only way back to a working index.
  */
 const DERIVED_TAGS = [
-  Tag.Term, Tag.Column, Tag.Measure, Tag.Edge, Tag.Segment, Tag.Tombstone, Tag.Ordered,
+  Tag.Term, Tag.Column, Tag.Measure, Tag.Edge, Tag.Segment, Tag.Tombstone, Tag.Ordered, Tag.Dirty,
 ] as const;
 
 /**
@@ -274,9 +282,21 @@ export const storeOverKv = (
    * The live key goes; a blob cannot be edited, so once anything has been
    * sealed the removal leaves a tombstone for the read to subtract instead.
    */
+  /**
+   * Mark the seal group a posting belongs to as changed since the last seal.
+   * One key per group, overwritten rather than added to, however many of its
+   * postings change.
+   */
+  const markDirty = (view: View, key: Uint8Array): void => {
+    view.put(dirtyKey(key.subarray(0, key.length - 4), segmentOf(seqOf(key))), EMPTY);
+  };
+
   const dropPosting = (view: View, key: Uint8Array, sealed: boolean): void => {
     view.del(key);
-    if (sealed) view.put(tombstoneKey(key), EMPTY);
+    if (sealed) {
+      view.put(tombstoneKey(key), EMPTY);
+      markDirty(view, key);
+    }
   };
 
   /** Write a posting, cancelling any tombstone a previous version left. */
@@ -288,7 +308,10 @@ export const storeOverKv = (
     // Without this the tombstone written a moment ago would hide the posting
     // just written — the batch is keyed, so the later call is the one that
     // lands.
-    if (sealed) view.del(tombstoneKey(key));
+    if (sealed) {
+      view.del(tombstoneKey(key));
+      markDirty(view, key);
+    }
   };
 
   const unproject = (view: View, seq: Seq, sealed: boolean) =>
@@ -872,6 +895,7 @@ export const storeOverKv = (
     }
     // The blobs went with the rest, so what is left is an unsealed live tier.
     view.put(metaKey(META_SEALED), u32(0));
+    view.put(metaKey(META_SWEPT), u32(0));
     let count = 0;
     const manifests: Array<{ seq: Seq; manifest: IndexManifest }> = [];
     yield* Stream.runForEach(engine.scan(Uint8Array.from([Tag.Manifest])), (entry) =>
@@ -918,6 +942,7 @@ export const storeOverKv = (
       // into an unsealed store: no blob can claim a posting, and no tombstone
       // is needed for one.
       view.put(metaKey(META_SEALED), u32(0));
+    view.put(metaKey(META_SWEPT), u32(0));
       for (const { event } of stored) {
         if (event.kind === "put") {
           yield* project(view, asSeq(event.seq), event.version, bodyOf(event),
@@ -964,13 +989,23 @@ export const storeOverKv = (
      * read the blob as it was before the additions would write back a blob
      * missing them.
      *
+     * After the first complete seal, a seal visits only the groups written
+     * since, which writes mark as they go (`markDirty`). A value an earlier seal
+     * declined as too sparse is not read again until it changes — what keeps a
+     * re-seal proportional to what changed. The first seal, and the first after
+     * a reindex or a rebuild, sweeps every live posting instead, and only a
+     * sweep that finishes counts as one: the flag saying so is written last.
+     *
      * The counts describe the segments this seal wrote, not what it added: a
-     * merged segment reports everything it now holds.
+     * merged segment reports everything it now holds. `examined` is the live
+     * postings the seal read.
      */
     sealPostings: exclusive(Effect.gen(function* () {
+      const swept = (yield* readMeta(META_SWEPT)) > 0;
       // Written before the first blob, so a removal arriving mid-seal writes a
       // tombstone it might not have needed rather than skipping one it did.
       yield* engine.write([{ op: "put", key: metaKey(META_SEALED), value: u32(1) }]);
+      let examined = 0;
 
       const buffer = new SegmentBuffer();
       let batch: KvWrite[] = [];
@@ -1048,17 +1083,45 @@ export const storeOverKv = (
           }
         });
 
-      // Live postings fold into the blob that covers them; blobs no live
-      // posting touches are never read, which is what makes a periodic seal
-      // proportional to what changed rather than to what is stored.
-      for (const tag of SEALABLE_TAGS) {
-        yield* Stream.runForEach(engine.scan(Uint8Array.from([tag])), (entry) =>
-          Effect.gen(function* () {
-            const id = seqOf(entry.key);
-            yield* openFor(entry.key, id);
-            buffer.add(id % SEGMENT_SPAN);
-            gathered.push(new Uint8Array(entry.key));
-          }));
+      const take = (key: Uint8Array) =>
+        Effect.gen(function* () {
+          const id = seqOf(key);
+          yield* openFor(key, id);
+          buffer.add(id % SEGMENT_SPAN);
+          gathered.push(new Uint8Array(key));
+          examined += 1;
+        });
+
+      if (!swept) {
+        // A sweep: every live posting folds into the blob that covers it, and
+        // blobs no live posting touches are never read.
+        for (const tag of SEALABLE_TAGS) {
+          yield* Stream.runForEach(engine.scan(Uint8Array.from([tag])), (entry) => take(entry.key));
+          flush();
+        }
+      } else {
+        // Only the groups written since the last seal. Each mark is cleared in
+        // the batch that carries its group's writes — the batch is only cut
+        // where a group ends — so an interrupted seal redoes exactly the
+        // groups it did not finish.
+        const marks = [...(yield* Stream.runCollect(engine.scan(Uint8Array.from([Tag.Dirty]))))]
+          .map((entry) => new Uint8Array(entry.key));
+        for (const mark of marks) {
+          const livePrefix = mark.subarray(1, mark.length - 4);
+          const base = readU32(mark, mark.length - 4) * SEGMENT_SPAN;
+          const at = (seq: number) => {
+            const key = new Uint8Array(livePrefix.length + 4);
+            key.set(livePrefix);
+            key.set(u32(seq), livePrefix.length);
+            return key;
+          };
+          const to = base + SEGMENT_SPAN > 0xffffffff ? undefined : at(base + SEGMENT_SPAN);
+          yield* Stream.runForEach(
+            engine.scan(livePrefix, scanOptions(at(base), to, false)),
+            (entry) => take(entry.key),
+          );
+          batch.push({ op: "delete", key: mark });
+        }
         flush();
       }
       // Both passes can reach the same segment, and pass two rewrites whatever
@@ -1083,8 +1146,17 @@ export const storeOverKv = (
         }));
       flush();
 
+      if (!swept) {
+        // A sweep covers every mark written since the store was sealed, and it
+        // is only a sweep once it has finished: the flag goes last.
+        yield* Stream.runForEach(engine.scan(Uint8Array.from([Tag.Dirty])), (entry) =>
+          Effect.sync(() => {
+            batch.push({ op: "delete", key: new Uint8Array(entry.key) });
+          }));
+        batch.push({ op: "put", key: metaKey(META_SWEPT), value: u32(1) });
+      }
       if (batch.length > 0) yield* engine.write(batch);
-      return { segments, postings };
+      return { segments, postings, examined };
     })),
 
     /**
