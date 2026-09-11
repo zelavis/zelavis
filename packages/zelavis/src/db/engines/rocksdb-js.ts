@@ -176,7 +176,8 @@ export const makeRocksdbJsEngine = (
           Stream.fromAsyncIterable(
             (async function* (): AsyncGenerator<Arr.NonEmptyArray<KvEntry>> {
               const { lo, hi, empty } = scanRange(prefix, options);
-              if (empty) return;
+              let left = options?.limit ?? Infinity;
+              if (empty || left <= 0) return;
               const reverse = options?.reverse === true;
               // An empty bound is omitted rather than passed. The binding
               // rejects a zero-length key outright, and this store asks for
@@ -229,6 +230,10 @@ export const makeRocksdbJsEngine = (
                       key: new Uint8Array(step.value.key),
                       value: new Uint8Array(step.value.value),
                     });
+                    if (--left <= 0) {
+                      finished = true;
+                      break;
+                    }
                   }
                   if (Arr.isArrayNonEmpty(batch)) yield batch;
                   if (finished) return;

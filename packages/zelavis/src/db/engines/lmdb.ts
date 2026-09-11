@@ -98,11 +98,16 @@ export const makeLmdbEngine = (
             Effect.try({
               try: () => {
                 const { lo, hi, empty } = scanRange(prefix, options);
-                if (empty) return [];
+                const limit = options?.limit ?? Infinity;
+                if (empty || limit <= 0) return [];
                 if (options?.reverse !== true) {
                   const range = db.getRange(hi === undefined ? { start: lo } : { start: lo, end: hi });
                   return (function* (): Generator<KvEntry> {
-                    for (const entry of range) yield { key: entry.key, value: entry.value };
+                    let left = limit;
+                    for (const entry of range) {
+                      yield { key: entry.key, value: entry.value };
+                      if (--left <= 0) return;
+                    }
                   })();
                 }
                 // In reverse the binding reads `start` as an inclusive upper
@@ -114,10 +119,12 @@ export const makeLmdbEngine = (
                   hi === undefined ? { reverse: true } : { start: hi, reverse: true },
                 );
                 return (function* (): Generator<KvEntry> {
+                  let left = limit;
                   for (const entry of range) {
                     if (hi !== undefined && compareKeys(entry.key, hi) >= 0) continue;
                     if (compareKeys(entry.key, lo) < 0) return;
                     yield { key: entry.key, value: entry.value };
+                    if (--left <= 0) return;
                   }
                 })();
               },

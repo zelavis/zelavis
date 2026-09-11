@@ -113,6 +113,17 @@ for (const [engine, open] of engines) {
       assert.deepEqual(yield* walk(docs, { where: [{ path: "price", value: 999 }] }), [[]]);
     })));
 
+  test(`${engine}: a page can hand back the cursor after each of its documents`, (t) =>
+    withDocs(t, (docs) => Effect.gen(function* () {
+      const orderBy = [{ path: "price" }];
+      const page = yield* docs.findPage({ collection: "items", orderBy, limit: 4, cursors: true });
+      assert.equal(page.cursors.length, 4);
+      assert.equal(page.cursors[3], page.next, "the last one is the page's own next");
+      const resumed = yield* docs.findPage({ collection: "items", orderBy, limit: 3, after: page.cursors[1] });
+      assert.deepEqual(ids(resumed.documents), ASCENDING.slice(2, 5));
+      assert.equal((yield* docs.findPage({ collection: "items", limit: 2 })).cursors, undefined);
+    })));
+
   test(`${engine}: a page cursor continues only its own read`, (t) =>
     withDocs(t, (docs) => Effect.gen(function* () {
       yield* docs.createCollection({ name: "other" });

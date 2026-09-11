@@ -65,6 +65,13 @@ export interface KvScanOptions {
   readonly to?: Uint8Array;
   /** Highest key first. The same entries as ascending, in the other order. */
   readonly reverse?: boolean;
+  /**
+   * At most this many entries, the first in scan order. A reader that will stop
+   * early says so here, so the engine stops at the source — a SQL `LIMIT`, an
+   * iterator it closes — rather than filling a buffer the reader throws away:
+   * a stream pulls an iterable thousands of entries at a time.
+   */
+  readonly limit?: number;
 }
 
 /**

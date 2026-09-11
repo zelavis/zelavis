@@ -97,10 +97,10 @@ export const sqliteKvEngineOver = (
     del: db.prepare("DELETE FROM kv WHERE key = ?"),
   };
 
-  const SCAN_TO = "SELECT key, value FROM kv WHERE key >= ? AND key < ? ORDER BY key";
-  const SCAN_FROM = "SELECT key, value FROM kv WHERE key >= ? ORDER BY key";
-  const SCAN_TO_DESC = "SELECT key, value FROM kv WHERE key >= ? AND key < ? ORDER BY key DESC";
-  const SCAN_FROM_DESC = "SELECT key, value FROM kv WHERE key >= ? ORDER BY key DESC";
+  const SCAN_TO = "SELECT key, value FROM kv WHERE key >= ? AND key < ? ORDER BY key LIMIT ?";
+  const SCAN_FROM = "SELECT key, value FROM kv WHERE key >= ? ORDER BY key LIMIT ?";
+  const SCAN_TO_DESC = "SELECT key, value FROM kv WHERE key >= ? AND key < ? ORDER BY key DESC LIMIT ?";
+  const SCAN_FROM_DESC = "SELECT key, value FROM kv WHERE key >= ? ORDER BY key DESC LIMIT ?";
 
   const fail = (op: string) => (cause: unknown) => new StoreError({ op, cause });
 
@@ -128,10 +128,12 @@ export const sqliteKvEngineOver = (
             // panicking inside its native layer. Single-shot statements stay
             // cached; only the iterating ones are rebuilt.
             const reverse = options?.reverse === true;
+            // SQLite reads a negative limit as none.
+            const limit = options?.limit ?? -1;
             const rows =
               hi === undefined
-                ? db.prepare(reverse ? SCAN_FROM_DESC : SCAN_FROM).iterate(toKey(lo))
-                : db.prepare(reverse ? SCAN_TO_DESC : SCAN_TO).iterate(toKey(lo), toKey(hi));
+                ? db.prepare(reverse ? SCAN_FROM_DESC : SCAN_FROM).iterate(toKey(lo), limit)
+                : db.prepare(reverse ? SCAN_TO_DESC : SCAN_TO).iterate(toKey(lo), toKey(hi), limit);
             return (function* (): Generator<KvEntry> {
               for (const row of rows as Iterable<{ key: unknown; value: unknown }>) {
                 yield { key: fromKey(row.key), value: toBytes(row.value) };

@@ -934,8 +934,22 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   it inside its transaction for the collection's indexes, on top of the check
   an insert makes before it: inserts without an index went from 4.7k/s to
   4.3k/s.
-- [ ] Order and page across shards in `db.scatter`: merge each shard's ordered
-  run by value, with a cursor per shard, rather than by shard and identifier.
+- [x] Order and page across shards in `db.scatter`. `scatter.findMany` merges
+  every tenant's ordered run by value (tenant by tenant among equals) instead
+  of re-sorting by tenant and id, reading each tenant only as far as `limit`.
+  `scatter.findPage` pages that merge with a cursor holding one document
+  cursor per tenant: it reads a share of the page from each and tops up the
+  ones the merge drains, and a continued read keeps the tenants and order it
+  began with. Across 20 tenants on 4 shards a page of 50 takes 5 ms whether
+  they hold 1,000 documents each or 5,000, where gathering and sorting takes
+  0.37 s and 1.9 s. `findPage({ cursors: true })` hands back the cursor after
+  every document, and `compareDocuments` is the order both use.
+- [x] A scan the store stops early says so. `KvScanOptions.limit` reaches the
+  engine — a SQL `LIMIT`, an iterator closed after that many — because a
+  stream pulls an iterable 4,096 entries at a time, so `Stream.take(256)` over
+  a scan read up to 4,096 rows. A first page of 50 by price over 50k documents
+  went from 6.6 ms to 0.6 ms, and a scatter page stopped growing with the
+  tenants' size.
 - [ ] Unique constraints committed in the same batch as the document, reference
   constraints, check constraints, and version preconditions beyond
   `expectedVersion`.
