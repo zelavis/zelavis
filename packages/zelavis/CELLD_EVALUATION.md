@@ -8,7 +8,7 @@ Status: architecture evaluation for roadmap item P0-b. The one idea adopted now,
 
 This evaluation reads celld's documented protocol (`docs/guarantees.md`, `limitations.md`, `security.md`, `testing.md`) and checks its central claims against the source: `crates/celld/bucket.rs`, `ownership_store.rs`, `actor.rs`, `wake.rs`, `pool.rs` and `js/r2_ops.rs`, `crates/logic` and `crates/ltx`. It compares each mechanism with what Zelavis does today, citing code, and decides how Zelavis should relate to celld.
 
-It does not run celld. A fleet needs a bucket with conditional writes, and the numbers below are celld's own published measurements, marked as such. Reproducing them is listed at the end as a follow-up.
+It also ran celld in a local lab against MinIO; see "Measured in a local lab". The operational table keeps celld's own published figures, marked as such, and the lab section sets what this machine measured beside them.
 
 ## What celld is
 
@@ -88,7 +88,7 @@ Running Zelavis's store inside celld cells would give up the cross-model interse
 | Option | Verdict |
 |---|---|
 | Reference and inspiration | **Yes, now.** See "What to adopt". |
-| Deployment or runtime backend | **Later, conditionally.** It fits as `src/backends/celld`, a `projectRuntime` driver for Workers-compatible Projects. The conditions for a prototype: (1) Fabric places and moves celld nodes as the Project's allocation, and celld never places anything outside it; (2) one fleet and one bucket credential per Project, since a bucket credential controls a whole fleet (`security.md`); (3) the Zelavis Gateway terminates TLS, and peer traffic (plaintext HTTP with HMAC) stays on a private network or an encrypted overlay; (4) an Agent supervises the process under celld's restart rules; (5) no celld or Cloudflare type appears in a public Zelavis contract; (6) celld has left alpha. |
+| Deployment or runtime backend | **Later, conditionally.** It fits as `src/backends/celld`, a `projectRuntime` driver for Workers-compatible Projects. The conditions for a prototype: (1) Fabric places and moves celld nodes as the Project's allocation, and celld never places anything outside it; (2) one fleet and one bucket credential per Project, since a bucket credential controls a whole fleet (`security.md`); (3) the Zelavis Gateway terminates TLS, and peer traffic (plaintext HTTP with HMAC) stays on a private network or an encrypted overlay; (4) an Agent supervises the process under celld's restart rules; (5) no celld or Cloudflare type appears in a public Zelavis contract; (6) celld has left alpha; (7) the supervising Agent detects a stalled node and kills it, because a stalled owner keeps its cells until it resumes or dies (see the lab). |
 | External compatible service | **No added value.** celld's R2 is its own bucket under a prefix, so Zelavis should talk to the bucket through `ZelavisFileStorage` instead of through celld. |
 | Storage engine (`KvEngine`) | **No.** celld isn't an ordered key-value engine, and embedding its cells as shards forks the source of truth. |
 | Platform scheduler | **No.** It would be a second placement authority whose ownership can disagree with Fabric's, which `AGENTS.md` rules out. |
@@ -111,6 +111,27 @@ These are celld's published numbers (`testing.md`), measured by celld and not re
 | Supervision | A restart without an attempt limit, spaced at least one lease lifetime. Self-fence exits with code 3. |
 | Security | No TLS; peer HTTP is plaintext with an HMAC; application code is trusted; one tenant per fleet. |
 
+## Measured in a local lab
+
+The lab ran on 2026-09-11 with Docker Desktop on an Apple Silicon Mac (8 CPUs and 8 GB for Docker). It used celld v0.4.1 from the official image (`ghcr.io/denoland/celld`, digest `sha256:ce8bbc3c…`) and MinIO `RELEASE.2025-09-07T16-13-09Z` on the same Docker network. The application was the `counter` example, where every request reads a value, increments it and writes it back, so every request is a durable write. Requests came sequentially from the host. Every number here also recorded the counter's value, so a write lost or repeated across an event shows up as a gap.
+
+| | Measured | celld's published figure |
+|---|---|---|
+| Storage checks | `celld diagnose`: all four conditional-write steps pass. Zelavis `probeFileStorageGuarantees`: conformant in 60 ms. By hand: a re-create, a stale update and an `ifMatch` on a deleted object are all rejected. | — |
+| Write, one node (bucket proof) | p50 4.0 ms, p90 5.4 ms, p99 9.1 ms; 200 writes, no gaps | about 90 ms to a region-local store, about 600 ms to a distant one |
+| Write, two nodes (follower proof) | p50 3.5 ms, p90 4.3 ms, p99 6.8 ms; 200 writes, no gaps | about 25 ms |
+| First request to a new cell | 45–47 ms | — |
+| Cold activation after idle eviction | 39.5, 52.9 and 48.8 ms (three cells, each confirmed evicted first); warm p50 4.7–6.3 ms; every counter continued | not yet published |
+| Crashed owner (`SIGKILL`) | served by the survivor after 8.2 s; the epoch advanced 1 → 2; the survivor sealed the dead session's node log (290 entries) before serving; the counter continued at exactly the next value | about 11 s at the tail, with 2 of 10 nodes stopped |
+| Frozen owner (`docker pause`, 3 min) | unavailable for the whole freeze: 56 requests to the other node, none answered within 3 s. On resume, the owner self-fenced within a second (`SELF-FENCE: node lease not renewed within TTL`, exit 3) and the survivor served the next value. | a node checks the owner's published lease expiry when it routes each request |
+| Footprint | about 80–95 MB of memory per idle node, about 1% CPU | — |
+
+**Reading it:**
+
+- **Correctness held every time.** No acknowledged write was lost or repeated across a crash, an eviction or a freeze. The protocol's own overhead is small when the store is close.
+- **The lab can't show the follower proof's advantage.** MinIO sits one network hop away, so a bucket proof costs almost what a follower fsync does. The cost that matters in production, a round trip to a remote bucket, needs a remote bucket to measure.
+- **A stalled owner isn't taken over while it stays stalled.** A crash is recovered in seconds. A node that is alive but frozen, which is what a paused VM or a long garbage-collection pause looks like, holds its cells until it resumes (and then fences) or dies. The docs say a node checks the owner's published lease expiry when it routes each request, which suggests takeover after about 10 s. The lab didn't see that within three minutes. That makes killing a stalled node the supervisor's job, and it's now condition 7 for a prototype.
+
 ## What this evaluation found in Zelavis
 
 1. **Object storage accepted any "S3-compatible" label.** `createS3CompatibleFileStorage` could not express a conditional write, so nothing could detect a store that ignores one. *Addressed in this change:* conditional create and overwrite in the file-storage contract, and a probe that checks them.
@@ -129,5 +150,7 @@ These are celld's published numbers (`testing.md`), measured by celld and not re
 - [ ] Make the file-backed service registry write conditionally.
 - [ ] Model authoritative placements as `{owner, epoch}` compare-and-swap records when they move into the System Store.
 - [ ] Self-fence Agents on an unrenewed lease, and carry a fencing token into their side effects.
-- [ ] Reproduce celld's latency, cold-activation and recovery numbers against MinIO and one qualified provider before any prototype.
+- [x] Reproduce celld's latency, cold-activation and failure behavior against MinIO (the lab above).
+- [ ] Repeat the lab against one qualified provider, where a bucket round trip has a real cost, before any prototype.
+- [ ] Report to celld that a stalled owner's cells stay unavailable until it resumes or dies.
 - [ ] Re-evaluate the runtime-backend option when celld leaves alpha.
