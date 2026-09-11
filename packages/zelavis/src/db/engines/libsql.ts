@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { Effect, type Scope } from "effect";
 import { StoreError } from "../errors.js";
 import type { KvEngine } from "../kv.js";
-import { claimGeneration, storeOverKv } from "../kv-store.js";
+import { openStoreOverKv } from "../kv-store.js";
 import { sqliteKvEngineOver, type SqliteHandle } from "./sqlite-kv.js";
 import type { PartitionKey } from "../model.js";
 import type { ObjectStoreApi } from "../store.js";
@@ -118,5 +118,5 @@ export const makeLibsqlStore = (
 ): Effect.Effect<ObjectStoreApi, StoreError, Scope.Scope> =>
   Effect.gen(function* () {
     const engine = yield* makeLibsqlEngine(partition, options);
-    return storeOverKv(partition, engine, yield* claimGeneration(engine));
+    return yield* openStoreOverKv(partition, engine);
   });

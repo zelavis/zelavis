@@ -11,7 +11,9 @@ import { join } from "node:path";
 import test from "node:test";
 import { Effect, Schema, Stream } from "effect";
 import { and, asSeq, between, equals, gt, gte, lt, lte, or, Query } from "../dist/db/index.js";
-import { makeMemoryStore } from "../dist/db/engines/memory-kv.js";
+import { makeMemoryStore, memoryKvEngine } from "../dist/db/engines/memory-kv.js";
+import { metaKey, Tag } from "../dist/db/keys.js";
+import { openStoreOverKv } from "../dist/db/kv-store.js";
 import { engineAvailable } from "./_engine-available.mjs";
 
 const enc = new TextEncoder();
@@ -30,7 +32,7 @@ const COUNT = 30;
 const priceOf = (seq) => (seq * 7) % 11;
 const regionOf = (seq) => (seq % 2 === 1 ? "eu" : "us");
 
-const manifest = (ordered, columns = []) => ({ terms: [], columns, measures: [], edges: [], ordered });
+const manifest = (ordered, columns = []) => ({ terms: [], columns: [...columns, ...ordered], measures: [], edges: [] });
 const putPrice = (store, seq, price) =>
   store.transact((txn) => txn.put(asSeq(seq), enc.encode(`{"seq":${seq}}`),
     manifest([["price", price]], [["region", regionOf(seq)]])));
@@ -119,6 +121,37 @@ for (const [engine, available, open] of engines) {
       yield* check;
     })));
 
+  test(`${engine}: ranges, pages, equality and extent agree across sealed and live postings`, { skip }, (t) =>
+    withStore(t, (store) => Effect.gen(function* () {
+      yield* seed(store);
+      yield* store.sealPostings;
+      // After the seal: move a sealed value, remove one, add a live one, and
+      // write one again unchanged, which puts its posting in both tiers.
+      yield* putPrice(store, 1, 50);
+      yield* store.transact((txn) => txn.retract(asSeq(2)));
+      yield* putPrice(store, 31, 4);
+      yield* putPrice(store, 3, priceOf(3));
+      const current = new Map(Array.from({ length: COUNT }, (_, i) => [i + 1, priceOf(i + 1)]));
+      current.set(1, 50);
+      current.delete(2);
+      current.set(31, 4);
+      const rows = [...current].sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+      const seqsWhere = (keep) => rows.filter(([, price]) => keep(price)).map(([seq]) => seq).sort((a, b) => a - b);
+      const check = Effect.gen(function* () {
+        assert.deepEqual(yield* readAll(store, { column: "price", limit: 4 }), rows);
+        assert.deepEqual(yield* readAll(store, { column: "price", direction: "desc", limit: 4 }), [...rows].reverse());
+        assert.deepEqual(yield* resolved(store, between("price", 3, 6)), seqsWhere((p) => p >= 3 && p <= 6));
+        assert.deepEqual(yield* resolved(store, equals("price", 4)), seqsWhere((p) => p === 4));
+        assert.deepEqual(yield* resolved(store, gt("price", 40)), [1]);
+        assert.deepEqual(yield* store.extent("price"),
+          { min: Math.min(...current.values()), max: Math.max(...current.values()) });
+      });
+      yield* check;
+      // A second seal folds the tombstones and the live postings into the blobs.
+      yield* store.sealPostings;
+      yield* check;
+    })));
+
   test(`${engine}: extent is a column's lowest and highest value, filtered or not`, { skip }, (t) =>
     withStore(t, (store) => Effect.gen(function* () {
       assert.deepEqual(yield* store.extent("price"), {});
@@ -168,3 +201,19 @@ test("a range query is data: it round-trips through its schema", () => {
   const decoded = Schema.decodeUnknownSync(Query)(JSON.parse(JSON.stringify(query)));
   assert.deepEqual(decoded, query);
 });
+
+test("a store written in an older layout is re-indexed when it opens", () =>
+  Effect.runPromise(Effect.gen(function* () {
+    const engine = memoryKvEngine();
+    yield* seed(yield* openStoreOverKv("acme", engine));
+    // An older layout: no format marker, and a posting under the retired equality tag.
+    yield* engine.write([
+      { op: "delete", key: metaKey("format") },
+      { op: "put", key: Uint8Array.of(Tag.Column, 1, 2, 3), value: new Uint8Array(0) },
+    ]);
+    const reopened = yield* openStoreOverKv("acme", engine);
+    const stray = [...(yield* Stream.runCollect(engine.scan(Uint8Array.of(Tag.Column))))];
+    assert.equal(stray.length, 0, "the retired lens was left behind");
+    assert.deepEqual(yield* resolved(reopened, between("price", 3, 6)), where((s) => priceOf(s) >= 3 && priceOf(s) <= 6));
+    assert.deepEqual(yield* resolved(reopened, equals("region", "eu")), where((s) => regionOf(s) === "eu"));
+  })));

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  columnKey, columnPrefix, compareKeys, compareOrderedValues, decodeIdentity, decodeOrderedKey,
+  compareKeys, compareOrderedValues, decodeIdentity, decodeOrderedKey,
   dstOf, edgeKey, edgePrefix, identityKey, inPrefixRange, orderedColumnPrefix, orderedKey,
   orderedValuePrefix, prefixEnd, seqOf, termKey, termPrefix,
 } from "../dist/db/keys.js";
@@ -52,9 +52,9 @@ test("lenses occupy disjoint ranges", () => {
   // A scan of one lens must never reach another, which is what replaces
   // column families on an engine that has none.
   const term = termKey("region", "eu", 1);
-  const column = columnKey("region", "eu", 1);
+  const column = orderedKey("region", "eu", 1);
   assert.notEqual(term[0], column[0], "different tags");
-  assert.equal(inPrefixRange(term, columnPrefix("region", "eu")), false);
+  assert.equal(inPrefixRange(term, orderedValuePrefix("region", "eu")), false);
   assert.equal(inPrefixRange(column, termPrefix("region", "eu")), false);
 });
 
@@ -94,7 +94,7 @@ test("scanning a prefix selects exactly its members", () => {
   const all = [
     termKey("title", "atlas", 1), termKey("title", "atlas", 2),
     termKey("title", "atlantic", 3), termKey("title", "beacon", 4),
-    termKey("body", "atlas", 5), columnKey("title", "atlas", 6),
+    termKey("body", "atlas", 5), orderedKey("title", "atlas", 6),
   ];
   const prefix = termPrefix("title", "atlas");
   const end = prefixEnd(prefix);
@@ -182,7 +182,6 @@ test("equal values tie-break by identifier, and the lens keeps to its own range"
   assert.equal(inPrefixRange(orderedKey("c", 5, 1), orderedColumnPrefix("c")), true);
   assert.equal(inPrefixRange(orderedKey("cd", 5, 1), orderedColumnPrefix("c")), false);
   assert.equal(inPrefixRange(termKey("c", "5", 1), orderedColumnPrefix("c")), false);
-  assert.equal(inPrefixRange(columnKey("c", "5", 1), orderedColumnPrefix("c")), false);
 });
 
 test("decoding a key held in a shared buffer reads the key and leaves it alone", () => {

@@ -14,7 +14,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Effect, Stream } from "effect";
 import { and, asSeq, equals, term } from "../dist/db/index.js";
-import { columnKey, compareKeys, eventKey, payloadKey, termKey } from "../dist/db/keys.js";
+import { compareKeys, eventKey, orderedKey, payloadKey, termKey } from "../dist/db/keys.js";
 import { FORMAT_FILE, makeRocksdbJsEngine, makeRocksdbJsStore } from "../dist/db/engines/rocksdb-js.js";
 import { engineAvailable } from "./_engine-available.mjs";
 
@@ -66,7 +66,7 @@ test("rocksdb-js: the key shapes the store writes survive byte for byte, in its 
     termKey("title", "a\u0001b", 3),
     termKey("title", "a", 4),
     termKey("title", "ab", 5),
-    columnKey("region", "ÿþ", 6),
+    orderedKey("region", "ÿþ", 6),
     payloadKey(0xfffffffe),
     eventKey(1),
     eventKey(256),

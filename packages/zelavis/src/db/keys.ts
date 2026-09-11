@@ -23,6 +23,7 @@ export const Tag = {
   Payload: 0x01,
   Manifest: 0x02,
   Term: 0x03,
+  /** Retired: equality is answered by `Ordered`. A reindex drops what older stores hold here. */
   Column: 0x04,
   Measure: 0x05,
   Edge: 0x06,
@@ -333,19 +334,6 @@ export const termPrefix = (field: string, term: string): Uint8Array =>
   build(Tag.Term, (out) => {
     writeString(out, field);
     writeString(out, term);
-  });
-
-export const columnKey = (column: string, value: string, seq: number): Uint8Array =>
-  build(Tag.Column, (out) => {
-    writeString(out, column);
-    writeString(out, value);
-    writeU32(out, seq);
-  });
-
-export const columnPrefix = (column: string, value: string): Uint8Array =>
-  build(Tag.Column, (out) => {
-    writeString(out, column);
-    writeString(out, value);
   });
 
 export const measureKey = (column: string, seq: number): Uint8Array =>

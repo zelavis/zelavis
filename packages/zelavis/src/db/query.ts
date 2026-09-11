@@ -16,10 +16,14 @@ export interface TermQuery {
   readonly term: string;
 }
 
+/**
+ * Objects holding exactly this value in a column, read from the ordered lens.
+ * Typed, as the lens is: `10`, `"10"` and `true` are three different values.
+ */
 export interface EqualsQuery {
   readonly _tag: "Equals";
   readonly column: string;
-  readonly value: string;
+  readonly value: OrderedScalar;
 }
 
 export interface EdgeQuery {
@@ -70,7 +74,7 @@ const RangeBoundWire = Schema.Struct({ value: OrderedScalarWire, inclusive: Sche
 
 export const Query: Schema.Codec<Query> = Schema.Union([
   Schema.TaggedStruct("Term", { field: Schema.String, term: Schema.String }),
-  Schema.TaggedStruct("Equals", { column: Schema.String, value: Schema.String }),
+  Schema.TaggedStruct("Equals", { column: Schema.String, value: OrderedScalarWire }),
   Schema.TaggedStruct("Edge", { edgeType: Schema.String, from: Schema.Finite }),
   Schema.TaggedStruct("Range", {
     column: Schema.String,
@@ -91,7 +95,7 @@ export const term = (field: string, value: string): Query => ({
   term: value,
 });
 
-export const equals = (column: string, value: string): Query => ({
+export const equals = (column: string, value: OrderedScalar): Query => ({
   _tag: "Equals",
   column,
   value,
