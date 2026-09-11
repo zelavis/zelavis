@@ -89,6 +89,7 @@ export interface ShardSeal {
   readonly shard: ShardId;
   readonly segments: number;
   readonly postings: number;
+  readonly examined: number;
 }
 
 export interface DatabaseApi {

@@ -330,3 +330,54 @@ test("a lens emptied by retraction loses its blob rather than keeping an empty o
     }),
   );
 });
+
+test("a re-seal reads only the groups written since, not the ones it declined", async (t) => {
+  await withStore(t, (store) =>
+    Effect.gen(function* () {
+      // Each object: a shared title and a unique one, a region shared by a
+      // third of them, and an edge from itself. The shared ones seal; the
+      // unique title and the edge are too sparse and stay live.
+      for (let seq = 1; seq <= 300; seq++) {
+        yield* write(store, seq, `r${seq % 3}`, ["atlas", `u${seq}`]);
+      }
+      const first = yield* store.sealPostings;
+      assert.equal(first.examined, 300 * 4, "the first seal sweeps every live posting");
+
+      yield* write(store, 301, "r1", ["atlas", "u301"]);
+      const second = yield* store.sealPostings;
+      assert.equal(second.examined, 4,
+        `a one-object change re-read ${second.examined} postings, so declined ones were read again`);
+
+      const third = yield* store.sealPostings;
+      assert.equal(third.examined, 0, "a seal with nothing written reads nothing");
+      assert.equal(third.segments, 0);
+
+      assert.equal((yield* seqs(store, term("title", "atlas"))).length, 301);
+      assert.deepEqual(yield* seqs(store, term("title", "u7")), [7]);
+      assert.deepEqual(yield* seqs(store, term("title", "u301")), [301]);
+      assert.equal((yield* seqs(store, equals("region", "r1"))).length, 101);
+
+      // A reindex unseals, so the next seal has to sweep again.
+      yield* store.reindexLenses;
+      const afterReindex = yield* store.sealPostings;
+      assert.equal(afterReindex.examined, 301 * 4);
+      assert.equal((yield* seqs(store, term("title", "atlas"))).length, 301);
+    }),
+  );
+});
+
+test("a value an earlier seal declined is sealed once it has grown enough", async (t) => {
+  await withStore(t, (store) =>
+    Effect.gen(function* () {
+      for (let seq = 1; seq <= 40; seq++) yield* write(store, seq, `solo${seq}`, ["grow"]);
+      const first = yield* store.sealPostings;
+      assert.equal(first.segments, 0, "forty postings of one value are below the threshold");
+
+      for (let seq = 41; seq <= 70; seq++) yield* write(store, seq, `solo${seq}`, ["grow"]);
+      const second = yield* store.sealPostings;
+      assert.ok(second.segments >= 1, "the value that grew past the threshold was sealed");
+      assert.ok(second.examined >= 70, "all of the grown value's postings were read, old and new");
+      assert.equal((yield* seqs(store, term("title", "grow"))).length, 70);
+    }),
+  );
+});

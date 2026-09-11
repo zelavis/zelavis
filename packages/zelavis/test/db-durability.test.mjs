@@ -292,31 +292,93 @@ test("a seal killed halfway leaves every query answering as it did", async (t) =
   // Enough postings that a seal takes far longer than the delay before the
   // kill, so the process really does die in the middle of one.
   const total = 30_000;
-  const enc = new TextEncoder();
   const before = await openStore(dir, (store) =>
     Effect.gen(function* () {
-      for (let seq = 1; seq <= total; seq++) {
-        yield* store.transact((txn) =>
-          txn.put(
-            asSeq(seq),
-            enc.encode(JSON.stringify({ seq })),
-            {
-              terms: [["kind", "post"], ["tag", `t${seq % 500}`]],
-              columns: [["region", `r${seq % 4}`]],
-              measures: [],
-              edges: [],
-            },
-            { namespace: "doc/acme/posts", key: `p${seq}` },
-          ));
-      }
-      return {
-        kind: yield* seqs(store, term("kind", "post")),
-        tag: yield* seqs(store, term("tag", "t7")),
-        region: yield* seqs(store, equals("region", "r2")),
-      };
+      yield* writePosts(store, 1, total);
+      return yield* sealAnswers(store);
     }));
   assert.equal(before.kind.length, total);
 
+  await killSealMidway(dir);
+
+  await openStore(dir, (store) =>
+    Effect.gen(function* () {
+      // Some lens keys are now blobs and the rest are still live postings.
+      // Reading both tiers is what makes that a state the store can simply be
+      // in rather than one it has to be repaired out of.
+      assert.deepEqual(yield* sealAnswers(store), before);
+
+      // Finishing the interrupted seal is just running it again.
+      const finished = yield* store.sealPostings;
+      assert.ok(finished.segments > 0, "there was sealing left to do");
+      assert.deepEqual(yield* sealAnswers(store), before);
+    }));
+});
+
+test("a re-seal killed halfway leaves every query answering as it did", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "zv-durable-reseal-kill-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  // A sealed store and then as many objects again, so the re-seal has marked
+  // groups to work through — every tag grows past the sealing threshold — and
+  // takes long enough to die in the middle of.
+  const total = 30_000;
+  const before = await openStore(dir, (store) =>
+    Effect.gen(function* () {
+      yield* writePosts(store, 1, total);
+      yield* store.sealPostings;
+      yield* writePosts(store, total + 1, 2 * total);
+      return yield* sealAnswers(store);
+    }));
+  assert.equal(before.kind.length, 2 * total);
+
+  await killSealMidway(dir);
+
+  await openStore(dir, (store) =>
+    Effect.gen(function* () {
+      assert.deepEqual(yield* sealAnswers(store), before);
+
+      // A group's mark goes in the batch that seals it, so the groups the
+      // killed seal did not reach are still marked and the next one finishes.
+      const finished = yield* store.sealPostings;
+      assert.ok(finished.examined > 0, "there was re-sealing left to do");
+      assert.deepEqual(yield* sealAnswers(store), before);
+      const idle = yield* store.sealPostings;
+      assert.equal(idle.examined, 0, "a finished re-seal leaves no group marked");
+    }));
+});
+
+/** Posts with a term every object shares, one of 500 tags, and one of four regions. */
+const writePosts = (store, from, to) =>
+  Effect.gen(function* () {
+    const enc = new TextEncoder();
+    for (let seq = from; seq <= to; seq++) {
+      yield* store.transact((txn) =>
+        txn.put(
+          asSeq(seq),
+          enc.encode(JSON.stringify({ seq })),
+          {
+            terms: [["kind", "post"], ["tag", `t${seq % 500}`]],
+            columns: [["region", `r${seq % 4}`]],
+            measures: [],
+            edges: [],
+          },
+          { namespace: "doc/acme/posts", key: `p${seq}` },
+        ));
+    }
+  });
+
+const sealAnswers = (store) =>
+  Effect.gen(function* () {
+    return {
+      kind: yield* seqs(store, term("kind", "post")),
+      tag: yield* seqs(store, term("tag", "t7")),
+      region: yield* seqs(store, equals("region", "r2")),
+    };
+  });
+
+/** Seal the store at `dir` in a child process and kill it partway through. */
+const killSealMidway = async (dir) => {
   const markerPath = join(dir, "seal.log");
   const child = spawn(process.execPath, [SEALER, dir, markerPath], { stdio: "inherit" });
   const exited = new Promise((resolve) => child.on("exit", (code, signal) => resolve(signal)));
@@ -338,21 +400,4 @@ test("a seal killed halfway leaves every query answering as it did", async (t) =
   assert.equal(await exited, "SIGKILL");
   assert.ok(!marker().includes("done"),
     "the seal finished before it could be interrupted; there is nothing to test here");
-
-  await openStore(dir, (store) =>
-    Effect.gen(function* () {
-      // Some lens keys are now blobs and the rest are still live postings.
-      // Reading both tiers is what makes that a state the store can simply be
-      // in rather than one it has to be repaired out of.
-      assert.deepEqual(yield* seqs(store, term("kind", "post")), before.kind);
-      assert.deepEqual(yield* seqs(store, term("tag", "t7")), before.tag);
-      assert.deepEqual(yield* seqs(store, equals("region", "r2")), before.region);
-
-      // Finishing the interrupted seal is just running it again.
-      const finished = yield* store.sealPostings;
-      assert.ok(finished.segments > 0, "there was sealing left to do");
-      assert.deepEqual(yield* seqs(store, term("kind", "post")), before.kind);
-      assert.deepEqual(yield* seqs(store, term("tag", "t7")), before.tag);
-      assert.deepEqual(yield* seqs(store, equals("region", "r2")), before.region);
-    }));
-});
+};

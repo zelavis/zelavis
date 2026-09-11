@@ -34,6 +34,7 @@ export const Tag = {
   Segment: 0x0b,
   Tombstone: 0x0c,
   Ordered: 0x0d,
+  Dirty: 0x0e,
 } as const;
 
 export type Tag = (typeof Tag)[keyof typeof Tag];
@@ -391,6 +392,22 @@ const under = (tag: Tag, key: Uint8Array): Uint8Array => {
   const out = new Uint8Array(key.length + 1);
   out[0] = tag;
   out.set(key, 1);
+  return out;
+};
+
+/**
+ * `[Dirty][live prefix][segment]` — a seal group written since the last seal.
+ *
+ * Once a store has been sealed, a posting write marks the group it lands in —
+ * one lens prefix within one segment span — so the next seal visits the groups
+ * that changed instead of every posting still live. A posting an earlier seal
+ * declined as too sparse would otherwise be read again by every seal after it.
+ */
+export const dirtyKey = (livePrefix: Uint8Array, segment: number): Uint8Array => {
+  const out = new Uint8Array(livePrefix.length + 5);
+  out[0] = Tag.Dirty;
+  out.set(livePrefix, 1);
+  new DataView(out.buffer).setUint32(livePrefix.length + 1, segment);
   return out;
 };
 

@@ -907,8 +907,16 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   store 40× slower (a first page 5 ms → 218 ms). The cost moved to re-sealing,
   which rescans the postings it leaves live: 0.66 s against 0.10 s for 2,000
   changed objects of 200k in `scripts/bench-seal.mjs`.
-- [ ] Make a re-seal skip postings an earlier seal already declined, and win
-  back the re-seal time the sealing threshold cost.
+- [x] A re-seal reads only the groups written since the last seal. Once a
+  store is sealed, each posting write also marks its group — one lens prefix
+  in one segment span, a key overwritten rather than added to — and a seal
+  after the first full sweep visits only the marked groups, so a value an
+  earlier seal declined is not read again until it changes. Re-sealing 2,000
+  changed objects of 200k takes 0.19 s, from 0.66 s (0.10 s before the
+  threshold); the rest is merging the six blobs those objects touch. A seal
+  reports how many postings it `examined`. The first seal, and the first after
+  a reindex or a rebuild, still sweeps everything, and a sweep only counts
+  once it has finished.
 - [ ] Composite indexes with explicit field order and null semantics. Until
   then, an order by several fields sorts in memory in `findMany` and is refused
   by `findPage`.
