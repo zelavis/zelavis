@@ -4,6 +4,7 @@ import type {
   ZelavisFileStorageObject,
   ZelavisFileStoragePutInput,
 } from "../index.js";
+import { ZelavisStorageConditionError } from "./conditions.js";
 
 const EMPTY_BODY_SHA256 =
   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -393,6 +394,7 @@ export function createS3CompatibleFileStorage(
         contentDisposition:
           response.headers.get("content-disposition") ?? undefined,
         metadata: collectCustomMetadata(response.headers),
+        etag: response.headers.get("etag") ?? undefined,
       };
     },
     async put(input): Promise<ZelavisFileStorageEntry> {
@@ -423,6 +425,17 @@ export function createS3CompatibleFileStorage(
       for (const [key, value] of Object.entries(input.metadata ?? {})) {
         headers.set(`x-amz-meta-${key}`, value);
       }
+      // The store checks these in the same step as the write. Only a 412 is a
+      // clean rejection: any other failure — including a 409 a store returns
+      // for a conflicting request still in flight — leaves unknown whether the
+      // write applied, so it stays an error rather than becoming a verdict.
+      if (input.condition) {
+        if ("ifAbsent" in input.condition) {
+          headers.set("if-none-match", "*");
+        } else {
+          headers.set("if-match", input.condition.ifMatch);
+        }
+      }
 
       const response = await signedFetch(options, {
         method: "PUT",
@@ -431,6 +444,21 @@ export function createS3CompatibleFileStorage(
         body,
       });
 
+      // An object that is gone cannot match the version a caller read, and a
+      // 404 on a PUT wrote nothing, so for `ifMatch` it is the same clean
+      // rejection. Not for `ifAbsent`: a store that answers the create of an
+      // absent object with 404 is broken (celld names one MinIO release), and
+      // that has to stay an error rather than read as "already exists".
+      if (
+        input.condition &&
+        (response.status === 412 ||
+          (response.status === 404 && "ifMatch" in input.condition))
+      ) {
+        throw new ZelavisStorageConditionError(
+          normalizeStoragePath(input.path),
+          input.condition,
+        );
+      }
       if (!response.ok) {
         throw new Error(`Failed to write S3 object "${input.path}" (${response.status}).`);
       }
@@ -438,6 +466,7 @@ export function createS3CompatibleFileStorage(
       return {
         path: normalizeStoragePath(input.path),
         size: body.byteLength,
+        etag: response.headers.get("etag") ?? undefined,
         updatedAt: new Date(),
         contentType: input.contentType,
         cacheControl: resolvedCacheControl,
