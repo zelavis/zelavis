@@ -1,13 +1,17 @@
 import { Effect, Semaphore, Stream } from "effect";
-import { CursorCompacted, ForeignCursor, LogCompacted, StoreError, WriterFenced } from "./errors.js";
+import {
+  CursorCompacted, CursorMismatch, ForeignCursor, LogCompacted, StoreError, WriterFenced,
+} from "./errors.js";
 import type { AppliedEvent, DbEvent, EventCursor } from "./events.js";
 import {
   columnKey, columnPrefix, edgeKey, edgePrefix, eventKey, eventPrefix,
   identityBySeqKey, identityKey, manifestKey, measureKey, measurePrefix,
   compareKeys, metaKey, payloadKey, positionOf, segmentIndexOf, segmentKey, segmentPrefix,
   seqOf, Tag, termKey, termPrefix, tombstoneKey, tombstonePrefix,
+  decodeOrderedKey, inPrefixRange, orderedColumnPrefix, orderedKey, orderedKindRange,
+  orderedValuePrefix, prefixEnd,
 } from "./keys.js";
-import type { KvEngine, KvWrite } from "./kv.js";
+import type { KvEngine, KvScanOptions, KvWrite } from "./kv.js";
 import {
   asSeq, type IndexManifest, type ObjectIdentity, type PartitionKey, type Seq,
 } from "./model.js";
@@ -15,8 +19,10 @@ import * as Postings from "./postings.js";
 import {
   decodeSegment, encodeSegment, SEGMENT_SPAN, SegmentBuffer, segmentOf,
 } from "./segments.js";
-import type { Query } from "./query.js";
-import type { EventsApi, ObjectStoreApi, Txn } from "./store.js";
+import type { Query, RangeBound, RangeQuery } from "./query.js";
+import type {
+  EventsApi, ObjectStoreApi, OrderedCursor, OrderedPage, OrderedReadInput, OrderedRow, Txn,
+} from "./store.js";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -47,7 +53,7 @@ const encodePayload = (version: number, body: Uint8Array): Uint8Array => {
 const json = (value: unknown): Uint8Array => encoder.encode(JSON.stringify(value));
 const unjson = <A>(bytes: Uint8Array): A => JSON.parse(decoder.decode(bytes)) as A;
 const EMPTY = new Uint8Array(0);
-const emptyManifest = (): IndexManifest => ({ terms: [], columns: [], measures: [], edges: [] });
+const emptyManifest = (): IndexManifest => ({ terms: [], columns: [], measures: [], edges: [], ordered: [] });
 
 /** Keys compare as bytes; a batch keyed by them needs a string. */
 const keyId = (key: Uint8Array): string => {
@@ -86,7 +92,7 @@ const SEAL_BATCH = 4096;
  * history rather than the only way back to a working index.
  */
 const DERIVED_TAGS = [
-  Tag.Term, Tag.Column, Tag.Measure, Tag.Edge, Tag.Segment, Tag.Tombstone,
+  Tag.Term, Tag.Column, Tag.Measure, Tag.Edge, Tag.Segment, Tag.Tombstone, Tag.Ordered,
 ] as const;
 
 /**
@@ -119,6 +125,67 @@ const SEPARATOR = "|";
 
 const encodeCursor = (partition: PartitionKey, position: number): EventCursor =>
   Buffer.from(partition + SEPARATOR + String(position), "utf8").toString("base64url") as EventCursor;
+
+/**
+ * An ordered read's position: the last key it returned, with the partition,
+ * column and direction it belongs to, so it cannot continue a different read.
+ */
+const encodeOrderedCursor = (
+  partition: PartitionKey,
+  column: string,
+  direction: "asc" | "desc",
+  key: Uint8Array,
+): OrderedCursor =>
+  Buffer.from(
+    JSON.stringify({ p: partition, c: column, d: direction, k: Buffer.from(key).toString("hex") }),
+    "utf8",
+  ).toString("base64url") as OrderedCursor;
+
+const decodeOrderedCursor = (
+  partition: PartitionKey,
+  column: string,
+  direction: "asc" | "desc",
+  cursor: OrderedCursor,
+): Effect.Effect<Uint8Array, ForeignCursor | CursorMismatch> =>
+  Effect.gen(function* () {
+    const malformed = new CursorMismatch({ reason: "the cursor is not one an ordered read produced" });
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    } catch {
+      return yield* malformed;
+    }
+    if (typeof parsed !== "object" || parsed === null) return yield* malformed;
+    const { p, c, d, k } = parsed as Record<string, unknown>;
+    if (typeof p !== "string" || typeof c !== "string" || typeof k !== "string") return yield* malformed;
+    if (d !== "asc" && d !== "desc") return yield* malformed;
+    if (p !== partition) return yield* new ForeignCursor({ expected: partition, received: p });
+    if (c !== column || d !== direction) {
+      return yield* new CursorMismatch({
+        reason: `the cursor continues a ${d} read of "${c}", not a ${direction} read of "${column}"`,
+      });
+    }
+    const key = new Uint8Array(Buffer.from(k, "hex"));
+    if (!inPrefixRange(key, orderedColumnPrefix(column))) return yield* malformed;
+    return key;
+  });
+
+/** The smallest key above `key`: nothing sorts between a key and itself plus a zero byte. */
+const successorOf = (key: Uint8Array): Uint8Array => {
+  const out = new Uint8Array(key.length + 1);
+  out.set(key);
+  return out;
+};
+
+const scanOptions = (
+  from: Uint8Array | undefined,
+  to: Uint8Array | undefined,
+  reverse: boolean,
+): KvScanOptions => ({
+  ...(from === undefined ? {} : { from }),
+  ...(to === undefined ? {} : { to }),
+  reverse,
+});
 
 const decodeCursor = (partition: PartitionKey, cursor: EventCursor): number => {
   const raw = Buffer.from(cursor, "base64url").toString("utf8");
@@ -227,6 +294,7 @@ export const storeOverKv = (
       for (const [edgeType, to] of manifest.edges) {
         dropPosting(view, edgeKey(edgeType, seq, to), sealed);
       }
+      for (const [column, value] of manifest.ordered ?? []) view.del(orderedKey(column, value, seq));
       view.del(manifestKey(seq));
 
       const identity = yield* view.get(identityBySeqKey(seq));
@@ -259,6 +327,12 @@ export const storeOverKv = (
       for (const [column, value] of manifest.measures) view.put(measureKey(column, seq), f64(value));
       for (const [edgeType, to] of manifest.edges) {
         addPosting(view, edgeKey(edgeType, seq, to), EMPTY, sealed);
+      }
+      // Ordered postings are never sealed. A blob per distinct value would cost
+      // a key per value anyway, so they stay live keys, and a retract deletes
+      // them outright rather than leaving a tombstone.
+      for (const [column, value] of manifest.ordered ?? []) {
+        view.put(orderedKey(column, value, seq), EMPTY);
       }
       view.put(manifestKey(seq), json(manifest));
       if (identity !== undefined) {
@@ -355,8 +429,62 @@ export const storeOverKv = (
       return Postings.andNot(present, removed.build());
     });
 
+  /**
+   * The key range a pair of bounds covers in one column of the ordered lens.
+   *
+   * An inclusive lower bound starts at the value's first key and an exclusive
+   * one just past its last; an upper bound mirrors that. With one bound the
+   * other side stops at the edge of that bound's kind, so a range compares
+   * like with like; with neither, it is the whole column.
+   */
+  const rangeBounds = (column: string, lower?: RangeBound, upper?: RangeBound) => ({
+    prefix: orderedColumnPrefix(column),
+    from:
+      lower !== undefined
+        ? lower.inclusive
+          ? orderedValuePrefix(column, lower.value)
+          : prefixEnd(orderedValuePrefix(column, lower.value))
+        : upper !== undefined
+          ? orderedKindRange(column, upper.value).start
+          : undefined,
+    to:
+      upper !== undefined
+        ? upper.inclusive
+          ? prefixEnd(orderedValuePrefix(column, upper.value))
+          : orderedValuePrefix(column, upper.value)
+        : lower !== undefined
+          ? orderedKindRange(column, lower.value).end
+          : undefined,
+  });
+
+  /**
+   * A range as a set of identifiers, so it intersects with every other lens.
+   *
+   * The scan yields identifiers in value order and a postings set is kept in
+   * identifier order, so they are sorted first — and de-duplicated, because a
+   * manifest may give one object several values in a column.
+   */
+  const rangePostings = (query: RangeQuery): Effect.Effect<Postings.Postings, StoreError> =>
+    Effect.gen(function* () {
+      const { prefix, from, to } = rangeBounds(query.column, query.lower, query.upper);
+      const found: number[] = [];
+      yield* Stream.runForEach(engine.scan(prefix, scanOptions(from, to, false)), (entry) =>
+        Effect.sync(() => {
+          found.push(seqOf(entry.key));
+        }));
+      const sorted = Uint32Array.from(found).sort();
+      const builder = new Postings.PostingsBuilder();
+      let previous = -1;
+      for (const seq of sorted) {
+        if (seq !== previous) builder.add(seq);
+        previous = seq;
+      }
+      return builder.build();
+    });
+
   const evaluate = (query: Query): Effect.Effect<Postings.Postings, StoreError> => {
     switch (query._tag) {
+      case "Range": return rangePostings(query);
       case "Term": return postingsUnder(termPrefix(query.field, query.term));
       case "Equals": return postingsUnder(columnPrefix(query.column, query.value));
       case "Edge": return postingsUnder(edgePrefix(query.edgeType, query.from));
@@ -364,6 +492,56 @@ export const storeOverKv = (
       case "Or": return Effect.map(Effect.forEach(query.of, evaluate), Postings.orAll);
     }
   };
+
+  /**
+   * One page of an ordered read.
+   *
+   * The scan runs in the requested direction and stops after one row more than
+   * the page holds; that extra row is how the page knows another follows, and
+   * it is not returned. A cursor records the last key returned, so the next
+   * page starts strictly past it — exact even when many objects share a value,
+   * because the identifier is part of the key.
+   */
+  const readOrdered = (
+    input: OrderedReadInput,
+  ): Effect.Effect<OrderedPage, StoreError | ForeignCursor | CursorMismatch> =>
+    Effect.gen(function* () {
+      const direction = input.direction ?? "asc";
+      const limit = input.limit ?? 100;
+      if (!Number.isInteger(limit) || limit < 1) {
+        return yield* Effect.die(
+          new RangeError(`An ordered read's limit must be a positive integer, not ${limit}.`),
+        );
+      }
+      const bounds = rangeBounds(input.column, input.lower, input.upper);
+      let { from, to } = bounds;
+      if (input.after !== undefined) {
+        const last = yield* decodeOrderedCursor(partition, input.column, direction, input.after);
+        if (direction === "asc") {
+          const next = successorOf(last);
+          if (from === undefined || compareKeys(next, from) > 0) from = next;
+        } else if (to === undefined || compareKeys(last, to) < 0) {
+          to = last;
+        }
+      }
+      const filter = input.where === undefined ? undefined : yield* evaluate(input.where);
+      const scanned = yield* Stream.runCollect(
+        engine.scan(bounds.prefix, scanOptions(from, to, direction === "desc")).pipe(
+          Stream.map((entry) => ({ key: entry.key, ...decodeOrderedKey(entry.key) })),
+          Stream.filter((row) => filter === undefined || Postings.has(filter, row.seq)),
+          Stream.take(limit + 1),
+        ),
+      );
+      const rows = [...scanned];
+      const more = rows.length > limit;
+      const page = more ? rows.slice(0, limit) : rows;
+      const out = page.map((row): OrderedRow => ({
+        seq: asSeq(row.seq),
+        value: row.value,
+        cursor: encodeOrderedCursor(partition, input.column, direction, row.key),
+      }));
+      return { rows: out, ...(more ? { next: out.at(-1)!.cursor } : {}) };
+    });
 
   const toEvent = (position: number, stored: StoredEvent): DbEvent => {
     const common = {
@@ -493,6 +671,9 @@ export const storeOverKv = (
       for (const [column, value] of manifest.columns) view.put(columnKey(column, value, seq), EMPTY);
       for (const [column, value] of manifest.measures) view.put(measureKey(column, seq), f64(value));
       for (const [edgeType, to] of manifest.edges) view.put(edgeKey(edgeType, seq, to), EMPTY);
+      for (const [column, value] of manifest.ordered ?? []) {
+        view.put(orderedKey(column, value, seq), EMPTY);
+      }
       count += 1;
     }
     yield* engine.write([...pending.values()]);
@@ -761,6 +942,33 @@ export const storeOverKv = (
           : { seq, version: readU32(bytes), bytes: bytes.subarray(4) }),
 
     resolve: (query) => Stream.fromIterableEffect(Effect.map(evaluate(query), Postings.iterate)),
+
+    ordered: (input) => readOrdered(input),
+
+    extent: (column, where) =>
+      Effect.gen(function* () {
+        const prefix = orderedColumnPrefix(column);
+        // Everything before the null run: null sorts last and is not a value.
+        const beforeNull = orderedKindRange(column, null).start;
+        const filter = where === undefined ? undefined : yield* evaluate(where);
+        const end = (reverse: boolean) =>
+          Effect.map(
+            Stream.runCollect(
+              engine.scan(prefix, scanOptions(undefined, beforeNull, reverse)).pipe(
+                Stream.map((entry) => decodeOrderedKey(entry.key)),
+                Stream.filter((row) => filter === undefined || Postings.has(filter, row.seq)),
+                Stream.take(1),
+              ),
+            ),
+            (rows) => [...rows][0]?.value,
+          );
+        const min = yield* end(false);
+        const max = yield* end(true);
+        return {
+          ...(min === undefined ? {} : { min }),
+          ...(max === undefined ? {} : { max }),
+        };
+      }),
 
     measure: (column) =>
       Effect.gen(function* () {

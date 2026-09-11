@@ -19,12 +19,15 @@ import {
   IdempotencyKeyReused,
   InvalidCollectionName,
   TenantMoving,
+  CursorMismatch,
+  UnsupportedOrdering,
 } from "./errors.js";
 import type { DbError } from "./errors.js";
-import type { Seq } from "./model.js";
-import { and, equals, or, type Query } from "./query.js";
+import { compareOrderedValues, sameOrderedKind } from "./keys.js";
+import type { OrderedScalar, Seq } from "./model.js";
+import { and, equals, or, type Query, type RangeBound } from "./query.js";
 import type { SchemasApi } from "./schemas.js";
-import type { ObjectStoreApi, Txn } from "./store.js";
+import type { ObjectStoreApi, OrderedCursor, Txn } from "./store.js";
 import type { TenantId } from "./topology.js";
 
 export type { Json, JsonObject } from "./json.js";
@@ -66,6 +69,27 @@ export interface FindDocumentsInput {
   readonly orderBy?: ReadonlyArray<DocumentSort>;
   readonly limit?: number;
   readonly offset?: number;
+}
+
+declare const DocumentCursorBrand: unique symbol;
+
+/** Where a page of documents stopped. Opaque, and bound to its tenant, collection and order. */
+export type DocumentCursor = string & { readonly [DocumentCursorBrand]: true };
+
+export interface FindPageInput {
+  readonly collection: string;
+  readonly where?: ReadonlyArray<DocumentFilter>;
+  /** At most one field: ordering by several needs a composite index. */
+  readonly orderBy?: ReadonlyArray<DocumentSort>;
+  /** Documents per page: 50 unless given, and at most 1000. */
+  readonly limit?: number;
+  readonly after?: DocumentCursor;
+}
+
+export interface DocumentPage {
+  readonly documents: ReadonlyArray<Document>;
+  /** Present only when another matching document follows. */
+  readonly next?: DocumentCursor;
 }
 
 /** Marks a stored collection record, distinct from any collection name. */
@@ -194,9 +218,74 @@ const columnsFor = (
   return out;
 };
 
-const compare = (left: Json | undefined, right: Json): number => {
-  if (typeof left === "number" && typeof right === "number") return left - right;
-  return String(left).localeCompare(String(right));
+/**
+ * Flatten a document into ordered postings: one per scalar, null included.
+ *
+ * The same paths as the column lens, for a different question. Equality asks
+ * which documents hold a value; this asks which come first, and a range is a
+ * run of it. Null is indexed because it has a place in that order, last; a
+ * field that is absent, or holds an object or array, has none.
+ */
+const orderedFor = (
+  tenant: TenantId,
+  collection: string,
+  data: JsonObject,
+): Array<readonly [string, OrderedScalar]> => {
+  const out: Array<readonly [string, OrderedScalar]> = [];
+  const walk = (value: Json, path: string): void => {
+    if (value === null || isScalar(value)) {
+      if (path !== "") out.push([columnFor(tenant, collection, path), value]);
+      return;
+    }
+    if (Array.isArray(value)) return;
+    for (const [k, v] of Object.entries(value)) walk(v, path === "" ? k : `${path}.${k}`);
+  };
+  walk(data, "");
+  return out;
+};
+
+/** A value at a path as the ordered lens sees it, or undefined when it has no place in the order. */
+const orderable = (value: Json | undefined): OrderedScalar | undefined =>
+  value === null || isScalar(value) ? value : undefined;
+
+/**
+ * Document order at one path, in a direction.
+ *
+ * Values follow the ordered lens's order, reversed for descending. A document
+ * whose value there is null or absent — or an object or array, which has no
+ * place in the order — comes after every value in both directions, as most
+ * interfaces expect of a missing price in either sort. Documents equal on every
+ * sort field keep ascending identifier order, which a stable sort preserves;
+ * that is the one place this differs from a descending read of the lens, which
+ * visits equal values in descending identifier order.
+ */
+const compareAt = (
+  left: Json | undefined,
+  right: Json | undefined,
+  direction: "asc" | "desc",
+): number => {
+  const a = orderable(left);
+  const b = orderable(right);
+  const aHas = a !== undefined && a !== null;
+  const bHas = b !== undefined && b !== null;
+  if (!aHas || !bHas) return aHas === bHas ? 0 : aHas ? -1 : 1;
+  const order = compareOrderedValues(a, b);
+  return direction === "desc" ? -order : order;
+};
+
+/**
+ * How two values compare for a filter, or undefined when they do not.
+ *
+ * A comparison holds only between values of one kind, as a one-sided range in
+ * the ordered lens does: `lt 5` is not satisfied by `true`, by null, or by a
+ * field that is absent.
+ */
+const comparison = (actual: Json | undefined, expected: Json): number | undefined => {
+  const a = orderable(actual);
+  const e = orderable(expected);
+  return a === undefined || e === undefined || !sameOrderedKind(a, e)
+    ? undefined
+    : compareOrderedValues(a, e);
 };
 
 const matches = (data: JsonObject, filter: DocumentFilter): boolean => {
@@ -212,50 +301,113 @@ const matches = (data: JsonObject, filter: DocumentFilter): boolean => {
       return actual === expected;
     case "ne":
       return actual !== expected;
-    case "gt":
-      return compare(actual, expected) > 0;
-    case "gte":
-      return compare(actual, expected) >= 0;
-    case "lt":
-      return compare(actual, expected) < 0;
-    case "lte":
-      return compare(actual, expected) <= 0;
+    case "gt": {
+      const order = comparison(actual, expected);
+      return order !== undefined && order > 0;
+    }
+    case "gte": {
+      const order = comparison(actual, expected);
+      return order !== undefined && order >= 0;
+    }
+    case "lt": {
+      const order = comparison(actual, expected);
+      return order !== undefined && order < 0;
+    }
+    case "lte": {
+      const order = comparison(actual, expected);
+      return order !== undefined && order <= 0;
+    }
   }
 };
 
 /**
  * Build the lens query for the filters that lenses can answer.
  *
- * `eq` and `in` become postings intersected against the collection. Ordering
- * comparisons cannot, so they are applied to the candidates afterwards; the
- * split is deliberate and visible rather than a silent full scan.
+ * `eq` and `in` become postings intersected against the collection, and are
+ * checked again against each candidate: the column lens indexes a value's
+ * text, so `10` and `"10"` share a posting, and only the document says which it
+ * holds. A comparison on a scalar becomes a range in the ordered lens, which
+ * compares like with like and needs no second look. Anything else is applied to
+ * the candidates afterwards; the split is deliberate and visible rather than a
+ * silent full scan.
  */
+interface Plan {
+  /** Every matching document, the collection clause included. */
+  readonly query: Query;
+  /**
+   * The same filter without the collection clause, or undefined when there is
+   * nothing but it. A field's column name carries the tenant and collection, so
+   * any posting under it already belongs to this collection: re-checking
+   * membership would cost a scan of the whole collection for nothing.
+   */
+  readonly fields: Query | undefined;
+  readonly residual: ReadonlyArray<DocumentFilter>;
+}
+
 const planQuery = (
   tenant: TenantId,
   collection: string,
   where: ReadonlyArray<DocumentFilter>,
-): { readonly query: Query; readonly residual: ReadonlyArray<DocumentFilter> } => {
-  const clauses: Query[] = [equals(collectionColumn(tenant), collection)];
+): Plan => {
+  const clauses: Query[] = [];
   const residual: DocumentFilter[] = [];
   for (const filter of where) {
     const op = filter.op ?? "eq";
-    if (op === "eq" && isScalar(filter.value as Json)) {
-      clauses.push(equals(columnFor(tenant, collection, filter.path), String(filter.value)));
-    } else if (op === "in" && Array.isArray(filter.value) && filter.value.length > 0) {
-      const members = filter.value.filter(isScalar);
-      if (members.length !== filter.value.length) {
+    const column = columnFor(tenant, collection, filter.path);
+    const value = filter.value as Json;
+    if (op === "eq" && isScalar(value)) {
+      clauses.push(equals(column, String(value)));
+      residual.push(filter);
+    } else if (
+      op === "in" && Array.isArray(filter.value) && filter.value.length > 0 &&
+      filter.value.every((member) => isScalar(member))
+    ) {
+      clauses.push(or(...filter.value.map((member) => equals(column, String(member)))));
+      residual.push(filter);
+    } else if (op === "gt" || op === "gte" || op === "lt" || op === "lte") {
+      const scalar = orderable(value);
+      if (scalar === undefined) {
         residual.push(filter);
         continue;
       }
+      const bound: RangeBound = { value: scalar, inclusive: op === "gte" || op === "lte" };
       clauses.push(
-        or(...members.map((v) => equals(columnFor(tenant, collection, filter.path), String(v)))),
+        op === "gt" || op === "gte"
+          ? { _tag: "Range", column, lower: bound }
+          : { _tag: "Range", column, upper: bound },
       );
     } else {
       residual.push(filter);
     }
   }
-  return { query: clauses.length === 1 ? clauses[0]! : and(...clauses), residual };
+  const fields = clauses.length === 0 ? undefined : clauses.length === 1 ? clauses[0]! : and(...clauses);
+  return {
+    // Field clauses are already confined to the collection (see `fields`), so
+    // the collection's own posting is needed only when there are none.
+    query: fields ?? equals(collectionColumn(tenant), collection),
+    fields,
+    residual,
+  };
 };
+
+/** Where a read of documents in order stands: after one document, in one of its runs. */
+type Position =
+  | { readonly phase: "values"; readonly cursor: OrderedCursor }
+  | { readonly phase: "rest"; readonly seq: number }
+  | { readonly phase: "seq"; readonly seq: number };
+
+interface Placed {
+  readonly document: Document;
+  /** The position just after this document. */
+  readonly position: Position;
+}
+
+interface PageShape {
+  readonly collection: string;
+  /** The field ordered by, or empty for identifier order. */
+  readonly path: string;
+  readonly direction: "asc" | "desc";
+}
 
 export interface DocumentsApi {
   readonly createCollection: (input: {
@@ -285,7 +437,25 @@ export interface DocumentsApi {
     readonly collection: string;
     readonly id: string;
   }) => Effect.Effect<Document | undefined>;
+  /**
+   * Every matching document, ordered and sliced as asked.
+   *
+   * Ordered by one field, it reads the ordered lens rather than sorting; by
+   * several, it sorts in memory, in the same order the lens would give.
+   */
   readonly findMany: (input: FindDocumentsInput) => Effect.Effect<ReadonlyArray<Document>>;
+  /**
+   * One page of matching documents, and a cursor for the next.
+   *
+   * Ordered by at most one field and read from the ordered lens in either
+   * direction, so a page costs about what it returns rather than a sort of
+   * every match. Without an order, documents come in identifier order. `next`
+   * is present only when another matching document exists, so the last page is
+   * never an empty one.
+   */
+  readonly findPage: (
+    input: FindPageInput,
+  ) => Effect.Effect<DocumentPage, CursorMismatch | UnsupportedOrdering>;
   readonly update: (input: {
     readonly collection: string;
     /** Do this at most once; see `insert`. */
@@ -462,7 +632,147 @@ export const documentsFor = (
       columns: columnsFor(tenant, doc.collection, doc.data),
       measures: [],
       edges: [],
+      ordered: orderedFor(tenant, doc.collection, doc.data),
     }, { namespace: documentNs(tenant, doc.collection), key: doc.id });
+
+  const keeps = (plan: Plan) => (doc: Document | undefined): doc is Document =>
+    doc !== undefined && plan.residual.every((filter) => matches(doc.data, filter));
+
+  /**
+   * One page of an ordered read, with store failures turned into defects as
+   * everywhere else here, and a foreign cursor into the one error a caller can
+   * act on: the tenant moved between pages, so the read has to start again.
+   */
+  const orderedPage = (input: Parameters<ObjectStoreApi["ordered"]>[0]) =>
+    store.ordered(input).pipe(
+      Effect.catch((error) =>
+        error._tag === "CursorMismatch"
+          ? Effect.fail(error)
+          : error._tag === "ForeignCursor"
+            ? Effect.fail(new CursorMismatch({
+              reason: "the tenant moved to another shard since this cursor was issued; start the read again",
+            }))
+            : Effect.die(error)),
+    );
+
+  /**
+   * Matching documents in the order of one field, from a position onward.
+   *
+   * Two runs make up the order. Documents with a value at the path come from
+   * the ordered lens, page by page, filtered by the plan's field clauses as the
+   * lens is read — the range stops short of null, which the lens sorts last.
+   * The rest, whose value is null or absent or an object or array, follow in
+   * identifier order in either direction: they are what the plan matches minus
+   * what the value run holds, a subtraction only the final pages of a read pay
+   * for. Every document carries the position just after it, so a page can end
+   * on any document exactly. `take` bounds how many are gathered; undefined
+   * gathers all.
+   */
+  const inOrder = (
+    plan: Plan,
+    collection: string,
+    sort: DocumentSort,
+    take: number | undefined,
+    from: Position | undefined,
+  ): Effect.Effect<Array<Placed>, CursorMismatch> =>
+    Effect.gen(function* () {
+      const column = columnFor(tenant, collection, sort.path);
+      const direction = sort.direction === "desc" ? "desc" : "asc";
+      // From the lowest value there is, `false`, up to where null begins.
+      const values = {
+        lower: { value: false, inclusive: true },
+        upper: { value: null, inclusive: false },
+      } as const;
+      const keep = keeps(plan);
+      const out: Array<Placed> = [];
+      const full = () => take !== undefined && out.length >= take;
+
+      if (from === undefined || from.phase === "values") {
+        let cursor = from?.phase === "values" ? from.cursor : undefined;
+        for (;;) {
+          if (full()) return out;
+          const limit = take === undefined ? 256 : Math.max(1, Math.min(256, take - out.length));
+          const page = yield* orderedPage({
+            column, direction, limit, ...values,
+            ...(plan.fields === undefined ? {} : { where: plan.fields }),
+            ...(cursor === undefined ? {} : { after: cursor }),
+          });
+          for (const row of page.rows) {
+            if (full()) return out;
+            const doc = yield* readDocument(row.seq);
+            if (keep(doc)) out.push({ document: doc, position: { phase: "values", cursor: row.cursor } });
+          }
+          if (page.next === undefined) break;
+          cursor = page.next;
+        }
+      }
+
+      const valued = new Set(
+        [...(yield* Stream.runCollect(
+          resolveQuery(and(plan.query, { _tag: "Range", column, ...values })),
+        ))].map(Number),
+      );
+      const after = from?.phase === "rest" ? from.seq : undefined;
+      for (const seq of yield* Stream.runCollect(resolveQuery(plan.query))) {
+        if (full()) break;
+        if (valued.has(Number(seq)) || (after !== undefined && Number(seq) <= after)) continue;
+        const doc = yield* readDocument(seq);
+        if (keep(doc)) out.push({ document: doc, position: { phase: "rest", seq: Number(seq) } });
+      }
+      return out;
+    });
+
+  /** Matching documents in identifier order, the order `resolve` already has. */
+  const inIdentifierOrder = (plan: Plan, take: number, from: Position | undefined) =>
+    Effect.gen(function* () {
+      const keep = keeps(plan);
+      const after = from?.phase === "seq" ? from.seq : undefined;
+      const out: Array<Placed> = [];
+      for (const seq of yield* Stream.runCollect(resolveQuery(plan.query))) {
+        if (out.length >= take) break;
+        if (after !== undefined && Number(seq) <= after) continue;
+        const doc = yield* readDocument(seq);
+        if (keep(doc)) out.push({ document: doc, position: { phase: "seq", seq: Number(seq) } });
+      }
+      return out;
+    });
+
+  const encodeDocumentCursor = (shape: PageShape, position: Position): DocumentCursor =>
+    Buffer.from(
+      JSON.stringify({ v: 1, t: tenant, c: shape.collection, o: shape.path, d: shape.direction, p: position }),
+      "utf8",
+    ).toString("base64url") as DocumentCursor;
+
+  const decodeDocumentCursor = (
+    cursor: DocumentCursor,
+    shape: PageShape,
+  ): Effect.Effect<Position, CursorMismatch> =>
+    Effect.gen(function* () {
+      const malformed = new CursorMismatch({ reason: "the cursor is not one findPage produced" });
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+      } catch {
+        return yield* malformed;
+      }
+      if (typeof parsed !== "object" || parsed === null) return yield* malformed;
+      const { v, t, c, o, d, p } = parsed as Record<string, unknown>;
+      if (v !== 1 || typeof p !== "object" || p === null) return yield* malformed;
+      if (t !== tenant || c !== shape.collection || o !== shape.path || d !== shape.direction) {
+        return yield* new CursorMismatch({
+          reason: `the cursor continues a different read: ${String(d)} by "${String(o)}" over "${String(c)}"`,
+        });
+      }
+      const { phase, seq, cursor: inner } = p as Record<string, unknown>;
+      if (shape.path === "") {
+        if (phase === "seq" && typeof seq === "number") return { phase, seq };
+      } else if (phase === "rest" && typeof seq === "number") {
+        return { phase, seq };
+      } else if (phase === "values" && typeof inner === "string") {
+        return { phase, cursor: inner as OrderedCursor };
+      }
+      return yield* malformed;
+    });
 
   /**
    * A completed write, remembered under the key the caller gave it.
@@ -582,23 +892,66 @@ export const documentsFor = (
 
     findMany: (input) =>
       Effect.gen(function* () {
-        const { query, residual } = planQuery(tenant, input.collection, input.where ?? []);
-        const seqs = yield* Stream.runCollect(resolveQuery(query));
-        let docs: Document[] = [];
-        for (const seq of seqs) {
-          const doc = yield* readDocument(seq);
-          if (doc !== undefined && residual.every((f) => matches(doc.data, f))) docs.push(doc);
-        }
-        for (const sort of [...(input.orderBy ?? [])].reverse()) {
-          const dir = sort.direction === "desc" ? -1 : 1;
-          docs = docs.sort(
-            (a, b) => dir * compare(readPath(a.data, sort.path), readPath(b.data, sort.path) as Json),
-          );
-        }
+        const plan = planQuery(tenant, input.collection, input.where ?? []);
         const offset = input.offset ?? 0;
-        return input.limit === undefined
-          ? docs.slice(offset)
-          : docs.slice(offset, offset + input.limit);
+        const slice = (docs: ReadonlyArray<Document>) =>
+          input.limit === undefined ? docs.slice(offset) : docs.slice(offset, offset + input.limit);
+        const sorts = input.orderBy ?? [];
+        if (sorts.length === 1) {
+          // One field is served by the ordered lens, in order, without a sort.
+          const found = yield* inOrder(
+            plan, input.collection, sorts[0]!,
+            input.limit === undefined ? undefined : offset + input.limit, undefined,
+          ).pipe(Effect.orDie);
+          return slice(found.map((entry) => entry.document));
+        }
+        const keep = keeps(plan);
+        let docs: Document[] = [];
+        for (const seq of yield* Stream.runCollect(resolveQuery(plan.query))) {
+          const doc = yield* readDocument(seq);
+          if (keep(doc)) docs.push(doc);
+        }
+        // Several fields have no index yet, so they are sorted here — in the
+        // lens's order, so the answer matches what an index would give.
+        for (const sort of [...sorts].reverse()) {
+          const direction = sort.direction === "desc" ? "desc" : "asc";
+          docs = docs.sort((a, b) =>
+            compareAt(readPath(a.data, sort.path), readPath(b.data, sort.path), direction));
+        }
+        return slice(docs);
+      }),
+
+    findPage: (input) =>
+      Effect.gen(function* () {
+        const sorts = input.orderBy ?? [];
+        if (sorts.length > 1) {
+          return yield* new UnsupportedOrdering({
+            reason:
+              "a page ordered by more than one field needs a composite index, which the " +
+              "store does not have yet; order by one field, or use findMany",
+          });
+        }
+        const limit = input.limit ?? 50;
+        if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
+          return yield* Effect.die(new RangeError(`findPage takes 1 to 1000 documents per page, not ${limit}.`));
+        }
+        const sort = sorts[0];
+        const shape: PageShape = {
+          collection: input.collection,
+          path: sort?.path ?? "",
+          direction: sort?.direction === "desc" ? "desc" : "asc",
+        };
+        const from = input.after === undefined ? undefined : yield* decodeDocumentCursor(input.after, shape);
+        const plan = planQuery(tenant, input.collection, input.where ?? []);
+        // One more than the page, to know whether another document follows.
+        const found = sort === undefined
+          ? yield* inIdentifierOrder(plan, limit + 1, from)
+          : yield* inOrder(plan, input.collection, sort, limit + 1, from);
+        const page = found.slice(0, limit);
+        return {
+          documents: page.map((entry) => entry.document),
+          ...(found.length > limit ? { next: encodeDocumentCursor(shape, page.at(-1)!.position) } : {}),
+        };
       }),
 
     update: (input) =>

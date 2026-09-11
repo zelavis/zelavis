@@ -1,6 +1,8 @@
 import { Effect } from "effect";
 import type { DatabaseApi, TenantApi } from "./database.js";
-import type { Collection, Document, FindDocumentsInput, JsonObject } from "./documents.js";
+import type {
+  Collection, Document, DocumentPage, FindDocumentsInput, FindPageInput, JsonObject,
+} from "./documents.js";
 import type { DomainEvent, ReadDomainEventsInput } from "./domain-events.js";
 import type { TenantBackupV1 } from "./backup.js";
 import type { CollectionSchema, CollectionSchemaSummary, SchemaValidationResult, StoredCollectionSchema } from "./schema/index.js";
@@ -45,6 +47,7 @@ export interface TenantRuntimeApi {
       id: string;
     }) => Promise<Document | undefined>;
     readonly findMany: (input: FindDocumentsInput) => Promise<ReadonlyArray<Document>>;
+    readonly findPage: (input: FindPageInput) => Promise<DocumentPage>;
     readonly update: (input: {
       collection: string;
       id: string;
@@ -134,6 +137,7 @@ const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
     insert: (input) => run(tenant.documents.insert(input)),
     findById: (input) => run(tenant.documents.findById(input)),
     findMany: (input) => run(tenant.documents.findMany(input)),
+    findPage: (input) => run(tenant.documents.findPage(input)),
     update: (input) => run(tenant.documents.update(input)),
     delete: (input) => run(tenant.documents.delete(input)),
   },

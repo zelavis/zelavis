@@ -1,7 +1,7 @@
 import { Effect, Stream, type Scope } from "effect";
 import { StoreError } from "../errors.js";
-import { prefixEnd } from "../keys.js";
-import type { KvEngine, KvEntry, KvWrite } from "../kv.js";
+import { compareKeys } from "../keys.js";
+import { scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
 import { claimGeneration, storeOverKv } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
 import type { ObjectStoreApi } from "../store.js";
@@ -21,6 +21,7 @@ interface LmdbDatabase {
   getRange(options: {
     start?: Uint8Array;
     end?: Uint8Array;
+    reverse?: boolean;
   }): Iterable<{ key: Uint8Array; value: Uint8Array }>;
   close(): Promise<void>;
 }
@@ -92,16 +93,32 @@ export const makeLmdbEngine = (
         get: (key) =>
           Effect.try({ try: () => db.get(key), catch: fail("lmdb.get") }),
 
-        scan: (prefix) =>
+        scan: (prefix, options) =>
           Stream.fromIterableEffect(
             Effect.try({
               try: () => {
-                const end = prefixEnd(prefix);
+                const { lo, hi, empty } = scanRange(prefix, options);
+                if (empty) return [];
+                if (options?.reverse !== true) {
+                  const range = db.getRange(hi === undefined ? { start: lo } : { start: lo, end: hi });
+                  return (function* (): Generator<KvEntry> {
+                    for (const entry of range) yield { key: entry.key, value: entry.value };
+                  })();
+                }
+                // In reverse the binding reads `start` as an inclusive upper
+                // bound and `end` as an exclusive lower one — the opposite of
+                // the half-open range asked for. So a reverse scan starts at
+                // `hi`, passes over `hi` itself, and stops at the first key below
+                // `lo`: the same entries as the forward scan, read backwards.
                 const range = db.getRange(
-                  end === undefined ? { start: prefix } : { start: prefix, end },
+                  hi === undefined ? { reverse: true } : { start: hi, reverse: true },
                 );
                 return (function* (): Generator<KvEntry> {
-                  for (const entry of range) yield { key: entry.key, value: entry.value };
+                  for (const entry of range) {
+                    if (hi !== undefined && compareKeys(entry.key, hi) >= 0) continue;
+                    if (compareKeys(entry.key, lo) < 0) return;
+                    yield { key: entry.key, value: entry.value };
+                  }
                 })();
               },
               catch: fail("lmdb.scan"),
