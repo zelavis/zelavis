@@ -106,6 +106,23 @@ export class ForeignCursor extends Schema.TaggedError<ForeignCursor>()("ForeignC
   received: Schema.String,
 }) {}
 
+/**
+ * A cursor handed to an ordered read it did not come from.
+ *
+ * A position in one order means nothing in another: continuing a descending
+ * read of one column from a cursor left by an ascending read of another would
+ * return a page that looks plausible and skips or repeats rows.
+ */
+export class CursorMismatch extends Schema.TaggedError<CursorMismatch>()("CursorMismatch", {
+  reason: Schema.String,
+}) {}
+
+/** An order the store cannot serve from an index, refused rather than sorted in memory. */
+export class UnsupportedOrdering extends Schema.TaggedError<UnsupportedOrdering>()(
+  "UnsupportedOrdering",
+  { reason: Schema.String },
+) {}
+
 export class InvalidCollectionName extends Schema.TaggedError<InvalidCollectionName>()(
   "InvalidCollectionName",
   { name: Schema.String, reason: Schema.String },

@@ -2,8 +2,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { join } from "node:path";
 import { Array as Arr, Effect, Stream, type Scope } from "effect";
 import { StoreError } from "../errors.js";
-import { prefixEnd } from "../keys.js";
-import type { KvEngine, KvEntry, KvWrite } from "../kv.js";
+import { compareKeys } from "../keys.js";
+import { scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
 import { claimGeneration, storeOverKv } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
 import type { ObjectStoreApi } from "../store.js";
@@ -50,6 +50,7 @@ interface RocksdbJsDatabase {
   getRange: (options: {
     start?: Buffer;
     end?: Buffer;
+    reverse?: boolean;
   }) => Iterable<{ key: Buffer; value: Buffer }>;
   transaction: <A>(run: (txn: RocksdbJsTransaction) => A) => Promise<A | void>;
 }
@@ -171,23 +172,32 @@ export const makeRocksdbJsEngine = (
             catch: fail("rocksdb-js.get"),
           }),
 
-        scan: (prefix) =>
+        scan: (prefix, options) =>
           Stream.fromAsyncIterable(
             (async function* (): AsyncGenerator<Arr.NonEmptyArray<KvEntry>> {
-              const end = prefixEnd(prefix);
-              // A half-open range, which is what `prefixEnd` already describes:
-              // membership is the range, never a byte-prefix test.
-              //
+              const { lo, hi, empty } = scanRange(prefix, options);
+              if (empty) return;
+              const reverse = options?.reverse === true;
               // An empty bound is omitted rather than passed. The binding
               // rejects a zero-length key outright, and this store asks for
               // exactly that whenever it scans a whole tag — or, at the top,
               // the entire keyspace. Omitting the bound is what "from the
               // beginning" and "to the end" mean here.
+              //
+              // In reverse the binding reads `start` as an inclusive upper
+              // bound and `end` as an exclusive lower one — the opposite of
+              // the half-open range asked for. So a reverse scan starts at
+              // `hi`, passes over `hi` itself, and stops at the first key below
+              // `lo`: the same entries as the forward scan, read backwards.
               const entries = db
-                .getRange({
-                  ...(prefix.length === 0 ? {} : { start: buf(prefix) }),
-                  ...(end === undefined || end.length === 0 ? {} : { end: buf(end) }),
-                })
+                .getRange(
+                  reverse
+                    ? { ...(hi === undefined || hi.length === 0 ? {} : { start: buf(hi) }), reverse: true }
+                    : {
+                        ...(lo.length === 0 ? {} : { start: buf(lo) }),
+                        ...(hi === undefined || hi.length === 0 ? {} : { end: buf(hi) }),
+                      },
+                )
                 [Symbol.iterator]();
               // Entries leave in batches, not one at a time. Each step of an
               // async generator is a promise and a trip through the stream, and
@@ -201,15 +211,27 @@ export const makeRocksdbJsEngine = (
               try {
                 for (;;) {
                   const batch: Array<KvEntry> = [];
-                  let step: IteratorResult<{ key: Buffer; value: Buffer }>;
-                  while (batch.length < SCAN_BATCH && !(step = entries.next()).done) {
+                  let finished = false;
+                  while (batch.length < SCAN_BATCH) {
+                    const step = entries.next();
+                    if (step.done) {
+                      finished = true;
+                      break;
+                    }
+                    if (reverse) {
+                      if (hi !== undefined && compareKeys(step.value.key, hi) >= 0) continue;
+                      if (compareKeys(step.value.key, lo) < 0) {
+                        finished = true;
+                        break;
+                      }
+                    }
                     batch.push({
                       key: new Uint8Array(step.value.key),
                       value: new Uint8Array(step.value.value),
                     });
                   }
                   if (Arr.isArrayNonEmpty(batch)) yield batch;
-                  if (batch.length < SCAN_BATCH) return;
+                  if (finished) return;
                 }
               } finally {
                 entries.return?.();

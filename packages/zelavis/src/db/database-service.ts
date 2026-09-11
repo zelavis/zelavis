@@ -4,7 +4,7 @@ import {
   type ZelavisRuntimeService,
 } from "../core/index.js";
 import type { DatabaseRuntimeApi } from "./runtime-api.js";
-import type { CollectionSurface, DocumentFilter, DocumentSort, JsonObject } from "./documents.js";
+import type { CollectionSurface, DocumentCursor, DocumentFilter, DocumentSort, JsonObject } from "./documents.js";
 import type { AggregateOperation, RangeInput } from "./time-series.js";
 
 function readBodyObject(body: unknown): Record<string, unknown> {
@@ -161,6 +161,8 @@ const NOT_FOUND_TAGS = new Set([
 
 const BAD_REQUEST_TAGS = new Set([
   "BackupFormatUnsupported",
+  "CursorMismatch",
+  "UnsupportedOrdering",
   "BackupTenantMismatch",
   "InvalidCollectionName",
   "PartitionMapInvalid",
@@ -216,6 +218,10 @@ function describeTaggedFailure(failure: TaggedFailure): string {
       return `Partition map version ${failure.version} is invalid: ${failure.reason}.`;
     case "RangeNotEmpty":
       return `Range ${failure.range} cannot move from "${failure.from}" to "${failure.to}" while tenants stand on it.`;
+    case "CursorMismatch":
+      return `This cursor cannot continue the read: ${failure.reason}.`;
+    case "UnsupportedOrdering":
+      return `This order is not supported: ${failure.reason}.`;
     default:
       return failure._tag;
   }
@@ -715,6 +721,62 @@ export function defineDatabaseDocumentsService(
                     offset: readNumber(input.offset, 0),
                   }),
                 },
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 404);
+            }
+          },
+        },
+        {
+          id: "database.documents.page",
+          method: "POST",
+          path: "/:collection/page",
+          spec: {
+            operationId: "pageDocuments",
+            summary: "Page through documents in order",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId"],
+                properties: {
+                  tenantId: { type: "string", description: "Tenant ID" },
+                  where: { type: "array", description: "Filters" },
+                  orderBy: { type: "array", description: "At most one sort" },
+                  limit: { type: "number", description: "Documents per page: 1 to 1000, 50 when omitted" },
+                  after: { type: "string", description: "The next cursor from the previous page" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "One page, and a next cursor only when more documents follow" },
+              400: { description: "A cursor from another read, more than one sort, or a bad limit" },
+              404: { description: "Not found" },
+            },
+          },
+          handler: async ({ service, params, body }) => {
+            const input = readBodyObject(body);
+            try {
+              const tenantId = readTenantId(input.tenantId);
+              const limit = readNumber(input.limit, 50);
+              if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
+                throw new TypeError("limit must be an integer from 1 to 1000.");
+              }
+              if (input.after !== undefined && typeof input.after !== "string") {
+                throw new TypeError("after must be the next cursor from a previous page.");
+              }
+              return {
+                body: await service.forTenant(tenantId).documents.findPage({
+                  collection: params.collection,
+                  where: readFilters(input.where),
+                  orderBy: readSort(input.orderBy),
+                  limit,
+                  ...(input.after === undefined ? {} : { after: input.after as DocumentCursor }),
+                }),
               };
             } catch (error) {
               return databaseErrorResponse(error, 404);

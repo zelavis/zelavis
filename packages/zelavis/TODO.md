@@ -872,6 +872,40 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   matters here — and a process to deploy, supervise and upgrade. It earns that
   only when process isolation, upgrading the engine apart from the runtime, or
   non-JavaScript Agents are the requirement, not as a default.
+- [x] An ordered lens for ranges, sorting and pages (roadmap P1, first
+  slice). Every engine now scans a bounded key range in either direction,
+  held to the conformance suite. Values encode so byte order is value order:
+  booleans, numbers as order-preserving float64, strings by code point with no
+  normalization or locale, byte strings, then null. Every scalar document field
+  gets an ordered posting beside its equality one. `gt`, `gte`, `lt`, `lte`
+  and `between` are serializable query nodes that intersect with every other
+  lens and compare like with like; `store.ordered` pages in either direction,
+  ties broken by identifier, with cursors bound to their partition, column and
+  direction; `extent` reads a column's two ends. For documents, comparisons are
+  answered by the lens instead of after it, `eq` and `in` are typed (`10` no
+  longer matches `"10"`), a one-field `orderBy` reads the lens, and `findPage`
+  (and `POST /:collection/page`) returns a cursor only when another document
+  follows. Null and absent values sort last in either direction. At 50k
+  documents a first page of 50 costs 9 ms in either direction, against 1.35 s
+  for the in-memory two-field sort, and a range over 1% of the values 3 ms.
+- [ ] Merge the equality and ordered lenses. Every scalar field is indexed
+  twice now and writes pay for it: 79% more time and 31% more disk at 50k
+  objects of five fields (`scripts/bench-ordered.mjs`). The ordered lens
+  answers typed equality with a value prefix; it needs sealing into segments
+  to match the column lens on wide intersections before the column lens goes.
+- [ ] Composite indexes with explicit field order and null semantics. Until
+  then, an order by several fields sorts in memory in `findMany` and is refused
+  by `findPage`.
+- [ ] Order and page across shards in `db.scatter`: merge each shard's ordered
+  run by value, with a cursor per shard, rather than by shard and identifier.
+- [ ] Unique constraints committed in the same batch as the document, reference
+  constraints, check constraints, and version preconditions beyond
+  `expectedVersion`.
+- [ ] Documents written before the ordered lens have no ordered postings until
+  they are written again. Add a maintenance pass that rewrites them, rather
+  than waiting for each one's next update.
+- [ ] Answer time-series ranges from the ordered lens instead of hierarchical
+  bucket postings.
 - [x] Measured the engines against each other (`scripts/bench-engines.mjs`).
   At 100k objects, with SQLite tuned: LMDB is roughly 4x faster than everything
   else on scans and the cross-model query and 3x on point reads, paying for it

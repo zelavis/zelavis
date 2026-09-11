@@ -46,6 +46,7 @@ test("the database service mounts the same routes on the db runtime API", async 
       "/api/database/documents/:collection",
       "/api/database/documents/:collection/:id",
       "/api/database/documents/:collection/query",
+      "/api/database/documents/:collection/page",
       "/api/database/documents/:collection/:id",
       "/api/database/documents/:collection/:id",
       "/api/database/schemas/collections",
@@ -281,4 +282,53 @@ test("listing time series names the Tenant that owns them", async (t) => {
   assert.deepEqual(scoped.body.series, []);
   assert.equal(unscoped.status, 400);
   assert.match(unscoped.body.error, /Tenant ID/);
+});
+
+test("documents page through a collection in order, and a misused cursor is a 400", async (t) => {
+  const { api } = await openTemporaryDatabase(t);
+  const service = defineDatabaseService(api);
+  const createCollection = routeOf(service, "database.collections.create");
+  const insert = routeOf(service, "database.documents.insert");
+  const page = routeOf(service, "database.documents.page");
+  const params = { collection: "products" };
+
+  await call(createCollection, { service: api, body: { tenantId: "acme", name: "products" } });
+  for (const [id, price] of [["a", 30], ["b", 10], ["c", 20], ["d", 40], ["e", 10]]) {
+    await call(insert, { service: api, params, body: { tenantId: "acme", id, data: { price } } });
+  }
+
+  const seen = [];
+  let after;
+  for (let pages = 0; pages < 10; pages++) {
+    const response = await call(page, {
+      service: api, params,
+      body: { tenantId: "acme", orderBy: [{ path: "price" }], limit: 2, ...(after === undefined ? {} : { after }) },
+    });
+    assert.ok(Array.isArray(response.body.documents), "a page carries its documents");
+    assert.ok(response.body.documents.length > 0, "no empty page");
+    seen.push(...response.body.documents.map((document) => document.id));
+    after = response.body.next;
+    if (after === undefined) break;
+  }
+  // Ties keep insertion order, so b before e.
+  assert.deepEqual(seen, ["b", "e", "c", "a", "d"]);
+
+  const first = await call(page, {
+    service: api, params, body: { tenantId: "acme", orderBy: [{ path: "price" }], limit: 2 },
+  });
+  const otherRead = await call(page, {
+    service: api, params,
+    body: { tenantId: "acme", orderBy: [{ path: "price", direction: "desc" }], after: first.body.next },
+  });
+  const twoSorts = await call(page, {
+    service: api, params, body: { tenantId: "acme", orderBy: [{ path: "price" }, { path: "id" }] },
+  });
+  const tooMany = await call(page, { service: api, params, body: { tenantId: "acme", limit: 5000 } });
+
+  assert.equal(otherRead.status, 400);
+  assert.equal(typeof otherRead.body.error, "string");
+  assert.equal(twoSorts.status, 400);
+  assert.match(twoSorts.body.error, /composite index/);
+  assert.equal(tooMany.status, 400);
+  assert.match(tooMany.body.error, /limit/);
 });

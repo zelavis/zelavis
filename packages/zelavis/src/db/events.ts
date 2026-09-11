@@ -52,6 +52,14 @@ const ManifestWire = Schema.Struct({
   columns: Schema.Array(Schema.Tuple([Schema.String, Schema.String])),
   measures: Schema.Array(Schema.Tuple([Schema.String, Schema.Finite])),
   edges: Schema.Array(Schema.Tuple([Schema.String, Schema.Finite])),
+  ordered: Schema.optional(
+    Schema.Array(
+      Schema.Tuple([
+        Schema.String,
+        Schema.Union([Schema.Null, Schema.Boolean, Schema.Finite, Schema.String]),
+      ]),
+    ),
+  ),
 });
 
 /** The adapter-neutral replication contract. */

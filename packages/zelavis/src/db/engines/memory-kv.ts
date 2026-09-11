@@ -1,6 +1,6 @@
 import { Effect, Stream } from "effect";
-import type { KvEngine, KvEntry, KvWrite } from "../kv.js";
-import { compareKeys, prefixEnd } from "../keys.js";
+import { scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
+import { compareKeys } from "../keys.js";
 import { claimGeneration, storeOverKv } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
 import type { ObjectStoreApi } from "../store.js";
@@ -48,19 +48,20 @@ export const memoryKvEngine = (): KvEngine => {
         return at >= 0 ? entries[at]!.value : undefined;
       }),
 
-    scan: (prefix) =>
+    scan: (prefix, options) =>
       Stream.fromIterableEffect(
         Effect.sync(() => {
-          const end = prefixEnd(prefix);
+          const { lo, hi, empty } = scanRange(prefix, options);
           const out: KvEntry[] = [];
-          let at = indexOf(prefix);
+          if (empty) return out;
+          let at = indexOf(lo);
           if (at < 0) at = ~at;
           for (let i = at; i < entries.length; i++) {
             const entry = entries[i]!;
-            if (end !== undefined && compareKeys(entry.key, end) >= 0) break;
+            if (hi !== undefined && compareKeys(entry.key, hi) >= 0) break;
             out.push(entry);
           }
-          return out;
+          return options?.reverse ? out.reverse() : out;
         }),
       ),
 

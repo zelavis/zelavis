@@ -64,11 +64,23 @@ export interface IndexManifest {
   readonly columns: ReadonlyArray<readonly [column: string, value: string]>;
   readonly measures: ReadonlyArray<readonly [column: string, value: number]>;
   readonly edges: ReadonlyArray<readonly [edgeType: string, to: Seq]>;
+  /**
+   * Values the object sorts by, one posting each in the ordered lens.
+   *
+   * Optional because a manifest written before the lens existed does not carry
+   * it. Such an object contributes no ordered postings until it is written
+   * again with a manifest that does.
+   */
+  readonly ordered?: ReadonlyArray<readonly [column: string, value: OrderedScalar]>;
 }
+
+/** A value the ordered lens sorts by, as a manifest carries it: JSON's scalars. */
+export type OrderedScalar = null | boolean | number | string;
 
 export const emptyManifest: IndexManifest = Object.freeze({
   terms: [],
   columns: [],
   measures: [],
   edges: [],
+  ordered: [],
 });

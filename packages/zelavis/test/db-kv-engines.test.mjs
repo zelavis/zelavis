@@ -93,6 +93,42 @@ for (const [name, make, installed] of engines) {
     );
   });
 
+  test(`${name}: bounded scans narrow the prefix range, in either direction`, { skip: installed ? false : `${name} is not installed` }, async (t) => {
+    await run(t, make, (engine) =>
+      Effect.gen(function* () {
+        const inside = [1, 2, 3, 4, 5].map((n) => key(9, n));
+        yield* engine.write([
+          ...inside.map((k) => ({ op: "put", key: k, value: k })),
+          // Neighbours on both sides of the prefix, which no bound may reach.
+          { op: "put", key: key(8, 9), value: key(0) },
+          { op: "put", key: key(10), value: key(0) },
+        ]);
+        const keysOf = (stream) => Effect.map(Stream.runCollect(stream), (c) => [...c].map((e) => [...e.key]));
+        const scan = (options) => keysOf(engine.scan(key(9), options));
+        const ascending = inside.map((k) => [...k]);
+        const descending = [...ascending].reverse();
+
+        assert.deepEqual(yield* scan(), ascending);
+        assert.deepEqual(yield* scan({ reverse: true }), descending);
+        // `from` is inclusive and `to` exclusive, whichever way the scan runs.
+        assert.deepEqual(yield* scan({ from: key(9, 2), to: key(9, 4) }), [[9, 2], [9, 3]]);
+        assert.deepEqual(yield* scan({ from: key(9, 2), to: key(9, 4), reverse: true }), [[9, 3], [9, 2]]);
+        // Bounds that fall between keys.
+        assert.deepEqual(yield* scan({ from: key(9, 2, 0), to: key(9, 4, 0) }), [[9, 3], [9, 4]]);
+        assert.deepEqual(yield* scan({ from: key(9, 2, 0), to: key(9, 4, 0), reverse: true }), [[9, 4], [9, 3]]);
+        // Bounds outside the prefix are clipped to it, never widening the scan.
+        assert.deepEqual(yield* scan({ from: key(8), to: key(11) }), ascending);
+        assert.deepEqual(yield* scan({ from: key(8), to: key(11), reverse: true }), descending);
+        // Empty ranges, both directions.
+        assert.deepEqual(yield* scan({ from: key(9, 3), to: key(9, 3) }), []);
+        assert.deepEqual(yield* scan({ from: key(9, 4), to: key(9, 2), reverse: true }), []);
+        // A reverse scan of the whole keyspace, and one stopped early.
+        assert.deepEqual(yield* keysOf(engine.scan(new Uint8Array(0), { reverse: true })),
+          [[10], [9, 5], [9, 4], [9, 3], [9, 2], [9, 1], [8, 9]]);
+        assert.deepEqual(yield* keysOf(Stream.take(engine.scan(key(9), { reverse: true }), 2)), [[9, 5], [9, 4]]);
+      }));
+  });
+
   test(`${name}: a batch lands whole, and later writes see earlier ones`, { skip: installed ? false : `${name} is not installed` }, async (t) => {
     await run(t, make, (engine) =>
       Effect.gen(function* () {

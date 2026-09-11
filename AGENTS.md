@@ -335,6 +335,11 @@ Key rules:
   writes it back changed, so two in flight on an asynchronous engine read the
   same value and one is lost. Reads take no permit. Nothing holding the permit
   may call another store write, or it waits on itself.
+- Document values, and anything a query compares or orders, use one order: the
+  ordered lens's (`compareOrderedValues` in `db/keys.ts`) — booleans, then
+  numbers, then strings by code point, then null. Never `localeCompare` or any
+  other host order for them, including when sorting in memory: a result sorted
+  in memory must match the same result read from an index, on every host.
 - A posting is a key in the live tier or a bit in a sealed blob, and a read is
   the union of both minus the tombstones. Blobs are immutable: `db.maintenance`
   seals the live postings into segments of 65536 identifiers, and anything
