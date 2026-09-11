@@ -1,7 +1,7 @@
 import { Effect, Stream } from "effect";
 import { scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
 import { compareKeys } from "../keys.js";
-import { claimGeneration, storeOverKv } from "../kv-store.js";
+import { openStoreOverKv } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
 import type { ObjectStoreApi } from "../store.js";
 import type { StoreError } from "../errors.js";
@@ -89,5 +89,5 @@ export const makeMemoryStore = (
 ): Effect.Effect<ObjectStoreApi, StoreError> =>
   Effect.gen(function* () {
     const engine = memoryKvEngine();
-    return storeOverKv(partition, engine, yield* claimGeneration(engine));
+    return yield* openStoreOverKv(partition, engine);
   });

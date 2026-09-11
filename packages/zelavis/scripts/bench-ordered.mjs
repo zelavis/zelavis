@@ -1,11 +1,11 @@
-// The ordered lens: what it costs to write, and what it saves to read.
+// The scalar lens: what it costs to write, and what it answers, sealed or not.
 //
-//   N=20000 node scripts/bench-ordered.mjs
+//   N=50000 node scripts/bench-ordered.mjs
 //
-// Cost: the same objects written with and without ordered postings, one
-// transaction each, so the difference is the lens and nothing else. Saving:
-// documents read in order through the lens against the in-memory sort that a
-// two-field order still takes.
+// One lens answers equality, ranges and order, so every scalar field is one
+// posting. Reads are measured twice: with every posting live, and after
+// `sealPostings` has folded them into segment blobs, which is the state a
+// maintained store is in — and the one a merged lens had to keep fast.
 import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -43,30 +43,24 @@ const withStore = async (body) => {
 };
 
 // ---------------------------------------------------------------- write cost
-const ingest = (withOrdered) => withStore((store, dir) => Effect.gen(function* () {
+const written = await withStore((store, dir) => Effect.gen(function* () {
   const started = performance.now();
   for (let seq = 1; seq <= N; seq++) {
     const values = Array.from({ length: FIELDS }, (_, f) => (seq * (f + 7919)) % 100000);
     yield* store.transact((txn) => txn.put(asSeq(seq), enc.encode(JSON.stringify(values)), {
       terms: [],
-      columns: values.map((v, f) => [`field${f}`, String(v)]),
+      columns: values.map((v, f) => [`field${f}`, v]),
       measures: [],
       edges: [],
-      ...(withOrdered ? { ordered: values.map((v, f) => [`field${f}`, v]) } : {}),
     }));
   }
   const ms = performance.now() - started;
   return { perSec: Math.round(N / (ms / 1000)), bytesPerObject: Math.round(sizeOf(dir) / N) };
 }));
-
-const without = await ingest(false);
-const withLens = await ingest(true);
 console.log(`\nWrite cost, ${N} objects x ${FIELDS} scalar fields, one transaction each (node:sqlite)`);
-console.log(`  equality lens only       ${String(without.perSec).padStart(7)} objects/s  ${String(without.bytesPerObject).padStart(5)} B/object`);
-console.log(`  equality + ordered lens  ${String(withLens.perSec).padStart(7)} objects/s  ${String(withLens.bytesPerObject).padStart(5)} B/object`);
-console.log(`  ordered lens adds        ${(((without.perSec / withLens.perSec) - 1) * 100).toFixed(0).padStart(6)}% time      ${(((withLens.bytesPerObject / without.bytesPerObject) - 1) * 100).toFixed(0).padStart(4)}% disk`);
+console.log(`  one scalar lens          ${String(written.perSec).padStart(7)} objects/s  ${String(written.bytesPerObject).padStart(5)} B/object`);
 
-// --------------------------------------------------------------- read saving
+// ------------------------------------------------------------------- reads
 await withStore((store) => Effect.gen(function* () {
   const docs = documentsFor(store, "t1");
   yield* docs.createCollection({ name: "items" });
@@ -90,14 +84,20 @@ await withStore((store) => Effect.gen(function* () {
     ["findPage, first 50 by price, ascending", run(docs.findPage(q({ orderBy: [{ path: "price" }], limit: 50 })))],
     ["findPage, first 50 by price, descending", run(docs.findPage(q({ orderBy: [{ path: "price", direction: "desc" }], limit: 50 })))],
     ["findPage, 20 pages of 50 by price", run(walkPages(20, "asc"))],
-    ["findMany, first 50 by one field (lens)", run(docs.findMany(q({ orderBy: [{ path: "price" }], limit: 50 })))],
+    ["findMany, category = 3 (5% of documents)", run(docs.findMany(q({ where: [{ path: "category", value: 3 }] })))],
+    ["findMany, category = 3 and price < 50%", run(docs.findMany(q({ where: [{ path: "category", value: 3 }, { path: "price", op: "lt", value: 500000 }] })))],
+    ["findMany, price < 1% of range", run(docs.findMany(q({ where: [{ path: "price", op: "lt", value: 10000 }] })))],
+    ["findMany, price < 50% of range", run(docs.findMany(q({ where: [{ path: "price", op: "lt", value: 500000 }] })))],
     ["findMany, first 50 by two fields (sorted in memory)", run(docs.findMany(q({ orderBy: [{ path: "price" }, { path: "name" }], limit: 50 })))],
-    ["findMany, price < 1% of range (lens)", run(docs.findMany(q({ where: [{ path: "price", op: "lt", value: 10000 }] })))],
-    ["findMany, price < 50% of range (lens)", run(docs.findMany(q({ where: [{ path: "price", op: "lt", value: 500000 }] })))],
   ];
+  const live = [];
+  for (const [, fn] of rows) live.push(yield* Effect.promise(() => median(5, fn)));
+  yield* store.sealPostings;
+  const sealed = [];
+  for (const [, fn] of rows) sealed.push(yield* Effect.promise(() => median(5, fn)));
   console.log(`\nReads over ${N} documents (node:sqlite, median of 5, warm)`);
-  for (const [label, fn] of rows) {
-    const ms = yield* Effect.promise(() => median(5, fn));
-    console.log(`  ${label.padEnd(52)} ${ms.toFixed(1).padStart(8)} ms`);
-  }
+  console.log(`  ${"".padEnd(52)} ${"live".padStart(9)} ${"sealed".padStart(9)}`);
+  rows.forEach(([label], i) => {
+    console.log(`  ${label.padEnd(52)} ${live[i].toFixed(1).padStart(7)}ms ${sealed[i].toFixed(1).padStart(7)}ms`);
+  });
 }));

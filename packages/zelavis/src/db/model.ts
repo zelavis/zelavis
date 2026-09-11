@@ -61,17 +61,13 @@ export interface DbObject {
  */
 export interface IndexManifest {
   readonly terms: ReadonlyArray<readonly [field: string, term: string]>;
-  readonly columns: ReadonlyArray<readonly [column: string, value: string]>;
+  /**
+   * Scalar values, one posting each in the ordered lens, which answers both
+   * equality and order. Typed: `10`, `"10"` and `true` are different values.
+   */
+  readonly columns: ReadonlyArray<readonly [column: string, value: OrderedScalar]>;
   readonly measures: ReadonlyArray<readonly [column: string, value: number]>;
   readonly edges: ReadonlyArray<readonly [edgeType: string, to: Seq]>;
-  /**
-   * Values the object sorts by, one posting each in the ordered lens.
-   *
-   * Optional because a manifest written before the lens existed does not carry
-   * it. Such an object contributes no ordered postings until it is written
-   * again with a manifest that does.
-   */
-  readonly ordered?: ReadonlyArray<readonly [column: string, value: OrderedScalar]>;
 }
 
 /** A value the ordered lens sorts by, as a manifest carries it: JSON's scalars. */
@@ -82,5 +78,4 @@ export const emptyManifest: IndexManifest = Object.freeze({
   columns: [],
   measures: [],
   edges: [],
-  ordered: [],
 });

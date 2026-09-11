@@ -888,11 +888,27 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   follows. Null and absent values sort last in either direction. At 50k
   documents a first page of 50 costs 9 ms in either direction, against 1.35 s
   for the in-memory two-field sort, and a range over 1% of the values 3 ms.
-- [ ] Merge the equality and ordered lenses. Every scalar field is indexed
-  twice now and writes pay for it: 79% more time and 31% more disk at 50k
-  objects of five fields (`scripts/bench-ordered.mjs`). The ordered lens
-  answers typed equality with a value prefix; it needs sealing into segments
-  to match the column lens on wide intersections before the column lens goes.
+- [x] Merged the equality and ordered lenses into one typed, sealable scalar
+  lens. A manifest's `columns` carry typed scalars and live in the ordered
+  lens, which answers equality with a value prefix and ranges and order from
+  the same posting; `equals` is typed, so documents no longer check `eq` and
+  `in` against the payload a second time. The lens seals like the others, and
+  an ordered read merges the sealed blobs — expanded back into the keys they
+  replaced — with the live tier and the tombstones. Writes are one posting per
+  field again: 6.5k objects/s and 1,685 B/object at 50k objects of five
+  fields, against 2.9k/s and 2,190 B with two lenses and 5.2k/s and 1,673 B
+  before the ordered lens. A sealed store reads as fast as a live one — a first
+  page of 50 in 5 ms — and sealing still pays where it did: a wide term 13.2×,
+  a wide column 14.2×, a selective predicate against an unselective one 180×.
+  A store in the older layout is re-indexed when it opens (format 2).
+- [x] Sealing leaves a value live until it has 64 postings in a segment. A
+  unique value — a price, a name — sealed into one blob per posting cost a key
+  each anyway plus a decode on every read, and made ordered reads of a sealed
+  store 40× slower (a first page 5 ms → 218 ms). The cost moved to re-sealing,
+  which rescans the postings it leaves live: 0.66 s against 0.10 s for 2,000
+  changed objects of 200k in `scripts/bench-seal.mjs`.
+- [ ] Make a re-seal skip postings an earlier seal already declined, and win
+  back the re-seal time the sealing threshold cost.
 - [ ] Composite indexes with explicit field order and null semantics. Until
   then, an order by several fields sorts in memory in `findMany` and is refused
   by `findPage`.
@@ -901,8 +917,9 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
 - [ ] Unique constraints committed in the same batch as the document, reference
   constraints, check constraints, and version preconditions beyond
   `expectedVersion`.
-- [ ] Documents written before the ordered lens have no ordered postings until
-  they are written again. Add a maintenance pass that rewrites them, rather
+- [ ] Documents written before the scalar lens index numbers and booleans as
+  text until they are written again, so a typed `eq`, a range or an order
+  misses or misplaces them. Add a maintenance pass that rewrites them, rather
   than waiting for each one's next update.
 - [ ] Answer time-series ranges from the ordered lens instead of hierarchical
   bucket postings.

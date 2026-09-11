@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { Effect, Stream, type Scope } from "effect";
 import { StoreError } from "../errors.js";
 import { scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
-import { claimGeneration, storeOverKv } from "../kv-store.js";
+import { openStoreOverKv } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
 import type { ObjectStoreApi } from "../store.js";
 
@@ -205,5 +205,5 @@ export const makeRocksdbStore = (
 ): Effect.Effect<ObjectStoreApi, StoreError, Scope.Scope> =>
   Effect.gen(function* () {
     const engine = yield* makeRocksdbEngine(partition, directory);
-    return storeOverKv(partition, engine, yield* claimGeneration(engine));
+    return yield* openStoreOverKv(partition, engine);
   });

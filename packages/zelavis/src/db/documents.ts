@@ -192,46 +192,21 @@ const isScalar = (value: Json | undefined): value is string | number | boolean =
   typeof value === "string" || typeof value === "number" || typeof value === "boolean";
 
 /**
- * Flatten a document into column postings.
+ * Flatten a document into scalar postings, one per value, null included.
  *
- * Every scalar reachable by a dotted path becomes an equality posting, which is
- * what lets `eq` and `in` filters be answered from the lens rather than by
- * reading payloads. Non-scalars are skipped rather than stringified: a posting
- * for `{"a":1}` would only ever match a query that happened to serialize it
- * identically, which is a match nobody intends.
+ * Every scalar reachable by a dotted path is indexed in the ordered lens, which
+ * answers equality, ranges and order from one posting: typed, so `10` and
+ * `"10"` are different values. Null is indexed because it has a place in that
+ * order, last; objects and arrays are skipped rather than stringified, because
+ * a posting for `{"a":1}` would only match a query that happened to serialize
+ * it identically, which is a match nobody intends.
  */
 const columnsFor = (
   tenant: TenantId,
   collection: string,
   data: JsonObject,
-): Array<readonly [string, string]> => {
-  const out: Array<readonly [string, string]> = [[collectionColumn(tenant), collection]];
-  const walk = (value: Json, path: string): void => {
-    if (isScalar(value)) {
-      out.push([columnFor(tenant, collection, path), String(value)]);
-      return;
-    }
-    if (value === null || Array.isArray(value)) return;
-    for (const [k, v] of Object.entries(value)) walk(v, path === "" ? k : `${path}.${k}`);
-  };
-  walk(data, "");
-  return out;
-};
-
-/**
- * Flatten a document into ordered postings: one per scalar, null included.
- *
- * The same paths as the column lens, for a different question. Equality asks
- * which documents hold a value; this asks which come first, and a range is a
- * run of it. Null is indexed because it has a place in that order, last; a
- * field that is absent, or holds an object or array, has none.
- */
-const orderedFor = (
-  tenant: TenantId,
-  collection: string,
-  data: JsonObject,
 ): Array<readonly [string, OrderedScalar]> => {
-  const out: Array<readonly [string, OrderedScalar]> = [];
+  const out: Array<readonly [string, OrderedScalar]> = [[collectionColumn(tenant), collection]];
   const walk = (value: Json, path: string): void => {
     if (value === null || isScalar(value)) {
       if (path !== "") out.push([columnFor(tenant, collection, path), value]);
@@ -323,13 +298,11 @@ const matches = (data: JsonObject, filter: DocumentFilter): boolean => {
 /**
  * Build the lens query for the filters that lenses can answer.
  *
- * `eq` and `in` become postings intersected against the collection, and are
- * checked again against each candidate: the column lens indexes a value's
- * text, so `10` and `"10"` share a posting, and only the document says which it
- * holds. A comparison on a scalar becomes a range in the ordered lens, which
- * compares like with like and needs no second look. Anything else is applied to
- * the candidates afterwards; the split is deliberate and visible rather than a
- * silent full scan.
+ * `eq` and `in` become typed postings, and a comparison on a scalar becomes a
+ * range that compares like with like, all answered by the ordered lens with no
+ * second look at the document. Anything else — `ne`, or a value that is an
+ * object or array — is applied to the candidates afterwards; the split is
+ * deliberate and visible rather than a silent full scan.
  */
 interface Plan {
   /** Every matching document, the collection clause included. */
@@ -355,17 +328,15 @@ const planQuery = (
     const op = filter.op ?? "eq";
     const column = columnFor(tenant, collection, filter.path);
     const value = filter.value as Json;
-    if (op === "eq" && isScalar(value)) {
-      clauses.push(equals(column, String(value)));
-      residual.push(filter);
+    const scalar = orderable(value);
+    if (op === "eq" && scalar !== undefined) {
+      clauses.push(equals(column, scalar));
     } else if (
       op === "in" && Array.isArray(filter.value) && filter.value.length > 0 &&
-      filter.value.every((member) => isScalar(member))
+      filter.value.every((member) => orderable(member) !== undefined)
     ) {
-      clauses.push(or(...filter.value.map((member) => equals(column, String(member)))));
-      residual.push(filter);
+      clauses.push(or(...filter.value.map((member) => equals(column, orderable(member)!))));
     } else if (op === "gt" || op === "gte" || op === "lt" || op === "lte") {
-      const scalar = orderable(value);
       if (scalar === undefined) {
         residual.push(filter);
         continue;
@@ -632,7 +603,6 @@ export const documentsFor = (
       columns: columnsFor(tenant, doc.collection, doc.data),
       measures: [],
       edges: [],
-      ordered: orderedFor(tenant, doc.collection, doc.data),
     }, { namespace: documentNs(tenant, doc.collection), key: doc.id });
 
   const keeps = (plan: Plan) => (doc: Document | undefined): doc is Document =>
