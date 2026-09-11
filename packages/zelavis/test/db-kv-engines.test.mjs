@@ -126,6 +126,14 @@ for (const [name, make, installed] of engines) {
         assert.deepEqual(yield* keysOf(engine.scan(new Uint8Array(0), { reverse: true })),
           [[10], [9, 5], [9, 4], [9, 3], [9, 2], [9, 1], [8, 9]]);
         assert.deepEqual(yield* keysOf(Stream.take(engine.scan(key(9), { reverse: true }), 2)), [[9, 5], [9, 4]]);
+        // A limit is the first entries in scan order, whichever way and within
+        // whatever bounds — including a reverse scan that passes over its own
+        // upper bound, which must not count against the limit.
+        assert.deepEqual(yield* scan({ limit: 2 }), [[9, 1], [9, 2]]);
+        assert.deepEqual(yield* scan({ reverse: true, limit: 2 }), [[9, 5], [9, 4]]);
+        assert.deepEqual(yield* scan({ to: key(9, 4), reverse: true, limit: 2 }), [[9, 3], [9, 2]]);
+        assert.deepEqual(yield* scan({ from: key(9, 2), limit: 100 }), ascending.slice(1));
+        assert.deepEqual(yield* scan({ limit: 0 }), []);
       }));
   });
 

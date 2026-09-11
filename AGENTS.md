@@ -360,6 +360,11 @@ Key rules:
   which is the only thing keeping a write from missing an index created
   alongside it and a backfill from overwriting a newer write: never move either
   read out of the transaction.
+- A scan that stops early passes `limit` to `engine.scan` rather than cutting
+  the stream with `Stream.take`. A stream pulls an iterable thousands of
+  entries at a time, so a take of a few rows still reads thousands; the limit
+  is what lets an engine stop at the source. Every engine honours it, and
+  `test/db-kv-engines.test.mjs` holds each to the same answers.
 - One transaction is one batch, and that is the whole durability story: a
   killed process loses no commit that returned, a write-ahead log truncated by
   a power cut costs a suffix rather than leaving holes, and an interrupted

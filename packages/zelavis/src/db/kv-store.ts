@@ -201,10 +201,12 @@ const scanOptions = (
   from: Uint8Array | undefined,
   to: Uint8Array | undefined,
   reverse: boolean,
+  limit?: number,
 ): KvScanOptions => ({
   ...(from === undefined ? {} : { from }),
   ...(to === undefined ? {} : { to }),
   reverse,
+  ...(limit === undefined ? {} : { limit }),
 });
 
 const decodeCursor = (partition: PartitionKey, cursor: EventCursor): number => {
@@ -624,14 +626,18 @@ export const storeOverKv = (
       let liveFrom = input.from;
       let liveTo = input.to;
       let liveDone = false;
+      // The first pull is sized to the page, which most reads end inside: a
+      // small page — a scatter asks every tenant for a few rows — would
+      // otherwise read a full chunk of keys to return a handful.
+      let liveChunk = Math.min(LIVE_CHUNK, input.limit);
       const pullLive = Effect.gen(function* () {
         if (liveDone) return [] as Array<Uint8Array>;
+        const size = liveChunk;
+        liveChunk = LIVE_CHUNK;
         const chunk = [
-          ...(yield* Stream.runCollect(
-            engine.scan(prefix, scanOptions(liveFrom, liveTo, reverse)).pipe(Stream.take(LIVE_CHUNK)),
-          )),
+          ...(yield* Stream.runCollect(engine.scan(prefix, scanOptions(liveFrom, liveTo, reverse, size)))),
         ].map((entry) => new Uint8Array(entry.key));
-        if (chunk.length < LIVE_CHUNK) liveDone = true;
+        if (chunk.length < size) liveDone = true;
         const last = chunk.at(-1);
         if (last !== undefined) {
           if (reverse) liveTo = last;
@@ -647,9 +653,7 @@ export const storeOverKv = (
         while (!sealedDone) {
           const blobs = [
             ...(yield* Stream.runCollect(
-              engine.scan(segmentPrefix(prefix), scanOptions(blobFrom, blobTo, reverse)).pipe(
-                Stream.take(BLOB_CHUNK),
-              ),
+              engine.scan(segmentPrefix(prefix), scanOptions(blobFrom, blobTo, reverse, BLOB_CHUNK)),
             )),
           ];
           const keys: Array<Uint8Array> = [];

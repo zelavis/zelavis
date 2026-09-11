@@ -141,7 +141,8 @@ export const makeRocksdbEngine = (
           Stream.fromAsyncIterable(
             (async function* (): AsyncGenerator<KvEntry> {
               const { lo, hi, empty } = scanRange(prefix, options);
-              if (empty) return;
+              let left = options?.limit ?? Infinity;
+              if (empty || left <= 0) return;
               const iterator = db.iterator({
                 gte: buf(lo),
                 ...(hi === undefined ? {} : { lt: buf(hi) }),
@@ -166,6 +167,7 @@ export const makeRocksdbEngine = (
                   });
                   if (entry === undefined) break;
                   yield entry;
+                  if (--left <= 0) break;
                 }
               } finally {
                 // Released whether the scan finished or the consumer stopped

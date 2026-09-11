@@ -52,16 +52,20 @@ export const memoryKvEngine = (): KvEngine => {
       Stream.fromIterableEffect(
         Effect.sync(() => {
           const { lo, hi, empty } = scanRange(prefix, options);
-          const out: KvEntry[] = [];
-          if (empty) return out;
-          let at = indexOf(lo);
-          if (at < 0) at = ~at;
-          for (let i = at; i < entries.length; i++) {
-            const entry = entries[i]!;
-            if (hi !== undefined && compareKeys(entry.key, hi) >= 0) break;
-            out.push(entry);
+          if (empty) return [] as KvEntry[];
+          // Both ends by binary search, so a bounded scan copies what it
+          // returns rather than the whole range.
+          let start = indexOf(lo);
+          if (start < 0) start = ~start;
+          let end = entries.length;
+          if (hi !== undefined) {
+            const at = indexOf(hi);
+            end = at < 0 ? ~at : at;
           }
-          return options?.reverse ? out.reverse() : out;
+          const count = Math.max(0, Math.min(end - start, options?.limit ?? Infinity));
+          return options?.reverse
+            ? entries.slice(end - count, end).reverse()
+            : entries.slice(start, start + count);
         }),
       ),
 

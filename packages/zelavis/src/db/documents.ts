@@ -129,12 +129,19 @@ export interface FindPageInput {
   /** Documents per page: 50 unless given, and at most 1000. */
   readonly limit?: number;
   readonly after?: DocumentCursor;
+  /**
+   * Also hand back the cursor after each document, not only after the last,
+   * so a reader that stops partway through a page resumes exactly there.
+   */
+  readonly cursors?: boolean;
 }
 
 export interface DocumentPage {
   readonly documents: ReadonlyArray<Document>;
   /** Present only when another matching document follows. */
   readonly next?: DocumentCursor;
+  /** With `cursors`, the cursor after each document, in order. */
+  readonly cursors?: ReadonlyArray<DocumentCursor>;
 }
 
 /** Marks a stored collection record, distinct from any collection name. */
@@ -332,6 +339,26 @@ const normalizeSorts = (sorts: ReadonlyArray<DocumentSort> | undefined): Array<S
     direction: sort.direction === "desc" ? "desc" : "asc",
     nulls: sort.nulls === "first" ? "first" : "last",
   }));
+
+/**
+ * Document order exactly as `findMany` and `findPage` give it: by each sort
+ * field in turn, in the ordered lens's order, with its direction and null
+ * placement. Documents equal on every field compare equal, and which comes
+ * first is then the caller's to say — anything merging several ordered reads
+ * compares with this, so the merge never disagrees with a read it merges.
+ */
+export const compareDocuments = (
+  orderBy: ReadonlyArray<DocumentSort>,
+): ((a: Document, b: Document) => number) => {
+  const sorts = normalizeSorts(orderBy);
+  return (a, b) => {
+    for (const sort of sorts) {
+      const order = compareAt(readPath(a.data, sort.path), readPath(b.data, sort.path), sort.direction, sort.nulls);
+      if (order !== 0) return order;
+    }
+    return 0;
+  };
+};
 
 const describeFields = (fields: ReadonlyArray<Required<IndexField>>): string =>
   fields.map((field) => `${field.path} ${field.direction} nulls ${field.nulls}`).join(", ");
@@ -1268,18 +1295,14 @@ export const documentsFor = (
           }
         }
         const keep = keeps(plan);
-        let docs: Document[] = [];
+        const docs: Document[] = [];
         for (const seq of yield* Stream.runCollect(resolveQuery(plan.query))) {
           const doc = yield* readDocument(seq);
           if (keep(doc)) docs.push(doc);
         }
         // No index serves these fields, so they are sorted here — in the
         // lens's order, so the answer matches what an index would give.
-        for (const sort of [...sorts].reverse()) {
-          docs = docs.sort((a, b) =>
-            compareAt(readPath(a.data, sort.path), readPath(b.data, sort.path), sort.direction, sort.nulls));
-        }
-        return slice(docs);
+        return slice(sorts.length === 0 ? docs : docs.sort(compareDocuments(sorts)));
       }),
 
     findPage: (input) =>
@@ -1314,6 +1337,9 @@ export const documentsFor = (
         return {
           documents: page.map((entry) => entry.document),
           ...(found.length > limit ? { next: encodeDocumentCursor(shape, page.at(-1)!.position) } : {}),
+          ...(input.cursors === true
+            ? { cursors: page.map((entry) => encodeDocumentCursor(shape, entry.position)) }
+            : {}),
         };
       }),
 
