@@ -2,9 +2,8 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { Effect, Stream, type Scope } from "effect";
 import { StoreError } from "../errors.js";
-import { prefixEnd } from "../keys.js";
-import type { KvEngine, KvEntry, KvWrite } from "../kv.js";
-import { claimGeneration, storeOverKv } from "../kv-store.js";
+import { scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
+import { openStoreOverKv } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
 import type { ObjectStoreApi } from "../store.js";
 
@@ -138,13 +137,18 @@ export const makeRocksdbEngine = (
             catch: fail("rocksdb.get"),
           }),
 
-        scan: (prefix) =>
+        scan: (prefix, options) =>
           Stream.fromAsyncIterable(
             (async function* (): AsyncGenerator<KvEntry> {
-              const end = prefixEnd(prefix);
+              const { lo, hi, empty } = scanRange(prefix, options);
+              let left = options?.limit ?? Infinity;
+              if (empty || left <= 0) return;
               const iterator = db.iterator({
-                gte: buf(prefix),
-                ...(end === undefined ? {} : { lt: buf(end) }),
+                gte: buf(lo),
+                ...(hi === undefined ? {} : { lt: buf(hi) }),
+                // This binding keeps `gte` and `lt` as the bounds in either
+                // direction; `reverse` only changes the way it walks them.
+                reverse: options?.reverse === true,
                 keyAsBuffer: true,
                 valueAsBuffer: true,
                 // A modest prefetch. Four megabytes was tried and cost more in
@@ -163,6 +167,7 @@ export const makeRocksdbEngine = (
                   });
                   if (entry === undefined) break;
                   yield entry;
+                  if (--left <= 0) break;
                 }
               } finally {
                 // Released whether the scan finished or the consumer stopped
@@ -202,5 +207,5 @@ export const makeRocksdbStore = (
 ): Effect.Effect<ObjectStoreApi, StoreError, Scope.Scope> =>
   Effect.gen(function* () {
     const engine = yield* makeRocksdbEngine(partition, directory);
-    return storeOverKv(partition, engine, yield* claimGeneration(engine));
+    return yield* openStoreOverKv(partition, engine);
   });

@@ -187,6 +187,32 @@ an exported type is never mistaken for an operational distributed feature.
   compare-and-delete operations with strictly advancing CAS timestamps;
   first-owner bootstrap uses them for a durable leased claim that prevents
   competing Platform writers from creating multiple owners.
+- [x] Evaluated celld against Fabric (`CELLD_EVALUATION.md`). It is a
+  reference now, a possible Project runtime backend later (one fleet per
+  Project, under Fabric's placement), and never a second scheduler, a storage
+  engine or the public object contract. Its bucket protocol is the useful part:
+  ownership as a compare-and-swap record carrying an epoch, the epoch in the
+  key of whatever the owner replicates, and acknowledgements held until a
+  durability proof covers them.
+- [x] File storage takes conditional writes (`condition: { ifAbsent }` or
+  `{ ifMatch: etag }`), and `probeFileStorageGuarantees` asks a store whether it
+  enforces them, in celld's four steps with read-after-write between them. A
+  store that accepts the condition and ignores it fails by name; one that
+  answers with an error is inconclusive, never conformant. S3 sends
+  `If-None-Match` / `If-Match` and treats a 412, or a 404 for `ifMatch`, as a
+  rejection; anything else stays an error. Local
+  storage creates by hard link, exact across processes, and compares and
+  replaces under a per-object queue, exact within one process.
+- [ ] Require the probe before any object store carries a lease, a fence or an
+  authoritative publication. The file-backed service registry is the first
+  case: it rewrites the whole registry with an unconditional PUT, so two
+  Platforms sharing that storage drop each other's updates.
+- [ ] When placements move into the System Store, make them `{owner, epoch}`
+  records acquired by compare-and-swap and advanced on every activation, the
+  shape celld's `cells/<cell>/own.json` has.
+- [ ] Self-fence an Agent whose lease it cannot renew, at the published expiry
+  rather than by trusting its own clock, and carry a fencing token into its
+  side effects.
 - [x] Credential recovery is provider-owned and endpoint-backed with generic
   start responses, explicit completion, and account-session revocation. The
   built-in email/username password plugins support expiring hashed one-time
@@ -626,8 +652,11 @@ driven by what the existing dependents call, not by what is easiest to port.
   record an event concerns.
 - [x] Optimistic concurrency through `expectedVersion` on update and delete, and
   duplicate-id rejection on insert.
-- [ ] Ordering, comparison and range filters served from the lens rather than
-  applied after it.
+- [x] Ordering, comparison and range filters served from the lens rather than
+  applied after it. `eq`, `in` and every comparison on a scalar become lens
+  clauses, and an order is read from the lens or a composite index. What is
+  still applied to the candidates afterwards is `ne`, and a filter whose value
+  is an object or an array — neither of which a range can express.
 - [x] `forTenant` as partition selection. Tenants hash to one of a fixed number
   of virtual ranges, and ranges are placed on physical shards, so an App is
   sharded from creation and growing moves placements rather than rehashing
@@ -791,6 +820,180 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   methods, nothing above it changed. The single keyspace cost nothing, because
   the key tags already give each lens the disjoint range column families would
   have provided.
+- [x] Serialized each store's writers. A commit reads the log's next position
+  and writes it back advanced, and `nextSeq`, sealing, compaction and both lens
+  rebuilds do the same with their own state; on an asynchronous engine two in
+  flight read the same value and the second write replaced the first. LMDB and
+  RocksDB each lost 31 of 32 concurrent commits that way without an error, and
+  LMDB handed one identifier to two objects; SQLite and libSQL were spared only
+  because their drivers never interleaved. One permit per store, and reads take
+  none (`db-concurrent-commits.test.mjs`).
+- [x] Evaluated `@harperfast/rocksdb-js` as the maintained replacement for the
+  discontinued `rocksdb` binding, as `engines/rocksdb-js.ts` behind no public
+  export. Prebuilt for macOS, Linux (glibc and musl) and Windows on x64 and
+  arm64, so nothing compiles on install; needs Node `^22.18.0 || >=24`; runs a
+  whole store under Bun 1.3; Deno is not claimed. It builds RocksDB 11.8.1
+  where the old binding carried 6.17.3, and has shipped 38 releases since
+  January 2026. Pinned at 2.8.0. It passes the key-value conformance suite,
+  SIGKILL durability, a cut write-ahead log (a suffix lost, never a hole),
+  concurrent writers, the cross-process lock, clean reopen, and refuses a
+  corrupt manifest pointer and a corrupt block on a point read. Commits are
+  RocksDB's default, stated rather than hidden: logged, not fsynced each — a
+  dead process loses nothing, a power cut can lose a suffix.
+- [x] Measured it against the old binding. Warm point reads take 0.31× the
+  time, identity lookups 0.42×, scans 0.75×, the cross-model query 0.80×, and
+  ingest runs 1.28× faster; cold scans 0.94×, the cold cross-model query 0.77×,
+  disk 0.9×. Cold point reads varied 8–16 µs between runs, against the old
+  binding's 15. Scans were half again slower until entries left the adapter in
+  batches of 1,024 instead of one promise each — the binding's own iterator was
+  never the cost.
+- [x] Migration needs no transformation. A store the old binding wrote opens
+  whole under the new one — 2,000 of 2,000 objects, every lens and event — and
+  the old binding still opens the directory afterwards, so the move is not a
+  one-way door. What it needs is to be deliberate: each directory now carries
+  `ZELAVIS-FORMAT.json` (engine, format, key and value encodings, and the
+  binding and RocksDB versions that created it), and an open refuses one whose
+  marker disagrees or that has none, before RocksDB touches it. RocksDB opens
+  any RocksDB directory, and one read with the wrong encodings misreads every
+  key without failing.
+- [ ] Switch the RocksDB engine to `@harperfast/rocksdb-js` and remove
+  `rocksdb`. Blocked on one gap: the binding ends a range scan quietly when
+  RocksDB's iterator fails. A checksum mismatch in a table's first block reads
+  as an empty range, one mid-file as its first half, while a point read of the
+  same block throws. The binding sees the failed status and discards it
+  (`DBIterator::Next`), so no adapter can report it; the old binding threw.
+  `db-rocksdb-js.test.mjs` carries it as a `todo` that has to pass first
+  (HarperFast/rocksdb-js#846).
+- [x] Reported the iterator-status gap upstream as HarperFast/rocksdb-js#846,
+  with a reproduction and the line that discards the status.
+- [x] Compared an in-process addon with a supervised sidecar for native
+  engines. The addon is the lowest-latency fit and the one that ships, and its
+  failure domain is the Project runtime: opening the old binding and then the
+  new one in one process aborted inside libuv's timer and took the process with
+  it, which a sidecar would have contained. A sidecar costs a round trip per
+  operation — the scan batching above shows how much per-entry overhead
+  matters here — and a process to deploy, supervise and upgrade. It earns that
+  only when process isolation, upgrading the engine apart from the runtime, or
+  non-JavaScript Agents are the requirement, not as a default.
+- [x] An ordered lens for ranges, sorting and pages (roadmap P1, first
+  slice). Every engine now scans a bounded key range in either direction,
+  held to the conformance suite. Values encode so byte order is value order:
+  booleans, numbers as order-preserving float64, strings by code point with no
+  normalization or locale, byte strings, then null. Every scalar document field
+  gets an ordered posting beside its equality one. `gt`, `gte`, `lt`, `lte`
+  and `between` are serializable query nodes that intersect with every other
+  lens and compare like with like; `store.ordered` pages in either direction,
+  ties broken by identifier, with cursors bound to their partition, column and
+  direction; `extent` reads a column's two ends. For documents, comparisons are
+  answered by the lens instead of after it, `eq` and `in` are typed (`10` no
+  longer matches `"10"`), a one-field `orderBy` reads the lens, and `findPage`
+  (and `POST /:collection/page`) returns a cursor only when another document
+  follows. Null and absent values sort last in either direction. At 50k
+  documents a first page of 50 costs 9 ms in either direction, against 1.35 s
+  for the in-memory two-field sort, and a range over 1% of the values 3 ms.
+- [x] Merged the equality and ordered lenses into one typed, sealable scalar
+  lens. A manifest's `columns` carry typed scalars and live in the ordered
+  lens, which answers equality with a value prefix and ranges and order from
+  the same posting; `equals` is typed, so documents no longer check `eq` and
+  `in` against the payload a second time. The lens seals like the others, and
+  an ordered read merges the sealed blobs — expanded back into the keys they
+  replaced — with the live tier and the tombstones. Writes are one posting per
+  field again: 6.5k objects/s and 1,685 B/object at 50k objects of five
+  fields, against 2.9k/s and 2,190 B with two lenses and 5.2k/s and 1,673 B
+  before the ordered lens. A sealed store reads as fast as a live one — a first
+  page of 50 in 5 ms — and sealing still pays where it did: a wide term 13.2×,
+  a wide column 14.2×, a selective predicate against an unselective one 180×.
+  A store in the older layout is re-indexed when it opens (format 2).
+- [x] Sealing leaves a value live until it has 64 postings in a segment. A
+  unique value — a price, a name — sealed into one blob per posting cost a key
+  each anyway plus a decode on every read, and made ordered reads of a sealed
+  store 40× slower (a first page 5 ms → 218 ms). The cost moved to re-sealing,
+  which rescans the postings it leaves live: 0.66 s against 0.10 s for 2,000
+  changed objects of 200k in `scripts/bench-seal.mjs`.
+- [x] A re-seal reads only the groups written since the last seal. Once a
+  store is sealed, each posting write also marks its group — one lens prefix
+  in one segment span, a key overwritten rather than added to — and a seal
+  after the first full sweep visits only the marked groups, so a value an
+  earlier seal declined is not read again until it changes. Re-sealing 2,000
+  changed objects of 200k takes 0.19 s, from 0.66 s (0.10 s before the
+  threshold); the rest is merging the six blobs those objects touch. A seal
+  reports how many postings it `examined`. The first seal, and the first after
+  a reindex or a rebuild, still sweeps everything, and a sweep only counts
+  once it has finished.
+- [x] Composite indexes with explicit field order and null semantics. A
+  collection declares them — `createIndex`, or `indexes` on `createCollection`
+  — as fields in order, each with a direction and a null placement, and each
+  lives in the ordered lens as one posting per document whose value is the
+  tuple encoded to sort as a tuple (`orderedTuple`). An index serves its order
+  and exactly its reverse, after any leading fields an equality fixes;
+  `findPage` refuses an order of several fields that no index serves, and
+  `findMany` sorts those in memory. Over 50k documents a first page by two
+  fields takes 6.7 ms (1.2 s sorted in memory), 20 pages 136 ms, and an
+  equality plus an order 9.8 ms against 31.6 ms through one field's lens. An
+  index over existing documents is built by writing each back, about 7k
+  documents/s and one log entry each. Single-field sorts take
+  `nulls: "first"` too.
+- [x] Read a collection's record once per document write. An insert hands the
+  record it already read to the write rather than loading it again, and a
+  set-null reuses the one its delete read: 4.0k inserts/s against 3.3k/s
+  before, measured in one run. Writes with a unique index, a check and a
+  reference are unchanged at 2.7k/s, where the constraint checks dominate.
+- [x] Order and page across shards in `db.scatter`. `scatter.findMany` merges
+  every tenant's ordered run by value (tenant by tenant among equals) instead
+  of re-sorting by tenant and id, reading each tenant only as far as `limit`.
+  `scatter.findPage` pages that merge with a cursor holding one document
+  cursor per tenant: it reads a share of the page from each and tops up the
+  ones the merge drains, and a continued read keeps the tenants and order it
+  began with. Across 20 tenants on 4 shards a page of 50 takes 5 ms whether
+  they hold 1,000 documents each or 5,000, where gathering and sorting takes
+  0.37 s and 1.9 s. `findPage({ cursors: true })` hands back the cursor after
+  every document, and `compareDocuments` is the order both use.
+- [x] A scan the store stops early says so. `KvScanOptions.limit` reaches the
+  engine — a SQL `LIMIT`, an iterator closed after that many — because a
+  stream pulls an iterable 4,096 entries at a time, so `Stream.take(256)` over
+  a scan read up to 4,096 rows. A first page of 50 by price over 50k documents
+  went from 6.6 ms to 0.6 ms, and a scatter page stopped growing with the
+  tenants' size.
+- [x] Constraints, each checked in the transaction that writes, under the
+  store's one writer: a violation is refused or cannot happen, never slipped in
+  between a check and a write. Document writes read, check and write in one
+  transaction — the id, the version, the data a merge builds on, the schema,
+  the idempotency receipt and the move fence — which also closes the lost
+  update two racing merges could cause. `unique` on a composite index refuses
+  a second holder of its values (a document missing one is not held to it, as
+  SQL treats NULL), and one built over documents that already break it is not
+  created. `checks` are filters every document must satisfy, a field with no
+  value passing as a NULL passes a SQL CHECK. `references` name a document in a
+  collection of the same tenant, and deleting one restricts, cascades or sets
+  null in the delete's own transaction. `precondition` on update and delete is
+  a compare-and-set on field values. Unconstrained writes run as before (4.1k
+  inserts/s); with a unique index, a check and a reference all enforced, 2.7k/s
+  against 3.9k/s for the same index unenforced.
+- [x] Join through references rather than through SQL. A `related` clause on
+  `findMany` and `findPage` — `{ reference, where?, id? }`, data like every
+  other query — answers the named collection's query first and turns the ids
+  it returns into an equality union over the referencing field's own postings,
+  so a join is a set operation over the one dense identifier space and costs
+  the target's query plus a posting list per document it matched. Over 20k
+  posts across 2k authors, the posts of one country's authors take 33.7 ms
+  against 154.9 ms for the alternative a caller had (read every post, resolve
+  its author, filter), one author by id 0.2 ms, and a page of 50 of the wide
+  join 18.8 ms. `withRelated` resolves what a page's documents name, reading
+  each named document once however many name it: 0.5 ms for a page of 50.
+  Joins stay inside a tenant because references do, and `db.scatter` carries
+  one to every tenant it asks. A reference a collection does not declare is
+  `UnknownReference` rather than a clause that quietly matches nothing.
+- [x] Expose `addCheck`, `dropCheck`, `addReference` and `dropReference` over
+  HTTP, and a delete precondition. A delete carries `expectedVersion` and a
+  JSON `precondition` in its query string, where the method has no body.
+- [x] Documents written before the scalar lens indexed numbers and booleans as
+  text, so a typed `eq`, a range or an order missed or misplaced them.
+  `documents.rewrite()` writes every document back — one collection or all of
+  them — which re-derives its postings from its data. A reindex cannot: it
+  derives them from the stored manifests, and the manifests are what is wrong.
+  `POST /database/maintenance/documents/rewrite` runs it.
+- [ ] Answer time-series ranges from the ordered lens instead of hierarchical
+  bucket postings.
 - [x] Measured the engines against each other (`scripts/bench-engines.mjs`).
   At 100k objects, with SQLite tuned: LMDB is roughly 4x faster than everything
   else on scans and the cross-model query and 3x on point reads, paying for it

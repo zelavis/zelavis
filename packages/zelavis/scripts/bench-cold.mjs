@@ -15,6 +15,7 @@ import { and, asSeq, equals, term } from "../dist/db/index.js";
 import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
 import { makeLibsqlStore } from "../dist/db/engines/libsql.js";
 import { makeRocksdbStore } from "../dist/db/engines/rocksdb.js";
+import { makeRocksdbJsStore } from "../dist/db/engines/rocksdb-js.js";
 import { makeLmdbStore } from "../dist/db/engines/lmdb.js";
 
 const N = Number(process.env.N ?? 500000);
@@ -58,9 +59,10 @@ const evictCache = async () => {
 const engines = [
   ["node-sqlite", (dir) => makeNodeSqliteStore("bench", dir)],
   ["libsql", (dir) => makeLibsqlStore("bench", { directory: dir })],
+  ["rocksdb-js", (dir) => makeRocksdbJsStore("bench", dir)],
   ["rocksdb", (dir) => makeRocksdbStore("bench", dir)],
   ["lmdb", (dir) => makeLmdbStore("bench", dir)],
-];
+].filter(([n]) => !process.env.ENGINES || process.env.ENGINES.split(",").includes(n));
 
 await makeScratch();
 const results = [];

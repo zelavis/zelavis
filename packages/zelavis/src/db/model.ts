@@ -61,10 +61,17 @@ export interface DbObject {
  */
 export interface IndexManifest {
   readonly terms: ReadonlyArray<readonly [field: string, term: string]>;
-  readonly columns: ReadonlyArray<readonly [column: string, value: string]>;
+  /**
+   * Scalar values, one posting each in the ordered lens, which answers both
+   * equality and order. Typed: `10`, `"10"` and `true` are different values.
+   */
+  readonly columns: ReadonlyArray<readonly [column: string, value: OrderedScalar]>;
   readonly measures: ReadonlyArray<readonly [column: string, value: number]>;
   readonly edges: ReadonlyArray<readonly [edgeType: string, to: Seq]>;
 }
+
+/** A value the ordered lens sorts by, as a manifest carries it: JSON's scalars. */
+export type OrderedScalar = null | boolean | number | string;
 
 export const emptyManifest: IndexManifest = Object.freeze({
   terms: [],

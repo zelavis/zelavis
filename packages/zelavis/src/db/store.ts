@@ -1,8 +1,51 @@
 import { Context, Effect, Stream } from "effect";
-import type { DbError } from "./errors.js";
+import type { CursorMismatch, DbError } from "./errors.js";
 import type { DbObject, IndexManifest, ObjectIdentity, PartitionKey, Seq } from "./model.js";
 import type { AppliedEvent, DbEvent, EventCursor, ReadEventsOptions } from "./events.js";
-import type { Query } from "./query.js";
+import type { OrderedValue } from "./keys.js";
+import type { Query, RangeBound } from "./query.js";
+
+declare const OrderedCursorBrand: unique symbol;
+
+/**
+ * Where an ordered read stopped, to continue from.
+ *
+ * Opaque like an event cursor, and bound to the partition, column and direction
+ * it came from: a position in one order means nothing in another.
+ */
+export type OrderedCursor = string & { readonly [OrderedCursorBrand]: true };
+
+export interface OrderedReadInput {
+  readonly column: string;
+  /** Ascending unless `"desc"`. Equal values tie-break by identifier in the same direction. */
+  readonly direction?: "asc" | "desc";
+  readonly lower?: RangeBound;
+  readonly upper?: RangeBound;
+  /** Only objects this query also matches. */
+  readonly where?: Query;
+  /** Rows per page: 100 unless given. */
+  readonly limit?: number;
+  /** Continue after the page this cursor ended. */
+  readonly after?: OrderedCursor;
+}
+
+export interface OrderedRow {
+  readonly seq: Seq;
+  readonly value: OrderedValue;
+  /** Continue after this row: a page can end on any row, not only the last. */
+  readonly cursor: OrderedCursor;
+}
+
+export interface OrderedPage {
+  readonly rows: ReadonlyArray<OrderedRow>;
+  /** Present only when more rows follow. */
+  readonly next?: OrderedCursor;
+}
+
+export interface OrderedExtent {
+  readonly min?: OrderedValue;
+  readonly max?: OrderedValue;
+}
 
 /**
  * A write handle scoped to one transaction.
@@ -89,7 +132,12 @@ export interface ObjectStoreApi {
    * from one leaves a tombstone.
    */
   readonly sealPostings: Effect.Effect<
-    { readonly segments: number; readonly postings: number },
+    {
+      readonly segments: number;
+      readonly postings: number;
+      /** Live postings the seal read: every one on a sweep, only changed groups after it. */
+      readonly examined: number;
+    },
     DbError
   >;
 
@@ -163,6 +211,27 @@ export interface ObjectStoreApi {
    * array has no way to express a cursor or a limit.
    */
   readonly resolve: (query: Query) => Stream.Stream<Seq, DbError>;
+
+  /**
+   * A page of objects in the order of their value in one column.
+   *
+   * Read from the ordered lens in either direction, so a page costs the keys it
+   * passes over rather than a sort of everything that matches. `where` filters
+   * during the scan: the order holds, but a selective filter over a wide column
+   * passes over many keys to fill a page, and that is the cost to expect.
+   */
+  readonly ordered: (
+    input: OrderedReadInput,
+  ) => Effect.Effect<OrderedPage, DbError | CursorMismatch>;
+
+  /**
+   * The lowest and highest value in a column, among what `where` matches.
+   *
+   * Null is not a value here: it sorts last, but a column of prices whose
+   * highest is null has no highest price. Unfiltered, each end is one key; a
+   * filter makes each end cost the keys it passes over before the first match.
+   */
+  readonly extent: (column: string, where?: Query) => Effect.Effect<OrderedExtent, DbError>;
 
   /**
    * Materialize a numeric column as a dense vector indexed by Seq.

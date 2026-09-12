@@ -87,10 +87,13 @@ const killWriterAfter = async (engine, directory, atLeast) => {
   return committed;
 };
 
-const openStore = (directory, body) =>
+const openStore = (directory, body, engine = "sqlite") =>
   Effect.runPromise(
     Effect.scoped(Effect.gen(function* () {
-      const store = yield* makeNodeSqliteStore("acme", directory);
+      const store = yield* (engine === "rocksdb-js"
+        ? (yield* Effect.promise(() => import("../dist/db/engines/rocksdb-js.js")))
+            .makeRocksdbJsStore("acme", directory)
+        : makeNodeSqliteStore("acme", directory));
       return yield* body(store);
     })),
   );
@@ -128,9 +131,13 @@ const assertCoherent = (store) =>
 const engines = [
   ["sqlite", true],
   ["libsql", engineAvailable("libsql")],
-  ["rocksdb", engineAvailable("rocksdb")],
   ["lmdb", engineAvailable("lmdb")],
+  ["rocksdb-js", engineAvailable("@harperfast/rocksdb-js")],
 ];
+
+// The discontinued `rocksdb` binding is absent while `rocksdb-js` is evaluated:
+// this file reopens every engine in one process, and opening the old binding
+// before the new one aborts inside libuv's timer. See db-kv-engines.test.mjs.
 
 for (const [engine, available] of engines) {
   test(`${engine}: a killed writer loses no transaction it had already committed`,
@@ -148,7 +155,7 @@ for (const [engine, available] of engines) {
       const reopen =
         engine === "sqlite" ? make.makeNodeSqliteStore("acme", dir)
         : engine === "libsql" ? make.makeLibsqlStore("acme", { directory: dir })
-        : engine === "rocksdb" ? make.makeRocksdbStore("acme", dir)
+        : engine === "rocksdb-js" ? make.makeRocksdbJsStore("acme", dir)
         : make.makeLmdbStore("acme", dir);
 
       const present = await Effect.runPromise(
@@ -210,52 +217,73 @@ test("a writer killed after sealing leaves both tiers coherent", async (t) => {
   );
 });
 
-test("a truncated write-ahead log costs a suffix, never a hole", async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "zv-durable-power-"));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+/**
+ * Where each engine keeps the log a power cut would tear.
+ *
+ * SQLite appends to one `-wal` file beside the database. RocksDB writes
+ * numbered `.log` files inside its own directory — one per partition, and a new
+ * one after every flush — so the live log is the newest of them. A writer
+ * killed this early has flushed nothing, which the test below also checks.
+ */
+const logs = {
+  sqlite: (at) =>
+    readdirSync(at).filter((name) => name.endsWith("-wal")).map((name) => join(at, name)),
+  "rocksdb-js": (at) =>
+    readdirSync(join(at, "acme")).filter((name) => /^\d+\.log$/.test(name)).sort()
+      .map((name) => join(at, "acme", name)),
+};
 
-  const committed = await killWriterAfter("sqlite", dir, 800);
+for (const [engine, available] of [
+  ["sqlite", true],
+  ["rocksdb-js", engineAvailable("@harperfast/rocksdb-js")],
+]) {
+  test(`${engine}: a truncated write-ahead log costs a suffix, never a hole`,
+    { skip: available ? false : `${engine} is not installed` },
+    async (t) => {
+      const dir = mkdtempSync(join(tmpdir(), `zv-durable-power-${engine}-`));
+      t.after(() => rmSync(dir, { recursive: true, force: true }));
 
-  const walOf = (at) =>
-    readdirSync(at).filter((name) => name.endsWith("-wal")).map((name) => join(at, name));
-  assert.equal(walOf(dir).length, 1, "the writer left a write-ahead log to cut");
+      const committed = await killWriterAfter(engine, dir, 800);
 
-  // Power loss does not truncate at a frame boundary, so neither does this: the
-  // cut lands mid-frame and SQLite has to reject the partial frame on its
-  // checksum rather than read half of it as data.
-  const survived = [];
-  for (const fraction of [0.9, 0.5, 0.1, 0]) {
-    const cut = mkdtempSync(join(tmpdir(), "zv-durable-cut-"));
-    t.after(() => rmSync(cut, { recursive: true, force: true }));
-    cpSync(dir, cut, { recursive: true });
+      const walOf = logs[engine];
+      assert.equal(walOf(dir).length, 1, "the writer left one write-ahead log to cut");
 
-    const wal = walOf(cut)[0];
-    truncateSync(wal, Math.floor(statSync(wal).size * fraction) + 7);
+      // Power loss does not truncate at a record boundary, so neither does this:
+      // the cut lands mid-record and the engine has to reject the partial
+      // record on its checksum rather than read half of it as data.
+      const survived = [];
+      for (const fraction of [0.9, 0.5, 0.1, 0]) {
+        const cut = mkdtempSync(join(tmpdir(), "zv-durable-cut-"));
+        t.after(() => rmSync(cut, { recursive: true, force: true }));
+        cpSync(dir, cut, { recursive: true });
 
-    const present = await openStore(cut, assertCoherent);
+        const wal = walOf(cut).at(-1);
+        truncateSync(wal, Math.floor(statSync(wal).size * fraction) + 7);
 
-    // Objects were written in order, one transaction each, so losing the end of
-    // the log must lose the highest identifiers — not scatter gaps through the
-    // middle of what survives.
-    assert.deepEqual(present, present.slice().sort((a, b) => a - b));
-    for (let i = 0; i < present.length; i++) {
-      assert.equal(present[i], i + 1,
-        `a hole at ${i + 1}: recovery kept ${present.length} objects but not the first ${present.length}`);
-    }
-    assert.ok(present.length <= committed.length + 1);
-    survived.push(present.length);
-  }
+        const present = await openStore(cut, assertCoherent, engine);
 
-  // Without this the test would pass just as happily if truncation did nothing
-  // at all — if every commit had already been checkpointed into the main file,
-  // cutting the log would prove no more than copying it.
-  assert.deepEqual(survived, survived.slice().sort((a, b) => b - a),
-    `cutting more of the log recovered more of the data: ${survived.join(", ")}`);
-  assert.ok(survived[survived.length - 1] < committed.length,
-    `discarding the whole log still recovered ${survived[survived.length - 1]} of ` +
-    `${committed.length} objects, so the log was not where they lived`);
-});
+        // Objects were written in order, one transaction each, so losing the end
+        // of the log must lose the highest identifiers — not scatter gaps
+        // through the middle of what survives.
+        assert.deepEqual(present, present.slice().sort((a, b) => a - b));
+        for (let i = 0; i < present.length; i++) {
+          assert.equal(present[i], i + 1,
+            `a hole at ${i + 1}: recovery kept ${present.length} objects but not the first ${present.length}`);
+        }
+        assert.ok(present.length <= committed.length + 1);
+        survived.push(present.length);
+      }
 
+      // Without this the test would pass just as happily if truncation did
+      // nothing at all — if every commit had already been checkpointed or
+      // flushed out of the log, cutting it would prove no more than copying it.
+      assert.deepEqual(survived, survived.slice().sort((a, b) => b - a),
+        `cutting more of the log recovered more of the data: ${survived.join(", ")}`);
+      assert.ok(survived[survived.length - 1] < committed.length,
+        `discarding the whole log still recovered ${survived[survived.length - 1]} of ` +
+        `${committed.length} objects, so the log was not where they lived`);
+    });
+}
 
 test("a seal killed halfway leaves every query answering as it did", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "zv-durable-seal-kill-"));
@@ -264,31 +292,93 @@ test("a seal killed halfway leaves every query answering as it did", async (t) =
   // Enough postings that a seal takes far longer than the delay before the
   // kill, so the process really does die in the middle of one.
   const total = 30_000;
-  const enc = new TextEncoder();
   const before = await openStore(dir, (store) =>
     Effect.gen(function* () {
-      for (let seq = 1; seq <= total; seq++) {
-        yield* store.transact((txn) =>
-          txn.put(
-            asSeq(seq),
-            enc.encode(JSON.stringify({ seq })),
-            {
-              terms: [["kind", "post"], ["tag", `t${seq % 500}`]],
-              columns: [["region", `r${seq % 4}`]],
-              measures: [],
-              edges: [],
-            },
-            { namespace: "doc/acme/posts", key: `p${seq}` },
-          ));
-      }
-      return {
-        kind: yield* seqs(store, term("kind", "post")),
-        tag: yield* seqs(store, term("tag", "t7")),
-        region: yield* seqs(store, equals("region", "r2")),
-      };
+      yield* writePosts(store, 1, total);
+      return yield* sealAnswers(store);
     }));
   assert.equal(before.kind.length, total);
 
+  await killSealMidway(dir);
+
+  await openStore(dir, (store) =>
+    Effect.gen(function* () {
+      // Some lens keys are now blobs and the rest are still live postings.
+      // Reading both tiers is what makes that a state the store can simply be
+      // in rather than one it has to be repaired out of.
+      assert.deepEqual(yield* sealAnswers(store), before);
+
+      // Finishing the interrupted seal is just running it again.
+      const finished = yield* store.sealPostings;
+      assert.ok(finished.segments > 0, "there was sealing left to do");
+      assert.deepEqual(yield* sealAnswers(store), before);
+    }));
+});
+
+test("a re-seal killed halfway leaves every query answering as it did", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "zv-durable-reseal-kill-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  // A sealed store and then as many objects again, so the re-seal has marked
+  // groups to work through — every tag grows past the sealing threshold — and
+  // takes long enough to die in the middle of.
+  const total = 30_000;
+  const before = await openStore(dir, (store) =>
+    Effect.gen(function* () {
+      yield* writePosts(store, 1, total);
+      yield* store.sealPostings;
+      yield* writePosts(store, total + 1, 2 * total);
+      return yield* sealAnswers(store);
+    }));
+  assert.equal(before.kind.length, 2 * total);
+
+  await killSealMidway(dir);
+
+  await openStore(dir, (store) =>
+    Effect.gen(function* () {
+      assert.deepEqual(yield* sealAnswers(store), before);
+
+      // A group's mark goes in the batch that seals it, so the groups the
+      // killed seal did not reach are still marked and the next one finishes.
+      const finished = yield* store.sealPostings;
+      assert.ok(finished.examined > 0, "there was re-sealing left to do");
+      assert.deepEqual(yield* sealAnswers(store), before);
+      const idle = yield* store.sealPostings;
+      assert.equal(idle.examined, 0, "a finished re-seal leaves no group marked");
+    }));
+});
+
+/** Posts with a term every object shares, one of 500 tags, and one of four regions. */
+const writePosts = (store, from, to) =>
+  Effect.gen(function* () {
+    const enc = new TextEncoder();
+    for (let seq = from; seq <= to; seq++) {
+      yield* store.transact((txn) =>
+        txn.put(
+          asSeq(seq),
+          enc.encode(JSON.stringify({ seq })),
+          {
+            terms: [["kind", "post"], ["tag", `t${seq % 500}`]],
+            columns: [["region", `r${seq % 4}`]],
+            measures: [],
+            edges: [],
+          },
+          { namespace: "doc/acme/posts", key: `p${seq}` },
+        ));
+    }
+  });
+
+const sealAnswers = (store) =>
+  Effect.gen(function* () {
+    return {
+      kind: yield* seqs(store, term("kind", "post")),
+      tag: yield* seqs(store, term("tag", "t7")),
+      region: yield* seqs(store, equals("region", "r2")),
+    };
+  });
+
+/** Seal the store at `dir` in a child process and kill it partway through. */
+const killSealMidway = async (dir) => {
   const markerPath = join(dir, "seal.log");
   const child = spawn(process.execPath, [SEALER, dir, markerPath], { stdio: "inherit" });
   const exited = new Promise((resolve) => child.on("exit", (code, signal) => resolve(signal)));
@@ -310,21 +400,4 @@ test("a seal killed halfway leaves every query answering as it did", async (t) =
   assert.equal(await exited, "SIGKILL");
   assert.ok(!marker().includes("done"),
     "the seal finished before it could be interrupted; there is nothing to test here");
-
-  await openStore(dir, (store) =>
-    Effect.gen(function* () {
-      // Some lens keys are now blobs and the rest are still live postings.
-      // Reading both tiers is what makes that a state the store can simply be
-      // in rather than one it has to be repaired out of.
-      assert.deepEqual(yield* seqs(store, term("kind", "post")), before.kind);
-      assert.deepEqual(yield* seqs(store, term("tag", "t7")), before.tag);
-      assert.deepEqual(yield* seqs(store, equals("region", "r2")), before.region);
-
-      // Finishing the interrupted seal is just running it again.
-      const finished = yield* store.sealPostings;
-      assert.ok(finished.segments > 0, "there was sealing left to do");
-      assert.deepEqual(yield* seqs(store, term("kind", "post")), before.kind);
-      assert.deepEqual(yield* seqs(store, term("tag", "t7")), before.tag);
-      assert.deepEqual(yield* seqs(store, equals("region", "r2")), before.region);
-    }));
-});
+};

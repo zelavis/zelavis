@@ -263,6 +263,13 @@ provisioning as separate capabilities. A placement is authoritative; a runtime
 URL is only an Agent-reported route target. Replicas do not imply multiple
 writable owners. Provider adapters supply capacity but never define Zelavis.
 
+An object store that carries a lease, a fence, or an authoritative publication
+must pass `probeFileStorageGuarantees` first, and every such write must be
+conditional (`ifAbsent` or `ifMatch`). An "S3-compatible" label proves nothing:
+some stores accept the conditional headers and ignore them. A backend that
+cannot enforce a condition refuses the write; it never performs it
+unconditionally.
+
 Every official `zelavis/app` Project uses the App Data Fabric topology from
 creation. A single-node App still routes Tenant data through a versioned
 partition map containing many virtual shard ranges and several physical SQLite
@@ -360,6 +367,15 @@ Key rules:
   event whose projection can be replayed, never a lens row with no event behind
   it. `rebuildLenses` re-derives every lens from the log alone and is the check
   that this holds.
+- A store admits one writer at a time. Every store write reads state and
+  writes it back changed, so two in flight on an asynchronous engine read the
+  same value and one is lost. Reads take no permit. Nothing holding the permit
+  may call another store write, or it waits on itself.
+- Document values, and anything a query compares or orders, use one order: the
+  ordered lens's (`compareOrderedValues` in `db/keys.ts`) — booleans, then
+  numbers, then strings by code point, then null. Never `localeCompare` or any
+  other host order for them, including when sorting in memory: a result sorted
+  in memory must match the same result read from an index, on every host.
 - A posting is a key in the live tier or a bit in a sealed blob, and a read is
   the union of both minus the tombstones. Blobs are immutable: `db.maintenance`
   seals the live postings into segments of 65536 identifiers, and anything
@@ -368,7 +384,38 @@ Key rules:
   directly leaves whatever a blob still claims. Sealing merges rather than
   rebuilds, touching only the segments a live posting or tombstone falls in, so
   the blobs accumulate across seals; `reindexLenses` is what re-derives them
-  from the manifests when that accumulation needs checking.
+  from the manifests when that accumulation needs checking. After its first
+  full sweep a seal reads only the groups marked dirty since, and the same
+  helpers write those marks — a posting written around them is never sealed
+  until the next reindex.
+- A composite index is a column of the ordered lens whose value is the
+  document's tuple, encoded by `orderedTuple` so that string order is tuple
+  order; the store knows nothing of it. A document write reads its collection's
+  indexes inside its transaction, and a backfill reads each document inside the
+  transaction that rewrites it. Both then run under the store's one writer,
+  which is the only thing keeping a write from missing an index created
+  alongside it and a backfill from overwriting a newer write: never move either
+  read out of the transaction.
+- A document write checks what it depends on — the id, the version, a
+  precondition, a unique value, a check, a reference — inside the transaction
+  that writes it (`transactChecked` in `documents.ts`), never before it: only
+  there does the store's one writer keep the answer true until the write
+  lands, and a failure there discards the whole batch. Reads inside a
+  transaction see committed state, not the transaction's own writes, so a
+  change that writes one record twice builds the second write from the first
+  (as `releaseReferences` and `linkTargets` do), never from a second read.
+- A read that joins two collections answers the named collection's query first
+  and turns the ids it returns into an equality union over the referencing
+  field's own postings (`relatedFilters` in `documents.ts`), so a join stays a
+  set operation over the one dense identifier space. Never read the
+  referencing collection and filter it in memory, and never let a reference
+  the collection does not declare pass as a clause matching everything or
+  nothing: that is `UnknownReference`.
+- A scan that stops early passes `limit` to `engine.scan` rather than cutting
+  the stream with `Stream.take`. A stream pulls an iterable thousands of
+  entries at a time, so a take of a few rows still reads thousands; the limit
+  is what lets an engine stop at the source. Every engine honours it, and
+  `test/db-kv-engines.test.mjs` holds each to the same answers.
 - One transaction is one batch, and that is the whole durability story: a
   killed process loses no commit that returned, a write-ahead log truncated by
   a power cut costs a suffix rather than leaving holes, and an interrupted

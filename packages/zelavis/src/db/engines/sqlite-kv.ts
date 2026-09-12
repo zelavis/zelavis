@@ -1,7 +1,6 @@
 import { Effect, Stream } from "effect";
 import { StoreError } from "../errors.js";
-import { prefixEnd } from "../keys.js";
-import type { KvEngine, KvEntry, KvWrite } from "../kv.js";
+import { scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
 
 /**
  * The handle a SQLite-shaped binding provides.
@@ -98,8 +97,10 @@ export const sqliteKvEngineOver = (
     del: db.prepare("DELETE FROM kv WHERE key = ?"),
   };
 
-  const SCAN_TO = "SELECT key, value FROM kv WHERE key >= ? AND key < ? ORDER BY key";
-  const SCAN_FROM = "SELECT key, value FROM kv WHERE key >= ? ORDER BY key";
+  const SCAN_TO = "SELECT key, value FROM kv WHERE key >= ? AND key < ? ORDER BY key LIMIT ?";
+  const SCAN_FROM = "SELECT key, value FROM kv WHERE key >= ? ORDER BY key LIMIT ?";
+  const SCAN_TO_DESC = "SELECT key, value FROM kv WHERE key >= ? AND key < ? ORDER BY key DESC LIMIT ?";
+  const SCAN_FROM_DESC = "SELECT key, value FROM kv WHERE key >= ? ORDER BY key DESC LIMIT ?";
 
   const fail = (op: string) => (cause: unknown) => new StoreError({ op, cause });
 
@@ -113,11 +114,12 @@ export const sqliteKvEngineOver = (
         catch: fail("sqlite-kv.get"),
       }),
 
-    scan: (prefix) =>
+    scan: (prefix, options) =>
       Stream.fromIterableEffect(
         Effect.try({
           try: () => {
-            const end = prefixEnd(prefix);
+            const { lo, hi, empty } = scanRange(prefix, options);
+            if (empty) return [];
             // Rows stream rather than materialize, so a wide posting scan never
             // becomes an array on its way into a bitmap.
             // A fresh statement per scan, not a cached one. A scan hands back a
@@ -125,10 +127,13 @@ export const sqliteKvEngineOver = (
             // one statement — which node:sqlite tolerates and libsql answers by
             // panicking inside its native layer. Single-shot statements stay
             // cached; only the iterating ones are rebuilt.
+            const reverse = options?.reverse === true;
+            // SQLite reads a negative limit as none.
+            const limit = options?.limit ?? -1;
             const rows =
-              end === undefined
-                ? db.prepare(SCAN_FROM).iterate(toKey(prefix))
-                : db.prepare(SCAN_TO).iterate(toKey(prefix), toKey(end));
+              hi === undefined
+                ? db.prepare(reverse ? SCAN_FROM_DESC : SCAN_FROM).iterate(toKey(lo), limit)
+                : db.prepare(reverse ? SCAN_TO_DESC : SCAN_TO).iterate(toKey(lo), toKey(hi), limit);
             return (function* (): Generator<KvEntry> {
               for (const row of rows as Iterable<{ key: unknown; value: unknown }>) {
                 yield { key: fromKey(row.key), value: toBytes(row.value) };

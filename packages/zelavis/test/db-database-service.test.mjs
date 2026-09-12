@@ -46,6 +46,13 @@ test("the database service mounts the same routes on the db runtime API", async 
       "/api/database/documents/:collection",
       "/api/database/documents/:collection/:id",
       "/api/database/documents/:collection/query",
+      "/api/database/documents/:collection/page",
+      "/api/database/documents/:collection/indexes",
+      "/api/database/documents/:collection/indexes/:name",
+      "/api/database/documents/:collection/checks",
+      "/api/database/documents/:collection/checks/:name",
+      "/api/database/documents/:collection/references",
+      "/api/database/documents/:collection/references/:name",
       "/api/database/documents/:collection/:id",
       "/api/database/documents/:collection/:id",
       "/api/database/schemas/collections",
@@ -58,6 +65,7 @@ test("the database service mounts the same routes on the db runtime API", async 
       "/api/database/timeseries/:series/aggregate",
       "/api/database/maintenance/system/views",
       "/api/database/maintenance/system/views/:view",
+      "/api/database/maintenance/documents/rewrite",
       "/api/database/maintenance/backups/export",
       "/api/database/maintenance/backups/restore",
     ],
@@ -281,4 +289,232 @@ test("listing time series names the Tenant that owns them", async (t) => {
   assert.deepEqual(scoped.body.series, []);
   assert.equal(unscoped.status, 400);
   assert.match(unscoped.body.error, /Tenant ID/);
+});
+
+test("documents page through a collection in order, and a misused cursor is a 400", async (t) => {
+  const { api } = await openTemporaryDatabase(t);
+  const service = defineDatabaseService(api);
+  const createCollection = routeOf(service, "database.collections.create");
+  const insert = routeOf(service, "database.documents.insert");
+  const page = routeOf(service, "database.documents.page");
+  const params = { collection: "products" };
+
+  await call(createCollection, { service: api, body: { tenantId: "acme", name: "products" } });
+  for (const [id, price] of [["a", 30], ["b", 10], ["c", 20], ["d", 40], ["e", 10]]) {
+    await call(insert, { service: api, params, body: { tenantId: "acme", id, data: { price } } });
+  }
+
+  const seen = [];
+  let after;
+  for (let pages = 0; pages < 10; pages++) {
+    const response = await call(page, {
+      service: api, params,
+      body: { tenantId: "acme", orderBy: [{ path: "price" }], limit: 2, ...(after === undefined ? {} : { after }) },
+    });
+    assert.ok(Array.isArray(response.body.documents), "a page carries its documents");
+    assert.ok(response.body.documents.length > 0, "no empty page");
+    seen.push(...response.body.documents.map((document) => document.id));
+    after = response.body.next;
+    if (after === undefined) break;
+  }
+  // Ties keep insertion order, so b before e.
+  assert.deepEqual(seen, ["b", "e", "c", "a", "d"]);
+
+  const first = await call(page, {
+    service: api, params, body: { tenantId: "acme", orderBy: [{ path: "price" }], limit: 2 },
+  });
+  const otherRead = await call(page, {
+    service: api, params,
+    body: { tenantId: "acme", orderBy: [{ path: "price", direction: "desc" }], after: first.body.next },
+  });
+  const twoSorts = await call(page, {
+    service: api, params, body: { tenantId: "acme", orderBy: [{ path: "price" }, { path: "id" }] },
+  });
+  const tooMany = await call(page, { service: api, params, body: { tenantId: "acme", limit: 5000 } });
+
+  assert.equal(otherRead.status, 400);
+  assert.equal(typeof otherRead.body.error, "string");
+  assert.equal(twoSorts.status, 400);
+  assert.match(twoSorts.body.error, /composite index/);
+  assert.equal(tooMany.status, 400);
+  assert.match(tooMany.body.error, /limit/);
+});
+
+test("an index created through the service lets a page order by two fields", async (t) => {
+  const { api } = await openTemporaryDatabase(t);
+  const service = defineDatabaseService(api);
+  const params = { collection: "products" };
+  const createIndex = routeOf(service, "database.indexes.create");
+  const page = routeOf(service, "database.documents.page");
+
+  await call(routeOf(service, "database.collections.create"), { service: api, body: { tenantId: "acme", name: "products" } });
+  for (const [id, category, price] of [["a", "tea", 3], ["b", "coffee", 5], ["c", "tea", 1]]) {
+    await call(routeOf(service, "database.documents.insert"), {
+      service: api, params, body: { tenantId: "acme", id, data: { category, price } },
+    });
+  }
+  const orderBy = [{ path: "category" }, { path: "price", direction: "desc" }];
+
+  const refused = await call(page, { service: api, params, body: { tenantId: "acme", orderBy } });
+  const created = await call(createIndex, {
+    service: api, params, body: { tenantId: "acme", name: "by_category_price", fields: orderBy },
+  });
+  const invalid = await call(createIndex, { service: api, params, body: { tenantId: "acme", name: "none", fields: [] } });
+  const taken = await call(createIndex, {
+    service: api, params, body: { tenantId: "acme", name: "by_category_price", fields: [{ path: "price" }] },
+  });
+  const ordered = await call(page, { service: api, params, body: { tenantId: "acme", orderBy } });
+  const dropped = await call(routeOf(service, "database.indexes.drop"), {
+    service: api, params: { ...params, name: "by_category_price" }, query: "tenantId=acme",
+  });
+
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /composite index/);
+  assert.equal(created.status, 201);
+  assert.equal(created.body.state, "ready");
+  assert.equal(invalid.status, 400);
+  assert.match(invalid.body.error, /1 to 8 fields/);
+  assert.equal(taken.status, 409);
+  assert.deepEqual(ordered.body.documents.map((document) => document.id), ["b", "a", "c"]);
+  assert.deepEqual(dropped.body, { dropped: true });
+});
+
+test("constraints refuse through the service with the status each deserves", async (t) => {
+  const { api } = await openTemporaryDatabase(t);
+  const service = defineDatabaseService(api);
+  const create = routeOf(service, "database.collections.create");
+  const insert = routeOf(service, "database.documents.insert");
+  const update = routeOf(service, "database.documents.update");
+
+  await call(create, { service: api, body: { tenantId: "acme", name: "authors" } });
+  const made = await call(create, {
+    service: api,
+    body: {
+      tenantId: "acme", name: "posts",
+      indexes: [{ name: "by_slug", fields: [{ path: "slug" }], unique: true }],
+      checks: [{ name: "rated", where: [{ path: "stars", op: "lte", value: 5 }] }],
+      references: [{ name: "author", path: "authorId", collection: "authors" }],
+    },
+  });
+  const put = (id, data) => call(insert, { service: api, params: { collection: "posts" }, body: { tenantId: "acme", id, data } });
+  const first = await put("p1", { slug: "a", stars: 3 });
+  const taken = await put("p2", { slug: "a" });
+  const unrated = await put("p3", { stars: 9 });
+  const orphan = await put("p4", { authorId: "ghost" });
+  const change = (body) => call(update, {
+    service: api, params: { collection: "posts", id: "p1" }, body: { tenantId: "acme", data: { stars: 4 }, ...body },
+  });
+  const stale = await change({ precondition: [{ path: "stars", value: 2 }] });
+  const outdated = await change({ expectedVersion: 7 });
+  const current = await change({ expectedVersion: 1, precondition: [{ path: "stars", value: 3 }] });
+
+  assert.equal(made.status, 201);
+  assert.ok((first.status ?? 200) < 300);
+  assert.equal(taken.status, 409);
+  assert.match(taken.body.error, /by_slug/);
+  assert.equal(unrated.status, 400);
+  assert.match(unrated.body.error, /rated/);
+  assert.equal(orphan.status, 409);
+  assert.match(orphan.body.error, /ghost/);
+  assert.equal(stale.status, 409);
+  assert.equal(outdated.status, 409);
+  assert.equal(current.body.version, 2);
+});
+
+test("checks, references and a rewrite are reachable over HTTP", async (t) => {
+  const { api } = await openTemporaryDatabase(t);
+  const service = defineDatabaseService(api);
+  const create = routeOf(service, "database.collections.create");
+  const insert = routeOf(service, "database.documents.insert");
+  const remove = routeOf(service, "database.documents.delete");
+  const posts = { collection: "posts" };
+  const put = (id, data) => call(insert, { service: api, params: posts, body: { tenantId: "acme", id, data } });
+
+  for (const name of ["authors", "posts"]) {
+    await call(create, { service: api, body: { tenantId: "acme", name } });
+  }
+  await call(insert, { service: api, params: { collection: "authors" }, body: { tenantId: "acme", id: "a1", data: {} } });
+  await put("p1", { stars: 3, authorId: "a1", status: "draft" });
+
+  const check = await call(routeOf(service, "database.checks.add"), {
+    service: api, params: posts,
+    body: { tenantId: "acme", name: "rated", where: [{ path: "stars", op: "lte", value: 5 }] },
+  });
+  const reference = await call(routeOf(service, "database.references.add"), {
+    service: api, params: posts,
+    body: { tenantId: "acme", name: "author", path: "authorId", collection: "authors", onDelete: "restrict" },
+  });
+  const overrated = await put("p2", { stars: 9 });
+  const orphan = await put("p3", { authorId: "ghost" });
+  const held = await call(remove, {
+    service: api, params: { collection: "authors", id: "a1" }, query: "tenantId=acme",
+  });
+  // A delete carries its conditions in the query string, where it has no body.
+  const stale = await call(remove, {
+    service: api, params: { collection: "posts", id: "p1" },
+    query: `tenantId=acme&precondition=${encodeURIComponent(JSON.stringify([{ path: "status", value: "live" }]))}`,
+  });
+  const wrongVersion = await call(remove, {
+    service: api, params: { collection: "posts", id: "p1" }, query: "tenantId=acme&expectedVersion=7",
+  });
+  const rewritten = await call(routeOf(service, "database.documents.rewrite"), {
+    service: api, body: { tenantId: "acme", collection: "posts" },
+  });
+  const droppedCheck = await call(routeOf(service, "database.checks.drop"), {
+    service: api, params: { collection: "posts", name: "rated" }, query: "tenantId=acme",
+  });
+  const droppedReference = await call(routeOf(service, "database.references.drop"), {
+    service: api, params: { collection: "posts", name: "author" }, query: "tenantId=acme",
+  });
+  const allowed = await put("p4", { stars: 9, authorId: "ghost" });
+
+  assert.equal(check.status, 201);
+  assert.equal(reference.body.onDelete, "restrict");
+  assert.equal(overrated.status, 400);
+  assert.match(overrated.body.error, /rated/);
+  assert.equal(orphan.status, 409);
+  assert.equal(held.status, 409);
+  assert.equal(stale.status, 409);
+  assert.equal(wrongVersion.status, 409);
+  assert.deepEqual(rewritten.body, { collections: 1, documents: 1 });
+  assert.deepEqual([droppedCheck.body, droppedReference.body], [{ dropped: true }, { dropped: true }]);
+  assert.ok((allowed.status ?? 200) < 300, "with both constraints gone, the write lands");
+});
+
+test("a join is asked for as data and answered over HTTP", async (t) => {
+  const { api } = await openTemporaryDatabase(t);
+  const service = defineDatabaseService(api);
+  const create = routeOf(service, "database.collections.create");
+  const insert = routeOf(service, "database.documents.insert");
+  const query = routeOf(service, "database.documents.query");
+  const page = routeOf(service, "database.documents.page");
+
+  await call(create, { service: api, body: { tenantId: "acme", name: "authors" } });
+  await call(create, {
+    service: api,
+    body: {
+      tenantId: "acme", name: "posts",
+      references: [{ name: "author", path: "authorId", collection: "authors" }],
+    },
+  });
+  for (const [id, data] of [["a1", { country: "fr" }], ["a2", { country: "de" }]]) {
+    await call(insert, { service: api, params: { collection: "authors" }, body: { tenantId: "acme", id, data } });
+  }
+  for (const [id, data] of [["p1", { authorId: "a1" }], ["p2", { authorId: "a2" }], ["p3", { authorId: "a1" }]]) {
+    await call(insert, { service: api, params: { collection: "posts" }, body: { tenantId: "acme", id, data } });
+  }
+  const related = [{ reference: "author", where: [{ path: "country", value: "fr" }] }];
+  const params = { collection: "posts" };
+
+  const queried = await call(query, { service: api, params, body: { tenantId: "acme", related } });
+  const paged = await call(page, { service: api, params, body: { tenantId: "acme", related, limit: 1 } });
+  const unknown = await call(query, {
+    service: api, params, body: { tenantId: "acme", related: [{ reference: "editor" }] },
+  });
+
+  assert.deepEqual(queried.body.documents.map((document) => document.id), ["p1", "p3"]);
+  assert.deepEqual(paged.body.documents.map((document) => document.id), ["p1"]);
+  assert.ok(paged.body.next, "a joined page continues like any other");
+  assert.equal(unknown.status, 404);
+  assert.match(unknown.body.error, /no reference named "editor"/);
 });

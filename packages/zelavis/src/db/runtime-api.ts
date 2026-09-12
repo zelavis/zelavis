@@ -1,6 +1,19 @@
 import { Effect } from "effect";
 import type { DatabaseApi, TenantApi } from "./database.js";
-import type { Collection, Document, FindDocumentsInput, JsonObject } from "./documents.js";
+import type {
+  Collection,
+  Document,
+  DocumentPage,
+  FindDocumentsInput,
+  FindPageInput,
+  JsonObject,
+  CollectionIndex,
+  IndexDefinition,
+  CheckConstraint,
+  DocumentFilter,
+  ReferenceConstraint,
+  RelatedDocuments,
+} from "./documents.js";
 import type { DomainEvent, ReadDomainEventsInput } from "./domain-events.js";
 import type { TenantBackupV1 } from "./backup.js";
 import type { CollectionSchema, CollectionSchemaSummary, SchemaValidationResult, StoredCollectionSchema } from "./schema/index.js";
@@ -32,7 +45,26 @@ export interface TenantRuntimeApi {
       name: string;
       surface?: Collection["surface"];
       metadata?: Record<string, unknown>;
+      indexes?: ReadonlyArray<IndexDefinition>;
+      checks?: ReadonlyArray<CheckConstraint>;
+      references?: ReadonlyArray<ReferenceConstraint>;
     }) => Promise<Collection>;
+    readonly addCheck: (input: CheckConstraint & { collection: string }) => Promise<CheckConstraint>;
+    readonly dropCheck: (input: { collection: string; name: string }) => Promise<boolean>;
+    readonly addReference: (
+      input: ReferenceConstraint & { from: string },
+    ) => Promise<Required<ReferenceConstraint>>;
+    readonly dropReference: (input: { collection: string; name: string }) => Promise<boolean>;
+    readonly withRelated: (input: {
+      collection: string;
+      documents: ReadonlyArray<Document>;
+      references?: ReadonlyArray<string>;
+    }) => Promise<ReadonlyArray<RelatedDocuments>>;
+    readonly rewrite: (input?: {
+      collection?: string;
+    }) => Promise<{ collections: number; documents: number }>;
+    readonly createIndex: (input: IndexDefinition & { collection: string }) => Promise<CollectionIndex>;
+    readonly dropIndex: (input: { collection: string; name: string }) => Promise<boolean>;
     readonly listCollections: () => Promise<ReadonlyArray<Collection>>;
     readonly collectionExists: (name: string) => Promise<boolean>;
     readonly insert: (input: {
@@ -45,17 +77,20 @@ export interface TenantRuntimeApi {
       id: string;
     }) => Promise<Document | undefined>;
     readonly findMany: (input: FindDocumentsInput) => Promise<ReadonlyArray<Document>>;
+    readonly findPage: (input: FindPageInput) => Promise<DocumentPage>;
     readonly update: (input: {
       collection: string;
       id: string;
       data: JsonObject;
       mode?: "merge" | "replace";
       expectedVersion?: number;
+      precondition?: ReadonlyArray<DocumentFilter>;
     }) => Promise<Document>;
     readonly delete: (input: {
       collection: string;
       id: string;
       expectedVersion?: number;
+      precondition?: ReadonlyArray<DocumentFilter>;
     }) => Promise<boolean>;
   };
   readonly events: {
@@ -129,11 +164,20 @@ const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => Effect.runPromise
 const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
   documents: {
     createCollection: (input) => run(tenant.documents.createCollection(input)),
+    createIndex: (input) => run(tenant.documents.createIndex(input)),
+    dropIndex: (input) => run(tenant.documents.dropIndex(input)),
+    addCheck: (input) => run(tenant.documents.addCheck(input)),
+    dropCheck: (input) => run(tenant.documents.dropCheck(input)),
+    addReference: (input) => run(tenant.documents.addReference(input)),
+    dropReference: (input) => run(tenant.documents.dropReference(input)),
+    withRelated: (input) => run(tenant.documents.withRelated(input)),
+    rewrite: (input) => run(tenant.documents.rewrite(input)),
     listCollections: () => run(tenant.documents.listCollections),
     collectionExists: (name) => run(tenant.documents.collectionExists(name)),
     insert: (input) => run(tenant.documents.insert(input)),
     findById: (input) => run(tenant.documents.findById(input)),
     findMany: (input) => run(tenant.documents.findMany(input)),
+    findPage: (input) => run(tenant.documents.findPage(input)),
     update: (input) => run(tenant.documents.update(input)),
     delete: (input) => run(tenant.documents.delete(input)),
   },

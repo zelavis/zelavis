@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { Context, Effect, Layer, LayerMap, type Scope } from "effect";
 import { StoreError } from "../errors.js";
 import type { KvEngine } from "../kv.js";
-import { claimGeneration, storeOverKv } from "../kv-store.js";
+import { openStoreOverKv } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
 import { ObjectStore, type ObjectStoreApi } from "../store.js";
 import { sqliteKvEngineOver } from "./sqlite-kv.js";
@@ -42,7 +42,7 @@ export const makeNodeSqliteStore = (
 ): Effect.Effect<ObjectStoreApi, StoreError, Scope.Scope> =>
   Effect.gen(function* () {
     const engine = yield* makeNodeSqliteEngine(partition, directory);
-    return storeOverKv(partition, engine, yield* claimGeneration(engine));
+    return yield* openStoreOverKv(partition, engine);
   });
 
 export const nodeSqliteStoreLayer = (partition: PartitionKey) =>

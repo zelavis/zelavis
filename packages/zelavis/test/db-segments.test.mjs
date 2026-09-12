@@ -160,11 +160,13 @@ test("an update that keeps a term keeps the posting the tombstone would hide", a
 test("sealing twice is sealing once, and the second answers the same", async (t) => {
   await withStore(t, (store) =>
     Effect.gen(function* () {
-      for (let seq = 1; seq <= 30; seq++) yield* write(store, seq, "eu-west", ["atlas"]);
+      // Enough objects that one value clears the sealing threshold.
+      for (let seq = 1; seq <= 100; seq++) yield* write(store, seq, "eu-west", ["atlas"]);
       const first = yield* store.sealPostings;
 
       yield* store.transact((txn) => txn.retract(asSeq(3)));
-      for (let seq = 31; seq <= 40; seq++) yield* write(store, seq, "us-east", ["beacon"]);
+      // Too few to seal: these stay live keys, and are found all the same.
+      for (let seq = 101; seq <= 110; seq++) yield* write(store, seq, "us-east", ["beacon"]);
 
       const expected = yield* seqs(store, term("title", "atlas"));
       const second = yield* store.sealPostings;
@@ -173,7 +175,7 @@ test("sealing twice is sealing once, and the second answers the same", async (t)
       assert.deepEqual(yield* seqs(store, term("title", "atlas")), expected,
         "a re-seal folds the tombstoned posting away rather than resurrecting it");
       assert.deepEqual(yield* seqs(store, term("title", "beacon")),
-        [31, 32, 33, 34, 35, 36, 37, 38, 39, 40]);
+        [101, 102, 103, 104, 105, 106, 107, 108, 109, 110]);
       assert.ok(first.segments > 0);
     }),
   );
@@ -185,11 +187,16 @@ test("sealing spans segment boundaries", async (t) => {
       // Identifiers are allocated densely, so reaching a second segment
       // honestly would mean 65536 objects. Placing them by hand is the same
       // thing for the fold, which only ever sees the trailing identifier.
-      const ids = [1, 2, SEGMENT_SPAN - 1, SEGMENT_SPAN, SEGMENT_SPAN + 5, SEGMENT_SPAN * 3];
+      // Three spans dense enough to seal, and one identifier alone in a fourth,
+      // too sparse to be worth a blob: it stays a live key.
+      const dense = [0, 1, 3].flatMap((span) =>
+        Array.from({ length: 64 }, (_, i) => span * SEGMENT_SPAN + 1 + i));
+      const ids = [...dense, SEGMENT_SPAN * 5 + 7];
       for (const seq of ids) yield* write(store, seq, "eu-west", ["atlas"]);
 
       const sealed = yield* store.sealPostings;
       assert.ok(sealed.segments >= 3, "one blob per span, not one blob overall");
+      assert.equal(sealed.postings, dense.length * 2, "the lone identifier was sealed anyway");
       assert.deepEqual(yield* seqs(store, term("title", "atlas")), ids);
       assert.deepEqual(yield* seqs(store, equals("region", "eu-west")), ids);
     }),
@@ -248,11 +255,12 @@ test("a re-seal touches only the segments something changed in", async (t) => {
   await withStore(t, (store) =>
     Effect.gen(function* () {
       // Many distinct lenses, so a rebuild and a merge differ by a lot.
+      // Forty terms of 75 objects each: every one dense enough to seal.
       for (let seq = 1; seq <= 3000; seq++) {
-        yield* write(store, seq, `r${seq % 3}`, ["atlas", `t${seq % 500}`]);
+        yield* write(store, seq, `r${seq % 3}`, ["atlas", `t${seq % 40}`]);
       }
       const first = yield* store.sealPostings;
-      assert.ok(first.segments > 500, "the first seal writes every lens");
+      assert.ok(first.segments > 40, "the first seal writes every lens");
 
       // One object changes. Under a rebuild the next seal would fold all of
       // them again; a merge should reach only the lenses this object is in.
@@ -266,7 +274,7 @@ test("a re-seal touches only the segments something changed in", async (t) => {
 
       // And the ones it did not touch still answer.
       assert.equal((yield* seqs(store, term("title", "atlas"))).length, 3000);
-      assert.equal((yield* seqs(store, term("title", "t7"))).length, 6);
+      assert.equal((yield* seqs(store, term("title", "t7"))).length, 75);
       assert.deepEqual(yield* seqs(store, term("title", "cobalt")), [42]);
       assert.equal((yield* seqs(store, equals("region", "r1"))).length, 1000);
     }),
@@ -319,6 +327,57 @@ test("a lens emptied by retraction loses its blob rather than keeping an empty o
       assert.deepEqual(yield* seqs(store, term("title", "atlas")), [11]);
       yield* store.sealPostings;
       assert.deepEqual(yield* seqs(store, term("title", "atlas")), [11]);
+    }),
+  );
+});
+
+test("a re-seal reads only the groups written since, not the ones it declined", async (t) => {
+  await withStore(t, (store) =>
+    Effect.gen(function* () {
+      // Each object: a shared title and a unique one, a region shared by a
+      // third of them, and an edge from itself. The shared ones seal; the
+      // unique title and the edge are too sparse and stay live.
+      for (let seq = 1; seq <= 300; seq++) {
+        yield* write(store, seq, `r${seq % 3}`, ["atlas", `u${seq}`]);
+      }
+      const first = yield* store.sealPostings;
+      assert.equal(first.examined, 300 * 4, "the first seal sweeps every live posting");
+
+      yield* write(store, 301, "r1", ["atlas", "u301"]);
+      const second = yield* store.sealPostings;
+      assert.equal(second.examined, 4,
+        `a one-object change re-read ${second.examined} postings, so declined ones were read again`);
+
+      const third = yield* store.sealPostings;
+      assert.equal(third.examined, 0, "a seal with nothing written reads nothing");
+      assert.equal(third.segments, 0);
+
+      assert.equal((yield* seqs(store, term("title", "atlas"))).length, 301);
+      assert.deepEqual(yield* seqs(store, term("title", "u7")), [7]);
+      assert.deepEqual(yield* seqs(store, term("title", "u301")), [301]);
+      assert.equal((yield* seqs(store, equals("region", "r1"))).length, 101);
+
+      // A reindex unseals, so the next seal has to sweep again.
+      yield* store.reindexLenses;
+      const afterReindex = yield* store.sealPostings;
+      assert.equal(afterReindex.examined, 301 * 4);
+      assert.equal((yield* seqs(store, term("title", "atlas"))).length, 301);
+    }),
+  );
+});
+
+test("a value an earlier seal declined is sealed once it has grown enough", async (t) => {
+  await withStore(t, (store) =>
+    Effect.gen(function* () {
+      for (let seq = 1; seq <= 40; seq++) yield* write(store, seq, `solo${seq}`, ["grow"]);
+      const first = yield* store.sealPostings;
+      assert.equal(first.segments, 0, "forty postings of one value are below the threshold");
+
+      for (let seq = 41; seq <= 70; seq++) yield* write(store, seq, `solo${seq}`, ["grow"]);
+      const second = yield* store.sealPostings;
+      assert.ok(second.segments >= 1, "the value that grew past the threshold was sealed");
+      assert.ok(second.examined >= 70, "all of the grown value's postings were read, old and new");
+      assert.equal((yield* seqs(store, term("title", "grow"))).length, 70);
     }),
   );
 });

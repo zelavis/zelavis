@@ -4,7 +4,18 @@ import {
   type ZelavisRuntimeService,
 } from "../core/index.js";
 import type { DatabaseRuntimeApi } from "./runtime-api.js";
-import type { CollectionSurface, DocumentFilter, DocumentSort, JsonObject } from "./documents.js";
+import type {
+  CollectionSurface,
+  DocumentCursor,
+  DocumentFilter,
+  DocumentSort,
+  JsonObject,
+  IndexDefinition,
+  IndexField,
+  CheckConstraint,
+  ReferenceConstraint,
+  RelatedFilter,
+} from "./documents.js";
 import type { AggregateOperation, RangeInput } from "./time-series.js";
 
 function readBodyObject(body: unknown): Record<string, unknown> {
@@ -55,6 +66,19 @@ function readFilters(value: unknown): DocumentFilter[] {
 
 function readSort(value: unknown): DocumentSort[] {
   return Array.isArray(value) ? (value as DocumentSort[]) : [];
+}
+
+/** Filters carried in a query string, where a body would be the wrong shape. */
+function readFilterQuery(value: string | null): DocumentFilter[] | undefined {
+  if (value === null) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new TypeError("precondition must be a JSON array of filters.");
+  }
+  if (!Array.isArray(parsed)) throw new TypeError("precondition must be a JSON array of filters.");
+  return readFilters(parsed);
 }
 
 function readNumber(value: unknown, fallback: number): number {
@@ -146,6 +170,10 @@ function taggedFailureOf(error: unknown, depth = 0): TaggedFailure | undefined {
 
 const CONFLICT_TAGS = new Set([
   "CollectionExists",
+  "ConstraintExists",
+  "IndexExists",
+  "ReferenceViolation",
+  "UniqueViolation",
   "DocumentConflict",
   "SchemaVersionExists",
 ]);
@@ -156,13 +184,19 @@ const NOT_FOUND_TAGS = new Set([
   "ProjectionNotFound",
   "SchemaNotFound",
   "TimeSeriesNotFound",
+  "UnknownReference",
   "UnknownSystemView",
 ]);
 
 const BAD_REQUEST_TAGS = new Set([
   "BackupFormatUnsupported",
+  "CursorMismatch",
+  "UnsupportedOrdering",
   "BackupTenantMismatch",
+  "CheckViolation",
   "InvalidCollectionName",
+  "InvalidConstraint",
+  "InvalidIndex",
   "PartitionMapInvalid",
   "RangeNotEmpty",
   "SchemaViolation",
@@ -204,6 +238,8 @@ function describeTaggedFailure(failure: TaggedFailure): string {
     }
     case "TimeSeriesNotFound":
       return `Time series "${failure.name}" is not defined.`;
+    case "UnknownReference":
+      return `Collection "${failure.collection}" has no reference named "${failure.name}".`;
     case "UnknownSystemView":
       return `Unknown logical database system view "${failure.name}".`;
     case "BackupTenantMismatch":
@@ -216,6 +252,24 @@ function describeTaggedFailure(failure: TaggedFailure): string {
       return `Partition map version ${failure.version} is invalid: ${failure.reason}.`;
     case "RangeNotEmpty":
       return `Range ${failure.range} cannot move from "${failure.from}" to "${failure.to}" while tenants stand on it.`;
+    case "CursorMismatch":
+      return `This cursor cannot continue the read: ${failure.reason}.`;
+    case "UnsupportedOrdering":
+      return `This order is not supported: ${failure.reason}.`;
+    case "InvalidIndex":
+      return `Index "${failure.name}" on collection "${failure.collection}" is invalid: ${failure.reason}.`;
+    case "IndexExists":
+      return `Collection "${failure.collection}" already has an index named "${failure.name}": ${failure.reason}.`;
+    case "UniqueViolation":
+      return `Document "${failure.id}" in collection "${failure.collection}" repeats the values index "${failure.index}" holds for "${failure.holder}".`;
+    case "CheckViolation":
+      return `Document "${failure.id}" in collection "${failure.collection}" fails check "${failure.check}": ${failure.reason}.`;
+    case "ReferenceViolation":
+      return `Document "${failure.id}" in collection "${failure.collection}" breaks reference "${failure.reference}": ${failure.reason}.`;
+    case "InvalidConstraint":
+      return `Constraint "${failure.name}" on collection "${failure.collection}" is invalid: ${failure.reason}.`;
+    case "ConstraintExists":
+      return `Collection "${failure.collection}" already has a constraint named "${failure.name}".`;
     default:
       return failure._tag;
   }
@@ -417,6 +471,45 @@ export function defineDatabaseMaintenanceService(
           },
         },
         {
+          id: "database.documents.rewrite",
+          method: "POST",
+          path: "/documents/rewrite",
+          spec: {
+            operationId: "rewriteDocuments",
+            summary: "Write documents back so their postings match today's lenses",
+            tags: ["database"],
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId"],
+                properties: {
+                  tenantId: { type: "string", description: "Tenant ID" },
+                  collection: { type: "string", description: "One collection; every one when omitted" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "How many collections and documents were written back" },
+              400: { description: "Bad request" },
+              404: { description: "No such collection" },
+            },
+          },
+          handler: async ({ service, body }) => {
+            const input = readBodyObject(body);
+            try {
+              const tenantId = readTenantId(input.tenantId);
+              return {
+                body: await service.forTenant(tenantId).documents.rewrite(
+                  typeof input.collection === "string" ? { collection: input.collection } : undefined,
+                ),
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 404);
+            }
+          },
+        },
+        {
           id: "database.backups.export",
           spec: {
             operationId: "exportDatabaseBackup",
@@ -539,6 +632,9 @@ export function defineDatabaseDocumentsService(
                   tenantId: { type: "string" },
                   surface: { type: "string" },
                   metadata: { type: "object", additionalProperties: true },
+                  indexes: { type: "array", description: "Composite indexes, each { name, fields, unique? }" },
+                  checks: { type: "array", description: "Check constraints, each { name, where }" },
+                  references: { type: "array", description: "References, each { name, path, collection, onDelete? }" },
                 },
               },
             },
@@ -573,6 +669,15 @@ export function defineDatabaseDocumentsService(
                     !Array.isArray(input.metadata)
                       ? (input.metadata as Record<string, unknown>)
                       : undefined,
+                  indexes: Array.isArray(input.indexes)
+                    ? (input.indexes as ReadonlyArray<IndexDefinition>)
+                    : undefined,
+                  checks: Array.isArray(input.checks)
+                    ? (input.checks as ReadonlyArray<CheckConstraint>)
+                    : undefined,
+                  references: Array.isArray(input.references)
+                    ? (input.references as ReadonlyArray<ReferenceConstraint>)
+                    : undefined,
                 }),
               };
             } catch (error) {
@@ -690,6 +795,7 @@ export function defineDatabaseDocumentsService(
                 properties: {
                   tenantId: { type: "string", description: "Tenant ID" },
                   where: { type: "array", description: "Filters" },
+                  related: { type: "array", description: "Joins, each { reference, where?, id? }" },
                   orderBy: { type: "array", description: "Sorts" },
                   limit: { type: "number" },
                   offset: { type: "number" },
@@ -710,6 +816,9 @@ export function defineDatabaseDocumentsService(
                   documents: await service.forTenant(tenantId).documents.findMany({
                     collection: params.collection,
                     where: readFilters(input.where),
+                    ...(Array.isArray(input.related)
+                      ? { related: input.related as ReadonlyArray<RelatedFilter> }
+                      : {}),
                     orderBy: readSort(input.orderBy),
                     limit: readNumber(input.limit, 100),
                     offset: readNumber(input.offset, 0),
@@ -718,6 +827,324 @@ export function defineDatabaseDocumentsService(
               };
             } catch (error) {
               return databaseErrorResponse(error, 404);
+            }
+          },
+        },
+        {
+          id: "database.documents.page",
+          method: "POST",
+          path: "/:collection/page",
+          spec: {
+            operationId: "pageDocuments",
+            summary: "Page through documents in order",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId"],
+                properties: {
+                  tenantId: { type: "string", description: "Tenant ID" },
+                  where: { type: "array", description: "Filters" },
+                  related: { type: "array", description: "Joins, each { reference, where?, id? }" },
+                  orderBy: { type: "array", description: "One field, or several that a composite index serves" },
+                  limit: { type: "number", description: "Documents per page: 1 to 1000, 50 when omitted" },
+                  after: { type: "string", description: "The next cursor from the previous page" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "One page, and a next cursor only when more documents follow" },
+              400: { description: "A cursor from another read, an order no index serves, or a bad limit" },
+              404: { description: "Not found" },
+            },
+          },
+          handler: async ({ service, params, body }) => {
+            const input = readBodyObject(body);
+            try {
+              const tenantId = readTenantId(input.tenantId);
+              const limit = readNumber(input.limit, 50);
+              if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
+                throw new TypeError("limit must be an integer from 1 to 1000.");
+              }
+              if (input.after !== undefined && typeof input.after !== "string") {
+                throw new TypeError("after must be the next cursor from a previous page.");
+              }
+              return {
+                body: await service.forTenant(tenantId).documents.findPage({
+                  collection: params.collection,
+                  where: readFilters(input.where),
+                  ...(Array.isArray(input.related)
+                    ? { related: input.related as ReadonlyArray<RelatedFilter> }
+                    : {}),
+                  orderBy: readSort(input.orderBy),
+                  limit,
+                  ...(input.after === undefined ? {} : { after: input.after as DocumentCursor }),
+                }),
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 404);
+            }
+          },
+        },
+        {
+          id: "database.indexes.create",
+          method: "POST",
+          path: "/:collection/indexes",
+          spec: {
+            operationId: "createIndex",
+            summary: "Add a composite index to a collection",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId", "name", "fields"],
+                properties: {
+                  tenantId: { type: "string", description: "Tenant ID" },
+                  name: { type: "string", description: "Index name" },
+                  fields: { type: "array", description: "Fields in order, each { path, direction?, nulls? }" },
+                },
+              },
+            },
+            responses: {
+              201: { description: "The index, ready to answer reads" },
+              400: { description: "An index definition that cannot be built" },
+              404: { description: "Not found" },
+              409: { description: "The name is taken by an index over other fields" },
+            },
+          },
+          handler: async ({ service, params, body }) => {
+            const input = readBodyObject(body);
+            try {
+              const tenantId = readTenantId(input.tenantId);
+              return {
+                status: 201,
+                body: await service.forTenant(tenantId).documents.createIndex({
+                  collection: params.collection,
+                  name: typeof input.name === "string" ? input.name : "",
+                  fields: Array.isArray(input.fields) ? (input.fields as ReadonlyArray<IndexField>) : [],
+                }),
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "database.indexes.drop",
+          method: "DELETE",
+          path: "/:collection/indexes/:name",
+          spec: {
+            operationId: "dropIndex",
+            summary: "Remove a composite index from a collection",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+              name: { type: "string", required: true, description: "Index name" },
+            },
+            queryParams: {
+              tenantId: { type: "string", required: true, description: "Tenant ID" },
+            },
+            responses: {
+              200: { description: "Whether an index by that name was removed" },
+              400: { description: "Bad request" },
+              404: { description: "Not found" },
+            },
+          },
+          handler: async ({ service, params, query }) => {
+            try {
+              const tenantId = readTenantId(query.get("tenantId"));
+              return {
+                body: {
+                  dropped: await service.forTenant(tenantId).documents.dropIndex({
+                    collection: params.collection,
+                    name: params.name,
+                  }),
+                },
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "database.checks.add",
+          method: "POST",
+          path: "/:collection/checks",
+          spec: {
+            operationId: "addCheck",
+            summary: "Add a check constraint to a collection",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId", "name", "where"],
+                properties: {
+                  tenantId: { type: "string", description: "Tenant ID" },
+                  name: { type: "string", description: "Check name" },
+                  where: { type: "array", description: "Filters every document must satisfy" },
+                },
+              },
+            },
+            responses: {
+              201: { description: "The check, which every document satisfies" },
+              400: { description: "A definition that cannot be enforced, or a document that fails it" },
+              404: { description: "Not found" },
+              409: { description: "The name is taken" },
+            },
+          },
+          handler: async ({ service, params, body }) => {
+            const input = readBodyObject(body);
+            try {
+              const tenantId = readTenantId(input.tenantId);
+              return {
+                status: 201,
+                body: await service.forTenant(tenantId).documents.addCheck({
+                  collection: params.collection,
+                  name: typeof input.name === "string" ? input.name : "",
+                  where: readFilters(input.where),
+                }),
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "database.checks.drop",
+          method: "DELETE",
+          path: "/:collection/checks/:name",
+          spec: {
+            operationId: "dropCheck",
+            summary: "Remove a check constraint from a collection",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+              name: { type: "string", required: true, description: "Check name" },
+            },
+            queryParams: {
+              tenantId: { type: "string", required: true, description: "Tenant ID" },
+            },
+            responses: {
+              200: { description: "Whether a check by that name was removed" },
+              400: { description: "Bad request" },
+              404: { description: "Not found" },
+            },
+          },
+          handler: async ({ service, params, query }) => {
+            try {
+              const tenantId = readTenantId(query.get("tenantId"));
+              return {
+                body: {
+                  dropped: await service.forTenant(tenantId).documents.dropCheck({
+                    collection: params.collection,
+                    name: params.name,
+                  }),
+                },
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "database.references.add",
+          method: "POST",
+          path: "/:collection/references",
+          spec: {
+            operationId: "addReference",
+            summary: "Add a reference from a collection to another",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "The collection holding the field" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId", "name", "path", "collection"],
+                properties: {
+                  tenantId: { type: "string", description: "Tenant ID" },
+                  name: { type: "string", description: "Reference name" },
+                  path: { type: "string", description: "The field holding the id" },
+                  collection: { type: "string", description: "The collection the id names a document of" },
+                  onDelete: { type: "string", description: "restrict, cascade or set-null" },
+                },
+              },
+            },
+            responses: {
+              201: { description: "The reference, which every document satisfies" },
+              400: { description: "A definition that cannot be enforced" },
+              404: { description: "Not found" },
+              409: { description: "The name is taken, or a document names nothing" },
+            },
+          },
+          handler: async ({ service, params, body }) => {
+            const input = readBodyObject(body);
+            try {
+              const tenantId = readTenantId(input.tenantId);
+              return {
+                status: 201,
+                body: await service.forTenant(tenantId).documents.addReference({
+                  from: params.collection,
+                  name: typeof input.name === "string" ? input.name : "",
+                  path: typeof input.path === "string" ? input.path : "",
+                  collection: typeof input.collection === "string" ? input.collection : "",
+                  ...(typeof input.onDelete === "string"
+                    ? { onDelete: input.onDelete as ReferenceConstraint["onDelete"] }
+                    : {}),
+                }),
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "database.references.drop",
+          method: "DELETE",
+          path: "/:collection/references/:name",
+          spec: {
+            operationId: "dropReference",
+            summary: "Remove a reference from a collection",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "The collection holding the field" },
+              name: { type: "string", required: true, description: "Reference name" },
+            },
+            queryParams: {
+              tenantId: { type: "string", required: true, description: "Tenant ID" },
+            },
+            responses: {
+              200: { description: "Whether a reference by that name was removed" },
+              400: { description: "Bad request" },
+              404: { description: "Not found" },
+            },
+          },
+          handler: async ({ service, params, query }) => {
+            try {
+              const tenantId = readTenantId(query.get("tenantId"));
+              return {
+                body: {
+                  dropped: await service.forTenant(tenantId).documents.dropReference({
+                    collection: params.collection,
+                    name: params.name,
+                  }),
+                },
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
             }
           },
         },
@@ -742,6 +1169,8 @@ export function defineDatabaseDocumentsService(
                   tenantId: { type: "string", description: "Tenant ID" },
                   data: { type: "object", additionalProperties: true, description: "Document data" },
                   mode: { type: "string", description: "Update mode (merge or replace)" },
+                  expectedVersion: { type: "number", description: "The version the document must be at" },
+                  precondition: { type: "array", description: "Filters the document must match as it stands" },
                 },
               },
             },
@@ -760,6 +1189,8 @@ export function defineDatabaseDocumentsService(
                   id: params.id,
                   data: readJsonObject(input.data),
                   mode: input.mode === "replace" ? "replace" : "merge",
+                  ...(typeof input.expectedVersion === "number" ? { expectedVersion: input.expectedVersion } : {}),
+                  ...(Array.isArray(input.precondition) ? { precondition: readFilters(input.precondition) } : {}),
                 }),
               };
             } catch (error) {
@@ -781,20 +1212,30 @@ export function defineDatabaseDocumentsService(
             },
             queryParams: {
               tenantId: { type: "string", required: true, description: "Tenant ID" },
+              expectedVersion: { type: "number", description: "The version the document must be at" },
+              precondition: {
+                type: "string",
+                description: "Filters the document must match, as a JSON array",
+              },
             },
             responses: {
               200: { description: "Document deleted" },
               400: { description: "Bad request" },
+              409: { description: "The document is not as the caller expected" },
             },
           },
           handler: async ({ service, params, query }) => {
             try {
               const tenantId = readTenantId(query.get("tenantId"));
+              const expectedVersion = readQueryNumber(query.get("expectedVersion"));
+              const precondition = readFilterQuery(query.get("precondition"));
               return {
                 body: {
                   deleted: await service.forTenant(tenantId).documents.delete({
                     collection: params.collection,
                     id: params.id,
+                    ...(expectedVersion === undefined ? {} : { expectedVersion }),
+                    ...(precondition === undefined ? {} : { precondition }),
                   }),
                 },
               };

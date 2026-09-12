@@ -313,3 +313,130 @@ test("the identifier an edge names really does mean something else next door", a
     })),
   );
 });
+
+const key = (row) => `${row.tenant}/${row.document.id}`;
+const BY_RANK_DESC = [{ path: "rank", direction: "desc" }];
+// Every tenant's rank 4, tenant by tenant, then every rank 3, and so on.
+const RANK_DESC = [4, 3, 2, 1].flatMap((rank) => TENANTS.map((tenant) => `${tenant}/p${rank}`));
+
+const walkScatter = (db, input, from) => Effect.gen(function* () {
+  const pages = [];
+  let after = from;
+  for (let i = 0; i < 1000; i++) {
+    const page = yield* db.scatter.findPage({ collection: "posts", ...input, ...(after === undefined ? {} : { after }) });
+    pages.push(page);
+    if (page.next === undefined) return pages;
+    after = page.next;
+  }
+  throw new Error("the scatter never ended");
+});
+
+test("an ordered scatter merges every tenant's run by value, not tenant by tenant", async (t) => {
+  await withDatabase(t, (db) =>
+    Effect.gen(function* () {
+      yield* seed(db);
+
+      const all = yield* db.scatter.findMany({ collection: "posts", orderBy: BY_RANK_DESC });
+      assert.deepEqual(all.rows.map(key), RANK_DESC);
+
+      // The first seven across every tenant, read as at most seven from each.
+      const top = yield* db.scatter.findMany({ collection: "posts", orderBy: BY_RANK_DESC, limit: 7 });
+      assert.deepEqual(top.rows.map(key), RANK_DESC.slice(0, 7));
+      assert.equal(top.truncated, true);
+      const narrow = yield* db.scatter.findMany({ collection: "posts", orderBy: BY_RANK_DESC, limit: 2 });
+      assert.deepEqual(narrow.rows.map(key), ["acme/p4", "bravo/p4"]);
+      assert.ok(narrow.legs.every((leg) => leg.rows === 2 && leg.truncated), "no tenant was read past two");
+
+      // Where a missing value goes holds across tenants as it does in one.
+      yield* db.forTenant("cosmo").documents.insert({ collection: "posts", id: "p9", data: { title: "unranked" } });
+      const nullsFirst = yield* db.scatter.findMany({
+        collection: "posts", orderBy: [{ path: "rank", nulls: "first" }], limit: 2,
+      });
+      assert.deepEqual(nullsFirst.rows.map(key), ["cosmo/p9", "acme/p1"]);
+      const nullsLast = yield* db.scatter.findMany({ collection: "posts", orderBy: [{ path: "rank" }] });
+      assert.equal(key(nullsLast.rows.at(-1)), "cosmo/p9");
+    }),
+  );
+});
+
+test("a scatter pages by value, resuming every tenant where the merge left it", async (t) => {
+  await withDatabase(t, (db) =>
+    Effect.gen(function* () {
+      yield* seed(db);
+
+      for (const limit of [1, 3, 7, 50]) {
+        for (const concurrency of [1, 8]) {
+          const pages = yield* walkScatter(db, { orderBy: BY_RANK_DESC, limit, concurrency });
+          assert.deepEqual(pages.flatMap((page) => page.rows.map(key)), RANK_DESC, `${limit} per page`);
+          assert.ok(pages.every((page) => page.rows.length > 0), `an empty page at ${limit} per page`);
+        }
+      }
+
+      // A page reads a share of itself from each tenant, not a page from each.
+      const first = yield* db.scatter.findPage({ collection: "posts", orderBy: BY_RANK_DESC, limit: 3 });
+      assert.deepEqual(first.rows.map(key), RANK_DESC.slice(0, 3));
+      assert.ok(first.legs.every((leg) => leg.read <= 2), JSON.stringify(first.legs));
+      assert.equal(first.legs.reduce((n, leg) => n + leg.rows, 0), 3);
+      assert.ok(first.shards > 1);
+    }),
+  );
+});
+
+test("without an order, a scatter pages tenant by tenant in identifier order", async (t) => {
+  await withDatabase(t, (db) =>
+    Effect.gen(function* () {
+      yield* seed(db);
+      const pages = yield* walkScatter(db, { limit: 3 });
+      assert.deepEqual(pages.flatMap((page) => page.rows.map(key)),
+        TENANTS.flatMap((tenant) => [1, 2, 3, 4].map((i) => `${tenant}/p${i}`)));
+    }),
+  );
+});
+
+test("a continued scatter keeps the tenants and the order it began with", async (t) => {
+  await withDatabase(t, (db) =>
+    Effect.gen(function* () {
+      yield* seed(db);
+      const first = yield* db.scatter.findPage({ collection: "posts", orderBy: BY_RANK_DESC, limit: 3 });
+
+      // A tenant arriving mid-read would put its rank 9 before rows already
+      // returned; it is left to the next read instead of breaking this one.
+      const late = db.forTenant("foxtrot").documents;
+      yield* late.createCollection({ name: "posts" });
+      yield* late.insert({ collection: "posts", id: "p1", data: { title: "foxtrot-9", rank: 9 } });
+      const rest = yield* walkScatter(db, { orderBy: BY_RANK_DESC, limit: 5 }, first.next);
+      assert.deepEqual([...first.rows, ...rest.flatMap((page) => page.rows)].map(key), RANK_DESC);
+      const fresh = yield* db.scatter.findPage({ collection: "posts", orderBy: BY_RANK_DESC, limit: 1 });
+      assert.deepEqual(fresh.rows.map(key), ["foxtrot/p1"]);
+
+      const tagOf = (effect) => Effect.map(Effect.flip(effect), (error) => error._tag);
+      const again = (input) => tagOf(db.scatter.findPage({ collection: "posts", after: first.next, ...input }));
+      assert.equal(yield* again({ orderBy: [{ path: "rank" }] }), "CursorMismatch");
+      assert.equal(yield* again({ orderBy: BY_RANK_DESC, collection: "other" }), "CursorMismatch");
+      assert.equal(yield* again({ orderBy: BY_RANK_DESC, tenants: ["acme"] }), "CursorMismatch");
+      assert.equal(yield* again({ orderBy: BY_RANK_DESC, after: "garbage" }), "CursorMismatch");
+    }),
+  );
+});
+
+test("an order one tenant cannot page is refused, naming the tenant", async (t) => {
+  await withDatabase(t, (db) =>
+    Effect.gen(function* () {
+      yield* seed(db);
+      const orderBy = [{ path: "rank" }, { path: "title" }];
+      const index = (tenant) => db.forTenant(tenant).documents.createIndex({
+        collection: "posts", name: "by_rank_title", fields: orderBy,
+      });
+      for (const tenant of TENANTS.filter((tenant) => tenant !== "delta")) yield* index(tenant);
+
+      const refused = yield* Effect.flip(db.scatter.findPage({ collection: "posts", orderBy }));
+      assert.equal(refused._tag, "UnsupportedOrdering");
+      assert.match(refused.reason, /tenant "delta"/);
+
+      yield* index("delta");
+      const pages = yield* walkScatter(db, { orderBy, limit: 4 });
+      assert.deepEqual(pages.flatMap((page) => page.rows.map(key)),
+        [1, 2, 3, 4].flatMap((rank) => TENANTS.map((tenant) => `${tenant}/p${rank}`)));
+    }),
+  );
+});

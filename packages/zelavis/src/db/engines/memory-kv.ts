@@ -1,7 +1,7 @@
 import { Effect, Stream } from "effect";
-import type { KvEngine, KvEntry, KvWrite } from "../kv.js";
-import { compareKeys, prefixEnd } from "../keys.js";
-import { claimGeneration, storeOverKv } from "../kv-store.js";
+import { scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
+import { compareKeys } from "../keys.js";
+import { openStoreOverKv } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
 import type { ObjectStoreApi } from "../store.js";
 import type { StoreError } from "../errors.js";
@@ -48,19 +48,24 @@ export const memoryKvEngine = (): KvEngine => {
         return at >= 0 ? entries[at]!.value : undefined;
       }),
 
-    scan: (prefix) =>
+    scan: (prefix, options) =>
       Stream.fromIterableEffect(
         Effect.sync(() => {
-          const end = prefixEnd(prefix);
-          const out: KvEntry[] = [];
-          let at = indexOf(prefix);
-          if (at < 0) at = ~at;
-          for (let i = at; i < entries.length; i++) {
-            const entry = entries[i]!;
-            if (end !== undefined && compareKeys(entry.key, end) >= 0) break;
-            out.push(entry);
+          const { lo, hi, empty } = scanRange(prefix, options);
+          if (empty) return [] as KvEntry[];
+          // Both ends by binary search, so a bounded scan copies what it
+          // returns rather than the whole range.
+          let start = indexOf(lo);
+          if (start < 0) start = ~start;
+          let end = entries.length;
+          if (hi !== undefined) {
+            const at = indexOf(hi);
+            end = at < 0 ? ~at : at;
           }
-          return out;
+          const count = Math.max(0, Math.min(end - start, options?.limit ?? Infinity));
+          return options?.reverse
+            ? entries.slice(end - count, end).reverse()
+            : entries.slice(start, start + count);
         }),
       ),
 
@@ -88,5 +93,5 @@ export const makeMemoryStore = (
 ): Effect.Effect<ObjectStoreApi, StoreError> =>
   Effect.gen(function* () {
     const engine = memoryKvEngine();
-    return storeOverKv(partition, engine, yield* claimGeneration(engine));
+    return yield* openStoreOverKv(partition, engine);
   });

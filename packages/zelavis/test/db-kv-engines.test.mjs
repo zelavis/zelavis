@@ -7,8 +7,8 @@ import { Effect, Stream } from "effect";
 import { compareKeys, termKey, termPrefix, seqOf } from "../dist/db/keys.js";
 import { memoryKvEngine } from "../dist/db/engines/memory-kv.js";
 import { makeNodeSqliteEngine } from "../dist/db/engines/node-sqlite.js";
-import { makeRocksdbEngine } from "../dist/db/engines/rocksdb.js";
 import { makeLmdbEngine } from "../dist/db/engines/lmdb.js";
+import { makeRocksdbJsEngine } from "../dist/db/engines/rocksdb-js.js";
 import { engineAvailable } from "./_engine-available.mjs";
 
 const bytes = (s) => new TextEncoder().encode(s);
@@ -20,8 +20,18 @@ const key = (...parts) => Uint8Array.from(parts);
 const engines = [
   ["memory", () => Effect.succeed(memoryKvEngine()), true],
   ["sqlite", (dir) => makeNodeSqliteEngine("kv", dir), true],
-  ["rocksdb", (dir) => makeRocksdbEngine("kv", dir), engineAvailable("rocksdb")],
+  // The discontinued `rocksdb` binding is deliberately absent while
+  // `rocksdb-js` is being evaluated. Opening a database with the old one and
+  // then the new one in the same process aborts inside libuv:
+  //
+  //   Assertion failed: (current_fn), function Run, file timer.h, line 203
+  //
+  // Only that order does it — the reverse is fine, and merely importing both
+  // is fine — so it is the old binding leaving timer state behind rather than
+  // anything the new one does wrong. It is a condition of the transition, and
+  // it disappears with the package it belongs to.
   ["lmdb", (dir) => makeLmdbEngine("kv", dir), engineAvailable("lmdb")],
+  ["rocksdb-js", (dir) => makeRocksdbJsEngine("kv", dir), engineAvailable("@harperfast/rocksdb-js")],
 ];
 
 const run = (t, make, body) => {
@@ -81,6 +91,50 @@ for (const [name, make, installed] of engines) {
           "an empty range is empty, not everything");
       }),
     );
+  });
+
+  test(`${name}: bounded scans narrow the prefix range, in either direction`, { skip: installed ? false : `${name} is not installed` }, async (t) => {
+    await run(t, make, (engine) =>
+      Effect.gen(function* () {
+        const inside = [1, 2, 3, 4, 5].map((n) => key(9, n));
+        yield* engine.write([
+          ...inside.map((k) => ({ op: "put", key: k, value: k })),
+          // Neighbours on both sides of the prefix, which no bound may reach.
+          { op: "put", key: key(8, 9), value: key(0) },
+          { op: "put", key: key(10), value: key(0) },
+        ]);
+        const keysOf = (stream) => Effect.map(Stream.runCollect(stream), (c) => [...c].map((e) => [...e.key]));
+        const scan = (options) => keysOf(engine.scan(key(9), options));
+        const ascending = inside.map((k) => [...k]);
+        const descending = [...ascending].reverse();
+
+        assert.deepEqual(yield* scan(), ascending);
+        assert.deepEqual(yield* scan({ reverse: true }), descending);
+        // `from` is inclusive and `to` exclusive, whichever way the scan runs.
+        assert.deepEqual(yield* scan({ from: key(9, 2), to: key(9, 4) }), [[9, 2], [9, 3]]);
+        assert.deepEqual(yield* scan({ from: key(9, 2), to: key(9, 4), reverse: true }), [[9, 3], [9, 2]]);
+        // Bounds that fall between keys.
+        assert.deepEqual(yield* scan({ from: key(9, 2, 0), to: key(9, 4, 0) }), [[9, 3], [9, 4]]);
+        assert.deepEqual(yield* scan({ from: key(9, 2, 0), to: key(9, 4, 0), reverse: true }), [[9, 4], [9, 3]]);
+        // Bounds outside the prefix are clipped to it, never widening the scan.
+        assert.deepEqual(yield* scan({ from: key(8), to: key(11) }), ascending);
+        assert.deepEqual(yield* scan({ from: key(8), to: key(11), reverse: true }), descending);
+        // Empty ranges, both directions.
+        assert.deepEqual(yield* scan({ from: key(9, 3), to: key(9, 3) }), []);
+        assert.deepEqual(yield* scan({ from: key(9, 4), to: key(9, 2), reverse: true }), []);
+        // A reverse scan of the whole keyspace, and one stopped early.
+        assert.deepEqual(yield* keysOf(engine.scan(new Uint8Array(0), { reverse: true })),
+          [[10], [9, 5], [9, 4], [9, 3], [9, 2], [9, 1], [8, 9]]);
+        assert.deepEqual(yield* keysOf(Stream.take(engine.scan(key(9), { reverse: true }), 2)), [[9, 5], [9, 4]]);
+        // A limit is the first entries in scan order, whichever way and within
+        // whatever bounds — including a reverse scan that passes over its own
+        // upper bound, which must not count against the limit.
+        assert.deepEqual(yield* scan({ limit: 2 }), [[9, 1], [9, 2]]);
+        assert.deepEqual(yield* scan({ reverse: true, limit: 2 }), [[9, 5], [9, 4]]);
+        assert.deepEqual(yield* scan({ to: key(9, 4), reverse: true, limit: 2 }), [[9, 3], [9, 2]]);
+        assert.deepEqual(yield* scan({ from: key(9, 2), limit: 100 }), ascending.slice(1));
+        assert.deepEqual(yield* scan({ limit: 0 }), []);
+      }));
   });
 
   test(`${name}: a batch lands whole, and later writes see earlier ones`, { skip: installed ? false : `${name} is not installed` }, async (t) => {
