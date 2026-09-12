@@ -32,7 +32,6 @@ const withSeries = (t, body) => {
       yield* tenant.documents.createCollection({ name: "readings" });
       yield* tenant.timeSeries.define({
         name: "usage",
-        bucket: "day",
         map: (event) =>
           event.type !== "document.upserted" ? null : {
             timestamp: event.payload.data.at,
@@ -48,7 +47,7 @@ const withSeries = (t, body) => {
   );
 };
 
-// Two readings a day, an hour apart: same bucket, distinct timestamps. Points
+// Two readings a day, an hour apart: distinct instants. Points
 // sharing an instant would leave the order of a `desc` query down to a tie
 // nothing promises to break one way.
 const rows = [
@@ -145,7 +144,7 @@ test("a filter composes with a time window rather than replacing it", async (t) 
       assert.deepEqual(filtered.map((p) => p.value), [30, 50, 60],
         "inside the window and carrying the tag");
 
-      // The bounds are still exact: a point in the same day bucket but outside
+      // The bounds are exact: a point on the same day but outside
       // the window does not come back because it matched the tag.
       const narrow = yield* usage.range({
         start: BASE + 2 * DAY, end: BASE + 2 * DAY + HOUR, tags: { tier: "paid" },
@@ -203,7 +202,6 @@ test("a tag is scoped to its series", async (t) => {
       // other's points.
       yield* tenant.timeSeries.define({
         name: "errors",
-        bucket: "day",
         map: (event) =>
           event.type !== "document.upserted" ? null : {
             timestamp: event.payload.data.at,
@@ -222,14 +220,13 @@ test("a tag is scoped to its series", async (t) => {
   );
 });
 
-test("a filter still works past the point a window stops naming buckets", async (t) => {
+test("a filter composes with a window far wider than the data", async (t) => {
   await withSeries(t, (tenant) =>
     Effect.gen(function* () {
       const usage = yield* seed(tenant);
 
-      // Beyond 400 buckets the window gives up naming them and asks for the
-      // whole series. The tag is intersected with that, so the query costs the
-      // tag rather than the series — the case a filter is most worth having.
+      // A window reaching well outside the data on both sides, intersected with
+      // the tag: the same set operation whatever the window's width.
       const wide = { start: BASE - 1000 * DAY, end: BASE + 1000 * DAY };
       assert.equal((yield* usage.range(wide)).length, 7);
 

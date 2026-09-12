@@ -86,7 +86,6 @@ test("time series: ingest maps events to points, range and aggregate read them",
 
       const listed = yield* timeSeries.list;
       assert.deepEqual(listed.map((s) => s.name), ["views"]);
-      assert.equal(listed[0].bucket, "day", "day buckets by default");
     }),
   );
 });
@@ -148,28 +147,28 @@ test("time series: points do not feed back into the event log", async (t) => {
   );
 });
 
-test("time series: hour buckets and wide ranges both resolve correctly", async (t) => {
+test("time series: a window is exact however wide it is", async (t) => {
   await withTenant(t, ({ documents, timeSeries }) =>
     Effect.gen(function* () {
       yield* documents.createCollection({ name: "posts" });
-      yield* timeSeries.define({ ...viewsSeries, name: "hourly", bucket: "hour" });
+      yield* timeSeries.define({ ...viewsSeries, name: "hourly" });
 
       yield* seed(documents, [
         { day: 0, views: 1, region: "eu" },
         { day: 10, views: 2, region: "eu" },
-        // Far enough out that the range spans more buckets than are worth naming,
-        // which must fall back to a scan rather than return nothing.
+        // Far out, which used to span more buckets than were worth naming and
+        // fell back to reading the series. There is nothing to fall back to now.
         { day: 900, views: 3, region: "eu" },
       ]);
       yield* timeSeries.ingest("hourly");
 
       const narrow = yield* timeSeries.get("hourly").range({ start: BASE, end: BASE + DAY });
-      assert.deepEqual(narrow.map((p) => p.value), [1], "narrow range uses buckets");
+      assert.deepEqual(narrow.map((p) => p.value), [1]);
 
       const wide = yield* timeSeries
         .get("hourly")
         .range({ start: BASE, end: BASE + 1000 * DAY });
-      assert.deepEqual(wide.map((p) => p.value), [1, 2, 3], "wide range falls back to a scan");
+      assert.deepEqual(wide.map((p) => p.value), [1, 2, 3]);
 
       assert.equal(yield* timeSeries.get("hourly").aggregate({ op: "count" }), 3);
     }),

@@ -63,7 +63,6 @@ test("system views: every view is listed and queryable", async (t) => {
 
       const series = yield* views.query({ name: "time-series" });
       assert.deepEqual(series.rows.map((r) => r.id), ["views"]);
-      assert.equal(series.rows[0].data.bucket, "day");
 
       const events = yield* views.query({ name: "events" });
       assert.deepEqual(

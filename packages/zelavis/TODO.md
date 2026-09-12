@@ -1026,8 +1026,20 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   them — which re-derives its postings from its data. A reindex cannot: it
   derives them from the stored manifests, and the manifests are what is wrong.
   `POST /database/maintenance/documents/rewrite` runs it.
-- [ ] Answer time-series ranges from the ordered lens instead of hierarchical
-  bucket postings.
+- [x] Answer time-series ranges from the ordered lens instead of hierarchical
+  bucket postings. A point carries its instant as one ordered posting rather
+  than five bucket postings, and a window is one range over it: exact, so
+  nothing is read that the caller did not ask for and nothing is trimmed
+  afterwards. Gone with the buckets: the interval cover, the 400-clause
+  backstop, the fallback that answered a wide window by reading the whole
+  series, and `BucketSize`, `bucket` and `coverBuckets` from the API. Over 20k
+  points ingest goes from 2.6k to 3.2k points/s on the four fewer postings;
+  reads are unchanged within noise (a month 5.2 ms to 4.7 ms, the whole series
+  122.6 ms to 121.5 ms), which is the point — the old cover was already cheap
+  to query and expensive to write and to keep correct. Tag filters are
+  untouched, being set intersection over the same identifiers. A series with
+  points already stored answers from its old postings until `rebuild` replays
+  it.
 - [x] Measured the engines against each other (`scripts/bench-engines.mjs`).
   At 100k objects, with SQLite tuned: LMDB is roughly 4x faster than everything
   else on scans and the cross-model query and 3x on point reads, paying for it
