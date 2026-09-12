@@ -15,6 +15,7 @@ import type {
   CheckConstraint,
   ReferenceConstraint,
   RelatedFilter,
+  DocumentWrite,
 } from "./documents.js";
 import type { AggregateOperation, RangeInput } from "./time-series.js";
 
@@ -682,6 +683,54 @@ export function defineDatabaseDocumentsService(
               };
             } catch (error) {
               return databaseErrorResponse(error, 409);
+            }
+          },
+        },
+        {
+          id: "database.documents.write",
+          method: "POST",
+          path: "/write",
+          spec: {
+            operationId: "writeDocuments",
+            summary: "Apply several document changes as one",
+            tags: ["documents"],
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId", "operations"],
+                properties: {
+                  tenantId: { type: "string", description: "Tenant ID" },
+                  operations: {
+                    type: "array",
+                    description: "Changes, each { _tag: Insert | Update | Delete, collection, ... }",
+                  },
+                },
+              },
+            },
+            responses: {
+              200: { description: "What each change did, in the order asked" },
+              400: { description: "A change nothing allows, which refuses the whole batch" },
+              404: { description: "Not found" },
+              409: { description: "A conflict, which refuses the whole batch" },
+            },
+          },
+          handler: async ({ service, body }) => {
+            const input = readBodyObject(body);
+            try {
+              const tenantId = readTenantId(input.tenantId);
+              if (!Array.isArray(input.operations)) {
+                throw new TypeError("operations must be a list of changes.");
+              }
+              return {
+                body: {
+                  written: await service.forTenant(tenantId).documents.write({
+                    operations: input.operations as ReadonlyArray<DocumentWrite>,
+                  }),
+                },
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
             }
           },
         },

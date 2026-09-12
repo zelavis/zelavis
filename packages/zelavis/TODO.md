@@ -969,6 +969,27 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   a compare-and-set on field values. Unconstrained writes run as before (4.1k
   inserts/s); with a unique index, a check and a reference all enforced, 2.7k/s
   against 3.9k/s for the same index unenforced.
+- [x] Document transaction scope, and no pretending past it. `documents.write`
+  applies a list of changes as one: every check each change makes — an id, a
+  version, a precondition, a unique value, a check, a reference — is made
+  against what the batch has written so far as well as what is committed, so a
+  post may name an author the same batch inserts, two changes cannot take one
+  unique value, and a document deleted earlier in the batch is gone for the
+  changes after it. Any violation refuses the whole batch. The scope is one
+  tenant, which lives on one shard: there is no write spanning shards, and
+  `db.scatter` reads rather than writes. `POST /database/documents/write`
+  carries it. Anything writing twice in one transaction now threads one
+  overlay and reads through it, which is what a cascade already needed: a
+  delete resolves each document naming it once, with every naming field
+  together, rather than once per reference.
+- [x] Wide-column behaviour is sparse named attributes, not column families.
+  Every scalar a document happens to hold is indexed under its own dotted
+  path, so documents in one collection may share nothing but the collection,
+  a field only some of them have is queryable and orders with the rest absent
+  last, and a field nothing had yet needs no migration to become either.
+  Partitioning and range locality are the tenant and lens key prefixes, which
+  keep a tenant's postings contiguous without an engine's column families
+  being exposed.
 - [x] Join through references rather than through SQL. A `related` clause on
   `findMany` and `findPage` — `{ reference, where?, id? }`, data like every
   other query — answers the named collection's query first and turns the ids

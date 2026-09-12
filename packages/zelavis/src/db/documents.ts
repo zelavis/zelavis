@@ -205,6 +205,43 @@ export interface RelatedFilter {
   readonly id?: string;
 }
 
+/** One change in a batch; see `DocumentsApi.write`. */
+export type DocumentWrite =
+  | {
+    readonly _tag: "Insert";
+    readonly collection: string;
+    readonly id?: string;
+    readonly data: JsonObject;
+  }
+  | {
+    readonly _tag: "Update";
+    readonly collection: string;
+    readonly id: string;
+    readonly data: JsonObject;
+    readonly mode?: "merge" | "replace";
+    readonly expectedVersion?: number;
+    readonly precondition?: ReadonlyArray<DocumentFilter>;
+  }
+  | {
+    readonly _tag: "Delete";
+    readonly collection: string;
+    readonly id: string;
+    readonly expectedVersion?: number;
+    readonly precondition?: ReadonlyArray<DocumentFilter>;
+  };
+
+/** What one change in a batch did, in the order the batch asked. */
+export type DocumentWritten =
+  | { readonly _tag: "Inserted"; readonly document: Document }
+  | { readonly _tag: "Updated"; readonly document: Document }
+  | {
+    readonly _tag: "Deleted";
+    readonly collection: string;
+    readonly id: string;
+    /** False when there was nothing there to delete. */
+    readonly deleted: boolean;
+  };
+
 /** A document and what its references name. */
 export interface RelatedDocuments {
   readonly document: Document;
@@ -603,6 +640,30 @@ const setPath = (data: JsonObject, path: string, value: Json): JsonObject => {
   return { ...data, [head!]: setPath(next, rest.join("."), value) };
 };
 
+/**
+ * What a transaction has written so far.
+ *
+ * A read inside a transaction sees what is committed, not what the transaction
+ * itself has written, so anything that writes more than once — a cascade, a
+ * batch — carries this and consults it first. Without it, a second write built
+ * on a second read would undo the first, and two writes in one transaction
+ * could each pass a check the other had already answered.
+ */
+interface Pending {
+  /** By identifier: the document as this transaction leaves it, or null once retracted. */
+  readonly bySeq: Map<number, Document | null>;
+  /** By `collection/id`, for the checks that address a document by name. */
+  readonly byName: Map<string, { readonly seq: Seq; readonly document: Document | null }>;
+  /** Unique values this transaction has taken, by column and tuple, to the document holding them. */
+  readonly claimed: Map<string, string>;
+}
+
+const nothingPending = (): Pending => ({ bySeq: new Map(), byName: new Map(), claimed: new Map() });
+
+const nameOf = (collection: string, id: string) => `${collection}/${id}`;
+
+const claimOf = (column: string, tuple: string) => `${column}\u0000${tuple}`;
+
 /** A document's position in one index. */
 const indexTuple = (index: StoredIndex, data: JsonObject): string =>
   orderedTuple(index.fields.map((field) => ({
@@ -980,6 +1041,31 @@ export interface DocumentsApi {
   }) => Effect.Effect<boolean, CollectionNotFound | TenantMoving>;
 
   /**
+   * Apply several changes as one: all of them land, or none does.
+   *
+   * One transaction, so every check each change makes — an id, a version, a
+   * precondition, a unique value, a check, a reference — is made against what
+   * the batch has written so far as well as what was committed. A post may
+   * name an author the same batch inserts; two changes may not take one unique
+   * value; a document deleted here is gone for the changes after it. Any
+   * violation refuses the whole batch, leaving nothing behind.
+   *
+   * The scope is one tenant, and a tenant lives on one shard, so this is as far
+   * as atomicity goes: there is no write that spans shards, and `db.scatter`
+   * reads rather than writes. A change set spanning tenants is several batches,
+   * each atomic on its own, and the caller decides what a partial outcome means.
+   */
+  readonly write: (input: {
+    readonly operations: ReadonlyArray<DocumentWrite>;
+    /** Do this at most once; see `insert`. */
+    readonly idempotencyKey?: string;
+  }) => Effect.Effect<
+    ReadonlyArray<DocumentWritten>,
+    | CollectionNotFound | DocumentConflict | DocumentNotFound | SchemaViolation | TenantMoving
+    | IdempotencyKeyReused | CheckViolation | UniqueViolation | ReferenceViolation
+  >;
+
+  /**
    * Write every document back as it stands, so its postings are the ones the
    * lenses derive today.
    *
@@ -1252,13 +1338,59 @@ export const documentsFor = (
     edges: [],
   });
 
+  /** The document at an identifier, as this transaction leaves it. */
+  const currentAt = (pending: Pending, seq: Seq): Effect.Effect<Document | undefined, DbError> =>
+    pending.bySeq.has(Number(seq))
+      ? Effect.succeed(pending.bySeq.get(Number(seq)) ?? undefined)
+      : readDocument(seq);
+
+  /** What a name addresses, as this transaction leaves it. */
+  const currentNamed = (
+    pending: Pending,
+    collection: string,
+    id: string,
+  ): Effect.Effect<{ readonly seq: Seq; readonly document: Document | null } | undefined, DbError> =>
+    Effect.gen(function* () {
+      const written = pending.byName.get(nameOf(collection, id));
+      if (written !== undefined) return written;
+      const seq = yield* lookup(documentNs(tenant, collection), id);
+      if (seq === undefined) return undefined;
+      return { seq, document: (yield* readDocument(seq)) ?? null };
+    });
+
+  /** Record a document this transaction has written, and the unique values it takes. */
+  const remember = (pending: Pending, collection: StoredCollection | undefined, doc: Document, seq: Seq) => {
+    pending.bySeq.set(Number(seq), doc);
+    pending.byName.set(nameOf(doc.collection, doc.id), { seq, document: doc });
+    const held = nameOf(doc.collection, doc.id);
+    for (const [key, holder] of pending.claimed) if (holder === held) pending.claimed.delete(key);
+    for (const index of collection?.indexes ?? []) {
+      if (index.unique !== true) continue;
+      if (index.fields.some((field) => !hasValue(readPath(doc.data, field.path)))) continue;
+      pending.claimed.set(claimOf(index.column, indexTuple(index, doc.data)), held);
+    }
+  };
+
+  /** Record a document this transaction has retracted, and release what it held. */
+  const forget = (pending: Pending, doc: Document, seq: Seq) => {
+    pending.bySeq.set(Number(seq), null);
+    pending.byName.set(nameOf(doc.collection, doc.id), { seq, document: null });
+    const held = nameOf(doc.collection, doc.id);
+    for (const [key, holder] of pending.claimed) if (holder === held) pending.claimed.delete(key);
+  };
+
   /**
    * Refuse a document its collection's constraints do not allow: a check it
    * fails, or values a unique index already has another document holding.
    * Called inside the transaction that writes the document, under the store's
    * one writer, so nothing it compares against can change before the write.
    */
-  const enforceConstraints = (collection: StoredCollection | undefined, doc: Document, seq: Seq) =>
+  const enforceConstraints = (
+    collection: StoredCollection | undefined,
+    doc: Document,
+    seq: Seq,
+    pending: Pending,
+  ) =>
     Effect.gen(function* () {
       for (const check of collection?.checks ?? []) {
         const failed = check.where.find((filter) => !satisfiesCheck(doc.data, filter));
@@ -1278,7 +1410,10 @@ export const documentsFor = (
         }
         // A document may name itself; it does not exist until this write lands.
         if (reference.collection === doc.collection && value === doc.id) continue;
-        if ((yield* lookup(documentNs(tenant, reference.collection), value)) === undefined) {
+        // Named in this transaction counts: an author and a post naming it can
+        // be written together, and one deleted here no longer counts.
+        const named = yield* currentNamed(pending, reference.collection, value);
+        if (named === undefined || named.document === null) {
           return yield* refused(`there is no document "${value}" in "${reference.collection}"`);
         }
       }
@@ -1286,12 +1421,23 @@ export const documentsFor = (
         // A building index is checked once, whole, when it becomes ready.
         if (index.unique !== true || index.state !== "ready") continue;
         if (index.fields.some((field) => !hasValue(readPath(doc.data, field.path)))) continue;
-        const holders = yield* Stream.runCollect(resolveQuery(equals(index.column, indexTuple(index, doc.data))));
-        const other = [...holders].find((holder) => Number(holder) !== Number(seq));
-        if (other !== undefined) {
-          const holder = yield* readDocument(other);
+        const tuple = indexTuple(index, doc.data);
+        // Taken earlier in this transaction, which the postings do not show yet.
+        const claimant = pending.claimed.get(claimOf(index.column, tuple));
+        if (claimant !== undefined && claimant !== nameOf(doc.collection, doc.id)) {
           return yield* new UniqueViolation({
-            collection: doc.collection, index: index.name, id: doc.id, holder: holder?.id ?? `#${Number(other)}`,
+            collection: doc.collection, index: index.name, id: doc.id,
+            holder: claimant.slice(claimant.indexOf("/") + 1),
+          });
+        }
+        const holders = yield* Stream.runCollect(resolveQuery(equals(index.column, tuple)));
+        for (const other of holders) {
+          if (Number(other) === Number(seq)) continue;
+          // A holder this transaction has deleted, or moved off the value, holds it no longer.
+          const holder = yield* currentAt(pending, other);
+          if (holder === undefined || indexTuple(index, holder.data) !== tuple) continue;
+          return yield* new UniqueViolation({
+            collection: doc.collection, index: index.name, id: doc.id, holder: holder.id,
           });
         }
       }
@@ -1310,13 +1456,26 @@ export const documentsFor = (
    * A caller that has already read the record in this transaction passes it
    * rather than paying for it twice.
    */
-  const documentPut = (txn: Txn, doc: Document, seq: Seq, loaded?: StoredCollection) =>
+  const documentPut = (
+    txn: Txn,
+    doc: Document,
+    seq: Seq,
+    pending: Pending,
+    loaded?: StoredCollection,
+  ) =>
     Effect.gen(function* () {
       const collection = loaded ?? (yield* loadCollection(doc.collection));
-      yield* enforceConstraints(collection, doc, seq);
+      yield* enforceConstraints(collection, doc, seq, pending);
       yield* txn.put(seq, encode(doc), manifestFor(doc, collection?.indexes ?? []), {
         namespace: documentNs(tenant, doc.collection), key: doc.id,
       });
+      remember(pending, collection, doc, seq);
+    });
+
+  const documentRetract = (txn: Txn, doc: Document, seq: Seq, pending: Pending) =>
+    Effect.gen(function* () {
+      yield* txn.retract(seq);
+      forget(pending, doc, seq);
     });
 
   /**
@@ -1331,26 +1490,35 @@ export const documentsFor = (
    * references keeps both, and one reached twice down a cascade — a diamond,
    * or a cycle back to where it began — is deleted once.
    */
-  const releaseReferences = (txn: Txn, deleted: Document, deletedSeq: Seq) =>
+  const releaseReferences = (txn: Txn, deleted: Document, deletedSeq: Seq, pending: Pending) =>
     Effect.gen(function* () {
-      const written = new Map<number, Document | null>([[Number(deletedSeq), null]]);
-      const current = (seq: Seq) =>
-        written.has(Number(seq)) ? Effect.succeed(written.get(Number(seq)) ?? undefined) : readDocument(seq);
+      forget(pending, deleted, deletedSeq);
       const release = (doc: Document): Effect.Effect<
         void,
         ReferenceViolation | SchemaViolation | CheckViolation | UniqueViolation | DbError
       > =>
         Effect.gen(function* () {
           const named = yield* loadCollection(doc.collection);
+          // Gathered per document that names this one, rather than per
+          // reference: a document naming it through two fields is written once,
+          // with both resolved. Written once per field, it would be checked in
+          // between with the other field still naming a document this delete
+          // has already taken away.
+          const holders = new Map<number, {
+            readonly seq: Seq;
+            readonly holder: Document;
+            readonly from: StoredCollection;
+            readonly naming: Array<Required<ReferenceConstraint>>;
+          }>();
           for (const back of named?.referencedBy ?? []) {
             const from = back.collection === doc.collection ? named : yield* loadCollection(back.collection);
             const reference = from?.references?.find((candidate) => candidate.name === back.reference);
-            if (reference === undefined) continue;
-            const holders = yield* Stream.runCollect(
+            if (from === undefined || reference === undefined) continue;
+            const found = yield* Stream.runCollect(
               resolveQuery(equals(columnFor(tenant, back.collection, reference.path), doc.id)),
             );
-            for (const held of holders) {
-              const holder = yield* current(held);
+            for (const held of found) {
+              const holder = yield* currentAt(pending, held);
               // Gone already in this transaction, or no longer naming it.
               if (holder === undefined || readPath(holder.data, reference.path) !== doc.id) continue;
               if (reference.onDelete === "restrict") {
@@ -1359,26 +1527,116 @@ export const documentsFor = (
                   reason: `"${holder.id}" in "${back.collection}" names it`,
                 });
               }
-              if (reference.onDelete === "cascade") {
-                written.set(Number(held), null);
-                yield* release(holder);
-                yield* txn.retract(held);
-                continue;
-              }
-              const data = setPath(holder.data, reference.path, null);
-              yield* enforceSchema(back.collection, data);
-              // One change to the document however many of its fields this
-              // delete clears: a version already moved here stays where it is.
-              const cleared: Document = {
-                ...holder, data, updatedAt: new Date().toISOString(),
-                version: written.has(Number(held)) ? holder.version : holder.version + 1,
-              };
-              written.set(Number(held), cleared);
-              yield* documentPut(txn, cleared, held, from);
+              const gathered = holders.get(Number(held)) ?? { seq: held, holder, from, naming: [] };
+              gathered.naming.push(reference);
+              holders.set(Number(held), gathered);
             }
+          }
+          for (const [at, gathered] of holders) {
+            // As it stands now, not as it stood when it was gathered: this
+            // pass may have deleted it since — down a cascade from elsewhere —
+            // or cleared the very field that named this document.
+            const holder = yield* currentAt(pending, gathered.seq);
+            if (holder === undefined) continue;
+            const naming = gathered.naming.filter(
+              (reference) => readPath(holder.data, reference.path) === doc.id);
+            if (naming.length === 0) continue;
+            // Deleting the document outranks clearing a field of it.
+            if (naming.some((reference) => reference.onDelete === "cascade")) {
+              forget(pending, holder, gathered.seq);
+              yield* release(holder);
+              yield* txn.retract(gathered.seq);
+              continue;
+            }
+            let data = holder.data;
+            for (const reference of naming) data = setPath(data, reference.path, null);
+            yield* enforceSchema(gathered.from.name, data);
+            // One change to the document however many of its fields this
+            // delete clears: a version already moved here stays where it is.
+            const cleared: Document = {
+              ...holder, data, updatedAt: new Date().toISOString(),
+              version: pending.bySeq.has(at) ? holder.version : holder.version + 1,
+            };
+            yield* documentPut(txn, cleared, gathered.seq, pending, gathered.from);
           }
         });
       yield* release(deleted);
+    });
+
+  /** Changes one batch may carry, bounding what one transaction holds. */
+  const MAX_BATCH = 1000;
+
+  /** Insert one document inside a transaction, under everything it must satisfy. */
+  const applyInsert = (
+    txn: Txn,
+    pending: Pending,
+    input: { readonly collection: string; readonly id: string; readonly data: JsonObject },
+    seq: Seq,
+  ) =>
+    Effect.gen(function* () {
+      const collection = yield* requireCollection(input.collection);
+      yield* enforceSchema(input.collection, input.data);
+      const taken = yield* currentNamed(pending, input.collection, input.id);
+      if (taken !== undefined && taken.document !== null) {
+        return yield* new DocumentConflict({
+          collection: input.collection, id: input.id, reason: "a document with this id already exists",
+        });
+      }
+      const now = new Date().toISOString();
+      const doc: Document = {
+        id: input.id, collection: input.collection, data: input.data,
+        createdAt: now, updatedAt: now, version: 1,
+      };
+      yield* documentPut(txn, doc, seq, pending, collection);
+      return doc;
+    });
+
+  const applyUpdate = (
+    txn: Txn,
+    pending: Pending,
+    input: {
+      readonly collection: string;
+      readonly id: string;
+      readonly data: JsonObject;
+      readonly mode?: "merge" | "replace";
+      readonly expectedVersion?: number;
+      readonly precondition?: ReadonlyArray<DocumentFilter>;
+    },
+  ) =>
+    Effect.gen(function* () {
+      const at = yield* currentNamed(pending, input.collection, input.id);
+      if (at === undefined || at.document === null) {
+        return yield* new DocumentNotFound({ collection: input.collection, id: input.id });
+      }
+      const current = at.document;
+      yield* expect(input.collection, current, input.expectedVersion, input.precondition);
+      const data = (input.mode ?? "merge") === "replace" ? input.data : { ...current.data, ...input.data };
+      yield* enforceSchema(input.collection, data);
+      const next: Document = {
+        ...current, data, updatedAt: new Date().toISOString(), version: current.version + 1,
+      };
+      yield* documentPut(txn, next, at.seq, pending);
+      return next;
+    });
+
+  const applyDelete = (
+    txn: Txn,
+    pending: Pending,
+    input: {
+      readonly collection: string;
+      readonly id: string;
+      readonly expectedVersion?: number;
+      readonly precondition?: ReadonlyArray<DocumentFilter>;
+    },
+  ) =>
+    Effect.gen(function* () {
+      const at = yield* currentNamed(pending, input.collection, input.id);
+      // Not there, or already gone earlier in this transaction.
+      if (at === undefined || at.document === null) return false;
+      yield* expect(input.collection, at.document, input.expectedVersion, input.precondition);
+      yield* releaseReferences(txn, at.document, at.seq, pending);
+      yield* documentRetract(txn, at.document, at.seq, pending);
+      return true;
     });
 
   /**
@@ -1882,19 +2140,9 @@ export const documentsFor = (
         return yield* commitOnce(input.idempotencyKey, fingerprint, request, (txn) =>
           Effect.gen(function* () {
             yield* assertNotMoving;
-            const collection = yield* requireCollection(input.collection);
-            yield* enforceSchema(input.collection, input.data);
-            if ((yield* lookup(documentNs(tenant, input.collection), id)) !== undefined) {
-              return yield* new DocumentConflict({
-                collection: input.collection, id, reason: "a document with this id already exists",
-              });
-            }
-            const now = new Date().toISOString();
-            const doc: Document = {
-              id, collection: input.collection, data: input.data, createdAt: now, updatedAt: now, version: 1,
-            };
-            yield* documentPut(txn, doc, seq, collection);
-            return doc;
+            return yield* applyInsert(txn, nothingPending(), {
+              collection: input.collection, id, data: input.data,
+            }, seq);
           }));
       }),
 
@@ -1994,25 +2242,7 @@ export const documentsFor = (
         return yield* commitOnce(input.idempotencyKey, fingerprint, request, (txn) =>
           Effect.gen(function* () {
             yield* assertNotMoving;
-            const seq = yield* lookup(documentNs(tenant, input.collection), input.id);
-            const current = seq === undefined ? undefined : yield* readDocument(seq);
-            if (seq === undefined || current === undefined) {
-              return yield* new DocumentNotFound({ collection: input.collection, id: input.id });
-            }
-            yield* expect(input.collection, current, input.expectedVersion, input.precondition);
-            const data =
-              (input.mode ?? "merge") === "replace"
-                ? input.data
-                : { ...current.data, ...input.data };
-            yield* enforceSchema(input.collection, data);
-            const next: Document = {
-              ...current,
-              data,
-              updatedAt: new Date().toISOString(),
-              version: current.version + 1,
-            };
-            yield* documentPut(txn, next, seq);
-            return next;
+            return yield* applyUpdate(txn, nothingPending(), input);
           }));
       }),
 
@@ -2026,15 +2256,7 @@ export const documentsFor = (
         return yield* commitOnce(input.idempotencyKey, fingerprint, request, (txn) =>
           Effect.gen(function* () {
             yield* assertNotMoving;
-            const seq = yield* lookup(documentNs(tenant, input.collection), input.id);
-            if (seq === undefined) return false;
-            const current = yield* readDocument(seq);
-            if (current !== undefined) {
-              yield* expect(input.collection, current, input.expectedVersion, input.precondition);
-              yield* releaseReferences(txn, current, seq);
-            }
-            yield* txn.retract(seq);
-            return true;
+            return yield* applyDelete(txn, nothingPending(), input);
           }),
           // Nothing happened, so there is nothing to remember: a later retry
           // that finds the document present should delete it rather than
@@ -2238,6 +2460,56 @@ export const documentsFor = (
             if (current === undefined || !checks.some((check) => check.name === input.name)) return false;
             yield* collectionPut(txn, seq, { ...current, checks: checks.filter((check) => check.name !== input.name) });
             return true;
+          }));
+      }),
+
+    write: (input) =>
+      Effect.gen(function* () {
+        const operations = input.operations;
+        if (!Array.isArray(operations) || operations.length === 0 || operations.length > MAX_BATCH) {
+          return yield* Effect.die(
+            new RangeError(`A batch takes 1 to ${MAX_BATCH} changes, not ${operations?.length}.`),
+          );
+        }
+        const request = `write ${operations.length} documents`;
+        const fingerprint = fingerprintOf({ op: "write", operations });
+        if (input.idempotencyKey !== undefined) {
+          const seen = yield* receiptFor(input.idempotencyKey, fingerprint, request);
+          if (seen !== undefined) return seen.result as ReadonlyArray<DocumentWritten>;
+        }
+        // Ids and identifiers are settled before the transaction, which cannot
+        // take the writer a second time to allocate one.
+        const ids = operations.map((operation) =>
+          operation._tag === "Insert" ? operation.id ?? crypto.randomUUID() : operation.id);
+        const seqs: Array<Seq | undefined> = [];
+        for (const operation of operations) {
+          seqs.push(operation._tag === "Insert" ? yield* nextSeq : undefined);
+        }
+        return yield* commitOnce(input.idempotencyKey, fingerprint, request, (txn) =>
+          Effect.gen(function* () {
+            yield* assertNotMoving;
+            // One overlay for the batch: each change sees what the ones before
+            // it wrote, which is what makes them one change rather than several.
+            const pending = nothingPending();
+            const written: Array<DocumentWritten> = [];
+            for (const [at, operation] of operations.entries()) {
+              if (operation._tag === "Insert") {
+                const document = yield* applyInsert(txn, pending, {
+                  collection: operation.collection, id: ids[at]!, data: operation.data,
+                }, seqs[at]!);
+                written.push({ _tag: "Inserted", document });
+                continue;
+              }
+              if (operation._tag === "Update") {
+                written.push({ _tag: "Updated", document: yield* applyUpdate(txn, pending, operation) });
+                continue;
+              }
+              written.push({
+                _tag: "Deleted", collection: operation.collection, id: operation.id,
+                deleted: yield* applyDelete(txn, pending, operation),
+              });
+            }
+            return written as ReadonlyArray<DocumentWritten>;
           }));
       }),
 

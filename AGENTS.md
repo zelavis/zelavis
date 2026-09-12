@@ -411,6 +411,13 @@ Key rules:
   referencing collection and filter it in memory, and never let a reference
   the collection does not declare pass as a clause matching everything or
   nothing: that is `UnknownReference`.
+- A change that writes more than once in one transaction — a batch, a delete
+  cascading or clearing what names it — threads one `Pending` overlay and
+  reads every document, id and unique value through it. A transaction sees
+  committed state, so a second write built on a fresh read undoes the first,
+  and two writes each pass a check the other already answered. Atomicity stops
+  at one tenant, which is one shard: there is no cross-shard write, and a
+  scatter reads.
 - A scan that stops early passes `limit` to `engine.scan` rather than cutting
   the stream with `Stream.take`. A stream pulls an iterable thousands of
   entries at a time, so a take of a few rows still reads thousands; the limit
