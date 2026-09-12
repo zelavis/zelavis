@@ -192,7 +192,6 @@ export const systemViewsFor = (sources: SystemViewSources): SystemViewsApi => ({
                 name: summary.name,
                 description: summary.description ?? null,
                 version: summary.version ?? null,
-                bucket: summary.bucket,
               } as JsonObject,
             })),
             input,

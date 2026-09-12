@@ -3,7 +3,7 @@ import type { DomainEvent } from "./domain-events.js";
 import { TimeSeriesNotFound } from "./errors.js";
 import type { JsonObject } from "./json.js";
 import type { ProjectionsApi, ProjectionSource } from "./projections.js";
-import { and, equals, or, type Query } from "./query.js";
+import { and, between, equals, or, type Query } from "./query.js";
 import type { ObjectStoreApi } from "./store.js";
 import type { TenantId } from "./topology.js";
 
@@ -31,21 +31,11 @@ export type TimeSeriesMapper = (
   context: { readonly series: string },
 ) => TimeSeriesInputPoint | ReadonlyArray<TimeSeriesInputPoint> | null | undefined;
 
-/**
- * How finely points are bucketed for range queries.
- *
- * The column lens answers equality, not ranges, so a point carries the bucket
- * it falls in and a range query asks for the buckets it spans. Coarser buckets
- * mean fewer clauses per query and more points to discard at the edges.
- */
-export type BucketSize = "hour" | "day";
-
 export interface TimeSeriesDefinition {
   readonly name: string;
   readonly description?: string;
   readonly version?: string | number;
   readonly source?: ProjectionSource;
-  readonly bucket?: BucketSize;
   readonly map: TimeSeriesMapper;
 }
 
@@ -53,7 +43,6 @@ export interface TimeSeriesSummary {
   readonly name: string;
   readonly description?: string;
   readonly version?: string | number;
-  readonly bucket: BucketSize;
 }
 
 /**
@@ -105,7 +94,15 @@ export interface TimeSeriesApi {
 }
 
 const SERIES_COLUMN = "zv.timeseries";
-const BUCKET_COLUMN = "zv.timeseries.bucket";
+
+/**
+ * The column a point's own instant is indexed under, per series.
+ *
+ * The ordered lens sorts numbers by value, so a window is one range over this
+ * column rather than a set of buckets covering it. Per series, so a range never
+ * has to say which series it meant twice.
+ */
+const instantColumn = (series: string) => `${series}@at`;
 
 /**
  * The column a tag is indexed under.
@@ -118,9 +115,6 @@ const tagColumn = (series: string, tag: string) => `${series}#${tag}`;
 /** Time series are projections; the prefix keeps them out of the projection listing. */
 export const TIME_SERIES_PROJECTION_PREFIX = "zv.timeseries/";
 
-const HOUR = 3_600_000;
-const DAY = 86_400_000;
-
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
@@ -132,84 +126,7 @@ const toEpoch = (value: Timestamp): number => {
   return parsed;
 };
 
-const widthOf = (bucket: BucketSize) => (bucket === "hour" ? HOUR : DAY);
-
-const bucketOf = (timestamp: number, bucket: BucketSize): number =>
-  Math.floor(timestamp / widthOf(bucket));
-
-/**
- * How many finer buckets make up the next coarser one.
- *
- * A point is indexed at every level, so a range is covered by whole coarse
- * blocks in the middle and finer ones at the edges — the same shape as any
- * interval cover. Eight keeps the edges cheap: at most seven blocks per level
- * on each side, whatever the range.
- */
-const LEVEL_FACTOR = 8;
-
-/**
- * Levels of bucket, from the series' own width upward.
- *
- * Five of them reaches 8^4 base buckets — about eleven years of days, or five
- * months of hours — in a single clause, and a longer range asks for several of
- * the top level rather than falling back to the whole series.
- *
- * The cost is one posting per level on every point written. Postings are keys
- * with no value and fold into blobs when a store is sealed, so this trades a
- * little write amplification for the difference between a bounded query and a
- * scan.
- */
-const BUCKET_LEVELS = 5;
-
-/**
- * The point at which a range gives up naming buckets and reads the series.
- *
- * With levels this is a backstop rather than a working limit: a cover needs at
- * most a couple of dozen clauses for any range a caller would write. It stays
- * because a query built from thousands of clauses would cost more to evaluate
- * than the scan it was meant to avoid, and nothing stops a caller asking for a
- * range of a million years.
- */
-const MAX_BUCKET_CLAUSES = 400;
-
-const widthAt = (level: number) => LEVEL_FACTOR ** level;
-
-/** The block at `level` holding a base bucket. Floors, so it holds for negatives. */
-const blockOf = (bucket: number, level: number) => Math.floor(bucket / widthAt(level));
-
-/**
- * The fewest whole blocks covering `[first, last]`.
- *
- * Greedy from the low end: take the largest block that starts exactly here and
- * ends no later than the range does, then continue from where it ended. That is
- * the standard interval cover, and it is exact — every base bucket in the range
- * falls in one block, and no block reaches outside it.
- */
-export const coverBuckets = (
-  first: number,
-  last: number,
-): ReadonlyArray<readonly [number, number]> => {
-  const blocks: Array<readonly [number, number]> = [];
-  let at = first;
-  while (at <= last) {
-    let level = 0;
-    while (level + 1 < BUCKET_LEVELS) {
-      const width = widthAt(level + 1);
-      const start = Math.floor(at / width) * width;
-      if (start !== at || at + width - 1 > last) break;
-      level += 1;
-    }
-    blocks.push([level, blockOf(at, level)]);
-    at += widthAt(level);
-  }
-  return blocks;
-};
-
 const seriesKey = (tenant: TenantId, series: string) => `${tenant}/${series}`;
-
-/** `<series>@<level>:<block>` — the level is in the value, so one column holds all of them. */
-const bucketValue = (series: string, level: number, block: number) =>
-  `${series}@${level}:${block}`;
 
 export const timeSeriesFor = (
   store: ObjectStoreApi,
@@ -218,12 +135,9 @@ export const timeSeriesFor = (
 ): TimeSeriesApi => {
   const definitions = new Map<string, TimeSeriesDefinition>();
 
-  const bucketFor = (name: string): BucketSize => definitions.get(name)?.bucket ?? "day";
-
   const writePoint = (series: string, point: TimeSeriesPoint) =>
     Effect.gen(function* () {
       const seq = yield* store.nextSeq;
-      const bucket = bucketOf(point.timestamp, bucketFor(series));
       yield* store.transact((txn) =>
         // No identity: points are appended, never addressed by name. That also
         // keeps them out of the domain event log, so ingesting a series cannot
@@ -232,13 +146,9 @@ export const timeSeriesFor = (
           terms: [],
           columns: [
             [SERIES_COLUMN, seriesKey(tenant, series)],
-            // One posting per level, so a range can ask for whole coarse blocks
-            // instead of naming every base bucket it spans.
-            ...Array.from({ length: BUCKET_LEVELS }, (_, level) =>
-              [
-                BUCKET_COLUMN,
-                bucketValue(seriesKey(tenant, series), level, blockOf(bucket, level)),
-              ] as const),
+            // The instant itself, which the ordered lens sorts by value: one
+            // posting, and a window is a range over it.
+            [instantColumn(seriesKey(tenant, series)), point.timestamp] as const,
             ...Object.entries(point.tags ?? {}).map(
               ([tag, value]) => [tagColumn(seriesKey(tenant, series), tag), value] as const,
             ),
@@ -260,19 +170,23 @@ export const timeSeriesFor = (
       return out;
     }).pipe(Effect.orDie);
 
+  /**
+   * The points of a series within a window, as one range over their instants.
+   *
+   * Exact, so nothing is read that the caller did not ask for and nothing has
+   * to be trimmed afterwards. An open end is the series itself, which the
+   * series column answers; a window with both ends never touches it, because
+   * the instant column is per series already.
+   */
   const planWindow = (series: string, start?: number, end?: number): Query => {
     const all = equals(SERIES_COLUMN, seriesKey(tenant, series));
-    if (start === undefined || end === undefined) return all;
-    const size = bucketFor(series);
-    const first = bucketOf(start, size);
-    const last = bucketOf(end, size);
-    if (last < first) return all;
-    const blocks = coverBuckets(first, last);
-    if (blocks.length > MAX_BUCKET_CLAUSES) return all;
-    const key = seriesKey(tenant, series);
-    const clauses = blocks.map(([level, block]) =>
-      equals(BUCKET_COLUMN, bucketValue(key, level, block)));
-    return clauses.length === 1 ? clauses[0]! : or(...clauses);
+    const column = instantColumn(seriesKey(tenant, series));
+    if (start !== undefined && end !== undefined) {
+      return end < start ? all : between(column, start, end);
+    }
+    if (start !== undefined) return and(all, { _tag: "Range", column, lower: { value: start, inclusive: true } });
+    if (end !== undefined) return and(all, { _tag: "Range", column, upper: { value: end, inclusive: true } });
+    return all;
   };
 
   /**
@@ -314,11 +228,8 @@ export const timeSeriesFor = (
     Effect.gen(function* () {
       const from = start === undefined ? undefined : toEpoch(start);
       const to = end === undefined ? undefined : toEpoch(end);
-      const points = yield* pointsMatching(planRange(series, from, to, tags));
-      // Buckets are coarse, so the exact bounds are applied to what they return.
-      return points.filter(
-        (p) => (from === undefined || p.timestamp >= from) && (to === undefined || p.timestamp <= to),
-      );
+      // The window is exact, so what the lens returns is the answer.
+      return yield* pointsMatching(planRange(series, from, to, tags));
     });
 
   const purge = (series: string) =>
@@ -373,7 +284,6 @@ export const timeSeriesFor = (
           name: definition.name,
           ...(definition.description === undefined ? {} : { description: definition.description }),
           ...(definition.version === undefined ? {} : { version: definition.version }),
-          bucket: definition.bucket ?? ("day" as BucketSize),
         }))
         .sort((a, b) => a.name.localeCompare(b.name)),
     ),
