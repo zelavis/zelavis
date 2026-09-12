@@ -861,13 +861,16 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   any RocksDB directory, and one read with the wrong encodings misreads every
   key without failing.
 - [ ] Switch the RocksDB engine to `@harperfast/rocksdb-js` and remove
-  `rocksdb`. Blocked on one gap: the binding ends a range scan quietly when
-  RocksDB's iterator fails. A checksum mismatch in a table's first block reads
-  as an empty range, one mid-file as its first half, while a point read of the
-  same block throws. The binding sees the failed status and discards it
-  (`DBIterator::Next`), so no adapter can report it; the old binding threw.
-  `db-rocksdb-js.test.mjs` carries it as a `todo` that has to pass first
-  (HarperFast/rocksdb-js#846).
+  `rocksdb`. The gap that blocked it is fixed upstream: the binding used to end
+  a range scan quietly when RocksDB's iterator failed — a checksum mismatch in
+  a table's first block read as an empty range, one mid-file as its first half,
+  while a point read of the same block threw — because `DBIterator::Next` saw
+  the failed status and discarded it. Our fix is merged
+  (HarperFast/rocksdb-js#847, closing #846). It is not released: the newest
+  published version is 2.9.0, tagged two days before the merge, and we are on
+  2.8.0. Upstream publishes on a GitHub release, so the next one cut from main
+  carries it; then the `todo` in `db-rocksdb-js.test.mjs` has to pass against
+  that version before the engine changes.
 - [x] Reported the iterator-status gap upstream as HarperFast/rocksdb-js#846,
   with a reproduction and the line that discards the status.
 - [x] Compared an in-process addon with a supervised sidecar for native
