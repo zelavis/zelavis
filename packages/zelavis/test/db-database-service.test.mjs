@@ -567,3 +567,39 @@ test("a batch of document changes is applied as one over HTTP", async (t) => {
   assert.match(refused.body.error, /rated/);
   assert.equal(orphan.status, 404, "the author its batch also asked for is not there either");
 });
+
+test("a search is declared and answered over HTTP", async (t) => {
+  const { api } = await openTemporaryDatabase(t);
+  const service = defineDatabaseService(api);
+  const create = routeOf(service, "database.collections.create");
+  const insert = routeOf(service, "database.documents.insert");
+  const query = routeOf(service, "database.documents.query");
+  const page = routeOf(service, "database.documents.page");
+  const params = { collection: "posts" };
+
+  await call(create, {
+    service: api,
+    body: {
+      tenantId: "acme", name: "posts",
+      analyzer: { fields: ["title"], version: 1, stopWords: ["the"] },
+    },
+  });
+  await call(create, { service: api, body: { tenantId: "acme", name: "plain" } });
+  for (const [id, title] of [["a", "The Quick Brown Fox"], ["b", "Brown bread"], ["c", "Something else"]]) {
+    await call(insert, { service: api, params, body: { tenantId: "acme", id, data: { title } } });
+  }
+
+  const searched = await call(query, { service: api, params, body: { tenantId: "acme", search: "brown" } });
+  const narrowed = await call(query, { service: api, params, body: { tenantId: "acme", search: "quick brown" } });
+  const paged = await call(page, { service: api, params, body: { tenantId: "acme", search: "brown", limit: 1 } });
+  const unanalyzed = await call(query, {
+    service: api, params: { collection: "plain" }, body: { tenantId: "acme", search: "brown" },
+  });
+
+  assert.deepEqual(searched.body.documents.map((d) => d.id).sort(), ["a", "b"]);
+  assert.deepEqual(narrowed.body.documents.map((d) => d.id), ["a"]);
+  assert.equal(paged.body.documents.length, 1);
+  assert.ok(paged.body.next, "a searched page continues like any other");
+  assert.equal(unanalyzed.status, 400);
+  assert.match(unanalyzed.body.error, /no analyzer/);
+});

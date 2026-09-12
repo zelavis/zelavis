@@ -28,12 +28,13 @@ import {
   InvalidConstraint,
   ConstraintExists,
   ReferenceViolation,
+  UnanalyzedCollection,
   UnknownReference,
 } from "./errors.js";
 import type { DbError } from "./errors.js";
 import { compareOrderedValues, decodeOrderedTuple, orderedTuple, sameOrderedKind } from "./keys.js";
 import type { IndexManifest, OrderedScalar, Seq } from "./model.js";
-import { and, equals, or, type Query, type RangeBound } from "./query.js";
+import { and, equals, or, term, type Query, type RangeBound } from "./query.js";
 import type { SchemasApi } from "./schemas.js";
 import type { ObjectStoreApi, OrderedCursor, Txn } from "./store.js";
 import type { TenantId } from "./topology.js";
@@ -53,8 +54,44 @@ export interface Collection {
   readonly checks?: ReadonlyArray<CheckConstraint>;
   /** Fields naming documents of other collections; see `ReferenceConstraint`. */
   readonly references?: ReadonlyArray<Required<ReferenceConstraint>>;
+  /** How text becomes searchable terms; see `Analyzer`. */
+  readonly analyzer?: Analyzer;
   /** The references other collections — or this one — make to this collection's documents. */
   readonly referencedBy?: ReadonlyArray<{ readonly collection: string; readonly reference: string }>;
+}
+
+/**
+ * How a collection's text becomes terms, as data rather than as code.
+ *
+ * Every step is recorded, because the terms already written are the ones a
+ * search reads: changing any of this changes what matches, so the version
+ * comes with it and documents are rewritten when it moves. A search analyzes
+ * its own text the same way, or a query would ask for terms the writer never
+ * produced.
+ */
+export interface Analyzer {
+  /** The fields analyzed, by dotted path. Nothing is analyzed unless named. */
+  readonly fields: ReadonlyArray<string>;
+  /**
+   * Bumped by the caller when any of this changes. A write records it, and
+   * `reanalyze` rewrites the documents that still carry an older one.
+   */
+  readonly version: number;
+  /** Lowercase before indexing. Unicode case folding, not a locale's. */
+  readonly fold?: boolean;
+  /** Words dropped from both the text and the query. Folded like any other term. */
+  readonly stopWords?: ReadonlyArray<string>;
+  /** Shortest term kept, in code points. Two by default. */
+  readonly minLength?: number;
+  /**
+   * The language this text is in, recorded rather than acted on.
+   *
+   * Nothing here stems or expands synonyms yet, and pretending otherwise
+   * would be worse than saying so: this travels with the terms so a later
+   * stemmer knows what it is reading, and so a change of language is a
+   * version change like any other.
+   */
+  readonly language?: string;
 }
 
 /**
@@ -177,6 +214,8 @@ export interface FindDocumentsInput {
   readonly where?: ReadonlyArray<DocumentFilter>;
   /** Also: whose references name documents matching these; see `RelatedFilter`. */
   readonly related?: ReadonlyArray<RelatedFilter>;
+  /** Also: whose analyzed text carries these words; see `Analyzer`. */
+  readonly search?: string;
   readonly orderBy?: ReadonlyArray<DocumentSort>;
   readonly limit?: number;
   readonly offset?: number;
@@ -262,6 +301,8 @@ export interface FindPageInput {
   readonly where?: ReadonlyArray<DocumentFilter>;
   /** Also: whose references name documents matching these; see `RelatedFilter`. */
   readonly related?: ReadonlyArray<RelatedFilter>;
+  /** Also: whose analyzed text carries these words; see `Analyzer`. */
+  readonly search?: string;
   /** One field, or several that a composite index serves: see `CollectionIndex`. */
   readonly orderBy?: ReadonlyArray<DocumentSort>;
   /** Documents per page: 50 unless given, and at most 1000. */
@@ -560,6 +601,36 @@ const normalizeIndex = (
   return Effect.succeed({ name: definition.name, fields, unique: definition.unique === true });
 };
 
+/**
+ * The terms a piece of text yields, in order, before stop words are removed.
+ *
+ * Split on anything that is not a letter, a number or a mark, which keeps
+ * words together across scripts without a per-language rule. Normalized to NFC
+ * first, so text that differs only in how an accent is encoded gives one term.
+ */
+const tokenize = (text: string, analyzer: Analyzer): Array<string> => {
+  const normalized = text.normalize("NFC");
+  const folded = analyzer.fold === false ? normalized : normalized.toLowerCase();
+  const minLength = analyzer.minLength ?? 2;
+  const stop = new Set((analyzer.stopWords ?? []).map((word) =>
+    analyzer.fold === false ? word.normalize("NFC") : word.normalize("NFC").toLowerCase()));
+  return folded
+    .split(/[^\p{L}\p{N}\p{M}]+/u)
+    .filter((token) => token.length >= minLength && !stop.has(token));
+};
+
+/** Every analyzed field's terms, deduplicated: a posting says the term is there, not how often. */
+const termsFor = (analyzer: Analyzer | undefined, data: JsonObject): Array<readonly [string, string]> => {
+  if (analyzer === undefined) return [];
+  const out = new Map<string, readonly [string, string]>();
+  for (const path of analyzer.fields) {
+    const value = readPath(data, path);
+    if (typeof value !== "string") continue;
+    for (const token of tokenize(value, analyzer)) out.set(`${path}\u0000${token}`, [path, token]);
+  }
+  return [...out.values()];
+};
+
 /** A value a field has, as opposed to null, absent, or an object or array. */
 const hasValue = (value: Json | undefined): boolean => {
   const scalar = orderable(value);
@@ -603,6 +674,41 @@ const normalizeCheck = (
     where.push({ path, op, value: filter.value });
   }
   return Effect.succeed({ name: check.name, where });
+};
+
+/** An analyzer in the shape it is stored, or why it cannot be used. */
+const normalizeAnalyzer = (
+  collection: string,
+  analyzer: Analyzer,
+): Effect.Effect<Analyzer, InvalidConstraint> => {
+  const invalid = (reason: string) =>
+    Effect.fail(new InvalidConstraint({ collection, name: "analyzer", reason }));
+  if (!Array.isArray(analyzer.fields) || analyzer.fields.length === 0) {
+    return invalid("an analyzer needs at least one field to analyze");
+  }
+  for (const path of analyzer.fields) {
+    if (typeof path !== "string" || path === "" || path.split(".").some((segment) => segment === "")) {
+      return invalid(`${JSON.stringify(path) ?? "undefined"} is not a field path`);
+    }
+  }
+  if (!Number.isInteger(analyzer.version) || analyzer.version < 1) {
+    return invalid("an analyzer's version is a whole number from one, raised when its rules change");
+  }
+  if (analyzer.minLength !== undefined && (!Number.isInteger(analyzer.minLength) || analyzer.minLength < 1)) {
+    return invalid("minLength is a whole number of code points, from one");
+  }
+  if (analyzer.stopWords !== undefined &&
+    (!Array.isArray(analyzer.stopWords) || analyzer.stopWords.some((word) => typeof word !== "string"))) {
+    return invalid("stopWords is a list of words");
+  }
+  return Effect.succeed({
+    fields: [...analyzer.fields],
+    version: analyzer.version,
+    ...(analyzer.fold === undefined ? {} : { fold: analyzer.fold }),
+    ...(analyzer.stopWords === undefined ? {} : { stopWords: [...analyzer.stopWords] }),
+    ...(analyzer.minLength === undefined ? {} : { minLength: analyzer.minLength }),
+    ...(analyzer.language === undefined ? {} : { language: analyzer.language }),
+  });
 };
 
 const ON_DELETE: ReadonlySet<string> = new Set(["restrict", "cascade", "set-null"]);
@@ -807,6 +913,21 @@ interface Plan {
   readonly residual: ReadonlyArray<DocumentFilter>;
 }
 
+/**
+ * A plan narrowed by a search.
+ *
+ * The words go in beside the field clauses rather than replacing them: a
+ * search is one more set to intersect, so filters still narrow it and it still
+ * narrows them. Without field clauses the words carry the collection on their
+ * own, because a term column is per collection already.
+ */
+const withSearch = (plan: Plan, words: Query | undefined): Plan =>
+  words === undefined ? plan : {
+    query: plan.fields === undefined ? words : and(plan.query, words),
+    fields: plan.fields === undefined ? words : and(plan.fields, words),
+    residual: plan.residual,
+  };
+
 const planQuery = (
   tenant: TenantId,
   collection: string,
@@ -881,6 +1002,8 @@ export interface DocumentsApi {
     readonly checks?: ReadonlyArray<CheckConstraint>;
     /** References to collections that already exist, or to this one. */
     readonly references?: ReadonlyArray<ReferenceConstraint>;
+    /** How this collection's text becomes searchable terms; see `Analyzer`. */
+    readonly analyzer?: Analyzer;
   }) => Effect.Effect<
     Collection,
     InvalidCollectionName | CollectionExists | InvalidIndex | InvalidConstraint | TenantMoving
@@ -917,7 +1040,7 @@ export interface DocumentsApi {
    */
   readonly findMany: (
     input: FindDocumentsInput,
-  ) => Effect.Effect<ReadonlyArray<Document>, UnknownReference>;
+  ) => Effect.Effect<ReadonlyArray<Document>, UnknownReference | UnanalyzedCollection>;
   /**
    * One page of matching documents, and a cursor for the next.
    *
@@ -930,7 +1053,10 @@ export interface DocumentsApi {
    */
   readonly findPage: (
     input: FindPageInput,
-  ) => Effect.Effect<DocumentPage, CursorMismatch | UnsupportedOrdering | UnknownReference>;
+  ) => Effect.Effect<
+    DocumentPage,
+    CursorMismatch | UnsupportedOrdering | UnknownReference | UnanalyzedCollection
+  >;
 
   /**
    * The documents these documents' references name, resolved in one pass.
@@ -1014,6 +1140,24 @@ export interface DocumentsApi {
   ) => Effect.Effect<
     CheckConstraint,
     CollectionNotFound | ConstraintExists | InvalidConstraint | CheckViolation | TenantMoving
+  >;
+
+  /**
+   * Declare how a collection's text becomes terms, and rewrite its documents
+   * under it.
+   *
+   * The terms already written are what a search reads, so changing an analyzer
+   * changes what matches: every document is written back under the new one
+   * before it is in force, which costs a write and a log entry each. Passing
+   * the analyzer a collection already has is not a mistake — it rewrites, which
+   * is what re-running an interrupted one does.
+   */
+  readonly analyze: (input: {
+    readonly collection: string;
+    readonly analyzer: Analyzer;
+  }) => Effect.Effect<
+    { readonly analyzer: Analyzer; readonly documents: number },
+    CollectionNotFound | InvalidConstraint | TenantMoving
   >;
 
   /**
@@ -1328,8 +1472,12 @@ export const documentsFor = (
     });
 
   /** Every posting a document contributes: a column per scalar, and a tuple per index. */
-  const manifestFor = (doc: Document, indexes: ReadonlyArray<StoredIndex>): IndexManifest => ({
-    terms: [],
+  const manifestFor = (
+    doc: Document,
+    indexes: ReadonlyArray<StoredIndex>,
+    analyzer?: Analyzer,
+  ): IndexManifest => ({
+    terms: termsFor(analyzer, doc.data),
     columns: [
       ...columnsFor(tenant, doc.collection, doc.data),
       ...indexes.map((index) => [index.column, indexTuple(index, doc.data)] as const),
@@ -1466,7 +1614,7 @@ export const documentsFor = (
     Effect.gen(function* () {
       const collection = loaded ?? (yield* loadCollection(doc.collection));
       yield* enforceConstraints(collection, doc, seq, pending);
-      yield* txn.put(seq, encode(doc), manifestFor(doc, collection?.indexes ?? []), {
+      yield* txn.put(seq, encode(doc), manifestFor(doc, collection?.indexes ?? [], collection?.analyzer), {
         namespace: documentNs(tenant, doc.collection), key: doc.id,
       });
       remember(pending, collection, doc, seq);
@@ -1859,14 +2007,16 @@ export const documentsFor = (
       for (let at = 0; at < seqs.length; at += REWRITE_CHUNK) {
         rewritten += yield* transactOrDie((txn) =>
           Effect.gen(function* () {
-            const indexes = (yield* loadCollection(collection))?.indexes ?? [];
+            const record = yield* loadCollection(collection);
+            const indexes = record?.indexes ?? [];
+            const analyzer = record?.analyzer;
             let written = 0;
             for (const seq of seqs.slice(at, at + REWRITE_CHUNK)) {
               const object = yield* readObject(seq);
               if (object === undefined) continue;
               const doc = decode<Document>(object.bytes);
               if (doc.collection !== collection) continue;
-              yield* txn.put(seq, object.bytes, manifestFor(doc, indexes), {
+              yield* txn.put(seq, object.bytes, manifestFor(doc, indexes, analyzer), {
                 namespace: documentNs(tenant, collection), key: doc.id,
               });
               written += 1;
@@ -1972,7 +2122,7 @@ export const documentsFor = (
     collection: StoredCollection | undefined,
     name: string,
     related: ReadonlyArray<RelatedFilter> | undefined,
-  ): Effect.Effect<ReadonlyArray<DocumentFilter> | undefined, UnknownReference> =>
+  ): Effect.Effect<ReadonlyArray<DocumentFilter> | undefined, UnknownReference | UnanalyzedCollection> =>
     Effect.gen(function* () {
       if (related === undefined || related.length === 0) return [];
       const filters: Array<DocumentFilter> = [];
@@ -2002,15 +2152,48 @@ export const documentsFor = (
       return filters;
     });
 
+  /**
+   * What a search becomes: the words of the query, analyzed the way the
+   * documents were, over the postings the writer produced.
+   *
+   * Every word must appear (they are intersected), and a word counts wherever
+   * any analyzed field carries it (those are united). So this is an ordinary
+   * set operation over the term lens, and it intersects with filters, ranges
+   * and joins like any other clause. Undefined when the query has no words
+   * left after analysis — every word was a stop word, or too short — which
+   * means it asks for nothing rather than for everything.
+   */
+  const searchQuery = (
+    analyzer: Analyzer | undefined,
+    collection: string,
+    text: string,
+  ): Effect.Effect<Query | undefined, UnanalyzedCollection> =>
+    Effect.gen(function* () {
+      if (analyzer === undefined) {
+        return yield* new UnanalyzedCollection({ collection });
+      }
+      const words = tokenize(text, analyzer);
+      if (words.length === 0) return undefined;
+      const clauses = words.map((word) => {
+        const fields = analyzer.fields.map((path) => term(path, word));
+        return fields.length === 1 ? fields[0]! : or(...fields);
+      });
+      return clauses.length === 1 ? clauses[0]! : and(...clauses);
+    });
+
   const findDocuments = (
     input: FindDocumentsInput,
-  ): Effect.Effect<ReadonlyArray<Document>, UnknownReference> =>
+  ): Effect.Effect<ReadonlyArray<Document>, UnknownReference | UnanalyzedCollection> =>
     Effect.gen(function* () {
       const collection = yield* loadCollection(input.collection);
       const related = yield* relatedFilters(collection, input.collection, input.related);
       if (related === undefined) return [];
       const where = [...(input.where ?? []), ...related];
-      const plan = planQuery(tenant, input.collection, where);
+      const words = input.search === undefined
+        ? undefined
+        : yield* searchQuery(collection?.analyzer, input.collection, input.search);
+      if (input.search !== undefined && words === undefined) return [];
+      const plan = withSearch(planQuery(tenant, input.collection, where), words);
       const offset = input.offset ?? 0;
       const take = input.limit === undefined ? undefined : offset + input.limit;
       const slice = (docs: ReadonlyArray<Document>) =>
@@ -2070,6 +2253,9 @@ export const documentsFor = (
           }
           references.push(reference);
         }
+        const analyzer = input.analyzer === undefined
+          ? undefined
+          : yield* normalizeAnalyzer(input.name, input.analyzer);
         const collection: StoredCollection = {
           name: input.name,
           createdAt: new Date().toISOString(),
@@ -2078,6 +2264,7 @@ export const documentsFor = (
           ...(indexes.length === 0 ? {} : { indexes }),
           ...(checks.length === 0 ? {} : { checks }),
           ...(references.length === 0 ? {} : { references }),
+          ...(analyzer === undefined ? {} : { analyzer }),
         };
         const seq = yield* nextSeq;
         // The collection and the back-references its targets carry, together:
@@ -2160,6 +2347,9 @@ export const documentsFor = (
         const collection = yield* loadCollection(input.collection);
         const related = yield* relatedFilters(collection, input.collection, input.related);
         const where = related === undefined ? [] : [...(input.where ?? []), ...related];
+        const words = input.search === undefined
+          ? undefined
+          : yield* searchQuery(collection?.analyzer, input.collection, input.search);
         const indexed = sorts.length === 0
           ? undefined
           : chooseIndex(collection?.indexes ?? [], sorts, equalityBindings(where));
@@ -2177,10 +2367,12 @@ export const documentsFor = (
         }
         const shape: PageShape = { collection: input.collection, order: sorts, via: indexed?.index.column };
         const from = input.after === undefined ? undefined : yield* decodeDocumentCursor(input.after, shape);
-        // Nothing the related clause could name: the page is empty, and the
-        // collection is never read.
-        if (related === undefined) return { documents: [] };
-        const plan = planQuery(tenant, input.collection, where);
+        // Nothing the related clause could name, or no word left to search
+        // for: the page is empty, and the collection is never read.
+        if (related === undefined || (input.search !== undefined && words === undefined)) {
+          return { documents: [] };
+        }
+        const plan = withSearch(planQuery(tenant, input.collection, where), words);
         // One more than the page, to know whether another document follows.
         const found = sorts.length === 0
           ? yield* inIdentifierOrder(plan, limit + 1, from)
@@ -2395,6 +2587,25 @@ export const documentsFor = (
           });
         }
         return check;
+      }),
+
+    analyze: (input) =>
+      Effect.gen(function* () {
+        yield* assertNotMoving;
+        const analyzer = yield* normalizeAnalyzer(input.collection, input.analyzer);
+        const seq = yield* lookup(collectionNs(tenant), input.collection);
+        if (seq === undefined) return yield* new CollectionNotFound({ name: input.collection });
+        // Recorded first, so every write from here on analyzes this way; the
+        // documents already there are then written back under it.
+        const recorded = yield* transactOrDie((txn) =>
+          Effect.gen(function* () {
+            const current = yield* loadCollection(input.collection);
+            if (current === undefined) return false;
+            yield* collectionPut(txn, seq, { ...current, analyzer });
+            return true;
+          }));
+        if (!recorded) return yield* new CollectionNotFound({ name: input.collection });
+        return { analyzer, documents: yield* rewriteDocuments(input.collection) };
       }),
 
     addReference: (input) =>
