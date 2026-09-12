@@ -16,6 +16,7 @@ import type {
   ReferenceConstraint,
   RelatedFilter,
   DocumentWrite,
+  Analyzer,
 } from "./documents.js";
 import type { AggregateOperation, RangeInput } from "./time-series.js";
 
@@ -196,6 +197,7 @@ const BAD_REQUEST_TAGS = new Set([
   "BackupTenantMismatch",
   "CheckViolation",
   "InvalidCollectionName",
+  "UnanalyzedCollection",
   "InvalidConstraint",
   "InvalidIndex",
   "PartitionMapInvalid",
@@ -239,6 +241,8 @@ function describeTaggedFailure(failure: TaggedFailure): string {
     }
     case "TimeSeriesNotFound":
       return `Time series "${failure.name}" is not defined.`;
+    case "UnanalyzedCollection":
+      return `Collection "${failure.collection}" has no analyzer, so it has nothing to search.`;
     case "UnknownReference":
       return `Collection "${failure.collection}" has no reference named "${failure.name}".`;
     case "UnknownSystemView":
@@ -636,6 +640,7 @@ export function defineDatabaseDocumentsService(
                   indexes: { type: "array", description: "Composite indexes, each { name, fields, unique? }" },
                   checks: { type: "array", description: "Check constraints, each { name, where }" },
                   references: { type: "array", description: "References, each { name, path, collection, onDelete? }" },
+                  analyzer: { type: "object", description: "How text becomes terms: { fields, version, ... }" },
                 },
               },
             },
@@ -678,6 +683,9 @@ export function defineDatabaseDocumentsService(
                     : undefined,
                   references: Array.isArray(input.references)
                     ? (input.references as ReadonlyArray<ReferenceConstraint>)
+                    : undefined,
+                  analyzer: input.analyzer && typeof input.analyzer === "object"
+                    ? (input.analyzer as Analyzer)
                     : undefined,
                 }),
               };
@@ -845,6 +853,7 @@ export function defineDatabaseDocumentsService(
                   tenantId: { type: "string", description: "Tenant ID" },
                   where: { type: "array", description: "Filters" },
                   related: { type: "array", description: "Joins, each { reference, where?, id? }" },
+                  search: { type: "string", description: "Words to find in the analyzed fields" },
                   orderBy: { type: "array", description: "Sorts" },
                   limit: { type: "number" },
                   offset: { type: "number" },
@@ -868,6 +877,7 @@ export function defineDatabaseDocumentsService(
                     ...(Array.isArray(input.related)
                       ? { related: input.related as ReadonlyArray<RelatedFilter> }
                       : {}),
+                    ...(typeof input.search === "string" ? { search: input.search } : {}),
                     orderBy: readSort(input.orderBy),
                     limit: readNumber(input.limit, 100),
                     offset: readNumber(input.offset, 0),
@@ -899,6 +909,7 @@ export function defineDatabaseDocumentsService(
                   tenantId: { type: "string", description: "Tenant ID" },
                   where: { type: "array", description: "Filters" },
                   related: { type: "array", description: "Joins, each { reference, where?, id? }" },
+                  search: { type: "string", description: "Words to find in the analyzed fields" },
                   orderBy: { type: "array", description: "One field, or several that a composite index serves" },
                   limit: { type: "number", description: "Documents per page: 1 to 1000, 50 when omitted" },
                   after: { type: "string", description: "The next cursor from the previous page" },
@@ -929,6 +940,7 @@ export function defineDatabaseDocumentsService(
                   ...(Array.isArray(input.related)
                     ? { related: input.related as ReadonlyArray<RelatedFilter> }
                     : {}),
+                  ...(typeof input.search === "string" ? { search: input.search } : {}),
                   orderBy: readSort(input.orderBy),
                   limit,
                   ...(input.after === undefined ? {} : { after: input.after as DocumentCursor }),

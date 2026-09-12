@@ -172,6 +172,12 @@ export class InvalidConstraint extends Schema.TaggedError<InvalidConstraint>()("
   reason: Schema.String,
 }) {}
 
+/** A search asked of a collection that declares no analyzer, so it has no terms. */
+export class UnanalyzedCollection extends Schema.TaggedError<UnanalyzedCollection>()(
+  "UnanalyzedCollection",
+  { collection: Schema.String },
+) {}
+
 /** A read asked about a reference the collection does not declare. */
 export class UnknownReference extends Schema.TaggedError<UnknownReference>()("UnknownReference", {
   collection: Schema.String,

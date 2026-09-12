@@ -842,6 +842,26 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   against it unchanged.
 - [x] The SQL store and its gateway are gone. Every engine is a `KvEngine`;
   there is one store.
+- [x] Search, as far as terms go: a collection declares an `Analyzer` — the
+  fields analyzed, NFC normalization, case folding, stop words, a minimum
+  length, a language recorded rather than acted on, and a version — and a
+  write turns those fields into term postings on the lens that already
+  existed and was never populated from documents. `findMany` and `findPage`
+  take `search`, analyzed the same way, so every word must appear and a word
+  counts in any analyzed field; it is one more set, intersecting with filters,
+  ranges and joins. `analyze` declares or changes the rule and writes every
+  document back under it, because the terms already stored are what a search
+  reads. A search of a collection with no analyzer is `UnanalyzedCollection`
+  rather than an empty answer to an unasked question.
+- [ ] Search, the rest of it: positions, phrases and proximity; BM25 or another
+  documented relevance model, with scores and explanations; prefix and fuzzy
+  matching; highlights; stemming and synonyms behind the analyzer's language;
+  and result ordering across shards. Each needs storage this slice does not
+  have: `termKey` ends at the identifier, so a position needs its own key
+  shape, and `Tag.Term` is sealable — a positional posting folded into a set
+  loses the offsets it exists for. Scoring needs document lengths and term
+  frequencies stored beside the postings. Benchmark `minisearch` and
+  `flexsearch` as references before choosing.
 - [ ] Take libsql's keys back off hex once the Buffer-parameter panic is
   released. Binding a lone Buffer routed it down the named-parameter path,
   where an anonymous `?` has no name and the unwrap panicked out of the

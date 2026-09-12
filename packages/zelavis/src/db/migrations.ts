@@ -1,6 +1,8 @@
 import { Effect } from "effect";
 import type { DocumentsApi } from "./documents.js";
-import { SchemaMigrationBlocked, SchemaNotFound, UnknownReference } from "./errors.js";
+import {
+  SchemaMigrationBlocked, SchemaNotFound, UnanalyzedCollection, UnknownReference,
+} from "./errors.js";
 import type { Json, JsonObject } from "./json.js";
 import type { SchemasApi } from "./schemas.js";
 import {
@@ -128,7 +130,7 @@ export interface MigrationsApi {
     collection: string,
     input: { readonly from?: number; readonly to: number;
       readonly apply?: ReadonlyArray<FieldMigration> },
-  ) => Effect.Effect<MigrationPlan, SchemaNotFound | UnknownReference>;
+  ) => Effect.Effect<MigrationPlan, SchemaNotFound | UnknownReference | UnanalyzedCollection>;
 
   /**
    * Bring every document in a collection up to a version.
@@ -139,7 +141,10 @@ export interface MigrationsApi {
   readonly migrate: (
     collection: string,
     input: MigrateInput,
-  ) => Effect.Effect<MigrationResult, SchemaNotFound | SchemaMigrationBlocked | UnknownReference>;
+  ) => Effect.Effect<
+    MigrationResult,
+    SchemaNotFound | SchemaMigrationBlocked | UnknownReference | UnanalyzedCollection
+  >;
 }
 
 const typeOf = (entry: CollectionFieldEntry) => entry.field._tag;
