@@ -925,6 +925,25 @@ export interface DocumentsApi {
   }) => Effect.Effect<boolean, CollectionNotFound | TenantMoving>;
 
   /**
+   * Write every document back as it stands, so its postings are the ones the
+   * lenses derive today.
+   *
+   * What repairs documents written before a change in how values are indexed:
+   * before the typed scalar lens, a number or a boolean was indexed as text,
+   * so a typed equality, a range or an order misses or misplaces them. A
+   * reindex cannot fix that — it re-derives the postings from the stored
+   * manifests, and the manifests are what is wrong. Each document costs a
+   * write and a log entry.
+   */
+  readonly rewrite: (input?: {
+    /** One collection; every one of the tenant's when omitted. */
+    readonly collection?: string;
+  }) => Effect.Effect<
+    { readonly collections: number; readonly documents: number },
+    CollectionNotFound | TenantMoving
+  >;
+
+  /**
    * Forget completed idempotency keys, returning how many were dropped.
    *
    * Receipts grow with requests rather than with data, and nothing expires them
@@ -1235,10 +1254,13 @@ export const documentsFor = (
    * added alongside this write was either recorded before it — and applies —
    * or after it, and what adds it reads this document. Read before the
    * transaction, the write could land between the two and escape both.
+   *
+   * A caller that has already read the record in this transaction passes it
+   * rather than paying for it twice.
    */
-  const documentPut = (txn: Txn, doc: Document, seq: Seq) =>
+  const documentPut = (txn: Txn, doc: Document, seq: Seq, loaded?: StoredCollection) =>
     Effect.gen(function* () {
-      const collection = yield* loadCollection(doc.collection);
+      const collection = loaded ?? (yield* loadCollection(doc.collection));
       yield* enforceConstraints(collection, doc, seq);
       yield* txn.put(seq, encode(doc), manifestFor(doc, collection?.indexes ?? []), {
         namespace: documentNs(tenant, doc.collection), key: doc.id,
@@ -1300,7 +1322,7 @@ export const documentsFor = (
                 version: written.has(Number(held)) ? holder.version : holder.version + 1,
               };
               written.set(Number(held), cleared);
-              yield* documentPut(txn, cleared, held);
+              yield* documentPut(txn, cleared, held, from);
             }
           }
         });
@@ -1523,10 +1545,12 @@ export const documentsFor = (
   const rewriteDocuments = (collection: string) =>
     Effect.gen(function* () {
       const seqs = [...(yield* Stream.runCollect(resolveQuery(equals(collectionColumn(tenant), collection))))];
+      let rewritten = 0;
       for (let at = 0; at < seqs.length; at += REWRITE_CHUNK) {
-        yield* write((txn) =>
+        rewritten += yield* transactOrDie((txn) =>
           Effect.gen(function* () {
             const indexes = (yield* loadCollection(collection))?.indexes ?? [];
+            let written = 0;
             for (const seq of seqs.slice(at, at + REWRITE_CHUNK)) {
               const object = yield* readObject(seq);
               if (object === undefined) continue;
@@ -1535,9 +1559,12 @@ export const documentsFor = (
               yield* txn.put(seq, object.bytes, manifestFor(doc, indexes), {
                 namespace: documentNs(tenant, collection), key: doc.id,
               });
+              written += 1;
             }
+            return written;
           }));
       }
+      return rewritten;
     });
 
   /** Matching documents in identifier order, the order `resolve` already has. */
@@ -1727,7 +1754,7 @@ export const documentsFor = (
         return yield* commitOnce(input.idempotencyKey, fingerprint, request, (txn) =>
           Effect.gen(function* () {
             yield* assertNotMoving;
-            yield* requireCollection(input.collection);
+            const collection = yield* requireCollection(input.collection);
             yield* enforceSchema(input.collection, input.data);
             if ((yield* lookup(documentNs(tenant, input.collection), id)) !== undefined) {
               return yield* new DocumentConflict({
@@ -1738,7 +1765,7 @@ export const documentsFor = (
             const doc: Document = {
               id, collection: input.collection, data: input.data, createdAt: now, updatedAt: now, version: 1,
             };
-            yield* documentPut(txn, doc, seq);
+            yield* documentPut(txn, doc, seq, collection);
             return doc;
           }));
       }),
@@ -2077,6 +2104,26 @@ export const documentsFor = (
             yield* collectionPut(txn, seq, { ...current, checks: checks.filter((check) => check.name !== input.name) });
             return true;
           }));
+      }),
+
+    rewrite: (input) =>
+      Effect.gen(function* () {
+        yield* assertNotMoving;
+        const names: Array<string> = [];
+        if (input?.collection === undefined) {
+          for (const seq of yield* Stream.runCollect(
+            resolveQuery(equals(collectionColumn(tenant), COLLECTION_MARKER)),
+          )) {
+            const object = yield* readObject(seq);
+            if (object !== undefined) names.push(decode<StoredCollection>(object.bytes).name);
+          }
+        } else {
+          yield* requireCollection(input.collection);
+          names.push(input.collection);
+        }
+        let documents = 0;
+        for (const name of names) documents += yield* rewriteDocuments(name);
+        return { collections: names.length, documents };
       }),
 
     forgetIdempotencyKeys: (input) =>

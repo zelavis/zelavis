@@ -54,6 +54,9 @@ export interface TenantRuntimeApi {
       input: ReferenceConstraint & { from: string },
     ) => Promise<Required<ReferenceConstraint>>;
     readonly dropReference: (input: { collection: string; name: string }) => Promise<boolean>;
+    readonly rewrite: (input?: {
+      collection?: string;
+    }) => Promise<{ collections: number; documents: number }>;
     readonly createIndex: (input: IndexDefinition & { collection: string }) => Promise<CollectionIndex>;
     readonly dropIndex: (input: { collection: string; name: string }) => Promise<boolean>;
     readonly listCollections: () => Promise<ReadonlyArray<Collection>>;
@@ -161,6 +164,7 @@ const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
     dropCheck: (input) => run(tenant.documents.dropCheck(input)),
     addReference: (input) => run(tenant.documents.addReference(input)),
     dropReference: (input) => run(tenant.documents.dropReference(input)),
+    rewrite: (input) => run(tenant.documents.rewrite(input)),
     listCollections: () => run(tenant.documents.listCollections),
     collectionExists: (name) => run(tenant.documents.collectionExists(name)),
     insert: (input) => run(tenant.documents.insert(input)),

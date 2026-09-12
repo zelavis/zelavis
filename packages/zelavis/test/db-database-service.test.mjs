@@ -49,6 +49,10 @@ test("the database service mounts the same routes on the db runtime API", async 
       "/api/database/documents/:collection/page",
       "/api/database/documents/:collection/indexes",
       "/api/database/documents/:collection/indexes/:name",
+      "/api/database/documents/:collection/checks",
+      "/api/database/documents/:collection/checks/:name",
+      "/api/database/documents/:collection/references",
+      "/api/database/documents/:collection/references/:name",
       "/api/database/documents/:collection/:id",
       "/api/database/documents/:collection/:id",
       "/api/database/schemas/collections",
@@ -61,6 +65,7 @@ test("the database service mounts the same routes on the db runtime API", async 
       "/api/database/timeseries/:series/aggregate",
       "/api/database/maintenance/system/views",
       "/api/database/maintenance/system/views/:view",
+      "/api/database/maintenance/documents/rewrite",
       "/api/database/maintenance/backups/export",
       "/api/database/maintenance/backups/restore",
     ],
@@ -414,4 +419,64 @@ test("constraints refuse through the service with the status each deserves", asy
   assert.equal(stale.status, 409);
   assert.equal(outdated.status, 409);
   assert.equal(current.body.version, 2);
+});
+
+test("checks, references and a rewrite are reachable over HTTP", async (t) => {
+  const { api } = await openTemporaryDatabase(t);
+  const service = defineDatabaseService(api);
+  const create = routeOf(service, "database.collections.create");
+  const insert = routeOf(service, "database.documents.insert");
+  const remove = routeOf(service, "database.documents.delete");
+  const posts = { collection: "posts" };
+  const put = (id, data) => call(insert, { service: api, params: posts, body: { tenantId: "acme", id, data } });
+
+  for (const name of ["authors", "posts"]) {
+    await call(create, { service: api, body: { tenantId: "acme", name } });
+  }
+  await call(insert, { service: api, params: { collection: "authors" }, body: { tenantId: "acme", id: "a1", data: {} } });
+  await put("p1", { stars: 3, authorId: "a1", status: "draft" });
+
+  const check = await call(routeOf(service, "database.checks.add"), {
+    service: api, params: posts,
+    body: { tenantId: "acme", name: "rated", where: [{ path: "stars", op: "lte", value: 5 }] },
+  });
+  const reference = await call(routeOf(service, "database.references.add"), {
+    service: api, params: posts,
+    body: { tenantId: "acme", name: "author", path: "authorId", collection: "authors", onDelete: "restrict" },
+  });
+  const overrated = await put("p2", { stars: 9 });
+  const orphan = await put("p3", { authorId: "ghost" });
+  const held = await call(remove, {
+    service: api, params: { collection: "authors", id: "a1" }, query: "tenantId=acme",
+  });
+  // A delete carries its conditions in the query string, where it has no body.
+  const stale = await call(remove, {
+    service: api, params: { collection: "posts", id: "p1" },
+    query: `tenantId=acme&precondition=${encodeURIComponent(JSON.stringify([{ path: "status", value: "live" }]))}`,
+  });
+  const wrongVersion = await call(remove, {
+    service: api, params: { collection: "posts", id: "p1" }, query: "tenantId=acme&expectedVersion=7",
+  });
+  const rewritten = await call(routeOf(service, "database.documents.rewrite"), {
+    service: api, body: { tenantId: "acme", collection: "posts" },
+  });
+  const droppedCheck = await call(routeOf(service, "database.checks.drop"), {
+    service: api, params: { collection: "posts", name: "rated" }, query: "tenantId=acme",
+  });
+  const droppedReference = await call(routeOf(service, "database.references.drop"), {
+    service: api, params: { collection: "posts", name: "author" }, query: "tenantId=acme",
+  });
+  const allowed = await put("p4", { stars: 9, authorId: "ghost" });
+
+  assert.equal(check.status, 201);
+  assert.equal(reference.body.onDelete, "restrict");
+  assert.equal(overrated.status, 400);
+  assert.match(overrated.body.error, /rated/);
+  assert.equal(orphan.status, 409);
+  assert.equal(held.status, 409);
+  assert.equal(stale.status, 409);
+  assert.equal(wrongVersion.status, 409);
+  assert.deepEqual(rewritten.body, { collections: 1, documents: 1 });
+  assert.deepEqual([droppedCheck.body, droppedReference.body], [{ dropped: true }, { dropped: true }]);
+  assert.ok((allowed.status ?? 200) < 300, "with both constraints gone, the write lands");
 });

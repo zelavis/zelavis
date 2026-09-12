@@ -652,8 +652,11 @@ driven by what the existing dependents call, not by what is easiest to port.
   record an event concerns.
 - [x] Optimistic concurrency through `expectedVersion` on update and delete, and
   duplicate-id rejection on insert.
-- [ ] Ordering, comparison and range filters served from the lens rather than
-  applied after it.
+- [x] Ordering, comparison and range filters served from the lens rather than
+  applied after it. `eq`, `in` and every comparison on a scalar become lens
+  clauses, and an order is read from the lens or a composite index. What is
+  still applied to the candidates afterwards is `ne`, and a filter whose value
+  is an object or an array — neither of which a range can express.
 - [x] `forTenant` as partition selection. Tenants hash to one of a fixed number
   of virtual ranges, and ranges are placed on physical shards, so an App is
   sharded from creation and growing moves placements rather than rehashing
@@ -930,10 +933,11 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   index over existing documents is built by writing each back, about 7k
   documents/s and one log entry each. Single-field sorts take
   `nulls: "first"` too.
-- [ ] Read a collection's record once per document write. Each write now reads
-  it inside its transaction for the collection's indexes, on top of the check
-  an insert makes before it: inserts without an index went from 4.7k/s to
-  4.3k/s.
+- [x] Read a collection's record once per document write. An insert hands the
+  record it already read to the write rather than loading it again, and a
+  set-null reuses the one its delete read: 4.0k inserts/s against 3.3k/s
+  before, measured in one run. Writes with a unique index, a check and a
+  reference are unchanged at 2.7k/s, where the constraint checks dominate.
 - [x] Order and page across shards in `db.scatter`. `scatter.findMany` merges
   every tenant's ordered run by value (tenant by tenant among equals) instead
   of re-sorting by tenant and id, reading each tenant only as far as `limit`.
@@ -965,13 +969,15 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   a compare-and-set on field values. Unconstrained writes run as before (4.1k
   inserts/s); with a unique index, a check and a reference all enforced, 2.7k/s
   against 3.9k/s for the same index unenforced.
-- [ ] Expose `addCheck`, `dropCheck`, `addReference` and `dropReference` over
-  HTTP, and a delete precondition: the service takes constraints only on
-  create and preconditions only on update today.
-- [ ] Documents written before the scalar lens index numbers and booleans as
-  text until they are written again, so a typed `eq`, a range or an order
-  misses or misplaces them. Add a maintenance pass that rewrites them, rather
-  than waiting for each one's next update.
+- [x] Expose `addCheck`, `dropCheck`, `addReference` and `dropReference` over
+  HTTP, and a delete precondition. A delete carries `expectedVersion` and a
+  JSON `precondition` in its query string, where the method has no body.
+- [x] Documents written before the scalar lens indexed numbers and booleans as
+  text, so a typed `eq`, a range or an order missed or misplaced them.
+  `documents.rewrite()` writes every document back — one collection or all of
+  them — which re-derives its postings from its data. A reindex cannot: it
+  derives them from the stored manifests, and the manifests are what is wrong.
+  `POST /database/maintenance/documents/rewrite` runs it.
 - [ ] Answer time-series ranges from the ordered lens instead of hierarchical
   bucket postings.
 - [x] Measured the engines against each other (`scripts/bench-engines.mjs`).
