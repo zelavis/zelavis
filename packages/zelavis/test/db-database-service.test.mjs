@@ -43,6 +43,7 @@ test("the database service mounts the same routes on the db runtime API", async 
       "/api/database/health",
       "/api/database/documents/collections",
       "/api/database/documents/collections",
+      "/api/database/documents/write",
       "/api/database/documents/:collection",
       "/api/database/documents/:collection/:id",
       "/api/database/documents/:collection/query",
@@ -517,4 +518,52 @@ test("a join is asked for as data and answered over HTTP", async (t) => {
   assert.ok(paged.body.next, "a joined page continues like any other");
   assert.equal(unknown.status, 404);
   assert.match(unknown.body.error, /no reference named "editor"/);
+});
+
+test("a batch of document changes is applied as one over HTTP", async (t) => {
+  const { api } = await openTemporaryDatabase(t);
+  const service = defineDatabaseService(api);
+  const create = routeOf(service, "database.collections.create");
+  const write = routeOf(service, "database.documents.write");
+  const get = routeOf(service, "database.documents.get");
+
+  await call(create, { service: api, body: { tenantId: "acme", name: "authors" } });
+  await call(create, {
+    service: api,
+    body: {
+      tenantId: "acme", name: "posts",
+      checks: [{ name: "rated", where: [{ path: "stars", op: "lte", value: 5 }] }],
+      references: [{ name: "author", path: "authorId", collection: "authors" }],
+    },
+  });
+
+  // The post names an author the same batch inserts.
+  const landed = await call(write, {
+    service: api,
+    body: {
+      tenantId: "acme",
+      operations: [
+        { _tag: "Insert", collection: "authors", id: "a1", data: { name: "Ann" } },
+        { _tag: "Insert", collection: "posts", id: "p1", data: { authorId: "a1", stars: 3 } },
+      ],
+    },
+  });
+  const refused = await call(write, {
+    service: api,
+    body: {
+      tenantId: "acme",
+      operations: [
+        { _tag: "Insert", collection: "authors", id: "a2", data: { name: "Bo" } },
+        { _tag: "Insert", collection: "posts", id: "p2", data: { authorId: "a2", stars: 9 } },
+      ],
+    },
+  });
+  const orphan = await call(get, {
+    service: api, params: { collection: "authors", id: "a2" }, query: "tenantId=acme",
+  });
+
+  assert.deepEqual(landed.body.written.map((entry) => entry._tag), ["Inserted", "Inserted"]);
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /rated/);
+  assert.equal(orphan.status, 404, "the author its batch also asked for is not there either");
 });
