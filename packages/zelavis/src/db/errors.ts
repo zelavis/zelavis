@@ -205,6 +205,12 @@ export class InvalidVectorQuery extends Schema.TaggedError<InvalidVectorQuery>()
   reason: Schema.String,
 }) {}
 
+/** A read asked to follow an edge the collection does not declare. */
+export class UnknownEdge extends Schema.TaggedError<UnknownEdge>()("UnknownEdge", {
+  collection: Schema.String,
+  name: Schema.String,
+}) {}
+
 /** A read asked about a reference the collection does not declare. */
 export class UnknownReference extends Schema.TaggedError<UnknownReference>()("UnknownReference", {
   collection: Schema.String,

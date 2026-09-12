@@ -1205,6 +1205,33 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   read rather than per collection; and quantized storage, which trades recall
   for space and so cannot land before recall is measurable.
 
+- [x] Typed links as a lens, as an `EdgeDefinition` on a collection and a
+  `linked` clause on `findMany` and `findPage`. A reference holds one id, so
+  following one is a lookup, and asking who names a document is an ordinary
+  column filter -- an edge is the case neither covers, because it holds a list.
+  Following one is a posting scan whose postings are the neighbours' own
+  identifiers, so the result intersects with everything else the target
+  collection indexes: a `where` narrows the neighbours before they are read
+  rather than after. That intersection is the whole reason it is a lens and not
+  a field.
+- [x] Filled the edge postings the store already carried. They were keyed,
+  sealable, dropped on retraction and re-derived by a reindex, but nothing ever
+  wrote one. They come from the resolution the constraint pass was already
+  doing, so a write costs no extra read, and the rewrite path re-derives them
+  itself -- re-deriving rather than re-checking, so a target that has since
+  gone leaves a link unposted instead of failing a rewrite that was only meant
+  to rebuild postings.
+- [ ] Graph slice two: inbound adjacency, which this deliberately does not do.
+  The lens keys a posting by its source, so answering "which documents link to
+  this one" needs a reverse posting written into the target's manifest, which
+  would re-version the target on every source write -- that cost has to be
+  chosen, not stumbled into. Then bounded traversal with depth, visit, time and
+  memory limits; shortest path, reachability, neighbourhood and component
+  queries where they have stable distributed semantics; and edge properties or
+  first-class edge objects without losing `Seq` identity. `graphology` is worth
+  evaluating for operating on a bounded materialized subgraph, never as the
+  persistence layer.
+
 ## Later
 
 - [ ] Remote, separately supervised Zelavis Agents.

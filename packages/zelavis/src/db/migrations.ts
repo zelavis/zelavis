@@ -296,6 +296,7 @@ export const migrationsFor = (
       const docs = yield* documents.findMany({ collection }).pipe(Effect.catchTags({
             UnembeddedCollection: Effect.die,
             InvalidVectorQuery: Effect.die,
+            UnknownEdge: Effect.die,
           }));
       return {
         source,

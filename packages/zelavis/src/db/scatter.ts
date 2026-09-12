@@ -452,6 +452,7 @@ export const scatterOver = (options: {
               }).pipe(Effect.catchTags({
             UnembeddedCollection: Effect.die,
             InvalidVectorQuery: Effect.die,
+            UnknownEdge: Effect.die,
           }));
               const capped = take(found, legLimit);
               return {
@@ -521,7 +522,7 @@ export const scatterOver = (options: {
               limit: count,
               ...(leg.at.position === undefined ? {} : { after: leg.at.position }),
               cursors: true,
-            }).pipe(Effect.mapError((error) =>
+            }).pipe(Effect.catchTags({ UnknownEdge: Effect.die })).pipe(Effect.mapError((error) =>
               error._tag === "UnsupportedOrdering"
                 ? new UnsupportedOrdering({ reason: `tenant "${leg.at.tenant}" cannot page it: ${error.reason}` })
                 : error));
