@@ -127,19 +127,20 @@ function readTimeSeriesOrder(value: unknown): RangeInput["order"] {
   throw new TypeError('order must be either "asc" or "desc".');
 }
 
-function readTimeSeriesAggregateOperation(value: unknown): AggregateOperation {
-  if (
-    value === "avg" ||
-    value === "sum" ||
-    value === "min" ||
-    value === "max" ||
-    value === "count"
-  ) {
-    return value;
-  }
+const TIME_SERIES_AGGREGATE_OPERATIONS = [
+  "avg", "sum", "min", "max", "count", "quantile", "first", "last", "delta", "rate",
+] as const satisfies ReadonlyArray<AggregateOperation>;
 
+function readTimeSeriesAggregateOperation(value: unknown): AggregateOperation {
+  const found = TIME_SERIES_AGGREGATE_OPERATIONS.find((operation) => operation === value);
+  if (found !== undefined) return found;
+
+  // Listed from the one place that knows them, so adding an operation cannot
+  // leave this message describing the set it used to accept.
   throw new TypeError(
-    'Time-series aggregate op must be one of "avg", "sum", "min", "max", or "count".',
+    `Time-series aggregate op must be one of ${
+      TIME_SERIES_AGGREGATE_OPERATIONS.map((operation) => `"${operation}"`).join(", ")
+    }.`,
   );
 }
 
@@ -1632,6 +1633,7 @@ export function defineDatabaseTimeSeriesService(
                   op: { type: "string" },
                   start: { type: "number" },
                   end: { type: "number" },
+                  p: { type: "number" },
                 },
               },
             },
@@ -1653,6 +1655,7 @@ export function defineDatabaseTimeSeriesService(
                     op: readTimeSeriesAggregateOperation(input.op),
                     start: readOptionalTimeSeriesBoundary(input.start, "start"),
                     end: readOptionalTimeSeriesBoundary(input.end, "end"),
+                    ...(input.p === undefined ? {} : { p: readRequiredNumber(input.p, "p") }),
                   }),
                 },
               };
