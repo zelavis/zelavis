@@ -1232,6 +1232,37 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   evaluating for operating on a bounded materialized subgraph, never as the
   persistence layer.
 
+- [x] Time-series aggregations over the window's endpoints and its
+  distribution: `quantile` with a fraction `p`, plus `first`, `last`, `delta`
+  and `rate`. The endpoint operations sort by time before answering and the
+  quantile sorts by value, which the folds already there never had to do --
+  `collect` answers in posting order, invisible to `sum` or `max` and decisive
+  for `first` and `rate`, since a point written late for an early instant would
+  otherwise be taken for the end of the window. Bounds stay closed, an empty
+  window still answers zero, and a window spanning no time rates zero rather
+  than dividing by it.
+- [x] Listed the aggregate operations in the service from the one place that
+  knows them, so adding one cannot leave the rejection message describing the
+  set it used to accept -- which is how a new operation would otherwise be
+  refused at the HTTP boundary while working through the runtime API.
+- [ ] Superseded, not pending: the roadmap's "finer and configurable bucket
+  widths with migration/version behaviour". There are no bucket widths left to
+  configure -- a point carries its instant in the ordered lens and a window is
+  one range over it. `db-time-series-buckets.test.mjs` is kept deliberately
+  under its old name as the regression guard that those answers did not change.
+- [ ] Time-series slice two: operations that answer with a series rather than a
+  number -- moving windows, histograms, interpolation -- which need a surface
+  of their own, since `aggregate` returns one number. Then rollups and
+  retention, which are new durable derived state and a policy for discarding
+  raw points; a rollup is a persisted coarser series, and must not become
+  hierarchical bucket postings again. Then late and out-of-order point
+  semantics with a duplicate/idempotency policy, event-time against
+  ingestion-time windows, and projection lag, health, retry and backfill
+  controls.
+- [ ] The HTTP aggregate route does not pass `tags`, though `AggregateInput`
+  carries them and the runtime API honours them: tag-filtered aggregation works
+  in process and not over the wire.
+
 ## Later
 
 - [ ] Remote, separately supervised Zelavis Agents.

@@ -7,7 +7,12 @@ import { and, between, equals, or, type Query } from "./query.js";
 import type { ObjectStoreApi } from "./store.js";
 import type { TenantId } from "./topology.js";
 
-export type AggregateOperation = "avg" | "sum" | "min" | "max" | "count";
+export type AggregateOperation =
+  | "avg" | "sum" | "min" | "max" | "count"
+  /** The value at a fraction through the sorted values; see `AggregateInput.p`. */
+  | "quantile"
+  /** The window's own endpoints, by time rather than by value. */
+  | "first" | "last" | "delta" | "rate";
 
 export type Timestamp = number | string | Date;
 
@@ -70,6 +75,11 @@ export interface AggregateInput {
   readonly start?: Timestamp;
   readonly end?: Timestamp;
   readonly tags?: TagFilter;
+  /**
+   * Which quantile, as a fraction from 0 to 1: 0.5 is the median and 0.99 the
+   * ninety-ninth percentile. Required by `quantile` and ignored by the rest.
+   */
+  readonly p?: number;
 }
 
 export interface TimeSeriesHandle {
@@ -92,6 +102,49 @@ export interface TimeSeriesApi {
   /** Discard every point and rebuild the series from the whole log. */
   readonly rebuild: (name: string) => Effect.Effect<IngestResult, TimeSeriesNotFound>;
 }
+
+/**
+ * The value a fraction of the way through the sorted values.
+ *
+ * Between two order statistics the answer is the straight line between them,
+ * so the median of an even number of points is the midpoint of the middle two
+ * rather than an arbitrary one of the pair.
+ */
+const quantileOf = (values: ReadonlyArray<number>, p: number): number => {
+  const sorted = [...values].sort((a, b) => a - b);
+  const at = p * (sorted.length - 1);
+  const low = Math.floor(at);
+  const high = Math.ceil(at);
+  return low === high
+    ? sorted[low]!
+    : sorted[low]! + (at - low) * (sorted[high]! - sorted[low]!);
+};
+
+/**
+ * What the window's endpoints say, which means sorting by time first.
+ *
+ * `collect` answers in posting order -- the order the points were written --
+ * and a point written late for an early instant would otherwise be taken for
+ * the end of the window. The value folds do not care; these do, because they
+ * are about when rather than how much.
+ *
+ * A rate is per second between the first and last instant. One point, or
+ * several sharing an instant, spans no time and rates zero rather than
+ * dividing by it.
+ */
+const overTime = (
+  op: "first" | "last" | "delta" | "rate",
+  points: ReadonlyArray<TimeSeriesPoint>,
+): number => {
+  const ordered = [...points].sort((a, b) => a.timestamp - b.timestamp);
+  const first = ordered[0]!;
+  const last = ordered[ordered.length - 1]!;
+  if (op === "first") return first.value;
+  if (op === "last") return last.value;
+  if (op === "delta") return last.value - first.value;
+  const seconds = (last.timestamp - first.timestamp) / 1000;
+  return seconds === 0 ? 0 : (last.value - first.value) / seconds;
+};
 
 const SERIES_COLUMN = "zv.timeseries";
 
@@ -300,8 +353,18 @@ export const timeSeriesFor = (
 
       aggregate: (input) =>
         Effect.gen(function* () {
+          // Asked before the points are read: a quantile without a fraction is
+          // a mistake in the call, not a property of the window.
+          if (
+            input.op === "quantile" &&
+            (input.p === undefined || !Number.isFinite(input.p) || input.p < 0 || input.p > 1)
+          ) {
+            return yield* Effect.die(new RangeError(`A quantile takes p from 0 to 1, not ${input.p}.`));
+          }
           const points = yield* collect(name, input.start, input.end, input.tags);
           if (input.op === "count") return points.length;
+          // An empty window has nothing to say, and says zero, as it already
+          // did for the folds that were here before.
           if (points.length === 0) return 0;
           const values = points.map((p) => p.value);
           switch (input.op) {
@@ -313,6 +376,10 @@ export const timeSeriesFor = (
               return Math.min(...values);
             case "max":
               return Math.max(...values);
+            case "quantile":
+              return quantileOf(values, input.p!);
+            default:
+              return overTime(input.op, points);
           }
         }),
     }),
