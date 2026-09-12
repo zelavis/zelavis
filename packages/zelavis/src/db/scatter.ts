@@ -449,7 +449,10 @@ export const scatterOver = (options: {
                 // behind rather than leaving the caller to guess from a count
                 // that happens to equal the limit.
                 ...(legLimit === undefined ? {} : { limit: legLimit + 1 }),
-              });
+              }).pipe(Effect.catchTags({
+            UnembeddedCollection: Effect.die,
+            InvalidVectorQuery: Effect.die,
+          }));
               const capped = take(found, legLimit);
               return {
                 leg: { shard, tenant, rows: capped.rows.length, truncated: capped.truncated },

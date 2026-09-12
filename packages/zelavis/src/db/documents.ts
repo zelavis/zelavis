@@ -30,6 +30,9 @@ import {
   ReferenceViolation,
   UnanalyzedCollection,
   UnindexedGeometry,
+  UnembeddedCollection,
+  VectorShapeMismatch,
+  InvalidVectorQuery,
   UnknownReference,
 } from "./errors.js";
 import type { DbError } from "./errors.js";
@@ -39,6 +42,10 @@ import {
   positionsOf, COARSEST_RESOLUTION,
   type BoundingBox, type Geometry, type Position as GeoPosition,
 } from "./spatial.js";
+import {
+  isUsableVector, normalized, similarity,
+  type DistanceMetric,
+} from "./vectors.js";
 import type { IndexManifest, OrderedScalar, Seq } from "./model.js";
 import { and, equals, or, term, type Query, type RangeBound } from "./query.js";
 import type { SchemasApi } from "./schemas.js";
@@ -64,6 +71,8 @@ export interface Collection {
   readonly analyzer?: Analyzer;
   /** How geometry becomes searchable cells; see `SpatialIndex`. */
   readonly spatial?: SpatialIndex;
+  /** Which field holds an embedding, and how it is compared; see `EmbeddingIndex`. */
+  readonly embedding?: EmbeddingIndex;
   /** The references other collections — or this one — make to this collection's documents. */
   readonly referencedBy?: ReadonlyArray<{ readonly collection: string; readonly reference: string }>;
 }
@@ -95,6 +104,40 @@ export interface SpatialIndex {
  * its own text the same way, or a query would ask for terms the writer never
  * produced.
  */
+/**
+ * What a collection promises about a field holding an embedding.
+ *
+ * The vectors stay in the documents, which are the authoritative state: this
+ * declares how to read them, and keeps no second copy. No lens is consulted to
+ * answer a similarity read either — an approximate index, when there is one,
+ * will be a projection that can be dropped and rebuilt, and the only honest way
+ * to know what it costs in recall is to have an exact answer to measure against.
+ *
+ * The model and its version are recorded rather than acted on. Vectors from two
+ * different models are not comparable, and a search mixing them returns nonsense
+ * in the shape of an answer; writing the identity down is what lets a reader —
+ * or a later rebuild — notice that it happened.
+ */
+export interface EmbeddingIndex {
+  /** The field holding the vector, by dotted path. */
+  readonly field: string;
+  /** How many elements every vector in that field has. */
+  readonly dimension: number;
+  /** How distance between two of them is measured. */
+  readonly metric: DistanceMetric;
+  /**
+   * Vectors are stored as given and compared as given. With `normalize`, each is
+   * scaled to unit length as it is written, which makes cosine and dot the same
+   * measure and saves the division on every later comparison.
+   */
+  readonly normalize?: boolean;
+  /** Which model produced these vectors, and which version of it. */
+  readonly model?: string;
+  readonly modelVersion?: string | number;
+  /** Raised when any of this changes, so documents can be rewritten under it. */
+  readonly version: number;
+}
+
 export interface Analyzer {
   /** The fields analyzed, by dotted path. Nothing is analyzed unless named. */
   readonly fields: ReadonlyArray<string>;
@@ -235,6 +278,27 @@ export interface CollectionIndex {
   readonly state: "building" | "ready";
 }
 
+/**
+ * Documents whose embedding is closest to a vector, closest first.
+ *
+ * Exact: every document the rest of the query admits is compared, and the `k`
+ * closest come back. So the other clauses are what make it cheap — `where`,
+ * `search` and `geometry` narrow the candidates before anything is compared,
+ * and a similarity read under a narrow filter costs what that filter returns
+ * rather than what the collection holds.
+ *
+ * Ties break by identifier, so the same query over the same documents answers
+ * in the same order every time.
+ */
+export interface SimilarFilter {
+  /** The field to compare, which the collection's `EmbeddingIndex` must name. */
+  readonly field: string;
+  /** The vector to compare against, of the dimension the index declares. */
+  readonly vector: ReadonlyArray<number>;
+  /** How many documents to return. */
+  readonly k: number;
+}
+
 export interface FindDocumentsInput {
   readonly collection: string;
   readonly where?: ReadonlyArray<DocumentFilter>;
@@ -244,6 +308,13 @@ export interface FindDocumentsInput {
   readonly search?: string;
   /** Also: whose geometry meets this; see `SpatialFilter`. */
   readonly geometry?: SpatialFilter;
+  /**
+   * Order by closeness to a vector instead of by a field; see `SimilarFilter`.
+   *
+   * Not on `findPage`: an order by score has no cursor that survives a write,
+   * so a page after the first could not be the page the reader asked for.
+   */
+  readonly similar?: SimilarFilter;
   readonly orderBy?: ReadonlyArray<DocumentSort>;
   readonly limit?: number;
   readonly offset?: number;
@@ -853,6 +924,54 @@ const normalizeSpatial = (
   });
 };
 
+const METRICS: ReadonlySet<string> = new Set(["cosine", "dot", "euclidean"]);
+
+/**
+ * Why this value cannot be the vector the embedding declares, or undefined when
+ * it can. A field that holds nothing is not a fault: a document without a vector
+ * simply never answers a similarity read.
+ */
+const describeVector = (embedding: EmbeddingIndex, value: unknown): string | undefined => {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) return `${embedding.field} holds ${typeof value}, which is not a vector`;
+  if (value.length !== embedding.dimension) {
+    return `${embedding.field} holds ${value.length} numbers, not the ${embedding.dimension} declared`;
+  }
+  if (!isUsableVector(value)) return `${embedding.field} holds a value that is not a finite number`;
+  return undefined;
+};
+
+/** An embedding index in the shape it is stored, or why it cannot be used. */
+const normalizeEmbedding = (
+  collection: string,
+  embedding: EmbeddingIndex,
+): Effect.Effect<EmbeddingIndex, InvalidConstraint> => {
+  const invalid = (reason: string) =>
+    Effect.fail(new InvalidConstraint({ collection, name: "embedding", reason }));
+  const path: unknown = embedding.field;
+  if (typeof path !== "string" || path === "" || path.split(".").some((segment) => segment === "")) {
+    return invalid(`${JSON.stringify(path) ?? "undefined"} is not a field path`);
+  }
+  if (!Number.isInteger(embedding.dimension) || embedding.dimension < 1) {
+    return invalid("a dimension is a whole number of elements, from one");
+  }
+  if (!METRICS.has(embedding.metric)) {
+    return invalid(`metric is one of ${[...METRICS].join(", ")}`);
+  }
+  if (!Number.isInteger(embedding.version) || embedding.version < 1) {
+    return invalid("an embedding's version is a whole number from one, raised when its rules change");
+  }
+  return Effect.succeed({
+    field: path,
+    dimension: embedding.dimension,
+    metric: embedding.metric,
+    ...(embedding.normalize === undefined ? {} : { normalize: embedding.normalize }),
+    ...(embedding.model === undefined ? {} : { model: embedding.model }),
+    ...(embedding.modelVersion === undefined ? {} : { modelVersion: embedding.modelVersion }),
+    version: embedding.version,
+  });
+};
+
 const ON_DELETE: ReadonlySet<string> = new Set(["restrict", "cascade", "set-null"]);
 
 /** A reference definition with its default filled in, or why it cannot be enforced. */
@@ -1174,6 +1293,8 @@ export interface DocumentsApi {
     readonly analyzer?: Analyzer;
     /** How this collection's geometry becomes searchable cells; see `SpatialIndex`. */
     readonly spatial?: SpatialIndex;
+    /** Which of this collection's fields holds an embedding; see `EmbeddingIndex`. */
+    readonly embedding?: EmbeddingIndex;
   }) => Effect.Effect<
     Collection,
     InvalidCollectionName | CollectionExists | InvalidIndex | InvalidConstraint | TenantMoving
@@ -1195,7 +1316,7 @@ export interface DocumentsApi {
   }) => Effect.Effect<
     Document,
     | CollectionNotFound | DocumentConflict | SchemaViolation | TenantMoving | IdempotencyKeyReused
-    | CheckViolation | UniqueViolation | ReferenceViolation
+    | CheckViolation | UniqueViolation | ReferenceViolation | VectorShapeMismatch
   >;
   readonly findById: (input: {
     readonly collection: string;
@@ -1212,7 +1333,8 @@ export interface DocumentsApi {
     input: FindDocumentsInput,
   ) => Effect.Effect<
     ReadonlyArray<Document>,
-    UnknownReference | UnanalyzedCollection | UnindexedGeometry
+    UnknownReference | UnanalyzedCollection | UnindexedGeometry | UnembeddedCollection
+    | InvalidVectorQuery
   >;
   /**
    * One page of matching documents, and a cursor for the next.
@@ -1259,7 +1381,7 @@ export interface DocumentsApi {
   }) => Effect.Effect<
     Document,
     | DocumentNotFound | DocumentConflict | SchemaViolation | TenantMoving | IdempotencyKeyReused
-    | CheckViolation | UniqueViolation | ReferenceViolation
+    | CheckViolation | UniqueViolation | ReferenceViolation | VectorShapeMismatch
   >;
   readonly delete: (input: {
     readonly collection: string;
@@ -1274,7 +1396,7 @@ export interface DocumentsApi {
     | DocumentConflict | TenantMoving | IdempotencyKeyReused
     // What the references to it decide: a restrict refuses the delete, and a
     // set-null rewrites documents that must still satisfy their constraints.
-    | ReferenceViolation | SchemaViolation | CheckViolation | UniqueViolation
+    | ReferenceViolation | SchemaViolation | CheckViolation | UniqueViolation | VectorShapeMismatch
   >;
 
   /**
@@ -1351,6 +1473,23 @@ export interface DocumentsApi {
   >;
 
   /**
+   * Declare which field holds an embedding, and hold the collection to it.
+   *
+   * Recorded first, so every write from here on must match the shape; then the
+   * documents already there are read against it, and one that does not match
+   * takes the declaration back off again — a collection should not promise a
+   * shape its own documents do not keep. Nothing is rewritten: a vector is
+   * posted to no lens, so there are no postings to re-derive.
+   */
+  readonly embed: (input: {
+    readonly collection: string;
+    readonly embedding: EmbeddingIndex;
+  }) => Effect.Effect<
+    { readonly embedding: EmbeddingIndex; readonly documents: number },
+    CollectionNotFound | InvalidConstraint | TenantMoving | VectorShapeMismatch
+  >;
+
+  /**
    * Add a reference to a collection, and return it once every document's
    * value names a document that exists. Recorded first and then checked
    * against the documents already there, as a check is.
@@ -1397,6 +1536,7 @@ export interface DocumentsApi {
     ReadonlyArray<DocumentWritten>,
     | CollectionNotFound | DocumentConflict | DocumentNotFound | SchemaViolation | TenantMoving
     | IdempotencyKeyReused | CheckViolation | UniqueViolation | ReferenceViolation
+    | VectorShapeMismatch
   >;
 
   /**
@@ -1748,6 +1888,15 @@ export const documentsFor = (
     pending: Pending,
   ) =>
     Effect.gen(function* () {
+      const embedding = collection?.embedding;
+      if (embedding !== undefined) {
+        const wrong = describeVector(embedding, readPath(doc.data, embedding.field));
+        if (wrong !== undefined) {
+          return yield* new VectorShapeMismatch({
+            collection: doc.collection, id: doc.id, field: embedding.field, reason: wrong,
+          });
+        }
+      }
       for (const check of collection?.checks ?? []) {
         const failed = check.where.find((filter) => !satisfiesCheck(doc.data, filter));
         if (failed !== undefined) {
@@ -1855,6 +2004,7 @@ export const documentsFor = (
       const release = (doc: Document): Effect.Effect<
         void,
         ReferenceViolation | SchemaViolation | CheckViolation | UniqueViolation | DbError
+        | VectorShapeMismatch
       > =>
         Effect.gen(function* () {
           const named = yield* loadCollection(doc.collection);
@@ -2356,10 +2506,16 @@ export const documentsFor = (
             (clause.where ?? []).every((filter) => matches(target.data, filter));
           ids = matching ? [clause.id] : [];
         } else {
+          // This sub-query is built right here and carries no `similar`
+          // clause, so the two failures a similarity read can produce cannot
+          // arise; a related clause should not advertise them.
           const targets = yield* findDocuments({
             collection: reference.collection,
             ...(clause.where === undefined ? {} : { where: clause.where }),
-          });
+          }).pipe(Effect.catchTags({
+            UnembeddedCollection: Effect.die,
+            InvalidVectorQuery: Effect.die,
+          }));
           ids = targets.map((target) => target.id);
         }
         if (ids.length === 0) return undefined;
@@ -2435,6 +2591,30 @@ export const documentsFor = (
    * every document the postings produce — so a coarse covering costs work and
    * never correctness.
    */
+  /** The embedding this read compares against, or why it cannot be used. */
+  const embeddingFor = (
+    collection: StoredCollection | undefined,
+    name: string,
+    filter: SimilarFilter,
+  ): Effect.Effect<EmbeddingIndex, UnembeddedCollection | InvalidVectorQuery> =>
+    Effect.gen(function* () {
+      const embedding = collection?.embedding;
+      if (embedding === undefined || embedding.field !== filter.field) {
+        return yield* new UnembeddedCollection({ collection: name });
+      }
+      const wrong = !Array.isArray(filter.vector)
+        ? "the query is not a vector"
+        : filter.vector.length !== embedding.dimension
+          ? `the query holds ${filter.vector.length} numbers, not the ${embedding.dimension} declared`
+          : !isUsableVector(filter.vector)
+            ? "the query holds a value that is not a finite number"
+            : undefined;
+      if (wrong !== undefined) {
+        return yield* new InvalidVectorQuery({ collection: name, field: filter.field, reason: wrong });
+      }
+      return embedding;
+    });
+
   const withGeometry = (
     collection: StoredCollection | undefined,
     name: string,
@@ -2459,7 +2639,8 @@ export const documentsFor = (
     input: FindDocumentsInput,
   ): Effect.Effect<
     ReadonlyArray<Document>,
-    UnknownReference | UnanalyzedCollection | UnindexedGeometry
+    UnknownReference | UnanalyzedCollection | UnindexedGeometry | UnembeddedCollection
+    | InvalidVectorQuery
   > =>
     Effect.gen(function* () {
       const collection = yield* loadCollection(input.collection);
@@ -2479,6 +2660,41 @@ export const documentsFor = (
       const slice = (docs: ReadonlyArray<Document>) =>
         input.limit === undefined ? docs.slice(offset) : docs.slice(offset, offset + input.limit);
       const sorts = normalizeSorts(input.orderBy);
+      if (input.similar !== undefined) {
+        const wanted = input.similar;
+        if (sorts.length > 0) {
+          return yield* Effect.die(new RangeError(
+            "a similarity read comes back closest first, so it cannot also be ordered by a field.",
+          ));
+        }
+        if (!Number.isInteger(wanted.k) || wanted.k < 1) {
+          return yield* Effect.die(new RangeError(
+            `a similarity read returns a whole number of documents from one, not ${wanted.k}.`,
+          ));
+        }
+        const embedding = yield* embeddingFor(collection, input.collection, wanted);
+        // Unit length is a property of the comparison, not of the stored data:
+        // the document keeps the vector it was given either way.
+        const unit = embedding.normalize === true;
+        const query = unit ? normalized(wanted.vector) : wanted.vector;
+        const keep = keeps(plan);
+        const scored: Array<{ document: Document; seq: number; score: number }> = [];
+        for (const seq of yield* Stream.runCollect(resolveQuery(plan.query))) {
+          const doc = yield* readDocument(seq);
+          if (!keep(doc)) continue;
+          const held = readPath(doc.data, embedding.field);
+          // A document without a usable vector is not an answer, and not an
+          // error either: `embed` is what refuses one that has the wrong shape.
+          if (!isUsableVector(held) || held.length !== embedding.dimension) continue;
+          scored.push({
+            document: doc,
+            seq: Number(seq),
+            score: similarity(query, unit ? normalized(held) : held, embedding.metric).score,
+          });
+        }
+        scored.sort((a, b) => b.score - a.score || a.seq - b.seq);
+        return slice(scored.slice(0, wanted.k).map((entry) => entry.document));
+      }
       if (sorts.length > 0) {
         const indexed = chooseIndex(collection?.indexes ?? [], sorts, equalityBindings(where));
         if (indexed !== undefined) {
@@ -2539,6 +2755,9 @@ export const documentsFor = (
         const spatial = input.spatial === undefined
           ? undefined
           : yield* normalizeSpatial(input.name, input.spatial);
+        const embedding = input.embedding === undefined
+          ? undefined
+          : yield* normalizeEmbedding(input.name, input.embedding);
         const collection: StoredCollection = {
           name: input.name,
           createdAt: new Date().toISOString(),
@@ -2549,6 +2768,7 @@ export const documentsFor = (
           ...(references.length === 0 ? {} : { references }),
           ...(analyzer === undefined ? {} : { analyzer }),
           ...(spatial === undefined ? {} : { spatial }),
+          ...(embedding === undefined ? {} : { embedding }),
         };
         const seq = yield* nextSeq;
         // The collection and the back-references its targets carry, together:
@@ -2911,6 +3131,48 @@ export const documentsFor = (
           }));
         if (!recorded) return yield* new CollectionNotFound({ name: input.collection });
         return { spatial, documents: yield* rewriteDocuments(input.collection) };
+      }),
+
+    embed: (input) =>
+      Effect.gen(function* () {
+        yield* assertNotMoving;
+        const embedding = yield* normalizeEmbedding(input.collection, input.embedding);
+        const seq = yield* lookup(collectionNs(tenant), input.collection);
+        if (seq === undefined) return yield* new CollectionNotFound({ name: input.collection });
+        // Recorded first, so every write from here on is held to the shape;
+        // then the documents already there are read against it.
+        const recorded = yield* transactOrDie((txn) =>
+          Effect.gen(function* () {
+            const current = yield* loadCollection(input.collection);
+            if (current === undefined) return false;
+            yield* collectionPut(txn, seq, { ...current, embedding });
+            return true;
+          }));
+        if (!recorded) return yield* new CollectionNotFound({ name: input.collection });
+        let documents = 0;
+        for (const held of yield* Stream.runCollect(resolveQuery(equals(collectionColumn(tenant), input.collection)))) {
+          const doc = yield* readDocument(held);
+          if (doc === undefined) continue;
+          const wrong = describeVector(embedding, readPath(doc.data, embedding.field));
+          if (wrong === undefined) {
+            documents += 1;
+            continue;
+          }
+          // Take it back off: a declaration that its own documents fail is
+          // worse than none, because every later read would trust it.
+          yield* transactOrDie((txn) =>
+            Effect.gen(function* () {
+              const current = yield* loadCollection(input.collection);
+              if (current === undefined) return;
+              const { embedding: _withdrawn, ...rest } = current;
+              yield* collectionPut(txn, seq, rest);
+            }));
+          return yield* new VectorShapeMismatch({
+            collection: input.collection, id: doc.id, field: embedding.field,
+            reason: `${wrong}, so the embedding was not declared`,
+          });
+        }
+        return { embedding, documents };
       }),
 
     addReference: (input) =>
