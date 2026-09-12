@@ -31,6 +31,7 @@ import {
   UnanalyzedCollection,
   UnindexedGeometry,
   UnembeddedCollection,
+  UnknownEdge,
   VectorShapeMismatch,
   InvalidVectorQuery,
   UnknownReference,
@@ -47,7 +48,7 @@ import {
   type DistanceMetric,
 } from "./vectors.js";
 import type { IndexManifest, OrderedScalar, Seq } from "./model.js";
-import { and, equals, or, term, type Query, type RangeBound } from "./query.js";
+import { and, edge as edgeQuery, equals, or, term, type Query, type RangeBound } from "./query.js";
 import type { SchemasApi } from "./schemas.js";
 import type { ObjectStoreApi, OrderedCursor, Txn } from "./store.js";
 import type { TenantId } from "./topology.js";
@@ -73,6 +74,8 @@ export interface Collection {
   readonly spatial?: SpatialIndex;
   /** Which field holds an embedding, and how it is compared; see `EmbeddingIndex`. */
   readonly embedding?: EmbeddingIndex;
+  /** Typed links to many other documents; see `EdgeDefinition`. */
+  readonly edges?: ReadonlyArray<EdgeDefinition>;
   /** The references other collections — or this one — make to this collection's documents. */
   readonly referencedBy?: ReadonlyArray<{ readonly collection: string; readonly reference: string }>;
 }
@@ -136,6 +139,28 @@ export interface EmbeddingIndex {
   readonly modelVersion?: string | number;
   /** Raised when any of this changes, so documents can be rewritten under it. */
   readonly version: number;
+}
+
+/**
+ * A typed link from one document to many others.
+ *
+ * A reference holds one id, so following one is a lookup. An edge holds a list,
+ * so following one is a posting scan -- and because the postings are the target
+ * documents' own identifiers, what comes back intersects with everything else
+ * the target collection indexes. That is the whole reason this is a lens and
+ * not a field: `where` on the target narrows the neighbours before they are
+ * read, rather than after.
+ *
+ * The field may hold a single id as well as an array of them; one link is just
+ * a short list.
+ */
+export interface EdgeDefinition {
+  /** Letters, numbers, underscores and hyphens, like a collection name. */
+  readonly name: string;
+  /** The field holding the target id, or an array of them. */
+  readonly path: string;
+  /** The collection those ids name documents of. */
+  readonly collection: string;
 }
 
 export interface Analyzer {
@@ -299,6 +324,24 @@ export interface SimilarFilter {
   readonly k: number;
 }
 
+/**
+ * The documents one document links to, along an edge it declares.
+ *
+ * The named document's links become postings of the target documents'
+ * identifiers, so this narrows to neighbours and then every other clause
+ * narrows further -- a neighbour that fails a `where` is never read. Following
+ * an edge of a document that does not exist is empty, not an error: it is a
+ * question about links, and a document with none has none.
+ */
+export interface LinkFilter {
+  /** The collection that declares the edge. */
+  readonly collection: string;
+  /** The document whose links are followed. */
+  readonly id: string;
+  /** Which declared edge to follow. */
+  readonly edge: string;
+}
+
 export interface FindDocumentsInput {
   readonly collection: string;
   readonly where?: ReadonlyArray<DocumentFilter>;
@@ -308,6 +351,8 @@ export interface FindDocumentsInput {
   readonly search?: string;
   /** Also: whose geometry meets this; see `SpatialFilter`. */
   readonly geometry?: SpatialFilter;
+  /** Also: only the documents another document links to; see `LinkFilter`. */
+  readonly linked?: LinkFilter;
   /**
    * Order by closeness to a vector instead of by a field; see `SimilarFilter`.
    *
@@ -422,6 +467,8 @@ export interface FindPageInput {
   readonly search?: string;
   /** Also: whose geometry meets this; see `SpatialFilter`. */
   readonly geometry?: SpatialFilter;
+  /** Also: only the documents another document links to; see `LinkFilter`. */
+  readonly linked?: LinkFilter;
   /** One field, or several that a composite index serves: see `CollectionIndex`. */
   readonly orderBy?: ReadonlyArray<DocumentSort>;
   /** Documents per page: 50 unless given, and at most 1000. */
@@ -924,6 +971,34 @@ const normalizeSpatial = (
   });
 };
 
+/**
+ * What the edge lens calls this edge. Scoped by collection, so two collections
+ * may both declare `tags` and mean different things by it.
+ */
+const edgeTypeFor = (collection: string, name: string): string => `${collection}/${name}`;
+
+/** An edge definition in the shape it is stored, or why it cannot be used. */
+const normalizeEdge = (
+  collection: string,
+  edge: EdgeDefinition,
+): Effect.Effect<EdgeDefinition, InvalidConstraint> => {
+  const invalid = (reason: string) =>
+    Effect.fail(new InvalidConstraint({ collection, name: String(edge.name), reason }));
+  if (typeof edge.name !== "string" || !COLLECTION_NAME_PATTERN.test(edge.name)) {
+    return invalid(
+      "an edge name must start with a letter or underscore and contain only letters, numbers, underscores, or hyphens",
+    );
+  }
+  const path: unknown = edge.path;
+  if (typeof path !== "string" || path === "" || path.split(".").some((segment) => segment === "")) {
+    return invalid(`${JSON.stringify(path) ?? "undefined"} is not a field path`);
+  }
+  if (typeof edge.collection !== "string" || !COLLECTION_NAME_PATTERN.test(edge.collection)) {
+    return invalid(`${JSON.stringify(edge.collection) ?? "undefined"} is not a collection name`);
+  }
+  return Effect.succeed({ name: edge.name, path, collection: edge.collection });
+};
+
 const METRICS: ReadonlySet<string> = new Set(["cosine", "dot", "euclidean"]);
 
 /**
@@ -1295,6 +1370,8 @@ export interface DocumentsApi {
     readonly spatial?: SpatialIndex;
     /** Which of this collection's fields holds an embedding; see `EmbeddingIndex`. */
     readonly embedding?: EmbeddingIndex;
+    /** This collection's typed links to other documents; see `EdgeDefinition`. */
+    readonly edges?: ReadonlyArray<EdgeDefinition>;
   }) => Effect.Effect<
     Collection,
     InvalidCollectionName | CollectionExists | InvalidIndex | InvalidConstraint | TenantMoving
@@ -1334,7 +1411,7 @@ export interface DocumentsApi {
   ) => Effect.Effect<
     ReadonlyArray<Document>,
     UnknownReference | UnanalyzedCollection | UnindexedGeometry | UnembeddedCollection
-    | InvalidVectorQuery
+    | InvalidVectorQuery | UnknownEdge
   >;
   /**
    * One page of matching documents, and a cursor for the next.
@@ -1351,7 +1428,7 @@ export interface DocumentsApi {
   ) => Effect.Effect<
     DocumentPage,
     | CursorMismatch | UnsupportedOrdering | UnknownReference | UnanalyzedCollection
-    | UnindexedGeometry
+    | UnindexedGeometry | UnknownEdge
   >;
 
   /**
@@ -1824,6 +1901,7 @@ export const documentsFor = (
     analyzer?: Analyzer,
     spatial?: SpatialIndex,
     h3?: Parameters<typeof cellsFor>[0],
+    edges: ReadonlyArray<readonly [string, Seq]> = [],
   ): IndexManifest => ({
     terms: [...termsFor(analyzer, doc.data), ...cellTermsFor(spatial, h3, doc.data)],
     columns: [
@@ -1831,7 +1909,7 @@ export const documentsFor = (
       ...indexes.map((index) => [index.column, indexTuple(index, doc.data)] as const),
     ],
     measures: [],
-    edges: [],
+    edges: [...edges],
   });
 
   /** The document at an identifier, as this transaction leaves it. */
@@ -1886,7 +1964,10 @@ export const documentsFor = (
     doc: Document,
     seq: Seq,
     pending: Pending,
-  ) =>
+  ): Effect.Effect<
+    ReadonlyArray<readonly [string, Seq]>,
+    CheckViolation | UniqueViolation | ReferenceViolation | VectorShapeMismatch | DbError
+  > =>
     Effect.gen(function* () {
       const embedding = collection?.embedding;
       if (embedding !== undefined) {
@@ -1946,6 +2027,35 @@ export const documentsFor = (
           });
         }
       }
+      // Resolved here because this is where a target is already being read
+      // under the writer's one permit: the overlay counts, so a document and
+      // the ones it links to can be written together.
+      const edges: Array<readonly [string, Seq]> = [];
+      for (const definition of collection?.edges ?? []) {
+        const value = readPath(doc.data, definition.path);
+        if (value === undefined || value === null) continue;
+        const ids = Array.isArray(value) ? value : [value];
+        const type = edgeTypeFor(doc.collection, definition.name);
+        for (const id of ids) {
+          const refused = (reason: string) =>
+            new ReferenceViolation({
+              collection: doc.collection, id: doc.id, reference: definition.name, reason,
+            });
+          if (typeof id !== "string") {
+            return yield* refused(`${definition.path} holds ${JSON.stringify(id)}, which is not a document id`);
+          }
+          if (definition.collection === doc.collection && id === doc.id) {
+            edges.push([type, seq]);
+            continue;
+          }
+          const named = yield* currentNamed(pending, definition.collection, id);
+          if (named === undefined || named.document === null) {
+            return yield* refused(`there is no document "${id}" in "${definition.collection}"`);
+          }
+          edges.push([type, named.seq]);
+        }
+      }
+      return edges;
     });
 
   /**
@@ -1970,10 +2080,10 @@ export const documentsFor = (
   ) =>
     Effect.gen(function* () {
       const collection = loaded ?? (yield* loadCollection(doc.collection));
-      yield* enforceConstraints(collection, doc, seq, pending);
+      const edges = yield* enforceConstraints(collection, doc, seq, pending);
       const cells = yield* spatialHandle(collection?.spatial);
       yield* txn.put(seq, encode(doc), manifestFor(
-        doc, collection?.indexes ?? [], collection?.analyzer, collection?.spatial, cells,
+        doc, collection?.indexes ?? [], collection?.analyzer, collection?.spatial, cells, edges,
       ), {
         namespace: documentNs(tenant, doc.collection), key: doc.id,
       });
@@ -2373,13 +2483,32 @@ export const documentsFor = (
             const analyzer = record?.analyzer;
             const spatial = record?.spatial;
             const cells = yield* spatialHandle(spatial);
+            const definitions = record?.edges ?? [];
             let written = 0;
             for (const seq of seqs.slice(at, at + REWRITE_CHUNK)) {
               const object = yield* readObject(seq);
               if (object === undefined) continue;
               const doc = decode<Document>(object.bytes);
               if (doc.collection !== collection) continue;
-              yield* txn.put(seq, object.bytes, manifestFor(doc, indexes, analyzer, spatial, cells), {
+              // Re-derived, not re-checked: these documents were accepted
+              // once already, so a target that has since gone leaves the link
+              // unposted rather than failing a rewrite.
+              const links: Array<readonly [string, Seq]> = [];
+              for (const definition of definitions) {
+                const value = readPath(doc.data, definition.path);
+                if (value === undefined || value === null) continue;
+                const type = edgeTypeFor(collection, definition.name);
+                for (const id of Array.isArray(value) ? value : [value]) {
+                  if (typeof id !== "string") continue;
+                  if (definition.collection === collection && id === doc.id) {
+                    links.push([type, seq]);
+                    continue;
+                  }
+                  const at = yield* lookup(documentNs(tenant, definition.collection), id);
+                  if (at !== undefined) links.push([type, at]);
+                }
+              }
+              yield* txn.put(seq, object.bytes, manifestFor(doc, indexes, analyzer, spatial, cells, links), {
                 namespace: documentNs(tenant, collection), key: doc.id,
               });
               written += 1;
@@ -2515,6 +2644,7 @@ export const documentsFor = (
           }).pipe(Effect.catchTags({
             UnembeddedCollection: Effect.die,
             InvalidVectorQuery: Effect.die,
+            UnknownEdge: Effect.die,
           }));
           ids = targets.map((target) => target.id);
         }
@@ -2615,6 +2745,31 @@ export const documentsFor = (
       return embedding;
     });
 
+  /**
+   * A plan narrowed to what one document links to, or undefined when there is
+   * nothing to link from -- an absent document has no links, which is an empty
+   * answer rather than a failure.
+   */
+  const withLink = (
+    plan: Plan,
+    filter: LinkFilter,
+  ): Effect.Effect<Plan | undefined, UnknownEdge> =>
+    Effect.gen(function* () {
+      const source = yield* loadCollection(filter.collection);
+      const declared = (source?.edges ?? []).find((candidate) => candidate.name === filter.edge);
+      if (declared === undefined) {
+        return yield* new UnknownEdge({ collection: filter.collection, name: filter.edge });
+      }
+      const seq = yield* lookup(documentNs(tenant, filter.collection), filter.id);
+      if (seq === undefined) return undefined;
+      const clause = edgeQuery(edgeTypeFor(filter.collection, filter.edge), Number(seq));
+      return {
+        query: and(plan.query, clause),
+        fields: plan.fields === undefined ? clause : and(plan.fields, clause),
+        residual: plan.residual,
+      };
+    });
+
   const withGeometry = (
     collection: StoredCollection | undefined,
     name: string,
@@ -2640,7 +2795,7 @@ export const documentsFor = (
   ): Effect.Effect<
     ReadonlyArray<Document>,
     UnknownReference | UnanalyzedCollection | UnindexedGeometry | UnembeddedCollection
-    | InvalidVectorQuery
+    | InvalidVectorQuery | UnknownEdge
   > =>
     Effect.gen(function* () {
       const collection = yield* loadCollection(input.collection);
@@ -2654,6 +2809,11 @@ export const documentsFor = (
       let plan = withSearch(planQuery(tenant, input.collection, where), words);
       if (input.geometry !== undefined) {
         plan = yield* withGeometry(collection, input.collection, plan, input.geometry);
+      }
+      if (input.linked !== undefined) {
+        const narrowed = yield* withLink(plan, input.linked);
+        if (narrowed === undefined) return [];
+        plan = narrowed;
       }
       const offset = input.offset ?? 0;
       const take = input.limit === undefined ? undefined : offset + input.limit;
@@ -2758,6 +2918,16 @@ export const documentsFor = (
         const embedding = input.embedding === undefined
           ? undefined
           : yield* normalizeEmbedding(input.name, input.embedding);
+        const edges: Array<EdgeDefinition> = [];
+        for (const definition of input.edges ?? []) {
+          const declared = yield* normalizeEdge(input.name, definition);
+          if (edges.some((other) => other.name === declared.name)) {
+            return yield* new InvalidConstraint({
+              collection: input.name, name: declared.name, reason: "the name is given twice",
+            });
+          }
+          edges.push(declared);
+        }
         const collection: StoredCollection = {
           name: input.name,
           createdAt: new Date().toISOString(),
@@ -2769,6 +2939,7 @@ export const documentsFor = (
           ...(analyzer === undefined ? {} : { analyzer }),
           ...(spatial === undefined ? {} : { spatial }),
           ...(embedding === undefined ? {} : { embedding }),
+          ...(edges.length === 0 ? {} : { edges }),
         };
         const seq = yield* nextSeq;
         // The collection and the back-references its targets carry, together:
@@ -2880,6 +3051,11 @@ export const documentsFor = (
         let plan = withSearch(planQuery(tenant, input.collection, where), words);
         if (geometry !== undefined) {
           plan = yield* withGeometry(collection, input.collection, plan, geometry);
+        }
+        if (input.linked !== undefined) {
+          const narrowed = yield* withLink(plan, input.linked);
+          if (narrowed === undefined) return { documents: [] };
+          plan = narrowed;
         }
         // One more than the page, to know whether another document follows.
         const found = sorts.length === 0
