@@ -12,6 +12,7 @@ import type {
   CheckConstraint,
   DocumentFilter,
   ReferenceConstraint,
+  RelatedDocuments,
 } from "./documents.js";
 import type { DomainEvent, ReadDomainEventsInput } from "./domain-events.js";
 import type { TenantBackupV1 } from "./backup.js";
@@ -54,6 +55,11 @@ export interface TenantRuntimeApi {
       input: ReferenceConstraint & { from: string },
     ) => Promise<Required<ReferenceConstraint>>;
     readonly dropReference: (input: { collection: string; name: string }) => Promise<boolean>;
+    readonly withRelated: (input: {
+      collection: string;
+      documents: ReadonlyArray<Document>;
+      references?: ReadonlyArray<string>;
+    }) => Promise<ReadonlyArray<RelatedDocuments>>;
     readonly rewrite: (input?: {
       collection?: string;
     }) => Promise<{ collections: number; documents: number }>;
@@ -164,6 +170,7 @@ const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
     dropCheck: (input) => run(tenant.documents.dropCheck(input)),
     addReference: (input) => run(tenant.documents.addReference(input)),
     dropReference: (input) => run(tenant.documents.dropReference(input)),
+    withRelated: (input) => run(tenant.documents.withRelated(input)),
     rewrite: (input) => run(tenant.documents.rewrite(input)),
     listCollections: () => run(tenant.documents.listCollections),
     collectionExists: (name) => run(tenant.documents.collectionExists(name)),

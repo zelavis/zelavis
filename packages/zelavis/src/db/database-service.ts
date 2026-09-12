@@ -14,6 +14,7 @@ import type {
   IndexField,
   CheckConstraint,
   ReferenceConstraint,
+  RelatedFilter,
 } from "./documents.js";
 import type { AggregateOperation, RangeInput } from "./time-series.js";
 
@@ -183,6 +184,7 @@ const NOT_FOUND_TAGS = new Set([
   "ProjectionNotFound",
   "SchemaNotFound",
   "TimeSeriesNotFound",
+  "UnknownReference",
   "UnknownSystemView",
 ]);
 
@@ -236,6 +238,8 @@ function describeTaggedFailure(failure: TaggedFailure): string {
     }
     case "TimeSeriesNotFound":
       return `Time series "${failure.name}" is not defined.`;
+    case "UnknownReference":
+      return `Collection "${failure.collection}" has no reference named "${failure.name}".`;
     case "UnknownSystemView":
       return `Unknown logical database system view "${failure.name}".`;
     case "BackupTenantMismatch":
@@ -791,6 +795,7 @@ export function defineDatabaseDocumentsService(
                 properties: {
                   tenantId: { type: "string", description: "Tenant ID" },
                   where: { type: "array", description: "Filters" },
+                  related: { type: "array", description: "Joins, each { reference, where?, id? }" },
                   orderBy: { type: "array", description: "Sorts" },
                   limit: { type: "number" },
                   offset: { type: "number" },
@@ -811,6 +816,9 @@ export function defineDatabaseDocumentsService(
                   documents: await service.forTenant(tenantId).documents.findMany({
                     collection: params.collection,
                     where: readFilters(input.where),
+                    ...(Array.isArray(input.related)
+                      ? { related: input.related as ReadonlyArray<RelatedFilter> }
+                      : {}),
                     orderBy: readSort(input.orderBy),
                     limit: readNumber(input.limit, 100),
                     offset: readNumber(input.offset, 0),
@@ -841,6 +849,7 @@ export function defineDatabaseDocumentsService(
                 properties: {
                   tenantId: { type: "string", description: "Tenant ID" },
                   where: { type: "array", description: "Filters" },
+                  related: { type: "array", description: "Joins, each { reference, where?, id? }" },
                   orderBy: { type: "array", description: "One field, or several that a composite index serves" },
                   limit: { type: "number", description: "Documents per page: 1 to 1000, 50 when omitted" },
                   after: { type: "string", description: "The next cursor from the previous page" },
@@ -868,6 +877,9 @@ export function defineDatabaseDocumentsService(
                 body: await service.forTenant(tenantId).documents.findPage({
                   collection: params.collection,
                   where: readFilters(input.where),
+                  ...(Array.isArray(input.related)
+                    ? { related: input.related as ReadonlyArray<RelatedFilter> }
+                    : {}),
                   orderBy: readSort(input.orderBy),
                   limit,
                   ...(input.after === undefined ? {} : { after: input.after as DocumentCursor }),

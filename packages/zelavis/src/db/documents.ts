@@ -28,6 +28,7 @@ import {
   InvalidConstraint,
   ConstraintExists,
   ReferenceViolation,
+  UnknownReference,
 } from "./errors.js";
 import type { DbError } from "./errors.js";
 import { compareOrderedValues, decodeOrderedTuple, orderedTuple, sameOrderedKind } from "./keys.js";
@@ -174,9 +175,44 @@ export interface CollectionIndex {
 export interface FindDocumentsInput {
   readonly collection: string;
   readonly where?: ReadonlyArray<DocumentFilter>;
+  /** Also: whose references name documents matching these; see `RelatedFilter`. */
+  readonly related?: ReadonlyArray<RelatedFilter>;
   readonly orderBy?: ReadonlyArray<DocumentSort>;
   readonly limit?: number;
   readonly offset?: number;
+}
+
+/**
+ * Documents whose reference names a document matching something else: a join
+ * through the identifiers the two collections already share.
+ *
+ * The named collection answers its own query first, and the ids it returns
+ * become an equality union over the referencing field's postings — the same
+ * postings an `eq` on that field reads. So a join is a set operation over one
+ * dense identifier space rather than a scan of either side, and it costs the
+ * target's query plus one posting list per document that query matched. It
+ * stays inside one tenant, because a reference does.
+ *
+ * With neither `where` nor `id`, it asks for documents naming any document of
+ * the target collection, which costs reading that collection's ids.
+ */
+export interface RelatedFilter {
+  /** The reference's name on the collection being read. */
+  readonly reference: string;
+  /** Filters the named document must match. */
+  readonly where?: ReadonlyArray<DocumentFilter>;
+  /** One named document, by id; with `where`, it must match that too. */
+  readonly id?: string;
+}
+
+/** A document and what its references name. */
+export interface RelatedDocuments {
+  readonly document: Document;
+  /**
+   * The document each reference names, by reference name. Undefined where the
+   * field names nothing, or names a document that no longer exists.
+   */
+  readonly related: Readonly<Record<string, Document | undefined>>;
 }
 
 declare const DocumentCursorBrand: unique symbol;
@@ -187,6 +223,8 @@ export type DocumentCursor = string & { readonly [DocumentCursorBrand]: true };
 export interface FindPageInput {
   readonly collection: string;
   readonly where?: ReadonlyArray<DocumentFilter>;
+  /** Also: whose references name documents matching these; see `RelatedFilter`. */
+  readonly related?: ReadonlyArray<RelatedFilter>;
   /** One field, or several that a composite index serves: see `CollectionIndex`. */
   readonly orderBy?: ReadonlyArray<DocumentSort>;
   /** Documents per page: 50 unless given, and at most 1000. */
@@ -816,7 +854,9 @@ export interface DocumentsApi {
    * sorting; by several, it reads a composite index that serves the order, or
    * failing one sorts in memory, in the order such an index would give.
    */
-  readonly findMany: (input: FindDocumentsInput) => Effect.Effect<ReadonlyArray<Document>>;
+  readonly findMany: (
+    input: FindDocumentsInput,
+  ) => Effect.Effect<ReadonlyArray<Document>, UnknownReference>;
   /**
    * One page of matching documents, and a cursor for the next.
    *
@@ -829,7 +869,22 @@ export interface DocumentsApi {
    */
   readonly findPage: (
     input: FindPageInput,
-  ) => Effect.Effect<DocumentPage, CursorMismatch | UnsupportedOrdering>;
+  ) => Effect.Effect<DocumentPage, CursorMismatch | UnsupportedOrdering | UnknownReference>;
+
+  /**
+   * The documents these documents' references name, resolved in one pass.
+   *
+   * Each named document is read once however many documents name it, so
+   * resolving a page costs the documents it actually points at. Takes
+   * documents rather than a query so that it composes with `findMany`,
+   * `findPage` and a scatter alike.
+   */
+  readonly withRelated: (input: {
+    readonly collection: string;
+    readonly documents: ReadonlyArray<Document>;
+    /** Which references to resolve; every one the collection declares when omitted. */
+    readonly references?: ReadonlyArray<string>;
+  }) => Effect.Effect<ReadonlyArray<RelatedDocuments>, UnknownReference>;
   readonly update: (input: {
     readonly collection: string;
     /** Do this at most once; see `insert`. */
@@ -1101,9 +1156,6 @@ export const documentsFor = (
       (found): found is StoredCollection => found !== undefined,
       () => new CollectionNotFound({ name }),
     );
-
-  const indexesOf = (collection: string) =>
-    Effect.map(loadCollection(collection), (found) => found?.indexes ?? []);
 
   const readDocument = (seq: Seq) =>
     Effect.map(readObject(seq), (o) => (o === undefined ? undefined : decode<Document>(o.bytes)));
@@ -1653,6 +1705,82 @@ export const documentsFor = (
       edges: [],
     }, { namespace: idempotencyNs(tenant), key: receipt.key });
 
+  /**
+   * What a `related` clause becomes: filters on the referencing field, or
+   * undefined when nothing it could name exists — in which case the read is
+   * empty and the collection is never touched.
+   */
+  const relatedFilters = (
+    collection: StoredCollection | undefined,
+    name: string,
+    related: ReadonlyArray<RelatedFilter> | undefined,
+  ): Effect.Effect<ReadonlyArray<DocumentFilter> | undefined, UnknownReference> =>
+    Effect.gen(function* () {
+      if (related === undefined || related.length === 0) return [];
+      const filters: Array<DocumentFilter> = [];
+      for (const clause of related) {
+        const reference = (collection?.references ?? []).find((candidate) => candidate.name === clause.reference);
+        if (reference === undefined) {
+          return yield* new UnknownReference({ collection: name, name: clause.reference });
+        }
+        let ids: Array<string>;
+        if (clause.id !== undefined) {
+          // One named document: read it, and hold it to the clause's filters.
+          const seq = yield* lookup(documentNs(tenant, reference.collection), clause.id);
+          const target = seq === undefined ? undefined : yield* readDocument(seq);
+          const matching = target !== undefined &&
+            (clause.where ?? []).every((filter) => matches(target.data, filter));
+          ids = matching ? [clause.id] : [];
+        } else {
+          const targets = yield* findDocuments({
+            collection: reference.collection,
+            ...(clause.where === undefined ? {} : { where: clause.where }),
+          });
+          ids = targets.map((target) => target.id);
+        }
+        if (ids.length === 0) return undefined;
+        filters.push({ path: reference.path, op: "in", value: ids });
+      }
+      return filters;
+    });
+
+  const findDocuments = (
+    input: FindDocumentsInput,
+  ): Effect.Effect<ReadonlyArray<Document>, UnknownReference> =>
+    Effect.gen(function* () {
+      const collection = yield* loadCollection(input.collection);
+      const related = yield* relatedFilters(collection, input.collection, input.related);
+      if (related === undefined) return [];
+      const where = [...(input.where ?? []), ...related];
+      const plan = planQuery(tenant, input.collection, where);
+      const offset = input.offset ?? 0;
+      const take = input.limit === undefined ? undefined : offset + input.limit;
+      const slice = (docs: ReadonlyArray<Document>) =>
+        input.limit === undefined ? docs.slice(offset) : docs.slice(offset, offset + input.limit);
+      const sorts = normalizeSorts(input.orderBy);
+      if (sorts.length > 0) {
+        const indexed = chooseIndex(collection?.indexes ?? [], sorts, equalityBindings(where));
+        if (indexed !== undefined) {
+          const found = yield* inIndexOrder(plan, indexed, take, undefined).pipe(Effect.orDie);
+          return slice(found.map((entry) => entry.document));
+        }
+        if (sorts.length === 1) {
+          // One field is served by its ordered lens, in order, without a sort.
+          const found = yield* inOrder(plan, input.collection, sorts[0]!, take, undefined).pipe(Effect.orDie);
+          return slice(found.map((entry) => entry.document));
+        }
+      }
+      const keep = keeps(plan);
+      const docs: Document[] = [];
+      for (const seq of yield* Stream.runCollect(resolveQuery(plan.query))) {
+        const doc = yield* readDocument(seq);
+        if (keep(doc)) docs.push(doc);
+      }
+      // No index serves these fields, so they are sorted here — in the
+      // lens's order, so the answer matches what an index would give.
+      return slice(sorts.length === 0 ? docs : docs.sort(compareDocuments(sorts)));
+    });
+
   return {
     createCollection: (input) =>
       Effect.gen(function* () {
@@ -1776,45 +1904,17 @@ export const documentsFor = (
         return seq === undefined ? undefined : yield* readDocument(seq);
       }),
 
-    findMany: (input) =>
-      Effect.gen(function* () {
-        const where = input.where ?? [];
-        const plan = planQuery(tenant, input.collection, where);
-        const offset = input.offset ?? 0;
-        const take = input.limit === undefined ? undefined : offset + input.limit;
-        const slice = (docs: ReadonlyArray<Document>) =>
-          input.limit === undefined ? docs.slice(offset) : docs.slice(offset, offset + input.limit);
-        const sorts = normalizeSorts(input.orderBy);
-        if (sorts.length > 0) {
-          const indexed = chooseIndex(yield* indexesOf(input.collection), sorts, equalityBindings(where));
-          if (indexed !== undefined) {
-            const found = yield* inIndexOrder(plan, indexed, take, undefined).pipe(Effect.orDie);
-            return slice(found.map((entry) => entry.document));
-          }
-          if (sorts.length === 1) {
-            // One field is served by its ordered lens, in order, without a sort.
-            const found = yield* inOrder(plan, input.collection, sorts[0]!, take, undefined).pipe(Effect.orDie);
-            return slice(found.map((entry) => entry.document));
-          }
-        }
-        const keep = keeps(plan);
-        const docs: Document[] = [];
-        for (const seq of yield* Stream.runCollect(resolveQuery(plan.query))) {
-          const doc = yield* readDocument(seq);
-          if (keep(doc)) docs.push(doc);
-        }
-        // No index serves these fields, so they are sorted here — in the
-        // lens's order, so the answer matches what an index would give.
-        return slice(sorts.length === 0 ? docs : docs.sort(compareDocuments(sorts)));
-      }),
+    findMany: (input) => findDocuments(input),
 
     findPage: (input) =>
       Effect.gen(function* () {
         const sorts = normalizeSorts(input.orderBy);
-        const where = input.where ?? [];
+        const collection = yield* loadCollection(input.collection);
+        const related = yield* relatedFilters(collection, input.collection, input.related);
+        const where = related === undefined ? [] : [...(input.where ?? []), ...related];
         const indexed = sorts.length === 0
           ? undefined
-          : chooseIndex(yield* indexesOf(input.collection), sorts, equalityBindings(where));
+          : chooseIndex(collection?.indexes ?? [], sorts, equalityBindings(where));
         if (sorts.length > 1 && indexed === undefined) {
           return yield* new UnsupportedOrdering({
             reason:
@@ -1829,6 +1929,9 @@ export const documentsFor = (
         }
         const shape: PageShape = { collection: input.collection, order: sorts, via: indexed?.index.column };
         const from = input.after === undefined ? undefined : yield* decodeDocumentCursor(input.after, shape);
+        // Nothing the related clause could name: the page is empty, and the
+        // collection is never read.
+        if (related === undefined) return { documents: [] };
         const plan = planQuery(tenant, input.collection, where);
         // One more than the page, to know whether another document follows.
         const found = sorts.length === 0
@@ -1844,6 +1947,38 @@ export const documentsFor = (
             ? { cursors: page.map((entry) => encodeDocumentCursor(shape, entry.position)) }
             : {}),
         };
+      }),
+
+    withRelated: (input) =>
+      Effect.gen(function* () {
+        const collection = yield* loadCollection(input.collection);
+        const declared = collection?.references ?? [];
+        const references = input.references === undefined
+          ? declared
+          : yield* Effect.forEach(input.references, (name) => {
+            const found = declared.find((reference) => reference.name === name);
+            return found === undefined
+              ? new UnknownReference({ collection: input.collection, name })
+              : Effect.succeed(found);
+          });
+        // One read per named document, however many documents name it.
+        const seen = new Map<string, Document | undefined>();
+        const out: Array<RelatedDocuments> = [];
+        for (const document of input.documents) {
+          const related: Record<string, Document | undefined> = {};
+          for (const reference of references) {
+            const value = readPath(document.data, reference.path);
+            if (typeof value !== "string") continue;
+            const at = `${reference.collection}/${value}`;
+            if (!seen.has(at)) {
+              const seq = yield* lookup(documentNs(tenant, reference.collection), value);
+              seen.set(at, seq === undefined ? undefined : yield* readDocument(seq));
+            }
+            related[reference.name] = seen.get(at);
+          }
+          out.push({ document, related });
+        }
+        return out;
       }),
 
     update: (input) =>

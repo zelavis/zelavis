@@ -1,9 +1,12 @@
 import { Effect, Stream } from "effect";
-import { CrossPartitionQuery, CursorMismatch, UnknownShard, UnsupportedOrdering } from "./errors.js";
+import {
+  CrossPartitionQuery, CursorMismatch, UnknownReference, UnknownShard, UnsupportedOrdering,
+} from "./errors.js";
 import type { DbError } from "./errors.js";
 import {
   compareDocuments,
   type Document,
+  type RelatedFilter,
   type DocumentCursor,
   type DocumentFilter,
   type DocumentSort,
@@ -88,6 +91,8 @@ export interface ScatterFindInput {
   /** Tenants to ask. Omit for every tenant the shards report holding data. */
   readonly tenants?: ReadonlyArray<TenantId>;
   readonly where?: ReadonlyArray<DocumentFilter>;
+  /** Joins, answered inside each tenant: a reference never leaves one. */
+  readonly related?: ReadonlyArray<RelatedFilter>;
   /**
    * Merged across tenants by these fields, exactly as one tenant's `findMany`
    * orders them, and tenant by tenant among equals. Without an order, rows go
@@ -117,6 +122,8 @@ export interface ScatterPageInput {
   /** Tenants to ask. Omit for every tenant the shards report holding data; a continued read keeps its own. */
   readonly tenants?: ReadonlyArray<TenantId>;
   readonly where?: ReadonlyArray<DocumentFilter>;
+  /** Joins, answered inside each tenant: a reference never leaves one. */
+  readonly related?: ReadonlyArray<RelatedFilter>;
   /** As `findPage` orders one tenant. Without one, tenant after tenant, each in identifier order. */
   readonly orderBy?: ReadonlyArray<DocumentSort>;
   /** Documents per page: 50 unless given, and at most 1000. */
@@ -162,7 +169,7 @@ export interface ScatterApi {
    */
   readonly findMany: (
     input: ScatterFindInput,
-  ) => Effect.Effect<ScatterResult<ScatteredDocument>, DbError>;
+  ) => Effect.Effect<ScatterResult<ScatteredDocument>, DbError | UnknownReference>;
 
   /**
    * One page of documents from several tenants, merged into one order.
@@ -178,7 +185,7 @@ export interface ScatterApi {
    */
   readonly findPage: (
     input: ScatterPageInput,
-  ) => Effect.Effect<ScatterPage, DbError | CursorMismatch | UnsupportedOrdering>;
+  ) => Effect.Effect<ScatterPage, DbError | CursorMismatch | UnsupportedOrdering | UnknownReference>;
 }
 
 /** How many legs run at once when a caller does not say. */
@@ -427,6 +434,7 @@ export const scatterOver = (options: {
               const found = yield* options.documentsFor(tenant).findMany({
                 collection: input.collection,
                 ...(input.where === undefined ? {} : { where: input.where }),
+                ...(input.related === undefined ? {} : { related: input.related }),
                 ...(input.orderBy === undefined ? {} : { orderBy: input.orderBy }),
                 // A per-tenant limit is asked for one row wider than the
                 // caller wants, so the leg can say whether anything was left
@@ -497,6 +505,7 @@ export const scatterOver = (options: {
             const page = yield* options.documentsFor(leg.at.tenant).findPage({
               collection: input.collection,
               ...(input.where === undefined ? {} : { where: input.where }),
+              ...(input.related === undefined ? {} : { related: input.related }),
               ...(input.orderBy === undefined ? {} : { orderBy: input.orderBy }),
               limit: count,
               ...(leg.at.position === undefined ? {} : { after: leg.at.position }),

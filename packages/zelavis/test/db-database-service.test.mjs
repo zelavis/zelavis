@@ -480,3 +480,41 @@ test("checks, references and a rewrite are reachable over HTTP", async (t) => {
   assert.deepEqual([droppedCheck.body, droppedReference.body], [{ dropped: true }, { dropped: true }]);
   assert.ok((allowed.status ?? 200) < 300, "with both constraints gone, the write lands");
 });
+
+test("a join is asked for as data and answered over HTTP", async (t) => {
+  const { api } = await openTemporaryDatabase(t);
+  const service = defineDatabaseService(api);
+  const create = routeOf(service, "database.collections.create");
+  const insert = routeOf(service, "database.documents.insert");
+  const query = routeOf(service, "database.documents.query");
+  const page = routeOf(service, "database.documents.page");
+
+  await call(create, { service: api, body: { tenantId: "acme", name: "authors" } });
+  await call(create, {
+    service: api,
+    body: {
+      tenantId: "acme", name: "posts",
+      references: [{ name: "author", path: "authorId", collection: "authors" }],
+    },
+  });
+  for (const [id, data] of [["a1", { country: "fr" }], ["a2", { country: "de" }]]) {
+    await call(insert, { service: api, params: { collection: "authors" }, body: { tenantId: "acme", id, data } });
+  }
+  for (const [id, data] of [["p1", { authorId: "a1" }], ["p2", { authorId: "a2" }], ["p3", { authorId: "a1" }]]) {
+    await call(insert, { service: api, params: { collection: "posts" }, body: { tenantId: "acme", id, data } });
+  }
+  const related = [{ reference: "author", where: [{ path: "country", value: "fr" }] }];
+  const params = { collection: "posts" };
+
+  const queried = await call(query, { service: api, params, body: { tenantId: "acme", related } });
+  const paged = await call(page, { service: api, params, body: { tenantId: "acme", related, limit: 1 } });
+  const unknown = await call(query, {
+    service: api, params, body: { tenantId: "acme", related: [{ reference: "editor" }] },
+  });
+
+  assert.deepEqual(queried.body.documents.map((document) => document.id), ["p1", "p3"]);
+  assert.deepEqual(paged.body.documents.map((document) => document.id), ["p1"]);
+  assert.ok(paged.body.next, "a joined page continues like any other");
+  assert.equal(unknown.status, 404);
+  assert.match(unknown.body.error, /no reference named "editor"/);
+});
