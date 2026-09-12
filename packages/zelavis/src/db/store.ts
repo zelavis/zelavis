@@ -156,6 +156,24 @@ export interface ObjectStoreApi {
   readonly compactedTo: Effect.Effect<number, DbError>;
 
   /**
+   * Write the live records down as of the current position, replacing any
+   * earlier snapshot.
+   *
+   * Compaction drops history, which takes away `rebuildLenses` — the operation
+   * that re-derives every lens from the log rather than trusting the stored
+   * manifests. A snapshot gives it back: state as of a position, and the log
+   * from there on. Written in one batch, so an interrupted snapshot leaves the
+   * store as it was.
+   */
+  readonly snapshot: Effect.Effect<
+    { readonly records: number; readonly position: number },
+    DbError
+  >;
+
+  /** The position the stored snapshot covers, or 0 when there is none. */
+  readonly snapshotAt: Effect.Effect<number, DbError>;
+
+  /**
    * Every record that still exists, with what it contributed.
    *
    * The snapshot in the plainest form. A backup uses it where the log no longer

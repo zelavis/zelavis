@@ -798,7 +798,19 @@ the `dbnew` runtime API, both construction sites open a sharded database through
 
 Independent of parity, and needed before an official recipe mounts `dbnew`:
 
-- [ ] Snapshots, so rebuilding replays live objects rather than all history.
+- [x] Snapshots, so a rebuild survives compaction. The gap was narrower than
+  this line suggested: `reindexLenses` already re-derives every lens from the
+  stored manifests and never reads the log, so rebuilding from state was
+  covered. What compaction took away was `rebuildLenses` — the operation that
+  re-derives from the log itself, and so catches a manifest that is wrong
+  rather than trusting it — which refused outright once anything was cut.
+  `store.snapshot` writes every live record down with the position it covers,
+  in one batch that also drops the previous snapshot, so an interrupted
+  snapshot leaves the store exactly as it was and a store never holds two or
+  none. A rebuild then starts from the snapshot and replays only the events
+  after it. A snapshot older than the cut is refused with `LogCompacted` as
+  before, because the events between them are gone. `db.maintenance.snapshot`
+  takes one per shard. The cost is a key per live record, written whole.
 - [x] Durability testing under interruption. `synchronous=NORMAL` in WAL mode
   does not fsync each commit, which trades two guarantees against each other,
   and both are now asserted rather than assumed. A `SIGKILL`ed writer loses no

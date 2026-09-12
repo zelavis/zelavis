@@ -58,6 +58,13 @@ export interface MaintenanceApi {
   readonly reindex: Effect.Effect<ReadonlyArray<ShardReindex>, DbError>;
 
   /**
+   * Write every shard's live records down as of its current position.
+   *
+   * What keeps a rebuild from history possible after compaction has cut it.
+   */
+  readonly snapshot: Effect.Effect<ReadonlyArray<ShardSnapshot>, DbError>;
+
+  /**
    * Fold every shard's postings into immutable blobs.
    *
    * The read-side counterpart to compaction: compaction stops storage growing
@@ -83,6 +90,12 @@ export interface ShardCompaction {
 export interface ShardReindex {
   readonly shard: ShardId;
   readonly records: number;
+}
+
+export interface ShardSnapshot {
+  readonly shard: ShardId;
+  readonly records: number;
+  readonly position: number;
 }
 
 export interface ShardSeal {
@@ -247,6 +260,10 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     reindex: Effect.map(
       acrossShards((store) => store.reindexLenses),
       (results) => results.map(([shard, records]) => ({ shard, records })),
+    ),
+    snapshot: Effect.map(
+      acrossShards((store) => store.snapshot),
+      (results) => results.map(([shard, result]) => ({ shard, ...result })),
     ),
     seal: Effect.map(
       acrossShards((store) => store.sealPostings),
