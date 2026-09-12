@@ -9,6 +9,7 @@ import {
   compareKeys, metaKey, payloadKey, positionOf, segmentIndexOf, segmentKey, segmentPrefix,
   seqOf, Tag, termKey, termPrefix, tombstoneKey, tombstonePrefix,
   decodeOrderedKey, dirtyKey, inPrefixRange, orderedColumnPrefix, orderedKey, orderedKindRange,
+  snapshotKey, snapshotPrefix,
   orderedValuePrefix, prefixEnd, type OrderedValue,
 } from "./keys.js";
 import type { KvEngine, KvScanOptions, KvWrite } from "./kv.js";
@@ -67,6 +68,17 @@ const META_NEXT_POSITION = "next_position";
 const META_GENERATION = "generation";
 /** The position everything at or below has been compacted away. */
 const META_COMPACTED_TO = "compacted_to";
+
+/**
+ * The log position the stored snapshot covers, or 0 when there is none.
+ *
+ * A rebuild replays the log, so compaction takes that ability away: a
+ * truncated log rebuilds a partial index. A snapshot gives it back — state as
+ * of a position, plus the events after it — which keeps the operation that
+ * checks the manifests rather than trusting them available on a store whose
+ * history has been cut.
+ */
+const META_SNAPSHOT_AT = "snapshot_at";
 /**
  * Whether any blob exists, which is the write path's only question about them.
  *
@@ -129,6 +141,15 @@ const STATE_TAGS = [Tag.Payload, Tag.Manifest, Tag.Identity, Tag.IdentityBySeq] 
 
 /** Everything a full replay from the log clears first. */
 const LENS_TAGS = [...STATE_TAGS, ...DERIVED_TAGS] as const;
+
+/** One live record as a snapshot holds it. */
+interface StoredSnapshot {
+  readonly version: number;
+  /** Base64, as an event body is: a stored value is JSON either way. */
+  readonly body: string;
+  readonly manifest: IndexManifest;
+  readonly identity?: ObjectIdentity;
+}
 
 interface StoredEvent {
   readonly generation: number;
@@ -890,6 +911,30 @@ export const storeOverKv = (
    * exactly what its object contributed. It cannot detect a corrupt manifest,
    * which is what a full replay is for.
    */
+  const liveRecords = Effect.gen(function* () {
+    // Driven by the identity index, because a record without a caller-facing
+    // name is derived state rather than something a backup should carry.
+    const identities: Array<{ seq: Seq; identity: ObjectIdentity }> = [];
+    yield* Stream.runForEach(engine.scan(Uint8Array.from([Tag.IdentityBySeq])), (entry) =>
+      Effect.sync(() => {
+        identities.push({ seq: asSeq(readU32(entry.key, 1)), identity: unjson(entry.value) });
+      }));
+    const out = [];
+    for (const { seq, identity } of identities) {
+      const payload = yield* engine.get(payloadKey(seq));
+      const manifest = yield* engine.get(manifestKey(seq));
+      if (payload === undefined) continue;
+      out.push({
+        seq,
+        version: readU32(payload),
+        bytes: payload.subarray(4),
+        manifest: manifest === undefined ? emptyManifest() : unjson<IndexManifest>(manifest),
+        identity,
+      });
+    }
+    return out;
+  });
+
   const reindexLenses = exclusive(Effect.gen(function* () {
     const pending = new Map<string, KvWrite>();
     const view = pendingView(pending);
@@ -924,14 +969,22 @@ export const storeOverKv = (
 
     rebuildLenses: exclusive(Effect.gen(function* () {
       const compactedTo = yield* readMeta(META_COMPACTED_TO);
+      const snapshotAt = yield* readMeta(META_SNAPSHOT_AT);
       // Replaying a truncated log would rebuild a partial index and report a
-      // count as though it were whole. `reindexLenses` is the operation that
-      // still works here, because it reads state rather than history.
-      if (compactedTo > 0) return yield* new LogCompacted({ partition, compactedTo });
+      // count as though it were whole — unless a snapshot covers everything
+      // that was cut, in which case the snapshot plus the events after it are
+      // the whole history. Without one, `reindexLenses` is the operation that
+      // still works, because it reads state rather than history.
+      if (compactedTo > 0 && snapshotAt < compactedTo) {
+        return yield* new LogCompacted({ partition, compactedTo });
+      }
       const stored: Array<{ position: number; event: StoredEvent }> = [];
       yield* Stream.runForEach(engine.scan(eventPrefix()), (entry) =>
         Effect.sync(() => {
-          stored.push({ position: positionOf(entry.key), event: unjson<StoredEvent>(entry.value) });
+          const position = positionOf(entry.key);
+          // Everything up to the snapshot is already in it.
+          if (position <= snapshotAt) return;
+          stored.push({ position, event: unjson<StoredEvent>(entry.value) });
         }));
       stored.sort((a, b) => a.position - b.position);
 
@@ -946,7 +999,21 @@ export const storeOverKv = (
       // into an unsealed store: no blob can claim a posting, and no tombstone
       // is needed for one.
       view.put(metaKey(META_SEALED), u32(0));
-    view.put(metaKey(META_SWEPT), u32(0));
+      view.put(metaKey(META_SWEPT), u32(0));
+      // The snapshot first, then the events it does not cover.
+      let restored = 0;
+      if (snapshotAt > 0) {
+        const records: Array<{ seq: number; record: StoredSnapshot }> = [];
+        yield* Stream.runForEach(engine.scan(snapshotPrefix()), (entry) =>
+          Effect.sync(() => {
+            records.push({ seq: readU32(entry.key, 1), record: unjson<StoredSnapshot>(entry.value) });
+          }));
+        for (const { seq, record } of records) {
+          yield* project(view, asSeq(seq), record.version,
+            new Uint8Array(Buffer.from(record.body, "base64")), record.manifest, false, record.identity);
+          restored += 1;
+        }
+      }
       for (const { event } of stored) {
         if (event.kind === "put") {
           yield* project(view, asSeq(event.seq), event.version, bodyOf(event),
@@ -957,8 +1024,44 @@ export const storeOverKv = (
         }
       }
       yield* engine.write([...pending.values()]);
-      return stored.length;
+      return restored + stored.length;
     })),
+
+    /**
+     * Write the live records down as of this position, replacing any earlier
+     * snapshot.
+     *
+     * One batch, so an interrupted snapshot leaves the store exactly as it
+     * was: the old one is dropped and the new one written together, and the
+     * position goes with them. It is what keeps `rebuildLenses` — the
+     * operation that re-derives from history rather than trusting the stored
+     * manifests — available once compaction has cut the log.
+     */
+    snapshot: exclusive(Effect.gen(function* () {
+      const position = yield* readMeta(META_NEXT_POSITION);
+      const writes: KvWrite[] = [];
+      yield* Stream.runForEach(engine.scan(snapshotPrefix()), (entry) =>
+        Effect.sync(() => writes.push({ op: "delete", key: new Uint8Array(entry.key) })));
+      let records = 0;
+      for (const record of yield* liveRecords) {
+        writes.push({
+          op: "put",
+          key: snapshotKey(record.seq),
+          value: json({
+            version: record.version,
+            body: Buffer.from(record.bytes).toString("base64"),
+            manifest: record.manifest,
+            identity: record.identity,
+          } satisfies StoredSnapshot),
+        });
+        records += 1;
+      }
+      writes.push({ op: "put", key: metaKey(META_SNAPSHOT_AT), value: u32(position) });
+      yield* engine.write(writes);
+      return { records, position };
+    })),
+
+    snapshotAt: readMeta(META_SNAPSHOT_AT),
 
     reindexLenses,
 
@@ -1195,29 +1298,7 @@ export const storeOverKv = (
 
     compactedTo: readMeta(META_COMPACTED_TO),
 
-    liveRecords: Effect.gen(function* () {
-      // Driven by the identity index, because a record without a caller-facing
-      // name is derived state rather than something a backup should carry.
-      const identities: Array<{ seq: Seq; identity: ObjectIdentity }> = [];
-      yield* Stream.runForEach(engine.scan(Uint8Array.from([Tag.IdentityBySeq])), (entry) =>
-        Effect.sync(() => {
-          identities.push({ seq: asSeq(readU32(entry.key, 1)), identity: unjson(entry.value) });
-        }));
-      const out = [];
-      for (const { seq, identity } of identities) {
-        const payload = yield* engine.get(payloadKey(seq));
-        const manifest = yield* engine.get(manifestKey(seq));
-        if (payload === undefined) continue;
-        out.push({
-          seq,
-          version: readU32(payload),
-          bytes: payload.subarray(4),
-          manifest: manifest === undefined ? emptyManifest() : unjson<IndexManifest>(manifest),
-          identity,
-        });
-      }
-      return out;
-    }),
+    liveRecords,
 
     lookup: (namespace, key) =>
       Effect.map(engine.get(identityKey(namespace, key)), (bytes) =>

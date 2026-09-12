@@ -35,6 +35,7 @@ export const Tag = {
   Tombstone: 0x0c,
   Ordered: 0x0d,
   Dirty: 0x0e,
+  Snapshot: 0x0f,
 } as const;
 
 export type Tag = (typeof Tag)[keyof typeof Tag];
@@ -385,6 +386,19 @@ export const decodeOrderedTuple = (
   }
   return out;
 };
+
+/**
+ * `[Snapshot][seq]` — one live record as of the position the snapshot covers.
+ *
+ * Outside both the state and the derived tags on purpose: a rebuild clears
+ * those and re-derives them, and it would be clearing what it is rebuilding
+ * from. A snapshot is neither state nor a lens; it is a copy of state, kept so
+ * that history cut away by compaction is not the only way back.
+ */
+export const snapshotKey = (seq: number): Uint8Array =>
+  build(Tag.Snapshot, (out) => writeU32(out, seq));
+
+export const snapshotPrefix = (): Uint8Array => Uint8Array.from([Tag.Snapshot]);
 
 /** `[tag][seq]` — the payload and its manifest, addressed by identifier. */
 export const payloadKey = (seq: number): Uint8Array =>
