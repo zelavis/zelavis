@@ -1,0 +1,162 @@
+---
+interface NavItem {
+	id: string;
+	label: string;
+}
+
+interface Props {
+	label?: string;
+	items: NavItem[];
+	showAfterId: string;
+}
+
+const { label = 'On this page', items, showAfterId } = Astro.props;
+---
+
+<nav class="local-nav" aria-label={label} data-local-nav data-show-after={showAfterId}>
+	<span class="local-nav-label">{label}</span>
+	{items.map((item, index) => (
+		<a href={`#${item.id}`} data-local-link={item.id} aria-current={index === 0 ? 'location' : undefined}>
+			<i aria-hidden="true"></i>
+			<span>{item.label}</span>
+		</a>
+	))}
+</nav>
+
+<script>
+	const localNavs = document.querySelectorAll<HTMLElement>('[data-local-nav]');
+
+	localNavs.forEach((nav) => {
+		const links = Array.from(nav.querySelectorAll<HTMLAnchorElement>('[data-local-link]'));
+		const sections = links
+			.map((link) => document.getElementById(link.dataset.localLink ?? ''))
+			.filter((section): section is HTMLElement => section instanceof HTMLElement);
+
+		const boundary = document.getElementById(nav.dataset.showAfter ?? '');
+		const updateVisibility = () => {
+			const hasEnteredContent = boundary
+				? boundary.getBoundingClientRect().top <= 110
+				: window.scrollY > 260;
+			const canShow = window.matchMedia('(min-width: 1351px)').matches;
+			const visible = hasEnteredContent && canShow;
+			nav.classList.toggle('local-nav--visible', visible);
+			if (visible && nav.dataset.firstVisible !== 'true') {
+				nav.dataset.firstVisible = 'true';
+				document.documentElement.classList.add('local-navigation-reached');
+				window.dispatchEvent(new CustomEvent('local-nav-first-visible'));
+			} else if (!visible && nav.dataset.firstVisible === 'true') {
+				nav.dataset.firstVisible = 'false';
+				document.documentElement.classList.remove('local-navigation-reached');
+				window.dispatchEvent(new CustomEvent('local-nav-reset'));
+			}
+		};
+		updateVisibility();
+		window.addEventListener('scroll', updateVisibility, { passive: true });
+		window.addEventListener('resize', updateVisibility);
+
+		const setActive = (id: string) => {
+			links.forEach((link) => {
+				if (link.dataset.localLink === id) link.setAttribute('aria-current', 'location');
+				else link.removeAttribute('aria-current');
+			});
+		};
+
+		if ('IntersectionObserver' in window) {
+			const observer = new IntersectionObserver((entries) => {
+				const visible = entries
+					.filter((entry) => entry.isIntersecting)
+					.sort((a, b) => Math.abs(a.boundingClientRect.top) - Math.abs(b.boundingClientRect.top));
+				if (visible[0]?.target.id) setActive(visible[0].target.id);
+			}, { rootMargin: '-28% 0px -58% 0px', threshold: 0 });
+			sections.forEach((section) => observer.observe(section));
+		}
+	});
+</script>
+
+<style>
+	.local-nav {
+		position: fixed;
+		z-index: 35;
+		top: 50%;
+		right: 22px;
+		display: grid;
+		gap: 3px;
+		width: 154px;
+		padding: 9px;
+		border: 1px solid rgba(255,255,255,.72);
+		border-radius: 22px;
+		background: rgba(245,247,249,.82);
+		-webkit-backdrop-filter: blur(30px) saturate(145%);
+		backdrop-filter: blur(30px) saturate(145%);
+		box-shadow: 0 18px 50px rgba(20,22,40,.13), inset 0 1px 0 rgba(255,255,255,.75);
+		opacity: 0;
+		visibility: hidden;
+		pointer-events: none;
+		transform: translateY(-50%) translateX(18px) scale(.98);
+		transition: opacity 260ms ease, transform 420ms cubic-bezier(.16,1,.3,1), visibility 0s linear 420ms;
+	}
+
+	.local-nav--visible {
+		opacity: 1;
+		visibility: visible;
+		pointer-events: auto;
+		transform: translateY(-50%) translateX(0) scale(1);
+		transition-delay: 0s;
+	}
+
+	.local-nav-label {
+		padding: 7px 10px 5px;
+		color: #8a8b93;
+		font-size: 10px;
+		font-weight: 700;
+		letter-spacing: .09em;
+		text-transform: uppercase;
+	}
+
+	.local-nav a {
+		display: grid;
+		grid-template-columns: 7px 1fr;
+		align-items: center;
+		gap: 8px;
+		min-height: 36px;
+		padding: 7px 10px;
+		border-radius: 13px;
+		color: #666871;
+		font-size: 12px;
+		font-weight: 600;
+		line-height: 1.2;
+		text-decoration: none;
+		transition: color 200ms ease, background 200ms ease, transform 200ms ease;
+	}
+
+	.local-nav a:hover { color: #111217; background: rgba(255,255,255,.65); }
+	.local-nav a:active { transform: scale(.98); }
+	.local-nav a:focus-visible { outline: 2px solid #5e55cf; outline-offset: 2px; }
+	.local-nav i {
+		width: 5px;
+		height: 5px;
+		border-radius: 50%;
+		background: #b7b8be;
+		transition: background 200ms ease, transform 200ms ease;
+	}
+	.local-nav a[aria-current='location'] { color: #111217; background: #fff; box-shadow: 0 3px 12px rgba(20,22,40,.08); }
+	.local-nav a[aria-current='location'] i { background: #5e55cf; transform: scale(1.25); }
+
+	@media (min-width: 1351px) {
+		:global(body:has(.local-nav) main [data-local-content] .wrap),
+		:global(body:has(.local-nav) main [data-local-content] .amp-wrap) {
+			width: min(1180px, calc(100% - 392px)) !important;
+			margin-inline: auto !important;
+		}
+	}
+
+	@media (max-width: 1350px) {
+		.local-nav { display: none; }
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.local-nav,
+		.local-nav a,
+		.local-nav i { transition: none; }
+	}
+</style>

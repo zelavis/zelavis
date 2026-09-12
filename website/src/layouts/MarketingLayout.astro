@@ -1,4 +1,9 @@
 ---
+import '@fontsource/poppins/400.css';
+import '@fontsource/poppins/500.css';
+import '@fontsource/poppins/600.css';
+import '@fontsource/poppins/700.css';
+
 /**
  * Standalone layout for the marketing surfaces (`/` and `/pricing`).
  *
@@ -14,10 +19,79 @@ interface Props {
 const { title, description } = Astro.props;
 const canonical = new URL(Astro.url.pathname, Astro.site ?? 'https://zelavis.com').href;
 const social = 'https://zelavis.com/brand/zelavis-social-card.png';
-const nav = [
-	{ label: 'Docs', href: '/docs' },
-	{ label: 'Pricing', href: '/pricing' },
-	{ label: 'Install', href: '/getting-started/installation' },
+const platformColumns = [
+	{ title: 'Build', links: [
+		{ label: 'Zelavis App', href: '/packages/app' },
+		{ label: 'Authentication', href: '/architecture/access-control' },
+		{ label: 'Content and media', href: '/packages/app' },
+		{ label: 'Workloads', href: '/packages/app' },
+		{ label: 'Project recipes', href: '/architecture/platform-project-recipes' },
+		{ label: 'File storage', href: '/guides/file-storage-flow' },
+	] },
+	{ title: 'Data', links: [
+		{ label: 'Multi-model database', href: '/api/database' },
+		{ label: 'Documents and events', href: '/api/database' },
+		{ label: 'Sharding topology', href: '/architecture/project-model' },
+		{ label: 'Storage engines', href: '/adapters' },
+	] },
+	{ title: 'Operate', links: [
+		{ label: 'Platform Fabric', href: '/architecture/project-model' },
+		{ label: 'Runtime targets', href: '/reference/runtime-targets' },
+		{ label: 'Native website hosting', href: '/architecture/website-core-service' },
+		{ label: 'Dashboard', href: '/packages/ui' },
+		{ label: 'Assistant runtime', href: '/architecture/assistant-runtime' },
+	] },
+	{ title: 'Extend', links: [
+		{ label: 'Services', href: '/guides/service-authoring' },
+		{ label: 'Plugins', href: '/guides/plugin-api' },
+		{ label: 'Frontends', href: '/architecture/service-model' },
+		{ label: 'Marketplace', href: '/packages/marketplace' },
+	] },
+];
+
+const solutionColumns = [
+	{ title: 'Project', links: [
+		{ label: 'Zelavis Apps', href: '/packages/app' },
+		{ label: 'Managed applications', href: '/architecture/project-model' },
+		{ label: 'Static websites', href: '/architecture/website-core-service' },
+	] },
+	{ title: 'Team', links: [
+		{ label: 'Product', href: '/docs' },
+		{ label: 'Engineering', href: '/guides/service-authoring' },
+		{ label: 'Content', href: '/packages/app' },
+	] },
+	{ title: 'Scale', links: [
+		{ label: 'Single server', href: '/reference/runtime-targets' },
+		{ label: 'Distributed fleet', href: '/architecture/project-model' },
+		{ label: 'Self-hosted', href: '/getting-started/installation' },
+	] },
+];
+
+const resourceColumns = [
+	{ title: 'Learn', links: [
+		{ label: 'Documentation', href: '/docs' },
+		{ label: 'Getting started', href: '/getting-started' },
+		{ label: 'Guides', href: '/guides' },
+		{ label: 'Architecture', href: '/architecture' },
+	] },
+	{ title: 'Develop', links: [
+		{ label: 'API reference', href: '/api' },
+		{ label: 'Packages', href: '/packages' },
+		{ label: 'Service authoring', href: '/guides/service-authoring' },
+		{ label: 'Plugin API', href: '/guides/plugin-api' },
+	] },
+	{ title: 'Project', links: [
+		{ label: 'GitHub', href: 'https://github.com/zelavis/zelavis' },
+		{ label: 'Contributing', href: 'https://github.com/zelavis/zelavis/blob/main/CONTRIBUTING.md' },
+		{ label: 'Security', href: 'https://github.com/zelavis/zelavis/blob/main/SECURITY.md' },
+		{ label: 'Versioning', href: '/reference/versioning' },
+	] },
+	{ title: 'Explore', links: [
+		{ label: 'Environment variables', href: '/reference/environment-variables' },
+		{ label: 'Route conventions', href: '/reference/route-conventions' },
+		{ label: 'Dashboard settings', href: '/reference/dashboard-settings' },
+		{ label: 'Marketplace catalog', href: '/reference/service-marketplace-catalog' },
+	] },
 ];
 ---
 
@@ -44,6 +118,7 @@ const nav = [
 		<a class="skip" href="#main">Skip to content</a>
 
 		<header class="nav" data-nav>
+			<div class="nav-shell" data-nav-shell>
 			<div class="nav-inner">
 				<a class="brand" href="/" aria-label="Zelavis home">
 					<svg class="brand-mark" viewBox="0 0 128 128" aria-hidden="true">
@@ -60,12 +135,62 @@ const nav = [
 					<span class="brand-word">Zelavis</span>
 				</a>
 
-				<nav class="nav-links" aria-label="Main">
-					{nav.map((item) => <a href={item.href}>{item.label}</a>)}
-					<a href="https://github.com/zelavis/zelavis" rel="noopener">GitHub</a>
+				<nav class="nav-links" aria-label="Main navigation">
+					<button type="button" data-menu-trigger="platform" aria-expanded="false">Platform</button>
+					<button type="button" data-menu-trigger="solutions" aria-expanded="false">Solutions</button>
+					<button type="button" data-menu-trigger="resources" aria-expanded="false">Resources</button>
+					<a href="/pricing">Pricing</a>
 				</nav>
 
-				<a class="btn btn-sm btn-primary nav-cta" href="/pricing">Get Zelavis Plus</a>
+				<div class="nav-actions">
+					<a class="nav-login" href="/zelavis/login">Login</a>
+					<a class="btn btn-sm btn-primary nav-cta" href="/pricing">Get Zelavis Plus</a>
+				</div>
+				<button class="nav-mobile-toggle" type="button" aria-expanded="false" aria-controls="mobile-navigation" data-mobile-menu-toggle>
+					<span></span><span></span><span class="sr-only">Menu</span>
+				</button>
+			</div>
+
+			<div class="mega-stage" data-mega-stage hidden>
+			<div class="mega-menu" data-menu="platform" aria-hidden="true" inert>
+				<div class="mega-grid mega-grid-four">
+					{platformColumns.map((column) => (
+						<div class="mega-column"><h2>{column.title}</h2>{column.links.map((link) => <a href={link.href}>{link.label}</a>)}</div>
+					))}
+				</div>
+			</div>
+
+			<div class="mega-menu" data-menu="solutions" aria-hidden="true" inert>
+				<div class="mega-solutions">
+					<a class="mega-feature" href="/docs">
+						<span class="mega-feature-art" aria-hidden="true"><i></i><i></i><i></i></span>
+						<strong>One platform for the whole product</strong>
+						<p>Move from first project to production without stitching the authority model together later.</p>
+						<b>Explore Zelavis <span>→</span></b>
+					</a>
+					<div class="mega-grid mega-grid-three">
+						{solutionColumns.map((column) => (
+							<div class="mega-column"><h2>{column.title}</h2>{column.links.map((link) => <a href={link.href}>{link.label}</a>)}</div>
+						))}
+					</div>
+				</div>
+			</div>
+
+			<div class="mega-menu" data-menu="resources" aria-hidden="true" inert>
+				<div class="mega-grid mega-grid-four">
+					{resourceColumns.map((column) => (
+						<div class="mega-column"><h2>{column.title}</h2>{column.links.map((link) => <a href={link.href}>{link.label}</a>)}</div>
+					))}
+				</div>
+			</div>
+			</div>
+
+			<div class="mobile-menu" id="mobile-navigation" data-mobile-menu hidden>
+				<details><summary>Platform</summary><div>{platformColumns.flatMap((column) => column.links).map((link) => <a href={link.href}>{link.label}</a>)}</div></details>
+				<details><summary>Solutions</summary><div>{solutionColumns.flatMap((column) => column.links).map((link) => <a href={link.href}>{link.label}</a>)}</div></details>
+				<details><summary>Resources</summary><div>{resourceColumns.flatMap((column) => column.links).map((link) => <a href={link.href}>{link.label}</a>)}</div></details>
+				<a href="/pricing">Pricing</a>
+			</div>
 			</div>
 		</header>
 
@@ -182,15 +307,163 @@ const nav = [
 					});
 				}
 
-				// Condense the header once the hero is behind you.
+				// Keep the header out of the reading path while preserving quick access on upward intent.
 				var header = document.querySelector('[data-nav]');
 				if (header) {
+					var lastScrollY = Math.max(window.scrollY, 0);
+					var upwardDistance = 0;
+					var hasSectionNavigator = function () {
+						return !!document.querySelector('[data-local-nav]') && window.matchMedia('(min-width: 1351px)').matches;
+					};
+					var menuIsActive = function () {
+						var shell = document.querySelector('[data-nav-shell]');
+						var keyboardFocusActive = shell && shell.querySelector(':focus-visible');
+						return shell && (
+							shell.classList.contains('is-open') ||
+							shell.classList.contains('is-mobile-open') ||
+							keyboardFocusActive
+						);
+					};
 					var onScroll = function () {
-						header.classList.toggle('is-stuck', window.scrollY > 12);
+						var currentScrollY = Math.max(window.scrollY, 0);
+						var delta = currentScrollY - lastScrollY;
+						header.classList.toggle('is-stuck', currentScrollY > 12);
+
+						if (currentScrollY <= 80) {
+							header.classList.remove('is-hidden');
+							header.classList.remove('is-revealed');
+							upwardDistance = 0;
+						} else if (delta < -1) {
+							upwardDistance += Math.abs(delta);
+							if (upwardDistance >= 10) {
+								header.classList.remove('is-hidden');
+								header.classList.add('is-revealed');
+								upwardDistance = 0;
+							}
+						} else if (delta > 1) {
+							upwardDistance = 0;
+							var sectionNavigatorReached = document.documentElement.classList.contains('local-navigation-reached');
+							if (hasSectionNavigator() && !sectionNavigatorReached) {
+								header.classList.remove('is-hidden');
+								header.classList.add('is-revealed');
+							} else if (!menuIsActive()) {
+								header.classList.add('is-hidden');
+							}
+						}
+						lastScrollY = currentScrollY;
 					};
 					onScroll();
 					window.addEventListener('scroll', onScroll, { passive: true });
+					window.addEventListener('local-nav-first-visible', function () {
+						if (window.scrollY <= 80 || menuIsActive()) return;
+						header.classList.add('is-revealed');
+						header.classList.add('is-hidden');
+					});
 				}
+
+				// Desktop mega menus and the compact mobile navigation share one state owner.
+				var navShell = document.querySelector('[data-nav-shell]');
+				var menuTriggers = Array.from(document.querySelectorAll('[data-menu-trigger]'));
+				var megaMenus = Array.from(document.querySelectorAll('[data-menu]'));
+				var megaStage = document.querySelector('[data-mega-stage]');
+				var mobileToggle = document.querySelector('[data-mobile-menu-toggle]');
+				var mobileMenu = document.querySelector('[data-mobile-menu]');
+				var closeTimer;
+				var closeAnimationTimer;
+
+				function setActiveMenu(name) {
+					var activeMenu;
+					megaMenus.forEach(function (menu) {
+						var isActive = menu.dataset.menu === name;
+						menu.classList.toggle('is-active', isActive);
+						menu.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+						menu.inert = !isActive;
+						if (isActive) activeMenu = menu;
+					});
+					if (megaStage && activeMenu) {
+						megaStage.style.height = activeMenu.scrollHeight + 'px';
+					}
+				}
+
+				function closeMenus() {
+					clearTimeout(closeTimer);
+					clearTimeout(closeAnimationTimer);
+					menuTriggers.forEach(function (trigger) { trigger.setAttribute('aria-expanded', 'false'); });
+					if (navShell) navShell.classList.add('is-closing');
+					if (megaStage) {
+						megaStage.classList.remove('is-visible');
+						megaStage.style.height = '0px';
+					}
+					closeAnimationTimer = setTimeout(function () {
+						megaMenus.forEach(function (menu) {
+							menu.classList.remove('is-active');
+							menu.setAttribute('aria-hidden', 'true');
+							menu.inert = true;
+						});
+						if (megaStage) {
+							megaStage.hidden = true;
+							megaStage.style.height = '';
+						}
+						if (navShell) navShell.classList.remove('is-open', 'is-closing');
+					}, 240);
+				}
+
+				function openMenu(name) {
+					clearTimeout(closeTimer);
+					clearTimeout(closeAnimationTimer);
+					if (!window.matchMedia('(min-width: 821px)').matches) return;
+					if (header) header.classList.remove('is-hidden');
+					menuTriggers.forEach(function (trigger) {
+						trigger.setAttribute('aria-expanded', trigger.dataset.menuTrigger === name ? 'true' : 'false');
+					});
+					if (megaStage) megaStage.hidden = false;
+					if (navShell) {
+						navShell.classList.remove('is-closing');
+						navShell.classList.add('is-open');
+					}
+					setActiveMenu(name);
+					if (megaStage) {
+						requestAnimationFrame(function () { megaStage.classList.add('is-visible'); });
+					}
+				}
+
+				menuTriggers.forEach(function (trigger) {
+					trigger.addEventListener('mouseenter', function () { openMenu(trigger.dataset.menuTrigger); });
+					trigger.addEventListener('focus', function () { openMenu(trigger.dataset.menuTrigger); });
+					trigger.addEventListener('click', function () {
+						openMenu(trigger.dataset.menuTrigger);
+					});
+				});
+
+				if (navShell) {
+					navShell.addEventListener('mouseleave', function () {
+						closeTimer = setTimeout(closeMenus, 150);
+					});
+					navShell.addEventListener('mouseenter', function () { clearTimeout(closeTimer); });
+				}
+
+				if (mobileToggle && mobileMenu && navShell) {
+					mobileToggle.addEventListener('click', function () {
+						var open = mobileToggle.getAttribute('aria-expanded') !== 'true';
+						if (open && header) header.classList.remove('is-hidden');
+						mobileToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+						mobileMenu.hidden = !open;
+						navShell.classList.toggle('is-mobile-open', open);
+					});
+				}
+
+				document.addEventListener('pointerdown', function (event) {
+					if (navShell && !navShell.contains(event.target)) closeMenus();
+				});
+				document.addEventListener('keydown', function (event) {
+					if (event.key !== 'Escape') return;
+					closeMenus();
+					if (mobileToggle && mobileMenu && navShell) {
+						mobileToggle.setAttribute('aria-expanded', 'false');
+						mobileMenu.hidden = true;
+						navShell.classList.remove('is-mobile-open');
+					}
+				});
 
 				// Copy-to-clipboard for the install commands.
 				document.querySelectorAll('[data-copy]').forEach(function (button) {
@@ -228,7 +501,7 @@ const nav = [
 				--radius: 14px;
 				--max: 1120px;
 				--ease: cubic-bezier(0.16, 1, 0.3, 1);
-				--font: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+				--font: 'Poppins', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
 					'Helvetica Neue', Arial, sans-serif;
 				--mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
 					'Liberation Mono', monospace;
@@ -372,26 +645,64 @@ const nav = [
 				position: sticky;
 				top: 0;
 				z-index: 50;
-				border-bottom: 1px solid transparent;
-				transition:
-					background 0.3s var(--ease),
-					border-color 0.3s var(--ease),
-					backdrop-filter 0.3s var(--ease);
+				padding-top: 16px;
+				transform: translateY(0);
+				transition: background 0.3s var(--ease), backdrop-filter 0.3s var(--ease), transform 0.32s var(--ease);
+				will-change: transform;
+			}
+
+			.nav.is-hidden {
+				transform: translateY(calc(-100% - 20px));
+				pointer-events: none;
 			}
 
 			.nav.is-stuck {
-				background: hsl(0 0% 4% / 0.82);
-				backdrop-filter: blur(12px);
-				border-bottom-color: var(--line-soft);
+				background: transparent;
+				backdrop-filter: none;
+			}
+
+			@media (prefers-reduced-motion: reduce) {
+				.nav { transition: none; }
+			}
+
+			.nav-shell {
+				position: relative;
+				width: min(1220px, calc(100% - 60px));
+				margin: 0 auto;
+				border-radius: 30px;
+				transition: background 0.22s var(--ease), color 0.22s var(--ease), box-shadow 0.22s var(--ease), border-radius 0.24s var(--ease);
+			}
+
+			.nav.is-stuck.is-revealed .nav-shell {
+				background: rgba(245, 247, 249, 0.9);
+				color: #090a0d;
+				-webkit-backdrop-filter: blur(30px);
+				backdrop-filter: blur(30px);
+			}
+
+			.nav-shell.is-open {
+				background: #fff;
+				color: #14151a;
+				border-radius: 30px 30px 0 0;
+				box-shadow: 0 26px 70px hsl(240 55% 12% / 0.2);
+			}
+
+			.nav-shell.is-open.is-closing {
+				border-radius: 30px;
+			}
+
+			.nav.is-stuck .nav-shell.is-open {
+				background: #fff;
+				-webkit-backdrop-filter: none;
+				backdrop-filter: none;
 			}
 
 			.nav-inner {
-				max-width: var(--max);
-				margin: 0 auto;
-				padding: 14px 24px;
+				height: 64px;
+				padding: 0 16px;
 				display: flex;
 				align-items: center;
-				gap: 1.5rem;
+				gap: 1.4rem;
 			}
 
 			.brand {
@@ -413,29 +724,272 @@ const nav = [
 
 			.nav-links {
 				display: flex;
-				gap: 1.4rem;
-				margin-left: auto;
-				font-size: 0.92rem;
+				align-items: center;
+				gap: 0;
+				font-size: 1rem;
 			}
 
-			.nav-links a {
+			.nav-links a,
+			.nav-links button {
+				padding: 0.4375rem 1rem;
+				border: 0;
+				border-radius: 999px;
+				background: transparent;
+				color: var(--text-2);
+				font: inherit;
+				font-weight: 600;
+				text-decoration: none;
+				cursor: pointer;
+				transition: color 0.2s var(--ease), background 0.2s var(--ease);
+			}
+
+			.nav-links a:hover,
+			.nav-links button:hover,
+			.nav-links button[aria-expanded="true"] {
+				color: var(--text);
+				background: hsl(0 0% 100% / 0.1);
+			}
+
+			.nav-actions {
+				margin-left: auto;
+				display: flex;
+				align-items: center;
+				gap: 1.25rem;
+			}
+
+			.nav-login {
 				color: var(--text-2);
 				text-decoration: none;
-				transition: color 0.2s var(--ease);
+				font-size: 0.92rem;
+				font-weight: 600;
 			}
 
-			.nav-links a:hover {
+			.nav-login:hover {
 				color: var(--text);
 			}
 
+			.nav-cta {
+				background: #fff;
+				color: #111217;
+				box-shadow: none;
+			}
+
+			.nav-cta:hover {
+				background: #f3f3f3;
+			}
+
+			.nav.is-stuck.is-revealed .brand-word,
+			.nav.is-stuck.is-revealed .nav-links a,
+			.nav.is-stuck.is-revealed .nav-links button,
+			.nav.is-stuck.is-revealed .nav-login {
+				color: #090a0d;
+			}
+
+			.nav.is-stuck.is-revealed .nav-links a:hover,
+			.nav.is-stuck.is-revealed .nav-links button:hover,
+			.nav.is-stuck.is-revealed .nav-links button[aria-expanded="true"] {
+				background: #f3f3f3;
+				color: #090a0d;
+			}
+
+			.nav.is-stuck.is-revealed .nav-cta {
+				background: #090a0d;
+				color: #fff;
+			}
+
+			.nav.is-stuck.is-revealed .nav-cta:hover {
+				background: #27282d;
+			}
+
+			.nav-shell.is-open .brand-word,
+			.nav-shell.is-open .nav-links a,
+			.nav-shell.is-open .nav-links button,
+			.nav-shell.is-open .nav-login {
+				color: #17181d;
+			}
+
+			.nav-shell.is-open .nav-links a:hover,
+			.nav-shell.is-open .nav-links button:hover,
+			.nav-shell.is-open .nav-links button[aria-expanded="true"] {
+				background: #f1f1f3;
+			}
+
+			.nav-shell.is-open .nav-cta {
+				background: #111217;
+				color: #fff;
+			}
+
+			.mega-stage {
+				position: absolute;
+				top: 62px;
+				left: 0;
+				right: 0;
+				overflow: hidden;
+				border-radius: 0 0 30px 30px;
+				background: #fff;
+				color: #17181d;
+				transform-origin: top;
+				opacity: 0;
+				transform: translateY(-7px) scaleY(0.985);
+				transition:
+					height 0.38s cubic-bezier(0.22, 1, 0.36, 1),
+					opacity 0.18s ease,
+					transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+			}
+
+			.mega-stage.is-visible {
+				opacity: 1;
+				transform: none;
+			}
+
+			.mega-menu {
+				position: absolute;
+				top: 0;
+				left: 0;
+				right: 0;
+				padding: 18px 32px 32px;
+				opacity: 0;
+				transform: translateY(10px);
+				pointer-events: none;
+				transition:
+					opacity 0.2s ease,
+					transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+			}
+
+			.mega-menu.is-active {
+				opacity: 1;
+				transform: none;
+				pointer-events: auto;
+			}
+
+			.mega-grid {
+				display: grid;
+				gap: 0;
+			}
+
+			.mega-grid-four { grid-template-columns: repeat(4, 1fr); }
+			.mega-grid-three { grid-template-columns: repeat(3, 1fr); }
+
+			.mega-column {
+				display: flex;
+				flex-direction: column;
+				gap: 0;
+			}
+
+			.mega-column h2 {
+				margin: 0 0 12px;
+				padding: 0 12px;
+				color: #868d95;
+				font-size: 1rem;
+				font-weight: 600;
+				line-height: 1.35;
+			}
+
+			.mega-column a {
+				width: 100%;
+				padding: 8px 12px;
+				border-radius: 6px;
+				color: #1c1d22;
+				font-size: 1.125rem;
+				font-weight: 400;
+				line-height: 1.55;
+				text-decoration: none;
+				transition: background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+			}
+
+			.mega-column a:hover,
+			.mega-column a:focus-visible {
+				background: #f2f4f8;
+				color: #090a0d;
+			}
+
+			.mega-solutions {
+				display: grid;
+				grid-template-columns: 300px 1fr;
+				gap: 34px;
+			}
+
+			.mega-feature {
+				min-height: 330px;
+				padding: 24px;
+				display: flex;
+				flex-direction: column;
+				border-radius: 14px;
+				overflow: hidden;
+				background: radial-gradient(circle at 80% 10%, #5048f0, transparent 38%), linear-gradient(145deg, #102359, #090b15 72%);
+				color: #fff;
+				text-decoration: none;
+			}
+
+			.mega-feature-art { position: relative; height: 126px; }
+			.mega-feature-art i { position: absolute; left: 12%; width: 76%; height: 28px; border-radius: 999px; background: linear-gradient(90deg, #416eff, #8b5cff); transform: rotate(var(--r)); box-shadow: 0 10px 24px #2224a8; }
+			.mega-feature-art i:nth-child(1) { top: 16px; --r: 27deg; }
+			.mega-feature-art i:nth-child(2) { top: 48px; --r: -25deg; }
+			.mega-feature-art i:nth-child(3) { top: 78px; --r: 20deg; }
+			.mega-feature strong { font-size: 1.35rem; line-height: 1.15; }
+			.mega-feature p { margin: 0.6rem 0 1rem; color: #cacbd7; font-size: 0.9rem; line-height: 1.45; }
+			.mega-feature b { margin-top: auto; font-size: 0.9rem; }
+
+			.nav-mobile-toggle,
+			.mobile-menu { display: none; }
+
+			.sr-only {
+				position: absolute;
+				width: 1px;
+				height: 1px;
+				padding: 0;
+				margin: -1px;
+				overflow: hidden;
+				clip: rect(0, 0, 0, 0);
+				white-space: nowrap;
+				border: 0;
+			}
+
 			@media (max-width: 820px) {
+				.nav { padding-top: 10px; }
+				.nav-shell { width: calc(100% - 20px); }
 				.nav-links {
 					display: none;
 				}
 
-				.nav-cta {
-					margin-left: auto;
+				.nav-mobile-toggle {
+					width: 42px;
+					height: 42px;
+					padding: 0;
+					display: grid;
+					place-content: center;
+					gap: 5px;
+					border: 1px solid hsl(0 0% 100% / 0.28);
+					border-radius: 50%;
+					background: transparent;
+					color: inherit;
 				}
+
+				.nav-mobile-toggle > span:not(.sr-only) { width: 16px; height: 1px; background: currentColor; transition: transform 0.2s ease; }
+				.nav-shell.is-mobile-open { background: #fff; color: #17181d; box-shadow: 0 24px 60px hsl(240 55% 12% / 0.22); }
+				.nav-shell.is-mobile-open .brand-word,
+				.nav-shell.is-mobile-open .nav-login,
+				.nav-shell.is-mobile-open .nav-mobile-toggle { color: #17181d; }
+				.nav-shell.is-mobile-open .nav-mobile-toggle > span:first-child { transform: translateY(3px) rotate(45deg); }
+				.nav-shell.is-mobile-open .nav-mobile-toggle > span:nth-child(2) { transform: translateY(-3px) rotate(-45deg); }
+				.mobile-menu { padding: 0 18px 24px; border-radius: 0 0 24px 24px; background: #fff; color: #17181d; }
+				.mobile-menu:not([hidden]) { display: block; }
+				.mobile-menu details { border-top: 1px solid #e7e7ea; }
+				.mobile-menu summary,
+				.mobile-menu > a { padding: 17px 0; display: block; color: inherit; font-weight: 700; text-decoration: none; cursor: pointer; }
+				.mobile-menu details div { padding: 0 0 15px 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; }
+				.mobile-menu details a { color: #696b75; font-size: 0.84rem; text-decoration: none; }
+				.mega-stage { display: none; }
+
+				.nav-cta {
+					margin-left: 0;
+				}
+			}
+
+			@media (max-width: 600px) {
+				.nav-inner { gap: 0.7rem; }
+				.brand-word { display: none; }
+				.nav-actions { gap: 0.7rem; }
 			}
 
 			/* ---------- shared section furniture ---------- */

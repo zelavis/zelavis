@@ -1,0 +1,216 @@
+---
+interface SegmentOption {
+	value: string;
+	label: string;
+	badge?: string;
+}
+
+interface Props {
+	id: string;
+	label: string;
+	options: SegmentOption[];
+	value?: string;
+	variant?: 'light' | 'glass';
+	width?: string;
+	role?: 'tablist' | 'radiogroup';
+}
+
+const {
+	id,
+	label,
+	options,
+	value = options[0]?.value,
+	variant = 'light',
+	width = '540px',
+	role = 'tablist',
+} = Astro.props;
+---
+
+<zelavis-segmented
+	id={id}
+	class:list={['segmented', `segmented--${variant}`]}
+	style={`--segment-count:${options.length};--segmented-width:${width}`}
+	role={role}
+	aria-label={label}
+	data-value={value}
+>
+	<span class="segmented-indicator" aria-hidden="true"></span>
+	{options.map((option) => {
+		const active = option.value === value;
+		return (
+			<button
+				type="button"
+				role={role === 'tablist' ? 'tab' : 'radio'}
+				aria-selected={role === 'tablist' ? String(active) : undefined}
+				aria-checked={role === 'radiogroup' ? String(active) : undefined}
+				tabindex={active ? '0' : '-1'}
+				data-segment-value={option.value}
+			>
+				<span>{option.label}</span>
+				{option.badge && <small>{option.badge}</small>}
+			</button>
+		);
+	})}
+</zelavis-segmented>
+
+<script>
+	class ZelavisSegmentedControl extends HTMLElement {
+		buttons: HTMLButtonElement[] = [];
+		indicator: HTMLElement | null = null;
+		resizeObserver: ResizeObserver | null = null;
+
+		connectedCallback() {
+			if (this.dataset.initialized === 'true') return;
+			this.dataset.initialized = 'true';
+			this.buttons = Array.from(this.querySelectorAll<HTMLButtonElement>('[data-segment-value]'));
+			this.indicator = this.querySelector<HTMLElement>('.segmented-indicator');
+
+			this.buttons.forEach((button) => {
+				button.addEventListener('click', () => this.select(button));
+				button.addEventListener('keydown', (event) => this.onKeydown(event, button));
+			});
+
+			const active = this.buttons.find((button) => button.dataset.segmentValue === this.dataset.value) ?? this.buttons[0];
+			if (active) this.updateIndicator(active, true);
+
+			if ('ResizeObserver' in window) {
+				this.resizeObserver = new ResizeObserver(() => {
+					const current = this.activeButton();
+					if (current) this.updateIndicator(current, true);
+				});
+				this.resizeObserver.observe(this);
+			}
+		}
+
+		disconnectedCallback() {
+			this.resizeObserver?.disconnect();
+		}
+
+		activeButton() {
+			return this.buttons.find((button) => button.dataset.segmentValue === this.dataset.value);
+		}
+
+		updateIndicator(button: HTMLButtonElement, immediate = false) {
+			if (!this.indicator) return;
+			if (immediate) this.classList.add('segmented--measuring');
+			this.indicator.style.left = `${button.offsetLeft}px`;
+			this.indicator.style.width = `${button.offsetWidth}px`;
+			this.classList.add('segmented--ready');
+			if (immediate) requestAnimationFrame(() => this.classList.remove('segmented--measuring'));
+		}
+
+		select(button: HTMLButtonElement, emit = true) {
+			const nextValue = button.dataset.segmentValue;
+			if (!nextValue) return;
+			this.dataset.value = nextValue;
+			const tablist = this.getAttribute('role') === 'tablist';
+			this.buttons.forEach((item) => {
+				const active = item === button;
+				item.tabIndex = active ? 0 : -1;
+				item.setAttribute(tablist ? 'aria-selected' : 'aria-checked', String(active));
+			});
+			this.updateIndicator(button);
+			if (emit) {
+				this.dispatchEvent(new CustomEvent('segmented-change', {
+					bubbles: true,
+					detail: { value: nextValue, index: this.buttons.indexOf(button) },
+				}));
+			}
+		}
+
+		onKeydown(event: KeyboardEvent, button: HTMLButtonElement) {
+			const current = this.buttons.indexOf(button);
+			let next: number | null = null;
+			if (event.key === 'ArrowRight') next = (current + 1) % this.buttons.length;
+			if (event.key === 'ArrowLeft') next = (current - 1 + this.buttons.length) % this.buttons.length;
+			if (event.key === 'Home') next = 0;
+			if (event.key === 'End') next = this.buttons.length - 1;
+			if (next === null) return;
+			event.preventDefault();
+			this.buttons[next].focus();
+			this.select(this.buttons[next]);
+		}
+	}
+
+	if (!customElements.get('zelavis-segmented')) {
+		customElements.define('zelavis-segmented', ZelavisSegmentedControl);
+	}
+</script>
+
+<style>
+	.segmented {
+		isolation: isolate;
+		position: relative;
+		display: grid;
+		grid-template-columns: repeat(var(--segment-count), minmax(0, 1fr));
+		gap: 2px;
+		width: min(var(--segmented-width), 100%);
+		margin-inline: auto;
+		padding: 5px;
+		border-radius: 999px;
+		font-family: var(--font);
+	}
+
+	.segmented--light { background: #f0f1f4; }
+	.segmented--glass {
+		border: 1px solid rgba(255,255,255,.35);
+		background: rgba(255,255,255,.13);
+		-webkit-backdrop-filter: blur(18px);
+		backdrop-filter: blur(18px);
+		box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 8px 26px rgba(9,11,31,.12);
+	}
+
+	.segmented-indicator {
+		display: block;
+		position: absolute;
+		z-index: 1;
+		top: 5px;
+		bottom: 5px;
+		left: 5px;
+		width: 0;
+		border-radius: 999px;
+		background: #fff;
+		opacity: 0;
+		box-shadow: 0 3px 12px rgba(20,22,40,.12);
+		transition: left 400ms cubic-bezier(.16,1,.3,1), width 400ms cubic-bezier(.16,1,.3,1), opacity 120ms ease;
+		will-change: left, width;
+		pointer-events: none;
+	}
+
+	.segmented--ready .segmented-indicator { opacity: 1; }
+	.segmented--measuring .segmented-indicator { transition: none; }
+
+	.segmented button {
+		position: relative;
+		z-index: 2;
+		min-width: 0;
+		padding: 10px 7px;
+		border: 0;
+		border-radius: 999px;
+		background: transparent;
+		color: #696b75;
+		font: inherit;
+		font-size: 13px;
+		font-weight: 650;
+		white-space: nowrap;
+		cursor: pointer;
+		transition: color 260ms ease, transform 180ms ease;
+	}
+
+	.segmented--glass button { color: rgba(255,255,255,.76); font-size: 14px; }
+	.segmented button[aria-selected='true'],
+	.segmented button[aria-checked='true'] { color: #17181c; }
+	.segmented:not(.segmented--ready) button[aria-selected='true'],
+	.segmented:not(.segmented--ready) button[aria-checked='true'] { background: #fff; }
+	.segmented button:hover { color: #2f3037; }
+	.segmented--glass button:hover { color: #fff; }
+	.segmented--glass button[aria-checked='true']:hover { color: #17181c; }
+	.segmented button:active { transform: scale(.97); }
+	.segmented button:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+	.segmented small { margin-left: 3px; font-size: 11px; opacity: .78; }
+
+	@media (prefers-reduced-motion: reduce) {
+		.segmented-indicator,
+		.segmented button { transition: none; }
+	}
+</style>

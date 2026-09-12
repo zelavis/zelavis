@@ -1,914 +1,337 @@
 ---
 import MarketingLayout from '../layouts/MarketingLayout.astro';
+import SegmentedControl from '../components/SegmentedControl.astro';
+import StickyLocalNav from '../components/StickyLocalNav.astro';
+import BrandMarquee from '../components/BrandMarquee.astro';
 
-/**
- * PLACEHOLDER BENCHMARK DATA — NOT MEASURED.
- *
- * These numbers exist so the scroll-animated chart has something to render.
- * They are invented and must be replaced with results from a real, repeatable
- * benchmark harness before this page is published as a performance claim.
- * The section renders a visible "placeholder" note for the same reason; drop
- * `placeholder: true` once the values below come from an actual run.
- */
-const benchmarks = {
-	placeholder: true,
-	caption: 'Zelavis App, single node, one logical database across four storage drivers.',
-	unit: 'reads/sec',
-	bars: [
-		{ label: 'SQLite', value: 128_400, pct: 74 },
-		{ label: 'libSQL', value: 141_900, pct: 82 },
-		{ label: 'RocksDB', value: 166_200, pct: 96 },
-		{ label: 'LMDB', value: 172_500, pct: 100 },
-	],
-	stats: [
-		{ value: 38, decimals: 0, suffix: ' ms', label: 'Cold start', note: 'Node adapter, warm disk' },
-		{ value: 1.9, decimals: 1, suffix: ' ms', label: 'p99 read latency', note: 'Document lens' },
-		{ value: 74, decimals: 0, suffix: ' MB', label: 'Resident memory', note: 'Idle runtime' },
-		{ value: 4, decimals: 0, suffix: ' shards', label: 'Sharded from creation', note: 'Every official App' },
-	],
-};
-
-const replaces = [
-	{ name: 'Firebase / Supabase', covers: 'Auth, database, real-time' },
-	{ name: 'WordPress', covers: 'Content types, entries, media' },
-	{ name: 'cPanel / Plesk', covers: 'Server, hosting, domains' },
-	{ name: 'phpMyAdmin', covers: 'Database administration UI' },
-	{ name: 'Workers / Functions', covers: 'Jobs, schedules, webhooks' },
+const platformTabs = [
+	{ id: 'apps', label: 'Apps', title: 'Projects that start production-ready', body: 'Create isolated projects with their runtime, version, services, and data boundary already defined.' },
+	{ id: 'data', label: 'Data', title: 'One object, many useful lenses', body: 'Write once through the documents API and query document, column, measure, and graph projections.' },
+	{ id: 'workloads', label: 'Workloads', title: 'Code that lives beside the product', body: 'Run project-scoped functions, jobs, schedules, and webhooks in the long-running Zelavis runtime.' },
+	{ id: 'hosting', label: 'Hosting', title: 'Your server is a first-class target', body: 'Host websites on infrastructure you control, with domains, logs, backups, and lifecycle operations in one place.' },
+	{ id: 'content', label: 'Content', title: 'Structured content without another system', body: 'Model content types, entries, schemas, and media on top of the same tenant-aware data foundation.' },
 ];
 
-const lifecycle = [
-	{
-		phase: 'Plan',
-		roadmap: true,
-		title: 'Issues, roadmaps, and cycles',
-		body: 'Track the work next to the thing it ships to. Tickets and roadmaps live inside the same project as the database they change.',
-		points: ['Issues and cycles', 'Roadmap views', 'Scoped to a project'],
-	},
-	{
-		phase: 'Build',
-		roadmap: false,
-		title: 'A backend that is already there',
-		body: 'Auth, a multi-model database, storage, content types, and project-scoped workloads ship with the platform. No stitching four vendors together.',
-		points: ['Auth and database', 'Content and media', 'Functions, jobs, schedules'],
-	},
-	{
-		phase: 'Manage',
-		roadmap: false,
-		title: 'Servers, domains, backups, logs',
-		body: 'The dashboard owns machine-level concerns as a first-class area, not an afterthought bolted on beside the app.',
-		points: ['Domains and TLS', 'Backups and logs', 'Marketplace and plugins'],
-	},
-	{
-		phase: 'Together',
-		roadmap: true,
-		title: 'Real-time collaboration',
-		body: 'Presence, shared editing, and comments across dashboard and project surfaces, so the platform is something a team uses at once.',
-		points: ['Presence', 'Shared editing', 'Comments'],
-	},
+const capabilities = [
+	{ number: '01', label: 'Database', title: 'Sharded from the first project', body: 'Every official Zelavis App routes stable virtual ranges across physical shards—even when they all live on one node.', accent: 'blue' },
+	{ number: '02', label: 'Platform Fabric', title: 'Placement is authority, not a URL', body: 'The control plane owns nodes, allocation, routing, generations, and lifecycle while project runtimes stay isolated.', accent: 'violet' },
+	{ number: '03', label: 'Open surfaces', title: 'Use the dashboard—or do not', body: 'Stable endpoints and SDK boundaries keep every capability available to CLIs, agents, scripts, plugins, and your own tools.', accent: 'coral' },
 ];
 
-const serviceSample = `import { zelavis } from "zelavis";
-import { app } from "zelavis/app";
-
-export default zelavis({
-  services: [
-    app({
-      auth: { providers: ["password", "oauth"] },
-      db: { driver: "libsql", shards: 4 },
-    }),
-  ],
-});`;
+const faqs = [
+	{ question: 'What does Zelavis replace?', answer: 'Zelavis combines the platform responsibilities teams often split across a backend service, CMS, hosting panel, database administration tool, and workloads platform. You can adopt the complete product or embed its focused packages.' },
+	{ question: 'Can I run it on my own infrastructure?', answer: 'Yes. Self-hosting is a foundation of the product, not an export path. Native website hosting targets user-controlled infrastructure, while managed providers remain optional adapters.' },
+	{ question: 'Is Zelavis tied to SQLite?', answer: 'No. The database store runs over an ordered key-value boundary. SQLite is the default, while libSQL, RocksDB, and LMDB engines are available behind the same logical database APIs.' },
+	{ question: 'Does one server still use the sharded architecture?', answer: 'Yes. Official Zelavis Apps use the topology router from creation. On a small installation the shard placements simply share one node, so scaling out changes placement instead of changing the application model.' },
+	{ question: 'Which parts are available today?', answer: 'Core runtime, project isolation, the multi-model database, auth foundations, workloads, dashboard, and local hosting capabilities are implemented. Collaboration and some fleet-scale operations remain explicit roadmap work.' },
+];
 ---
 
 <MarketingLayout
 	title="Zelavis — The App Platform"
-	description="Plan, build, and manage apps together, from first ticket to production. Auth, database, content, workloads, and hosting in one platform."
+	description="Plan, build, and manage apps together. Auth, database, content, workloads, and hosting in one self-hostable platform."
 >
-	<!-- ============================ hero ============================ -->
-	<section class="hero">
-		<div class="hero-glow" aria-hidden="true"></div>
-		<div class="hero-grid" aria-hidden="true"></div>
-
-		<div class="wrap hero-inner">
-			<a class="pill" href="/pricing" data-reveal>
-				<span class="pill-dot"></span>
-				Zelavis Plus is available
-				<span class="pill-arrow">→</span>
-			</a>
-
-			<h1 data-reveal style="--delay: 70">
-				The App Platform.{' '}
-				<span class="grad">Plan, build, and manage</span>{' '}
-				apps together.
-			</h1>
-
-			<p class="hero-lede" data-reveal style="--delay: 140">
-				From the first ticket to production. Auth, a multi-model database, content,
-				workloads, and native website hosting — one platform instead of five, running
-				managed on zelavis.com or on hardware you choose.
-			</p>
-
-			<div class="hero-cta" data-reveal style="--delay: 210">
-				<a class="btn btn-primary" href="/getting-started/installation">Start building</a>
-				<a class="btn btn-ghost" href="/docs">Read the docs</a>
-			</div>
-
-			<div class="hero-install" data-reveal style="--delay: 280">
-				<div class="terminal">
-					<span class="prompt">$</span>
-					<code>npm install --global zelavis &amp;&amp; zelavis serve</code>
-					<button
-						class="copy"
-						type="button"
-						aria-label="Copy to clipboard"
-						data-copy="npm install --global zelavis && zelavis serve"
-					>
-						Copy
-					</button>
+	<StickyLocalNav showAfterId="platform" items={[
+		{ id: 'platform', label: 'Platform' },
+		{ id: 'data', label: 'Data' },
+		{ id: 'architecture', label: 'Architecture' },
+		{ id: 'hosting', label: 'Hosting' },
+		{ id: 'questions', label: 'Questions' },
+	]} />
+	<section class="amp-hero">
+		<div class="amp-orb amp-orb-one" aria-hidden="true"></div>
+		<div class="amp-orb amp-orb-two" aria-hidden="true"></div>
+		<div class="amp-hero-inner">
+			<div class="amp-hero-copy">
+				<p class="amp-kicker" data-reveal>The Agentic App Platform</p>
+				<h1 data-reveal style="--delay: 70">Plan. Build. Manage.<br />Own every layer.</h1>
+				<p class="amp-hero-lede" data-reveal style="--delay: 140">
+					Auth, data, content, workloads, and native hosting—one self-hostable platform
+					for the whole product.
+				</p>
+				<div class="amp-actions" data-reveal style="--delay: 210">
+					<a class="amp-button amp-button-light" href="/getting-started/installation">Start building</a>
+					<a class="amp-button amp-button-outline" href="/docs">Read the docs</a>
 				</div>
-				<p class="hero-alt">
-					Prefer a script? <code>curl -fsSL https://zelavis.com/install.sh | sudo sh</code>
-				</p>
-			</div>
-		</div>
-	</section>
-
-	<!-- ======================= replaces the stack ======================= -->
-	<section class="section band">
-		<div class="wrap">
-			<div class="split">
-				<div data-reveal>
-					<p class="eyebrow">One platform instead of five</p>
-					<h2 class="section-title">Stop stitching the stack&nbsp;together.</h2>
-					<p class="section-lede">
-						Most teams run a backend vendor, a CMS, a hosting panel, a database GUI, and a
-						functions platform — five bills, five permission models, five places to look when
-						something breaks. Zelavis covers those categories as one system with one
-						authority model.
-					</p>
-				</div>
-
-				<ul class="replaces" data-reveal style="--delay: 120">
-					{
-						replaces.map((item, i) => (
-							<li class="replaces-row" style={`--delay: ${i * 70}`} data-reveal>
-								<span class="replaces-name">{item.name}</span>
-								<span class="replaces-arrow" aria-hidden="true">→</span>
-								<span class="replaces-covers">{item.covers}</span>
-							</li>
-						))
-					}
-				</ul>
-			</div>
-		</div>
-	</section>
-
-	<!-- ========================== lifecycle ========================== -->
-	<section class="section">
-		<div class="wrap">
-			<div class="section-head" data-reveal>
-				<p class="eyebrow">The whole lifecycle</p>
-				<h2 class="section-title">Four phases, one place.</h2>
-				<p class="section-lede">
-					A project is the operational unit: it owns its runtime, its data directory, and its
-					version. Everything below happens inside that same boundary.
-				</p>
 			</div>
 
-			<div class="phases">
-				{
-					lifecycle.map((item, i) => (
-						<article class="card phase" data-reveal style={`--delay: ${i * 90}`}>
-							<header class="phase-head">
-								<span class="phase-name">{item.phase}</span>
-								{item.roadmap && <span class="badge badge-roadmap">Roadmap</span>}
-							</header>
-							<h3>{item.title}</h3>
-							<p>{item.body}</p>
-							<ul>
-								{item.points.map((point) => (
-									<li>{point}</li>
-								))}
-							</ul>
-						</article>
-					))
-				}
-			</div>
-
-			<p class="phases-note" data-reveal>
-				Phases marked <span class="badge badge-roadmap">Roadmap</span> are committed direction,
-				not shipped behavior.
-			</p>
-		</div>
-	</section>
-
-	<!-- ========================== benchmarks ========================== -->
-	<section class="section band">
-		<div class="wrap">
-			<div class="section-head" data-reveal>
-				<p class="eyebrow">Performance</p>
-				<h2 class="section-title">One store logic. Four&nbsp;engines.</h2>
-				<p class="section-lede">
-					<code>zelavis/db</code> is a multi-model object store on a swappable storage engine —
-					the same event-sourced logic over an ordered key-value interface, whichever driver
-					you point it at.
-				</p>
-			</div>
-
-			<div class="bench card" data-metrics data-reveal>
-				<div class="bench-head">
-					<div>
-						<h3>Read throughput by driver</h3>
-						<p>{benchmarks.caption}</p>
+			<div class="amp-product-stage" aria-label="Zelavis project overview" data-reveal style="--delay: 180">
+				<div class="stage-glow"></div>
+				<div class="stage-window">
+					<div class="stage-topbar">
+						<span class="stage-logo">Z</span>
+						<span>northstar / production</span>
+						<span class="stage-status"><i></i> healthy</span>
 					</div>
-					<span class="bench-unit">{benchmarks.unit}</span>
-				</div>
-
-				<div class="bars">
-					{
-						benchmarks.bars.map((bar, i) => (
-							<div class="bar-row" style={`--pct: ${bar.pct}%; --delay: ${i * 120}ms`}>
-								<span class="bar-label">{bar.label}</span>
-								<div class="bar-track">
-									<div class="bar-fill" />
-								</div>
-								<span
-									class="bar-value"
-									data-count={String(bar.value)}
-									data-decimals="0"
-								>
-									0
-								</span>
-							</div>
-						))
-					}
-				</div>
-
-				{
-					benchmarks.placeholder && (
-						<p class="bench-disclaimer">
-							<strong>Placeholder data.</strong> These figures are illustrative and have not
-							been measured. Replace them with results from a repeatable benchmark harness
-							before treating this section as a performance claim.
-						</p>
-					)
-				}
-			</div>
-
-			<div class="stats" data-metrics>
-				{
-					benchmarks.stats.map((stat, i) => (
-						<div class="stat" data-reveal style={`--delay: ${i * 90}`}>
-							<span
-								class="stat-value"
-								data-count={String(stat.value)}
-								data-decimals={String(stat.decimals)}
-								data-suffix={stat.suffix}
-							>
-								0
-							</span>
-							<span class="stat-label">{stat.label}</span>
-							<span class="stat-note">{stat.note}</span>
+					<div class="stage-body">
+						<aside>
+							<b>Overview</b><span>Database</span><span>Auth</span><span>Content</span><span>Workloads</span>
+						</aside>
+						<div class="stage-canvas">
+							<p>Project activity</p>
+							<div class="stage-chart" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+							<div class="stage-metrics"><span><b>4</b> shards</span><span><b>12</b> services</span><span><b>99.99%</b> healthy</span></div>
 						</div>
-					))
-				}
-			</div>
-		</div>
-	</section>
-
-	<!-- ============================ code ============================ -->
-	<section class="section">
-		<div class="wrap">
-			<div class="split split-code">
-				<div data-reveal>
-					<p class="eyebrow">Runtime-neutral</p>
-					<h2 class="section-title">A service definition, not a&nbsp;deployment target.</h2>
-					<p class="section-lede">
-						Zelavis is a web-standard <code>fetch(request)</code> runtime. The Node adapter
-						ships today, Bun and other fetch-native hosts call it directly, and nothing in the
-						core assumes a specific provider.
-					</p>
-					<ul class="ticks">
-						<li>Every project locks its exact recipe version</li>
-						<li>Own process, own data directory, per project</li>
-						<li>Auth, database, and workloads mounted by the project that owns them</li>
-					</ul>
-				</div>
-
-				<div class="code-card" data-reveal style="--delay: 120">
-					<div class="code-bar">
-						<span class="dot"></span><span class="dot"></span><span class="dot"></span>
-						<span class="code-file">zelavis.config.ts</span>
 					</div>
-					<pre><code>{serviceSample}</code></pre>
+				</div>
+				<div class="stage-float stage-float-top"><span>Deploy complete</span><b>v1.0.4</b><i>✓</i></div>
+				<div class="stage-float stage-float-bottom"><span>Database</span><b>4 shards · SQLite</b><i>→</i></div>
+			</div>
+		</div>
+		<div class="hero-brand-dock"><BrandMarquee /></div>
+	</section>
+
+	<section class="amp-section amp-platform" id="platform" data-local-content>
+		<div class="amp-wrap">
+			<div class="amp-heading centered platform-heading" data-reveal>
+				<p class="amp-eyebrow">One platform, end to end</p>
+			</div>
+
+			<div class="amp-tabs-wrap" data-reveal>
+				<SegmentedControl
+					id="platform-tabs"
+					label="Platform capabilities"
+					value="apps"
+					width="540px"
+					options={platformTabs.map((tab) => ({ value: tab.id, label: tab.label }))}
+				/>
+			</div>
+
+			<div class="amp-platform-panel" data-reveal>
+				<div class="platform-visual">
+					<div class="visual-shell">
+						<div class="visual-toolbar"><i></i><i></i><i></i><span>zelavis://northstar</span></div>
+						<div class="visual-content">
+							<div class="visual-list"><b>Projects</b><span class="active">Northstar</span><span>Atlas</span><span>Studio</span></div>
+							<div class="visual-board">
+								<div class="visual-board-head"><span>Northstar</span><small>Running</small></div>
+								<div class="visual-cards"><i></i><i></i><i></i></div>
+								<div class="visual-lines"><i></i><i></i><i></i><i></i></div>
+							</div>
+						</div>
+					</div>
+				</div>
+				<div class="platform-copy">
+					<p class="amp-eyebrow" data-panel-label>Apps</p>
+					<h3 data-panel-title>{platformTabs[0].title}</h3>
+					<p data-panel-body>{platformTabs[0].body}</p>
+					<a href="/architecture/project-model">Explore the architecture <span>→</span></a>
 				</div>
 			</div>
 		</div>
 	</section>
 
-	<!-- ========================== deployment ========================== -->
-	<section class="section band">
-		<div class="wrap">
-			<div class="section-head" data-reveal>
-				<p class="eyebrow">Your call</p>
-				<h2 class="section-title">Managed, or your own hardware.</h2>
-				<p class="section-lede">
-					The same platform either way. Start managed and move later, or run it yourself from
-					day one — the runtime, database, dashboard, and hosting are the same build.
-				</p>
+	<section class="amp-section amp-soft" id="data" data-local-content>
+		<div class="amp-wrap">
+			<div class="amp-heading centered" data-reveal>
+				<p class="amp-eyebrow">Data without the seams</p>
+				<h2>One write. Many ways to understand it.</h2>
+				<p>The event log is the source of truth. Document, column, measure, and graph lenses stay close enough to intersect without moving data between engines.</p>
 			</div>
-
-			<div class="deploy">
-				<article class="card deploy-card" data-reveal>
-					<h3>Managed on zelavis.com</h3>
-					<p>
-						We run the control plane, backups, and updates. You open the dashboard and start a
-						project.
-					</p>
-					<a class="btn btn-primary btn-sm" href="/pricing">See Zelavis Plus</a>
-				</article>
-
-				<article class="card deploy-card" data-reveal style="--delay: 110">
-					<h3>Self-hosted</h3>
-					<p>
-						APT, <code>.deb</code>, archives, or npm. Production packages bundle a pinned Node
-						runtime so the host does not have to match.
-					</p>
-					<a class="btn btn-ghost btn-sm" href="/getting-started/installation">Installation guide</a>
-				</article>
+			<div class="lens-stage" data-reveal>
+				<div class="lens-source"><span>01</span><b>Document write</b><code>tenant.documents.put()</code></div>
+				<div class="lens-line" aria-hidden="true"></div>
+				<div class="lens-event"><span>Event log</span><b>append → project</b></div>
+				<div class="lens-grid">
+					<article><i>◫</i><b>Document</b><span>Objects and fields</span></article>
+					<article><i>▥</i><b>Column</b><span>Fast intersections</span></article>
+					<article><i>⌁</i><b>Measure</b><span>Time-series signals</span></article>
+					<article><i>⌘</i><b>Graph</b><span>Connected records</span></article>
+				</div>
 			</div>
 		</div>
 	</section>
 
-	<!-- ============================= cta ============================= -->
-	<section class="cta">
-		<div class="wrap cta-inner" data-reveal>
-			<h2>Build the whole thing in one place.</h2>
-			<p>Install it in a minute, or let us run it for you.</p>
-			<div class="hero-cta">
-				<a class="btn btn-primary" href="/getting-started/installation">Get started free</a>
-				<a class="btn btn-ghost" href="/pricing">Compare plans</a>
+	<section class="amp-section amp-statement" data-local-content>
+		<div class="amp-wrap narrow" data-reveal>
+			<p class="amp-eyebrow">Fewer seams. Clearer ownership.</p>
+			<h2>Your app should not feel like five vendors sitting next to each other.</h2>
+			<p>Zelavis gives every project one boundary for its runtime, data, services, version, and lifecycle—without giving up the option to replace the pieces underneath.</p>
+		</div>
+	</section>
+
+	<section class="amp-proof" data-local-content>
+		<div class="amp-wrap proof-inner" data-reveal>
+			<div class="proof-mark">Z</div>
+			<blockquote>“The platform shell is a client of Zelavis—not the place where Zelavis happens.”</blockquote>
+			<p>Every dashboard action maps to a stable endpoint and capability, so the same system remains open to agents, CLIs, scripts, and your own frontend.</p>
+		</div>
+	</section>
+
+	<section class="amp-section amp-together" id="architecture" data-local-content>
+		<div class="amp-wrap">
+			<div class="amp-heading centered" data-reveal>
+				<p class="amp-eyebrow">Better together</p>
+				<h2>One platform. Clean boundaries.</h2>
+				<p>The control plane and project runtimes work as one product without sharing one failure domain.</p>
+			</div>
+			<div class="together-grid">
+				<div class="together-copy">
+					{capabilities.map((item, index) => (
+						<button class:list={['together-item', index === 0 && 'active']} type="button" data-capability={item.accent}>
+							<span>{item.number}</span><div><b>{item.label}</b><p>{item.title}</p></div><i>+</i>
+						</button>
+					))}
+				</div>
+				<div class="together-visual" data-accent="blue" data-reveal>
+					<div class="topology-head"><span>App data topology</span><b>version 18</b></div>
+					<div class="topology-map">
+						<div class="topology-node root"><span>Project</span><b>northstar</b></div>
+						<div class="topology-links"></div>
+						<div class="topology-shards">
+							<div><span>Shard 01</span><b>0000–3fff</b></div><div><span>Shard 02</span><b>4000–7fff</b></div><div><span>Shard 03</span><b>8000–bfff</b></div><div><span>Shard 04</span><b>c000–ffff</b></div>
+						</div>
+					</div>
+					<p data-capability-description>{capabilities[0].body}</p>
+				</div>
 			</div>
 		</div>
 	</section>
+
+	<section class="amp-section amp-features" id="hosting" data-local-content>
+		<div class="amp-wrap">
+			<article class="feature-row" data-reveal>
+				<div><p class="amp-eyebrow">Run anywhere</p><h2>Start on one machine.<br />Keep the architecture.</h2><p>Small installations and larger fleets use the same topology. Scaling changes placement and replicas—not your application API.</p></div>
+				<div class="feature-visual servers"><i></i><i></i><i></i><span>one logical platform</span></div>
+			</article>
+			<article class="feature-row reverse" data-reveal>
+				<div><p class="amp-eyebrow">Explicit authority</p><h2>A child knows its parent.<br />It never becomes it.</h2><p>Projects receive scoped resources and services while the Platform Fabric retains node, placement, generation, and fleet authority.</p></div>
+				<div class="feature-visual authority"><span>Platform Fabric</span><div><i>Project A</i><i>Project B</i><i>Project C</i></div></div>
+			</article>
+			<article class="feature-row" data-reveal>
+				<div><p class="amp-eyebrow">Extensible by design</p><h2>Plugins contribute.<br />Contracts decide.</h2><p>Ordinary services extend validated, namespaced capabilities. Trusted platform services own the schemas and privileged boundaries.</p></div>
+				<div class="feature-visual plugins"><b>zelavis/core</b><span>auth</span><span>payments</span><span>storage</span><span>frontend</span></div>
+			</article>
+		</div>
+	</section>
+
+	<section class="amp-brand-band" data-local-content>
+		<div class="amp-wrap" data-reveal>
+			<p class="amp-eyebrow">Yours, all the way down</p>
+			<h2>Managed when you want it.<br />Self-hosted when you need it.</h2>
+			<p>Keep the same product model across a laptop, a private server, and a distributed fleet.</p>
+			<a class="amp-button amp-button-dark" href="/getting-started/installation">Install Zelavis</a>
+		</div>
+	</section>
+
+	<section class="amp-dark amp-products" data-local-content>
+		<div class="amp-wrap">
+			<div class="amp-heading centered" data-reveal>
+				<p class="amp-eyebrow">Build with the whole platform</p>
+				<h2>Pair the App stack with these Zelavis foundations.</h2>
+			</div>
+			<div class="product-cards">
+				<a href="/packages/zelavis"><span>01</span><h3>Platform OS</h3><p>Projects, servers, lifecycle, gateway, and the System Store.</p><i>→</i></a>
+				<a href="/api/database"><span>02</span><h3>Multi-model DB</h3><p>Event-sourced objects with document, column, measure, and graph lenses.</p><i>→</i></a>
+				<a href="/architecture/service-model"><span>03</span><h3>Service runtime</h3><p>Typed capabilities, endpoints, contributions, plugins, and frontends.</p><i>→</i></a>
+			</div>
+		</div>
+	</section>
+
+	<section class="amp-dark amp-faq" id="questions" data-local-content>
+		<div class="amp-wrap faq-wrap">
+			<h2 data-reveal>Frequently asked questions</h2>
+			<div class="faq-list" data-reveal>
+				{faqs.map((faq, index) => (
+					<details open={index === 0}>
+						<summary>{faq.question}<span></span></summary>
+						<p>{faq.answer}</p>
+					</details>
+				))}
+			</div>
+		</div>
+	</section>
+
+	<script id="platform-tab-data" type="application/json" set:html={JSON.stringify(platformTabs)}></script>
+	<script id="capability-data" type="application/json" set:html={JSON.stringify(capabilities)}></script>
+	<script is:inline>
+		(function () {
+			var tabControl = document.getElementById('platform-tabs');
+			var data = JSON.parse(document.getElementById('platform-tab-data').textContent || '[]');
+			var label = document.querySelector('[data-panel-label]');
+			var title = document.querySelector('[data-panel-title]');
+			var body = document.querySelector('[data-panel-body]');
+			var panelCopy = document.querySelector('.platform-copy');
+
+			function updatePanel(selected) {
+				function setContent() {
+					label.textContent = selected.label;
+					title.textContent = selected.title;
+					body.textContent = selected.body;
+				}
+				if (!panelCopy || !panelCopy.animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+					setContent();
+					return;
+				}
+				panelCopy.getAnimations().forEach(function (animation) { animation.cancel(); });
+				var out = panelCopy.animate(
+					[{ opacity: 1, transform: 'translateY(0)' }, { opacity: 0, transform: 'translateY(-7px)' }],
+					{ duration: 120, easing: 'ease-in', fill: 'forwards' }
+				);
+				out.onfinish = function () {
+					setContent();
+					panelCopy.animate(
+						[{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'translateY(0)' }],
+						{ duration: 240, easing: 'cubic-bezier(.16,1,.3,1)', fill: 'both' }
+					);
+				};
+			}
+
+			function selectTab(value) {
+				var selected = data.find(function (item) { return item.id === value; });
+				if (!selected) return;
+				updatePanel(selected);
+			}
+
+			if (tabControl) tabControl.addEventListener('segmented-change', function (event) {
+				selectTab(event.detail.value);
+			});
+			var capabilityData = JSON.parse(document.getElementById('capability-data').textContent || '[]');
+			var capabilityButtons = Array.from(document.querySelectorAll('[data-capability]'));
+			var visual = document.querySelector('.together-visual');
+			var description = document.querySelector('[data-capability-description]');
+			capabilityButtons.forEach(function (button, index) {
+				button.addEventListener('click', function () {
+					capabilityButtons.forEach(function (item) { item.classList.toggle('active', item === button); });
+					visual.dataset.accent = button.dataset.capability; description.textContent = capabilityData[index].body;
+				});
+			});
+		})();
+	</script>
+
+	<style>
+		:global(body) { background: #fff; color: #12131a; }
+		:global(.nav) { position: absolute; top: 0; width: 100%; background: transparent; border: 0; color: white; z-index: 20; }
+		:global(.nav.is-stuck) { position: fixed; background: transparent; border-color: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; }
+		:global(.nav .nav-inner) { max-width: 1220px; }
+		:global(.nav .nav-links), :global(.nav .nav-actions) { font-family: var(--font); font-size: 16px; font-weight: 500; letter-spacing: -.04px; }
+		:global(.nav .nav-links a), :global(.nav .nav-links button), :global(.nav .nav-login), :global(.nav .brand), :global(.nav .brand-word) { color: white; }
+		:global(.nav .nav-cta) { background: white; color: #17181c; box-shadow: none; }
+		.amp-wrap, .amp-hero-inner { width: min(1180px, calc(100% - 64px)); margin: 0 auto; }
+		.amp-hero { position: relative; height: 100vh; height: 100svh; height: 100dvh; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; overflow: hidden; color: #fff; border-radius: 0 0 34px 34px; background: radial-gradient(circle at 87% 28%, rgba(251, 131, 130, .72), transparent 32%), radial-gradient(circle at 50% 105%, rgba(76, 36, 149, .86), transparent 38%), linear-gradient(118deg, #153b96 0%, #263a9d 34%, #6844ac 69%, #a95d82 100%); font-family: var(--font); }
+		.amp-orb { position: absolute; border-radius: 999px; filter: blur(2px); opacity: .3; pointer-events: none; }.amp-orb-one { width: 620px; height: 620px; right: -260px; top: 20px; background: radial-gradient(circle, #ffa475, transparent 68%); }.amp-orb-two { width: 520px; height: 520px; left: 27%; bottom: -330px; background: radial-gradient(circle, #5d25bb, transparent 70%); }
+		.amp-hero-inner { position: relative; z-index: 2; min-height: 0; padding: clamp(92px, 14dvh, 112px) 0 clamp(12px, 3dvh, 24px); display: grid; grid-template-columns: .96fr 1.04fr; gap: clamp(30px, 4vw, 56px); align-items: center; overflow: hidden; }
+		.hero-brand-dock { position: relative; z-index: 4; min-width: 0; }
+		.amp-kicker { margin: 0 0 8px; font-size: clamp(18px, 2.8dvh, 22px); line-height: 1.1; font-weight: 500; letter-spacing: normal; text-transform: none; }.amp-eyebrow { margin: 0 0 18px; font-size: 14px; line-height: 1.2; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }.amp-hero h1 { max-width: 660px; margin: 0; font-size: clamp(42px, 8dvh, 64px); line-height: 1.09; letter-spacing: -1px; font-weight: 700; }.amp-hero-lede { max-width: 590px; margin: clamp(16px, 3.75dvh, 30px) 0 0; font-size: clamp(16px, 2.25dvh, 18px); line-height: 1.34; font-weight: 400; letter-spacing: normal; color: rgba(255,255,255,.88); }.amp-actions { display: flex; gap: 14px; margin-top: clamp(18px, 4.25dvh, 34px); }
+		.amp-button { display: inline-flex; align-items: center; justify-content: center; min-height: 54px; padding: 0 25px; border-radius: 999px; text-decoration: none; font-weight: 700; transition: transform .25s ease, background .25s ease; }.amp-button:hover { transform: translateY(-2px); }.amp-button-light { background: #fff; color: #14151a; }.amp-button-outline { border: 1px solid rgba(255,255,255,.65); color: #fff; }.amp-button-dark { background: #111218; color: #fff; }
+		.amp-product-stage { position: relative; min-height: clamp(270px, 54dvh, 490px); display: grid; place-items: center; perspective: 900px; }.stage-glow { position: absolute; inset: 8% 2%; border-radius: 50%; background: rgba(255,255,255,.28); filter: blur(70px); }.stage-window { position: relative; width: 100%; border: 1px solid rgba(255,255,255,.3); border-radius: 16px; overflow: hidden; background: rgba(247,249,255,.96); color: #1b1d28; box-shadow: 0 40px 80px rgba(15,16,69,.35); transform: rotateY(-5deg) rotateX(2deg); }.stage-topbar { height: clamp(44px, 6.75dvh, 54px); padding: 0 17px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #e7e8ef; font-size: 12px; color: #696b78; }.stage-logo { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px; background: #28259d; color: white; font-weight: 800; }.stage-status { margin-left: auto; display: flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 999px; background: #eaf7ef; color: #27834b; }.stage-status i { width: 6px; height: 6px; border-radius: 50%; background: #42b46c; }
+		.stage-body { min-height: clamp(220px, 40dvh, 320px); display: grid; grid-template-columns: 118px 1fr; }.stage-body aside { padding: clamp(16px, 3dvh, 24px) 16px; display: flex; flex-direction: column; gap: clamp(10px, 2.1dvh, 17px); border-right: 1px solid #e7e8ef; background: #f5f6fb; font-size: 11px; color: #8a8c99; }.stage-body aside b { padding: 8px; margin: -8px; border-radius: 7px; background: #e6e7f6; color: #25277c; }.stage-canvas { padding: clamp(17px, 3.5dvh, 28px); }.stage-canvas > p { margin: 0 0 clamp(12px, 3dvh, 24px); font-size: 14px; font-weight: 700; }.stage-chart { height: clamp(92px, 18.75dvh, 150px); display: flex; gap: 13px; align-items: end; padding: clamp(11px, 2.25dvh, 18px); border: 1px solid #e8e9ef; border-radius: 12px; background: #fff; }.stage-chart i { flex: 1; height: var(--h); border-radius: 5px 5px 2px 2px; background: linear-gradient(#7c72e8, #4138b2); }.stage-chart i:nth-child(1){--h:38%}.stage-chart i:nth-child(2){--h:55%}.stage-chart i:nth-child(3){--h:46%}.stage-chart i:nth-child(4){--h:77%}.stage-chart i:nth-child(5){--h:64%}.stage-chart i:nth-child(6){--h:88%}.stage-chart i:nth-child(7){--h:95%}.stage-metrics { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-top: 12px; }.stage-metrics span { padding: clamp(7px, 1.4dvh, 11px); border-radius: 9px; background: #f1f2f7; font-size: 9px; color: #777a86; }.stage-metrics b { display: block; font-size: 15px; color: #20222a; }
+		.stage-float { position: absolute; z-index: 3; width: 220px; padding: 14px 44px 14px 16px; border: 1px solid rgba(255,255,255,.5); border-radius: 12px; background: #fff; color: #21232d; box-shadow: 0 20px 45px rgba(26,20,88,.24); }.stage-float span { display: block; font-size: 10px; color: #858795; }.stage-float b { font-size: 13px; }.stage-float i { position: absolute; right: 14px; top: 20px; width: 25px; height: 25px; display: grid; place-items: center; border-radius: 50%; background: #e9f7ef; color: #279456; font-style: normal; }.stage-float-top { right: -28px; top: 52px; }.stage-float-bottom { left: -26px; bottom: 38px; }
+		.amp-section { padding: 128px 0; }.amp-heading { max-width: 790px; margin-bottom: 58px; }.amp-heading.centered { margin-left: auto; margin-right: auto; text-align: center; }.amp-eyebrow { color: #6253d7; }.amp-heading h2, .amp-statement h2, .amp-brand-band h2, .feature-row h2 { margin: 0; font-size: clamp(42px, 5vw, 66px); line-height: 1.04; letter-spacing: -.045em; font-weight: 650; }.amp-heading > p:last-child:not(.amp-eyebrow), .amp-statement .narrow > p:last-child { max-width: 700px; margin: 22px auto 0; font-size: 18px; line-height: 1.65; color: #666974; }
+		.platform-heading { margin-bottom: 28px; }
+		.amp-tabs-wrap { display: flex; justify-content: center; width: 100%; margin: 0 auto; padding-bottom: 48px; }
+		.amp-platform-panel { min-height: 420px; padding: 54px; display: grid; grid-template-columns: 1.15fr .85fr; gap: 64px; align-items: center; border-radius: 22px; background: #f4f5f8; }.platform-copy h3 { margin: 0; font-size: 34px; line-height: 1.13; letter-spacing: -.035em; }.platform-copy > p:not(.amp-eyebrow) { margin: 20px 0 24px; color: #686b75; line-height: 1.65; }.platform-copy a { color: #27267e; font-weight: 700; text-decoration: none; }.platform-copy a span { margin-left: 8px; }
+		.visual-shell { border: 1px solid #dfe1e9; border-radius: 15px; overflow: hidden; background: white; box-shadow: 0 25px 55px rgba(33,38,70,.12); transform: rotate(-1deg); }.visual-toolbar { height: 40px; display: flex; align-items: center; gap: 6px; padding: 0 13px; background: #f7f7fa; border-bottom: 1px solid #e8e9ee; }.visual-toolbar i { width: 7px; height: 7px; border-radius: 50%; background: #d4d5db; }.visual-toolbar span { margin-left: auto; margin-right: auto; font: 9px monospace; color: #92949e; }.visual-content { min-height: 270px; display: grid; grid-template-columns: 108px 1fr; }.visual-list { padding: 18px 12px; display: flex; flex-direction: column; gap: 14px; border-right: 1px solid #ececf1; background: #fafafd; font-size: 10px; color: #8b8d98; }.visual-list b { color: #252731; }.visual-list .active { padding: 7px 8px; margin: -7px -8px; border-radius: 6px; background: #ececff; color: #4b46ae; }.visual-board { padding: 21px; }.visual-board-head { display: flex; justify-content: space-between; font-size: 12px; font-weight: 700; }.visual-board-head small { padding: 4px 7px; border-radius: 999px; background: #eaf7ef; color: #39875a; font-size: 8px; }.visual-cards { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin: 22px 0; }.visual-cards i { height: 55px; border-radius: 7px; background: linear-gradient(145deg,#ececff,#f6f4ff); border: 1px solid #e4e3f7; }.visual-lines { display: grid; gap: 9px; }.visual-lines i { height: 8px; border-radius: 4px; background: #eceef2; }.visual-lines i:nth-child(2){width:82%}.visual-lines i:nth-child(3){width:91%}.visual-lines i:nth-child(4){width:65%}
+		.amp-soft { background: #f2f3f7; }.lens-stage { position: relative; max-width: 940px; min-height: 450px; margin: 0 auto; padding: 54px; border-radius: 22px; overflow: hidden; background: linear-gradient(145deg,#171a28,#24213d); color: #fff; }.lens-source { width: 290px; padding: 18px; border: 1px solid rgba(255,255,255,.14); border-radius: 12px; background: rgba(255,255,255,.07); }.lens-source span { float: right; color: #8e83e9; }.lens-source b,.lens-source code { display: block; }.lens-source code { margin-top: 10px; color: #aeb0bf; font-size: 11px; }.lens-line { width: 1px; height: 45px; margin-left: 145px; background: linear-gradient(#8375e7,transparent); }.lens-event { width: 290px; padding: 16px; border-radius: 10px; background: #6355d8; }.lens-event span,.lens-event b { display:block; }.lens-event span { font-size:10px; opacity:.72; }.lens-grid { margin-top: 42px; display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; }.lens-grid article { min-height: 115px; padding: 18px; border: 1px solid rgba(255,255,255,.12); border-radius: 12px; background: rgba(255,255,255,.055); }.lens-grid i,.lens-grid b,.lens-grid span { display:block; }.lens-grid i { margin-bottom: 17px; color:#a399ff; font-style:normal;font-size:20px}.lens-grid span { margin-top:5px;color:#9ea1af;font-size:11px}
+		.amp-statement { min-height: 700px; display: grid; place-items: center; text-align: center; }.narrow { max-width: 920px; }.amp-statement h2 { font-size: clamp(48px,6vw,78px); }.amp-proof { padding: 112px 0; background: linear-gradient(105deg,#e9efff 0%,#eeeafe 52%,#fdebed 100%); text-align:center; }.proof-inner { max-width: 830px; }.proof-mark { width: 48px;height:48px;display:grid;place-items:center;margin:0 auto 28px;border-radius:14px;background:#5146c7;color:#fff;font-weight:900}.amp-proof blockquote { margin:0;font-size:clamp(32px,4vw,50px);line-height:1.18;letter-spacing:-.035em;font-weight:600}.amp-proof p { max-width:680px;margin:24px auto 0;color:#676a78;line-height:1.65}
+		.together-grid { display:grid;grid-template-columns:.8fr 1.2fr;gap:80px;align-items:center}.together-item { width:100%;padding:25px 0;display:grid;grid-template-columns:40px 1fr 30px;gap:12px;text-align:left;border:0;border-bottom:1px solid #e3e4e8;background:transparent;color:#777984;cursor:pointer}.together-item > span { font-size:11px}.together-item b { color:#23242a}.together-item p { margin:4px 0 0;font-size:14px}.together-item i { font-style:normal;font-size:20px}.together-item.active { color:#353098}.together-visual { min-height:430px;padding:30px;border-radius:20px;background:#eef1ff;transition:background .3s ease}.together-visual[data-accent="violet"]{background:#f3edff}.together-visual[data-accent="coral"]{background:#fff0ef}.topology-head { display:flex;justify-content:space-between;margin-bottom:45px;font-size:12px}.topology-head b { color:#6e62d8}.topology-map { text-align:center}.topology-node { width:170px;margin:0 auto;padding:16px;border-radius:12px;background:#21243a;color:white}.topology-node span,.topology-node b {display:block}.topology-node span{font-size:10px;color:#a8abbb}.topology-links { width:72%;height:55px;margin:0 auto;border-left:1px solid #8c87d9;border-right:1px solid #8c87d9;border-bottom:1px solid #8c87d9}.topology-shards{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.topology-shards div{padding:14px 7px;border-radius:9px;background:white;box-shadow:0 8px 18px rgba(50,45,100,.08)}.topology-shards span,.topology-shards b{display:block}.topology-shards span{font-size:9px;color:#81838d}.topology-shards b{font-size:10px}.together-visual>p{max-width:570px;margin:45px auto 0;text-align:center;color:#656975;font-size:14px;line-height:1.6}
+		.amp-features { padding-top: 30px; }.feature-row { min-height:650px;display:grid;grid-template-columns:1fr 1fr;gap:110px;align-items:center}.feature-row.reverse>div:first-child{order:2}.feature-row h2{font-size:clamp(42px,4.5vw,60px)}.feature-row>div>p:last-child{max-width:520px;margin-top:22px;color:#696c76;line-height:1.7}.feature-visual{min-height:390px;border-radius:21px;background:#f1f3f8;position:relative;overflow:hidden}.servers{display:flex;align-items:end;justify-content:center;gap:14px;padding:70px}.servers i{width:92px;height:var(--h);border-radius:9px 9px 3px 3px;background:linear-gradient(#6e64dc,#302b8d);box-shadow:inset 0 0 0 1px rgba(255,255,255,.15)}.servers i:nth-child(1){--h:48%}.servers i:nth-child(2){--h:75%}.servers i:nth-child(3){--h:58%}.servers span{position:absolute;bottom:28px;padding:8px 13px;border-radius:999px;background:#fff;font-size:11px}.authority{padding:60px;display:grid;place-items:center;background:#f4efff}.authority>span{padding:19px 30px;border-radius:12px;background:#28243f;color:#fff;font-weight:700}.authority>div{display:flex;gap:10px;margin-top:-80px}.authority i{padding:14px;border-radius:9px;background:#fff;box-shadow:0 10px 20px rgba(41,35,80,.1);font-style:normal;font-size:11px}.plugins{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;padding:62px;background:#fff0ef}.plugins b{grid-column:1/-1;padding:22px;border-radius:12px;background:#272334;color:white;text-align:center}.plugins span{padding:20px;border-radius:10px;background:#fff;text-align:center;font-size:12px;box-shadow:0 8px 18px rgba(76,40,54,.08)}
+		.amp-brand-band { padding:140px 0;background:radial-gradient(circle at 80% 20%,rgba(255,163,143,.75),transparent 30%),linear-gradient(120deg,#dfe9ff,#e8e3ff 50%,#fce6e8)}.amp-brand-band .amp-wrap{max-width:850px;text-align:center}.amp-brand-band h2{font-size:clamp(50px,6vw,78px)}.amp-brand-band>div>p:not(.amp-eyebrow){max-width:650px;margin:26px auto 34px;color:#60636e;font-size:18px}
+		.amp-dark{background:#0b0c10;color:#f7f7f9}.amp-products{padding:130px 0 110px}.amp-dark .amp-eyebrow{color:#9d94ff}.amp-dark .amp-heading>p:last-child{color:#9799a3}.product-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.product-cards a{position:relative;min-height:260px;padding:28px;border:1px solid #292b32;border-radius:16px;background:#17181d;color:#fff;text-decoration:none;transition:transform .25s ease,background .25s ease}.product-cards a:hover{transform:translateY(-5px);background:#1d1e25}.product-cards span{color:#777985;font-size:11px}.product-cards h3{margin:70px 0 10px;font-size:23px}.product-cards p{margin:0;color:#a7a9b2;font-size:14px;line-height:1.55}.product-cards i{position:absolute;right:25px;top:25px;font-style:normal}.amp-faq{padding:80px 0 150px}.faq-wrap{max-width:850px}.amp-faq h2{margin:0 0 45px;font-size:44px;letter-spacing:-.035em}.faq-list details{border-top:1px solid #303139}.faq-list details:last-child{border-bottom:1px solid #303139}.faq-list summary{padding:24px 0;display:flex;justify-content:space-between;gap:20px;cursor:pointer;font-weight:650;list-style:none}.faq-list summary::-webkit-details-marker{display:none}.faq-list summary span{width:18px;height:18px;position:relative}.faq-list summary span:before,.faq-list summary span:after{content:"";position:absolute;top:8px;left:1px;width:16px;height:1px;background:#fff}.faq-list summary span:after{transform:rotate(90deg);transition:transform .2s ease}.faq-list details[open] summary span:after{transform:rotate(0)}.faq-list details p{max-width:710px;margin:-6px 0 25px;color:#a5a7b1;line-height:1.65}
+		[data-reveal]{opacity:0;transform:translateY(18px);transition:opacity .7s ease calc(var(--delay,0)*1ms),transform .7s ease calc(var(--delay,0)*1ms)}[data-reveal].is-visible{opacity:1;transform:none}@media (prefers-reduced-motion:reduce){[data-reveal]{opacity:1;transform:none;transition:none}}
+		@media(max-width:900px){.amp-wrap,.amp-hero-inner{width:min(720px,calc(100% - 38px))}.amp-hero-inner{grid-template-columns:1fr;padding:clamp(92px,15dvh,112px) 0 10px;gap:4px;align-content:center}.amp-hero-copy{max-width:660px}.amp-product-stage{width:min(580px,88%);min-height:clamp(150px,27dvh,270px);margin:0 auto;transform:scale(.78)}.amp-platform-panel,.together-grid,.feature-row{grid-template-columns:1fr}.amp-platform-panel{padding:28px}.feature-row{gap:40px;padding:70px 0;min-height:0}.feature-row.reverse>div:first-child{order:0}.product-cards{grid-template-columns:1fr}.amp-section{padding:90px 0}.lens-grid{grid-template-columns:repeat(2,1fr)}}
+		@media(max-width:600px){:global(.nav .nav-links){display:none}:global(.nav .nav-actions){gap:12px}:global(.nav .nav-cta){display:inline-flex}.amp-wrap,.amp-hero-inner{width:calc(100% - 28px)}.amp-hero{border-radius:0 0 24px 24px}.amp-hero-inner{padding:96px 0 8px;gap:4px;align-content:start}.amp-kicker{font-size:16px;line-height:18px}.amp-hero h1{font-size:32px;line-height:35px;letter-spacing:-.5px}.amp-hero-lede{margin-top:16px;font-size:16px;line-height:21px}.amp-actions{gap:8px;margin-top:18px}.amp-button{min-height:44px;padding:0 18px;font-size:13px}.amp-product-stage{min-height:clamp(170px,28svh,240px);transform:scale(.7);margin:-12px auto 0}.stage-float-top{right:-5px}.stage-float-bottom{left:-5px}.amp-heading h2,.amp-statement h2,.amp-brand-band h2,.feature-row h2{font-size:40px}.amp-platform-panel{grid-template-columns:1fr;gap:30px}.visual-content{grid-template-columns:80px 1fr}.amp-statement{min-height:540px}.lens-stage{padding:25px;min-height:520px}.lens-source,.lens-event{width:100%}.lens-line{margin-left:50%}.lens-grid{grid-template-columns:1fr 1fr}.together-grid{gap:35px}.together-visual{padding:18px;min-height:400px}.topology-shards{grid-template-columns:1fr 1fr}.feature-visual{min-height:320px}.servers{padding:50px 30px}.authority{padding:35px}.authority>div{flex-wrap:wrap;justify-content:center}.amp-brand-band{padding:100px 0}.product-cards a{min-height:220px}.amp-faq h2{font-size:38px}}
+		@media(max-height:620px) and (max-width:900px){.amp-product-stage{display:none}.amp-hero-inner{align-content:center}.amp-hero-lede{max-width:520px}}
+		@media(max-width:360px){:global(.nav .nav-login){display:none}}
+	</style>
 </MarketingLayout>
-
-<style>
-	/* ---------- hero ---------- */
-
-	.hero {
-		position: relative;
-		padding-block: clamp(70px, 12vw, 150px) clamp(60px, 9vw, 110px);
-		overflow: hidden;
-	}
-
-	.hero-glow {
-		position: absolute;
-		top: -280px;
-		left: 50%;
-		width: 900px;
-		height: 640px;
-		transform: translateX(-50%);
-		background: radial-gradient(
-			ellipse at center,
-			hsl(26 100% 55% / 0.24),
-			transparent 66%
-		);
-		filter: blur(28px);
-		pointer-events: none;
-		animation: drift 16s ease-in-out infinite alternate;
-	}
-
-	@keyframes drift {
-		from {
-			transform: translateX(-50%) translateY(0) scale(1);
-		}
-		to {
-			transform: translateX(-46%) translateY(24px) scale(1.06);
-		}
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.hero-glow {
-			animation: none;
-		}
-	}
-
-	.hero-grid {
-		position: absolute;
-		inset: 0;
-		background-image:
-			linear-gradient(hsl(0 0% 100% / 0.035) 1px, transparent 1px),
-			linear-gradient(90deg, hsl(0 0% 100% / 0.035) 1px, transparent 1px);
-		background-size: 64px 64px;
-		mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 78%);
-		pointer-events: none;
-	}
-
-	.hero-inner {
-		position: relative;
-		text-align: center;
-	}
-
-	.pill {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.6rem;
-		border: 1px solid var(--line);
-		background: hsl(0 0% 100% / 0.03);
-		border-radius: 999px;
-		padding: 0.4rem 0.9rem;
-		font-size: 0.85rem;
-		color: var(--text-2);
-		text-decoration: none;
-		transition: border-color 0.25s var(--ease), color 0.25s var(--ease);
-	}
-
-	.pill:hover {
-		border-color: hsl(26 100% 58% / 0.5);
-		color: var(--text);
-	}
-
-	.pill-dot {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--accent);
-		box-shadow: 0 0 0 3px hsl(26 100% 58% / 0.2);
-	}
-
-	.pill-arrow {
-		color: var(--accent);
-	}
-
-	.hero h1 {
-		font-size: clamp(2.6rem, 7.2vw, 5rem);
-		line-height: 1.02;
-		letter-spacing: -0.045em;
-		font-weight: 850;
-		margin: 1.7rem auto 0;
-		max-width: 17ch;
-	}
-
-	.grad {
-		background: linear-gradient(100deg, var(--accent), var(--accent-2));
-		-webkit-background-clip: text;
-		background-clip: text;
-		color: transparent;
-	}
-
-	.hero-lede {
-		color: var(--text-2);
-		font-size: clamp(1.02rem, 1.7vw, 1.2rem);
-		max-width: 58ch;
-		margin: 1.5rem auto 0;
-	}
-
-	.hero-cta {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.75rem;
-		justify-content: center;
-		margin-top: 2rem;
-	}
-
-	.hero-install {
-		margin-top: 2.5rem;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.75rem;
-	}
-
-	.hero-install .terminal {
-		width: min(560px, 100%);
-	}
-
-	.hero-alt {
-		color: var(--text-3);
-		font-size: 0.85rem;
-		margin: 0;
-	}
-
-	.hero-alt code {
-		font-family: var(--mono);
-		color: var(--text-2);
-	}
-
-	/* ---------- bands + shared ---------- */
-
-	.band {
-		background: linear-gradient(180deg, var(--bg), var(--bg-1) 40%, var(--bg));
-		border-block: 1px solid var(--line-soft);
-	}
-
-	.section-head {
-		max-width: 720px;
-		margin-bottom: 3rem;
-	}
-
-	.split {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: clamp(2rem, 5vw, 4.5rem);
-		align-items: center;
-	}
-
-	@media (max-width: 900px) {
-		.split {
-			grid-template-columns: 1fr;
-		}
-	}
-
-	/* ---------- replaces list ---------- */
-
-	.replaces {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		border: 1px solid var(--line-soft);
-		border-radius: var(--radius);
-		overflow: hidden;
-	}
-
-	.replaces-row {
-		display: flex;
-		align-items: center;
-		gap: 0.85rem;
-		padding: 1rem 1.25rem;
-		border-bottom: 1px solid var(--line-soft);
-		background: var(--bg-1);
-		transition: background 0.25s var(--ease);
-	}
-
-	.replaces-row:last-child {
-		border-bottom: 0;
-	}
-
-	.replaces-row:hover {
-		background: var(--bg-2);
-	}
-
-	.replaces-name {
-		font-weight: 650;
-		font-size: 0.95rem;
-		min-width: 10.5rem;
-	}
-
-	.replaces-arrow {
-		color: var(--accent);
-	}
-
-	.replaces-covers {
-		color: var(--text-3);
-		font-size: 0.9rem;
-	}
-
-	@media (max-width: 520px) {
-		.replaces-row {
-			flex-wrap: wrap;
-			gap: 0.4rem;
-		}
-
-		.replaces-arrow {
-			display: none;
-		}
-	}
-
-	/* ---------- phases ---------- */
-
-	.phases {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-		gap: 1.25rem;
-	}
-
-	.phase-head {
-		display: flex;
-		align-items: center;
-		gap: 0.6rem;
-		margin-bottom: 0.9rem;
-	}
-
-	.phase-name {
-		font-size: 0.78rem;
-		font-weight: 750;
-		letter-spacing: 0.1em;
-		text-transform: uppercase;
-		color: var(--accent);
-	}
-
-	.phase h3 {
-		font-size: 1.12rem;
-		margin: 0 0 0.6rem;
-		letter-spacing: -0.02em;
-	}
-
-	.phase p {
-		color: var(--text-2);
-		font-size: 0.93rem;
-		margin: 0 0 1rem;
-	}
-
-	.phase ul {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		border-top: 1px solid var(--line-soft);
-		padding-top: 0.9rem;
-	}
-
-	.phase li {
-		color: var(--text-3);
-		font-size: 0.86rem;
-		padding-left: 1rem;
-		position: relative;
-		margin-bottom: 0.35rem;
-	}
-
-	.phase li::before {
-		content: '';
-		position: absolute;
-		left: 0;
-		top: 0.6em;
-		width: 5px;
-		height: 5px;
-		border-radius: 50%;
-		background: var(--line);
-	}
-
-	.phases-note {
-		margin-top: 1.75rem;
-		color: var(--text-3);
-		font-size: 0.88rem;
-	}
-
-	/* ---------- benchmarks ---------- */
-
-	.bench {
-		padding: 1.9rem;
-	}
-
-	.bench:hover {
-		transform: none;
-	}
-
-	.bench-head {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 1rem;
-		flex-wrap: wrap;
-		margin-bottom: 1.9rem;
-	}
-
-	.bench-head h3 {
-		margin: 0 0 0.3rem;
-		font-size: 1.1rem;
-		letter-spacing: -0.02em;
-	}
-
-	.bench-head p {
-		margin: 0;
-		color: var(--text-3);
-		font-size: 0.87rem;
-	}
-
-	.bench-unit {
-		font-family: var(--mono);
-		font-size: 0.78rem;
-		color: var(--text-3);
-		border: 1px solid var(--line-soft);
-		border-radius: 999px;
-		padding: 0.2rem 0.7rem;
-		white-space: nowrap;
-	}
-
-	.bars {
-		display: flex;
-		flex-direction: column;
-		gap: 1.1rem;
-	}
-
-	.bar-row {
-		display: grid;
-		grid-template-columns: 5.5rem 1fr 6rem;
-		align-items: center;
-		gap: 1rem;
-	}
-
-	.bar-label {
-		font-size: 0.9rem;
-		font-weight: 600;
-		color: var(--text-2);
-	}
-
-	.bar-track {
-		height: 12px;
-		background: var(--bg-2);
-		border-radius: 999px;
-		overflow: hidden;
-	}
-
-	.bar-fill {
-		height: 100%;
-		width: 0;
-		border-radius: 999px;
-		background: linear-gradient(90deg, var(--accent), var(--accent-2));
-		transition: width 1.15s var(--ease);
-		transition-delay: var(--delay, 0ms);
-	}
-
-	.is-running .bar-fill {
-		width: var(--pct);
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.bar-fill {
-			transition: none;
-		}
-	}
-
-	.bar-value {
-		font-family: var(--mono);
-		font-size: 0.9rem;
-		text-align: right;
-		color: var(--text);
-		font-variant-numeric: tabular-nums;
-	}
-
-	@media (max-width: 560px) {
-		.bar-row {
-			grid-template-columns: 4.5rem 1fr 4.5rem;
-			gap: 0.6rem;
-		}
-
-		.bar-value {
-			font-size: 0.78rem;
-		}
-	}
-
-	.bench-disclaimer {
-		margin: 1.75rem 0 0;
-		padding-top: 1.1rem;
-		border-top: 1px solid var(--line-soft);
-		color: var(--text-3);
-		font-size: 0.82rem;
-	}
-
-	.bench-disclaimer strong {
-		color: var(--accent);
-	}
-
-	.stats {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-		gap: 1.25rem;
-		margin-top: 1.25rem;
-	}
-
-	.stat {
-		border: 1px solid var(--line-soft);
-		border-radius: var(--radius);
-		background: var(--bg-1);
-		padding: 1.4rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.15rem;
-	}
-
-	.stat-value {
-		font-size: clamp(1.7rem, 3.4vw, 2.2rem);
-		font-weight: 800;
-		letter-spacing: -0.03em;
-		color: var(--text);
-		font-variant-numeric: tabular-nums;
-	}
-
-	.stat-label {
-		font-size: 0.9rem;
-		color: var(--text-2);
-		font-weight: 600;
-	}
-
-	.stat-note {
-		font-size: 0.8rem;
-		color: var(--text-3);
-	}
-
-	/* ---------- code ---------- */
-
-	.split-code {
-		align-items: start;
-	}
-
-	.ticks {
-		list-style: none;
-		margin: 1.6rem 0 0;
-		padding: 0;
-	}
-
-	.ticks li {
-		position: relative;
-		padding-left: 1.7rem;
-		margin-bottom: 0.65rem;
-		color: var(--text-2);
-		font-size: 0.93rem;
-	}
-
-	.ticks li::before {
-		content: '✓';
-		position: absolute;
-		left: 0;
-		color: var(--accent);
-		font-weight: 700;
-	}
-
-	.code-card {
-		border: 1px solid var(--line-soft);
-		border-radius: var(--radius);
-		background: var(--bg-1);
-		overflow: hidden;
-	}
-
-	.code-bar {
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-		padding: 0.75rem 1rem;
-		border-bottom: 1px solid var(--line-soft);
-		background: var(--bg-2);
-	}
-
-	.dot {
-		width: 10px;
-		height: 10px;
-		border-radius: 50%;
-		background: var(--line);
-	}
-
-	.code-file {
-		margin-left: 0.6rem;
-		font-family: var(--mono);
-		font-size: 0.78rem;
-		color: var(--text-3);
-	}
-
-	.code-card pre {
-		margin: 0;
-		padding: 1.25rem;
-		overflow-x: auto;
-		font-family: var(--mono);
-		font-size: 0.84rem;
-		line-height: 1.7;
-		color: var(--text-2);
-	}
-
-	/* ---------- deploy ---------- */
-
-	.deploy {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-		gap: 1.25rem;
-	}
-
-	.deploy-card h3 {
-		margin: 0 0 0.6rem;
-		font-size: 1.15rem;
-		letter-spacing: -0.02em;
-	}
-
-	.deploy-card p {
-		color: var(--text-2);
-		font-size: 0.93rem;
-		margin: 0 0 1.35rem;
-	}
-
-	.deploy-card code {
-		font-family: var(--mono);
-		font-size: 0.85em;
-	}
-
-	/* ---------- cta ---------- */
-
-	.cta {
-		padding-block: clamp(80px, 12vw, 140px);
-		text-align: center;
-		border-top: 1px solid var(--line-soft);
-		background:
-			radial-gradient(ellipse 60% 100% at 50% 100%, hsl(26 100% 50% / 0.13), transparent 70%),
-			var(--bg);
-	}
-
-	.cta-inner h2 {
-		font-size: clamp(1.9rem, 4.4vw, 2.9rem);
-		letter-spacing: -0.035em;
-		margin: 0 0 0.75rem;
-		font-weight: 800;
-	}
-
-	.cta-inner p {
-		color: var(--text-2);
-		margin: 0;
-	}
-</style>
