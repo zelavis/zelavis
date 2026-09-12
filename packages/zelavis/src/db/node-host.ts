@@ -3,6 +3,7 @@ import { Effect, Exit, Scope } from "effect";
 import { makeDatabase, TOPOLOGY_SHARD, type DatabaseApi } from "./database.js";
 import type { StoreError } from "./errors.js";
 import { makeLibsqlStore } from "./engines/libsql.js";
+import { makeLibsqlRemoteStore } from "./engines/libsql-remote.js";
 import { makeLmdbStore } from "./engines/lmdb.js";
 import { makeNodeSqliteStore } from "./engines/node-sqlite.js";
 import { makeRocksdbStore } from "./engines/rocksdb.js";
@@ -16,7 +17,7 @@ import {
   type ShardId,
 } from "./topology.js";
 
-export type EngineName = "sqlite" | "libsql" | "rocksdb" | "lmdb";
+export type EngineName = "sqlite" | "libsql" | "libsql-remote" | "rocksdb" | "lmdb";
 
 /**
  * Which storage engine a database opens on.
@@ -37,6 +38,14 @@ export interface EngineOptions {
   readonly name?: EngineName;
   /** libSQL only: a remote primary to replicate from, making this an embedded replica. */
   readonly syncUrl?: string;
+  /**
+   * A database reachable only over the network, for `libsql-remote`.
+   *
+   * `turso://` is accepted for the address Turso prints. Every read and write
+   * is a round trip, so prefer `syncUrl` — an embedded replica, whose reads are
+   * local — wherever a local file is possible.
+   */
+  readonly url?: string;
   /** libSQL only. */
   readonly authToken?: string;
   /** libSQL only: seconds between background syncs. */
@@ -75,6 +84,12 @@ const openShardWith = (
           ...(engine?.syncUrl === undefined ? {} : { syncUrl: engine.syncUrl }),
           ...(engine?.authToken === undefined ? {} : { authToken: engine.authToken }),
           ...(engine?.syncInterval === undefined ? {} : { syncInterval: engine.syncInterval }),
+        });
+    case "libsql-remote":
+      return (shard) =>
+        makeLibsqlRemoteStore(shard, {
+          url: engine?.url ?? "",
+          ...(engine?.authToken === undefined ? {} : { authToken: engine.authToken }),
         });
     case "rocksdb":
       return (shard) => makeRocksdbStore(shard, directory);

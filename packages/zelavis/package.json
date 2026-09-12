@@ -143,6 +143,10 @@
     "./cli": {
       "types": "./dist/cli/index.d.ts",
       "import": "./dist/cli/index.js"
+    },
+    "./db/libsql-remote": {
+      "types": "./dist/db/engines/libsql-remote.d.ts",
+      "import": "./dist/db/engines/libsql-remote.js"
     }
   },
   "scripts": {
@@ -185,6 +189,7 @@
     "@effect/language-service": "^0.87.2",
     "@effect/tsgo": "^0.43.0",
     "@harperfast/rocksdb-js": "2.8.0",
+    "@libsql/client": "^0.15.15",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.4.0",
     "libsql": "^0.5.29",
@@ -205,6 +210,7 @@
     "@zelavis/ui": "workspace:*"
   },
   "peerDependencies": {
+    "@libsql/client": "^0.15.0",
     "libsql": "^0.5.29",
     "lmdb": "^3.4.3",
     "rocksdb": "^5.2.1"
@@ -217,6 +223,9 @@
       "optional": true
     },
     "lmdb": {
+      "optional": true
+    },
+    "@libsql/client": {
       "optional": true
     }
   }

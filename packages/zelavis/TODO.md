@@ -788,10 +788,22 @@ the `dbnew` runtime API, both construction sites open a sharded database through
 - [x] A libSQL driver for `dbnew`, over the same store logic as the built-in
   one. Both engines meet a synchronous gateway, so retraction, manifests, events
   and postings exist once rather than per driver.
-- [ ] Remote-only libSQL. The driver uses the synchronous binding, which covers
-  local files and embedded replicas; a database reachable only over the network
-  needs transaction serialization designed before an asynchronous gateway is
-  safe to offer.
+- [x] Remote-only libSQL, as its own engine (`libsql-remote`). The blocker this
+  item named had already been answered: `KvEngine` is `Effect`-shaped and
+  defines a write as one atomic batch, so there is no open transaction for a
+  caller to land inside and nothing to serialize. What actually stood in the
+  way was narrower — `sqliteKvEngineOver` needs a synchronous handle, which a
+  network client cannot give — so the driver implements `KvEngine` directly on
+  `@libsql/client`: bounds and limits go into the statement, `write` is one
+  `batch` in write mode, and blobs come back as `ArrayBuffer` rather than
+  `Buffer` and are wrapped. Verified against a real Turso database: the whole
+  contract — byte order both ways, clipped bounds, limits, binary values,
+  a failed batch landing nothing — and then a whole store over the network,
+  with documents, ordered reads, a unique constraint, paging, sealing and a
+  rebuild. The tests skip when `TURSO_URL` and `TURSO_TOKEN` are unset, so CI
+  stays green without a server. Prefer an embedded replica (`libsql` with a
+  `syncUrl`) wherever a local file is possible: every read here is a round
+  trip, which is also why sealing matters more on this engine than any other.
 - [x] Report real topology on `/database/health`: shard count, virtual ranges
   and partition map version, read from the live topology rather than stood in
   for by constants.
