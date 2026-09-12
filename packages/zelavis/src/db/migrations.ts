@@ -292,7 +292,11 @@ export const migrationsFor = (
       const instructions = input.apply ?? [];
       const differences = differencesBetween(source.fields, target.fields);
       const keep = new Set(target.fields.map((entry) => entry.name));
-      const docs = yield* documents.findMany({ collection });
+      // No `similar` clause here either; see `relatedFilters`.
+      const docs = yield* documents.findMany({ collection }).pipe(Effect.catchTags({
+            UnembeddedCollection: Effect.die,
+            InvalidVectorQuery: Effect.die,
+          }));
       return {
         source,
         target,

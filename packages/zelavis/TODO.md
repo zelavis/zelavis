@@ -1180,6 +1180,31 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   the rest quietly would answer a narrower question in the shape of the asked
   one.
 
+- [x] Exact vector search over declared embeddings, as an `EmbeddingIndex` on a
+  collection and a `similar` clause on `findMany`. The collection names one
+  field, its dimension, a metric and a version; `embed` records that against a
+  collection that already holds documents, reads each one against it, and
+  withdraws the declaration if one does not match rather than leaving a
+  collection promising a shape its documents do not keep. The vectors stay in
+  the documents and are posted to no lens, so there is no second copy to fall
+  out of date and nothing to re-derive on a rewrite -- `manifestFor` is
+  untouched by this.
+- [x] Exact rather than approximate, deliberately. Every document the rest of
+  the query admits is compared, so `where`, `search` and `geometry` narrow the
+  candidates before anything is scored and a similarity read under a narrow
+  filter costs what the filter returns. This is also the baseline an
+  approximate index has to be measured against: adopting ANN first would leave
+  nothing to measure recall against, which is the only honest way to decide
+  whether its recall is good enough.
+- [ ] Vector slice two: an approximate index, measured for recall against the
+  exact answer above before it is trusted. `usearch` is the candidate and is a
+  native addon (node-gyp-build), so it needs the same treatment the engines
+  got -- optional peer, and a store that is a rebuildable projection rather
+  than authoritative. Also wanted: similarity on `findPage`, which needs a
+  cursor that survives a write when the order is a score; a metric chosen per
+  read rather than per collection; and quantized storage, which trades recall
+  for space and so cannot land before recall is measurable.
+
 ## Later
 
 - [ ] Remote, separately supervised Zelavis Agents.

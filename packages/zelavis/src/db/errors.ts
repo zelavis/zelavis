@@ -184,6 +184,27 @@ export class UnindexedGeometry extends Schema.TaggedError<UnindexedGeometry>()("
   field: Schema.String,
 }) {}
 
+/** A similarity read on a collection that declares no embedding. */
+export class UnembeddedCollection extends Schema.TaggedError<UnembeddedCollection>()(
+  "UnembeddedCollection",
+  { collection: Schema.String },
+) {}
+
+/** A vector whose shape the collection's embedding does not allow. */
+export class VectorShapeMismatch extends Schema.TaggedError<VectorShapeMismatch>()("VectorShapeMismatch", {
+  collection: Schema.String,
+  id: Schema.String,
+  field: Schema.String,
+  reason: Schema.String,
+}) {}
+
+/** A similarity read whose own vector the collection's embedding does not admit. */
+export class InvalidVectorQuery extends Schema.TaggedError<InvalidVectorQuery>()("InvalidVectorQuery", {
+  collection: Schema.String,
+  field: Schema.String,
+  reason: Schema.String,
+}) {}
+
 /** A read asked about a reference the collection does not declare. */
 export class UnknownReference extends Schema.TaggedError<UnknownReference>()("UnknownReference", {
   collection: Schema.String,
