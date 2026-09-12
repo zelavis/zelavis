@@ -373,3 +373,45 @@ test("an index created through the service lets a page order by two fields", asy
   assert.deepEqual(ordered.body.documents.map((document) => document.id), ["b", "a", "c"]);
   assert.deepEqual(dropped.body, { dropped: true });
 });
+
+test("constraints refuse through the service with the status each deserves", async (t) => {
+  const { api } = await openTemporaryDatabase(t);
+  const service = defineDatabaseService(api);
+  const create = routeOf(service, "database.collections.create");
+  const insert = routeOf(service, "database.documents.insert");
+  const update = routeOf(service, "database.documents.update");
+
+  await call(create, { service: api, body: { tenantId: "acme", name: "authors" } });
+  const made = await call(create, {
+    service: api,
+    body: {
+      tenantId: "acme", name: "posts",
+      indexes: [{ name: "by_slug", fields: [{ path: "slug" }], unique: true }],
+      checks: [{ name: "rated", where: [{ path: "stars", op: "lte", value: 5 }] }],
+      references: [{ name: "author", path: "authorId", collection: "authors" }],
+    },
+  });
+  const put = (id, data) => call(insert, { service: api, params: { collection: "posts" }, body: { tenantId: "acme", id, data } });
+  const first = await put("p1", { slug: "a", stars: 3 });
+  const taken = await put("p2", { slug: "a" });
+  const unrated = await put("p3", { stars: 9 });
+  const orphan = await put("p4", { authorId: "ghost" });
+  const change = (body) => call(update, {
+    service: api, params: { collection: "posts", id: "p1" }, body: { tenantId: "acme", data: { stars: 4 }, ...body },
+  });
+  const stale = await change({ precondition: [{ path: "stars", value: 2 }] });
+  const outdated = await change({ expectedVersion: 7 });
+  const current = await change({ expectedVersion: 1, precondition: [{ path: "stars", value: 3 }] });
+
+  assert.equal(made.status, 201);
+  assert.ok((first.status ?? 200) < 300);
+  assert.equal(taken.status, 409);
+  assert.match(taken.body.error, /by_slug/);
+  assert.equal(unrated.status, 400);
+  assert.match(unrated.body.error, /rated/);
+  assert.equal(orphan.status, 409);
+  assert.match(orphan.body.error, /ghost/);
+  assert.equal(stale.status, 409);
+  assert.equal(outdated.status, 409);
+  assert.equal(current.body.version, 2);
+});

@@ -9,6 +9,9 @@ import type {
   JsonObject,
   CollectionIndex,
   IndexDefinition,
+  CheckConstraint,
+  DocumentFilter,
+  ReferenceConstraint,
 } from "./documents.js";
 import type { DomainEvent, ReadDomainEventsInput } from "./domain-events.js";
 import type { TenantBackupV1 } from "./backup.js";
@@ -42,7 +45,15 @@ export interface TenantRuntimeApi {
       surface?: Collection["surface"];
       metadata?: Record<string, unknown>;
       indexes?: ReadonlyArray<IndexDefinition>;
+      checks?: ReadonlyArray<CheckConstraint>;
+      references?: ReadonlyArray<ReferenceConstraint>;
     }) => Promise<Collection>;
+    readonly addCheck: (input: CheckConstraint & { collection: string }) => Promise<CheckConstraint>;
+    readonly dropCheck: (input: { collection: string; name: string }) => Promise<boolean>;
+    readonly addReference: (
+      input: ReferenceConstraint & { from: string },
+    ) => Promise<Required<ReferenceConstraint>>;
+    readonly dropReference: (input: { collection: string; name: string }) => Promise<boolean>;
     readonly createIndex: (input: IndexDefinition & { collection: string }) => Promise<CollectionIndex>;
     readonly dropIndex: (input: { collection: string; name: string }) => Promise<boolean>;
     readonly listCollections: () => Promise<ReadonlyArray<Collection>>;
@@ -64,11 +75,13 @@ export interface TenantRuntimeApi {
       data: JsonObject;
       mode?: "merge" | "replace";
       expectedVersion?: number;
+      precondition?: ReadonlyArray<DocumentFilter>;
     }) => Promise<Document>;
     readonly delete: (input: {
       collection: string;
       id: string;
       expectedVersion?: number;
+      precondition?: ReadonlyArray<DocumentFilter>;
     }) => Promise<boolean>;
   };
   readonly events: {
@@ -144,6 +157,10 @@ const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
     createCollection: (input) => run(tenant.documents.createCollection(input)),
     createIndex: (input) => run(tenant.documents.createIndex(input)),
     dropIndex: (input) => run(tenant.documents.dropIndex(input)),
+    addCheck: (input) => run(tenant.documents.addCheck(input)),
+    dropCheck: (input) => run(tenant.documents.dropCheck(input)),
+    addReference: (input) => run(tenant.documents.addReference(input)),
+    dropReference: (input) => run(tenant.documents.dropReference(input)),
     listCollections: () => run(tenant.documents.listCollections),
     collectionExists: (name) => run(tenant.documents.collectionExists(name)),
     insert: (input) => run(tenant.documents.insert(input)),

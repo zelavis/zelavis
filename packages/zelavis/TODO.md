@@ -950,9 +950,24 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   a scan read up to 4,096 rows. A first page of 50 by price over 50k documents
   went from 6.6 ms to 0.6 ms, and a scatter page stopped growing with the
   tenants' size.
-- [ ] Unique constraints committed in the same batch as the document, reference
-  constraints, check constraints, and version preconditions beyond
-  `expectedVersion`.
+- [x] Constraints, each checked in the transaction that writes, under the
+  store's one writer: a violation is refused or cannot happen, never slipped in
+  between a check and a write. Document writes read, check and write in one
+  transaction — the id, the version, the data a merge builds on, the schema,
+  the idempotency receipt and the move fence — which also closes the lost
+  update two racing merges could cause. `unique` on a composite index refuses
+  a second holder of its values (a document missing one is not held to it, as
+  SQL treats NULL), and one built over documents that already break it is not
+  created. `checks` are filters every document must satisfy, a field with no
+  value passing as a NULL passes a SQL CHECK. `references` name a document in a
+  collection of the same tenant, and deleting one restricts, cascades or sets
+  null in the delete's own transaction. `precondition` on update and delete is
+  a compare-and-set on field values. Unconstrained writes run as before (4.1k
+  inserts/s); with a unique index, a check and a reference all enforced, 2.7k/s
+  against 3.9k/s for the same index unenforced.
+- [ ] Expose `addCheck`, `dropCheck`, `addReference` and `dropReference` over
+  HTTP, and a delete precondition: the service takes constraints only on
+  create and preconditions only on update today.
 - [ ] Documents written before the scalar lens index numbers and booleans as
   text until they are written again, so a typed `eq`, a range or an order
   misses or misplaces them. Add a maintenance pass that rewrites them, rather

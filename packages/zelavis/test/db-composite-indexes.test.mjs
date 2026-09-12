@@ -156,6 +156,7 @@ for (const [engine, open] of engines) {
           { path: "price", direction: "asc", nulls: "last" },
           { path: "status", direction: "asc", nulls: "last" },
         ],
+        unique: false,
         state: "ready",
       }]);
     })));

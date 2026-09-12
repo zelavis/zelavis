@@ -12,6 +12,8 @@ import type {
   JsonObject,
   IndexDefinition,
   IndexField,
+  CheckConstraint,
+  ReferenceConstraint,
 } from "./documents.js";
 import type { AggregateOperation, RangeInput } from "./time-series.js";
 
@@ -154,7 +156,10 @@ function taggedFailureOf(error: unknown, depth = 0): TaggedFailure | undefined {
 
 const CONFLICT_TAGS = new Set([
   "CollectionExists",
+  "ConstraintExists",
   "IndexExists",
+  "ReferenceViolation",
+  "UniqueViolation",
   "DocumentConflict",
   "SchemaVersionExists",
 ]);
@@ -173,7 +178,9 @@ const BAD_REQUEST_TAGS = new Set([
   "CursorMismatch",
   "UnsupportedOrdering",
   "BackupTenantMismatch",
+  "CheckViolation",
   "InvalidCollectionName",
+  "InvalidConstraint",
   "InvalidIndex",
   "PartitionMapInvalid",
   "RangeNotEmpty",
@@ -236,6 +243,16 @@ function describeTaggedFailure(failure: TaggedFailure): string {
       return `Index "${failure.name}" on collection "${failure.collection}" is invalid: ${failure.reason}.`;
     case "IndexExists":
       return `Collection "${failure.collection}" already has an index named "${failure.name}": ${failure.reason}.`;
+    case "UniqueViolation":
+      return `Document "${failure.id}" in collection "${failure.collection}" repeats the values index "${failure.index}" holds for "${failure.holder}".`;
+    case "CheckViolation":
+      return `Document "${failure.id}" in collection "${failure.collection}" fails check "${failure.check}": ${failure.reason}.`;
+    case "ReferenceViolation":
+      return `Document "${failure.id}" in collection "${failure.collection}" breaks reference "${failure.reference}": ${failure.reason}.`;
+    case "InvalidConstraint":
+      return `Constraint "${failure.name}" on collection "${failure.collection}" is invalid: ${failure.reason}.`;
+    case "ConstraintExists":
+      return `Collection "${failure.collection}" already has a constraint named "${failure.name}".`;
     default:
       return failure._tag;
   }
@@ -559,7 +576,9 @@ export function defineDatabaseDocumentsService(
                   tenantId: { type: "string" },
                   surface: { type: "string" },
                   metadata: { type: "object", additionalProperties: true },
-                  indexes: { type: "array", description: "Composite indexes, each { name, fields }" },
+                  indexes: { type: "array", description: "Composite indexes, each { name, fields, unique? }" },
+                  checks: { type: "array", description: "Check constraints, each { name, where }" },
+                  references: { type: "array", description: "References, each { name, path, collection, onDelete? }" },
                 },
               },
             },
@@ -596,6 +615,12 @@ export function defineDatabaseDocumentsService(
                       : undefined,
                   indexes: Array.isArray(input.indexes)
                     ? (input.indexes as ReadonlyArray<IndexDefinition>)
+                    : undefined,
+                  checks: Array.isArray(input.checks)
+                    ? (input.checks as ReadonlyArray<CheckConstraint>)
+                    : undefined,
+                  references: Array.isArray(input.references)
+                    ? (input.references as ReadonlyArray<ReferenceConstraint>)
                     : undefined,
                 }),
               };
@@ -906,6 +931,8 @@ export function defineDatabaseDocumentsService(
                   tenantId: { type: "string", description: "Tenant ID" },
                   data: { type: "object", additionalProperties: true, description: "Document data" },
                   mode: { type: "string", description: "Update mode (merge or replace)" },
+                  expectedVersion: { type: "number", description: "The version the document must be at" },
+                  precondition: { type: "array", description: "Filters the document must match as it stands" },
                 },
               },
             },
@@ -924,6 +951,8 @@ export function defineDatabaseDocumentsService(
                   id: params.id,
                   data: readJsonObject(input.data),
                   mode: input.mode === "replace" ? "replace" : "merge",
+                  ...(typeof input.expectedVersion === "number" ? { expectedVersion: input.expectedVersion } : {}),
+                  ...(Array.isArray(input.precondition) ? { precondition: readFilters(input.precondition) } : {}),
                 }),
               };
             } catch (error) {
