@@ -137,6 +137,47 @@ export class IndexExists extends Schema.TaggedError<IndexExists>()("IndexExists"
   reason: Schema.String,
 }) {}
 
+/** A second document with the values a unique index already has one document holding. */
+export class UniqueViolation extends Schema.TaggedError<UniqueViolation>()("UniqueViolation", {
+  collection: Schema.String,
+  index: Schema.String,
+  id: Schema.String,
+  /** The document already holding them. */
+  holder: Schema.String,
+}) {}
+
+/** A document a check constraint of its collection does not allow. */
+export class CheckViolation extends Schema.TaggedError<CheckViolation>()("CheckViolation", {
+  collection: Schema.String,
+  id: Schema.String,
+  check: Schema.String,
+  reason: Schema.String,
+}) {}
+
+/**
+ * A reference that does not hold: a document naming one that does not exist,
+ * or a delete of a document others name under a reference that restricts it.
+ */
+export class ReferenceViolation extends Schema.TaggedError<ReferenceViolation>()("ReferenceViolation", {
+  collection: Schema.String,
+  id: Schema.String,
+  reference: Schema.String,
+  reason: Schema.String,
+}) {}
+
+/** A constraint definition that cannot be enforced as given. */
+export class InvalidConstraint extends Schema.TaggedError<InvalidConstraint>()("InvalidConstraint", {
+  collection: Schema.String,
+  name: Schema.String,
+  reason: Schema.String,
+}) {}
+
+/** A constraint name already in use on the collection. */
+export class ConstraintExists extends Schema.TaggedError<ConstraintExists>()("ConstraintExists", {
+  collection: Schema.String,
+  name: Schema.String,
+}) {}
+
 export class InvalidCollectionName extends Schema.TaggedError<InvalidCollectionName>()(
   "InvalidCollectionName",
   { name: Schema.String, reason: Schema.String },

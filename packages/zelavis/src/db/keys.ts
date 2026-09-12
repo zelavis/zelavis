@@ -360,6 +360,32 @@ export const orderedTuple = (components: ReadonlyArray<TupleComponent>): string 
   return hex;
 };
 
+/**
+ * The values of a tuple `orderedTuple` wrote, undefined where a field had
+ * none. The directions must be the ones it was written with: a descending
+ * field's bytes are inverted, and nothing in them says so.
+ */
+export const decodeOrderedTuple = (
+  tuple: string,
+  directions: ReadonlyArray<"asc" | "desc">,
+): Array<OrderedValue | undefined> => {
+  const bytes = Uint8Array.from(tuple.match(/../g) ?? [], (pair) => Number.parseInt(pair, 16));
+  const out: Array<OrderedValue | undefined> = [];
+  let at = 0;
+  for (const direction of directions) {
+    if (bytes[at] === NoValue.First || bytes[at] === NoValue.Last) {
+      out.push(undefined);
+      at += 1;
+      continue;
+    }
+    const rest = direction === "desc" ? bytes.subarray(at).map((byte) => ~byte & 0xff) : bytes.subarray(at);
+    const { value, next } = readOrderedValue(rest, 0);
+    out.push(value);
+    at += next;
+  }
+  return out;
+};
+
 /** `[tag][seq]` — the payload and its manifest, addressed by identifier. */
 export const payloadKey = (seq: number): Uint8Array =>
   build(Tag.Payload, (out) => writeU32(out, seq));

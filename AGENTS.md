@@ -360,6 +360,14 @@ Key rules:
   which is the only thing keeping a write from missing an index created
   alongside it and a backfill from overwriting a newer write: never move either
   read out of the transaction.
+- A document write checks what it depends on — the id, the version, a
+  precondition, a unique value, a check, a reference — inside the transaction
+  that writes it (`transactChecked` in `documents.ts`), never before it: only
+  there does the store's one writer keep the answer true until the write
+  lands, and a failure there discards the whole batch. Reads inside a
+  transaction see committed state, not the transaction's own writes, so a
+  change that writes one record twice builds the second write from the first
+  (as `releaseReferences` and `linkTargets` do), never from a second read.
 - A scan that stops early passes `limit` to `engine.scan` rather than cutting
   the stream with `Stream.take`. A stream pulls an iterable thousands of
   entries at a time, so a take of a few rows still reads thousands; the limit

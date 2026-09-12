@@ -23,9 +23,14 @@ import {
   IndexExists,
   InvalidIndex,
   UnsupportedOrdering,
+  UniqueViolation,
+  CheckViolation,
+  InvalidConstraint,
+  ConstraintExists,
+  ReferenceViolation,
 } from "./errors.js";
 import type { DbError } from "./errors.js";
-import { compareOrderedValues, orderedTuple, sameOrderedKind } from "./keys.js";
+import { compareOrderedValues, decodeOrderedTuple, orderedTuple, sameOrderedKind } from "./keys.js";
 import type { IndexManifest, OrderedScalar, Seq } from "./model.js";
 import { and, equals, or, type Query, type RangeBound } from "./query.js";
 import type { SchemasApi } from "./schemas.js";
@@ -43,6 +48,56 @@ export interface Collection {
   readonly metadata?: Record<string, unknown>;
   /** Composite indexes over the collection's documents; see `CollectionIndex`. */
   readonly indexes?: ReadonlyArray<CollectionIndex>;
+  /** What every document's values must satisfy; see `CheckConstraint`. */
+  readonly checks?: ReadonlyArray<CheckConstraint>;
+  /** Fields naming documents of other collections; see `ReferenceConstraint`. */
+  readonly references?: ReadonlyArray<Required<ReferenceConstraint>>;
+  /** The references other collections — or this one — make to this collection's documents. */
+  readonly referencedBy?: ReadonlyArray<{ readonly collection: string; readonly reference: string }>;
+}
+
+/**
+ * A field whose value is the id of a document in another collection of the
+ * same tenant — or of this one.
+ *
+ * Tenant-local by construction: the id is looked up in the writing tenant's own
+ * collection, so no reference can reach another tenant's documents. A document
+ * with no value in the field names nothing and is not held to it; one naming a
+ * document that does not exist is refused, checked in the transaction that
+ * writes it. An id never changes, so there is nothing for an update of the
+ * named document to carry along: what a reference decides is what deleting it
+ * does, in the same transaction as the delete.
+ */
+export interface ReferenceConstraint {
+  /** Letters, numbers, underscores and hyphens, like a collection name. */
+  readonly name: string;
+  /** The field holding the id. */
+  readonly path: string;
+  /** The collection the id names a document of. */
+  readonly collection: string;
+  /**
+   * Deleting a document others name: refused while they do (`"restrict"`, the
+   * default), deleting them too (`"cascade"`, and so on down), or clearing the
+   * field (`"set-null"`) — which leaves those documents to satisfy their own
+   * schema and checks with it null.
+   */
+  readonly onDelete?: "restrict" | "cascade" | "set-null";
+}
+
+/**
+ * A rule every document of a collection must satisfy, as data: filters, the
+ * same ones `findMany` takes, so a check can be stored, listed, sent and
+ * compared rather than being a function nobody can inspect.
+ *
+ * A filter on a field with no value — null or absent — holds, as a NULL passes
+ * a SQL CHECK: whether a field must be there is the schema's to say, and a
+ * check says what its value may be when it is.
+ */
+export interface CheckConstraint {
+  /** Letters, numbers, underscores and hyphens, like a collection name. */
+  readonly name: string;
+  /** Every one must hold. */
+  readonly where: ReadonlyArray<DocumentFilter>;
 }
 
 export interface Document<TData extends JsonObject = JsonObject> {
@@ -88,6 +143,13 @@ export interface IndexDefinition {
   readonly name: string;
   /** In order: by the first field, then by the second among equals, and so on. */
   readonly fields: ReadonlyArray<IndexField>;
+  /**
+   * Refuse a second document with the same values in every field, checked in
+   * the transaction that writes it. A document with no value at one of the
+   * fields is not held to it, as SQL treats NULL: two missing emails are not
+   * the same email.
+   */
+  readonly unique?: boolean;
 }
 
 /**
@@ -104,6 +166,7 @@ export interface IndexDefinition {
 export interface CollectionIndex {
   readonly name: string;
   readonly fields: ReadonlyArray<Required<IndexField>>;
+  readonly unique: boolean;
   /** Only a ready index answers reads; a building one is still adding the documents written before it. */
   readonly state: "building" | "ready";
 }
@@ -227,6 +290,7 @@ interface StoredCollection extends Omit<Collection, "indexes"> {
 const publicIndex = (index: StoredIndex): CollectionIndex => ({
   name: index.name,
   fields: index.fields,
+  unique: index.unique === true,
   state: index.state,
 });
 
@@ -383,7 +447,10 @@ const MAX_INDEX_FIELDS = 8;
 const normalizeIndex = (
   collection: string,
   definition: IndexDefinition,
-): Effect.Effect<{ readonly name: string; readonly fields: Array<Required<IndexField>> }, InvalidIndex> => {
+): Effect.Effect<
+  { readonly name: string; readonly fields: Array<Required<IndexField>>; readonly unique: boolean },
+  InvalidIndex
+> => {
   const invalid = (reason: string) =>
     Effect.fail(new InvalidIndex({ collection, name: String(definition.name), reason }));
   if (typeof definition.name !== "string" || !COLLECTION_NAME_PATTERN.test(definition.name)) {
@@ -412,7 +479,90 @@ const normalizeIndex = (
     }
     fields.push({ path, direction, nulls });
   }
-  return Effect.succeed({ name: definition.name, fields });
+  if (definition.unique !== undefined && typeof definition.unique !== "boolean") {
+    return invalid("unique must be true or false");
+  }
+  return Effect.succeed({ name: definition.name, fields, unique: definition.unique === true });
+};
+
+/** A value a field has, as opposed to null, absent, or an object or array. */
+const hasValue = (value: Json | undefined): boolean => {
+  const scalar = orderable(value);
+  return scalar !== undefined && scalar !== null;
+};
+
+const describeFilter = (filter: DocumentFilter): string =>
+  `${filter.path} ${filter.op ?? "eq"} ${JSON.stringify(filter.value)}`;
+
+/** Whether one filter of a check holds: a field with no value always does. */
+const satisfiesCheck = (data: JsonObject, filter: DocumentFilter): boolean => {
+  const actual = readPath(data, filter.path);
+  return actual === undefined || actual === null || matches(data, filter);
+};
+
+const FILTER_OPERATORS: ReadonlySet<string> = new Set(["eq", "ne", "gt", "gte", "lt", "lte", "in"]);
+
+/** A check definition in the shape it is stored, or why it cannot be enforced. */
+const normalizeCheck = (
+  collection: string,
+  check: CheckConstraint,
+): Effect.Effect<CheckConstraint, InvalidConstraint> => {
+  const invalid = (reason: string) =>
+    Effect.fail(new InvalidConstraint({ collection, name: String(check.name), reason }));
+  if (typeof check.name !== "string" || !COLLECTION_NAME_PATTERN.test(check.name)) {
+    return invalid(
+      "a check name must start with a letter or underscore and contain only letters, numbers, underscores, or hyphens",
+    );
+  }
+  if (!Array.isArray(check.where) || check.where.length === 0) return invalid("a check needs at least one filter");
+  const where: Array<DocumentFilter> = [];
+  for (const filter of check.where) {
+    const path: unknown = filter?.path;
+    if (typeof path !== "string" || path === "" || path.split(".").some((segment) => segment === "")) {
+      return invalid(`${JSON.stringify(path) ?? "undefined"} is not a field path`);
+    }
+    const op = filter.op ?? "eq";
+    if (!FILTER_OPERATORS.has(op)) return invalid(`"${String(op)}" is not a filter operator`);
+    if (filter.value === undefined) return invalid(`the filter on "${path}" has no value`);
+    if (op === "in" && !Array.isArray(filter.value)) return invalid(`"in" on "${path}" takes a list of values`);
+    where.push({ path, op, value: filter.value });
+  }
+  return Effect.succeed({ name: check.name, where });
+};
+
+const ON_DELETE: ReadonlySet<string> = new Set(["restrict", "cascade", "set-null"]);
+
+/** A reference definition with its default filled in, or why it cannot be enforced. */
+const normalizeReference = (
+  collection: string,
+  reference: ReferenceConstraint,
+): Effect.Effect<Required<ReferenceConstraint>, InvalidConstraint> => {
+  const invalid = (reason: string) =>
+    Effect.fail(new InvalidConstraint({ collection, name: String(reference.name), reason }));
+  if (typeof reference.name !== "string" || !COLLECTION_NAME_PATTERN.test(reference.name)) {
+    return invalid(
+      "a reference name must start with a letter or underscore and contain only letters, numbers, underscores, or hyphens",
+    );
+  }
+  const path: unknown = reference.path;
+  if (typeof path !== "string" || path === "" || path.split(".").some((segment) => segment === "")) {
+    return invalid(`${JSON.stringify(path) ?? "undefined"} is not a field path`);
+  }
+  if (typeof reference.collection !== "string" || !COLLECTION_NAME_PATTERN.test(reference.collection)) {
+    return invalid(`${JSON.stringify(reference.collection) ?? "undefined"} is not a collection name`);
+  }
+  const onDelete = reference.onDelete ?? "restrict";
+  if (!ON_DELETE.has(onDelete)) return invalid(`onDelete must be "restrict", "cascade" or "set-null"`);
+  return Effect.succeed({ name: reference.name, path, collection: reference.collection, onDelete });
+};
+
+/** The data with one dotted path set, copying only what lies along it. */
+const setPath = (data: JsonObject, path: string, value: Json): JsonObject => {
+  const [head, ...rest] = path.split(".");
+  if (rest.length === 0) return { ...data, [head!]: value };
+  const inner = data[head!];
+  const next = inner !== null && typeof inner === "object" && !Array.isArray(inner) ? inner : {};
+  return { ...data, [head!]: setPath(next, rest.join("."), value) };
 };
 
 /** A document's position in one index. */
@@ -629,7 +779,13 @@ export interface DocumentsApi {
     readonly metadata?: Record<string, unknown>;
     /** Indexes to start with; an empty collection has nothing to add to them, so they are ready at once. */
     readonly indexes?: ReadonlyArray<IndexDefinition>;
-  }) => Effect.Effect<Collection, InvalidCollectionName | CollectionExists | InvalidIndex | TenantMoving>;
+    readonly checks?: ReadonlyArray<CheckConstraint>;
+    /** References to collections that already exist, or to this one. */
+    readonly references?: ReadonlyArray<ReferenceConstraint>;
+  }) => Effect.Effect<
+    Collection,
+    InvalidCollectionName | CollectionExists | InvalidIndex | InvalidConstraint | TenantMoving
+  >;
   readonly listCollections: Effect.Effect<ReadonlyArray<Collection>>;
   readonly collectionExists: (name: string) => Effect.Effect<boolean>;
   readonly insert: (input: {
@@ -646,7 +802,8 @@ export interface DocumentsApi {
     readonly data: JsonObject;
   }) => Effect.Effect<
     Document,
-    CollectionNotFound | DocumentConflict | SchemaViolation | TenantMoving | IdempotencyKeyReused
+    | CollectionNotFound | DocumentConflict | SchemaViolation | TenantMoving | IdempotencyKeyReused
+    | CheckViolation | UniqueViolation | ReferenceViolation
   >;
   readonly findById: (input: {
     readonly collection: string;
@@ -681,9 +838,12 @@ export interface DocumentsApi {
     readonly data: JsonObject;
     readonly mode?: "merge" | "replace";
     readonly expectedVersion?: number;
+    /** Filters the document as it stands must match, or the update is a conflict: a compare-and-set. */
+    readonly precondition?: ReadonlyArray<DocumentFilter>;
   }) => Effect.Effect<
     Document,
-    DocumentNotFound | DocumentConflict | SchemaViolation | TenantMoving | IdempotencyKeyReused
+    | DocumentNotFound | DocumentConflict | SchemaViolation | TenantMoving | IdempotencyKeyReused
+    | CheckViolation | UniqueViolation | ReferenceViolation
   >;
   readonly delete: (input: {
     readonly collection: string;
@@ -691,7 +851,15 @@ export interface DocumentsApi {
     readonly idempotencyKey?: string;
     readonly id: string;
     readonly expectedVersion?: number;
-  }) => Effect.Effect<boolean, DocumentConflict | TenantMoving | IdempotencyKeyReused>;
+    /** Filters the document as it stands must match, or the delete is a conflict. */
+    readonly precondition?: ReadonlyArray<DocumentFilter>;
+  }) => Effect.Effect<
+    boolean,
+    | DocumentConflict | TenantMoving | IdempotencyKeyReused
+    // What the references to it decide: a restrict refuses the delete, and a
+    // set-null rewrites documents that must still satisfy their constraints.
+    | ReferenceViolation | SchemaViolation | CheckViolation | UniqueViolation
+  >;
 
   /**
    * Add a composite index to a collection, and return it once it is ready.
@@ -704,13 +872,54 @@ export interface DocumentsApi {
    */
   readonly createIndex: (
     input: IndexDefinition & { readonly collection: string },
-  ) => Effect.Effect<CollectionIndex, CollectionNotFound | IndexExists | InvalidIndex | TenantMoving>;
+  ) => Effect.Effect<
+    CollectionIndex,
+    CollectionNotFound | IndexExists | InvalidIndex | UniqueViolation | TenantMoving
+  >;
 
   /**
    * Remove an index and clear its postings, which costs a write per document
    * as building it did. False when the collection has no index by that name.
    */
   readonly dropIndex: (input: {
+    readonly collection: string;
+    readonly name: string;
+  }) => Effect.Effect<boolean, CollectionNotFound | TenantMoving>;
+
+  /**
+   * Add a check to a collection, and return it once every document satisfies it.
+   *
+   * It holds for writes from the moment it is recorded, and the documents
+   * already there are then read against it. One that fails it takes the check
+   * away again, and is named in the error.
+   */
+  readonly addCheck: (
+    input: CheckConstraint & { readonly collection: string },
+  ) => Effect.Effect<
+    CheckConstraint,
+    CollectionNotFound | ConstraintExists | InvalidConstraint | CheckViolation | TenantMoving
+  >;
+
+  /**
+   * Add a reference to a collection, and return it once every document's
+   * value names a document that exists. Recorded first and then checked
+   * against the documents already there, as a check is.
+   */
+  readonly addReference: (
+    input: ReferenceConstraint & { readonly from: string },
+  ) => Effect.Effect<
+    Required<ReferenceConstraint>,
+    CollectionNotFound | ConstraintExists | InvalidConstraint | ReferenceViolation | TenantMoving
+  >;
+
+  /** Remove a reference. False when the collection has none by that name. */
+  readonly dropReference: (input: {
+    readonly collection: string;
+    readonly name: string;
+  }) => Effect.Effect<boolean, CollectionNotFound | TenantMoving>;
+
+  /** Remove a check. False when the collection has none by that name. */
+  readonly dropCheck: (input: {
     readonly collection: string;
     readonly name: string;
   }) => Effect.Effect<boolean, CollectionNotFound | TenantMoving>;
@@ -798,35 +1007,65 @@ export const documentsFor = (
       return receipt;
     });
 
+  /** The store's own failures: a caller cannot act on them, so they become defects. */
+  const STORE_FAILURES: ReadonlySet<string> = new Set([
+    "StoreError", "WriterFenced", "ForeignCursor", "CursorCompacted", "LogCompacted", "PartitionUnavailable",
+  ]);
+
   /**
-   * Apply a change and, if the caller gave a key, record what it did — together.
+   * Run a change in one transaction, keeping the failures a caller can act on.
    *
-   * One transaction for both. Recording the receipt afterwards would leave a
-   * window in which the write had happened and the key had not been noted,
-   * which is exactly the window a retry falls into and the one direction of
-   * failure a key exists to prevent.
+   * A transaction holds the store's one writer, so what the change reads —
+   * whether an id is taken, which version is current, whether a value is held
+   * — stays true until its writes land, and a failure discards all of them.
+   * Only the store's own failures become defects; a conflict or a violation
+   * reaches the caller as itself.
    */
-  const commitOnce = <A>(
+  const transactChecked = <A, E>(
+    change: (txn: Txn) => Effect.Effect<A, E | DbError>,
+  ): Effect.Effect<A, Exclude<E, DbError>> =>
+    store.transact(change).pipe(
+      Effect.catch((error) =>
+        STORE_FAILURES.has((error as { readonly _tag: string })._tag)
+          ? Effect.die(error)
+          : Effect.fail(error as Exclude<E, DbError>)),
+    );
+
+  /**
+   * Check and apply a change and, if the caller gave a key, record what it did
+   * — in one transaction.
+   *
+   * Recording the receipt afterwards would leave a window in which the write
+   * had happened and the key had not been noted, which is exactly the window a
+   * retry falls into. The receipt is looked for before anything is allocated,
+   * so a replay costs a lookup, and again inside the transaction, where a first
+   * attempt running alongside cannot slip past it. A result `remember` declines
+   * is not recorded: nothing happened worth replaying.
+   */
+  const commitOnce = <A, E>(
     key: string | undefined,
     fingerprint: string,
     request: string,
-    result: A,
-    change: (txn: Txn) => Effect.Effect<void, DbError>,
-  ): Effect.Effect<A> =>
+    change: (txn: Txn) => Effect.Effect<A, E | DbError>,
+    remember: (result: A) => boolean = () => true,
+  ): Effect.Effect<A, Exclude<E, DbError> | IdempotencyKeyReused> =>
     Effect.gen(function* () {
-      if (key === undefined) {
-        yield* write(change);
-        return result;
-      }
-      const seq = yield* nextSeq;
-      yield* write((txn) =>
+      if (key === undefined) return yield* transactChecked(change);
+      const seen = yield* receiptFor(key, fingerprint, request);
+      if (seen !== undefined) return seen.result as A;
+      const receiptSeq = yield* nextSeq;
+      return yield* transactChecked<A, E | IdempotencyKeyReused>((txn) =>
         Effect.gen(function* () {
-          yield* change(txn);
-          yield* rememberKey(txn, {
-            key, fingerprint, request, result, at: new Date().toISOString(),
-          }, seq);
+          const raced = yield* receiptFor(key, fingerprint, request);
+          if (raced !== undefined) return raced.result as A;
+          const result = yield* change(txn);
+          if (remember(result)) {
+            yield* rememberKey(txn, {
+              key, fingerprint, request, result, at: new Date().toISOString(),
+            }, receiptSeq);
+          }
+          return result;
         }));
-      return result;
     });
 
   const loadCollection = (name: string) =>
@@ -879,6 +1118,58 @@ export const documentsFor = (
       edges: [],
     }, { namespace: collectionNs(tenant), key: collection.name });
 
+  /**
+   * Record on each target collection the references naming it, in the caller's
+   * transaction. A target that does not exist cannot be named.
+   *
+   * One write per target, with all of its references at once: a read inside a
+   * transaction sees what is committed, so a second write built on a second
+   * read would drop what the first one added.
+   */
+  const linkTargets = (txn: Txn, from: string, references: ReadonlyArray<Required<ReferenceConstraint>>) =>
+    Effect.gen(function* () {
+      for (const name of new Set(references.map((reference) => reference.collection))) {
+        const naming = references.filter((reference) => reference.collection === name);
+        const targetSeq = yield* lookup(collectionNs(tenant), name);
+        const target = targetSeq === undefined ? undefined : yield* loadCollection(name);
+        if (targetSeq === undefined || target === undefined) {
+          return yield* new InvalidConstraint({
+            collection: from, name: naming[0]!.name, reason: `there is no collection "${name}" to reference`,
+          });
+        }
+        yield* collectionPut(txn, targetSeq, {
+          ...target,
+          referencedBy: [
+            ...(target.referencedBy ?? []),
+            ...naming.map((reference) => ({ collection: from, reference: reference.name })),
+          ],
+        });
+      }
+    });
+
+  /** Remove a reference and its back-reference together, in the caller's transaction. */
+  const unlinkReference = (txn: Txn, from: string, name: string) =>
+    Effect.gen(function* () {
+      const fromSeq = yield* lookup(collectionNs(tenant), from);
+      const source = fromSeq === undefined ? undefined : yield* loadCollection(from);
+      const reference = source?.references?.find((candidate) => candidate.name === name);
+      if (fromSeq === undefined || source === undefined || reference === undefined) return false;
+      const unlinked = (record: StoredCollection): StoredCollection => ({
+        ...record,
+        referencedBy: (record.referencedBy ?? []).filter((back) => !(back.collection === from && back.reference === name)),
+      });
+      const remaining = { ...source, references: (source.references ?? []).filter((candidate) => candidate.name !== name) };
+      if (reference.collection === from) {
+        yield* collectionPut(txn, fromSeq, unlinked(remaining));
+        return true;
+      }
+      yield* collectionPut(txn, fromSeq, remaining);
+      const targetSeq = yield* lookup(collectionNs(tenant), reference.collection);
+      const target = targetSeq === undefined ? undefined : yield* loadCollection(reference.collection);
+      if (targetSeq !== undefined && target !== undefined) yield* collectionPut(txn, targetSeq, unlinked(target));
+      return true;
+    });
+
   /** Every posting a document contributes: a column per scalar, and a tuple per index. */
   const manifestFor = (doc: Document, indexes: ReadonlyArray<StoredIndex>): IndexManifest => ({
     terms: [],
@@ -891,21 +1182,155 @@ export const documentsFor = (
   });
 
   /**
-   * Write a document with every posting it contributes, its indexes' included.
+   * Refuse a document its collection's constraints do not allow: a check it
+   * fails, or values a unique index already has another document holding.
+   * Called inside the transaction that writes the document, under the store's
+   * one writer, so nothing it compares against can change before the write.
+   */
+  const enforceConstraints = (collection: StoredCollection | undefined, doc: Document, seq: Seq) =>
+    Effect.gen(function* () {
+      for (const check of collection?.checks ?? []) {
+        const failed = check.where.find((filter) => !satisfiesCheck(doc.data, filter));
+        if (failed !== undefined) {
+          return yield* new CheckViolation({
+            collection: doc.collection, id: doc.id, check: check.name, reason: `${describeFilter(failed)} does not hold`,
+          });
+        }
+      }
+      for (const reference of collection?.references ?? []) {
+        const value = readPath(doc.data, reference.path);
+        if (value === undefined || value === null) continue;
+        const refused = (reason: string) =>
+          new ReferenceViolation({ collection: doc.collection, id: doc.id, reference: reference.name, reason });
+        if (typeof value !== "string") {
+          return yield* refused(`${reference.path} holds ${JSON.stringify(value)}, which is not a document id`);
+        }
+        // A document may name itself; it does not exist until this write lands.
+        if (reference.collection === doc.collection && value === doc.id) continue;
+        if ((yield* lookup(documentNs(tenant, reference.collection), value)) === undefined) {
+          return yield* refused(`there is no document "${value}" in "${reference.collection}"`);
+        }
+      }
+      for (const index of collection?.indexes ?? []) {
+        // A building index is checked once, whole, when it becomes ready.
+        if (index.unique !== true || index.state !== "ready") continue;
+        if (index.fields.some((field) => !hasValue(readPath(doc.data, field.path)))) continue;
+        const holders = yield* Stream.runCollect(resolveQuery(equals(index.column, indexTuple(index, doc.data))));
+        const other = [...holders].find((holder) => Number(holder) !== Number(seq));
+        if (other !== undefined) {
+          const holder = yield* readDocument(other);
+          return yield* new UniqueViolation({
+            collection: doc.collection, index: index.name, id: doc.id, holder: holder?.id ?? `#${Number(other)}`,
+          });
+        }
+      }
+    });
+
+  /**
+   * Write a document with every posting it contributes, its indexes' included,
+   * once its collection's constraints allow it.
    *
-   * The indexes are read here, inside the transaction, and not by the caller.
-   * A transaction holds the store's one writer, so an index created alongside
-   * this write was either recorded before it — and is included — or after it,
-   * and its backfill finds this document. Read before the transaction, the
-   * write could land between the two and be missing from the index for good.
+   * The collection is read here, inside the transaction, and not by the
+   * caller. A transaction holds the store's one writer, so an index or a check
+   * added alongside this write was either recorded before it — and applies —
+   * or after it, and what adds it reads this document. Read before the
+   * transaction, the write could land between the two and escape both.
    */
   const documentPut = (txn: Txn, doc: Document, seq: Seq) =>
     Effect.gen(function* () {
-      const indexes = (yield* loadCollection(doc.collection))?.indexes ?? [];
-      yield* txn.put(seq, encode(doc), manifestFor(doc, indexes), {
+      const collection = yield* loadCollection(doc.collection);
+      yield* enforceConstraints(collection, doc, seq);
+      yield* txn.put(seq, encode(doc), manifestFor(doc, collection?.indexes ?? []), {
         namespace: documentNs(tenant, doc.collection), key: doc.id,
       });
     });
+
+  /**
+   * What deleting a document does to the documents naming it, each reference
+   * deciding for its own: refuse the delete, delete them too, or clear the
+   * field. All of it in the delete's own transaction, so either every
+   * consequence lands with the delete or none does.
+   *
+   * Reads inside a transaction see what is committed, not what the
+   * transaction has written so far, so the documents this one has already
+   * cleared or deleted are carried alongside: a document cleared under two
+   * references keeps both, and one reached twice down a cascade — a diamond,
+   * or a cycle back to where it began — is deleted once.
+   */
+  const releaseReferences = (txn: Txn, deleted: Document, deletedSeq: Seq) =>
+    Effect.gen(function* () {
+      const written = new Map<number, Document | null>([[Number(deletedSeq), null]]);
+      const current = (seq: Seq) =>
+        written.has(Number(seq)) ? Effect.succeed(written.get(Number(seq)) ?? undefined) : readDocument(seq);
+      const release = (doc: Document): Effect.Effect<
+        void,
+        ReferenceViolation | SchemaViolation | CheckViolation | UniqueViolation | DbError
+      > =>
+        Effect.gen(function* () {
+          const named = yield* loadCollection(doc.collection);
+          for (const back of named?.referencedBy ?? []) {
+            const from = back.collection === doc.collection ? named : yield* loadCollection(back.collection);
+            const reference = from?.references?.find((candidate) => candidate.name === back.reference);
+            if (reference === undefined) continue;
+            const holders = yield* Stream.runCollect(
+              resolveQuery(equals(columnFor(tenant, back.collection, reference.path), doc.id)),
+            );
+            for (const held of holders) {
+              const holder = yield* current(held);
+              // Gone already in this transaction, or no longer naming it.
+              if (holder === undefined || readPath(holder.data, reference.path) !== doc.id) continue;
+              if (reference.onDelete === "restrict") {
+                return yield* new ReferenceViolation({
+                  collection: doc.collection, id: doc.id, reference: `${back.collection}.${reference.name}`,
+                  reason: `"${holder.id}" in "${back.collection}" names it`,
+                });
+              }
+              if (reference.onDelete === "cascade") {
+                written.set(Number(held), null);
+                yield* release(holder);
+                yield* txn.retract(held);
+                continue;
+              }
+              const data = setPath(holder.data, reference.path, null);
+              yield* enforceSchema(back.collection, data);
+              // One change to the document however many of its fields this
+              // delete clears: a version already moved here stays where it is.
+              const cleared: Document = {
+                ...holder, data, updatedAt: new Date().toISOString(),
+                version: written.has(Number(held)) ? holder.version : holder.version + 1,
+              };
+              written.set(Number(held), cleared);
+              yield* documentPut(txn, cleared, held);
+            }
+          }
+        });
+      yield* release(deleted);
+    });
+
+  /**
+   * The conditions a caller put on a change, checked against the document as
+   * it stands inside the transaction: a version, and filters its data must
+   * match. Each is a compare-and-set, and holds only because nothing can write
+   * the document between the check and the change.
+   */
+  const expect = (
+    collection: string,
+    current: Document,
+    expectedVersion: number | undefined,
+    precondition: ReadonlyArray<DocumentFilter> | undefined,
+  ): Effect.Effect<void, DocumentConflict> => {
+    if (expectedVersion !== undefined && expectedVersion !== current.version) {
+      return Effect.fail(new DocumentConflict({
+        collection, id: current.id, reason: `expected version ${expectedVersion}, found ${current.version}`,
+      }));
+    }
+    const unmet = precondition?.find((filter) => !matches(current.data, filter));
+    return unmet === undefined
+      ? Effect.void
+      : Effect.fail(new DocumentConflict({
+        collection, id: current.id, reason: `the document does not match ${describeFilter(unmet)}`,
+      }));
+  };
 
   const keeps = (plan: Plan) => (doc: Document | undefined): doc is Document =>
     doc !== undefined && plan.residual.every((filter) => matches(doc.data, filter));
@@ -1053,6 +1478,33 @@ export const documentsFor = (
       }
     });
 
+  /**
+   * Two documents holding the same values in every field of a unique index,
+   * if any do. Equal tuples sit next to each other in the index, so this is
+   * one ordered read of it; a tuple missing a value is not held to the index
+   * and is passed over.
+   */
+  const duplicateIn = (index: StoredIndex) =>
+    Effect.gen(function* () {
+      const directions = index.fields.map((field) => field.direction);
+      let previous: { readonly value: unknown; readonly seq: Seq } | undefined;
+      let after: OrderedCursor | undefined;
+      for (;;) {
+        const page = yield* orderedPage({
+          column: index.column, limit: 1000, ...(after === undefined ? {} : { after }),
+        }).pipe(Effect.orDie);
+        for (const row of page.rows) {
+          if (previous !== undefined && row.value === previous.value &&
+            decodeOrderedTuple(String(row.value), directions).every((value) => value !== undefined)) {
+            return [previous.seq, row.seq] as const;
+          }
+          previous = { value: row.value, seq: row.seq };
+        }
+        if (page.next === undefined) return undefined;
+        after = page.next;
+      }
+    });
+
   /** Documents a rewrite puts back per transaction, releasing the writer between them. */
   const REWRITE_CHUNK = 256;
 
@@ -1189,15 +1641,42 @@ export const documentsFor = (
           }
           indexes.push({ ...index, state: "ready", column: indexColumnFor(tenant, input.name, index.name) });
         }
+        const checks: Array<CheckConstraint> = [];
+        for (const definition of input.checks ?? []) {
+          const check = yield* normalizeCheck(input.name, definition);
+          if (checks.some((other) => other.name === check.name)) {
+            return yield* new InvalidConstraint({ collection: input.name, name: check.name, reason: "the name is given twice" });
+          }
+          checks.push(check);
+        }
+        const references: Array<Required<ReferenceConstraint>> = [];
+        for (const definition of input.references ?? []) {
+          const reference = yield* normalizeReference(input.name, definition);
+          if (references.some((other) => other.name === reference.name)) {
+            return yield* new InvalidConstraint({ collection: input.name, name: reference.name, reason: "the name is given twice" });
+          }
+          references.push(reference);
+        }
         const collection: StoredCollection = {
           name: input.name,
           createdAt: new Date().toISOString(),
           surface: input.surface ?? "database",
           ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
           ...(indexes.length === 0 ? {} : { indexes }),
+          ...(checks.length === 0 ? {} : { checks }),
+          ...(references.length === 0 ? {} : { references }),
         };
         const seq = yield* nextSeq;
-        yield* write((txn) => collectionPut(txn, seq, collection));
+        // The collection and the back-references its targets carry, together:
+        // a delete in a target finds what names it from its own record.
+        yield* transactChecked((txn) =>
+          Effect.gen(function* () {
+            const own = references
+              .filter((reference) => reference.collection === input.name)
+              .map((reference) => ({ collection: input.name, reference: reference.name }));
+            yield* collectionPut(txn, seq, own.length === 0 ? collection : { ...collection, referencedBy: own });
+            yield* linkTargets(txn, input.name, references.filter((reference) => reference.collection !== input.name));
+          }));
         // Record that this tenant occupies the shard. Placement decisions need
         // to know which tenants a shard actually holds, and deriving that by
         // scanning every namespace would mean reading the whole store.
@@ -1231,7 +1710,6 @@ export const documentsFor = (
 
     insert: (input) =>
       Effect.gen(function* () {
-        yield* assertNotMoving;
         const request = `insert into "${input.collection}"`;
         const fingerprint = fingerprintOf({
           op: "insert", collection: input.collection, id: input.id, data: input.data,
@@ -1240,31 +1718,29 @@ export const documentsFor = (
           const seen = yield* receiptFor(input.idempotencyKey, fingerprint, request);
           if (seen !== undefined) return seen.result as Document;
         }
-        yield* requireCollection(input.collection);
-        yield* enforceSchema(input.collection, input.data);
         // A generated id would differ on every retry, so a keyed insert without
         // one would store a second document and hand back the first.
         const id = input.id ?? crypto.randomUUID();
-        const clash = yield* lookup(documentNs(tenant, input.collection), id);
-        if (clash !== undefined) {
-          return yield* new DocumentConflict({
-            collection: input.collection,
-            id,
-            reason: "a document with this id already exists",
-          });
-        }
-        const now = new Date().toISOString();
-        const doc: Document = {
-          id,
-          collection: input.collection,
-          data: input.data,
-          createdAt: now,
-          updatedAt: now,
-          version: 1,
-        };
+        // Allocated before the transaction, which cannot take the writer twice;
+        // a refused insert leaves a gap, which nothing depends on not having.
         const seq = yield* nextSeq;
-        return yield* commitOnce(input.idempotencyKey, fingerprint, request, doc,
-          (txn) => documentPut(txn, doc, seq));
+        return yield* commitOnce(input.idempotencyKey, fingerprint, request, (txn) =>
+          Effect.gen(function* () {
+            yield* assertNotMoving;
+            yield* requireCollection(input.collection);
+            yield* enforceSchema(input.collection, input.data);
+            if ((yield* lookup(documentNs(tenant, input.collection), id)) !== undefined) {
+              return yield* new DocumentConflict({
+                collection: input.collection, id, reason: "a document with this id already exists",
+              });
+            }
+            const now = new Date().toISOString();
+            const doc: Document = {
+              id, collection: input.collection, data: input.data, createdAt: now, updatedAt: now, version: 1,
+            };
+            yield* documentPut(txn, doc, seq);
+            return doc;
+          }));
       }),
 
     findById: (input) =>
@@ -1345,72 +1821,63 @@ export const documentsFor = (
 
     update: (input) =>
       Effect.gen(function* () {
-        yield* assertNotMoving;
         const request = `update "${input.collection}/${input.id}"`;
         const fingerprint = fingerprintOf({
           op: "update", collection: input.collection, id: input.id, data: input.data,
-          mode: input.mode, expectedVersion: input.expectedVersion,
+          mode: input.mode, expectedVersion: input.expectedVersion, precondition: input.precondition,
         });
-        if (input.idempotencyKey !== undefined) {
-          const seen = yield* receiptFor(input.idempotencyKey, fingerprint, request);
-          if (seen !== undefined) return seen.result as Document;
-        }
-        const seq = yield* lookup(documentNs(tenant, input.collection), input.id);
-        const current = seq === undefined ? undefined : yield* readDocument(seq);
-        if (seq === undefined || current === undefined) {
-          return yield* new DocumentNotFound({ collection: input.collection, id: input.id });
-        }
-        if (input.expectedVersion !== undefined && input.expectedVersion !== current.version) {
-          return yield* new DocumentConflict({
-            collection: input.collection,
-            id: input.id,
-            reason: `expected version ${input.expectedVersion}, found ${current.version}`,
-          });
-        }
-        const data =
-          (input.mode ?? "merge") === "replace"
-            ? input.data
-            : { ...current.data, ...input.data };
-        yield* enforceSchema(input.collection, data);
-        const next: Document = {
-          ...current,
-          data,
-          updatedAt: new Date().toISOString(),
-          version: current.version + 1,
-        };
-        return yield* commitOnce(input.idempotencyKey, fingerprint, request, next,
-          (txn) => documentPut(txn, next, seq));
+        // The version, the conditions and the data merged into are all read in
+        // the transaction that writes, so two updates cannot both build on the
+        // same version and have one silently undo the other.
+        return yield* commitOnce(input.idempotencyKey, fingerprint, request, (txn) =>
+          Effect.gen(function* () {
+            yield* assertNotMoving;
+            const seq = yield* lookup(documentNs(tenant, input.collection), input.id);
+            const current = seq === undefined ? undefined : yield* readDocument(seq);
+            if (seq === undefined || current === undefined) {
+              return yield* new DocumentNotFound({ collection: input.collection, id: input.id });
+            }
+            yield* expect(input.collection, current, input.expectedVersion, input.precondition);
+            const data =
+              (input.mode ?? "merge") === "replace"
+                ? input.data
+                : { ...current.data, ...input.data };
+            yield* enforceSchema(input.collection, data);
+            const next: Document = {
+              ...current,
+              data,
+              updatedAt: new Date().toISOString(),
+              version: current.version + 1,
+            };
+            yield* documentPut(txn, next, seq);
+            return next;
+          }));
       }),
 
     delete: (input) =>
       Effect.gen(function* () {
-        yield* assertNotMoving;
         const request = `delete "${input.collection}/${input.id}"`;
         const fingerprint = fingerprintOf({
           op: "delete", collection: input.collection, id: input.id,
-          expectedVersion: input.expectedVersion,
+          expectedVersion: input.expectedVersion, precondition: input.precondition,
         });
-        if (input.idempotencyKey !== undefined) {
-          const seen = yield* receiptFor(input.idempotencyKey, fingerprint, request);
-          if (seen !== undefined) return seen.result as boolean;
-        }
-        const seq = yield* lookup(documentNs(tenant, input.collection), input.id);
-        // Nothing happened, so there is nothing to remember: a later retry that
-        // finds the document present should delete it rather than replay a
-        // "no" from when it was already gone.
-        if (seq === undefined) return false;
-        if (input.expectedVersion !== undefined) {
-          const current = yield* readDocument(seq);
-          if (current !== undefined && current.version !== input.expectedVersion) {
-            return yield* new DocumentConflict({
-              collection: input.collection,
-              id: input.id,
-              reason: `expected version ${input.expectedVersion}, found ${current.version}`,
-            });
-          }
-        }
-        return yield* commitOnce(input.idempotencyKey, fingerprint, request, true,
-          (txn) => txn.retract(seq));
+        return yield* commitOnce(input.idempotencyKey, fingerprint, request, (txn) =>
+          Effect.gen(function* () {
+            yield* assertNotMoving;
+            const seq = yield* lookup(documentNs(tenant, input.collection), input.id);
+            if (seq === undefined) return false;
+            const current = yield* readDocument(seq);
+            if (current !== undefined) {
+              yield* expect(input.collection, current, input.expectedVersion, input.precondition);
+              yield* releaseReferences(txn, current, seq);
+            }
+            yield* txn.retract(seq);
+            return true;
+          }),
+          // Nothing happened, so there is nothing to remember: a later retry
+          // that finds the document present should delete it rather than
+          // replay a "no" from when it was already gone.
+          (deleted) => deleted);
       }),
 
     createIndex: (input) =>
@@ -1436,31 +1903,52 @@ export const documentsFor = (
             return index;
           }));
         if (recorded === undefined) return yield* new CollectionNotFound({ name: input.collection });
-        if (!sameFields(recorded.fields, definition.fields)) {
+        if (!sameFields(recorded.fields, definition.fields) || (recorded.unique === true) !== definition.unique) {
           return yield* new IndexExists({
             collection: input.collection,
             name: definition.name,
-            reason: `it is defined over ${describeFields(recorded.fields)}`,
+            reason: `it is defined over ${describeFields(recorded.fields)}${recorded.unique === true ? ", unique" : ""}`,
           });
         }
         if (recorded.state === "ready") return publicIndex(recorded);
         // A building index found here may be one an earlier call did not
         // finish; rewriting is idempotent, so finishing it is running it again.
         yield* rewriteDocuments(input.collection);
-        const ready = yield* transactOrDie((txn) =>
+        // Ready, or — for a unique index the documents already break — gone,
+        // decided in one transaction: no write can slip a duplicate in between
+        // the check and the index starting to refuse them.
+        const outcome = yield* transactOrDie((txn) =>
           Effect.gen(function* () {
             const current = yield* loadCollection(input.collection);
             const indexes = current?.indexes ?? [];
-            if (current === undefined || !indexes.some((index) => index.column === recorded.column)) return false;
+            if (current === undefined || !indexes.some((index) => index.column === recorded.column)) {
+              return { _tag: "dropped" } as const;
+            }
+            const clash = recorded.unique === true ? yield* duplicateIn(recorded) : undefined;
+            if (clash !== undefined) {
+              yield* collectionPut(txn, seq, {
+                ...current,
+                indexes: indexes.filter((index) => index.column !== recorded.column),
+              });
+              return { _tag: "duplicate", clash } as const;
+            }
             yield* collectionPut(txn, seq, {
               ...current,
               indexes: indexes.map((index) =>
                 index.column === recorded.column ? { ...index, state: "ready" as const } : index),
             });
-            return true;
+            return { _tag: "ready" } as const;
           }));
+        if (outcome._tag === "duplicate") {
+          yield* rewriteDocuments(input.collection);
+          const [first, second] = yield* Effect.forEach(outcome.clash, (held) => readDocument(held));
+          return yield* new UniqueViolation({
+            collection: input.collection, index: definition.name,
+            id: second?.id ?? "?", holder: first?.id ?? "?",
+          });
+        }
         // Dropped while it was being built: what it was is all there is to say.
-        return ready ? { ...publicIndex(recorded), state: "ready" } : publicIndex(recorded);
+        return outcome._tag === "ready" ? { ...publicIndex(recorded), state: "ready" } : publicIndex(recorded);
       }),
 
     dropIndex: (input) =>
@@ -1484,6 +1972,111 @@ export const documentsFor = (
         // Clearing them now is what returns the space.
         if (dropped) yield* rewriteDocuments(input.collection);
         return dropped;
+      }),
+
+    addCheck: (input) =>
+      Effect.gen(function* () {
+        yield* assertNotMoving;
+        const check = yield* normalizeCheck(input.collection, input);
+        const seq = yield* lookup(collectionNs(tenant), input.collection);
+        if (seq === undefined) return yield* new CollectionNotFound({ name: input.collection });
+        // Recorded first, so every write from here on is held to it; then the
+        // documents already there are read against it. A write refused in
+        // between was refused by a check its caller had asked for.
+        const recorded = yield* transactOrDie((txn) =>
+          Effect.gen(function* () {
+            const current = yield* loadCollection(input.collection);
+            if (current === undefined) return "missing" as const;
+            if ((current.checks ?? []).some((other) => other.name === check.name)) return "exists" as const;
+            yield* collectionPut(txn, seq, { ...current, checks: [...(current.checks ?? []), check] });
+            return "added" as const;
+          }));
+        if (recorded === "missing") return yield* new CollectionNotFound({ name: input.collection });
+        if (recorded === "exists") return yield* new ConstraintExists({ collection: input.collection, name: check.name });
+        for (const held of yield* Stream.runCollect(resolveQuery(equals(collectionColumn(tenant), input.collection)))) {
+          const doc = yield* readDocument(held);
+          const failed = doc === undefined ? undefined : check.where.find((filter) => !satisfiesCheck(doc.data, filter));
+          if (doc === undefined || failed === undefined) continue;
+          yield* transactOrDie((txn) =>
+            Effect.gen(function* () {
+              const current = yield* loadCollection(input.collection);
+              if (current === undefined) return;
+              yield* collectionPut(txn, seq, {
+                ...current, checks: (current.checks ?? []).filter((other) => other.name !== check.name),
+              });
+            }));
+          return yield* new CheckViolation({
+            collection: input.collection, id: doc.id, check: check.name,
+            reason: `${describeFilter(failed)} does not hold, so the check was not added`,
+          });
+        }
+        return check;
+      }),
+
+    addReference: (input) =>
+      Effect.gen(function* () {
+        yield* assertNotMoving;
+        const reference = yield* normalizeReference(input.from, input);
+        const seq = yield* lookup(collectionNs(tenant), input.from);
+        if (seq === undefined) return yield* new CollectionNotFound({ name: input.from });
+        const recorded = yield* transactChecked((txn) =>
+          Effect.gen(function* () {
+            const current = yield* loadCollection(input.from);
+            if (current === undefined) return "missing" as const;
+            if ((current.references ?? []).some((other) => other.name === reference.name)) return "exists" as const;
+            const withReference = { ...current, references: [...(current.references ?? []), reference] };
+            if (reference.collection === input.from) {
+              yield* collectionPut(txn, seq, {
+                ...withReference,
+                referencedBy: [...(current.referencedBy ?? []), { collection: input.from, reference: reference.name }],
+              });
+            } else {
+              yield* collectionPut(txn, seq, withReference);
+              yield* linkTargets(txn, input.from, [reference]);
+            }
+            return "added" as const;
+          }));
+        if (recorded === "missing") return yield* new CollectionNotFound({ name: input.from });
+        if (recorded === "exists") return yield* new ConstraintExists({ collection: input.from, name: reference.name });
+        for (const held of yield* Stream.runCollect(resolveQuery(equals(collectionColumn(tenant), input.from)))) {
+          const doc = yield* readDocument(held);
+          const value = doc === undefined ? undefined : readPath(doc.data, reference.path);
+          if (doc === undefined || value === undefined || value === null) continue;
+          const names = typeof value === "string" && (
+            (reference.collection === input.from && value === doc.id) ||
+            (yield* lookup(documentNs(tenant, reference.collection), value)) !== undefined);
+          if (names) continue;
+          yield* transactOrDie((txn) => unlinkReference(txn, input.from, reference.name));
+          return yield* new ReferenceViolation({
+            collection: input.from, id: doc.id, reference: reference.name,
+            reason: `${reference.path} holds ${JSON.stringify(value)}, which names no document in "${reference.collection}", so the reference was not added`,
+          });
+        }
+        return reference;
+      }),
+
+    dropReference: (input) =>
+      Effect.gen(function* () {
+        yield* assertNotMoving;
+        if ((yield* lookup(collectionNs(tenant), input.collection)) === undefined) {
+          return yield* new CollectionNotFound({ name: input.collection });
+        }
+        return yield* transactOrDie((txn) => unlinkReference(txn, input.collection, input.name));
+      }),
+
+    dropCheck: (input) =>
+      Effect.gen(function* () {
+        yield* assertNotMoving;
+        const seq = yield* lookup(collectionNs(tenant), input.collection);
+        if (seq === undefined) return yield* new CollectionNotFound({ name: input.collection });
+        return yield* transactOrDie((txn) =>
+          Effect.gen(function* () {
+            const current = yield* loadCollection(input.collection);
+            const checks = current?.checks ?? [];
+            if (current === undefined || !checks.some((check) => check.name === input.name)) return false;
+            yield* collectionPut(txn, seq, { ...current, checks: checks.filter((check) => check.name !== input.name) });
+            return true;
+          }));
       }),
 
     forgetIdempotencyKeys: (input) =>

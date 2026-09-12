@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   compareKeys, compareOrderedValues, decodeIdentity, decodeOrderedKey,
   dstOf, edgeKey, edgePrefix, identityKey, inPrefixRange, orderedColumnPrefix, orderedKey,
-  orderedTuple, orderedValuePrefix, prefixEnd, seqOf, termKey, termPrefix,
+  decodeOrderedTuple, orderedTuple, orderedValuePrefix, prefixEnd, seqOf, termKey, termPrefix,
 } from "../dist/db/keys.js";
 
 const sorted = (keys) => [...keys].sort(compareKeys);
@@ -233,5 +233,22 @@ test("a composite key sorts field by field, each with its own direction and null
       `${JSON.stringify(a)} against ${JSON.stringify(b)}`);
     // The leading fields alone are a prefix of the whole, which is what a seek by them relies on.
     assert.ok(x.startsWith(orderedTuple(a.slice(0, 2).map((value, j) => ({ value, ...spec[j] })))));
+  }
+});
+
+test("a composite key decodes back to its values, with no value as undefined", () => {
+  const nul = String.fromCharCode(0);
+  const values = [undefined, null, false, true, -2.5, 0, 10, "", "a", `a${nul}b`, "é"];
+  for (const direction of ["asc", "desc"]) {
+    for (const nulls of ["first", "last"]) {
+      const spec = [{ direction, nulls }, { direction: direction === "asc" ? "desc" : "asc", nulls }];
+      for (const a of values) {
+        for (const b of values) {
+          const tuple = orderedTuple([a, b].map((value, i) => ({ value, ...spec[i] })));
+          assert.deepEqual(decodeOrderedTuple(tuple, spec.map((field) => field.direction)),
+            [a, b].map((value) => (value === null ? undefined : value)));
+        }
+      }
+    }
   }
 });
