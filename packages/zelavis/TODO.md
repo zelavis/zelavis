@@ -756,8 +756,11 @@ driven by what the existing dependents call, not by what is easiest to port.
   stale. A backup whose identities name another tenant is now refused whatever
   its label says, because a merge looks those names up and would otherwise write
   over the tenant they really belong to.
-- [ ] Shard topology, so an official App routes virtual ranges across several
-  physical shards from creation rather than gaining sharding later.
+- [x] Shard topology, so an official App routes virtual ranges across several
+  physical shards from creation rather than gaining sharding later. A Node
+  database opens `DEFAULT_LOCAL_SHARDS` — four — unless told otherwise, and the
+  App recipe runs on the database the runtime hands it, so growing moves
+  placements rather than introducing partitioning for the first time.
 - [x] Logical, shard-aware dashboard system views. Built from the tenant APIs
   rather than from storage, so a view cannot name a physical table, cannot read
   one belonging to another tenant, and does not break when a range moves. Note
@@ -789,8 +792,9 @@ the `dbnew` runtime API, both construction sites open a sharded database through
   local files and embedded replicas; a database reachable only over the network
   needs transaction serialization designed before an asynchronous gateway is
   safe to offer.
-- [ ] Report real topology on `/database/health` — shard count and partition map
-  version — now that `dbnew` serves it.
+- [x] Report real topology on `/database/health`: shard count, virtual ranges
+  and partition map version, read from the live topology rather than stood in
+  for by constants.
 
 Independent of parity, and needed before an official recipe mounts `dbnew`:
 

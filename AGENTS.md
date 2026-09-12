@@ -672,6 +672,14 @@ those grants, while endpoints remain the authority layer.
   its Done, Prepared, Next, and Later sections when a core, App-versioning, or
   Fabric capability changes state; never mark an exported contract as
   operational behavior before its implementation exists.
+- Keep that roadmap current in the same change, never afterwards. A change
+  that finishes an item marks it done in its own commit and says what it now
+  does and what it cost — the numbers, where they were measured. Anything the
+  work turned up goes in as a new open item then, while it is still known: a
+  follow-up, a limit hit, a cost worth paying down later. And check what you
+  touched on the way past: an item left open because nobody revisited it reads
+  as work outstanding, which is the same defect as a stale comment, and the
+  next reader plans around it.
 - `packages/zelavis/src/app` owns the official `zelavis/app` Project recipe,
   document-first database, auth primitives, and Project-scoped workloads. It
   consumes the same core implementation and must never grow private server
