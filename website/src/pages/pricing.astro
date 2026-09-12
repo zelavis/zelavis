@@ -1,0 +1,983 @@
+---
+import MarketingLayout from '../layouts/MarketingLayout.astro';
+import SegmentedControl from '../components/SegmentedControl.astro';
+import StickyLocalNav from '../components/StickyLocalNav.astro';
+import BrandMarquee from '../components/BrandMarquee.astro';
+
+/**
+ * PLACEHOLDER PRICING — set real numbers before launch.
+ *
+ * Every amount, seat count, and quota below is invented so the page has
+ * something to lay out. Pricing is a business decision: replace `monthly`,
+ * `yearly`, and the quota strings with the real Zelavis Plus figures.
+ * `yearly` is the effective per-month amount when billed annually.
+ */
+const plans = [
+	{
+		id: 'community',
+		name: 'Community',
+		tagline: 'Self-host the whole platform.',
+		monthly: 0,
+		yearly: 0,
+		cta: { label: 'Install Zelavis', href: '/getting-started/installation', primary: false },
+		note: 'Free and open source, forever.',
+		features: [
+			'Unlimited projects on your own hardware',
+			'Auth, database, content, and media',
+			'Project-scoped workloads',
+			'Native website hosting',
+			'Community support on GitHub',
+		],
+	},
+	{
+		id: 'plus',
+		name: 'Zelavis Plus',
+		tagline: 'Managed on zelavis.com, run by us.',
+		monthly: 24,
+		yearly: 19,
+		featured: true,
+		cta: { label: 'Start free trial', href: 'https://zelavis.com/signup', primary: true },
+		note: '14-day trial. No card required.',
+		features: [
+			'Everything in Community',
+			'All five product intelligence pillars',
+			'Managed control plane and updates',
+			'Daily backups with point-in-time restore',
+			'Replica placement and failover',
+			'Custom domains with managed TLS',
+			'Priority support, 1 business day',
+		],
+	},
+	{
+		id: 'enterprise',
+		name: 'Enterprise',
+		tagline: 'Your compliance, your placement rules.',
+		monthly: null,
+		yearly: null,
+		cta: { label: 'Talk to us', href: 'mailto:sales@zelavis.com', primary: false },
+		note: 'Annual agreements.',
+		features: [
+			'Everything in Plus',
+			'Single tenant or bring your own cloud',
+			'SSO and audit logging',
+			'Custom shard and tenant placement',
+			'Dedicated support channel and SLA',
+		],
+	},
+];
+
+const plusPillars = [
+	{
+		icon: '📊',
+		title: 'Product & Marketing Analytics',
+		description: 'Track user funnels, see where people drop off during sign-up, and understand which features keep customers coming back.',
+	},
+	{
+		icon: '🤖',
+		title: 'AI Agents & Analytics',
+		description: 'Ask advanced Global Agents product questions in plain English for instant root-cause analysis, and understand how customers use your own AI features.',
+		example: '“Why are new users dropping before setup?”',
+	},
+	{
+		icon: '✨',
+		title: 'Session Replay & Heatmaps',
+		description: 'Watch visual recordings of real user sessions and reveal exactly where people get stuck, hesitate, or become confused.',
+	},
+	{
+		icon: '🧪',
+		title: 'Feature & Web Experimentation',
+		description: 'Run A/B tests across features and webpages to learn which version performs best before releasing it to everyone.',
+	},
+	{
+		icon: '🗣️',
+		title: 'AI Feedback',
+		description: 'Bring customer comments and reviews together from across the web, then use AI to categorize what users are asking for.',
+	},
+];
+
+const matrix = [
+	{ group: 'Platform', rows: [
+		{ label: 'Projects', community: 'Unlimited', plus: 'Unlimited', enterprise: 'Unlimited' },
+		{ label: 'Auth, database, content, and media', community: true, plus: true, enterprise: true },
+		{ label: 'Functions, jobs, schedules, and webhooks', community: true, plus: true, enterprise: true },
+		{ label: 'Storage drivers', community: 'SQLite, libSQL, RocksDB, LMDB', plus: 'All drivers', enterprise: 'All drivers' },
+		{ label: 'Native website hosting', community: true, plus: true, enterprise: true },
+		{ label: 'Marketplace and plugins', community: true, plus: true, enterprise: true },
+	] },
+	{ group: 'Product intelligence', rows: [
+		{ label: 'Product & Marketing Analytics', community: false, plus: true, enterprise: true },
+		{ label: 'AI Agents & Analytics', community: false, plus: true, enterprise: true },
+		{ label: 'Session Replay & Heatmaps', community: false, plus: true, enterprise: true },
+		{ label: 'Feature & Web Experimentation', community: false, plus: true, enterprise: true },
+		{ label: 'AI Feedback', community: false, plus: true, enterprise: true },
+	] },
+	{ group: 'Operations', rows: [
+		{ label: 'Managed control plane', community: false, plus: true, enterprise: true },
+		{ label: 'Automated backups', community: 'Self-managed', plus: 'Daily + PITR', enterprise: 'Custom schedule' },
+		{ label: 'Replication and failover', community: 'Self-managed', plus: true, enterprise: true },
+		{ label: 'Custom domains and TLS', community: 'Self-managed', plus: 'Managed', enterprise: 'Managed' },
+		{ label: 'Bring your own cloud', community: true, plus: false, enterprise: true },
+		{ label: 'Custom placement rules', community: false, plus: false, enterprise: true },
+	] },
+	{ group: 'Team', rows: [
+		{ label: 'Seats', community: 'Unlimited', plus: 'Per seat', enterprise: 'Unlimited' },
+		{ label: 'SSO', community: false, plus: false, enterprise: true },
+		{ label: 'Audit logging', community: false, plus: 'Basic', enterprise: 'Full' },
+		{ label: 'Support', community: 'Community', plus: '1 business day', enterprise: 'SLA' },
+	] },
+];
+
+const faqs = [
+	{
+		q: 'Is Zelavis still free if I self-host?',
+		a: 'Yes. The platform is open source and the Community plan is the full self-hosted product — every storage driver, native website hosting, workloads, and the Marketplace. Zelavis Plus pays for us to run and operate it for you.',
+	},
+	{
+		q: 'Can I still get Zelavis Plus if I self-host?',
+		a: 'Yes. Zelavis Plus works whether Zelavis is self-hosted or hosted for you on Zelavis Cloud. If you prefer self-hosting, you can keep Zelavis where it is and add the five Plus pillars. If you prefer a fully managed experience, we can host and operate the complete platform for you.',
+	},
+	{
+		q: 'What happens to my data if I leave Plus?',
+		a: 'Projects are portable by design. Every project locks its exact recipe version and owns its own data directory, so a managed project can be exported and started on your own hardware without a rewrite.',
+	},
+	{
+		q: 'Do you charge per project?',
+		a: 'No. Plus is priced per seat, and projects are unlimited on every plan.',
+	},
+	{
+		q: 'When do planning and collaboration arrive?',
+		a: 'Project planning and real-time collaboration are committed roadmap direction rather than shipped features today. They are not part of what any plan bills for right now, and pricing for them will be announced before they ship.',
+	},
+];
+---
+
+<MarketingLayout
+	title="Pricing — Zelavis Plus"
+	description="Self-host Zelavis for free, or run it managed with Zelavis Plus. Compare Community, Plus, and Enterprise."
+>
+	<StickyLocalNav showAfterId="plus-pillars" items={[
+		{ id: 'plans', label: 'Plans' },
+		{ id: 'plus-pillars', label: 'Plus pillars' },
+		{ id: 'compare', label: 'Compare' },
+		{ id: 'questions', label: 'Questions' },
+	]} />
+	<div class="pricing-intro">
+	<section class="p-hero">
+		<div class="p-glow" aria-hidden="true"></div>
+		<div class="wrap p-hero-inner">
+			<div class="pricing-controls">
+				<p class="eyebrow" data-reveal>Pricing</p>
+				<div class="billing-switch" data-reveal style="--delay: 70">
+					<SegmentedControl
+						id="billing-cycle"
+						label="Billing cycle"
+						role="radiogroup"
+						variant="glass"
+						width="286px"
+						value="monthly"
+						options={[
+							{ value: 'monthly', label: 'Monthly' },
+							{ value: 'yearly', label: 'Annual', badge: '−20%' },
+						]}
+					/>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<section class="p-plans" id="plans">
+		<div class="wrap plans">
+			{
+				plans.map((plan, i) => (
+					<article
+						class:list={['card plan', { 'is-featured': plan.featured }]}
+						data-reveal
+						style={`--delay: ${i * 100}`}
+					>
+						{plan.featured && <span class="plan-flag">Most popular</span>}
+						<h2>{plan.name}</h2>
+						<p class="plan-tagline">{plan.tagline}</p>
+
+						<div class="plan-price">
+							{plan.monthly === null ? (
+								<span class="price-custom">Custom</span>
+							) : (
+								<>
+									<span class="price-cur">$</span>
+									<span
+										class="price-amount"
+										data-monthly={String(plan.monthly)}
+										data-yearly={String(plan.yearly)}
+									>
+										{plan.monthly}
+									</span>
+									<span class="price-unit">/ seat / month</span>
+								</>
+							)}
+						</div>
+
+						<a
+							class:list={['btn', 'plan-cta', plan.cta.primary ? 'btn-primary' : 'btn-ghost']}
+							href={plan.cta.href}
+						>
+							{plan.cta.label}
+						</a>
+
+						<p class="plan-note">{plan.note}</p>
+
+					</article>
+				))
+			}
+		</div>
+	</section>
+	<div class="hero-brand-dock"><BrandMarquee /></div>
+	</div>
+
+	<section class="pillars-section" id="plus-pillars" data-local-content>
+		<div class="wrap">
+			<div class="pillars-head" data-reveal>
+				<p class="pillars-eyebrow">Included with Zelavis Plus</p>
+				<h2>Five pillars. One complete growth system.</h2>
+				<p>Understand behavior, find the reason behind it, test what works, and turn customer signals into better products.</p>
+			</div>
+
+			<div class="pillars-grid">
+				{plusPillars.map((pillar, index) => (
+					<article class="pillar-card" data-reveal style={`--delay: ${index * 70}`}>
+						<span class="pillar-icon" aria-hidden="true">{pillar.icon}</span>
+						<h3>{pillar.title}</h3>
+						<p>{pillar.description}</p>
+						{pillar.example && <p class="pillar-example">{pillar.example}</p>}
+					</article>
+				))}
+			</div>
+		</div>
+	</section>
+
+	<section class="section" id="compare" data-local-content>
+		<div class="wrap">
+			<div class="section-head" data-reveal>
+				<h2 class="section-title">Compare every plan.</h2>
+				<p class="section-lede">
+					Compare the open self-hosted foundation with the managed operations and five
+					product-intelligence pillars included with Plus.
+				</p>
+			</div>
+
+			<div class="matrix-scroll" data-reveal>
+				<table class="matrix">
+					<thead>
+						<tr>
+							<th scope="col">Feature</th>
+							<th scope="col">Community</th>
+							<th scope="col" class="col-plus">Plus</th>
+							<th scope="col">Enterprise</th>
+						</tr>
+					</thead>
+					<tbody>
+						{
+							matrix.map((group) => (
+								<>
+									<tr class="matrix-group">
+										<th scope="rowgroup" colspan="4">{group.group}</th>
+									</tr>
+									{group.rows.map((row) => (
+										<tr>
+											<th scope="row">{row.label}</th>
+											{[row.community, row.plus, row.enterprise].map((cell, idx) => (
+												<td class:list={[{ 'col-plus': idx === 1 }]}>
+													{cell === true ? (
+														<span class="yes" aria-label="Included">✓</span>
+													) : cell === false ? (
+														<span class="no" aria-label="Not included">—</span>
+													) : (
+														cell
+													)}
+												</td>
+											))}
+										</tr>
+									))}
+								</>
+							))
+						}
+					</tbody>
+				</table>
+			</div>
+		</div>
+	</section>
+
+	<section class="section band" id="questions" data-local-content>
+		<div class="wrap faq-wrap">
+			<div class="section-head" data-reveal>
+				<h2 class="section-title">Questions.</h2>
+			</div>
+			<div class="faqs">
+				{
+					faqs.map((faq, i) => (
+						<details class="faq" data-reveal style={`--delay: ${i * 80}`}>
+							<summary>
+								{faq.q}
+								<span class="faq-icon" aria-hidden="true">+</span>
+							</summary>
+							<p>{faq.a}</p>
+						</details>
+					))
+				}
+			</div>
+		</div>
+	</section>
+
+	<section class="cta" data-local-content>
+		<div class="wrap cta-inner" data-reveal>
+			<h2>Try it before you pay for it.</h2>
+			<p>Self-host in a minute, or start a 14-day Plus trial.</p>
+			<div class="cta-row">
+				<a class="btn btn-primary" href="https://zelavis.com/signup">Start free trial</a>
+				<a class="btn btn-ghost" href="/getting-started/installation">Install yourself</a>
+			</div>
+		</div>
+	</section>
+
+	<script is:inline>
+		(function () {
+			var billingControl = document.getElementById('billing-cycle');
+			var amounts = document.querySelectorAll('.price-amount');
+			var reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+			function swapAmount(amount, next) {
+				if (next === null || amount.textContent === next) return;
+				if (reducedMotion.matches || !amount.animate) {
+					amount.textContent = next;
+					return;
+				}
+
+				amount.getAnimations().forEach(function (animation) { animation.cancel(); });
+				var out = amount.animate(
+					[
+						{ opacity: 1, transform: 'translateY(0)', filter: 'blur(0)' },
+						{ opacity: 0, transform: 'translateY(-7px)', filter: 'blur(3px)' },
+					],
+					{ duration: 130, easing: 'cubic-bezier(.4,0,1,1)', fill: 'forwards' }
+				);
+				out.onfinish = function () {
+					amount.textContent = next;
+					amount.animate(
+						[
+							{ opacity: 0, transform: 'translateY(7px)', filter: 'blur(3px)' },
+							{ opacity: 1, transform: 'translateY(0)', filter: 'blur(0)' },
+						],
+						{ duration: 220, easing: 'cubic-bezier(.16,1,.3,1)', fill: 'both' }
+					);
+				};
+			}
+
+			function selectCycle(cycle) {
+				amounts.forEach(function (amount) {
+					var next = amount.getAttribute(cycle === 'yearly' ? 'data-yearly' : 'data-monthly');
+					swapAmount(amount, next);
+				});
+			}
+
+			if (billingControl) billingControl.addEventListener('segmented-change', function (event) {
+				selectCycle(event.detail.value);
+			});
+		})();
+	</script>
+</MarketingLayout>
+
+<style>
+	:global(body) {
+		background: #fff;
+		color: #15161b;
+	}
+
+	:global(.nav) {
+		position: absolute;
+		top: 0;
+		width: 100%;
+		background: transparent;
+		border: 0;
+		color: #fff;
+		z-index: 20;
+	}
+
+	:global(.nav.is-stuck) {
+		position: fixed;
+		background: transparent;
+	}
+
+	:global(.nav .nav-links),
+	:global(.nav .nav-actions) {
+		font-family: var(--font);
+		font-size: 16px;
+		font-weight: 500;
+	}
+
+	:global(.nav .nav-links a),
+	:global(.nav .nav-links button),
+	:global(.nav .nav-login),
+	:global(.nav .brand),
+	:global(.nav .brand-word) {
+		color: #fff;
+	}
+
+	:global(.nav .nav-cta) {
+		background: #fff;
+		color: #17181c;
+		box-shadow: none;
+	}
+
+	.pricing-intro {
+		position: relative;
+		height: 100vh;
+		height: 100svh;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+		padding: 100px 0 104px;
+		overflow: hidden;
+		border-radius: 0 0 34px 34px;
+		background:
+			radial-gradient(circle at 84% 18%, rgba(255, 148, 143, 0.72), transparent 31%),
+			radial-gradient(circle at 48% 112%, rgba(78, 38, 156, 0.88), transparent 40%),
+			linear-gradient(118deg, #153b96 0%, #293b9f 35%, #6946ae 69%, #ad6085 100%);
+	}
+
+	.p-hero {
+		position: relative;
+		flex: none;
+		padding: 12px 0 28px;
+		text-align: center;
+		overflow: visible;
+		background: transparent;
+		color: #fff;
+	}
+
+	.p-glow {
+		position: absolute;
+		top: -260px;
+		left: 50%;
+		width: 900px;
+		height: 650px;
+		transform: translateX(-50%);
+		background: radial-gradient(ellipse at center, rgba(255,255,255,.18), transparent 68%);
+		filter: blur(45px);
+		pointer-events: none;
+	}
+
+	.p-hero-inner {
+		position: relative;
+	}
+
+	.pricing-controls {
+		display: grid;
+		justify-items: center;
+		row-gap: 18px;
+		width: 100%;
+	}
+
+	.p-hero .eyebrow {
+		margin: 0;
+		color: #f5aa62;
+		font-size: .88rem;
+		font-weight: 700;
+		letter-spacing: .12em;
+		text-transform: uppercase;
+	}
+
+	.billing-switch { width: 286px; max-width: 100%; }
+
+	/* ---------- plans ---------- */
+
+	.p-plans {
+		flex: 1;
+		min-height: 0;
+		padding: 0 0 18px;
+		margin-top: 0;
+		position: relative;
+		z-index: 2;
+		background: transparent;
+	}
+
+	.plans {
+		height: 100%;
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 18px;
+		align-items: stretch;
+		transform: none;
+		margin-bottom: 0;
+	}
+
+	.plan {
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		padding: clamp(22px, 3.1svh, 32px);
+		border: 1px solid #e5e5eb;
+		border-radius: 24px;
+		background: #fff;
+		color: #17181d;
+		box-shadow: 0 18px 45px rgba(35, 30, 80, .08);
+	}
+
+	.plans .plan:hover {
+		transform: none;
+		border-color: #e5e5eb;
+		box-shadow: 0 18px 45px rgba(35, 30, 80, .08);
+	}
+
+	.plan.is-featured {
+		border-color: transparent;
+		background:
+			radial-gradient(circle at 82% 8%, rgba(131, 101, 255, .62), transparent 36%),
+			linear-gradient(145deg, #17245f, #342171 65%, #522d75);
+		color: #fff;
+		box-shadow: 0 28px 70px rgba(46, 31, 117, .25);
+	}
+
+	.plans .plan.is-featured:hover {
+		border-color: transparent;
+		box-shadow: 0 28px 70px rgba(46, 31, 117, .25);
+	}
+
+	.plan-flag {
+		position: absolute;
+		top: 18px;
+		right: 18px;
+		background: rgba(255,255,255,.16);
+		color: #fff;
+		font-size: 0.7rem;
+		font-weight: 750;
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
+		padding: 0.35rem 0.7rem;
+		border-radius: 999px;
+	}
+
+	.plan h2 {
+		font-size: 1.35rem;
+		margin: 0 0 0.5rem;
+		letter-spacing: -0.02em;
+	}
+
+	.plan-tagline {
+		color: #71727c;
+		font-size: 0.93rem;
+		margin: 0 0 clamp(.8rem, 2svh, 1.35rem);
+		min-height: 2.6em;
+	}
+
+	.plan.is-featured .plan-tagline,
+	.plan.is-featured .price-cur,
+	.plan.is-featured .price-unit,
+	.plan.is-featured .plan-note {
+		color: rgba(255,255,255,.72);
+	}
+
+	.plan-price {
+		display: flex;
+		align-items: baseline;
+		gap: 0.2rem;
+		margin-bottom: clamp(.8rem, 2svh, 1.3rem);
+		min-height: 3rem;
+	}
+
+	.price-cur {
+		font-size: 1.3rem;
+		font-weight: 700;
+		color: #777883;
+	}
+
+	.price-amount {
+		font-size: 2.9rem;
+		font-weight: 700;
+		letter-spacing: -0.04em;
+		line-height: 1;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.price-unit,
+	.price-custom {
+		color: #777883;
+		font-size: 0.87rem;
+		margin-left: 0.3rem;
+	}
+
+	.price-custom {
+		font-size: 2rem;
+		font-weight: 800;
+		color: #17181d;
+		letter-spacing: -0.03em;
+		margin-left: 0;
+	}
+
+	.plan-cta {
+		width: 100%;
+		min-height: 52px;
+		border-radius: 999px;
+		background: #17181d;
+		border-color: #17181d;
+		color: #fff;
+		box-shadow: none;
+	}
+
+	.plan.is-featured .plan-cta {
+		background: #fff;
+		border-color: #fff;
+		color: #17181d;
+	}
+
+	.plan-note {
+		color: #858690;
+		font-size: 0.8rem;
+		text-align: center;
+		margin: 0.7rem 0 0;
+	}
+
+	.hero-brand-dock { position: absolute; z-index: 4; right: 0; bottom: 0; left: 0; }
+
+	/* ---------- Plus pillars ---------- */
+
+	.pillars-section {
+		padding: 108px 0 118px;
+		background: #fff;
+		color: #17181d;
+	}
+
+	.pillars-head {
+		max-width: 760px;
+		margin: 0 auto 54px;
+		text-align: center;
+	}
+
+	.pillars-eyebrow {
+		margin: 0 0 15px;
+		color: #6258d2;
+		font-size: .82rem;
+		font-weight: 700;
+		letter-spacing: .1em;
+		text-transform: uppercase;
+	}
+
+	.pillars-head h2 {
+		margin: 0;
+		font-size: clamp(2.25rem, 4.4vw, 3.65rem);
+		line-height: 1.08;
+		letter-spacing: -.045em;
+		font-weight: 700;
+	}
+
+	.pillars-head > p:last-child {
+		max-width: 650px;
+		margin: 22px auto 0;
+		color: #696b76;
+		font-size: 1.05rem;
+		line-height: 1.65;
+	}
+
+	.pillars-grid {
+		display: grid;
+		grid-template-columns: repeat(6, minmax(0, 1fr));
+		gap: 18px;
+	}
+
+	.pillar-card {
+		grid-column: span 2;
+		min-height: 300px;
+		padding: 30px;
+		border: 1px solid #e7e7ed;
+		border-radius: 22px;
+		background: #f8f8fb;
+		transition: transform .28s var(--ease), border-color .28s var(--ease), box-shadow .28s var(--ease);
+	}
+
+	.pillar-card:nth-child(4),
+	.pillar-card:nth-child(5) {
+		grid-column: span 3;
+		min-height: 270px;
+	}
+
+	.pillar-card:hover {
+		transform: translateY(-5px);
+		border-color: #cbc8e9;
+		box-shadow: 0 22px 48px rgba(52, 40, 117, .1);
+	}
+
+	.pillar-icon {
+		width: 52px;
+		height: 52px;
+		display: grid;
+		place-items: center;
+		border-radius: 15px;
+		background: #fff;
+		box-shadow: 0 8px 24px rgba(40, 31, 88, .08);
+		font-size: 1.5rem;
+	}
+
+	.pillar-card h3 {
+		margin: 27px 0 12px;
+		font-size: 1.25rem;
+		line-height: 1.3;
+		letter-spacing: -.025em;
+	}
+
+	.pillar-card > p {
+		margin: 0;
+		color: #646670;
+		font-size: .94rem;
+		line-height: 1.65;
+	}
+
+	.pillar-card .pillar-example {
+		margin-top: 18px;
+		padding: 12px 14px;
+		border-radius: 10px;
+		background: #eceaf9;
+		color: #4c438f;
+		font-size: .82rem;
+		font-weight: 500;
+		font-style: italic;
+	}
+
+	/* ---------- matrix ---------- */
+	.section {
+		background: #fff;
+		color: #17181d;
+	}
+
+	.section :global(.section-title) {
+		color: #17181d;
+		font-weight: 700;
+	}
+
+	.section :global(.section-lede) {
+		color: #686a74;
+	}
+
+	.matrix-scroll {
+		overflow-x: auto;
+		border: 1px solid #e5e5eb;
+		border-radius: 20px;
+		box-shadow: 0 15px 45px rgba(35, 30, 80, .06);
+	}
+
+	.matrix {
+		width: 100%;
+		border-collapse: collapse;
+		min-width: 660px;
+		font-size: 0.9rem;
+	}
+
+	.matrix th,
+	.matrix td {
+		text-align: left;
+		padding: 0.85rem 1.1rem;
+		border-bottom: 1px solid #e8e8ed;
+	}
+
+	.matrix thead th {
+		background: #f5f5f8;
+		font-size: 0.78rem;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: #777985;
+		white-space: nowrap;
+	}
+
+	.matrix tbody th {
+		font-weight: 550;
+		color: #3d3f47;
+	}
+
+	.matrix td {
+		color: #6d6f79;
+	}
+
+	.matrix-group th {
+		background: #ececf4;
+		font-size: 0.75rem;
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
+		color: #574dc6;
+	}
+
+	.col-plus {
+		background: rgba(91, 79, 204, .055);
+	}
+
+	.yes {
+		color: #574dc6;
+		font-weight: 700;
+	}
+
+	.no {
+		color: #999aa3;
+	}
+
+	/* ---------- faq ---------- */
+
+	.faq-wrap {
+		max-width: 800px;
+	}
+
+	.band {
+		background: #f5f5f8;
+	}
+
+	.faqs {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+
+	.faq {
+		border: 1px solid #e3e3e9;
+		border-radius: 16px;
+		background: #fff;
+		padding: 0 1.4rem;
+		transition: border-color 0.25s var(--ease);
+	}
+
+	.faq[open] {
+		border-color: #bbb9d4;
+	}
+
+	.faq summary {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		cursor: pointer;
+		list-style: none;
+		padding: 1.15rem 0;
+		font-weight: 620;
+		font-size: 0.97rem;
+	}
+
+	.faq summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.faq-icon {
+		color: #574dc6;
+		font-size: 1.3rem;
+		line-height: 1;
+		transition: transform 0.25s var(--ease);
+		flex-shrink: 0;
+	}
+
+	.faq[open] .faq-icon {
+		transform: rotate(45deg);
+	}
+
+	.faq p {
+		margin: 0;
+		padding: 0 0 1.2rem;
+		color: #666872;
+		font-size: 0.92rem;
+		max-width: 68ch;
+	}
+
+	/* ---------- cta ---------- */
+
+	.cta {
+		padding-block: clamp(80px, 12vw, 130px);
+		text-align: center;
+		border-top: 0;
+		background:
+			radial-gradient(circle at 82% 20%, rgba(137, 91, 219, .72), transparent 35%),
+			linear-gradient(125deg, #142c79, #33206d 65%, #743b6c);
+		color: #fff;
+	}
+
+	.cta-inner h2 {
+		font-size: clamp(1.9rem, 4.4vw, 2.8rem);
+		letter-spacing: -0.035em;
+		margin: 0 0 0.75rem;
+		font-weight: 700;
+	}
+
+	.cta-inner p {
+		color: rgba(255,255,255,.75);
+		margin: 0 0 2rem;
+	}
+
+	.cta-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.75rem;
+		justify-content: center;
+	}
+
+	.cta :global(.btn-primary) {
+		background: #fff;
+		color: #17181d;
+		box-shadow: none;
+	}
+
+	.cta :global(.btn-ghost) {
+		border-color: rgba(255,255,255,.55);
+		background: transparent;
+		color: #fff;
+	}
+
+	@media (max-width: 820px) {
+		.p-hero {
+			padding: 2px 0 22px;
+		}
+
+		.plans {
+			grid-template-columns: none;
+			grid-auto-flow: column;
+			grid-auto-columns: min(82vw, 330px);
+			justify-content: start;
+			overflow-x: auto;
+			overflow-y: hidden;
+			scroll-snap-type: x mandatory;
+			scrollbar-width: none;
+			transform: none;
+			margin-bottom: 0;
+		}
+
+		.plans::-webkit-scrollbar { display: none; }
+		.plan { scroll-snap-align: start; }
+
+		.pillars-grid {
+			grid-template-columns: 1fr 1fr;
+		}
+
+		.pillar-card,
+		.pillar-card:nth-child(4),
+		.pillar-card:nth-child(5) {
+			grid-column: auto;
+			min-height: 0;
+		}
+	}
+
+	@media (max-width: 560px) {
+		.pricing-intro { padding: 88px 0 88px; }
+		.p-hero { padding: 0 20px 16px; }
+		.pricing-controls { row-gap: 10px; }
+		.plan { padding: 20px; }
+		.plan-tagline { margin-bottom: .65rem; }
+		.plan-price { margin-bottom: .7rem; }
+		.plan-cta { min-height: 44px; }
+		.billing-switch { width: min(286px, 100%); }
+		.pillars-section { padding: 82px 0 90px; }
+		.pillars-head { margin-bottom: 38px; }
+		.pillars-grid { grid-template-columns: 1fr; }
+	}
+
+	@media (max-height: 700px) {
+		.pricing-intro { padding-top: 82px; }
+		.p-hero { padding-bottom: 12px; }
+		.pricing-controls { row-gap: 9px; }
+		.plan { padding: 18px 22px; }
+		.plan-tagline { display: none; }
+		.plan-price { min-height: 2.5rem; margin-bottom: .6rem; }
+		.price-amount { font-size: 2.35rem; }
+		.plan-cta { min-height: 42px; }
+		.plan-note { margin-top: .45rem; }
+	}
+</style>

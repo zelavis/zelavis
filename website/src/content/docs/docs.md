@@ -1,9 +1,11 @@
 ---
 title: Zelavis Docs
-description: Public documentation for the Zelavis App Platform.
+sidebar:
+  label: Overview
+description: Public documentation for Zelavis, the App Platform.
 ---
 
-Public documentation for the Zelavis self-hostable App Platform: backend primitives, native website hosting, project management, server operations, and a runtime-neutral dashboard.
+Public documentation for Zelavis, the App Platform: backend primitives, native website hosting, project management, server operations, and a runtime-neutral dashboard.
 
 ## Principles
 

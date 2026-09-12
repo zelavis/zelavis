@@ -13,10 +13,46 @@ Zelavis is a unified, self-hostable App Platform. It replaces — and combines �
 | phpMyAdmin | Database administration UI (collections, tables, queries, events) |
 | Workers / Functions platforms | Project-scoped workloads: functions, jobs, schedules, and webhooks hosted by the long-running Zelavis runtime |
 | Claude / Codex chat | AI chat area built into the dashboard for interacting with Zelavis and building via AI |
+| Linear / Jira *(roadmap)* | Project planning: issues, tickets, roadmaps, and cycles scoped to a Zelavis Project |
+| Notion / Figma multiplayer *(roadmap)* | Real-time collaboration: presence, shared editing, and comments across dashboard and Project surfaces |
+
+Rows marked *(roadmap)* are committed product direction, not shipped behavior. Planning and
+real-time collaboration complete the lifecycle the product positioning claims — plan, build, and
+manage in one self-hosted platform — and self-hosting a team's tickets, roadmap, and discussion is
+a stronger ownership claim than self-hosting a database alone. No implementation exists yet. Do not
+describe either as available in docs, README, dashboard, or marketing copy until it ships, and keep
+them out of `packages/zelavis/TODO.md`, which tracks core, App-versioning, and Fabric capabilities
+rather than product scope.
 
 The difference from Firebase/Supabase is depth and ownership: Zelavis is fully self-hostable, runtime-neutral, and built to scale beyond a single database engine. The database layer is the deepest differentiator — `zelavis/db` is a multi-model object store (event-sourced, tenant-aware, one payload projected through document, column, measure, and graph lenses) on a swappable storage engine. SQLite, libSQL, RocksDB and LMDB drivers ship today, all over the same store logic through an ordered key-value interface. Official Zelavis Apps are locally physically sharded from creation: one logical App database routes stable virtual shard ranges across several SQLite files even when every placement is on one Node. Tenant placement, replication, failover, shard movement, and exceptional Tenant subdivision build on that same topology instead of introducing a second distributed architecture later. The event log is the natural replication stream and `tenant_id` is the normal first partition key. That is the same role Vitess plays for MySQL, but Zelavis is not coupled to any single SQL engine. Replicas do not imply multiple writable owners; multi-writer consistency requires a separate explicit data specification.
 
 Zelavis should be able to host websites itself on user-controlled infrastructure. Managed deployment providers may be optional targets through plugins, but they are not the default hosting model and must not replace native Zelavis website hosting.
+
+## Product Positioning
+
+The canonical public tagline is:
+
+> **Zelavis — The App Platform.**
+> Plan, build, and manage apps together, from first ticket to production.
+
+The headline claims the whole application lifecycle, which is what earns the definite article;
+the subline names the span of that lifecycle, which is the claim no single competing tool covers.
+Keep these surfaces consistent with it and with each other when any one of them changes:
+
+- `README.md` headline.
+- `website/astro.config.mjs` Starlight `description`.
+- `website/src/content/docs/index.mdx` frontmatter `description` and intro line.
+
+The tagline stays deployment-neutral on purpose. Managed Zelavis on zelavis.com is a first-class
+offering alongside self-hosting, so headline and tagline copy must not lead with self-hosting,
+ownership, or "your own infrastructure": that framing reads as DIY-only and quietly excludes the
+managed product. Self-hostability remains a core architectural constraint and a capability worth
+stating plainly in body copy, feature sections, and installation docs. It is simply not the
+headline claim, and it should not be reintroduced into one.
+
+The tagline is deliberately ahead of shipped features, so body copy carries the accuracy load:
+headlines may claim the direction, but feature lists, docs, and dashboard copy must still mark
+planning and collaboration as roadmap.
 
 Dashboard/product structure:
 

@@ -559,7 +559,7 @@ zelavis.services.add({
 });
 ```
 
-This contributes an ordinary runtime service. Do not model integrations using
+This contributes an ordinary runtime service. Do not model adapters using
 parent-maintained child-name allow-lists, `childServices`, or service
 inheritance. A provider is discovered through a declared capability and the
 owning plugin's public registration contract.

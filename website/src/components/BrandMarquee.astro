@@ -1,0 +1,110 @@
+---
+const brands = [
+	'Node.js',
+	'Bun',
+	'SQLite',
+	'libSQL',
+	'RocksDB',
+	'LMDB',
+	'Docker',
+	'WordPress',
+	'MySQL',
+	'PostgreSQL',
+	'S3',
+];
+---
+
+<section class="brand-marquee" aria-label="Technologies Zelavis is designed to work with">
+	<p class="brand-marquee-label">Built for your stack</p>
+	<div class="brand-marquee-viewport">
+		<div class="brand-marquee-track">
+			<div class="brand-marquee-set">
+				{brands.map((brand) => <span class="brand-wordmark">{brand}</span>)}
+			</div>
+			<div class="brand-marquee-set" aria-hidden="true">
+				{brands.map((brand) => <span class="brand-wordmark">{brand}</span>)}
+			</div>
+		</div>
+	</div>
+</section>
+
+<style>
+	.brand-marquee {
+		display: grid;
+		grid-template-columns: max-content minmax(0, 1fr);
+		align-items: center;
+		gap: 34px;
+		height: 88px;
+		padding: 0 max(32px, calc((100vw - 1180px) / 2));
+		border-top: 1px solid rgba(255, 255, 255, .2);
+		background: rgba(20, 20, 62, .09);
+		-webkit-backdrop-filter: blur(12px);
+		backdrop-filter: blur(12px);
+		color: #fff;
+	}
+
+	.brand-marquee-label {
+		position: relative;
+		z-index: 2;
+		margin: 0;
+		font-size: 11px;
+		font-weight: 750;
+		letter-spacing: .12em;
+		line-height: 1.25;
+		text-transform: uppercase;
+		white-space: nowrap;
+		color: rgba(255, 255, 255, .66);
+	}
+
+	.brand-marquee-viewport {
+		overflow: hidden;
+		min-width: 0;
+		-webkit-mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+		mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+	}
+
+	.brand-marquee-track {
+		display: flex;
+		width: max-content;
+		will-change: transform;
+		animation: brand-marquee-scroll 55s linear infinite;
+	}
+
+	.brand-marquee-set {
+		display: flex;
+		align-items: center;
+		gap: 64px;
+		padding-right: 64px;
+	}
+
+	.brand-wordmark {
+		flex: none;
+		font-size: clamp(16px, 1.65vw, 22px);
+		font-weight: 700;
+		letter-spacing: -.035em;
+		white-space: nowrap;
+		color: rgba(255, 255, 255, .82);
+	}
+
+	@keyframes brand-marquee-scroll {
+		from { transform: translate3d(0, 0, 0); }
+		to { transform: translate3d(-50%, 0, 0); }
+	}
+
+	@media (max-width: 700px) {
+		.brand-marquee {
+			grid-template-columns: 1fr;
+			gap: 6px;
+			height: 76px;
+			padding: 10px 0 12px;
+		}
+
+		.brand-marquee-label { padding: 0 20px; font-size: 9px; }
+		.brand-marquee-set { gap: 42px; padding-right: 42px; }
+		.brand-wordmark { font-size: 16px; }
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.brand-marquee-track { animation: none; }
+	}
+</style>

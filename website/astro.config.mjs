@@ -9,7 +9,7 @@ export default defineConfig({
       starlight({
           title: 'Zelavis Docs',
           customCss: ['./src/styles/theme.css'],
-          description: 'Composable backend platform for self-hostable app foundations.',
+          description: 'Zelavis is the App Platform. Plan, build, and manage apps together, from first ticket to production.',
           favicon: '/favicon.svg',
           head: [
               { tag: 'meta', attrs: { property: 'og:image', content: 'https://zelavis.com/brand/zelavis-social-card.png' } },
@@ -21,6 +21,7 @@ export default defineConfig({
           ],
           social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/zelavis/zelavis' }],
           sidebar: [
+              { label: 'Overview', link: '/docs' },
               {
                   label: 'Getting Started',
                   items: [{ autogenerate: { directory: 'getting-started' } }],
