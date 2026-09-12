@@ -818,8 +818,14 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   against it unchanged.
 - [x] The SQL store and its gateway are gone. Every engine is a `KvEngine`;
   there is one store.
-- [ ] Report the libsql Buffer-parameter panic upstream. Binding a Buffer to a
-  SELECT crashes the process in libsql 0.5.29, so its keys travel as hex text.
+- [ ] Take libsql's keys back off hex once the Buffer-parameter panic is
+  released. Binding a lone Buffer routed it down the named-parameter path,
+  where an anonymous `?` has no name and the unwrap panicked out of the
+  runtime — aborting the process outright on 0.6.0-pre.41. Reported and fixed
+  upstream (tursodatabase/libsql-js#234, a fork under `repos/libsql-js`):
+  buffers and typed arrays bind positionally, and a named-parameter object
+  against `?` throws instead. Until a release carries it, this engine's keys
+  stay hex text — which preserves order, so only the width is lost.
 - [x] A RocksDB engine, and it was a driver rather than a redesign: four
   methods, nothing above it changed. The single keyspace cost nothing, because
   the key tags already give each lens the disjoint range column families would
