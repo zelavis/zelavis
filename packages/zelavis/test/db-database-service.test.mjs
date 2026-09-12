@@ -603,3 +603,43 @@ test("a search is declared and answered over HTTP", async (t) => {
   assert.equal(unanalyzed.status, 400);
   assert.match(unanalyzed.body.error, /no analyzer/);
 });
+
+test("geometry is declared and queried over HTTP", async (t) => {
+  const { api } = await openTemporaryDatabase(t);
+  const service = defineDatabaseService(api);
+  const create = routeOf(service, "database.collections.create");
+  const insert = routeOf(service, "database.documents.insert");
+  const query = routeOf(service, "database.documents.query");
+  const params = { collection: "places" };
+  const at = (lon, lat) => ({ type: "Point", coordinates: [lon, lat] });
+
+  await call(create, {
+    service: api,
+    body: {
+      tenantId: "acme", name: "places",
+      spatial: { fields: ["where"], resolution: 9, version: 1 },
+    },
+  });
+  await call(create, { service: api, body: { tenantId: "acme", name: "plain" } });
+  for (const [id, lon, lat] of [["gate", 13.3777, 52.5163], ["eiffel", 2.2945, 48.8584]]) {
+    await call(insert, { service: api, params, body: { tenantId: "acme", id, data: { where: at(lon, lat) } } });
+  }
+
+  const near = await call(query, {
+    service: api, params,
+    body: { tenantId: "acme", geometry: { field: "where", near: [13.3777, 52.5163], radius: 2000 } },
+  });
+  const wide = await call(query, {
+    service: api, params,
+    body: { tenantId: "acme", geometry: { field: "where", near: [13.3777, 52.5163], radius: 5000000 } },
+  });
+  const unindexed = await call(query, {
+    service: api, params: { collection: "plain" },
+    body: { tenantId: "acme", geometry: { field: "where", near: [0, 0], radius: 10 } },
+  });
+
+  assert.deepEqual(near.body.documents.map((d) => d.id), ["gate"]);
+  assert.deepEqual(wide.body.documents.map((d) => d.id).sort(), ["eiffel", "gate"]);
+  assert.equal(unindexed.status, 400);
+  assert.match(unindexed.body.error, /does not index geometry/);
+});

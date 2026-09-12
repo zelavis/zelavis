@@ -16,6 +16,7 @@ import type {
   DocumentWrite,
   DocumentWritten,
   Analyzer,
+  SpatialIndex,
 } from "./documents.js";
 import type { DomainEvent, ReadDomainEventsInput } from "./domain-events.js";
 import type { TenantBackupV1 } from "./backup.js";
@@ -52,11 +53,16 @@ export interface TenantRuntimeApi {
       checks?: ReadonlyArray<CheckConstraint>;
       references?: ReadonlyArray<ReferenceConstraint>;
       analyzer?: Analyzer;
+      spatial?: SpatialIndex;
     }) => Promise<Collection>;
     readonly analyze: (input: {
       collection: string;
       analyzer: Analyzer;
     }) => Promise<{ analyzer: Analyzer; documents: number }>;
+    readonly locate: (input: {
+      collection: string;
+      spatial: SpatialIndex;
+    }) => Promise<{ spatial: SpatialIndex; documents: number }>;
     readonly addCheck: (input: CheckConstraint & { collection: string }) => Promise<CheckConstraint>;
     readonly dropCheck: (input: { collection: string; name: string }) => Promise<boolean>;
     readonly addReference: (
@@ -178,6 +184,7 @@ const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
     createIndex: (input) => run(tenant.documents.createIndex(input)),
     dropIndex: (input) => run(tenant.documents.dropIndex(input)),
     analyze: (input) => run(tenant.documents.analyze(input)),
+    locate: (input) => run(tenant.documents.locate(input)),
     addCheck: (input) => run(tenant.documents.addCheck(input)),
     dropCheck: (input) => run(tenant.documents.dropCheck(input)),
     addReference: (input) => run(tenant.documents.addReference(input)),

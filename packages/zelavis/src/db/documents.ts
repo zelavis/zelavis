@@ -29,10 +29,16 @@ import {
   ConstraintExists,
   ReferenceViolation,
   UnanalyzedCollection,
+  UnindexedGeometry,
   UnknownReference,
 } from "./errors.js";
 import type { DbError } from "./errors.js";
 import { compareOrderedValues, decodeOrderedTuple, orderedTuple, sameOrderedKind } from "./keys.js";
+import {
+  boxGeometry, cellsFor, contains, coveringFor, diskFor, distanceBetween, inBox, loadH3,
+  positionsOf, COARSEST_RESOLUTION,
+  type BoundingBox, type Geometry, type Position as GeoPosition,
+} from "./spatial.js";
 import type { IndexManifest, OrderedScalar, Seq } from "./model.js";
 import { and, equals, or, term, type Query, type RangeBound } from "./query.js";
 import type { SchemasApi } from "./schemas.js";
@@ -56,8 +62,28 @@ export interface Collection {
   readonly references?: ReadonlyArray<Required<ReferenceConstraint>>;
   /** How text becomes searchable terms; see `Analyzer`. */
   readonly analyzer?: Analyzer;
+  /** How geometry becomes searchable cells; see `SpatialIndex`. */
+  readonly spatial?: SpatialIndex;
   /** The references other collections — or this one — make to this collection's documents. */
   readonly referencedBy?: ReadonlyArray<{ readonly collection: string; readonly reference: string }>;
+}
+
+/**
+ * How a collection's geometry becomes cells, as data rather than as code.
+ *
+ * A cell narrows a query to candidates; the exact check decides. So the
+ * resolution is a cost, not a correctness knob: coarser cells mean fewer
+ * postings per document and more candidates to check, finer ones the reverse.
+ * The version travels with the cells, because changing the resolution changes
+ * what was written, and `locate` rewrites the documents when it moves.
+ */
+export interface SpatialIndex {
+  /** The fields holding GeoJSON geometry, by dotted path. */
+  readonly fields: ReadonlyArray<string>;
+  /** H3 resolution, 0 (coarsest) to 15. Nine is roughly a city block. */
+  readonly resolution: number;
+  /** Raised by the caller when any of this changes. */
+  readonly version: number;
 }
 
 /**
@@ -147,7 +173,7 @@ export interface Document<TData extends JsonObject = JsonObject> {
   readonly version: number;
 }
 
-export type FilterOperator = "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "in";
+export type FilterOperator = "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "in" | "geometry";
 
 export interface DocumentFilter {
   readonly path: string;
@@ -216,10 +242,30 @@ export interface FindDocumentsInput {
   readonly related?: ReadonlyArray<RelatedFilter>;
   /** Also: whose analyzed text carries these words; see `Analyzer`. */
   readonly search?: string;
+  /** Also: whose geometry meets this; see `SpatialFilter`. */
+  readonly geometry?: SpatialFilter;
   readonly orderBy?: ReadonlyArray<DocumentSort>;
   readonly limit?: number;
   readonly offset?: number;
 }
+
+/**
+ * Documents whose geometry is near a point, in a box, or meeting a shape.
+ *
+ * Cells narrow the candidates and the exact check decides, so what comes back
+ * is what the geometry says: a document sharing a cell with the centre but
+ * lying outside the radius does not appear. The field must be one the
+ * collection's `SpatialIndex` names, or there are no cells to read.
+ */
+export type SpatialFilter =
+  | {
+    readonly field: string;
+    /** Within this many metres of the centre, great-circle. */
+    readonly near: GeoPosition;
+    readonly radius: number;
+  }
+  | { readonly field: string; readonly within: BoundingBox }
+  | { readonly field: string; readonly intersects: Geometry };
 
 /**
  * Documents whose reference names a document matching something else: a join
@@ -303,6 +349,8 @@ export interface FindPageInput {
   readonly related?: ReadonlyArray<RelatedFilter>;
   /** Also: whose analyzed text carries these words; see `Analyzer`. */
   readonly search?: string;
+  /** Also: whose geometry meets this; see `SpatialFilter`. */
+  readonly geometry?: SpatialFilter;
   /** One field, or several that a composite index serves: see `CollectionIndex`. */
   readonly orderBy?: ReadonlyArray<DocumentSort>;
   /** Documents per page: 50 unless given, and at most 1000. */
@@ -631,6 +679,72 @@ const termsFor = (analyzer: Analyzer | undefined, data: JsonObject): Array<reado
   return [...out.values()];
 };
 
+/** Marks a document whose geometry was too large to cover at the declared resolution. */
+const COARSE_SENTINEL = "*coarse";
+
+/** The geometry at a path, if it is one this understands. */
+const geometryAt = (data: JsonObject, path: string): Geometry | undefined => {
+  const value = readPath(data, path);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const shape = value as { type?: unknown; coordinates?: unknown };
+  if (typeof shape.type !== "string" || !Array.isArray(shape.coordinates)) return undefined;
+  return shape.type === "Point" || shape.type === "Polygon" || shape.type === "MultiPolygon"
+    ? (value as unknown as Geometry)
+    : undefined;
+};
+
+/**
+ * The cell postings a document contributes: one per covering cell and its
+ * ancestors, per spatial field.
+ *
+ * They ride on the term lens, which is already sealable and already intersects
+ * with every other lens — a cell is a term whose field is a path and whose
+ * value is a cell id.
+ */
+const cellTermsFor = (
+  spatial: SpatialIndex | undefined,
+  h3: Parameters<typeof cellsFor>[0] | undefined,
+  data: JsonObject,
+): Array<readonly [string, string]> => {
+  if (spatial === undefined || h3 === undefined) return [];
+  const out: Array<readonly [string, string]> = [];
+  for (const path of spatial.fields) {
+    const geometry = geometryAt(data, path);
+    if (geometry === undefined) continue;
+    const covering = coveringFor(h3, geometry, spatial.resolution);
+    const cells = new Set<string>(covering.cells);
+    for (const cell of covering.cells) {
+      for (let level = covering.resolution - 1; level >= COARSEST_RESOLUTION; level--) {
+        cells.add(h3.cellToParent(cell, level));
+      }
+    }
+    for (const cell of cells) out.push([`${path}@cell`, cell]);
+    // A shape too large to cover at the declared resolution is indexed coarsely,
+    // which a finer query would never meet. The sentinel keeps it a candidate:
+    // there are few such documents, and the exact check still decides.
+    if (covering.resolution < spatial.resolution) out.push([`${path}@cell`, COARSE_SENTINEL]);
+  }
+  return out;
+};
+
+/** Whether a document's geometry really meets a filter, on its own coordinates. */
+const matchesGeometry = (filter: SpatialFilter, data: JsonObject): boolean => {
+  const geometry = geometryAt(data, filter.field);
+  if (geometry === undefined) return false;
+  if ("near" in filter) {
+    return positionsOf(geometry).some((position) =>
+      distanceBetween(position, filter.near) <= filter.radius);
+  }
+  if ("within" in filter) {
+    return positionsOf(geometry).some((position) => inBox(filter.within, position));
+  }
+  // Either shape holding a point of the other: enough for points and for
+  // overlapping areas, and honest about the case it misses — two shapes
+  // crossing edge to edge with no vertex inside either.
+  return positionsOf(filter.intersects).some((position) => contains(geometry, position)) ||
+    positionsOf(geometry).some((position) => contains(filter.intersects, position));
+};
+
 /** A value a field has, as opposed to null, absent, or an object or array. */
 const hasValue = (value: Json | undefined): boolean => {
   const scalar = orderable(value);
@@ -708,6 +822,34 @@ const normalizeAnalyzer = (
     ...(analyzer.stopWords === undefined ? {} : { stopWords: [...analyzer.stopWords] }),
     ...(analyzer.minLength === undefined ? {} : { minLength: analyzer.minLength }),
     ...(analyzer.language === undefined ? {} : { language: analyzer.language }),
+  });
+};
+
+/** A spatial index in the shape it is stored, or why it cannot be used. */
+const normalizeSpatial = (
+  collection: string,
+  spatial: SpatialIndex,
+): Effect.Effect<SpatialIndex, InvalidConstraint> => {
+  const invalid = (reason: string) =>
+    Effect.fail(new InvalidConstraint({ collection, name: "spatial", reason }));
+  if (!Array.isArray(spatial.fields) || spatial.fields.length === 0) {
+    return invalid("a spatial index needs at least one field to index");
+  }
+  for (const path of spatial.fields) {
+    if (typeof path !== "string" || path === "" || path.split(".").some((segment) => segment === "")) {
+      return invalid(`${JSON.stringify(path) ?? "undefined"} is not a field path`);
+    }
+  }
+  if (!Number.isInteger(spatial.resolution) || spatial.resolution < 0 || spatial.resolution > 15) {
+    return invalid("resolution is a whole number from 0 to 15");
+  }
+  if (!Number.isInteger(spatial.version) || spatial.version < 1) {
+    return invalid("a spatial index's version is a whole number from one, raised when its rules change");
+  }
+  return Effect.succeed({
+    fields: [...spatial.fields],
+    resolution: spatial.resolution,
+    version: spatial.version,
   });
 };
 
@@ -862,6 +1004,8 @@ const comparison = (actual: Json | undefined, expected: Json): number | undefine
 const matches = (data: JsonObject, filter: DocumentFilter): boolean => {
   const actual = readPath(data, filter.path);
   const op = filter.op ?? "eq";
+  // A spatial filter carries its own shape, and decides on the coordinates.
+  if (op === "geometry") return matchesGeometry(filter.value as unknown as SpatialFilter, data);
   if (op === "in") {
     const values = Array.isArray(filter.value) ? filter.value : [filter.value];
     return values.some((v) => actual === v);
@@ -927,6 +1071,30 @@ const withSearch = (plan: Plan, words: Query | undefined): Plan =>
     fields: plan.fields === undefined ? words : and(plan.fields, words),
     residual: plan.residual,
   };
+
+/**
+ * A plan narrowed by the cells a spatial filter names.
+ *
+ * The cells go in as ordinary term clauses — united, because a document in any
+ * of them is a candidate — and the exact check rides in the residual, so what
+ * comes back is what the geometry admits rather than what the covering
+ * approximated.
+ */
+const withCells = (
+  plan: Plan,
+  field: string,
+  cells: ReadonlyArray<string>,
+  exact: DocumentFilter,
+): Plan => {
+  if (cells.length === 0) return { ...plan, residual: [...plan.residual, exact] };
+  const clauses = cells.map((cell) => term(`${field}@cell`, cell));
+  const covering = clauses.length === 1 ? clauses[0]! : or(...clauses);
+  return {
+    query: plan.fields === undefined ? covering : and(plan.query, covering),
+    fields: plan.fields === undefined ? covering : and(plan.fields, covering),
+    residual: [...plan.residual, exact],
+  };
+};
 
 const planQuery = (
   tenant: TenantId,
@@ -1004,6 +1172,8 @@ export interface DocumentsApi {
     readonly references?: ReadonlyArray<ReferenceConstraint>;
     /** How this collection's text becomes searchable terms; see `Analyzer`. */
     readonly analyzer?: Analyzer;
+    /** How this collection's geometry becomes searchable cells; see `SpatialIndex`. */
+    readonly spatial?: SpatialIndex;
   }) => Effect.Effect<
     Collection,
     InvalidCollectionName | CollectionExists | InvalidIndex | InvalidConstraint | TenantMoving
@@ -1040,7 +1210,10 @@ export interface DocumentsApi {
    */
   readonly findMany: (
     input: FindDocumentsInput,
-  ) => Effect.Effect<ReadonlyArray<Document>, UnknownReference | UnanalyzedCollection>;
+  ) => Effect.Effect<
+    ReadonlyArray<Document>,
+    UnknownReference | UnanalyzedCollection | UnindexedGeometry
+  >;
   /**
    * One page of matching documents, and a cursor for the next.
    *
@@ -1055,7 +1228,8 @@ export interface DocumentsApi {
     input: FindPageInput,
   ) => Effect.Effect<
     DocumentPage,
-    CursorMismatch | UnsupportedOrdering | UnknownReference | UnanalyzedCollection
+    | CursorMismatch | UnsupportedOrdering | UnknownReference | UnanalyzedCollection
+    | UnindexedGeometry
   >;
 
   /**
@@ -1157,6 +1331,22 @@ export interface DocumentsApi {
     readonly analyzer: Analyzer;
   }) => Effect.Effect<
     { readonly analyzer: Analyzer; readonly documents: number },
+    CollectionNotFound | InvalidConstraint | TenantMoving
+  >;
+
+  /**
+   * Declare how a collection's geometry becomes cells, and rewrite its
+   * documents under it.
+   *
+   * The cells already written are what narrows a query, so a change of
+   * resolution changes what a read considers: every document is written back
+   * before the new index is in force, at a write and a log entry each.
+   */
+  readonly locate: (input: {
+    readonly collection: string;
+    readonly spatial: SpatialIndex;
+  }) => Effect.Effect<
+    { readonly spatial: SpatialIndex; readonly documents: number },
     CollectionNotFound | InvalidConstraint | TenantMoving
   >;
 
@@ -1408,6 +1598,22 @@ export const documentsFor = (
     return yield* new TenantMoving({ tenant, from, to });
   });
 
+  /**
+   * H3, loaded once and kept.
+   *
+   * Resolved before a transaction rather than inside one: the manifest is built
+   * under the store's writer, and taking an import there would put async work
+   * in the one place that must stay short. A collection with no spatial fields
+   * never loads it at all.
+   */
+  let h3: Parameters<typeof cellsFor>[0] | undefined;
+  const spatialHandle = (spatial: SpatialIndex | undefined) =>
+    Effect.gen(function* () {
+      if (spatial === undefined) return undefined;
+      if (h3 === undefined) h3 = yield* Effect.orDie(loadH3);
+      return h3;
+    });
+
   const transactOrDie = <A>(f: (txn: Txn) => Effect.Effect<A, DbError>): Effect.Effect<A> =>
     Effect.orDie(store.transact(f));
 
@@ -1476,8 +1682,10 @@ export const documentsFor = (
     doc: Document,
     indexes: ReadonlyArray<StoredIndex>,
     analyzer?: Analyzer,
+    spatial?: SpatialIndex,
+    h3?: Parameters<typeof cellsFor>[0],
   ): IndexManifest => ({
-    terms: termsFor(analyzer, doc.data),
+    terms: [...termsFor(analyzer, doc.data), ...cellTermsFor(spatial, h3, doc.data)],
     columns: [
       ...columnsFor(tenant, doc.collection, doc.data),
       ...indexes.map((index) => [index.column, indexTuple(index, doc.data)] as const),
@@ -1614,7 +1822,10 @@ export const documentsFor = (
     Effect.gen(function* () {
       const collection = loaded ?? (yield* loadCollection(doc.collection));
       yield* enforceConstraints(collection, doc, seq, pending);
-      yield* txn.put(seq, encode(doc), manifestFor(doc, collection?.indexes ?? [], collection?.analyzer), {
+      const cells = yield* spatialHandle(collection?.spatial);
+      yield* txn.put(seq, encode(doc), manifestFor(
+        doc, collection?.indexes ?? [], collection?.analyzer, collection?.spatial, cells,
+      ), {
         namespace: documentNs(tenant, doc.collection), key: doc.id,
       });
       remember(pending, collection, doc, seq);
@@ -2010,13 +2221,15 @@ export const documentsFor = (
             const record = yield* loadCollection(collection);
             const indexes = record?.indexes ?? [];
             const analyzer = record?.analyzer;
+            const spatial = record?.spatial;
+            const cells = yield* spatialHandle(spatial);
             let written = 0;
             for (const seq of seqs.slice(at, at + REWRITE_CHUNK)) {
               const object = yield* readObject(seq);
               if (object === undefined) continue;
               const doc = decode<Document>(object.bytes);
               if (doc.collection !== collection) continue;
-              yield* txn.put(seq, object.bytes, manifestFor(doc, indexes, analyzer), {
+              yield* txn.put(seq, object.bytes, manifestFor(doc, indexes, analyzer, spatial, cells), {
                 namespace: documentNs(tenant, collection), key: doc.id,
               });
               written += 1;
@@ -2122,7 +2335,10 @@ export const documentsFor = (
     collection: StoredCollection | undefined,
     name: string,
     related: ReadonlyArray<RelatedFilter> | undefined,
-  ): Effect.Effect<ReadonlyArray<DocumentFilter> | undefined, UnknownReference | UnanalyzedCollection> =>
+  ): Effect.Effect<
+    ReadonlyArray<DocumentFilter> | undefined,
+    UnknownReference | UnanalyzedCollection | UnindexedGeometry
+  > =>
     Effect.gen(function* () {
       if (related === undefined || related.length === 0) return [];
       const filters: Array<DocumentFilter> = [];
@@ -2181,9 +2397,70 @@ export const documentsFor = (
       return clauses.length === 1 ? clauses[0]! : and(...clauses);
     });
 
+  /**
+   * The cells a spatial filter should look in.
+   *
+   * A radius asks for the rings of cells around its centre, at a resolution
+   * coarse enough that the ring stays small — the covering is approximate
+   * either way, so spending postings on precision here buys nothing the exact
+   * check does not already provide. A box or a shape is covered directly.
+   */
+  const spatialCells = (
+    h3: Parameters<typeof cellsFor>[0],
+    spatial: SpatialIndex,
+    filter: SpatialFilter,
+  ): ReadonlyArray<string> => {
+    const cells = new Set<string>([COARSE_SENTINEL]);
+    if ("near" in filter) {
+      for (const cell of diskFor(h3, filter.near, filter.radius, spatial.resolution)) cells.add(cell);
+      return [...cells];
+    }
+    // A box crossing the antimeridian is two boxes; one ring would be read the
+    // long way round the world, which is both the wrong area and a covering
+    // that never finishes.
+    const shapes: ReadonlyArray<Geometry> = "within" in filter
+      ? boxGeometry(filter.within)
+      : [filter.intersects];
+    for (const shape of shapes) {
+      for (const cell of coveringFor(h3, shape, spatial.resolution).cells) cells.add(cell);
+    }
+    return [...cells];
+  };
+
+  /**
+   * A plan narrowed by a spatial filter: candidates from cells, decided by the
+   * geometry itself.
+   *
+   * The exact check travels as a residual filter, which `keeps` applies to
+   * every document the postings produce — so a coarse covering costs work and
+   * never correctness.
+   */
+  const withGeometry = (
+    collection: StoredCollection | undefined,
+    name: string,
+    plan: Plan,
+    filter: SpatialFilter,
+  ): Effect.Effect<Plan, UnindexedGeometry> =>
+    Effect.gen(function* () {
+      const spatial = collection?.spatial;
+      if (spatial === undefined || !spatial.fields.includes(filter.field)) {
+        return yield* new UnindexedGeometry({ collection: name, field: filter.field });
+      }
+      const h3 = yield* Effect.orDie(loadH3);
+      const exact: DocumentFilter = {
+        path: filter.field,
+        op: "geometry",
+        value: filter as unknown as Json,
+      };
+      return withCells(plan, filter.field, spatialCells(h3, spatial, filter), exact);
+    });
+
   const findDocuments = (
     input: FindDocumentsInput,
-  ): Effect.Effect<ReadonlyArray<Document>, UnknownReference | UnanalyzedCollection> =>
+  ): Effect.Effect<
+    ReadonlyArray<Document>,
+    UnknownReference | UnanalyzedCollection | UnindexedGeometry
+  > =>
     Effect.gen(function* () {
       const collection = yield* loadCollection(input.collection);
       const related = yield* relatedFilters(collection, input.collection, input.related);
@@ -2193,7 +2470,10 @@ export const documentsFor = (
         ? undefined
         : yield* searchQuery(collection?.analyzer, input.collection, input.search);
       if (input.search !== undefined && words === undefined) return [];
-      const plan = withSearch(planQuery(tenant, input.collection, where), words);
+      let plan = withSearch(planQuery(tenant, input.collection, where), words);
+      if (input.geometry !== undefined) {
+        plan = yield* withGeometry(collection, input.collection, plan, input.geometry);
+      }
       const offset = input.offset ?? 0;
       const take = input.limit === undefined ? undefined : offset + input.limit;
       const slice = (docs: ReadonlyArray<Document>) =>
@@ -2256,6 +2536,9 @@ export const documentsFor = (
         const analyzer = input.analyzer === undefined
           ? undefined
           : yield* normalizeAnalyzer(input.name, input.analyzer);
+        const spatial = input.spatial === undefined
+          ? undefined
+          : yield* normalizeSpatial(input.name, input.spatial);
         const collection: StoredCollection = {
           name: input.name,
           createdAt: new Date().toISOString(),
@@ -2265,6 +2548,7 @@ export const documentsFor = (
           ...(checks.length === 0 ? {} : { checks }),
           ...(references.length === 0 ? {} : { references }),
           ...(analyzer === undefined ? {} : { analyzer }),
+          ...(spatial === undefined ? {} : { spatial }),
         };
         const seq = yield* nextSeq;
         // The collection and the back-references its targets carry, together:
@@ -2350,6 +2634,7 @@ export const documentsFor = (
         const words = input.search === undefined
           ? undefined
           : yield* searchQuery(collection?.analyzer, input.collection, input.search);
+        const geometry = input.geometry;
         const indexed = sorts.length === 0
           ? undefined
           : chooseIndex(collection?.indexes ?? [], sorts, equalityBindings(where));
@@ -2372,7 +2657,10 @@ export const documentsFor = (
         if (related === undefined || (input.search !== undefined && words === undefined)) {
           return { documents: [] };
         }
-        const plan = withSearch(planQuery(tenant, input.collection, where), words);
+        let plan = withSearch(planQuery(tenant, input.collection, where), words);
+        if (geometry !== undefined) {
+          plan = yield* withGeometry(collection, input.collection, plan, geometry);
+        }
         // One more than the page, to know whether another document follows.
         const found = sorts.length === 0
           ? yield* inIdentifierOrder(plan, limit + 1, from)
@@ -2606,6 +2894,23 @@ export const documentsFor = (
           }));
         if (!recorded) return yield* new CollectionNotFound({ name: input.collection });
         return { analyzer, documents: yield* rewriteDocuments(input.collection) };
+      }),
+
+    locate: (input) =>
+      Effect.gen(function* () {
+        yield* assertNotMoving;
+        const spatial = yield* normalizeSpatial(input.collection, input.spatial);
+        const seq = yield* lookup(collectionNs(tenant), input.collection);
+        if (seq === undefined) return yield* new CollectionNotFound({ name: input.collection });
+        const recorded = yield* transactOrDie((txn) =>
+          Effect.gen(function* () {
+            const current = yield* loadCollection(input.collection);
+            if (current === undefined) return false;
+            yield* collectionPut(txn, seq, { ...current, spatial });
+            return true;
+          }));
+        if (!recorded) return yield* new CollectionNotFound({ name: input.collection });
+        return { spatial, documents: yield* rewriteDocuments(input.collection) };
       }),
 
     addReference: (input) =>
