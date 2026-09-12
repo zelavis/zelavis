@@ -17,6 +17,8 @@ import type {
   RelatedFilter,
   DocumentWrite,
   Analyzer,
+  SpatialFilter,
+  SpatialIndex,
 } from "./documents.js";
 import type { AggregateOperation, RangeInput } from "./time-series.js";
 
@@ -198,6 +200,7 @@ const BAD_REQUEST_TAGS = new Set([
   "CheckViolation",
   "InvalidCollectionName",
   "UnanalyzedCollection",
+  "UnindexedGeometry",
   "InvalidConstraint",
   "InvalidIndex",
   "PartitionMapInvalid",
@@ -241,6 +244,8 @@ function describeTaggedFailure(failure: TaggedFailure): string {
     }
     case "TimeSeriesNotFound":
       return `Time series "${failure.name}" is not defined.`;
+    case "UnindexedGeometry":
+      return `Collection "${failure.collection}" does not index geometry at "${failure.field}".`;
     case "UnanalyzedCollection":
       return `Collection "${failure.collection}" has no analyzer, so it has nothing to search.`;
     case "UnknownReference":
@@ -641,6 +646,7 @@ export function defineDatabaseDocumentsService(
                   checks: { type: "array", description: "Check constraints, each { name, where }" },
                   references: { type: "array", description: "References, each { name, path, collection, onDelete? }" },
                   analyzer: { type: "object", description: "How text becomes terms: { fields, version, ... }" },
+                  spatial: { type: "object", description: "How geometry becomes cells: { fields, resolution, version }" },
                 },
               },
             },
@@ -686,6 +692,9 @@ export function defineDatabaseDocumentsService(
                     : undefined,
                   analyzer: input.analyzer && typeof input.analyzer === "object"
                     ? (input.analyzer as Analyzer)
+                    : undefined,
+                  spatial: input.spatial && typeof input.spatial === "object"
+                    ? (input.spatial as SpatialIndex)
                     : undefined,
                 }),
               };
@@ -854,6 +863,7 @@ export function defineDatabaseDocumentsService(
                   where: { type: "array", description: "Filters" },
                   related: { type: "array", description: "Joins, each { reference, where?, id? }" },
                   search: { type: "string", description: "Words to find in the analyzed fields" },
+                  geometry: { type: "object", description: "A spatial filter: { field, near+radius | within | intersects }" },
                   orderBy: { type: "array", description: "Sorts" },
                   limit: { type: "number" },
                   offset: { type: "number" },
@@ -878,6 +888,9 @@ export function defineDatabaseDocumentsService(
                       ? { related: input.related as ReadonlyArray<RelatedFilter> }
                       : {}),
                     ...(typeof input.search === "string" ? { search: input.search } : {}),
+                    ...(input.geometry && typeof input.geometry === "object"
+                      ? { geometry: input.geometry as SpatialFilter }
+                      : {}),
                     orderBy: readSort(input.orderBy),
                     limit: readNumber(input.limit, 100),
                     offset: readNumber(input.offset, 0),
@@ -910,6 +923,7 @@ export function defineDatabaseDocumentsService(
                   where: { type: "array", description: "Filters" },
                   related: { type: "array", description: "Joins, each { reference, where?, id? }" },
                   search: { type: "string", description: "Words to find in the analyzed fields" },
+                  geometry: { type: "object", description: "A spatial filter: { field, near+radius | within | intersects }" },
                   orderBy: { type: "array", description: "One field, or several that a composite index serves" },
                   limit: { type: "number", description: "Documents per page: 1 to 1000, 50 when omitted" },
                   after: { type: "string", description: "The next cursor from the previous page" },
@@ -941,6 +955,9 @@ export function defineDatabaseDocumentsService(
                     ? { related: input.related as ReadonlyArray<RelatedFilter> }
                     : {}),
                   ...(typeof input.search === "string" ? { search: input.search } : {}),
+                  ...(input.geometry && typeof input.geometry === "object"
+                    ? { geometry: input.geometry as SpatialFilter }
+                    : {}),
                   orderBy: readSort(input.orderBy),
                   limit,
                   ...(input.after === undefined ? {} : { after: input.after as DocumentCursor }),

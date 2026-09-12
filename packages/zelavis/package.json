@@ -147,6 +147,10 @@
     "./db/libsql-remote": {
       "types": "./dist/db/engines/libsql-remote.d.ts",
       "import": "./dist/db/engines/libsql-remote.js"
+    },
+    "./db/spatial": {
+      "types": "./dist/db/spatial.d.ts",
+      "import": "./dist/db/spatial.js"
     }
   },
   "scripts": {
@@ -192,6 +196,7 @@
     "@libsql/client": "^0.15.15",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.4.0",
+    "h3-js": "^4.5.0",
     "libsql": "^0.5.29",
     "lmdb": "^3.4.3",
     "rocksdb": "^5.2.1",
@@ -213,7 +218,8 @@
     "@libsql/client": "^0.15.0",
     "libsql": "^0.5.29",
     "lmdb": "^3.4.3",
-    "rocksdb": "^5.2.1"
+    "rocksdb": "^5.2.1",
+    "h3-js": "^4.5.0"
   },
   "peerDependenciesMeta": {
     "libsql": {
@@ -226,6 +232,9 @@
       "optional": true
     },
     "@libsql/client": {
+      "optional": true
+    },
+    "h3-js": {
       "optional": true
     }
   }

@@ -178,6 +178,12 @@ export class UnanalyzedCollection extends Schema.TaggedError<UnanalyzedCollectio
   { collection: Schema.String },
 ) {}
 
+/** A spatial filter named a field the collection's index does not cover. */
+export class UnindexedGeometry extends Schema.TaggedError<UnindexedGeometry>()("UnindexedGeometry", {
+  collection: Schema.String,
+  field: Schema.String,
+}) {}
+
 /** A read asked about a reference the collection does not declare. */
 export class UnknownReference extends Schema.TaggedError<UnknownReference>()("UnknownReference", {
   collection: Schema.String,

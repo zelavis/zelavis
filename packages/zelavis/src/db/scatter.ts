@@ -1,7 +1,7 @@
 import { Effect, Stream } from "effect";
 import {
-  CrossPartitionQuery, CursorMismatch, UnanalyzedCollection, UnknownReference, UnknownShard,
-  UnsupportedOrdering,
+  CrossPartitionQuery, CursorMismatch, UnanalyzedCollection, UnindexedGeometry, UnknownReference,
+  UnknownShard, UnsupportedOrdering,
 } from "./errors.js";
 import type { DbError } from "./errors.js";
 import {
@@ -170,7 +170,10 @@ export interface ScatterApi {
    */
   readonly findMany: (
     input: ScatterFindInput,
-  ) => Effect.Effect<ScatterResult<ScatteredDocument>, DbError | UnknownReference | UnanalyzedCollection>;
+  ) => Effect.Effect<
+    ScatterResult<ScatteredDocument>,
+    DbError | UnknownReference | UnanalyzedCollection | UnindexedGeometry
+  >;
 
   /**
    * One page of documents from several tenants, merged into one order.
@@ -188,7 +191,8 @@ export interface ScatterApi {
     input: ScatterPageInput,
   ) => Effect.Effect<
     ScatterPage,
-    DbError | CursorMismatch | UnsupportedOrdering | UnknownReference | UnanalyzedCollection
+    | DbError | CursorMismatch | UnsupportedOrdering | UnknownReference | UnanalyzedCollection
+    | UnindexedGeometry
   >;
 }
 

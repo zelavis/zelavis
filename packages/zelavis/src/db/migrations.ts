@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import type { DocumentsApi } from "./documents.js";
 import {
-  SchemaMigrationBlocked, SchemaNotFound, UnanalyzedCollection, UnknownReference,
+  SchemaMigrationBlocked, SchemaNotFound, UnanalyzedCollection, UnindexedGeometry, UnknownReference,
 } from "./errors.js";
 import type { Json, JsonObject } from "./json.js";
 import type { SchemasApi } from "./schemas.js";
@@ -130,7 +130,10 @@ export interface MigrationsApi {
     collection: string,
     input: { readonly from?: number; readonly to: number;
       readonly apply?: ReadonlyArray<FieldMigration> },
-  ) => Effect.Effect<MigrationPlan, SchemaNotFound | UnknownReference | UnanalyzedCollection>;
+  ) => Effect.Effect<
+    MigrationPlan,
+    SchemaNotFound | UnknownReference | UnanalyzedCollection | UnindexedGeometry
+  >;
 
   /**
    * Bring every document in a collection up to a version.
@@ -143,7 +146,8 @@ export interface MigrationsApi {
     input: MigrateInput,
   ) => Effect.Effect<
     MigrationResult,
-    SchemaNotFound | SchemaMigrationBlocked | UnknownReference | UnanalyzedCollection
+    | SchemaNotFound | SchemaMigrationBlocked | UnknownReference | UnanalyzedCollection
+    | UnindexedGeometry
   >;
 }
 

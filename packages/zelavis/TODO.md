@@ -853,6 +853,34 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   document back under it, because the terms already stored are what a search
   reads. A search of a collection with no analyzer is `UnanalyzedCollection`
   rather than an empty answer to an unasked question.
+- [x] Geometry: a collection declares a `SpatialIndex` — the fields holding
+  GeoJSON, an H3 resolution and a version — and a write covers each geometry
+  in cells, posted on the term lens with every ancestor down to resolution 2,
+  so a coarse query meets a finely indexed document. `findMany` and `findPage`
+  take a `geometry` filter: `near` a point within metres, `within` a box, or
+  `intersects` a shape. Cells only narrow the candidates; the exact check on
+  the real coordinates decides, so a neighbour sharing a cell with the centre
+  but lying outside the radius does not come back. `locate` changes the index
+  and rewrites the documents under it, as `analyze` does for text. A filter on
+  a field no index covers is `UnindexedGeometry`.
+  What this costs, stated rather than implied: distance is haversine on a
+  sphere, about 0.3% from WGS84; `intersects` holds when either shape contains
+  a vertex of the other, so two shapes crossing edge to edge with no vertex
+  inside either are missed; a covering is capped at 4,096 cells and coarsened
+  to fit, and a geometry too large for the declared resolution carries a
+  sentinel posting so it stays a candidate rather than disappearing.
+  Two bugs its own tests caught: a ring spanning the antimeridian contained the
+  far side of the world, because each vertex was unwrapped against the query
+  point rather than against one reference; and a box crossing the date line was
+  covered the long way round the globe — 73 cells at resolution 2 became 3,497
+  at 4, and would have been tens of millions at 9 — so a box is now split at
+  the line.
+- [ ] Geometry, the rest of it: nearest-neighbour ordering and paging by
+  distance; line geometries; polygon-to-polygon intersection that does not
+  depend on a vertex falling inside; and a documented denial-of-service budget
+  for very large or very numerous rings beyond the covering cap. `flatbush`
+  and `rbush` are the candidates to weigh for an in-memory nearest-neighbour
+  pass once ordering is defined.
 - [ ] Search, the rest of it: positions, phrases and proximity; BM25 or another
   documented relevance model, with scores and explanations; prefix and fuzzy
   matching; highlights; stemming and synonyms behind the analyzer's language;
