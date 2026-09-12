@@ -172,6 +172,12 @@ export class InvalidConstraint extends Schema.TaggedError<InvalidConstraint>()("
   reason: Schema.String,
 }) {}
 
+/** A read asked about a reference the collection does not declare. */
+export class UnknownReference extends Schema.TaggedError<UnknownReference>()("UnknownReference", {
+  collection: Schema.String,
+  name: Schema.String,
+}) {}
+
 /** A constraint name already in use on the collection. */
 export class ConstraintExists extends Schema.TaggedError<ConstraintExists>()("ConstraintExists", {
   collection: Schema.String,

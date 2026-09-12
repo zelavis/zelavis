@@ -368,6 +368,13 @@ Key rules:
   transaction see committed state, not the transaction's own writes, so a
   change that writes one record twice builds the second write from the first
   (as `releaseReferences` and `linkTargets` do), never from a second read.
+- A read that joins two collections answers the named collection's query first
+  and turns the ids it returns into an equality union over the referencing
+  field's own postings (`relatedFilters` in `documents.ts`), so a join stays a
+  set operation over the one dense identifier space. Never read the
+  referencing collection and filter it in memory, and never let a reference
+  the collection does not declare pass as a clause matching everything or
+  nothing: that is `UnknownReference`.
 - A scan that stops early passes `limit` to `engine.scan` rather than cutting
   the stream with `Stream.take`. A stream pulls an iterable thousands of
   entries at a time, so a take of a few rows still reads thousands; the limit

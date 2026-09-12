@@ -969,6 +969,20 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   a compare-and-set on field values. Unconstrained writes run as before (4.1k
   inserts/s); with a unique index, a check and a reference all enforced, 2.7k/s
   against 3.9k/s for the same index unenforced.
+- [x] Join through references rather than through SQL. A `related` clause on
+  `findMany` and `findPage` — `{ reference, where?, id? }`, data like every
+  other query — answers the named collection's query first and turns the ids
+  it returns into an equality union over the referencing field's own postings,
+  so a join is a set operation over the one dense identifier space and costs
+  the target's query plus a posting list per document it matched. Over 20k
+  posts across 2k authors, the posts of one country's authors take 33.7 ms
+  against 154.9 ms for the alternative a caller had (read every post, resolve
+  its author, filter), one author by id 0.2 ms, and a page of 50 of the wide
+  join 18.8 ms. `withRelated` resolves what a page's documents name, reading
+  each named document once however many name it: 0.5 ms for a page of 50.
+  Joins stay inside a tenant because references do, and `db.scatter` carries
+  one to every tenant it asks. A reference a collection does not declare is
+  `UnknownReference` rather than a clause that quietly matches nothing.
 - [x] Expose `addCheck`, `dropCheck`, `addReference` and `dropReference` over
   HTTP, and a delete precondition. A delete carries `expectedVersion` and a
   JSON `precondition` in its query string, where the method has no body.
