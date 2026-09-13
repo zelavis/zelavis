@@ -893,15 +893,14 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   for very large or very numerous rings beyond the covering cap. `flatbush`
   and `rbush` are the candidates to weigh for an in-memory nearest-neighbour
   pass once ordering is defined.
-- [ ] Search, the rest of it: positions, phrases and proximity; BM25 or another
-  documented relevance model, with scores and explanations; prefix and fuzzy
-  matching; highlights; stemming and synonyms behind the analyzer's language;
-  and result ordering across shards. Each needs storage this slice does not
-  have: `termKey` ends at the identifier, so a position needs its own key
-  shape, and `Tag.Term` is sealable — a positional posting folded into a set
-  loses the offsets it exists for. Scoring needs document lengths and term
-  frequencies stored beside the postings. Benchmark `minisearch` and
-  `flexsearch` as references before choosing.
+- [x] Search, relevance scoring and phrase search: BM25 relevance scoring
+  over term frequencies, field token lengths, and candidate IDF; ranking
+  results by relevance score descending when no explicit order is specified;
+  quoted phrase queries (`"quick brown"`) verified consecutively against
+  analyzed fields; and `score` exposed on matching documents.
+- [ ] Search, the rest of it: positional postings in the KV storage format;
+  prefix and fuzzy matching; highlights; stemming and synonyms behind the
+  analyzer's language; and result ordering across shards.
 - [ ] Take libsql's keys back off hex once the Buffer-parameter panic is
   released. Binding a lone Buffer routed it down the named-parameter path,
   where an anonymous `?` has no name and the unwrap panicked out of the
