@@ -1307,10 +1307,14 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   `404` beside `UnknownReference`, `UnembeddedCollection`, `InvalidVectorQuery`
   and `VectorShapeMismatch` as `400` beside `UnanalyzedCollection`. A caller's
   mistake had been reading as a server fault.
-- [ ] The HTTP surface is checked by hand against the API. Wiring a capability
-  is a separate step from building it, and three slices in a row missed it;
-  a test that walks the documents API and asserts every operation has a route
-  would catch the next one rather than a later reading of the rules.
+- [x] The HTTP surface is checked against the API by a test rather than by
+  hand. It derives coverage instead of listing it: the tenant API is wrapped in
+  a recorder, every route the service mounts is invoked, and every method a
+  caller can reach in process has to have been reached by one of them. Writing
+  it immediately found five more operations with no route -- `analyze`,
+  `locate`, `embed`, `withRelated` and `collectionExists`, one of them added to
+  the runtime API a single change earlier -- which is the argument for deriving
+  it: the hand check had just been done, carefully, and still missed five.
 
 ## Later
 
