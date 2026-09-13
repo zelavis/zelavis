@@ -17,6 +17,12 @@ import type {
   DocumentWritten,
   Analyzer,
   SpatialIndex,
+  EmbeddingIndex,
+  EdgeDefinition,
+  MeasureDefinition,
+  SummarizeInput,
+  Summary,
+  GroupedSummary,
 } from "./documents.js";
 import type { DomainEvent, ReadDomainEventsInput } from "./domain-events.js";
 import type { TenantBackupV1 } from "./backup.js";
@@ -54,6 +60,9 @@ export interface TenantRuntimeApi {
       references?: ReadonlyArray<ReferenceConstraint>;
       analyzer?: Analyzer;
       spatial?: SpatialIndex;
+      embedding?: EmbeddingIndex;
+      edges?: ReadonlyArray<EdgeDefinition>;
+      measures?: ReadonlyArray<MeasureDefinition>;
     }) => Promise<Collection>;
     readonly analyze: (input: {
       collection: string;
@@ -63,6 +72,14 @@ export interface TenantRuntimeApi {
       collection: string;
       spatial: SpatialIndex;
     }) => Promise<{ spatial: SpatialIndex; documents: number }>;
+    readonly embed: (input: {
+      collection: string;
+      embedding: EmbeddingIndex;
+    }) => Promise<{ embedding: EmbeddingIndex; documents: number }>;
+    readonly summarize: (input: SummarizeInput) => Promise<Summary>;
+    readonly summarizeBy: (
+      input: SummarizeInput & { groupBy: string; groups?: number },
+    ) => Promise<ReadonlyArray<GroupedSummary>>;
     readonly addCheck: (input: CheckConstraint & { collection: string }) => Promise<CheckConstraint>;
     readonly dropCheck: (input: { collection: string; name: string }) => Promise<boolean>;
     readonly addReference: (
@@ -185,6 +202,9 @@ const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
     dropIndex: (input) => run(tenant.documents.dropIndex(input)),
     analyze: (input) => run(tenant.documents.analyze(input)),
     locate: (input) => run(tenant.documents.locate(input)),
+    embed: (input) => run(tenant.documents.embed(input)),
+    summarize: (input) => run(tenant.documents.summarize(input)),
+    summarizeBy: (input) => run(tenant.documents.summarizeBy(input)),
     addCheck: (input) => run(tenant.documents.addCheck(input)),
     dropCheck: (input) => run(tenant.documents.dropCheck(input)),
     addReference: (input) => run(tenant.documents.addReference(input)),
