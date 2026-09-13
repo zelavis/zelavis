@@ -50,11 +50,17 @@ import {
 } from "./vectors.js";
 import type { IndexManifest, OrderedScalar, Seq } from "./model.js";
 import {
-  and, between, edge as edgeQuery, equals, or, term, termPrefixQuery, type Query, type RangeBound,
+  and, between, edge as edgeQuery, equals, or, term, type Query, type RangeBound,
 } from "./query.js";
 import type { SchemasApi } from "./schemas.js";
 import type { ObjectStoreApi, OrderedCursor, Txn } from "./store.js";
 import type { TenantId } from "./topology.js";
+import { stem } from "./stemmer.js";
+import {
+  parseSearchQuery, toPlanQuery, matchesSearchClause,
+  type SearchClause, type ParsedSearchQuery,
+  damerauLevenshtein,
+} from "./search-parser.js";
 
 export type { Json, JsonObject } from "./json.js";
 
@@ -281,7 +287,7 @@ export interface Document<TData extends JsonObject = JsonObject> {
   readonly highlights?: Record<string, ReadonlyArray<string>>;
 }
 
-export type FilterOperator = "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "in" | "geometry" | "phrase";
+export type FilterOperator = "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "in" | "geometry" | "phrase" | "search";
 
 export interface DocumentFilter {
   readonly path: string;
@@ -901,9 +907,13 @@ const tokenize = (text: string, analyzer: Analyzer): Array<string> => {
   const minLength = analyzer.minLength ?? 2;
   const stop = new Set((analyzer.stopWords ?? []).map((word) =>
     analyzer.fold === false ? word.normalize("NFC") : word.normalize("NFC").toLowerCase()));
-  return folded
+  const rawTokens = folded
     .split(/[^\p{L}\p{N}\p{M}]+/u)
     .filter((token) => token.length >= minLength && !stop.has(token));
+  if (analyzer.language) {
+    return rawTokens.map((token) => stem(token, analyzer.language));
+  }
+  return rawTokens;
 };
 
 /** Every analyzed field's terms, deduplicated: a posting says the term is there, not how often. */
@@ -1416,6 +1426,13 @@ const matches = (data: JsonObject, filter: DocumentFilter): boolean => {
   const op = filter.op ?? "eq";
   // A spatial filter carries its own shape, and decides on the coordinates.
   if (op === "geometry") return matchesGeometry(filter.value as unknown as SpatialFilter, data);
+  if (op === "search") {
+    const { root, analyzer } = filter.value as unknown as {
+      root: SearchClause;
+      analyzer: Analyzer;
+    };
+    return matchesSearchClause(data, root, analyzer, tokenize, readPath);
+  }
   if (op === "phrase") {
     const { phrases, analyzer } = filter.value as unknown as {
       phrases: ReadonlyArray<ReadonlyArray<string>>;
@@ -2929,126 +2946,6 @@ export const documentsFor = (
       return filters;
     });
 
-/**
- * Damerau-Levenshtein edit distance: insertions, deletions, substitutions, and transpositions.
- */
-const damerauLevenshtein = (a: string, b: string, maxDist = 2): number => {
-  if (a === b) return 0;
-  const la = a.length;
-  const lb = b.length;
-  if (Math.abs(la - lb) > maxDist) return Infinity;
-
-  const d: number[][] = [];
-  for (let i = 0; i <= la; i++) d[i] = [i];
-  for (let j = 0; j <= lb; j++) d[0]![j] = j;
-
-  for (let i = 1; i <= la; i++) {
-    let rowMin = Infinity;
-    for (let j = 1; j <= lb; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      let val = Math.min(
-        d[i - 1]![j]! + 1, // deletion
-        d[i]![j - 1]! + 1, // insertion
-        d[i - 1]![j - 1]! + cost, // substitution
-      );
-      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
-        val = Math.min(val, d[i - 2]![j - 2]! + 1); // transposition
-      }
-      d[i]![j] = val;
-      if (val < rowMin) rowMin = val;
-    }
-    if (rowMin > maxDist) return Infinity;
-  }
-  return d[la]![lb]!;
-};
-
-interface ParsedSearchTerm {
-  readonly raw: string;
-  readonly token: string;
-  readonly kind: "exact" | "prefix" | "fuzzy";
-  readonly fuzzyDistance?: number;
-}
-
-interface ParsedSearchQuery {
-  readonly terms: ReadonlyArray<ParsedSearchTerm>;
-  readonly phrases: ReadonlyArray<ReadonlyArray<string>>;
-}
-
-const parseSearchQuery = (
-  text: string,
-  analyzer: Analyzer,
-  options?: { fuzzy?: boolean | number; prefix?: boolean },
-): ParsedSearchQuery | undefined => {
-  const termsMap = new Map<string, ParsedSearchTerm>();
-  const phrases: Array<ReadonlyArray<string>> = [];
-
-  const pattern = /"([^"]*)"|'([^']*)'|(\S+)/g;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(text)) !== null) {
-    const quoted = match[1] ?? match[2];
-    if (quoted !== undefined) {
-      const phraseTokens = tokenize(quoted, analyzer);
-      if (phraseTokens.length > 1) {
-        phrases.push(phraseTokens);
-        for (const t of phraseTokens) {
-          if (!termsMap.has(`exact:${t}`)) {
-            termsMap.set(`exact:${t}`, { raw: t, token: t, kind: "exact" });
-          }
-        }
-      } else if (phraseTokens.length === 1) {
-        const t = phraseTokens[0]!;
-        if (!termsMap.has(`exact:${t}`)) {
-          termsMap.set(`exact:${t}`, { raw: t, token: t, kind: "exact" });
-        }
-      }
-    } else if (match[3] !== undefined) {
-      const raw = match[3];
-      const isPrefixSyntax = raw.endsWith("*") && raw.length > 1;
-      const fuzzyMatch = /(?:~(\d*))$/.exec(raw);
-      const isFuzzySyntax = fuzzyMatch !== null && raw.length > 1;
-
-      let baseText = raw;
-      let kind: "exact" | "prefix" | "fuzzy" = "exact";
-      let fuzzyDistance: number | undefined;
-
-      if (isPrefixSyntax) {
-        baseText = raw.slice(0, -1);
-        kind = "prefix";
-      } else if (isFuzzySyntax) {
-        baseText = raw.slice(0, -fuzzyMatch[0].length);
-        kind = "fuzzy";
-        const explicitDist = fuzzyMatch[1] ? Number.parseInt(fuzzyMatch[1], 10) : undefined;
-        fuzzyDistance = explicitDist !== undefined && !Number.isNaN(explicitDist)
-          ? explicitDist
-          : (baseText.length <= 5 ? 1 : 2);
-      } else if (options?.prefix === true) {
-        kind = "prefix";
-      } else if (options?.fuzzy !== undefined && options.fuzzy !== false) {
-        kind = "fuzzy";
-        fuzzyDistance = typeof options.fuzzy === "number"
-          ? options.fuzzy
-          : (baseText.length <= 5 ? 1 : 2);
-      }
-
-      const wordTokens = tokenize(baseText, analyzer);
-      for (const t of wordTokens) {
-        const key = `${kind}:${t}:${fuzzyDistance ?? ""}`;
-        if (!termsMap.has(key)) {
-          termsMap.set(key, {
-            raw,
-            token: t,
-            kind,
-            ...(fuzzyDistance !== undefined ? { fuzzyDistance } : {}),
-          });
-        }
-      }
-    }
-  }
-
-  if (termsMap.size === 0) return undefined;
-  return { terms: [...termsMap.values()], phrases };
-};
-
 const generateHighlights = (
   data: JsonObject,
   analyzer: Analyzer,
@@ -3076,18 +2973,24 @@ const generateHighlights = (
       const end = start + word.length;
       const normalized = word.normalize("NFC");
       const folded = analyzer.fold === false ? normalized : normalized.toLowerCase();
+      const stemmed = analyzer.language ? stem(folded, analyzer.language) : folded;
 
       let matched = false;
       for (const qTerm of parsed.terms) {
-        if (qTerm.kind === "exact" && folded === qTerm.token) {
+        if (qTerm.field !== undefined && qTerm.field !== field) continue;
+        if (qTerm.kind === "exact" && (folded === qTerm.token || stemmed === qTerm.token)) {
           matched = true;
           break;
-        } else if (qTerm.kind === "prefix" && folded.startsWith(qTerm.token)) {
+        } else if (qTerm.kind === "prefix" && (folded.startsWith(qTerm.token) || stemmed.startsWith(qTerm.token))) {
           matched = true;
           break;
         } else if (qTerm.kind === "fuzzy") {
-          const dist = damerauLevenshtein(folded, qTerm.token, qTerm.fuzzyDistance ?? 2);
-          if (dist <= (qTerm.fuzzyDistance ?? 2)) {
+          const maxDist = qTerm.fuzzyDistance ?? 2;
+          const dist = Math.min(
+            damerauLevenshtein(folded, qTerm.token, maxDist),
+            damerauLevenshtein(stemmed, qTerm.token, maxDist),
+          );
+          if (dist <= maxDist) {
             matched = true;
             break;
           }
@@ -3192,15 +3095,7 @@ const generateHighlights = (
 };
 
   /**
-   * What a search becomes: the words of the query, analyzed the way the
-   * documents were, over the postings the writer produced.
-   *
-   * Every word must appear (they are intersected), and a word counts wherever
-   * any analyzed field carries it (those are united). So this is an ordinary
-   * set operation over the term lens, and it intersects with filters, ranges
-   * and joins like any other clause. Undefined when the query has no words
-   * left after analysis — every word was a stop word, or too short — which
-   * means it asks for nothing rather than for everything.
+   * What a search becomes: the query compiled into postings constraints and residual filters.
    */
   const searchQuery = (
     analyzer: Analyzer | undefined,
@@ -3208,47 +3103,17 @@ const generateHighlights = (
     text: string,
     options?: { fuzzy?: boolean | number; prefix?: boolean },
   ): Effect.Effect<
-    { readonly query: Query; readonly parsed: ParsedSearchQuery } | undefined,
+    { readonly query: Query | undefined; readonly parsed: ParsedSearchQuery } | undefined,
     UnanalyzedCollection
   > =>
     Effect.gen(function* () {
       if (analyzer === undefined) {
         return yield* new UnanalyzedCollection({ collection });
       }
-      const parsed = parseSearchQuery(text, analyzer, options);
+      const parsed = parseSearchQuery(text, analyzer, tokenize, options);
       if (parsed === undefined) return undefined;
 
-      const termClauses: Query[] = [];
-
-      for (const item of parsed.terms) {
-        if (item.kind === "exact") {
-          const fields = analyzer.fields.map((path) => term(path, item.token));
-          termClauses.push(fields.length === 1 ? fields[0]! : or(...fields));
-        } else if (item.kind === "prefix") {
-          const fields = analyzer.fields.map((path) => termPrefixQuery(path, item.token));
-          termClauses.push(fields.length === 1 ? fields[0]! : or(...fields));
-        } else if (item.kind === "fuzzy") {
-          const maxDist = item.fuzzyDistance ?? (item.token.length <= 5 ? 1 : 2);
-          const fieldClauses: Query[] = [];
-
-          for (const path of analyzer.fields) {
-            const storedTerms = yield* termsOf(path);
-            const matched = storedTerms.filter((st) => damerauLevenshtein(st, item.token, maxDist) <= maxDist);
-            if (matched.length > 0) {
-              const sub = matched.map((w) => term(path, w));
-              fieldClauses.push(sub.length === 1 ? sub[0]! : or(...sub));
-            }
-          }
-
-          if (fieldClauses.length === 0) {
-            return undefined;
-          }
-          termClauses.push(fieldClauses.length === 1 ? fieldClauses[0]! : or(...fieldClauses));
-        }
-      }
-
-      if (termClauses.length === 0) return undefined;
-      const query = termClauses.length === 1 ? termClauses[0]! : and(...termClauses);
+      const query = yield* Effect.orDie(toPlanQuery(parsed.root, analyzer, termsOf));
       return { query, parsed };
     });
 
@@ -3448,7 +3313,7 @@ const generateHighlights = (
     {
       readonly plan: Plan;
       readonly where: ReadonlyArray<DocumentFilter>;
-      readonly words?: { readonly query: Query; readonly parsed: ParsedSearchQuery };
+      readonly words?: { readonly query: Query | undefined; readonly parsed: ParsedSearchQuery };
     } | undefined,
     UnknownReference | UnanalyzedCollection | UnindexedGeometry | UnknownEdge
   > =>
@@ -3464,15 +3329,15 @@ const generateHighlights = (
           });
       if (input.search !== undefined && words === undefined) return undefined;
       let plan = withSearch(planQuery(tenant, input.collection, where), words?.query);
-      if (words !== undefined && words.parsed.phrases.length > 0 && collection?.analyzer !== undefined) {
+      if (words !== undefined && collection?.analyzer !== undefined) {
         plan = {
           ...plan,
           residual: [
             ...plan.residual,
             {
-              path: "*phrase",
-              op: "phrase",
-              value: { phrases: words.parsed.phrases, analyzer: collection.analyzer } as unknown as Json,
+              path: "*search",
+              op: "search",
+              value: { root: words.parsed.root, analyzer: collection.analyzer } as unknown as Json,
             },
           ],
         };
@@ -3588,9 +3453,9 @@ const generateHighlights = (
         if (doc && keep(doc)) candidates.push({ document: doc, seq: Number(seq) });
       }
 
-      if (planned.words !== undefined && collection?.analyzer !== undefined) {
+      if (planned.words !== undefined && collection?.analyzer !== undefined && planned.words.parsed.terms.length > 0) {
         const analyzer = collection.analyzer;
-        const { terms, phrases } = planned.words.parsed;
+        const { terms, scoredPhrases } = planned.words.parsed;
 
         interface ScoredCandidate {
           document: Document;
@@ -3615,6 +3480,7 @@ const generateHighlights = (
             docLength += tokens.length;
             for (const token of tokens) {
               for (const qTerm of terms) {
+                if (qTerm.field !== undefined && qTerm.field !== field) continue;
                 if (qTerm.kind === "exact" && token === qTerm.token) {
                   termCounts.set(qTerm.token, (termCounts.get(qTerm.token) ?? 0) + 1);
                 } else if (qTerm.kind === "prefix" && token.startsWith(qTerm.token)) {
@@ -3628,8 +3494,9 @@ const generateHighlights = (
                 }
               }
             }
-            for (const phrase of phrases) {
-              phraseOccurrences += countPhraseMatches(tokens, phrase);
+            for (const phrase of (scoredPhrases ?? [])) {
+              if (phrase.field !== undefined && phrase.field !== field) continue;
+              phraseOccurrences += countPhraseMatches(tokens, phrase.tokens);
             }
             if (terms.length > 1) {
               const termTokens = terms.map((t) => t.token);
@@ -3897,15 +3764,15 @@ const generateHighlights = (
           return { documents: [] };
         }
         let plan = withSearch(planQuery(tenant, input.collection, where), words?.query);
-        if (words !== undefined && words.parsed.phrases.length > 0 && collection?.analyzer !== undefined) {
+        if (words !== undefined && collection?.analyzer !== undefined) {
           plan = {
             ...plan,
             residual: [
               ...plan.residual,
               {
-                path: "*phrase",
-                op: "phrase",
-                value: { phrases: words.parsed.phrases, analyzer: collection.analyzer } as unknown as Json,
+                path: "*search",
+                op: "search",
+                value: { root: words.parsed.root, analyzer: collection.analyzer } as unknown as Json,
               },
             ],
           };

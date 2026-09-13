@@ -904,8 +904,14 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   distance and distance-discounted BM25 scoring; and customizable contextual
   highlights (`<mark>...</mark>`, ellipsis bounding, case-preserving snippets)
   on returned documents across `findMany` and `findPage`.
+- [x] Search, language and stemming: language-aware stemming (English Porter
+  stemmer) behind the analyzer's `language` property, matching inflected variants
+  across document indexing, query parsing, BM25 scoring, and snippet highlighting;
+  rich boolean search query language supporting boolean operators (`AND`, `OR`,
+  `NOT`, `-`, `&&`, `||`, `!`), grouping with parentheses `(...)`, and field
+  scoping (`field:term`, `field:"phrase"`, `field:prefix*`, `field:fuzzy~`).
 - [ ] Search, the rest of it: positional postings in the KV storage format;
-  stemming and synonyms behind the analyzer's language; and result ordering across shards.
+  synonyms; and result ordering across shards.
 - [ ] Take libsql's keys back off hex once the Buffer-parameter panic is
   released. Binding a lone Buffer routed it down the named-parameter path,
   where an anonymous `?` has no name and the unwrap panicked out of the
