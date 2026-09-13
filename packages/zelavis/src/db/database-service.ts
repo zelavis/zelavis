@@ -17,6 +17,7 @@ import type {
   RelatedFilter,
   DocumentWrite,
   Analyzer,
+  Document,
   SpatialFilter,
   SpatialIndex,
   EmbeddingIndex,
@@ -1136,6 +1137,226 @@ export function defineDatabaseDocumentsService(
               };
             } catch (error) {
               return databaseErrorResponse(error, 404);
+            }
+          },
+        },
+        {
+          id: "database.collections.exists",
+          method: "GET",
+          path: "/collections/:collection/exists",
+          spec: {
+            operationId: "collectionExists",
+            summary: "Whether a collection exists",
+            tags: ["database"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+            },
+            queryParams: {
+              tenantId: { type: "string", required: true, description: "Tenant ID" },
+            },
+            responses: {
+              200: { description: "Whether the collection exists" },
+              400: { description: "Bad request" },
+            },
+          },
+          handler: async ({ service, params, query }) => {
+            try {
+              const tenantId = readTenantId(query.get("tenantId"));
+              return {
+                body: {
+                  exists: await service.forTenant(tenantId).documents.collectionExists(params.collection),
+                },
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "database.documents.related",
+          method: "POST",
+          path: "/:collection/related",
+          spec: {
+            operationId: "withRelated",
+            summary: "Resolve the documents these documents reference",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId", "documents"],
+                properties: {
+                  tenantId: { type: "string", description: "Tenant ID" },
+                  documents: { type: "array", description: "Documents whose references to resolve" },
+                  references: { type: "array", description: "Which references; every declared one when omitted" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "Each document, and what its references name" },
+              404: { description: "A reference the collection does not declare" },
+            },
+          },
+          handler: async ({ service, params, body }) => {
+            const input = readBodyObject(body);
+            try {
+              const tenantId = readTenantId(input.tenantId);
+              return {
+                body: {
+                  documents: await service.forTenant(tenantId).documents.withRelated({
+                    collection: params.collection,
+                    documents: Array.isArray(input.documents)
+                      ? (input.documents as ReadonlyArray<Document>)
+                      : [],
+                    ...(Array.isArray(input.references)
+                      ? { references: input.references as ReadonlyArray<string> }
+                      : {}),
+                  }),
+                },
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 404);
+            }
+          },
+        },
+        {
+          id: "database.documents.analyzer",
+          method: "POST",
+          path: "/:collection/analyzer",
+          spec: {
+            operationId: "analyzeCollection",
+            summary: "Declare how a collection's text becomes terms, and rewrite under it",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId", "analyzer"],
+                properties: {
+                  tenantId: { type: "string", description: "Tenant ID" },
+                  analyzer: { type: "object", description: "{ fields, version, fold?, stopWords?, minLength?, language? }" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "The analyzer, and how many documents were rewritten" },
+              400: { description: "An analyzer that cannot be used" },
+              404: { description: "Not found" },
+            },
+          },
+          handler: async ({ service, params, body }) => {
+            const input = readBodyObject(body);
+            try {
+              const tenantId = readTenantId(input.tenantId);
+              if (!input.analyzer || typeof input.analyzer !== "object") {
+                throw new TypeError("An analyzer is required.");
+              }
+              return {
+                body: await service.forTenant(tenantId).documents.analyze({
+                  collection: params.collection,
+                  analyzer: input.analyzer as Analyzer,
+                }),
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "database.documents.geometry",
+          method: "POST",
+          path: "/:collection/geometry",
+          spec: {
+            operationId: "locateCollection",
+            summary: "Declare how a collection's geometry becomes cells, and rewrite under it",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId", "spatial"],
+                properties: {
+                  tenantId: { type: "string", description: "Tenant ID" },
+                  spatial: { type: "object", description: "{ fields, resolution, version }" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "The spatial index, and how many documents were rewritten" },
+              400: { description: "An index that cannot be used" },
+              404: { description: "Not found" },
+            },
+          },
+          handler: async ({ service, params, body }) => {
+            const input = readBodyObject(body);
+            try {
+              const tenantId = readTenantId(input.tenantId);
+              if (!input.spatial || typeof input.spatial !== "object") {
+                throw new TypeError("A spatial index is required.");
+              }
+              return {
+                body: await service.forTenant(tenantId).documents.locate({
+                  collection: params.collection,
+                  spatial: input.spatial as SpatialIndex,
+                }),
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
+            }
+          },
+        },
+        {
+          id: "database.documents.embedding",
+          method: "POST",
+          path: "/:collection/embedding",
+          spec: {
+            operationId: "embedCollection",
+            summary: "Declare which field holds an embedding, and hold the collection to it",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId", "embedding"],
+                properties: {
+                  tenantId: { type: "string", description: "Tenant ID" },
+                  embedding: { type: "object", description: "{ field, dimension, metric, version, normalize?, model? }" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "The embedding, and how many documents were read against it" },
+              400: { description: "A declaration its own documents fail, or one that cannot be used" },
+              404: { description: "Not found" },
+            },
+          },
+          handler: async ({ service, params, body }) => {
+            const input = readBodyObject(body);
+            try {
+              const tenantId = readTenantId(input.tenantId);
+              if (!input.embedding || typeof input.embedding !== "object") {
+                throw new TypeError("An embedding is required.");
+              }
+              return {
+                body: await service.forTenant(tenantId).documents.embed({
+                  collection: params.collection,
+                  embedding: input.embedding as EmbeddingIndex,
+                }),
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 400);
             }
           },
         },
