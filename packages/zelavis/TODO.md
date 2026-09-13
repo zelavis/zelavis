@@ -360,19 +360,19 @@ an exported type is never mistaken for an operational distributed feature.
   install, and `api` is optional so `kind: "provider"` plugins can register
   through a domain contract without mounting routes.
 
-- [x] Plugin namespace foundation: explicit manifest `zelavis.namespace`,
-  collision rejection, SDK menu registration at `plugins.ui.menus`, and
-  namespaced package HTTP mounts. `zelavis.operations.create` declares an
-  operation once for HTTP, discovered JS clients and CLI subcommands; the
-  example plugin exercises the shared operation path.
+- [x] Plugin namespace and three-way parity foundation: explicit manifest
+  `zelavis.namespace`, collision rejection, SDK menu registration at
+  `plugins.ui.menus`, and namespaced package HTTP mounts.
+  `zelavis.operations.create` declares an operation once for HTTP, discovered
+  JS clients and CLI subcommands; CLI supports `--data`, stdin, and
+  `--flag=value`; `@zelavis/ecommerce` service endpoints are migrated to
+  declared operations with typed resource clients on `PluginApiRegistry`.
 
 ## Prepared, Not Operational Yet
 
-- [ ] Finish migrating existing service endpoints to declared plugin
-  operations, with typed resource clients. Package-loading menu registration
-  has the new SDK name; runtime HTTP/CLI menu mutation still needs the same
-  package ownership, durable registration, removal and cleanup contract.
-  Do not describe complete cross-interface parity as shipped yet.
+- [ ] Runtime HTTP/CLI menu mutation still needs the same package ownership,
+  durable registration, removal and cleanup contract as package-loading menu
+  registration. Do not describe dynamic remote menu mutation as shipped yet.
 
 - [ ] Compatibility dates are carried by runtimes, artifacts, and providers,
   but no behavior gates have been introduced yet. Add gates only when behavior

@@ -3,6 +3,7 @@ import test from "node:test";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { zelavis as boot } from "../dist/index.js";
 import { zelavis, createZelavisClient } from "../dist/sdk/fetch.js";
 import { loadPluginPackage, createServiceRegistry, validatePluginPackageManifest } from "../dist/service.js";
@@ -129,6 +130,33 @@ test("a third-party operation shares HTTP, SDK and CLI behavior under a custom r
   try {
     await runPluginsCommand(["seotool", "audits", "create", "--file", file, "--url", "http://localhost/custom", "--json"]);
     assert.deepEqual(JSON.parse(output.pop()), expected);
+
+    // Test --flag=value and --data inline JSON payload
+    await runPluginsCommand(["seotool", "audits", "create", `--data=${JSON.stringify(input)}`, "--url=http://localhost/custom"]);
+    assert.deepEqual(JSON.parse(output.pop()), expected);
+
+    // Test standard input stream with --data-stdin
+    const stdinStream = Readable.from([JSON.stringify(input)]);
+    await runPluginsCommand(["seotool", "audits", "create", "--data-stdin", "--url=http://localhost/custom"], { stdin: stdinStream });
+    assert.deepEqual(JSON.parse(output.pop()), expected);
+
+    // Test standard input stream with --file -
+    const fileStdinStream = Readable.from([JSON.stringify(input)]);
+    await runPluginsCommand(["seotool", "audits", "create", "--file", "-", "--url=http://localhost/custom"], { stdin: fileStdinStream });
+    assert.deepEqual(JSON.parse(output.pop()), expected);
+
+    // Test conflicting payload inputs
+    await assert.rejects(
+      runPluginsCommand(["seotool", "audits", "create", "--file", file, "--data", "{}", "--url=http://localhost/custom"]),
+      /only one/,
+    );
+
+    // Test invalid JSON in --data
+    await assert.rejects(
+      runPluginsCommand(["seotool", "audits", "create", "--data", "invalid-json", "--url=http://localhost/custom"]),
+      /Invalid JSON/,
+    );
+
     await writeFile(file, "{}");
     await assert.rejects(runPluginsCommand(["seotool", "audits", "create", "--file", file, "--url", "http://localhost/custom"]), (error) => error.response.status === 400);
     await runPluginsCommand(["seotool", "--help", "--url", "http://localhost/custom"]);
