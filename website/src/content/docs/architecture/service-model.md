@@ -127,9 +127,9 @@ Service pages are served as full HTML documents and mounted by the dashboard ins
 A good current TypeScript direction is:
 
 - use `package.json` as the service manifest and configuration surface (`"zelavis": { "kind": "plugin" }`, `"type": "module"`, `"exports"`)
-- use the official Zelavis SDK (`import { zelavis } from "zelavis/sdk"`) for plugin code: `zelavis.menu.create(...)`, `zelavis.routes.create(...)`, `zelavis.commands.register(...)`, `zelavis.events.on(...)`
+- use the official Zelavis SDK (`import { zelavis } from "zelavis/sdk"`) for plugin code: `zelavis.plugins.ui.menus.create(...)`, `zelavis.routes.create(...)`, `zelavis.commands.register(...)`, `zelavis.events.on(...)`
 - use plain `ZelavisRuntimeService` object literals for the internal runtime contract
-- let plugins carry declarative dashboard metadata through `zelavis.menu.create({ ... })` so plugins are not locked to one dashboard implementation detail
+- let plugins carry declarative dashboard metadata through `zelavis.plugins.ui.menus.create({ ... })` so plugins are not locked to one dashboard implementation detail
 - let provider plugins expose the public contract associated with a declared capability
 
 ## Suggested plugin shape
@@ -143,7 +143,8 @@ Plugins are standard npm packages configured via `package.json`:
   "type": "module",
   "exports": "./dist/index.js",
   "zelavis": {
-    "kind": "plugin"
+    "kind": "plugin",
+    "namespace": "ecommerce"
   }
 }
 ```
@@ -153,7 +154,7 @@ Plugin code uses the official Zelavis SDK:
 ```ts
 import { zelavis } from "zelavis/sdk";
 
-zelavis.menu.create({
+zelavis.plugins.ui.menus.create({
   title: "Ecommerce",
   path: "/commerce",
   page: {
@@ -214,7 +215,7 @@ Installed provider plugins are discovered by capability. The domain validates th
 
 Important point:
 
-- the `menu` object is service-owned metadata registered via `zelavis.menu.create(...)`
+- the `menu` object is service-owned metadata registered via `zelavis.plugins.ui.menus.create(...)`
 - `menu.page` is the content contract for service-owned dashboard pages
 - Zelavis decides how to render that metadata in the current dashboard shell
 - if the dashboard changes later, the service contract can stay stable while Zelavis adapts the rendering layer

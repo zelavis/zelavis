@@ -6,7 +6,8 @@ It is intentionally small:
 
 - one service root menu item: `Example Basic`
 - one iframe-rendered dashboard page at `/zelavis/example-basic`
-- one service-owned API route at `/zelavis/api/v1/example-basic/health`
+- one service-owned API route at `/zelavis/api/v1/plugins/example/health`
+- matching `client.plugins.example.health.get()` and `zelavis plugins example health get` operations
 
 ## Build the service
 
@@ -39,7 +40,7 @@ The upload registers the source first. In **Uploaded sources**, click **Install*
 After install:
 
 - open `http://localhost:3000/zelavis/example-basic`
-- open `http://localhost:3000/zelavis/api/v1/example-basic/health`
+- open `http://localhost:3000/zelavis/api/v1/plugins/example/health`
 
 ## What to upload
 

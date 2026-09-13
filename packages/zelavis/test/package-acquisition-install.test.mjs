@@ -67,7 +67,7 @@ test("an uploaded package still installs, and installs once", async () => {
         version: "1.0.0",
         type: "module",
         exports: { ".": { import: "./index.js" } },
-        zelavis: { kind: "plugin" },
+        zelavis: { kind: "plugin", namespace: "example" },
       }),
       "index.js": "export default { name: '@example/uploaded' }",
     });

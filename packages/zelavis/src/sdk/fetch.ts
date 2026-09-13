@@ -15,6 +15,8 @@ import type {
   ZelavisAnyRuntimeServiceInput,
 } from "../core/runtime/contracts.js";
 import type { ZelavisServiceMenuDefinition } from "../core/service/definition.js";
+import { createPluginClients, validateOperationName, type RegisteredPluginClients, type PluginOperation } from "./plugins.js";
+export type { PluginClients, PluginApiRegistry, RegisteredPluginClients, PluginOperation, PluginOperationOptions } from "./plugins.js";
 
 export type { AuthApi, DatabaseRuntimeApi, DatabaseJsonObject };
 export {
@@ -60,6 +62,8 @@ export interface ZelavisSdkSurfaceManifest {
 export interface ZelavisClientOptions {
   baseUrl: string | URL;
   rootPath?: string;
+  apiPrefix?: string;
+  apiVersion?: string;
   fetch?: typeof fetch;
   headers?: HeadersInit | (() => HeadersInit | Promise<HeadersInit>);
 }
@@ -70,6 +74,7 @@ export interface ZelavisClientRequestOptions extends Omit<RequestInit, "body"> {
 }
 
 export interface ZelavisRuntimeConfigResponse {
+  pluginOperations?: readonly PluginOperation[];
   rootPath: string;
   api: {
     basePath: string;
@@ -107,6 +112,8 @@ export interface ZelavisDashboardSettingsUpdate {
 }
 
 export interface ZelavisClient {
+  readonly plugins: RegisteredPluginClients;
+  pluginOperations(): Promise<readonly PluginOperation[]>;
   readonly baseUrl: URL;
   readonly rootPath: string;
   request(path: string, options?: ZelavisClientRequestOptions): Promise<Response>;
@@ -150,6 +157,9 @@ export function createZelavisClient(
 
   const baseUrl = new URL(options.baseUrl);
   const rootPath = normalizeRootPath(options.rootPath ?? "/zelavis");
+  const apiPrefix = normalizeRootPath(options.apiPrefix ?? "/api");
+  const apiVersion = options.apiVersion ?? "v1";
+  if (!/^[a-zA-Z0-9_-]+$/.test(apiVersion)) throw new TypeError("Invalid API version.");
 
   async function resolveHeaders(headers?: HeadersInit): Promise<Headers> {
     const resolved = new Headers(
@@ -184,7 +194,8 @@ export function createZelavisClient(
       }
     }
 
-    return fetchImplementation(resolveApiUrl(baseUrl, rootPath, path), init);
+    const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+    return fetchImplementation(new URL(`${rootPath}${apiPrefix}/${apiVersion}${normalizedPath}`, baseUrl), init);
   }
 
   async function json<T = unknown>(
@@ -193,13 +204,21 @@ export function createZelavisClient(
   ): Promise<T> {
     const response = await request(path, requestOptions);
     if (!response.ok) {
-      throw new ZelavisClientHttpError(response);
+      const body = await response.clone().json().catch(() => undefined);
+      throw new ZelavisClientHttpError(response, body);
     }
-
+    if (response.status === 204) return undefined as T;
     return response.json() as Promise<T>;
   }
 
   return {
+    plugins: createPluginClients(
+      async () => (await json<ZelavisRuntimeConfigResponse>("/runtime/config")).pluginOperations ?? [],
+      async (path, method, body) => json(path, { method, body: body as object | undefined }),
+    ),
+    async pluginOperations() {
+      return (await json<ZelavisRuntimeConfigResponse>("/runtime/config")).pluginOperations ?? [];
+    },
     baseUrl,
     rootPath,
     request,
@@ -223,11 +242,14 @@ export function createZelavisClient(
 
 export class ZelavisClientHttpError extends Error {
   readonly response: Response;
+  readonly body: unknown;
 
-  constructor(response: Response) {
-    super(`Zelavis request failed with status ${response.status}.`);
+  constructor(response: Response, body?: unknown) {
+    super(body && typeof body === "object" && "error" in body && typeof body.error === "string"
+      ? body.error : `Zelavis request failed with status ${response.status}.`);
     this.name = "ZelavisClientHttpError";
     this.response = response;
+    this.body = body;
   }
 }
 
@@ -259,7 +281,10 @@ export interface ZelavisPluginServicesApi {
 }
 
 export interface ZelavisSdk {
-  readonly menu: ZelavisMenuApi;
+  readonly operations: {
+    create(operation: ZelavisServerRoute & { resource: string; action: string }): void;
+  };
+  readonly plugins: { readonly ui: { readonly menus: ZelavisMenuApi } };
   readonly routes: ZelavisRoutesApi;
   readonly commands: ZelavisCommandsApi;
   readonly events: ZelavisEventsApi;
@@ -269,13 +294,28 @@ export interface ZelavisSdk {
 }
 
 export const zelavis: ZelavisSdk = {
-  menu: {
+  operations: {
+    create({ resource, action, ...route }) {
+      const context = requireActivePluginContext("zelavis.operations.create");
+      validateOperationName(resource);
+      validateOperationName(action);
+      if (!/^\/(?:[a-zA-Z0-9_-]+|:[a-zA-Z][a-zA-Z0-9]*)(?:\/(?:[a-zA-Z0-9_-]+|:[a-zA-Z][a-zA-Z0-9]*))*$/.test(route.path)) {
+        throw new TypeError("Plugin operations require a resource path beginning with / without wildcards, queries or traversal.");
+      }
+      if (!route.spec) throw new TypeError("Plugin operations require a documented route spec.");
+      if (context.routes.some((item) => item.meta?.pluginResource === resource && item.meta?.pluginAction === action)) {
+        throw new TypeError(`Duplicate plugin operation: ${resource}.${action}`);
+      }
+      context.routes.push({ ...route, meta: { ...route.meta, pluginResource: resource, pluginAction: action } });
+    },
+  },
+  plugins: { ui: { menus: {
     create(menu) {
-      const context = requireActivePluginContext("zelavis.menu.create");
+      const context = requireActivePluginContext("zelavis.plugins.ui.menus.create");
       context.menus.push(menu);
       return menu;
     },
-  },
+  } } },
   routes: {
     create(routes) {
       const context = requireActivePluginContext("zelavis.routes.create");
@@ -321,11 +361,6 @@ function normalizeRootPath(path: string): string {
   }
 
   return `/${trimmed.replace(/^\/+|\/+$/g, "")}`;
-}
-
-function resolveApiUrl(baseUrl: URL, rootPath: string, path: string): URL {
-  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  return new URL(`${rootPath}/api/v1${normalizedPath}`, baseUrl);
 }
 
 function isBodyInit(value: unknown): value is BodyInit {

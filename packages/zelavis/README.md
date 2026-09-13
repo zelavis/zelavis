@@ -229,7 +229,7 @@ Plugin code uses the official Zelavis SDK:
 ```ts
 import { zelavis } from "zelavis/sdk";
 
-zelavis.menu.create({
+zelavis.plugins.ui.menus.create({
   title: "Ecommerce",
   path: "/commerce",
 });
@@ -644,7 +644,7 @@ That lets a custom service ship simple static dashboard pages:
 ```ts
 import { zelavis } from "zelavis/sdk";
 
-zelavis.menu.create({
+zelavis.plugins.ui.menus.create({
   title: "Reports",
   path: "/reports",
   page: {

@@ -4,7 +4,7 @@ import { ECOMMERCE_MANIFEST } from "../dist/manifest.js";
 /**
  * Loads the plugin the way an installation does.
  *
- * It declares its menu through `zelavis.menu.create`, which only works inside
+ * It declares its menu through `zelavis.plugins.ui.menus.create`, which only works inside
  * a plugin execution context — so importing the module and passing the object
  * into a catalogue no longer works, and these tests exercise the real install
  * path rather than a shape only tests used.

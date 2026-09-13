@@ -441,7 +441,7 @@ function parseSubscriptionCreation(body: unknown): {
 /**
  * The plugin's dashboard menu, declared through the official SDK.
  *
- * `zelavis.menu.create` rather than a `menu` field on the exported object.
+ * `zelavis.plugins.ui.menus.create` rather than a `menu` field on the exported object.
  * Both reach the same place — the loader merges SDK contributions over the
  * field — but the SDK is what the authoring guide tells plugin authors to use,
  * and a first-party plugin contradicting that makes the rule not stick.
@@ -450,7 +450,7 @@ function parseSubscriptionCreation(body: unknown): {
  * That is the trade: this plugin is now loaded rather than composed as a live
  * object, which is how it arrives on a real installation anyway.
  */
-zelavis.menu.create({
+zelavis.plugins.ui.menus.create({
   title: "Ecommerce",
   path: "/commerce",
   pageLabel: "Commerce",

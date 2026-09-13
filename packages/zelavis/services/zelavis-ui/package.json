@@ -14,7 +14,8 @@
       "mode": "spa",
       "assetBase": "/assets/",
       "basePathGlobal": "__ZELAVIS_BASE_PATH__"
-    }
+    },
+    "namespace": "ui"
   },
   "main": "./dist/dashboard-service.js",
   "types": "./dist/dashboard-service.d.ts",

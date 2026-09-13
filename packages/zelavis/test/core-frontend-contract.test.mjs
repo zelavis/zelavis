@@ -21,7 +21,7 @@ const base = (frontend) => ({
 
 test("a package that is not a frontend reads as undefined", () => {
   assert.equal(
-    readFrontendManifest({ name: "@acme/plugin", zelavis: { kind: "plugin" } }),
+    readFrontendManifest({ name: "@acme/plugin", zelavis: { kind: "plugin", namespace: "example" } }),
     undefined,
   );
   assert.equal(readFrontendManifest({ name: "@acme/plain" }), undefined);
@@ -247,7 +247,7 @@ test("an unlistable frontend is still installable", async () => {
 
 test("a non-frontend package cannot be listed as one", () => {
   assert.throws(
-    () => assertListableFrontend({ name: "@acme/plugin", zelavis: { kind: "plugin" } }),
+    () => assertListableFrontend({ name: "@acme/plugin", zelavis: { kind: "plugin", namespace: "example" } }),
     /is not a frontend/,
   );
 });

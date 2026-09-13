@@ -1,3 +1,4 @@
+import { zelavis } from "../../dist/sdk/fetch.js";
 import { loadPluginPackage } from "../../dist/service.js";
 
 /**
@@ -19,6 +20,7 @@ export const EXAMPLE_PLUGIN_MANIFEST = Object.freeze({
   }),
   zelavis: Object.freeze({
     kind: "plugin",
+    namespace: "catalog",
     capabilities: Object.freeze(["api:routes", "dashboard:menu"]),
   }),
 });
@@ -94,7 +96,11 @@ let cached;
 export function loadExamplePlugin() {
   cached ??= loadPluginPackage({
     manifest: EXAMPLE_PLUGIN_MANIFEST,
-    importer: async () => ({ default: service }),
+    importer: async () => {
+      const { menu, ...definition } = service;
+      zelavis.plugins.ui.menus.create(menu);
+      return { default: definition };
+    },
   });
   return cached;
 }

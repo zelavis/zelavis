@@ -22,6 +22,26 @@ zelavis serve
 
 ## Commands
 
+Plugin-owned operations use the plural namespace consistently:
+
+```bash
+zelavis plugins --help
+zelavis plugins example health get --url http://localhost:3000/zelavis --json
+zelavis plugins example --help --url http://localhost:3000/zelavis
+```
+
+Commands are discovered from the running installation's operation declarations.
+The example above calls the same handler as
+`GET /zelavis/api/v1/plugins/example/health` and
+`client.plugins.example.health.get()`. For writes, use `--file input.json`;
+path/query arguments use `--param name=value` and `--query name=value`. Supply
+`--token` when the endpoint requires bearer authentication. Output and errors
+are JSON, and failures exit nonzero.
+
+See [Plugin API](/guides/plugin-api/) for declaring an operation and the current
+migration limits. Only endpoints with operation declarations appear in this
+command tree.
+
 - `serve` starts the Platform runtime and dashboard.
 - `bootstrap` creates the first Platform owner account.
 - `bootstrap status` reports whether an owner still has to be created.
@@ -219,7 +239,10 @@ the package that defines it:
 {
   "zelavis": {
     "kind": "plugin",
-    "capabilities": ["zelavis/auth:credentials"]
+    "capabilities": [
+      "zelavis/auth:credentials"
+    ],
+    "namespace": "example"
   }
 }
 ```

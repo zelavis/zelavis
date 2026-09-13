@@ -365,6 +365,7 @@ export function createZelavisDashboardService(
 
   return Object.freeze({
     name: "@zelavis/ui",
+    namespace: "ui",
     // The dashboard is a frontend — the default face of the outermost
     // installation — not a plugin that happens to serve HTML. Its manifest
     // declares the same thing, truthfully: a static frontend over the

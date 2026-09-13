@@ -13,7 +13,7 @@ The authoring guide's Rule 4 tells plugin authors to use `zelavis/sdk` for
 menus, routes, commands and events. The flagship example plugin used a `menu`
 field on its exported object instead — which works, because the loader merges
 both, but a first-party plugin contradicting a documented rule is how the rule
-stops sticking. It now calls `zelavis.menu.create`.
+stops sticking. It now calls `zelavis.plugins.ui.menus.create`.
 
 That only works inside a plugin execution context, so the plugin has to be
 loaded rather than imported and passed around as a live object. Which turned up

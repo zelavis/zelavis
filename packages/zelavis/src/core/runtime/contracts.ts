@@ -246,6 +246,8 @@ export interface ZelavisRuntimeServiceDynamicMenuResponse {
 
 export interface ZelavisRuntimeService<TService = unknown> {
   name: string;
+  /** Public plugin API namespace, owned by the package manifest. */
+  namespace?: string;
   kind?: string;
   basePath?: string;
   /**

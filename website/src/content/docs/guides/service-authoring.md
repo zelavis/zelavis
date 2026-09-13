@@ -101,7 +101,7 @@ For plugins that register menus, API routes, commands, or event listeners, use t
 ```ts
 import { zelavis } from "zelavis/sdk";
 
-zelavis.menu.create({
+zelavis.plugins.ui.menus.create({
   title: "Reports",
   path: "/reports",
   page: {
@@ -168,7 +168,7 @@ A top-level service is a normal ESM module. Export the service definition as `de
 ```ts
 import { zelavis } from "zelavis/sdk";
 
-zelavis.menu.create({
+zelavis.plugins.ui.menus.create({
   title: "Search",
   path: "/search",
   page: {

@@ -1023,7 +1023,7 @@ test("node adapter installs uploaded ZIP service packages", async () => {
         version: "0.0.3",
         type: "module",
         exports: "./dist/index.mjs",
-        zelavis: { kind: "plugin" },
+        zelavis: { kind: "plugin", namespace: "example" },
       }),
       "dist/index.mjs": `
         export default {

@@ -40,7 +40,7 @@ async function discover(directory) {
 
 const VALID = {
   exports: "./index.js",
-  zelavis: { kind: "plugin", capabilities: ["api:routes"] },
+  zelavis: { kind: "plugin", namespace: "example", capabilities: ["api:routes"] },
 };
 
 test("a missing folder is the normal empty case, not a failure", async () => {
@@ -69,7 +69,7 @@ test("an exports path escaping its package is refused", async () => {
   const directory = await folder();
   await writePackage(directory, "escape", {
     exports: "../../../../etc/passwd",
-    zelavis: { kind: "plugin" },
+    zelavis: { kind: "plugin", namespace: "example" },
   });
 
   const { discovered, skipped } = await discover(directory);
@@ -82,7 +82,7 @@ test("an invalid capability is refused at discovery, not silently ignored", asyn
   await writePackage(
     directory,
     "badcap",
-    { exports: "./index.js", zelavis: { kind: "plugin", capabilities: ["NotValid"] } },
+    { exports: "./index.js", zelavis: { kind: "plugin", namespace: "example", capabilities: ["NotValid"] } },
     "export default {};",
   );
 

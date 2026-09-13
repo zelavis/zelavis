@@ -85,6 +85,13 @@ Available parsers: `parseAsString`, `parseAsStringLiteral`. Add new parsers to `
 
 ## Sidebar and navigation rules
 
+- Plugin and service packages register menus through `zelavis.plugins.ui.menus.create`
+  from `zelavis/sdk`. Consume runtime `menus` as the complete registration
+  list; never concatenate it with `menu`, its primary catalogue entry.
+- UI owns namespace `ui`; all service-owned APIs use the plural `plugins`
+  prefix across JS, HTTP and CLI. Require `zelavis.namespace` in executable
+  package manifests, and follow AGENTS.md's namespace ownership/parity rules.
+
 - The sidebar uses a Swiper-based slide navigation model — each slide is a distinct panel
 - Top-level sections that have a natural entry page declare `landingUrl` in `dashboard-data.ts`; this navigates the main content area when the section is opened from the Platform root
 - Add `landingUrl` to any new top-level section that has a clear entry page
@@ -108,6 +115,10 @@ Available parsers: `parseAsString`, `parseAsStringLiteral`. Add new parsers to `
 
 - Use `pnpm dev` for end-to-end Zelavis runtime and dashboard work
 - Treat the dashboard as a client of Zelavis endpoints. If a dashboard page can perform a platform action, the same action must exist as a server capability and endpoint.
+- Official public capabilities also require matching JS SDK and CLI operations.
+  When adding or changing a capability for the UI, update all three adapters
+  with the same schemas, permissions, errors, and lifecycle; follow AGENTS.md's
+  "JS, HTTP, and CLI parity" rule. Dashboard reachability alone is incomplete.
 - Do not make route modules, component callbacks, local React state, or framework-specific server actions the only implementation of privileged platform behavior.
 - The mounted dashboard path is `/zelavis`, including in dev mode
 - `/zelavis` opens the Projects overview. Project-scoped pages live under `/zelavis/projects/:projectId/*`; the current starter project is `/zelavis/projects/default`.

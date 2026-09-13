@@ -105,7 +105,7 @@ Catalog entries are not executed directly. A host activates a service through ru
 }
 ```
 
-The `specifier` points to the service's ESM module entry point. That module can export a `ZelavisRuntimeService` object, use the official Zelavis SDK (`zelavis.menu.create`, `zelavis.routes.create`), or export the service definition directly.
+The `specifier` points to the service's ESM module entry point. That module can export a `ZelavisRuntimeService` object, use the official Zelavis SDK (`zelavis.plugins.ui.menus.create`, `zelavis.routes.create`), or export the service definition directly.
 
 For local testing, `examples/plugin-basic` builds a real service package at `examples/plugin-basic/dist/example-basic.zip`. Run `pnpm --filter @zelavis/example-plugin-basic package`, select that ZIP in the project Marketplace at `/zelavis/projects/:projectId/marketplace`, and the Node adapter will unpack it into `.zelavis/services`, read `zelavis.service.json`, derive the service name from the module definition, then activate it without restarting the server.
 

@@ -544,6 +544,64 @@ top of Zelavis.
 
 Everything Zelavis can do must be reachable through a stable server capability and an endpoint.
 
+### JS, HTTP, and CLI parity
+
+Every official public Zelavis capability must be available through the official
+JavaScript SDK, versioned HTTP API, and CLI. No official capability is complete
+when it is JS-only, HTTP-only, or CLI-only. When adding or changing a core API,
+inspect and update all three surfaces in the same change; existing missing
+surfaces are implementation gaps, not precedent for another exception.
+
+- Define one domain operation and shared input/output/error schemas, then adapt
+  it to JS, HTTP, and CLI. Keep authorization, validation, defaults, ownership,
+  lifecycle, persistence, idempotency, and effects identical for equivalent
+  requests. Do not duplicate business logic in transport handlers or commands.
+- Service/plugin-owned APIs use the plural `plugins` namespace everywhere:
+  `zelavis.plugins.<namespace>.<resource>.<action>(...)`, HTTP
+  `/zelavis/api/v1/plugins/<namespace>/<resource>`, and CLI
+  `zelavis plugins <namespace> <resource> <action>`. This includes official
+  services: UI owns `plugins.ui`, and third-party SEO tools might own
+  `plugins.seotool`. Do not use singular `plugin`, root aliases such as
+  `zelavis.seotool`, or a parallel private API for first-party services.
+- Every executable plugin/service package must explicitly declare
+  `zelavis.namespace` in its manifest. Creation templates must include it;
+  loaders validate it before evaluating code. Use a stable lower-camel-case
+  identifier (letters/digits, starting lowercase); reserved JS protocol names
+  are refused. Never infer it from an npm package name. File-only frontends
+  need a namespace only if they own an API.
+- Namespace ownership is unique within an installation or Project runtime;
+  reject collisions explicitly, including collisions with official services.
+  The manifest is authoritative: an exported object cannot claim a different
+  namespace. Owning an API namespace grants no extra permission or ability to
+  impersonate another service. Disabling/uninstalling removes its operations
+  with the service lifecycle; independent runtimes have independent registries.
+- Core Platform capabilities retain their domain namespaces. SDK authoring
+  helpers that declare operations or executable handlers are distinct from
+  installed plugin operations; plugins call the same public APIs as other
+  clients. Define operations once with a resource/action, HTTP method/path,
+  schemas, access requirements and handler so JS and CLI adapt the same HTTP
+  contract. Keep frontend page routes separate from plugin API routes.
+- HTTP uses resource paths and appropriate methods; JS uses typed methods; CLI
+  uses domain/resource subcommands and action verbs, with flags for options.
+  Equivalent behavior is required, not identical punctuation. Preserve explicit
+  Project/Tenant/service identity and the configured API root in every adapter.
+- The SDK and CLI must provide discoverable, typed/documented operations;
+  a generic HTTP request escape hatch alone does not satisfy parity. CLI
+  operations need a machine-readable output mode and equivalent domain errors.
+- Package-loading SDK declarations must map to an explicit capability contract
+  with equivalent HTTP and CLI operations. Carry declarative data or artifact
+  references, not executable JS closures, across transports. Preserve package
+  ownership and cleanup semantics; a remote menu registration must not silently
+  become an unrelated global menu or bypass the SDK registration contract.
+- Verify equivalent successful results, validation failures, authorization,
+  and lifecycle effects across adapters with focused contract tests. Document
+  all three forms together, and identify unimplemented forms as gaps rather
+  than describing them as shipped.
+
+This is the required direction for public APIs, not a claim that the current
+SDK, HTTP routes, and CLI already have full parity. Internal implementation
+helpers are not separate public capabilities.
+
 The dashboard is a client of Zelavis, not the source of truth for platform behavior. Any feature exposed in the dashboard must also be available to non-dashboard callers such as the CLI, AI agents, scripts, plugins, external admin tools, and future automation flows.
 
 Endpoint-backed does not mean serverless-first. Zelavis should expose stateless,
@@ -765,7 +823,7 @@ When creating a new core package, service package, or plugin package:
      - `src/stripe-plugin.ts`
 2. Keep `src/index.ts` small and make it re-export the named definition file.
 3. Use plain `ZelavisRuntimeService` object literals for mounted runtime services.
-4. Use `package.json` manifest (`"zelavis": { "kind": "plugin" }`) and the official Zelavis SDK (`zelavis.menu.create`, `zelavis.routes.create`, etc.) for plugins. `defineService` is removed.
+4. Use `package.json` manifest (`"zelavis": { "kind": "plugin" }`) and the official Zelavis SDK (`zelavis.plugins.ui.menus.create`, `zelavis.routes.create`, etc.) for plugins. `defineService` is removed. Plugin and service packages must register menus through `zelavis.plugins.ui.menus.create`; exported `menu`/`menus` fields are rejected. Runtime `menus` is the complete SDK registration list, and `menu` is its primary catalogue entry, so consumers must not concatenate them.
 5. Keep orchestration helpers only when they add real behavior.
    - good: `authService(...)` because it creates Auth and registers explicit auth-method plugins
    - bad: pass-through aliases that only rename another function

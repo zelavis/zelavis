@@ -10,7 +10,8 @@
     "kind": "plugin",
     "capabilities": [
       "@zelavis/ecommerce:payments"
-    ]
+    ],
+    "namespace": "paypal"
   },
   "types": "./dist/index.d.ts",
   "exports": {

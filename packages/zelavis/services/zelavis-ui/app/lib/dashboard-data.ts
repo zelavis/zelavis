@@ -337,7 +337,7 @@ export function buildProjectManagementNavItems(
   const platformServiceNavItems = (services ?? [])
     .filter((service) => service.core)
     .flatMap((service) =>
-      [service.menu, ...(service.menus ?? [])]
+      getRuntimeServiceMenus(service)
         .filter(
           (menu): menu is RuntimeServiceMenuDefinition => {
             if (!menu) {
@@ -829,9 +829,13 @@ function getServiceMenuSurface(service: RuntimeService): DashboardServiceSurface
 function getRuntimeServiceMenus(
   service: RuntimeService,
 ): readonly RuntimeServiceMenuDefinition[] {
-  return [service.menu, ...(service.menus ?? [])].filter(
-    (menu): menu is RuntimeServiceMenuDefinition => Boolean(menu),
-  );
+  // The runtime exposes the first registered menu as `menu` as well as in
+  // `menus`. The plural field is the complete list, not additional entries.
+  return service.menus?.length
+    ? service.menus
+    : service.menu
+      ? [service.menu]
+      : [];
 }
 
 export function buildDashboardServiceRegistryEntries(

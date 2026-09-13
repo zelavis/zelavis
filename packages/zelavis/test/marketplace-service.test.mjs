@@ -30,7 +30,7 @@ test("the marketplace reaches the dashboard as an ordinary service", async () =>
   // ships with the Platform is carried by `scope`, not by the kind.
   assert.equal(service.kind, "plugin");
 
-  // Two menus, both contributed by `zelavis.menu.create` in the package.
+  // Two menus, both contributed by `zelavis.plugins.ui.menus.create` in the package.
   // Nothing in the dashboard names the marketplace, so if these are missing
   // the button is simply gone.
   assert.equal(service.menus.length, 2);

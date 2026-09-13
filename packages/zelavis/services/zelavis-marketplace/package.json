@@ -6,7 +6,8 @@
   "license": "MIT",
   "type": "module",
   "zelavis": {
-    "kind": "plugin"
+    "kind": "plugin",
+    "namespace": "marketplace"
   },
   "exports": {
     ".": {

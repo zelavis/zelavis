@@ -1819,6 +1819,7 @@ async function resolveRuntimeManagementCore(
     const serviceRegistry = await readResolvedServiceRegistry();
     const serializedServices = serviceRegistry.map((entry) => ({
       name: entry.service.name,
+      namespace: entry.service.namespace,
       version: entry.service.version,
       kind: entry.service.kind,
       specifier: entry.specifier,
@@ -1839,6 +1840,20 @@ async function resolveRuntimeManagementCore(
 
     return {
       name: "zelavis",
+      pluginOperations: context.getServices().flatMap((service) =>
+        service.namespace
+          ? Object.values(service.api ?? {}).flatMap((routes) => routes.flatMap((route) =>
+              typeof route.meta?.pluginResource === "string" && typeof route.meta?.pluginAction === "string"
+                ? [{
+                    namespace: service.namespace,
+                    resource: route.meta.pluginResource,
+                    action: route.meta.pluginAction,
+                    method: route.method,
+                    path: joinPathParts(service.basePath, route.path),
+                    spec: route.spec,
+                  }]
+                : []))
+          : []),
       rootPath,
       api: {
         prefix: context.apiPrefix,
@@ -1856,6 +1871,7 @@ async function resolveRuntimeManagementCore(
       },
       services: context.getServices().map((service) => ({
         name: service.name,
+        namespace: service.namespace,
         kind: service.kind,
         // Composed into the runtime by the operator rather than installed at
         // runtime, which is what "system" means here.
@@ -3518,8 +3534,16 @@ function createServicePrefixes(
   const prefixes: Record<string, string> = {};
   const mountAtRoot = options.mountPrefix === "/";
   const frontendServices = new Set(options.frontendServiceNames ?? []);
+  const namespaceOwners = new Map<string, string>();
 
   for (const service of services) {
+    if (service.namespace) {
+      const previous = namespaceOwners.get(service.namespace);
+      if (previous && previous !== service.name) {
+        throw new TypeError(`Plugin namespace "${service.namespace}" is already owned by "${previous}"; "${service.name}" cannot claim it.`);
+      }
+      namespaceOwners.set(service.namespace, service.name);
+    }
     if (service.name === "@zelavis/frontend") {
       prefixes[service.name] = "/";
       continue;

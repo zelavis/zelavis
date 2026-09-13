@@ -348,7 +348,7 @@ an exported type is never mistaken for an operational distributed feature.
   manifest (`"zelavis": { "kind": ... }`, ESM `type`/`exports`, no legacy
   `main`). `defineService` is removed; only the unrelated marketplace helpers
   `defineServiceCatalogEntry`/`defineServiceCatalog` remain.
-- [x] Plugin code uses the official `zelavis/sdk` surface — `zelavis.menu`,
+- [x] Plugin code uses the official `zelavis/sdk` surface — `zelavis.plugins.ui.menus`,
   `zelavis.routes`, `zelavis.commands`, `zelavis.events`, and
   `zelavis.services` — bound to an explicit plugin execution context that
   throws a descriptive error when called outside `loadPluginPackage`.
@@ -360,7 +360,19 @@ an exported type is never mistaken for an operational distributed feature.
   install, and `api` is optional so `kind: "provider"` plugins can register
   through a domain contract without mounting routes.
 
+- [x] Plugin namespace foundation: explicit manifest `zelavis.namespace`,
+  collision rejection, SDK menu registration at `plugins.ui.menus`, and
+  namespaced package HTTP mounts. `zelavis.operations.create` declares an
+  operation once for HTTP, discovered JS clients and CLI subcommands; the
+  example plugin exercises the shared operation path.
+
 ## Prepared, Not Operational Yet
+
+- [ ] Finish migrating existing service endpoints to declared plugin
+  operations, with typed resource clients. Package-loading menu registration
+  has the new SDK name; runtime HTTP/CLI menu mutation still needs the same
+  package ownership, durable registration, removal and cleanup contract.
+  Do not describe complete cross-interface parity as shipped yet.
 
 - [ ] Compatibility dates are carried by runtimes, artifacts, and providers,
   but no behavior gates have been introduced yet. Add gates only when behavior
@@ -473,7 +485,7 @@ an exported type is never mistaken for an operational distributed feature.
 
 - [x] The marketplace is its own package, `@zelavis/marketplace`, alongside
   `@zelavis/ui` under `product-services/`. It declares `zelavis.kind` in its
-  own `package.json`, contributes both its menus through `zelavis.menu.create`,
+  own `package.json`, contributes both its menus through `zelavis.plugins.ui.menus.create`,
   and is loaded through `loadPluginPackage` — the same loader an installed
   third-party plugin goes through. Nothing in the dashboard names it: its
   routes, pages, components, and hardcoded nav entries were removed from

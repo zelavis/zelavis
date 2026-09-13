@@ -100,7 +100,7 @@ test("an unrecognised kind is refused rather than silently ignored", () => {
     "typo",
   ]) {
     assert.throws(
-      () => validatePluginPackageManifest({ ...base, zelavis: { kind } }),
+      () => validatePluginPackageManifest({ ...base, zelavis: { kind, namespace: "example" } }),
       /must be one of app, frontend, plugin/,
       kind,
     );
@@ -108,7 +108,7 @@ test("an unrecognised kind is refused rather than silently ignored", () => {
 
   for (const kind of ["app", "plugin"]) {
     assert.doesNotThrow(
-      () => validatePluginPackageManifest({ ...base, zelavis: { kind } }),
+      () => validatePluginPackageManifest({ ...base, zelavis: { kind, namespace: "example" } }),
       kind,
     );
   }
@@ -125,22 +125,22 @@ test("manifest strictness follows the code, not the kind label", () => {
   // service had to label itself a plugin to get its manifest validated.
   for (const kind of ["app", "plugin"]) {
     assert.throws(
-      () => validatePluginPackageManifest({ ...base, type: undefined, zelavis: { kind } }),
+      () => validatePluginPackageManifest({ ...base, type: undefined, zelavis: { kind, namespace: "example" } }),
       /"type": "module"/,
       `${kind} type`,
     );
     assert.throws(
-      () => validatePluginPackageManifest({ ...base, exports: undefined, zelavis: { kind } }),
+      () => validatePluginPackageManifest({ ...base, exports: undefined, zelavis: { kind, namespace: "example" } }),
       /must define "exports"/,
       `${kind} exports`,
     );
     assert.throws(
-      () => validatePluginPackageManifest({ ...base, main: "./index.js", zelavis: { kind } }),
+      () => validatePluginPackageManifest({ ...base, main: "./index.js", zelavis: { kind, namespace: "example" } }),
       /"main" is not supported/,
       `${kind} main`,
     );
     assert.doesNotThrow(() =>
-      validatePluginPackageManifest({ ...base, zelavis: { kind } }),
+      validatePluginPackageManifest({ ...base, zelavis: { kind, namespace: "example" } }),
     );
   }
 

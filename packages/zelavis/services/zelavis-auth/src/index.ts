@@ -29,7 +29,7 @@ export const ZELAVIS_AUTH_SETTINGS_SERVICE_NAME = "@zelavis/auth";
  */
 export const AUTH_EXTENSION_OWNER = "zelavis/auth";
 
-zelavis.menu.create({
+zelavis.plugins.ui.menus.create({
   title: "Auth",
   path: "/auth",
   pageLabel: "Auth",

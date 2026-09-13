@@ -45,7 +45,7 @@ test("validatePluginPackageManifest rejects non-module plugins with exact messag
         name: "@example/foo",
         version: "1.0.0",
         exports: "./dist/index.js",
-        zelavis: { kind: "plugin" },
+        zelavis: { kind: "plugin", namespace: "example" },
       }),
     (error) => {
       assert.equal(
@@ -64,7 +64,7 @@ test("validatePluginPackageManifest rejects plugins missing exports with exact m
         name: "@example/foo",
         version: "1.0.0",
         type: "module",
-        zelavis: { kind: "plugin" },
+        zelavis: { kind: "plugin", namespace: "example" },
       }),
     (error) => {
       assert.equal(
@@ -85,7 +85,7 @@ test("validatePluginPackageManifest rejects legacy main in plugins with exact me
         type: "module",
         main: "./dist/index.js",
         exports: "./dist/index.js",
-        zelavis: { kind: "plugin" },
+        zelavis: { kind: "plugin", namespace: "example" },
       }),
     (error) => {
       assert.equal(
@@ -103,7 +103,7 @@ test("validatePluginPackageManifest accepts valid modern plugin package.json", (
     version: "1.0.0",
     type: "module",
     exports: "./dist/index.js",
-    zelavis: { kind: "plugin" },
+    zelavis: { kind: "plugin", namespace: "example" },
   });
 
   assert.equal(manifest.name, "@example/foo");
@@ -130,8 +130,8 @@ test("resolvePackageExportsEntry resolves string and conditional exports", () =>
 
 test("zelavis SDK throws descriptive error when called outside active plugin context", () => {
   assert.throws(
-    () => zelavis.menu.create({ title: "Test", path: "/test" }),
-    /zelavis\.menu\.create can only be called within an active Zelavis plugin execution context\./,
+    () => zelavis.plugins.ui.menus.create({ title: "Test", path: "/test" }),
+    /zelavis\.plugins\.ui\.menus\.create can only be called within an active Zelavis plugin execution context\./,
   );
 
   assert.throws(
@@ -166,14 +166,14 @@ test("loadPluginPackage executes plugin and attributes menus, routes, and comman
     version: "1.2.0",
     type: "module",
     exports: "./index.js",
-    zelavis: { kind: "plugin" },
+    zelavis: { kind: "plugin", namespace: "example" },
   };
 
   const loadedService = await loadPluginPackage({
     manifest,
     importer: async () => {
       // Inside plugin module evaluation:
-      zelavis.menu.create({
+      zelavis.plugins.ui.menus.create({
         title: "My Plugin",
         path: "/my-plugin",
       });
@@ -466,7 +466,7 @@ test("the runtime core never resolves plugin manifests from a filesystem", async
       name: "@zelavis/manifest-boundary-fixture",
       type: "module",
       exports: "./index.js",
-      zelavis: { kind: "plugin" },
+      zelavis: { kind: "plugin", namespace: "example" },
     }),
   );
 

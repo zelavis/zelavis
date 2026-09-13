@@ -26,8 +26,9 @@ describe("the marketplace reaches the dashboard through the service registry", (
     const config = await runtimeConfig();
     const items = buildProjectManagementNavItems(config.services);
 
-    const marketplace = items.find((item) => item.title === "Marketplace");
-    expect(marketplace).toBeDefined();
+    const marketplaces = items.filter((item) => item.title === "Marketplace");
+    expect(marketplaces).toHaveLength(1);
+    const [marketplace] = marketplaces;
     expect(marketplace?.url).toBe("/marketplace");
     expect(marketplace?.sectionLabel).toBe("Explore");
   });
@@ -42,8 +43,9 @@ describe("the marketplace reaches the dashboard through the service registry", (
       "project-a",
     );
 
-    const marketplace = items.find((item) => item.title === "Marketplace");
-    expect(marketplace).toBeDefined();
+    const marketplaces = items.filter((item) => item.title === "Marketplace");
+    expect(marketplaces).toHaveLength(1);
+    const [marketplace] = marketplaces;
     expect(marketplace?.url).toBe("/projects/project-a/marketplace");
   });
 

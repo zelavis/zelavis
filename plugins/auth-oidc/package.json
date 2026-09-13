@@ -11,7 +11,8 @@
     "kind": "plugin",
     "capabilities": [
       "zelavis/auth:credentials"
-    ]
+    ],
+    "namespace": "oidc"
   },
   "exports": {
     ".": {

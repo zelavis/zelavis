@@ -18,7 +18,7 @@ A Zelavis extension is a normal npm package:
 3. Plugin code imports the public SDK from `zelavis/sdk`.
 4. During package loading, Zelavis establishes an execution context and
    evaluates the package entry module.
-5. Calls such as `zelavis.menu.create(...)` and
+5. Calls such as `zelavis.plugins.ui.menus.create(...)` and
    `zelavis.routes.create(...)` contribute behavior to that active package.
 6. Zelavis turns the manifest, exported values, and SDK contributions into one
    runtime service.
@@ -68,7 +68,11 @@ Minimal manifest:
   },
   "zelavis": {
     "kind": "plugin",
-    "capabilities": ["dashboard:menu", "api:routes"]
+    "capabilities": [
+      "dashboard:menu",
+      "api:routes"
+    ],
+    "namespace": "examplePlugin"
   },
   "peerDependencies": {
     "zelavis": ">=1.0.1-alpha.2"
@@ -108,7 +112,10 @@ Its package manifest still uses modern ESM:
   "exports": "./dist/index.js",
   "zelavis": {
     "kind": "app",
-    "capabilities": ["app:project"]
+    "capabilities": [
+      "app:project"
+    ],
+    "namespace": "myProjectRecipe"
   }
 }
 ```
@@ -220,6 +227,86 @@ Typical descriptive fields include `title`, `summary`, `description`,
 
 ## Loading and execution semantics
 
+Executable packages must declare a stable `zelavis.namespace`, such as
+`"namespace": "seotool"`. It is a JavaScript identifier beginning with a lowercase
+letter, containing letters/digits, and excluding reserved protocol names such
+as `then` and `constructor`. The loader validates it before evaluating the
+module. Namespaces must be unique in each installation or Project runtime.
+An exported service cannot override the manifest namespace.
+
+Plugin HTTP endpoints mount at `/zelavis/api/v1/plugins/<namespace>`; an
+exported `basePath` does not select a second public API location. The configured
+runtime root, API prefix and version replace those defaults. Frontend page
+routes keep their own paths.
+
+### One operation across HTTP, JavaScript and CLI
+
+Use the SDK's operation declaration for new plugin endpoints:
+
+```ts
+import { zelavis } from "zelavis/sdk";
+
+zelavis.operations.create({
+  id: "seotool.audits.create",
+  resource: "audits",
+  action: "create",
+  method: "POST",
+  path: "/audits",
+  access: { permissions: ["seotool.audits.create"], scope: { type: "system" } },
+  spec: {
+    operationId: "createSeoAudit",
+    summary: "Create an SEO audit",
+    requestBody: {
+      required: true,
+      schema: {
+        type: "object",
+        required: ["url"],
+        properties: { url: { type: "string" } },
+      },
+    },
+  },
+  handler: async ({ body }) => auditService.create(body),
+});
+```
+
+Here `auditService` is the plugin's implementation; it owns input validation,
+business behavior and the HTTP response. The operation spec documents the
+contract; it does not replace validation in that implementation. Every adapter
+invokes the same handler through HTTP, including its access checks.
+
+With manifest namespace `seotool`, the operation is available as:
+
+- HTTP: `POST /zelavis/api/v1/plugins/seotool/audits` with a JSON body.
+- JS: `client.plugins.seotool.audits.create({ url: "https://example.com" })`.
+- CLI: `zelavis plugins seotool audits create --file audit.json --json`.
+
+Create a connected JS client with
+`zelavis.createClient({ baseUrl: "http://localhost:3000", headers: ... })`.
+Its `plugins` tree discovers mounted operations from runtime configuration.
+`client.pluginOperations()` lists their resource/action identities, methods,
+paths and specs. Plugin packages can publish typed client declarations through
+the exported `PluginApiRegistry` interface; otherwise discovered operations
+accept unknown inputs and return unknown results.
+
+`zelavis plugins seotool --help --url http://localhost:3000/zelavis` discovers
+the same operations and their specs. Commands accept `--param name=value` for
+path parameters, `--query name=value` for query parameters, `--file` for a JSON
+body, and `--token` for bearer authentication. Output is JSON; the CLI entrypoint
+reports HTTP failures with a status and domain error body and exits nonzero.
+Use `--api-prefix` and `--api-version` for non-default API configurations.
+
+For JS operations with path or query parameters, pass
+`{ params: { id: "..." }, query: { limit: "10" } }` as the second argument.
+GET and DELETE operations take no body; pass `undefined` as the first argument
+when supplying these options.
+
+This is the namespace and operation-dispatch foundation. Existing endpoints
+declared only through `routes.create` still need operation metadata to appear
+in JS/CLI discovery. `zelavis.plugins.ui.menus.create` currently registers
+package-owned menus during loading; HTTP/CLI runtime menu mutation is not yet
+implemented. It must preserve the same ownership, persistence and cleanup
+contract before it ships.
+
 Zelavis validates `package.json`, resolves the primary `exports` entry, creates
 a plugin execution context, and imports the ESM entry inside that context. SDK
 registration calls are therefore normally made at module scope:
@@ -227,7 +314,7 @@ registration calls are therefore normally made at module scope:
 ```ts
 import { zelavis } from "zelavis/sdk";
 
-zelavis.menu.create({
+zelavis.plugins.ui.menus.create({
   title: "Example",
   path: "/example",
 });
@@ -240,7 +327,7 @@ the package entry is being evaluated:
 import { zelavis } from "zelavis/sdk";
 
 function registerPlugin() {
-  zelavis.menu.create({ title: "Example", path: "/example" });
+  zelavis.plugins.ui.menus.create({ title: "Example", path: "/example" });
 }
 
 registerPlugin();
@@ -264,8 +351,11 @@ The current `zelavis` SDK object exposes:
 
 ```ts
 interface ZelavisSdk {
-  menu: {
+  plugins: { ui: { menus: {
     create(menu): MenuDefinition;
+  } } };
+  operations: {
+    create(operation): void;
   };
   routes: {
     create(routeOrRoutes): readonly Route[];
@@ -290,12 +380,18 @@ The default export is also the same SDK object, but the named import is clearer:
 import { zelavis } from "zelavis/sdk";
 ```
 
-## Menus with `zelavis.menu.create()`
+## Menus with `zelavis.plugins.ui.menus.create()`
+
+Register plugin and service package menus only through `zelavis.plugins.ui.menus.create()`
+from `zelavis/sdk`. Exported `menu` or `menus` fields are rejected by the package
+loader. The runtime's `menus` field contains the complete list of SDK
+registrations; its singular `menu` field is the first entry for catalogue
+display, not an additional registration.
 
 The smallest menu contribution is:
 
 ```ts
-zelavis.menu.create({
+zelavis.plugins.ui.menus.create({
   title: "Example",
   path: "/example",
 });
@@ -304,7 +400,7 @@ zelavis.menu.create({
 A plugin-owned settings page can be shipped as an HTML entry document:
 
 ```ts
-zelavis.menu.create({
+zelavis.plugins.ui.menus.create({
   title: "Example Plugin",
   path: "/example",
   pageLabel: "Example",
@@ -395,7 +491,7 @@ Use dynamic items for service-owned runtime lists rather than hardcoding them
 in dashboard code:
 
 ```ts
-zelavis.menu.create({
+zelavis.plugins.ui.menus.create({
   title: "Reports",
   path: "/reports",
   dynamicItems: {
@@ -665,7 +761,9 @@ example-plugin/
   "name": "@acme/example-plugin",
   "version": "1.0.0",
   "type": "module",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -674,7 +772,11 @@ example-plugin/
   },
   "zelavis": {
     "kind": "plugin",
-    "capabilities": ["dashboard:menu", "api:routes"]
+    "capabilities": [
+      "dashboard:menu",
+      "api:routes"
+    ],
+    "namespace": "examplePlugin"
   },
   "peerDependencies": {
     "zelavis": ">=1.0.1-alpha.2"
@@ -691,7 +793,7 @@ example-plugin/
 ```ts
 import { zelavis } from "zelavis/sdk";
 
-zelavis.menu.create({
+zelavis.plugins.ui.menus.create({
   title: "Example Plugin",
   path: "/example",
   page: {

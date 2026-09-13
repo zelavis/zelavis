@@ -1,6 +1,6 @@
 import { zelavis } from "zelavis/sdk";
 
-zelavis.menu.create({
+zelavis.plugins.ui.menus.create({
   title: "Example Basic",
   path: "/example-basic",
   pageLabel: "Example Basic",
@@ -11,7 +11,10 @@ zelavis.menu.create({
   },
 });
 
-zelavis.routes.create({
+zelavis.operations.create({
+  resource: "health",
+  action: "get",
+  spec: { operationId: "getExampleHealth", summary: "Read the example plugin's health" },
   id: "example-basic.health",
   method: "GET",
   path: "/health",

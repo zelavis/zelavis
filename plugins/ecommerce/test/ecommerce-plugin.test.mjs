@@ -10,7 +10,7 @@ import { loadEcommercePlugin } from "./load-plugin.mjs";
 
 test("ecommercePlugin defines standard Zelavis plugin structure with OpenAPI specs", async () => {
   // Loaded rather than imported: the plugin declares its menu through
-  // `zelavis.menu.create`, which only works inside a plugin execution context.
+  // `zelavis.plugins.ui.menus.create`, which only works inside a plugin execution context.
   const ecommercePlugin = await loadEcommercePlugin();
   assert.equal(ecommercePlugin.name, "@zelavis/ecommerce");
   assert.equal(ecommercePlugin.kind, "plugin");

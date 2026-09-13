@@ -6,6 +6,7 @@ import {
 import {
   validatePluginPackageManifest,
   resolvePackageExportsEntry,
+  validatePluginNamespace,
   type ZelavisPackageManifest,
 } from "./core/service/manifest.js";
 import {
@@ -216,6 +217,7 @@ export function createServiceRegistry<TContext = unknown>(
   entries: readonly ZelavisServiceRegistryEntry<TContext>[],
 ): readonly Readonly<ZelavisServiceRegistryEntry<TContext>>[] {
   const seen = new Set<string>();
+  const namespaces = new Map<string, string>();
 
   return Object.freeze(
     entries.map((entry) => {
@@ -235,6 +237,15 @@ export function createServiceRegistry<TContext = unknown>(
       }
 
       seen.add(service.name);
+
+      if (service.namespace !== undefined) {
+        const namespace = validatePluginNamespace(service.namespace);
+        const owner = namespaces.get(namespace);
+        if (owner) {
+          throw new TypeError(`Plugin namespace "${namespace}" is already owned by "${owner}"; "${service.name}" cannot claim it.`);
+        }
+        namespaces.set(namespace, service.name);
+      }
 
       if (entry.status !== "installed" && entry.status !== "available") {
         throw new TypeError(
@@ -313,6 +324,7 @@ export function resolveServiceModule<TContext = unknown>(
   if ("name" in raw && typeof raw.name === "string") {
     return Object.freeze({
       name: raw.name,
+      namespace: manifest?.zelavis?.namespace ?? raw.namespace as string | undefined,
       basePath: typeof raw.basePath === "string" ? raw.basePath : undefined,
       api: (raw.api as Record<string, any>) ?? {},
       service: raw.service ?? raw,
@@ -399,8 +411,18 @@ export async function loadPluginPackage(options: {
         >)
     | undefined;
 
+  if (resolvedService?.menu !== undefined || resolvedService?.menus !== undefined) {
+    throw new TypeError(
+      `Package "${manifest.name}" must register menus with zelavis.plugins.ui.menus.create() from zelavis/sdk, not exported menu or menus fields.`,
+    );
+  }
+  if (resolvedService?.namespace !== undefined && resolvedService.namespace !== manifest.zelavis?.namespace) {
+    throw new TypeError(`Package "${manifest.name}" cannot override its manifest namespace.`);
+  }
+
   const runtimeService: ZelavisServiceRegistryEntry<any>["service"] = {
     name: manifest.name,
+    namespace: manifest.zelavis?.namespace,
     version: manifest.version,
     kind: manifest.zelavis?.kind ?? "plugin",
     // Declared on the module, not through an SDK call: these describe what the
@@ -415,15 +437,17 @@ export async function loadPluginPackage(options: {
       resolvedService?.capabilities ?? (manifest.zelavis?.capabilities as any),
     marketplace: resolvedService?.marketplace,
     pageAssets: resolvedService?.pageAssets,
-    basePath: resolvedService?.basePath,
+    basePath: manifest.zelavis?.namespace ? `/plugins/${manifest.zelavis.namespace}` : undefined,
     api: {
       v1: [
         ...(resolvedService?.api?.v1 ?? []),
         ...context.routes,
       ],
     },
-    menu: context.menus[0] ?? resolvedService?.menu,
-    menus: context.menus.length > 0 ? context.menus : resolvedService?.menus,
+    // `menu` is the primary-menu view used by the service catalogue. `menus`
+    // carries every SDK registration; it does not supplement that first menu.
+    menu: context.menus[0],
+    menus: context.menus.length > 0 ? context.menus : undefined,
     services: [
       ...(resolvedService?.services ?? []),
       ...context.services,
