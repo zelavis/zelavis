@@ -48,6 +48,7 @@ test("the database service mounts the same routes on the db runtime API", async 
       "/api/database/documents/:collection/:id",
       "/api/database/documents/:collection/query",
       "/api/database/documents/:collection/page",
+      "/api/database/documents/:collection/traverse",
       "/api/database/documents/:collection/summarize",
       "/api/database/documents/:collection/summarize-by",
       "/api/database/documents/collections/:collection/exists",
@@ -711,6 +712,23 @@ test("a collection declares its edges and measures over HTTP, and aggregates ove
     body: { tenantId, linked: { collection: "items", id: "c", edge: "related" } },
   });
   assert.deepEqual(linked.body.documents.map((doc) => doc.id).sort(), ["a", "b"]);
+
+  // Inbound edge traversal via query route
+  const inbound = await call(routeOf(service, "database.documents.query"), {
+    service: api,
+    params: { collection: "items" },
+    body: { tenantId, linked: { collection: "items", id: "a", edge: "related", direction: "inbound" } },
+  });
+  assert.deepEqual(inbound.body.documents.map((doc) => doc.id).sort(), ["b", "c"]);
+
+  // Traverse endpoint
+  const traversed = await call(routeOf(service, "database.documents.traverse"), {
+    service: api,
+    params: { collection: "items" },
+    body: { tenantId, id: "c", edge: "related", direction: "outbound" },
+  });
+  assert.deepEqual(traversed.body.documents.map((doc) => doc.id).sort(), ["a", "b"]);
+  assert.equal(traversed.body.maxDepthReached, 1);
 });
 
 test("a caller's mistake is answered as one, not as a server fault", async (t) => {

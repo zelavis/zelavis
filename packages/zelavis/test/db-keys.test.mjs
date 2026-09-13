@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   compareKeys, compareOrderedValues, decodeIdentity, decodeOrderedKey,
-  dstOf, edgeKey, edgePrefix, identityKey, inPrefixRange, orderedColumnPrefix, orderedKey,
+  dstOf, edgeKey, edgePrefix, reverseEdgeKey, reverseEdgePrefix, srcOf,
+  identityKey, inPrefixRange, orderedColumnPrefix, orderedKey,
   decodeOrderedTuple, orderedTuple, orderedValuePrefix, prefixEnd, seqOf, termKey, termPrefix,
 } from "../dist/db/keys.js";
 
@@ -62,6 +63,15 @@ test("edges scan by source and yield their destination", () => {
   assert.deepEqual(sorted([30, 10, 20].map((d) => edgeKey("uses", 5, d))).map(dstOf), [10, 20, 30]);
   assert.equal(inPrefixRange(edgeKey("uses", 5, 10), edgePrefix("uses", 5)), true);
   assert.equal(inPrefixRange(edgeKey("uses", 6, 10), edgePrefix("uses", 5)), false, "source is exact");
+});
+
+test("reverse edges scan by destination and yield their source", () => {
+  assert.deepEqual(sorted([30, 10, 20].map((s) => reverseEdgeKey("uses", 5, s))).map(srcOf), [10, 20, 30]);
+  assert.equal(inPrefixRange(reverseEdgeKey("uses", 5, 10), reverseEdgePrefix("uses", 5)), true);
+  assert.equal(inPrefixRange(reverseEdgeKey("uses", 6, 10), reverseEdgePrefix("uses", 5)), false, "destination is exact");
+  // Ensure Edge and EdgeReverse occupy completely disjoint ranges
+  assert.equal(inPrefixRange(reverseEdgeKey("uses", 5, 10), edgePrefix("uses", 5)), false);
+  assert.equal(inPrefixRange(edgeKey("uses", 5, 10), reverseEdgePrefix("uses", 5)), false);
 });
 
 test("identity round-trips, including awkward names", () => {

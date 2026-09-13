@@ -4,7 +4,7 @@ import {
 } from "./errors.js";
 import type { AppliedEvent, DbEvent, EventCursor } from "./events.js";
 import {
-  edgeKey, edgePrefix, eventKey, eventPrefix,
+  edgeKey, edgePrefix, reverseEdgeKey, reverseEdgePrefix, eventKey, eventPrefix,
   identityBySeqKey, identityKey, manifestKey, measureKey, measurePrefix,
   compareKeys, metaKey, payloadKey, positionOf, segmentIndexOf, segmentKey, segmentPrefix,
   seqOf, Tag, termKey, termPrefix, termPrefixKey, readTermKey, tombstoneKey, tombstonePrefix,
@@ -112,7 +112,7 @@ const SEAL_BATCH = 4096;
  * history rather than the only way back to a working index.
  */
 const DERIVED_TAGS = [
-  Tag.Term, Tag.Column, Tag.Measure, Tag.Edge, Tag.Segment, Tag.Tombstone, Tag.Ordered, Tag.Dirty,
+  Tag.Term, Tag.Column, Tag.Measure, Tag.Edge, Tag.EdgeReverse, Tag.Segment, Tag.Tombstone, Tag.Ordered, Tag.Dirty,
 ] as const;
 
 /**
@@ -122,7 +122,7 @@ const DERIVED_TAGS = [
  * stored number rather than a posting, and folding it into a set would lose
  * exactly the thing it exists to hold.
  */
-const SEALABLE_TAGS = [Tag.Term, Tag.Ordered, Tag.Edge] as const;
+const SEALABLE_TAGS = [Tag.Term, Tag.Ordered, Tag.Edge, Tag.EdgeReverse] as const;
 
 /**
  * The fewest postings one value needs, within one segment, to be sealed.
@@ -351,6 +351,7 @@ export const storeOverKv = (
       for (const [column] of manifest.measures) view.del(measureKey(column, seq));
       for (const [edgeType, to] of manifest.edges) {
         dropPosting(view, edgeKey(edgeType, seq, to), sealed);
+        dropPosting(view, reverseEdgeKey(edgeType, to, seq), sealed);
       }
       view.del(manifestKey(seq));
 
@@ -384,6 +385,7 @@ export const storeOverKv = (
       for (const [column, value] of manifest.measures) view.put(measureKey(column, seq), f64(value));
       for (const [edgeType, to] of manifest.edges) {
         addPosting(view, edgeKey(edgeType, seq, to), EMPTY, sealed);
+        addPosting(view, reverseEdgeKey(edgeType, to, seq), EMPTY, sealed);
       }
       view.put(manifestKey(seq), json(manifest));
       if (identity !== undefined) {
@@ -744,7 +746,12 @@ export const storeOverKv = (
       case "Term": return postingsUnder(termPrefix(query.field, query.term));
       case "TermPrefix": return postingsUnder(termPrefixKey(query.field, query.prefix));
       case "Equals": return postingsUnder(orderedValuePrefix(query.column, query.value));
-      case "Edge": return postingsUnder(edgePrefix(query.edgeType, query.from));
+      case "Edge": {
+        const direction = query.direction ?? "outbound";
+        return direction === "inbound"
+          ? postingsUnder(reverseEdgePrefix(query.edgeType, query.from))
+          : postingsUnder(edgePrefix(query.edgeType, query.from));
+      }
       case "And": return Effect.map(Effect.forEach(query.of, evaluate), Postings.andAll);
       case "Or": return Effect.map(Effect.forEach(query.of, evaluate), Postings.orAll);
     }
@@ -956,7 +963,10 @@ export const storeOverKv = (
       for (const [field, term] of manifest.terms) view.put(termKey(field, term, seq), EMPTY);
       for (const [column, value] of manifest.columns) view.put(orderedKey(column, value, seq), EMPTY);
       for (const [column, value] of manifest.measures) view.put(measureKey(column, seq), f64(value));
-      for (const [edgeType, to] of manifest.edges) view.put(edgeKey(edgeType, seq, to), EMPTY);
+      for (const [edgeType, to] of manifest.edges) {
+        view.put(edgeKey(edgeType, seq, to), EMPTY);
+        view.put(reverseEdgeKey(edgeType, to, seq), EMPTY);
+      }
       count += 1;
     }
     yield* engine.write([...pending.values()]);

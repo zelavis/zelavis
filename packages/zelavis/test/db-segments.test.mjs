@@ -335,17 +335,17 @@ test("a re-seal reads only the groups written since, not the ones it declined", 
   await withStore(t, (store) =>
     Effect.gen(function* () {
       // Each object: a shared title and a unique one, a region shared by a
-      // third of them, and an edge from itself. The shared ones seal; the
-      // unique title and the edge are too sparse and stay live.
+      // third of them, and an edge from itself (forward and reverse). The shared
+      // ones seal; the unique title and the edges are too sparse and stay live.
       for (let seq = 1; seq <= 300; seq++) {
         yield* write(store, seq, `r${seq % 3}`, ["atlas", `u${seq}`]);
       }
       const first = yield* store.sealPostings;
-      assert.equal(first.examined, 300 * 4, "the first seal sweeps every live posting");
+      assert.equal(first.examined, 300 * 5, "the first seal sweeps every live posting");
 
       yield* write(store, 301, "r1", ["atlas", "u301"]);
       const second = yield* store.sealPostings;
-      assert.equal(second.examined, 4,
+      assert.equal(second.examined, 5,
         `a one-object change re-read ${second.examined} postings, so declined ones were read again`);
 
       const third = yield* store.sealPostings;
@@ -360,7 +360,7 @@ test("a re-seal reads only the groups written since, not the ones it declined", 
       // A reindex unseals, so the next seal has to sweep again.
       yield* store.reindexLenses;
       const afterReindex = yield* store.sealPostings;
-      assert.equal(afterReindex.examined, 301 * 4);
+      assert.equal(afterReindex.examined, 301 * 5);
       assert.equal((yield* seqs(store, term("title", "atlas"))).length, 301);
     }),
   );
