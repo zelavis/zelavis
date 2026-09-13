@@ -65,6 +65,14 @@ const writeEscaped = (out: number[], bytes: Uint8Array): void => {
   out.push(0x00);
 };
 
+const writeEscapedPrefix = (out: number[], bytes: Uint8Array): void => {
+  for (const byte of bytes) {
+    if (byte === 0x00) out.push(0x01, 0x01);
+    else if (byte === 0x01) out.push(0x01, 0x02);
+    else out.push(byte);
+  }
+};
+
 const writeString = (out: number[], value: string): void => writeEscaped(out, encoder.encode(value));
 
 const readEscaped = (bytes: Uint8Array, at: number): { raw: Uint8Array; next: number } => {
@@ -420,6 +428,26 @@ export const termPrefix = (field: string, term: string): Uint8Array =>
     writeString(out, field);
     writeString(out, term);
   });
+
+/** `[tag][field][escaped prefix without 0x00]` — a prefix scan covers any term starting with prefix. */
+export const termPrefixKey = (field: string, prefix: string): Uint8Array =>
+  build(Tag.Term, (out) => {
+    writeString(out, field);
+    writeEscapedPrefix(out, encoder.encode(prefix));
+  });
+
+/** Extract field and term from a term posting key or segment key. */
+export const readTermKey = (key: Uint8Array): { field: string; term: string } | undefined => {
+  if (key.length < 2) return undefined;
+  if (key[0] !== Tag.Term && key[0] !== Tag.Segment) return undefined;
+  try {
+    const f = readString(key, 1);
+    const t = readString(key, f.next);
+    return { field: f.value, term: t.value };
+  } catch {
+    return undefined;
+  }
+};
 
 export const measureKey = (column: string, seq: number): Uint8Array =>
   build(Tag.Measure, (out) => {

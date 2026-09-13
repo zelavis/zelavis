@@ -50,7 +50,7 @@ import {
 } from "./vectors.js";
 import type { IndexManifest, OrderedScalar, Seq } from "./model.js";
 import {
-  and, between, edge as edgeQuery, equals, or, term, type Query, type RangeBound,
+  and, between, edge as edgeQuery, equals, or, term, termPrefixQuery, type Query, type RangeBound,
 } from "./query.js";
 import type { SchemasApi } from "./schemas.js";
 import type { ObjectStoreApi, OrderedCursor, Txn } from "./store.js";
@@ -257,6 +257,17 @@ export interface CheckConstraint {
   readonly where: ReadonlyArray<DocumentFilter>;
 }
 
+export interface HighlightOptions {
+  /** The opening tag for matches, defaults to "<mark>". */
+  readonly preTag?: string;
+  /** The closing tag for matches, defaults to "</mark>". */
+  readonly postTag?: string;
+  /** Maximum character length for a snippet, defaults to 100. */
+  readonly snippetLength?: number;
+  /** Maximum number of snippets to return per field, defaults to 3. */
+  readonly maxSnippets?: number;
+}
+
 export interface Document<TData extends JsonObject = JsonObject> {
   readonly id: string;
   readonly collection: string;
@@ -266,6 +277,8 @@ export interface Document<TData extends JsonObject = JsonObject> {
   readonly version: number;
   /** Present when a search query is scored, closest/most relevant first. */
   readonly score?: number;
+  /** Highlighted snippets for searched fields, keyed by field path. */
+  readonly highlights?: Record<string, ReadonlyArray<string>>;
 }
 
 export type FilterOperator = "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "in" | "geometry" | "phrase";
@@ -408,6 +421,12 @@ export interface FindDocumentsInput {
   readonly related?: ReadonlyArray<RelatedFilter>;
   /** Also: whose analyzed text carries these words; see `Analyzer`. */
   readonly search?: string;
+  /** When true or an edit distance number (1 or 2), terms match fuzzily. */
+  readonly fuzzy?: boolean | number;
+  /** When true, terms match as prefixes (e.g. for search-as-you-type). */
+  readonly prefix?: boolean;
+  /** Highlight matching terms in analyzed fields of returned documents. */
+  readonly highlight?: boolean | HighlightOptions;
   /** Also: whose geometry meets this; see `SpatialFilter`. */
   readonly geometry?: SpatialFilter;
   /** Also: only the documents another document links to; see `LinkFilter`. */
@@ -524,6 +543,12 @@ export interface FindPageInput {
   readonly related?: ReadonlyArray<RelatedFilter>;
   /** Also: whose analyzed text carries these words; see `Analyzer`. */
   readonly search?: string;
+  /** When true or an edit distance number (1 or 2), terms match fuzzily. */
+  readonly fuzzy?: boolean | number;
+  /** When true, terms match as prefixes (e.g. for search-as-you-type). */
+  readonly prefix?: boolean;
+  /** Highlight matching terms in analyzed fields of returned documents. */
+  readonly highlight?: boolean | HighlightOptions;
   /** Also: whose geometry meets this; see `SpatialFilter`. */
   readonly geometry?: SpatialFilter;
   /** Also: only the documents another document links to; see `LinkFilter`. */
@@ -1889,6 +1914,7 @@ export const documentsFor = (
   const readObject = (seq: Seq) => Effect.orDie(store.read(seq));
   const nextSeq = Effect.orDie(store.nextSeq);
   const resolveQuery = (query: Query): Stream.Stream<Seq> => Stream.orDie(store.resolve(query));
+  const termsOf = (field: string, prefix?: string) => Effect.orDie(store.terms(field, prefix));
   const write = (f: (txn: Txn) => Effect.Effect<void, DbError>): Effect.Effect<void> =>
     Effect.orDie(store.transact(f));
 
@@ -2856,16 +2882,57 @@ export const documentsFor = (
       return filters;
     });
 
+/**
+ * Damerau-Levenshtein edit distance: insertions, deletions, substitutions, and transpositions.
+ */
+const damerauLevenshtein = (a: string, b: string, maxDist = 2): number => {
+  if (a === b) return 0;
+  const la = a.length;
+  const lb = b.length;
+  if (Math.abs(la - lb) > maxDist) return Infinity;
+
+  const d: number[][] = [];
+  for (let i = 0; i <= la; i++) d[i] = [i];
+  for (let j = 0; j <= lb; j++) d[0]![j] = j;
+
+  for (let i = 1; i <= la; i++) {
+    let rowMin = Infinity;
+    for (let j = 1; j <= lb; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let val = Math.min(
+        d[i - 1]![j]! + 1, // deletion
+        d[i]![j - 1]! + 1, // insertion
+        d[i - 1]![j - 1]! + cost, // substitution
+      );
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        val = Math.min(val, d[i - 2]![j - 2]! + 1); // transposition
+      }
+      d[i]![j] = val;
+      if (val < rowMin) rowMin = val;
+    }
+    if (rowMin > maxDist) return Infinity;
+  }
+  return d[la]![lb]!;
+};
+
+interface ParsedSearchTerm {
+  readonly raw: string;
+  readonly token: string;
+  readonly kind: "exact" | "prefix" | "fuzzy";
+  readonly fuzzyDistance?: number;
+}
+
 interface ParsedSearchQuery {
-  readonly terms: ReadonlyArray<string>;
+  readonly terms: ReadonlyArray<ParsedSearchTerm>;
   readonly phrases: ReadonlyArray<ReadonlyArray<string>>;
 }
 
 const parseSearchQuery = (
   text: string,
   analyzer: Analyzer,
+  options?: { fuzzy?: boolean | number; prefix?: boolean },
 ): ParsedSearchQuery | undefined => {
-  const terms = new Set<string>();
+  const termsMap = new Map<string, ParsedSearchTerm>();
   const phrases: Array<ReadonlyArray<string>> = [];
 
   const pattern = /"([^"]*)"|'([^']*)'|(\S+)/g;
@@ -2876,18 +2943,205 @@ const parseSearchQuery = (
       const phraseTokens = tokenize(quoted, analyzer);
       if (phraseTokens.length > 1) {
         phrases.push(phraseTokens);
-        for (const t of phraseTokens) terms.add(t);
+        for (const t of phraseTokens) {
+          if (!termsMap.has(`exact:${t}`)) {
+            termsMap.set(`exact:${t}`, { raw: t, token: t, kind: "exact" });
+          }
+        }
       } else if (phraseTokens.length === 1) {
-        terms.add(phraseTokens[0]!);
+        const t = phraseTokens[0]!;
+        if (!termsMap.has(`exact:${t}`)) {
+          termsMap.set(`exact:${t}`, { raw: t, token: t, kind: "exact" });
+        }
       }
     } else if (match[3] !== undefined) {
-      const wordTokens = tokenize(match[3], analyzer);
-      for (const t of wordTokens) terms.add(t);
+      const raw = match[3];
+      const isPrefixSyntax = raw.endsWith("*") && raw.length > 1;
+      const fuzzyMatch = /(?:~(\d*))$/.exec(raw);
+      const isFuzzySyntax = fuzzyMatch !== null && raw.length > 1;
+
+      let baseText = raw;
+      let kind: "exact" | "prefix" | "fuzzy" = "exact";
+      let fuzzyDistance: number | undefined;
+
+      if (isPrefixSyntax) {
+        baseText = raw.slice(0, -1);
+        kind = "prefix";
+      } else if (isFuzzySyntax) {
+        baseText = raw.slice(0, -fuzzyMatch[0].length);
+        kind = "fuzzy";
+        const explicitDist = fuzzyMatch[1] ? Number.parseInt(fuzzyMatch[1], 10) : undefined;
+        fuzzyDistance = explicitDist !== undefined && !Number.isNaN(explicitDist)
+          ? explicitDist
+          : (baseText.length <= 5 ? 1 : 2);
+      } else if (options?.prefix === true) {
+        kind = "prefix";
+      } else if (options?.fuzzy !== undefined && options.fuzzy !== false) {
+        kind = "fuzzy";
+        fuzzyDistance = typeof options.fuzzy === "number"
+          ? options.fuzzy
+          : (baseText.length <= 5 ? 1 : 2);
+      }
+
+      const wordTokens = tokenize(baseText, analyzer);
+      for (const t of wordTokens) {
+        const key = `${kind}:${t}:${fuzzyDistance ?? ""}`;
+        if (!termsMap.has(key)) {
+          termsMap.set(key, {
+            raw,
+            token: t,
+            kind,
+            ...(fuzzyDistance !== undefined ? { fuzzyDistance } : {}),
+          });
+        }
+      }
     }
   }
 
-  if (terms.size === 0) return undefined;
-  return { terms: [...terms], phrases };
+  if (termsMap.size === 0) return undefined;
+  return { terms: [...termsMap.values()], phrases };
+};
+
+const generateHighlights = (
+  data: JsonObject,
+  analyzer: Analyzer,
+  parsed: ParsedSearchQuery,
+  options: HighlightOptions,
+): Record<string, ReadonlyArray<string>> => {
+  const preTag = options.preTag ?? "<mark>";
+  const postTag = options.postTag ?? "</mark>";
+  const snippetLength = options.snippetLength ?? 100;
+  const maxSnippets = options.maxSnippets ?? 3;
+
+  const result: Record<string, string[]> = {};
+
+  for (const field of analyzer.fields) {
+    const rawVal = readPath(data, field);
+    if (typeof rawVal !== "string" || rawVal.trim().length === 0) continue;
+
+    const wordPattern = /[\p{L}\p{N}\p{M}]+/gu;
+    const matches: Array<{ start: number; end: number }> = [];
+    let m: RegExpExecArray | null;
+
+    while ((m = wordPattern.exec(rawVal)) !== null) {
+      const word = m[0];
+      const start = m.index;
+      const end = start + word.length;
+      const normalized = word.normalize("NFC");
+      const folded = analyzer.fold === false ? normalized : normalized.toLowerCase();
+
+      let matched = false;
+      for (const qTerm of parsed.terms) {
+        if (qTerm.kind === "exact" && folded === qTerm.token) {
+          matched = true;
+          break;
+        } else if (qTerm.kind === "prefix" && folded.startsWith(qTerm.token)) {
+          matched = true;
+          break;
+        } else if (qTerm.kind === "fuzzy") {
+          const dist = damerauLevenshtein(folded, qTerm.token, qTerm.fuzzyDistance ?? 2);
+          if (dist <= (qTerm.fuzzyDistance ?? 2)) {
+            matched = true;
+            break;
+          }
+        }
+      }
+
+      if (matched) {
+        matches.push({ start, end });
+      }
+    }
+
+    if (matches.length === 0) continue;
+
+    const merged: Array<{ start: number; end: number }> = [];
+    for (const match of matches) {
+      const last = merged.at(-1);
+      if (last && match.start <= last.end) {
+        last.end = Math.max(last.end, match.end);
+      } else {
+        merged.push({ ...match });
+      }
+    }
+
+    if (rawVal.length <= snippetLength) {
+      let highlighted = "";
+      let lastIndex = 0;
+      for (const span of merged) {
+        highlighted += rawVal.slice(lastIndex, span.start);
+        highlighted += preTag + rawVal.slice(span.start, span.end) + postTag;
+        lastIndex = span.end;
+      }
+      highlighted += rawVal.slice(lastIndex);
+      result[field] = [highlighted];
+      continue;
+    }
+
+    const snippets: string[] = [];
+    const clusters: Array<Array<{ start: number; end: number }>> = [];
+    let currentCluster: Array<{ start: number; end: number }> = [];
+
+    for (const span of merged) {
+      if (currentCluster.length === 0) {
+        currentCluster.push(span);
+      } else {
+        const clusterStart = currentCluster[0]!.start;
+        if (span.end - clusterStart <= snippetLength) {
+          currentCluster.push(span);
+        } else {
+          clusters.push(currentCluster);
+          currentCluster = [span];
+          if (clusters.length >= maxSnippets) break;
+        }
+      }
+    }
+    if (currentCluster.length > 0 && clusters.length < maxSnippets) {
+      clusters.push(currentCluster);
+    }
+
+    for (const cluster of clusters) {
+      const first = cluster[0]!;
+      const last = cluster.at(-1)!;
+      const matchSpanLen = last.end - first.start;
+      const padding = Math.max(0, Math.floor((snippetLength - matchSpanLen) / 2));
+
+      let snippetStart = Math.max(0, first.start - padding);
+      let snippetEnd = Math.min(rawVal.length, last.end + padding);
+
+      if (snippetStart > 0) {
+        const spaceIdx = rawVal.lastIndexOf(" ", snippetStart);
+        if (spaceIdx !== -1 && spaceIdx >= snippetStart - 15) {
+          snippetStart = spaceIdx + 1;
+        }
+      }
+      if (snippetEnd < rawVal.length) {
+        const spaceIdx = rawVal.indexOf(" ", snippetEnd);
+        if (spaceIdx !== -1 && spaceIdx <= snippetEnd + 15) {
+          snippetEnd = spaceIdx;
+        }
+      }
+
+      let snippet = "";
+      let lastIdx = snippetStart;
+      for (const span of cluster) {
+        if (span.start >= snippetStart && span.end <= snippetEnd) {
+          snippet += rawVal.slice(lastIdx, span.start);
+          snippet += preTag + rawVal.slice(span.start, span.end) + postTag;
+          lastIdx = span.end;
+        }
+      }
+      snippet += rawVal.slice(lastIdx, snippetEnd);
+
+      if (snippetStart > 0) snippet = `...${snippet}`;
+      if (snippetEnd < rawVal.length) snippet = `${snippet}...`;
+
+      snippets.push(snippet);
+    }
+
+    result[field] = snippets;
+  }
+
+  return result;
 };
 
   /**
@@ -2905,6 +3159,7 @@ const parseSearchQuery = (
     analyzer: Analyzer | undefined,
     collection: string,
     text: string,
+    options?: { fuzzy?: boolean | number; prefix?: boolean },
   ): Effect.Effect<
     { readonly query: Query; readonly parsed: ParsedSearchQuery } | undefined,
     UnanalyzedCollection
@@ -2913,13 +3168,40 @@ const parseSearchQuery = (
       if (analyzer === undefined) {
         return yield* new UnanalyzedCollection({ collection });
       }
-      const parsed = parseSearchQuery(text, analyzer);
+      const parsed = parseSearchQuery(text, analyzer, options);
       if (parsed === undefined) return undefined;
-      const clauses = parsed.terms.map((word) => {
-        const fields = analyzer.fields.map((path) => term(path, word));
-        return fields.length === 1 ? fields[0]! : or(...fields);
-      });
-      const query = clauses.length === 1 ? clauses[0]! : and(...clauses);
+
+      const termClauses: Query[] = [];
+
+      for (const item of parsed.terms) {
+        if (item.kind === "exact") {
+          const fields = analyzer.fields.map((path) => term(path, item.token));
+          termClauses.push(fields.length === 1 ? fields[0]! : or(...fields));
+        } else if (item.kind === "prefix") {
+          const fields = analyzer.fields.map((path) => termPrefixQuery(path, item.token));
+          termClauses.push(fields.length === 1 ? fields[0]! : or(...fields));
+        } else if (item.kind === "fuzzy") {
+          const maxDist = item.fuzzyDistance ?? (item.token.length <= 5 ? 1 : 2);
+          const fieldClauses: Query[] = [];
+
+          for (const path of analyzer.fields) {
+            const storedTerms = yield* termsOf(path);
+            const matched = storedTerms.filter((st) => damerauLevenshtein(st, item.token, maxDist) <= maxDist);
+            if (matched.length > 0) {
+              const sub = matched.map((w) => term(path, w));
+              fieldClauses.push(sub.length === 1 ? sub[0]! : or(...sub));
+            }
+          }
+
+          if (fieldClauses.length === 0) {
+            return undefined;
+          }
+          termClauses.push(fieldClauses.length === 1 ? fieldClauses[0]! : or(...fieldClauses));
+        }
+      }
+
+      if (termClauses.length === 0) return undefined;
+      const query = termClauses.length === 1 ? termClauses[0]! : and(...termClauses);
       return { query, parsed };
     });
 
@@ -3093,6 +3375,8 @@ const parseSearchQuery = (
       readonly where?: ReadonlyArray<DocumentFilter>;
       readonly related?: ReadonlyArray<RelatedFilter>;
       readonly search?: string;
+      readonly fuzzy?: boolean | number;
+      readonly prefix?: boolean;
       readonly geometry?: SpatialFilter;
       readonly linked?: LinkFilter;
     },
@@ -3110,7 +3394,10 @@ const parseSearchQuery = (
       const where = [...(input.where ?? []), ...related];
       const words = input.search === undefined
         ? undefined
-        : yield* searchQuery(collection?.analyzer, input.collection, input.search);
+        : yield* searchQuery(collection?.analyzer, input.collection, input.search, {
+            fuzzy: input.fuzzy,
+            prefix: input.prefix,
+          });
       if (input.search !== undefined && words === undefined) return undefined;
       let plan = withSearch(planQuery(tenant, input.collection, where), words?.query);
       if (words !== undefined && words.parsed.phrases.length > 0 && collection?.analyzer !== undefined) {
@@ -3263,18 +3550,29 @@ const parseSearchQuery = (
             const tokens = tokenize(val, analyzer);
             docLength += tokens.length;
             for (const token of tokens) {
-              if (terms.includes(token)) {
-                termCounts.set(token, (termCounts.get(token) ?? 0) + 1);
+              for (const qTerm of terms) {
+                if (qTerm.kind === "exact" && token === qTerm.token) {
+                  termCounts.set(qTerm.token, (termCounts.get(qTerm.token) ?? 0) + 1);
+                } else if (qTerm.kind === "prefix" && token.startsWith(qTerm.token)) {
+                  termCounts.set(qTerm.token, (termCounts.get(qTerm.token) ?? 0) + 0.95);
+                } else if (qTerm.kind === "fuzzy") {
+                  const dist = damerauLevenshtein(token, qTerm.token, qTerm.fuzzyDistance ?? 2);
+                  if (dist <= (qTerm.fuzzyDistance ?? 2)) {
+                    const weight = dist === 0 ? 1 : Math.max(0.4, 1 - dist * 0.2);
+                    termCounts.set(qTerm.token, (termCounts.get(qTerm.token) ?? 0) + weight);
+                  }
+                }
               }
             }
             for (const phrase of phrases) {
               phraseOccurrences += countPhraseMatches(tokens, phrase);
             }
             if (terms.length > 1) {
+              const termTokens = terms.map((t) => t.token);
               for (let i = 0; i < tokens.length - 1; i++) {
                 const t1 = tokens[i]!;
                 const t2 = tokens[i + 1]!;
-                if (terms.includes(t1) && terms.includes(t2) && t1 !== t2) {
+                if (termTokens.includes(t1) && termTokens.includes(t2) && t1 !== t2) {
                   adjacentPairs += 1;
                 }
               }
@@ -3298,18 +3596,18 @@ const parseSearchQuery = (
         const b = 0.75;
 
         const idf = new Map<string, number>();
-        for (const term of terms) {
-          const docCount = scoredCandidates.filter((c) => (c.termCounts.get(term) ?? 0) > 0).length;
-          idf.set(term, Math.log(1 + (N - docCount + 0.5) / (docCount + 0.5)));
+        for (const qTerm of terms) {
+          const docCount = scoredCandidates.filter((c) => (c.termCounts.get(qTerm.token) ?? 0) > 0).length;
+          idf.set(qTerm.token, Math.log(1 + (N - docCount + 0.5) / (docCount + 0.5)));
         }
 
         const scoredDocs: Array<{ document: Document; seq: number }> = [];
         for (const c of scoredCandidates) {
           let bm25 = 0;
-          for (const term of terms) {
-            const tf = c.termCounts.get(term) ?? 0;
+          for (const qTerm of terms) {
+            const tf = c.termCounts.get(qTerm.token) ?? 0;
             if (tf > 0) {
-              const termIdf = idf.get(term) ?? 0;
+              const termIdf = idf.get(qTerm.token) ?? 0;
               const denom = tf + k1 * (1 - b + (b * (avgdl > 0 ? c.docLength / avgdl : 1)));
               const tfScore = denom > 0 ? (tf * (k1 + 1)) / denom : 0;
               bm25 += termIdf * tfScore;
@@ -3327,11 +3625,20 @@ const parseSearchQuery = (
           });
         }
 
+        const highlightOpts = typeof input.highlight === "object" ? input.highlight : {};
+        const attachHighlights = (doc: Document): Document => {
+          if (!input.highlight || planned.words === undefined || collection?.analyzer === undefined) {
+            return doc;
+          }
+          const hl = generateHighlights(doc.data, collection.analyzer, planned.words.parsed, highlightOpts);
+          return Object.keys(hl).length > 0 ? { ...doc, highlights: hl } : doc;
+        };
+
         if (sorts.length === 0) {
           scoredDocs.sort((a, b) => (b.document.score ?? 0) - (a.document.score ?? 0) || a.seq - b.seq);
-          return slice(scoredDocs.map((item) => item.document));
+          return slice(scoredDocs.map((item) => attachHighlights(item.document)));
         }
-        const docs = scoredDocs.map((item) => item.document);
+        const docs = scoredDocs.map((item) => attachHighlights(item.document));
         return slice(docs.sort(compareDocuments(sorts)));
       }
 
@@ -3498,7 +3805,10 @@ const parseSearchQuery = (
         const where = related === undefined ? [] : [...(input.where ?? []), ...related];
         const words = input.search === undefined
           ? undefined
-          : yield* searchQuery(collection?.analyzer, input.collection, input.search);
+          : yield* searchQuery(collection?.analyzer, input.collection, input.search, {
+              fuzzy: input.fuzzy,
+              prefix: input.prefix,
+            });
         const geometry = input.geometry;
         const indexed = sorts.length === 0
           ? undefined
@@ -3550,9 +3860,17 @@ const parseSearchQuery = (
           : indexed !== undefined
             ? yield* inIndexOrder(plan, indexed, limit + 1, from)
             : yield* inOrder(plan, input.collection, sorts[0]!, limit + 1, from);
+        const highlightOpts = typeof input.highlight === "object" ? input.highlight : {};
+        const attachHighlights = (doc: Document): Document => {
+          if (!input.highlight || words === undefined || collection?.analyzer === undefined) {
+            return doc;
+          }
+          const hl = generateHighlights(doc.data, collection.analyzer, words.parsed, highlightOpts);
+          return Object.keys(hl).length > 0 ? { ...doc, highlights: hl } : doc;
+        };
         const page = found.slice(0, limit);
         return {
-          documents: page.map((entry) => entry.document),
+          documents: page.map((entry) => attachHighlights(entry.document)),
           ...(found.length > limit ? { next: encodeDocumentCursor(shape, page.at(-1)!.position) } : {}),
           ...(input.cursors === true
             ? { cursors: page.map((entry) => encodeDocumentCursor(shape, entry.position)) }

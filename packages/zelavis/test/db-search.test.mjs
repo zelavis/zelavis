@@ -206,4 +206,137 @@ for (const [engine, open] of engines) {
       const emptyPage = yield* docs.findPage({ collection: "posts", search: '"brown quick fox"' });
       assert.equal(emptyPage.documents.length, 0);
     })));
+
+  test(`${engine}: prefix search matches terms beginning with prefix using * or prefix option`, (t) =>
+    setup(t, (docs) => Effect.gen(function* () {
+      // Prefix with asterisk
+      assert.deepEqual(yield* found(docs, { search: "bro*" }), ["a", "b"]);
+      assert.deepEqual(yield* found(docs, { search: "coff*" }), ["c"]);
+      assert.deepEqual(yield* found(docs, { search: "qui*" }), ["a", "c"]);
+
+      // Intersected prefix and exact word
+      assert.deepEqual(yield* found(docs, { search: "quick bro*" }), ["a"]);
+      assert.deepEqual(yield* found(docs, { search: "quick cof*" }), ["c"]);
+      assert.deepEqual(yield* found(docs, { search: "quick xyz*" }), []);
+
+      // Programmatic prefix option
+      assert.deepEqual(yield* found(docs, { search: "bro", prefix: true }), ["a", "b"]);
+      assert.deepEqual(yield* found(docs, { search: "coff", prefix: true }), ["c"]);
+
+      // Prefix in findPage
+      const page = yield* docs.findPage({ collection: "posts", search: "bro*" });
+      assert.deepEqual(page.documents.map((d) => d.id).sort(), ["a", "b"]);
+    })));
+
+  test(`${engine}: fuzzy search matches typos within edit distance using ~ or fuzzy option`, (t) =>
+    setup(t, (docs) => Effect.gen(function* () {
+      // Damerau-Levenshtein distance 1 transposition: "brwon" -> "brown"
+      assert.deepEqual(yield* found(docs, { search: "brwon~" }), ["a", "b"]);
+
+      // Distance 1 substitution: "quik" -> "quick"
+      assert.deepEqual(yield* found(docs, { search: "quik~1" }), ["a", "c"]);
+
+      // Distance 1 insertion/deletion: "coffe" -> "coffee"
+      assert.deepEqual(yield* found(docs, { search: "coffe~1" }), ["c"]);
+
+      // Distant typo exceeding edit distance fails to match
+      assert.deepEqual(yield* found(docs, { search: "banana~1" }), []);
+      assert.deepEqual(yield* found(docs, { search: "brwooonnn~1" }), []);
+
+      // Programmatic fuzzy option
+      assert.deepEqual(yield* found(docs, { search: "brwon", fuzzy: true }), ["a", "b"]);
+      assert.deepEqual(yield* found(docs, { search: "quik", fuzzy: 1 }), ["a", "c"]);
+
+      // Multi-word with fuzzy
+      assert.deepEqual(yield* found(docs, { search: "quick brwon~" }), ["a"]);
+
+      // Exact match ranks higher than fuzzy match due to distance discounting
+      yield* docs.insert({
+        collection: "posts",
+        id: "exact-match",
+        data: { title: "Super coffee", body: "hot beverage" },
+      });
+      yield* docs.insert({
+        collection: "posts",
+        id: "typo-match",
+        data: { title: "Super coffe", body: "hot beverage" },
+      });
+      const ranked = yield* docs.findMany({ collection: "posts", search: "coffee~1" });
+      const exactIdx = ranked.findIndex((d) => d.id === "exact-match");
+      const typoIdx = ranked.findIndex((d) => d.id === "typo-match");
+      assert.ok(exactIdx !== -1 && typoIdx !== -1);
+      assert.ok(exactIdx < typoIdx, "exact match ranks higher than fuzzy typo match");
+      assert.ok(ranked[exactIdx].score > ranked[typoIdx].score);
+
+      // Distance 2 matches two edits like "caffe" -> "coffee"
+      yield* docs.insert({
+        collection: "posts",
+        id: "two-edits",
+        data: { title: "Super caffe", body: "hot beverage" },
+      });
+      const dist2Matches = yield* found(docs, { search: "coffee~2" });
+      assert.ok(dist2Matches.includes("two-edits"));
+
+      // Fuzzy in findPage
+      const page = yield* docs.findPage({ collection: "posts", search: "brwon~" });
+      assert.deepEqual(page.documents.map((d) => d.id).sort(), ["a", "b"]);
+    })));
+
+  test(`${engine}: highlights matching terms and phrases in returned documents`, (t) =>
+    setup(t, (docs) => Effect.gen(function* () {
+      // Basic highlight with default <mark>...</mark>
+      const results = yield* docs.findMany({ collection: "posts", search: "brown", highlight: true });
+      assert.equal(results.length, 2);
+      const docA = results.find((d) => d.id === "a");
+      const docB = results.find((d) => d.id === "b");
+      assert.ok(docA?.highlights);
+      assert.ok(docB?.highlights);
+      // Case preservation: "The Quick Brown Fox" -> "Brown" is highlighted keeping capital B
+      assert.deepEqual(docA.highlights.title, ["The Quick <mark>Brown</mark> Fox"]);
+      assert.deepEqual(docB.highlights.title, ["<mark>Brown</mark> bread"]);
+
+      // Custom highlight tags
+      const custom = yield* docs.findMany({
+        collection: "posts",
+        search: "brown",
+        highlight: { preTag: "<em>", postTag: "</em>" },
+      });
+      const customA = custom.find((d) => d.id === "a");
+      assert.deepEqual(customA?.highlights?.title, ["The Quick <em>Brown</em> Fox"]);
+
+      // Highlights on prefix match
+      const prefixHl = yield* docs.findMany({ collection: "posts", search: "qui*", highlight: true });
+      const prefixA = prefixHl.find((d) => d.id === "a");
+      assert.ok(prefixA?.highlights?.title?.[0]?.includes("<mark>Quick</mark>"));
+
+      // Highlights on fuzzy match
+      const fuzzyHl = yield* docs.findMany({ collection: "posts", search: "brwon~", highlight: true });
+      const fuzzyB = fuzzyHl.find((d) => d.id === "b");
+      assert.ok(fuzzyB?.highlights?.title?.[0]?.includes("<mark>Brown</mark>"));
+
+      // Long text snippet truncation with ellipses
+      yield* docs.insert({
+        collection: "posts",
+        id: "long-doc",
+        data: {
+          title: "Short Title",
+          body: "The quick brown fox jumps over the lazy sleeping dog and then takes a very long rest under a big green tree in the middle of a sunny park.",
+        },
+      });
+      const snippetRes = yield* docs.findMany({
+        collection: "posts",
+        search: "tree",
+        highlight: { snippetLength: 50 },
+      });
+      const longDoc = snippetRes.find((d) => d.id === "long-doc");
+      assert.ok(longDoc?.highlights?.body);
+      const snippet = longDoc.highlights.body[0];
+      assert.ok(snippet.includes("<mark>tree</mark>"));
+      assert.ok(snippet.startsWith("...") || snippet.endsWith("..."), "snippet is bounded with ellipses");
+
+      // Highlights in findPage
+      const page = yield* docs.findPage({ collection: "posts", search: "brown", highlight: true });
+      assert.ok(page.documents.length > 0);
+      assert.ok(page.documents[0].highlights);
+    })));
 }
