@@ -48,6 +48,8 @@ test("the database service mounts the same routes on the db runtime API", async 
       "/api/database/documents/:collection/:id",
       "/api/database/documents/:collection/query",
       "/api/database/documents/:collection/page",
+      "/api/database/documents/:collection/summarize",
+      "/api/database/documents/:collection/summarize-by",
       "/api/database/documents/:collection/indexes",
       "/api/database/documents/:collection/indexes/:name",
       "/api/database/documents/:collection/checks",
@@ -642,4 +644,95 @@ test("geometry is declared and queried over HTTP", async (t) => {
   assert.deepEqual(wide.body.documents.map((d) => d.id).sort(), ["eiffel", "gate"]);
   assert.equal(unindexed.status, 400);
   assert.match(unindexed.body.error, /does not index geometry/);
+});
+
+test("a collection declares its edges and measures over HTTP, and aggregates over them", async (t) => {
+  const { api } = await openTemporaryDatabase(t);
+  const service = defineDatabaseService(api);
+  const tenantId = "acme";
+
+  // Declared through the endpoint, not in process: the point of this test is
+  // that the three declarations added since search and geometry are reachable.
+  const created = await call(routeOf(service, "database.collections.create"), {
+    service: api,
+    body: {
+      tenantId,
+      name: "items",
+      edges: [{ name: "related", path: "related", collection: "items" }],
+      measures: [{ name: "price", path: "price" }],
+    },
+  });
+  assert.equal(created.status, 201);
+  assert.deepEqual(created.body.measures, [{ name: "price", path: "price" }]);
+
+  const insert = (id, data) =>
+    call(routeOf(service, "database.documents.insert"), {
+      service: api,
+      params: { collection: "items" },
+      body: { tenantId, id, data },
+    });
+  await insert("a", { price: 10, region: "eu", related: [] });
+  await insert("b", { price: 20, region: "eu", related: ["a"] });
+  await insert("c", { price: 30, region: "us", related: ["a", "b"] });
+
+  const summary = await call(routeOf(service, "database.documents.summarize"), {
+    service: api,
+    params: { collection: "items" },
+    body: { tenantId, measure: "price", op: "sum" },
+  });
+  assert.deepEqual(summary.body, { value: 60, documents: 3 });
+
+  const filtered = await call(routeOf(service, "database.documents.summarize"), {
+    service: api,
+    params: { collection: "items" },
+    body: { tenantId, measure: "price", op: "avg", where: [{ path: "region", value: "eu" }] },
+  });
+  assert.deepEqual(filtered.body, { value: 15, documents: 2 });
+
+  const grouped = await call(routeOf(service, "database.documents.summarizeBy"), {
+    service: api,
+    params: { collection: "items" },
+    body: { tenantId, measure: "price", op: "sum", groupBy: "region" },
+  });
+  assert.deepEqual(
+    grouped.body.groups.map((group) => [group.key, group.value, group.documents]),
+    [["eu", 30, 2], ["us", 30, 1]],
+  );
+
+  // A link filter reaches the query route, which it could not before.
+  const linked = await call(routeOf(service, "database.documents.query"), {
+    service: api,
+    params: { collection: "items" },
+    body: { tenantId, linked: { collection: "items", id: "c", edge: "related" } },
+  });
+  assert.deepEqual(linked.body.documents.map((doc) => doc.id).sort(), ["a", "b"]);
+});
+
+test("a caller's mistake is answered as one, not as a server fault", async (t) => {
+  const { api } = await openTemporaryDatabase(t);
+  const service = defineDatabaseService(api);
+  const tenantId = "acme";
+
+  await call(routeOf(service, "database.collections.create"), {
+    service: api,
+    body: { tenantId, name: "plain" },
+  });
+
+  // A measure the collection does not declare is a 404, as an unknown
+  // reference already is -- not the 500 these used to fall through to.
+  const unknown = await call(routeOf(service, "database.documents.summarize"), {
+    service: api,
+    params: { collection: "plain" },
+    body: { tenantId, measure: "nope", op: "sum" },
+  });
+  assert.equal(unknown.status, 404);
+
+  // An operation that does not exist is refused before anything is read.
+  const badOp = await call(routeOf(service, "database.documents.summarize"), {
+    service: api,
+    params: { collection: "plain" },
+    body: { tenantId, measure: "price", op: "median" },
+  });
+  assert.equal(badOp.status, 400);
+  assert.match(String(badOp.body.error), /countDistinct/);
 });

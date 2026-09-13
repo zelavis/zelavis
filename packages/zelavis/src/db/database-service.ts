@@ -19,6 +19,12 @@ import type {
   Analyzer,
   SpatialFilter,
   SpatialIndex,
+  EmbeddingIndex,
+  EdgeDefinition,
+  MeasureDefinition,
+  LinkFilter,
+  SimilarFilter,
+  MeasureOperation,
 } from "./documents.js";
 import type { AggregateOperation, RangeInput } from "./time-series.js";
 
@@ -62,6 +68,49 @@ function readJsonObject(value: unknown): JsonObject {
   }
 
   return value as JsonObject;
+}
+
+const MEASURE_OPERATIONS = [
+  "count", "sum", "avg", "min", "max", "variance", "stddev", "countDistinct",
+] as const satisfies ReadonlyArray<MeasureOperation>;
+
+function readMeasureOperation(value: unknown): MeasureOperation {
+  const found = MEASURE_OPERATIONS.find((operation) => operation === value);
+  if (found !== undefined) return found;
+
+  // Listed from the one place that knows them; see the time-series operations.
+  throw new TypeError(
+    `Measure op must be one of ${MEASURE_OPERATIONS.map((operation) => `"${operation}"`).join(", ")}.`,
+  );
+}
+
+function readMeasureName(value: unknown): string {
+  const name = readString(value);
+  if (!name) throw new TypeError("A measure name is required.");
+  return name;
+}
+
+/**
+ * The clauses every filtering read shares.
+ *
+ * Decoded in one place so a query, a page and an aggregate narrow by the same
+ * words: an endpoint that read `linked` only on some of them would answer a
+ * different question depending on which one was asked.
+ */
+function readQueryClauses(input: Record<string, unknown>) {
+  return {
+    where: readFilters(input.where),
+    ...(Array.isArray(input.related)
+      ? { related: input.related as ReadonlyArray<RelatedFilter> }
+      : {}),
+    ...(typeof input.search === "string" ? { search: input.search } : {}),
+    ...(input.geometry && typeof input.geometry === "object"
+      ? { geometry: input.geometry as SpatialFilter }
+      : {}),
+    ...(input.linked && typeof input.linked === "object"
+      ? { linked: input.linked as LinkFilter }
+      : {}),
+  };
 }
 
 function readFilters(value: unknown): DocumentFilter[] {
@@ -185,6 +234,8 @@ const CONFLICT_TAGS = new Set([
 
 const NOT_FOUND_TAGS = new Set([
   "CollectionNotFound",
+  "UnknownEdge",
+  "UnknownMeasure",
   "DocumentNotFound",
   "ProjectionNotFound",
   "SchemaNotFound",
@@ -202,6 +253,9 @@ const BAD_REQUEST_TAGS = new Set([
   "InvalidCollectionName",
   "UnanalyzedCollection",
   "UnindexedGeometry",
+  "UnembeddedCollection",
+  "InvalidVectorQuery",
+  "VectorShapeMismatch",
   "InvalidConstraint",
   "InvalidIndex",
   "PartitionMapInvalid",
@@ -648,6 +702,9 @@ export function defineDatabaseDocumentsService(
                   references: { type: "array", description: "References, each { name, path, collection, onDelete? }" },
                   analyzer: { type: "object", description: "How text becomes terms: { fields, version, ... }" },
                   spatial: { type: "object", description: "How geometry becomes cells: { fields, resolution, version }" },
+                  embedding: { type: "object", description: "Which field holds a vector: { field, dimension, metric, version }" },
+                  edges: { type: "array", description: "Typed links, each { name, path, collection }" },
+                  measures: { type: "array", description: "Numeric fields to aggregate, each { name, path }" },
                 },
               },
             },
@@ -696,6 +753,15 @@ export function defineDatabaseDocumentsService(
                     : undefined,
                   spatial: input.spatial && typeof input.spatial === "object"
                     ? (input.spatial as SpatialIndex)
+                    : undefined,
+                  embedding: input.embedding && typeof input.embedding === "object"
+                    ? (input.embedding as EmbeddingIndex)
+                    : undefined,
+                  edges: Array.isArray(input.edges)
+                    ? (input.edges as ReadonlyArray<EdgeDefinition>)
+                    : undefined,
+                  measures: Array.isArray(input.measures)
+                    ? (input.measures as ReadonlyArray<MeasureDefinition>)
                     : undefined,
                 }),
               };
@@ -865,6 +931,8 @@ export function defineDatabaseDocumentsService(
                   related: { type: "array", description: "Joins, each { reference, where?, id? }" },
                   search: { type: "string", description: "Words to find in the analyzed fields" },
                   geometry: { type: "object", description: "A spatial filter: { field, near+radius | within | intersects }" },
+                  linked: { type: "object", description: "Only what a document links to: { collection, id, edge }" },
+                  similar: { type: "object", description: "Closest first by embedding: { field, vector, k }" },
                   orderBy: { type: "array", description: "Sorts" },
                   limit: { type: "number" },
                   offset: { type: "number" },
@@ -884,13 +952,9 @@ export function defineDatabaseDocumentsService(
                 body: {
                   documents: await service.forTenant(tenantId).documents.findMany({
                     collection: params.collection,
-                    where: readFilters(input.where),
-                    ...(Array.isArray(input.related)
-                      ? { related: input.related as ReadonlyArray<RelatedFilter> }
-                      : {}),
-                    ...(typeof input.search === "string" ? { search: input.search } : {}),
-                    ...(input.geometry && typeof input.geometry === "object"
-                      ? { geometry: input.geometry as SpatialFilter }
+                    ...readQueryClauses(input),
+                    ...(input.similar && typeof input.similar === "object"
+                      ? { similar: input.similar as SimilarFilter }
                       : {}),
                     orderBy: readSort(input.orderBy),
                     limit: readNumber(input.limit, 100),
@@ -925,6 +989,7 @@ export function defineDatabaseDocumentsService(
                   related: { type: "array", description: "Joins, each { reference, where?, id? }" },
                   search: { type: "string", description: "Words to find in the analyzed fields" },
                   geometry: { type: "object", description: "A spatial filter: { field, near+radius | within | intersects }" },
+                  linked: { type: "object", description: "Only what a document links to: { collection, id, edge }" },
                   orderBy: { type: "array", description: "One field, or several that a composite index serves" },
                   limit: { type: "number", description: "Documents per page: 1 to 1000, 50 when omitted" },
                   after: { type: "string", description: "The next cursor from the previous page" },
@@ -951,18 +1016,123 @@ export function defineDatabaseDocumentsService(
               return {
                 body: await service.forTenant(tenantId).documents.findPage({
                   collection: params.collection,
-                  where: readFilters(input.where),
-                  ...(Array.isArray(input.related)
-                    ? { related: input.related as ReadonlyArray<RelatedFilter> }
-                    : {}),
-                  ...(typeof input.search === "string" ? { search: input.search } : {}),
-                  ...(input.geometry && typeof input.geometry === "object"
-                    ? { geometry: input.geometry as SpatialFilter }
-                    : {}),
+                  ...readQueryClauses(input),
                   orderBy: readSort(input.orderBy),
                   limit,
                   ...(input.after === undefined ? {} : { after: input.after as DocumentCursor }),
                 }),
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 404);
+            }
+          },
+        },
+        {
+          id: "database.documents.summarize",
+          method: "POST",
+          path: "/:collection/summarize",
+          spec: {
+            operationId: "summarizeDocuments",
+            summary: "Aggregate a declared measure",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId", "measure", "op"],
+                properties: {
+                  tenantId: { type: "string", description: "Tenant ID" },
+                  measure: { type: "string", description: "A measure the collection declares" },
+                  op: { type: "string", description: "count, sum, avg, min, max, variance, stddev or countDistinct" },
+                  where: { type: "array", description: "Filters" },
+                  related: { type: "array", description: "Joins, each { reference, where?, id? }" },
+                  search: { type: "string", description: "Words to find in the analyzed fields" },
+                  geometry: { type: "object", description: "A spatial filter" },
+                  linked: { type: "object", description: "Only what a document links to: { collection, id, edge }" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "The value, and the documents it was computed over" },
+              400: { description: "An operation or measure the collection cannot answer" },
+              404: { description: "Not found" },
+            },
+          },
+          handler: async ({ service, params, body }) => {
+            const input = readBodyObject(body);
+            try {
+              const tenantId = readTenantId(input.tenantId);
+              return {
+                body: await service.forTenant(tenantId).documents.summarize({
+                  collection: params.collection,
+                  measure: readMeasureName(input.measure),
+                  op: readMeasureOperation(input.op),
+                  ...readQueryClauses(input),
+                }),
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 404);
+            }
+          },
+        },
+        {
+          id: "database.documents.summarizeBy",
+          method: "POST",
+          path: "/:collection/summarize-by",
+          spec: {
+            operationId: "summarizeDocumentsBy",
+            summary: "Aggregate a declared measure, grouped",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId", "measure", "op", "groupBy"],
+                properties: {
+                  tenantId: { type: "string", description: "Tenant ID" },
+                  measure: { type: "string", description: "A measure the collection declares" },
+                  op: { type: "string", description: "count, sum, avg, min, max, variance, stddev or countDistinct" },
+                  groupBy: { type: "string", description: "The field whose values separate the groups" },
+                  groups: { type: "number", description: "Groups to return: 100 when omitted, at most 1000" },
+                  where: { type: "array", description: "Filters" },
+                  related: { type: "array", description: "Joins, each { reference, where?, id? }" },
+                  search: { type: "string", description: "Words to find in the analyzed fields" },
+                  geometry: { type: "object", description: "A spatial filter" },
+                  linked: { type: "object", description: "Only what a document links to: { collection, id, edge }" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "One answer per value at the grouped field" },
+              400: { description: "An operation or measure the collection cannot answer" },
+              404: { description: "Not found" },
+            },
+          },
+          handler: async ({ service, params, body }) => {
+            const input = readBodyObject(body);
+            try {
+              const tenantId = readTenantId(input.tenantId);
+              const groupBy = readString(input.groupBy);
+              if (!groupBy) throw new TypeError("A field to group by is required.");
+              return {
+                body: {
+                  groups: await service.forTenant(tenantId).documents.summarizeBy({
+                    collection: params.collection,
+                    measure: readMeasureName(input.measure),
+                    op: readMeasureOperation(input.op),
+                    groupBy,
+                    ...(input.groups === undefined
+                      ? {}
+                      : { groups: readRequiredNumber(input.groups, "groups") }),
+                    ...readQueryClauses(input),
+                  }),
+                },
               };
             } catch (error) {
               return databaseErrorResponse(error, 404);

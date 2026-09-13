@@ -1284,6 +1284,22 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   it first, so the write dies rather than being refused. Pre-existing and
   untested; measures skip non-finite values rather than adding to it.
 
+- [x] Brought the newer database capabilities up to the rule that everything
+  must be reachable through a stable capability and versioned endpoint. Search
+  and geometry were wired when they landed and the capabilities after them were
+  not: embeddings, typed edges and measures could not be declared over HTTP,
+  `linked` and `similar` could not be sent with a query, and `embed`,
+  `summarize` and `summarizeBy` had neither a runtime method nor a route.
+- [x] Placed four domain errors that reached the wire as `500`s because they
+  were in none of the status sets -- `UnknownEdge` and `UnknownMeasure` as
+  `404` beside `UnknownReference`, `UnembeddedCollection`, `InvalidVectorQuery`
+  and `VectorShapeMismatch` as `400` beside `UnanalyzedCollection`. A caller's
+  mistake had been reading as a server fault.
+- [ ] The HTTP surface is checked by hand against the API. Wiring a capability
+  is a separate step from building it, and three slices in a row missed it;
+  a test that walks the documents API and asserts every operation has a route
+  would catch the next one rather than a later reading of the rules.
+
 ## Later
 
 - [ ] Remote, separately supervised Zelavis Agents.
