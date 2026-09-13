@@ -28,7 +28,14 @@ import type {
   SimilarFilter,
   MeasureOperation,
 } from "./documents.js";
-import type { AggregateOperation, RangeInput } from "./time-series.js";
+import type {
+  AggregateOperation,
+  InterpolateInput,
+  MovingInput,
+  RangeInput,
+  TagFilter,
+  WindowsInput,
+} from "./time-series.js";
 
 function readBodyObject(body: unknown): Record<string, unknown> {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -201,6 +208,102 @@ function readTimeSeriesAggregateOperation(value: unknown): AggregateOperation {
 }
 
 function readRequiredNumber(value: unknown, name: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new TypeError(`${name} must be a number.`);
+  }
+
+  return value;
+}
+
+function readOptionalTagFilter(value: unknown): TagFilter | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("tags must be an object.");
+  }
+
+  const result: Record<string, string | ReadonlyArray<string>> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof v === "string") {
+      result[k] = v;
+    } else if (Array.isArray(v) && v.every((item) => typeof item === "string")) {
+      result[k] = v as ReadonlyArray<string>;
+    } else {
+      throw new TypeError(`Tag "${k}" must be a string or array of strings.`);
+    }
+  }
+
+  return result;
+}
+
+function readOptionalTimeSeriesFill(value: unknown): WindowsInput["fill"] {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+
+  if (value === "none" || value === "zero" || value === "previous" || value === "linear") {
+    return value;
+  }
+
+  throw new TypeError('fill must be "none", "zero", "previous", or "linear".');
+}
+
+function readOptionalInterpolateMethod(value: unknown): InterpolateInput["method"] {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+
+  if (value === "linear" || value === "previous" || value === "next") {
+    return value;
+  }
+
+  throw new TypeError('method must be "linear", "previous", or "next".');
+}
+
+function readMovingWindow(value: unknown): MovingInput["window"] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("window must be an object specifying count or time.");
+  }
+
+  const obj = value as Record<string, unknown>;
+  if ("count" in obj) {
+    const count = obj.count;
+    if (typeof count !== "number" || !Number.isSafeInteger(count) || count <= 0) {
+      throw new TypeError("window.count must be an integer > 0.");
+    }
+    return { count };
+  }
+
+  if ("time" in obj) {
+    const time = obj.time;
+    if (typeof time !== "number" || !Number.isFinite(time) || time <= 0) {
+      throw new TypeError("window.time must be a number > 0.");
+    }
+    return { time };
+  }
+
+  throw new TypeError("window must specify either count or time.");
+}
+
+function readOptionalNumberArray(value: unknown, name: string): ReadonlyArray<number> | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "number" && Number.isFinite(item))) {
+    throw new TypeError(`${name} must be an array of numbers.`);
+  }
+
+  return value;
+}
+
+function readOptionalNumber(value: unknown, name: string): number | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new TypeError(`${name} must be a number.`);
   }
@@ -2041,6 +2144,7 @@ export function defineDatabaseTimeSeriesService(
                   end: { type: "number" },
                   limit: { type: "number" },
                   order: { type: "string" },
+                  tags: { type: "object", description: "Filter points by tags" },
                 },
               },
             },
@@ -2063,6 +2167,7 @@ export function defineDatabaseTimeSeriesService(
                     end: readOptionalTimeSeriesBoundary(input.end, "end"),
                     limit: readNumber(input.limit, 100),
                     order: readTimeSeriesOrder(input.order),
+                    tags: readOptionalTagFilter(input.tags),
                   }),
                 },
               };
@@ -2093,6 +2198,7 @@ export function defineDatabaseTimeSeriesService(
                   start: { type: "number" },
                   end: { type: "number" },
                   p: { type: "number" },
+                  tags: { type: "object", description: "Filter points by tags" },
                 },
               },
             },
@@ -2115,8 +2221,281 @@ export function defineDatabaseTimeSeriesService(
                     start: readOptionalTimeSeriesBoundary(input.start, "start"),
                     end: readOptionalTimeSeriesBoundary(input.end, "end"),
                     ...(input.p === undefined ? {} : { p: readRequiredNumber(input.p, "p") }),
+                    tags: readOptionalTagFilter(input.tags),
                   }),
                 },
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 404);
+            }
+          },
+        },
+        {
+          id: "database.timeseries.windows",
+          method: "POST",
+          path: "/:series/windows",
+          spec: {
+            operationId: "queryTimeSeriesWindows",
+            summary: "Query time series windows",
+            tags: ["timeseries"],
+            pathParams: {
+              series: { type: "string", required: true, description: "Series name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId", "interval"],
+                properties: {
+                  tenantId: { type: "string" },
+                  interval: { type: "number", description: "Window duration in milliseconds" },
+                  step: { type: "number", description: "Step between consecutive window starts in milliseconds" },
+                  op: { type: "string", description: "Aggregate operation (default: avg)" },
+                  start: { type: "number" },
+                  end: { type: "number" },
+                  fill: { type: "string", enum: ["none", "zero", "previous", "linear"] },
+                  p: { type: "number" },
+                  tags: { type: "object", description: "Filter points by tags" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "Time series buckets" },
+              404: { description: "Not found" },
+            },
+          },
+          handler: async ({ service, params, body }) => {
+            const input = readBodyObject(body);
+
+            try {
+              const tenantId = readTenantId(input.tenantId);
+              return {
+                body: {
+                  buckets: await service
+                    .forTenant(tenantId)
+                    .timeSeries.windows(params.series, {
+                    interval: readRequiredNumber(input.interval, "interval"),
+                    ...(input.step === undefined ? {} : { step: readRequiredNumber(input.step, "step") }),
+                    ...(input.op === undefined ? {} : { op: readTimeSeriesAggregateOperation(input.op) }),
+                    start: readOptionalTimeSeriesBoundary(input.start, "start"),
+                    end: readOptionalTimeSeriesBoundary(input.end, "end"),
+                    fill: readOptionalTimeSeriesFill(input.fill),
+                    ...(input.p === undefined ? {} : { p: readRequiredNumber(input.p, "p") }),
+                    tags: readOptionalTagFilter(input.tags),
+                  }),
+                },
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 404);
+            }
+          },
+        },
+        {
+          id: "database.timeseries.moving",
+          method: "POST",
+          path: "/:series/moving",
+          spec: {
+            operationId: "queryTimeSeriesMoving",
+            summary: "Query time series moving aggregate",
+            tags: ["timeseries"],
+            pathParams: {
+              series: { type: "string", required: true, description: "Series name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId", "window"],
+                properties: {
+                  tenantId: { type: "string" },
+                  window: {
+                    type: "object",
+                    description: "Rolling window by count or time duration in ms",
+                  },
+                  op: { type: "string", description: "Aggregate operation (default: avg)" },
+                  start: { type: "number" },
+                  end: { type: "number" },
+                  p: { type: "number" },
+                  tags: { type: "object", description: "Filter points by tags" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "Moving window points" },
+              404: { description: "Not found" },
+            },
+          },
+          handler: async ({ service, params, body }) => {
+            const input = readBodyObject(body);
+
+            try {
+              const tenantId = readTenantId(input.tenantId);
+              return {
+                body: {
+                  points: await service
+                    .forTenant(tenantId)
+                    .timeSeries.moving(params.series, {
+                    window: readMovingWindow(input.window),
+                    ...(input.op === undefined ? {} : { op: readTimeSeriesAggregateOperation(input.op) }),
+                    start: readOptionalTimeSeriesBoundary(input.start, "start"),
+                    end: readOptionalTimeSeriesBoundary(input.end, "end"),
+                    ...(input.p === undefined ? {} : { p: readRequiredNumber(input.p, "p") }),
+                    tags: readOptionalTagFilter(input.tags),
+                  }),
+                },
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 404);
+            }
+          },
+        },
+        {
+          id: "database.timeseries.histogram",
+          method: "POST",
+          path: "/:series/histogram",
+          spec: {
+            operationId: "queryTimeSeriesHistogram",
+            summary: "Query time series histogram",
+            tags: ["timeseries"],
+            pathParams: {
+              series: { type: "string", required: true, description: "Series name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId"],
+                properties: {
+                  tenantId: { type: "string" },
+                  bins: { type: "number", description: "Number of equal-width bins" },
+                  boundaries: { type: "array", items: { type: "number" } },
+                  step: { type: "number" },
+                  min: { type: "number" },
+                  max: { type: "number" },
+                  start: { type: "number" },
+                  end: { type: "number" },
+                  tags: { type: "object", description: "Filter points by tags" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "Histogram result" },
+              404: { description: "Not found" },
+            },
+          },
+          handler: async ({ service, params, body }) => {
+            const input = readBodyObject(body);
+
+            try {
+              const tenantId = readTenantId(input.tenantId);
+              return {
+                body: await service
+                  .forTenant(tenantId)
+                  .timeSeries.histogram(params.series, {
+                  ...(input.bins === undefined ? {} : { bins: readRequiredNumber(input.bins, "bins") }),
+                  boundaries: readOptionalNumberArray(input.boundaries, "boundaries"),
+                  ...(input.step === undefined ? {} : { step: readRequiredNumber(input.step, "step") }),
+                  min: readOptionalNumber(input.min, "min"),
+                  max: readOptionalNumber(input.max, "max"),
+                  start: readOptionalTimeSeriesBoundary(input.start, "start"),
+                  end: readOptionalTimeSeriesBoundary(input.end, "end"),
+                  tags: readOptionalTagFilter(input.tags),
+                }),
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 404);
+            }
+          },
+        },
+        {
+          id: "database.timeseries.interpolate",
+          method: "POST",
+          path: "/:series/interpolate",
+          spec: {
+            operationId: "queryTimeSeriesInterpolate",
+            summary: "Query time series interpolation",
+            tags: ["timeseries"],
+            pathParams: {
+              series: { type: "string", required: true, description: "Series name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId", "step"],
+                properties: {
+                  tenantId: { type: "string" },
+                  step: { type: "number", description: "Grid step in milliseconds" },
+                  method: { type: "string", enum: ["linear", "previous", "next"] },
+                  start: { type: "number" },
+                  end: { type: "number" },
+                  tags: { type: "object", description: "Filter points by tags" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "Interpolated points" },
+              404: { description: "Not found" },
+            },
+          },
+          handler: async ({ service, params, body }) => {
+            const input = readBodyObject(body);
+
+            try {
+              const tenantId = readTenantId(input.tenantId);
+              return {
+                body: {
+                  points: await service
+                    .forTenant(tenantId)
+                    .timeSeries.interpolate(params.series, {
+                    step: readRequiredNumber(input.step, "step"),
+                    method: readOptionalInterpolateMethod(input.method),
+                    start: readOptionalTimeSeriesBoundary(input.start, "start"),
+                    end: readOptionalTimeSeriesBoundary(input.end, "end"),
+                    tags: readOptionalTagFilter(input.tags),
+                  }),
+                },
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 404);
+            }
+          },
+        },
+        {
+          id: "database.timeseries.ingest",
+          method: "POST",
+          path: "/:series/ingest",
+          spec: {
+            operationId: "ingestTimeSeries",
+            summary: "Ingest time series from event log",
+            tags: ["timeseries"],
+            pathParams: {
+              series: { type: "string", required: true, description: "Series name" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId"],
+                properties: {
+                  tenantId: { type: "string" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "Ingest result" },
+              404: { description: "Not found" },
+            },
+          },
+          handler: async ({ service, params, body }) => {
+            const input = readBodyObject(body);
+
+            try {
+              const tenantId = readTenantId(input.tenantId);
+              return {
+                body: await service
+                  .forTenant(tenantId)
+                  .timeSeries.ingest(params.series),
               };
             } catch (error) {
               return databaseErrorResponse(error, 404);

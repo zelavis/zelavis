@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Effect } from "effect";
-import { makeDatabase, partitionMapFor } from "../dist/db/index.js";
+import { makeDatabase, partitionMapFor, defineDatabaseService } from "../dist/db/index.js";
 import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
+import { openTemporaryDatabase } from "./_database.mjs";
 
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
@@ -235,4 +236,61 @@ test("a filter composes with a window far wider than the data", async (t) => {
       assert.equal(yield* usage.aggregate({ op: "sum", ...wide, tags: { region: "eu-west" } }), 80);
     }),
   );
+});
+
+test("the HTTP aggregate and range routes honour tag filters", async (t) => {
+  const { api, database } = await openTemporaryDatabase(t);
+  const tenant = database.forTenant("acme");
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* tenant.documents.createCollection({ name: "readings" });
+      yield* tenant.timeSeries.define({
+        name: "usage",
+        map: (event) =>
+          event.type !== "document.upserted" ? null : {
+            timestamp: event.payload.data.at,
+            value: event.payload.data.value,
+            tags: { region: event.payload.data.region, tier: event.payload.data.tier },
+          },
+      });
+      for (const [id, day, hour, region, tier, value] of rows) {
+        yield* tenant.documents.insert({
+          collection: "readings",
+          id,
+          data: { at: BASE + day * DAY + hour * HOUR, region, tier, value },
+        });
+      }
+      yield* tenant.timeSeries.ingest("usage");
+    }),
+  );
+
+  const service = defineDatabaseService(api);
+  const call = (route, { service: svc, params = {}, query = "", body } = {}) =>
+    route.handler({
+      service: svc,
+      params,
+      query: new URLSearchParams(query),
+      body,
+      headers: {},
+      request: undefined,
+    });
+  const routeOf = (id) =>
+    [...service.api.v1, ...service.services.flatMap((s) => s.api.v1)].find((r) => r.id === id);
+
+  // Range with tag over HTTP
+  const rangeRes = await call(routeOf("database.timeseries.range"), {
+    service: api,
+    params: { series: "usage" },
+    body: { tenantId: "acme", tags: { region: "eu-west" } },
+  });
+  assert.equal(rangeRes.body.points.length, 3);
+  assert.deepEqual(rangeRes.body.points.map((p) => p.value), [10, 20, 50]);
+
+  // Aggregate with tag over HTTP
+  const aggRes = await call(routeOf("database.timeseries.aggregate"), {
+    service: api,
+    params: { series: "usage" },
+    body: { tenantId: "acme", op: "sum", tags: { region: "eu-west" } },
+  });
+  assert.equal(aggRes.body.value, 80);
 });
