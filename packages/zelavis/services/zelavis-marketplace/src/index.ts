@@ -27,7 +27,7 @@ export const ZELAVIS_MARKETPLACE_SERVICE_NAME = "@zelavis/marketplace";
  * starters, plus templates and server provider plugins for the Platform as a
  * whole.
  */
-zelavis.menu.create({
+zelavis.plugins.ui.menus.create({
   title: "Marketplace",
   path: "/marketplace",
   pageLabel: "Marketplace",
@@ -51,7 +51,7 @@ zelavis.menu.create({
  * A separate contribution rather than a variant of the one above — a different
  * surface, a different permission, and a different catalogue.
  */
-zelavis.menu.create({
+zelavis.plugins.ui.menus.create({
   title: "Marketplace",
   path: "/marketplace",
   pageLabel: "Marketplace",
@@ -71,7 +71,7 @@ zelavis.menu.create({
 /**
  * What the SDK does not cover: identity, and the page bytes themselves.
  *
- * `zelavis.menu.create` declares that a page exists and where it lives; the
+ * `zelavis.plugins.ui.menus.create` declares that a page exists and where it lives; the
  * file has to come from somewhere, and for a service that ships inside the
  * Platform there is no package archive to unpack it from.
  */

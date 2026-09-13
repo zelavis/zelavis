@@ -7,9 +7,24 @@ import { readFrontendManifest } from "./frontend.js";
 
 export interface ZelavisManifestConfig {
   kind: string;
+  namespace?: string;
   capabilities?: readonly string[];
   marketplace?: Record<string, unknown>;
   [key: string]: unknown;
+}
+
+const RESERVED_PLUGIN_NAMESPACES = new Set([
+  "__proto__", "prototype", "constructor", "then", "toJSON",
+]);
+
+export function validatePluginNamespace(value: unknown): string {
+  if (typeof value !== "string" || !/^[a-z][a-zA-Z0-9]*$/.test(value) ||
+      RESERVED_PLUGIN_NAMESPACES.has(value)) {
+    throw new TypeError(
+      '"zelavis.namespace" must be a non-reserved identifier beginning with a lowercase letter and containing only letters and digits.',
+    );
+  }
+  return value;
 }
 
 export interface ZelavisPackageManifest {
@@ -124,6 +139,13 @@ export function validatePluginPackageManifest(
     // Validate the frontend block here so a malformed one is refused at install
     // rather than surfacing as a broken site the first time someone visits it.
     readFrontendManifest(manifest as ZelavisPackageManifest);
+  }
+
+  // Code-providing packages choose their public name; it is never inferred
+  // from an npm package name. File-only frontends may opt into a namespace.
+  const namespace = (zelavis as Record<string, unknown>).namespace;
+  if (kind !== "frontend" || namespace !== undefined) {
+    validatePluginNamespace(namespace);
   }
 
   return manifest as ZelavisPackageManifest;

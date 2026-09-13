@@ -7,7 +7,7 @@ import { loadPluginPackage } from "../service.js";
  * third-party service goes through.
  *
  * This is the point of shipping the marketplace as its own package. The module
- * body runs inside a plugin execution context, so its `zelavis.menu.create`
+ * body runs inside a plugin execution context, so its `zelavis.plugins.ui.menus.create`
  * calls are the real SDK calls and its menus reach the dashboard through the
  * ordinary extension path. If that path is broken, the Platform's own
  * marketplace is broken with it — which is the only way a first-party service

@@ -19,5 +19,5 @@ export const AUTH_SETTINGS_MANIFEST = Object.freeze({
       import: "./dist/index.js",
     }),
   }),
-  zelavis: Object.freeze({ kind: "plugin" }),
+  zelavis: Object.freeze({ kind: "plugin", namespace: "auth" }),
 });

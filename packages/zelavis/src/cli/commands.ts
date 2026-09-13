@@ -4,6 +4,8 @@ import {
   readBootstrapStatus,
 } from "./bootstrap.js";
 import { runAgentCommand } from "./agent.js";
+import { runPluginsCommand } from "./plugins.js";
+import { ZelavisClientHttpError } from "../sdk/fetch.js";
 import { promptSecret, readAllStdin } from "./prompt.js";
 import {
   formatActivationResult,
@@ -58,6 +60,8 @@ function printHelp(): void {
   console.log(`Zelavis CLI
 
 Usage:
+  zelavis plugins <namespace> <resource> <action> [--file input.json] [--url <url>] [--json]
+  zelavis plugins [<namespace> [<resource>]] --help [--url <url>]
   zelavis serve [--host <host>] [--port <port>] [--data-dir <path>]
   zelavis services list [--url <url>]
   zelavis services install <name> [--url <url>]
@@ -386,6 +390,10 @@ export async function runCli(
   options: ZelavisCliOptions = {},
 ): Promise<void> {
   try {
+    if (args[0] === "plugins") {
+      await runPluginsCommand(args.slice(1));
+      return;
+    }
     const parsed = parseArgs(args);
 
     if (parsed.version) {
@@ -441,7 +449,14 @@ export async function runCli(
     }
     throw new Error(`Unknown command "${parsed.command}".`);
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
+    if (args[0] === "plugins") {
+      console.error(JSON.stringify({
+        error: error instanceof Error ? error.message : String(error),
+        ...(error instanceof ZelavisClientHttpError ? { status: error.response.status, details: error.body } : {}),
+      }));
+    } else {
+      console.error(error instanceof Error ? error.message : String(error));
+    }
     process.exitCode = 1;
   }
 }

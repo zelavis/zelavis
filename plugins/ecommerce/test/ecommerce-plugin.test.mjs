@@ -6,11 +6,13 @@ import test from "node:test";
 import {
   Zelavis,
 } from "../../../packages/zelavis/dist/index.js";
+import { createZelavisClient } from "../../../packages/zelavis/dist/sdk/fetch.js";
+import { runPluginsCommand } from "../../../packages/zelavis/dist/cli/plugins.js";
 import { loadEcommercePlugin } from "./load-plugin.mjs";
 
 test("ecommercePlugin defines standard Zelavis plugin structure with OpenAPI specs", async () => {
   // Loaded rather than imported: the plugin declares its menu through
-  // `zelavis.menu.create`, which only works inside a plugin execution context.
+  // `zelavis.plugins.ui.menus.create`, which only works inside a plugin execution context.
   const ecommercePlugin = await loadEcommercePlugin();
   assert.equal(ecommercePlugin.name, "@zelavis/ecommerce");
   assert.equal(ecommercePlugin.kind, "plugin");
@@ -197,4 +199,89 @@ test("ecommercePlugin registers and exposes recurring subscription endpoints", a
   const subCollection = collections.find((col) => col.name === "commerce_subscriptions");
   assert.ok(subCollection, "commerce_subscriptions collection should exist");
   assert.equal(subCollection.surface, "database", "surface must be 'database', not hidden in metadata");
+});
+
+test("ecommerce operations provide three-way parity across HTTP, JS SDK, and CLI", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "zv-ecommerce-parity-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const plugin = await loadEcommercePlugin();
+  const zelavis = new Zelavis({
+    adapter: {
+      name: "ecommerce-parity-adapter",
+      async resolve() {
+        return {
+          subsystems: { database: { directory } },
+          serviceRegistry: {
+            catalog: [{ service: plugin, status: "installed", order: 0 }],
+            store: {
+              read() { return [{ name: "@zelavis/ecommerce", status: "installed", order: 0 }]; },
+              write(entries) { return entries; },
+            },
+          },
+        };
+      },
+    },
+  });
+
+  const owner = { principal: { id: "owner", type: "user", permissions: ["*"] } };
+  const fetcher = (url, init) => zelavis.fetch(new Request(url, init), owner);
+  const client = createZelavisClient({ baseUrl: "http://localhost", rootPath: "/zelavis", fetch: fetcher });
+
+  // 1. Discover operations
+  const operations = await client.pluginOperations();
+  const ecommerceOps = operations.filter((op) => op.namespace === "ecommerce");
+  assert.ok(ecommerceOps.length >= 18, `Expected at least 18 operations, got ${ecommerceOps.length}`);
+  const productCreateOp = ecommerceOps.find((op) => op.resource === "products" && op.action === "create");
+  assert.ok(productCreateOp, "products.create operation must exist");
+  assert.equal(productCreateOp.path, "/plugins/ecommerce/products");
+
+  // 2. HTTP access under /zelavis/api/v1/plugins/ecommerce/products
+  const productInput = {
+    title: "Vintage Denim Jacket",
+    price: { amount: 8900, currency: "USD" },
+    slug: "vintage-denim-jacket",
+  };
+  const httpRes = await fetcher("http://localhost/zelavis/api/v1/plugins/ecommerce/products", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(productInput),
+  });
+  assert.equal(httpRes.status, 201);
+  const createdProduct = await httpRes.json();
+  assert.equal(createdProduct.title, "Vintage Denim Jacket");
+
+  // 3. JS SDK client access via client.plugins.ecommerce.products
+  const sdkProducts = await client.plugins.ecommerce.products.list();
+  assert.equal(sdkProducts.length, 1);
+  assert.equal(sdkProducts[0].title, "Vintage Denim Jacket");
+
+  const productById = await client.plugins.ecommerce.products.getById(undefined, {
+    params: { id: createdProduct.id },
+  });
+  assert.equal(productById.id, createdProduct.id);
+
+  // 4. CLI access via runPluginsCommand with --data inline JSON
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const output = [];
+  globalThis.fetch = fetcher;
+  console.log = (value) => output.push(value);
+  try {
+    await runPluginsCommand([
+      "ecommerce",
+      "products",
+      "create",
+      `--data=${JSON.stringify({ title: "Corduroy Cap", price: { amount: 2500, currency: "USD" } })}`,
+      "--url=http://localhost/zelavis",
+    ]);
+    const cliCreated = JSON.parse(output.pop());
+    assert.equal(cliCreated.title, "Corduroy Cap");
+
+    await runPluginsCommand(["ecommerce", "products", "list", "--url=http://localhost/zelavis"]);
+    const cliList = JSON.parse(output.pop());
+    assert.equal(cliList.length, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+  }
 });

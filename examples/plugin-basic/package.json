@@ -6,7 +6,8 @@
   "type": "module",
   "exports": "./dist/index.js",
   "zelavis": {
-    "kind": "plugin"
+    "kind": "plugin",
+    "namespace": "example"
   },
   "scripts": {
     "build": "pnpm exec tsc -p tsconfig.json",

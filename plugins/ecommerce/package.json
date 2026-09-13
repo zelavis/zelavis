@@ -12,7 +12,8 @@
     "capabilities": [
       "api:routes",
       "dashboard:menu"
-    ]
+    ],
+    "namespace": "ecommerce"
   },
   "exports": {
     ".": {

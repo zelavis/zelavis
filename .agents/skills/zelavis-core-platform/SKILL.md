@@ -69,12 +69,15 @@ before editing.
   union previously drifted to list five dead kinds while omitting `frontend`.
   Trust comes from `scope` (`system` for what the operator composed,
   `extension` for what was installed at runtime), never from the kind.
-- Plugins and services are configured via `package.json` manifests (`"zelavis": { "kind": "plugin", "capabilities": [...] }`, `"type": "module"`, `"exports"`, no legacy `main` outside `frontend`). Plugin code uses the official Zelavis SDK (`zelavis.menu.create`, `zelavis.routes.create`, `zelavis.services.add`); `defineService` is completely removed. See `website/src/content/docs/guides/plugin-api.md`.
+- Plugins and services are configured via `package.json` manifests (`"zelavis": { "kind": "plugin", "capabilities": [...] }`, `"type": "module"`, `"exports"`, no legacy `main` outside `frontend`). Plugin code uses the official Zelavis SDK (`zelavis.plugins.ui.menus.create`, `zelavis.routes.create`, `zelavis.services.add`); `defineService` is completely removed. See `website/src/content/docs/guides/plugin-api.md`.
 - The SDK contributes during module evaluation, so it only works inside the
   loader's execution context. A service that needs the registry, a database, or
   platform resources is added from `setup(context)` with `context.addService`
   instead. Both are official; which applies is decided by whether the service
   can be described before the runtime exists.
+- Package menus are registered only with `zelavis.plugins.ui.menus.create`; the loader
+  rejects exported `menu`/`menus` fields. Runtime `menus` is the full SDK list;
+  `menu` is its primary catalogue entry, not another registration.
 - The loader must carry everything a plugin declares. It once built its service
   object field by field and omitted `setup`, so a plugin registering its API
   there installed as a package with a menu and no endpoints while the same
@@ -144,6 +147,22 @@ before editing.
 - Preserve the service model; do not invent a parallel composition pattern.
 - Everything Zelavis can do must be reachable through a stable capability and
   versioned endpoint. The dashboard is a client, not the authority layer.
+- Every official public capability must have matching JS SDK, HTTP, and CLI
+  operations. Inspect and update all three when changing a core API; a missing
+  surface is a gap, not a completed feature. Share operation schemas and domain
+  logic, including permissions, errors, defaults, ownership, and lifecycle.
+  Service-owned APIs use `zelavis.plugins.<namespace>.<resource>.<action>`,
+  `/api/v1/plugins/<namespace>/<resource>`, and
+  `zelavis plugins <namespace> <resource> <action>`, including official UI and
+  third-party services. Require an explicit validated `zelavis.namespace` in
+  executable package manifests and templates; reject runtime collisions and
+  exported namespace overrides. No singular `plugin` or root aliases. Core
+  Platform capabilities retain their domain namespaces. Provide
+  discoverable SDK/CLI operations and machine-readable CLI output, not just a
+  generic request escape hatch. Package-loading declarations also need parity
+  through declarative data or artifact references with equivalent ownership
+  and cleanup. Test adapter equivalence and document all three forms together.
+  See AGENTS.md's "JS, HTTP, and CLI parity" rule for the full contract.
 - Do not implement Platform behavior only in UI routes, framework server
   actions, local component state, or dashboard-only helpers.
 - Keep `packages/zelavis/TODO.md` current when core, runtime, App versioning, or

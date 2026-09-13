@@ -7,7 +7,7 @@ const MANIFEST = Object.freeze({
   version: "1.0.0",
   type: "module",
   exports: { ".": { import: "./dist/index.js" } },
-  zelavis: { kind: "plugin" },
+  zelavis: { kind: "plugin", namespace: "example" },
 });
 
 /**
@@ -23,6 +23,18 @@ async function load(service) {
     importer: async () => ({ default: service }),
   });
 }
+
+test("package menus must be registered through the SDK", async () => {
+  for (const fields of [
+    { menu: { title: "Example", path: "/example" } },
+    { menus: [{ title: "Example", path: "/example" }] },
+  ]) {
+    await assert.rejects(
+      load({ name: "@acme/complete", ...fields }),
+      /must register menus with zelavis\.plugins\.ui\.menus\.create\(\)/,
+    );
+  }
+});
 
 test("a plugin that registers services during setup keeps its setup", async () => {
   const service = {

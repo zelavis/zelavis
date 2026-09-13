@@ -441,7 +441,7 @@ function parseSubscriptionCreation(body: unknown): {
 /**
  * The plugin's dashboard menu, declared through the official SDK.
  *
- * `zelavis.menu.create` rather than a `menu` field on the exported object.
+ * `zelavis.plugins.ui.menus.create` rather than a `menu` field on the exported object.
  * Both reach the same place — the loader merges SDK contributions over the
  * field — but the SDK is what the authoring guide tells plugin authors to use,
  * and a first-party plugin contradicting that makes the rule not stick.
@@ -450,7 +450,7 @@ function parseSubscriptionCreation(body: unknown): {
  * That is the trade: this plugin is now loaded rather than composed as a live
  * object, which is how it arrives on a real installation anyway.
  */
-zelavis.menu.create({
+zelavis.plugins.ui.menus.create({
   title: "Ecommerce",
   path: "/commerce",
   pageLabel: "Commerce",
@@ -555,6 +555,7 @@ export const ecommercePlugin = Object.freeze({
             id: "commerce.health",
             method: "GET",
             path: "/health",
+            meta: { pluginResource: "health", pluginAction: "get" },
             spec: {
               operationId: "getCommerceHealth",
               summary: "Health and runtime status of ecommerce service",
@@ -580,6 +581,7 @@ export const ecommercePlugin = Object.freeze({
             id: "commerce.products.list",
             method: "GET",
             path: "/products",
+            meta: { pluginResource: "products", pluginAction: "list" },
             spec: {
               operationId: "listProducts",
               summary: "List all products",
@@ -597,6 +599,7 @@ export const ecommercePlugin = Object.freeze({
             id: "commerce.products.create",
             method: "POST",
             path: "/products",
+            meta: { pluginResource: "products", pluginAction: "create" },
             spec: {
               operationId: "createProduct",
               summary: "Create a new product",
@@ -643,6 +646,7 @@ export const ecommercePlugin = Object.freeze({
             id: "commerce.products.getById",
             method: "GET",
             path: "/products/:id",
+            meta: { pluginResource: "products", pluginAction: "getById" },
             spec: {
               operationId: "getProductById",
               summary: "Get a product by ID",
@@ -669,6 +673,7 @@ export const ecommercePlugin = Object.freeze({
             id: "commerce.customers.list",
             method: "GET",
             path: "/customers",
+            meta: { pluginResource: "customers", pluginAction: "list" },
             spec: {
               operationId: "listCustomers",
               summary: "List customers",
@@ -686,6 +691,7 @@ export const ecommercePlugin = Object.freeze({
             id: "commerce.customers.create",
             method: "POST",
             path: "/customers",
+            meta: { pluginResource: "customers", pluginAction: "create" },
             spec: {
               operationId: "createCustomer",
               summary: "Create a customer record",
@@ -725,6 +731,7 @@ export const ecommercePlugin = Object.freeze({
             id: "commerce.customers.getById",
             method: "GET",
             path: "/customers/:id",
+            meta: { pluginResource: "customers", pluginAction: "getById" },
             spec: {
               operationId: "getCustomerById",
               summary: "Get a customer by ID",
@@ -751,6 +758,7 @@ export const ecommercePlugin = Object.freeze({
             id: "commerce.coupons.list",
             method: "GET",
             path: "/coupons",
+            meta: { pluginResource: "coupons", pluginAction: "list" },
             spec: {
               operationId: "listCoupons",
               summary: "List discount coupons",
@@ -768,6 +776,7 @@ export const ecommercePlugin = Object.freeze({
             id: "commerce.coupons.create",
             method: "POST",
             path: "/coupons",
+            meta: { pluginResource: "coupons", pluginAction: "create" },
             spec: {
               operationId: "createCoupon",
               summary: "Create a discount coupon",
@@ -807,6 +816,7 @@ export const ecommercePlugin = Object.freeze({
             id: "commerce.coupons.getByCode",
             method: "GET",
             path: "/coupons/:code",
+            meta: { pluginResource: "coupons", pluginAction: "getByCode" },
             spec: {
               operationId: "getCouponByCode",
               summary: "Get a coupon by code",
@@ -833,6 +843,7 @@ export const ecommercePlugin = Object.freeze({
             id: "commerce.orders.list",
             method: "GET",
             path: "/orders",
+            meta: { pluginResource: "orders", pluginAction: "list" },
             spec: {
               operationId: "listOrders",
               summary: "List orders",
@@ -850,6 +861,7 @@ export const ecommercePlugin = Object.freeze({
             id: "commerce.orders.create",
             method: "POST",
             path: "/orders",
+            meta: { pluginResource: "orders", pluginAction: "create" },
             spec: {
               operationId: "createOrder",
               summary: "Create an order",
@@ -910,6 +922,7 @@ export const ecommercePlugin = Object.freeze({
             id: "commerce.orders.getById",
             method: "GET",
             path: "/orders/:id",
+            meta: { pluginResource: "orders", pluginAction: "getById" },
             spec: {
               operationId: "getOrderById",
               summary: "Get an order by ID",
@@ -936,6 +949,7 @@ export const ecommercePlugin = Object.freeze({
             id: "commerce.payments.providers.list",
             method: "GET",
             path: "/payments/providers",
+            meta: { pluginResource: "payments", pluginAction: "providers" },
             spec: {
               operationId: "listPaymentProviders",
               summary: "List installed payment providers",
@@ -962,6 +976,7 @@ export const ecommercePlugin = Object.freeze({
             id: "commerce.payments.attempts.list",
             method: "GET",
             path: "/payments/attempts",
+            meta: { pluginResource: "payments", pluginAction: "attempts" },
             spec: {
               operationId: "listPaymentAttempts",
               summary: "List payment attempts",
@@ -979,6 +994,7 @@ export const ecommercePlugin = Object.freeze({
             id: "commerce.payments.create",
             method: "POST",
             path: "/orders/:id/payments",
+            meta: { pluginResource: "payments", pluginAction: "create" },
             spec: {
               operationId: "createOrderPayment",
               summary: "Initiate payment for an order",
@@ -1023,6 +1039,7 @@ export const ecommercePlugin = Object.freeze({
             id: "commerce.subscriptions.list",
             method: "GET",
             path: "/subscriptions",
+            meta: { pluginResource: "subscriptions", pluginAction: "list" },
             spec: {
               operationId: "listSubscriptions",
               summary: "List recurring billing subscriptions",
@@ -1040,6 +1057,7 @@ export const ecommercePlugin = Object.freeze({
             id: "commerce.subscriptions.create",
             method: "POST",
             path: "/subscriptions",
+            meta: { pluginResource: "subscriptions", pluginAction: "create" },
             spec: {
               operationId: "createSubscription",
               summary: "Create a recurring billing subscription",
@@ -1087,6 +1105,7 @@ export const ecommercePlugin = Object.freeze({
             id: "commerce.subscriptions.getById",
             method: "GET",
             path: "/subscriptions/:id",
+            meta: { pluginResource: "subscriptions", pluginAction: "getById" },
             spec: {
               operationId: "getSubscriptionById",
               summary: "Get subscription details by ID",
@@ -1113,6 +1132,7 @@ export const ecommercePlugin = Object.freeze({
             id: "commerce.subscriptions.cancel",
             method: "POST",
             path: "/subscriptions/:id/cancel",
+            meta: { pluginResource: "subscriptions", pluginAction: "cancel" },
             spec: {
               operationId: "cancelSubscription",
               summary: "Cancel an active subscription",
@@ -1154,6 +1174,16 @@ export const ecommercePlugin = Object.freeze({
             },
           },
     ];
+
+    context.addService({
+      name: "@zelavis/ecommerce",
+      namespace: "ecommerce",
+      basePath: "/plugins/ecommerce",
+      service: commerce,
+      api: {
+        v1: routes,
+      },
+    });
 
     context.addService({
       name: "commerce",

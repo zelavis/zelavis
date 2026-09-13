@@ -10,7 +10,8 @@
     "kind": "plugin",
     "capabilities": [
       "@zelavis/ecommerce:payments"
-    ]
+    ],
+    "namespace": "stripe"
   },
   "types": "./dist/index.d.ts",
   "exports": {

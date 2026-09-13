@@ -73,7 +73,7 @@ test("a manifest carrying an invalid capability is refused at validation", () =>
     name: "@acme/thing",
     type: "module",
     exports: "./index.js",
-    zelavis: { kind: "plugin", capabilities },
+    zelavis: { kind: "plugin", namespace: "example", capabilities },
   });
 
   assert.doesNotThrow(() =>
@@ -90,7 +90,7 @@ test("manifest capabilities reach the loaded service", async () => {
     version: "1.0.0",
     type: "module",
     exports: "./index.js",
-    zelavis: { kind: "plugin", capabilities: ["zelavis/auth:credentials"] },
+    zelavis: { kind: "plugin", namespace: "example", capabilities: ["zelavis/auth:credentials"] },
   };
 
   // A service object that does not restate its capabilities is not opting out.
