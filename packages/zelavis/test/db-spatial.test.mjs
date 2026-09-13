@@ -8,7 +8,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Effect } from "effect";
 import {
-  contains, distanceBetween, inBox, loadH3, cellsFor, COARSEST_RESOLUTION,
+  contains, distanceBetween, distanceToGeometry, distanceToSegment, inBox, loadH3, cellsFor, coveringFor,
+  intersectsGeometry, segmentsIntersect, boundingBoxOf, boundingBoxesOverlap,
+  assertGeometryBudget, MAX_GEOMETRY_VERTICES, MAX_GEOMETRY_RINGS, COARSEST_RESOLUTION,
 } from "../dist/db/spatial.js";
 
 const BERLIN = [13.405, 52.52];
@@ -96,4 +98,111 @@ test("a covering names the cell and its ancestors", async () => {
     coordinates: [[[13.405, 52.52], [13.4051, 52.52], [13.4051, 52.5201], [13.405, 52.5201], [13.405, 52.52]]],
   };
   assert.ok(cellsFor(h3, tiny, 7).length > 0, "a shape narrower than a cell is still indexed");
+});
+
+test("a line string indexes cells continuously along its path and contains its points", async () => {
+  const h3 = await Effect.runPromise(loadH3);
+  const line = {
+    type: "LineString",
+    coordinates: [[13.3777, 52.5163], [13.4094, 52.5208]],
+  };
+  const cells = cellsFor(h3, line, 8);
+  assert.ok(cells.length > 2, `line produced ${cells.length} cells`);
+  assert.ok(cells.includes(h3.latLngToCell(52.5163, 13.3777, 8)));
+  assert.ok(cells.includes(h3.latLngToCell(52.5208, 13.4094, 8)));
+
+  const covering = coveringFor(h3, line, 8);
+  assert.ok(covering.cells.length > 0);
+  assert.equal(covering.resolution, 8);
+
+  // Containment on line
+  assert.equal(contains(line, [13.3777, 52.5163]), true, "endpoint is on line");
+  assert.equal(contains(line, [13.4094, 52.5208]), true, "endpoint is on line");
+  // Point halfway along the segment
+  const mid = [
+    (13.3777 + 13.4094) / 2,
+    (52.5163 + 52.5208) / 2,
+  ];
+  assert.equal(contains(line, mid), true, "midpoint is on line");
+  assert.equal(contains(line, [13.3777, 52.6]), false, "point far north is not on line");
+});
+
+test("two polygons crossing edge-to-edge intersect even with no vertex inside either", () => {
+  // A vertical rectangle and a horizontal rectangle crossing in a plus sign (+)
+  const vertical = {
+    type: "Polygon",
+    coordinates: [[[2, 0], [3, 0], [3, 10], [2, 10], [2, 0]]],
+  };
+  const horizontal = {
+    type: "Polygon",
+    coordinates: [[[0, 4], [10, 4], [10, 5], [0, 5], [0, 4]]],
+  };
+
+  // Verify that neither polygon's vertices lie inside the other
+  const vInH = vertical.coordinates[0].some((p) => contains(horizontal, p));
+  const hInV = horizontal.coordinates[0].some((p) => contains(vertical, p));
+  assert.equal(vInH, false, "no vertex of vertical is inside horizontal");
+  assert.equal(hInV, false, "no vertex of horizontal is inside vertical");
+
+  // But they intersect!
+  assert.equal(intersectsGeometry(vertical, horizontal), true, "vertical intersects horizontal");
+  assert.equal(intersectsGeometry(horizontal, vertical), true, "symmetric intersection");
+
+  // Non-intersecting polygons
+  const disjoint = {
+    type: "Polygon",
+    coordinates: [[[20, 20], [25, 20], [25, 25], [20, 25], [20, 20]]],
+  };
+  assert.equal(intersectsGeometry(vertical, disjoint), false, "disjoint polygons do not intersect");
+});
+
+test("distanceToGeometry calculates accurate distances to points, lines, and polygons", () => {
+  const line = {
+    type: "LineString",
+    coordinates: [[13.37, 52.51], [13.39, 52.51]],
+  };
+  // A point directly north of the midpoint of line (0.01 deg lat away)
+  const query = [13.38, 52.52];
+  const dist = distanceToGeometry(query, line);
+  // ~1112 metres (perpendicular distance to midpoint)
+  assert.ok(Math.abs(dist - 1112) < 2, `expected ~1112m, got ${dist}m`);
+
+  // Distance to a polygon:
+  const poly = {
+    type: "Polygon",
+    coordinates: [[[0, 0], [4, 0], [4, 4], [0, 4], [0, 0]]],
+  };
+  assert.equal(distanceToGeometry([2, 2], poly), 0, "point inside polygon has distance 0");
+  const outsideDist = distanceToGeometry([6, 2], poly);
+  assert.ok(outsideDist > 200_000, `distance to polygon edge is positive: ${outsideDist}m`);
+});
+
+test("denial-of-service budget prevents processing pathologically large geometries", () => {
+  // Geometry exceeding MAX_GEOMETRY_VERTICES
+  const hugeCoords = [];
+  for (let i = 0; i <= MAX_GEOMETRY_VERTICES + 10; i++) {
+    hugeCoords.push([13.4 + i * 0.0001, 52.5]);
+  }
+  const hugeLine = {
+    type: "LineString",
+    coordinates: hugeCoords,
+  };
+  assert.throws(
+    () => assertGeometryBudget(hugeLine),
+    /Geometry exceeds maximum vertex budget/,
+  );
+
+  // Geometry exceeding MAX_GEOMETRY_RINGS
+  const manyRings = [];
+  for (let i = 0; i <= MAX_GEOMETRY_RINGS + 5; i++) {
+    manyRings.push([[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]);
+  }
+  const hugePoly = {
+    type: "Polygon",
+    coordinates: manyRings,
+  };
+  assert.throws(
+    () => assertGeometryBudget(hugePoly),
+    /Geometry exceeds maximum ring budget/,
+  );
 });

@@ -887,7 +887,7 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   covered the long way round the globe — 73 cells at resolution 2 became 3,497
   at 4, and would have been tens of millions at 9 — so a box is now split at
   the line.
-- [ ] Geometry, the rest of it: nearest-neighbour ordering and paging by
+- [x] Geometry, the rest of it: nearest-neighbour ordering and paging by
   distance; line geometries; polygon-to-polygon intersection that does not
   depend on a vertex falling inside; and a documented denial-of-service budget
   for very large or very numerous rings beyond the covering cap. `flatbush`

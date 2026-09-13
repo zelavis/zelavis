@@ -40,8 +40,8 @@ import {
 import type { DbError } from "./errors.js";
 import { compareOrderedValues, decodeOrderedTuple, orderedTuple, sameOrderedKind } from "./keys.js";
 import {
-  boxGeometry, cellsFor, contains, coveringFor, diskFor, distanceBetween, inBox, loadH3,
-  positionsOf, COARSEST_RESOLUTION,
+  boxGeometry, cellsFor, coveringFor, diskFor, distanceToGeometry, inBox,
+  intersectsGeometry, loadH3, positionsOf, COARSEST_RESOLUTION,
   type BoundingBox, type Geometry, type Position as GeoPosition,
 } from "./spatial.js";
 import {
@@ -283,6 +283,8 @@ export interface Document<TData extends JsonObject = JsonObject> {
   readonly version: number;
   /** Present when a search query is scored, closest/most relevant first. */
   readonly score?: number;
+  /** Present when a spatial near query is evaluated, distance in metres from query point. */
+  readonly distance?: number;
   /** Highlighted snippets for searched fields, keyed by field path. */
   readonly highlights?: Record<string, ReadonlyArray<string>>;
 }
@@ -826,7 +828,17 @@ export const compareDocuments = (
   const sorts = normalizeSorts(orderBy);
   return (a, b) => {
     for (const sort of sorts) {
-      const order = compareAt(readPath(a.data, sort.path), readPath(b.data, sort.path), sort.direction, sort.nulls);
+      const valA = sort.path === "$distance" || sort.path === "distance"
+        ? (a.distance ?? readPath(a.data, sort.path))
+        : sort.path === "$score" || sort.path === "score"
+          ? (a.score ?? readPath(a.data, sort.path))
+          : readPath(a.data, sort.path);
+      const valB = sort.path === "$distance" || sort.path === "distance"
+        ? (b.distance ?? readPath(b.data, sort.path))
+        : sort.path === "$score" || sort.path === "score"
+          ? (b.score ?? readPath(b.data, sort.path))
+          : readPath(b.data, sort.path);
+      const order = compareAt(valA, valB, sort.direction, sort.nulls);
       if (order !== 0) return order;
     }
     return 0;
@@ -937,7 +949,7 @@ const geometryAt = (data: JsonObject, path: string): Geometry | undefined => {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
   const shape = value as { type?: unknown; coordinates?: unknown };
   if (typeof shape.type !== "string" || !Array.isArray(shape.coordinates)) return undefined;
-  return shape.type === "Point" || shape.type === "Polygon" || shape.type === "MultiPolygon"
+  return shape.type === "Point" || shape.type === "LineString" || shape.type === "MultiLineString" || shape.type === "Polygon" || shape.type === "MultiPolygon"
     ? (value as unknown as Geometry)
     : undefined;
 };
@@ -981,17 +993,13 @@ const matchesGeometry = (filter: SpatialFilter, data: JsonObject): boolean => {
   const geometry = geometryAt(data, filter.field);
   if (geometry === undefined) return false;
   if ("near" in filter) {
-    return positionsOf(geometry).some((position) =>
-      distanceBetween(position, filter.near) <= filter.radius);
+    return distanceToGeometry(filter.near, geometry) <= filter.radius;
   }
   if ("within" in filter) {
-    return positionsOf(geometry).some((position) => inBox(filter.within, position));
+    return boxGeometry(filter.within).some((box) => intersectsGeometry(box, geometry)) ||
+      positionsOf(geometry).some((position) => inBox(filter.within, position));
   }
-  // Either shape holding a point of the other: enough for points and for
-  // overlapping areas, and honest about the case it misses — two shapes
-  // crossing edge to edge with no vertex inside either.
-  return positionsOf(filter.intersects).some((position) => contains(geometry, position)) ||
-    positionsOf(geometry).some((position) => contains(filter.intersects, position));
+  return intersectsGeometry(filter.intersects, geometry);
 };
 
 /** A value a field has, as opposed to null, absent, or an object or array. */
@@ -1578,7 +1586,8 @@ const planQuery = (
 type Position =
   | { readonly phase: "values"; readonly cursor: OrderedCursor }
   | { readonly phase: "rest"; readonly seq: number }
-  | { readonly phase: "seq"; readonly seq: number };
+  | { readonly phase: "seq"; readonly seq: number }
+  | { readonly phase: "distance"; readonly distance: number; readonly seq: number };
 
 interface Placed {
   readonly document: Document;
@@ -2826,6 +2835,52 @@ export const documentsFor = (
       return out;
     });
 
+  /** Matching documents in distance order from a query point. */
+  const inDistanceOrder = (
+    plan: Plan,
+    collection: string,
+    filter: Extract<SpatialFilter, { near: GeoPosition }>,
+    take: number,
+    from: Position | undefined,
+  ) =>
+    Effect.gen(function* () {
+      const keep = keeps(plan);
+      const candidates: Array<{ document: Document; seq: number; distance: number }> = [];
+      for (const seq of yield* Stream.runCollect(resolveQuery(plan.query))) {
+        const doc = yield* readDocument(seq);
+        if (doc && keep(doc)) {
+          const docGeo = geometryAt(doc.data, filter.field);
+          const dist = docGeo !== undefined
+            ? Math.round(distanceToGeometry(filter.near, docGeo) * 100) / 100
+            : Number.POSITIVE_INFINITY;
+          candidates.push({
+            document: { ...doc, distance: dist },
+            seq: Number(seq),
+            distance: dist,
+          });
+        }
+      }
+      candidates.sort((a, b) => a.distance - b.distance || a.seq - b.seq);
+
+      const after = from?.phase === "distance"
+        ? { distance: from.distance, seq: from.seq }
+        : undefined;
+
+      const out: Array<Placed> = [];
+      for (const entry of candidates) {
+        if (after !== undefined) {
+          if (entry.distance < after.distance) continue;
+          if (entry.distance === after.distance && entry.seq <= after.seq) continue;
+        }
+        out.push({
+          document: entry.document,
+          position: { phase: "distance", distance: entry.distance, seq: entry.seq },
+        });
+        if (out.length >= take) break;
+      }
+      return out;
+    });
+
   const orderOf = (order: ReadonlyArray<Sort>) =>
     order.map((sort) => [sort.path, sort.direction, sort.nulls]);
 
@@ -2867,9 +2922,12 @@ export const documentsFor = (
           reason: "the collection's indexes changed since this cursor was issued; start the read again",
         });
       }
-      const { phase, seq, cursor: inner } = p as Record<string, unknown>;
+      const { phase, seq, cursor: inner, distance } = p as Record<string, unknown>;
       if (shape.order.length === 0) {
         if (phase === "seq" && typeof seq === "number") return { phase, seq };
+        if (phase === "distance" && typeof distance === "number" && typeof seq === "number") {
+          return { phase, distance, seq };
+        }
       } else if (phase === "rest" && typeof seq === "number" && shape.via === undefined) {
         return { phase, seq };
       } else if (phase === "values" && typeof inner === "string") {
@@ -3434,23 +3492,39 @@ const generateHighlights = (
         scored.sort((a, b) => b.score - a.score || a.seq - b.seq);
         return slice(scored.slice(0, wanted.k).map((entry) => entry.document));
       }
-      if (sorts.length > 0) {
-        const indexed = chooseIndex(collection?.indexes ?? [], sorts, equalityBindings(where));
-        if (indexed !== undefined) {
-          const found = yield* inIndexOrder(plan, indexed, take, undefined).pipe(Effect.orDie);
-          return slice(found.map((entry) => entry.document));
+      const attachDistance = (doc: Document): Document => {
+        if (input.geometry === undefined || !("near" in input.geometry) || doc.distance !== undefined) {
+          return doc;
         }
-        if (sorts.length === 1) {
-          // One field is served by its ordered lens, in order, without a sort.
-          const found = yield* inOrder(plan, input.collection, sorts[0]!, take, undefined).pipe(Effect.orDie);
-          return slice(found.map((entry) => entry.document));
+        const docGeo = geometryAt(doc.data, input.geometry.field);
+        if (docGeo === undefined) return doc;
+        return {
+          ...doc,
+          distance: Math.round(distanceToGeometry(input.geometry.near, docGeo) * 100) / 100,
+        };
+      };
+      if (sorts.length > 0) {
+        const isDynamicSort = sorts.some(
+          (s) => s.path === "$distance" || s.path === "distance" || s.path === "$score" || s.path === "score",
+        );
+        if (!isDynamicSort) {
+          const indexed = chooseIndex(collection?.indexes ?? [], sorts, equalityBindings(where));
+          if (indexed !== undefined) {
+            const found = yield* inIndexOrder(plan, indexed, take, undefined).pipe(Effect.orDie);
+            return slice(found.map((entry) => attachDistance(entry.document)));
+          }
+          if (sorts.length === 1) {
+            // One field is served by its ordered lens, in order, without a sort.
+            const found = yield* inOrder(plan, input.collection, sorts[0]!, take, undefined).pipe(Effect.orDie);
+            return slice(found.map((entry) => attachDistance(entry.document)));
+          }
         }
       }
       const keep = keeps(plan);
       const candidates: Array<{ document: Document; seq: number }> = [];
       for (const seq of yield* Stream.runCollect(resolveQuery(plan.query))) {
         const doc = yield* readDocument(seq);
-        if (doc && keep(doc)) candidates.push({ document: doc, seq: Number(seq) });
+        if (doc && keep(doc)) candidates.push({ document: attachDistance(doc), seq: Number(seq) });
       }
 
       if (planned.words !== undefined && collection?.analyzer !== undefined && planned.words.parsed.terms.length > 0) {
@@ -3571,6 +3645,14 @@ const generateHighlights = (
         }
         const docs = scoredDocs.map((item) => attachHighlights(item.document));
         return slice(docs.sort(compareDocuments(sorts)));
+      }
+
+      if (sorts.length === 0 && input.geometry && "near" in input.geometry) {
+        candidates.sort(
+          (a, b) => (a.document.distance ?? Number.POSITIVE_INFINITY) - (b.document.distance ?? Number.POSITIVE_INFINITY) ||
+            a.seq - b.seq,
+        );
+        return slice(candidates.map((c) => c.document));
       }
 
       const docs = candidates.map((c) => c.document);
@@ -3785,9 +3867,22 @@ const generateHighlights = (
           if (narrowed === undefined) return { documents: [] };
           plan = narrowed;
         }
+        const attachDistance = (doc: Document): Document => {
+          if (geometry === undefined || !("near" in geometry) || doc.distance !== undefined) {
+            return doc;
+          }
+          const docGeo = geometryAt(doc.data, geometry.field);
+          if (docGeo === undefined) return doc;
+          return {
+            ...doc,
+            distance: Math.round(distanceToGeometry(geometry.near, docGeo) * 100) / 100,
+          };
+        };
         // One more than the page, to know whether another document follows.
         const found = sorts.length === 0
-          ? yield* inIdentifierOrder(plan, limit + 1, from)
+          ? (geometry !== undefined && "near" in geometry
+              ? yield* inDistanceOrder(plan, input.collection, geometry, limit + 1, from)
+              : yield* inIdentifierOrder(plan, limit + 1, from))
           : indexed !== undefined
             ? yield* inIndexOrder(plan, indexed, limit + 1, from)
             : yield* inOrder(plan, input.collection, sorts[0]!, limit + 1, from);
@@ -3801,7 +3896,7 @@ const generateHighlights = (
         };
         const page = found.slice(0, limit);
         return {
-          documents: page.map((entry) => attachHighlights(entry.document)),
+          documents: page.map((entry) => attachHighlights(attachDistance(entry.document))),
           ...(found.length > limit ? { next: encodeDocumentCursor(shape, page.at(-1)!.position) } : {}),
           ...(input.cursors === true
             ? { cursors: page.map((entry) => encodeDocumentCursor(shape, entry.position)) }
