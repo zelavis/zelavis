@@ -33,9 +33,15 @@ import type { ProjectionSummary } from "./projections.js";
 import type { QuerySystemViewInput, SystemView, SystemViewResult } from "./system-views.js";
 import type {
   AggregateInput,
+  HistogramInput,
+  HistogramResult,
+  InterpolateInput,
+  MovingInput,
   RangeInput,
+  TimeSeriesBucket,
   TimeSeriesPoint,
   TimeSeriesSummary,
+  WindowsInput,
 } from "./time-series.js";
 import { shardsOf, type ShardId, type TenantId } from "./topology.js";
 
@@ -165,6 +171,22 @@ export interface TenantRuntimeApi {
       input?: RangeInput,
     ) => Promise<ReadonlyArray<TimeSeriesPoint>>;
     readonly aggregate: (series: string, input: AggregateInput) => Promise<number>;
+    readonly windows: (
+      series: string,
+      input: WindowsInput,
+    ) => Promise<ReadonlyArray<TimeSeriesBucket>>;
+    readonly moving: (
+      series: string,
+      input: MovingInput,
+    ) => Promise<ReadonlyArray<TimeSeriesPoint>>;
+    readonly histogram: (
+      series: string,
+      input: HistogramInput,
+    ) => Promise<HistogramResult>;
+    readonly interpolate: (
+      series: string,
+      input: InterpolateInput,
+    ) => Promise<ReadonlyArray<TimeSeriesPoint>>;
     readonly ingest: (series: string) => Promise<{ name: string; points: number }>;
   };
   readonly backups: {
@@ -246,6 +268,10 @@ const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
     list: () => run(tenant.timeSeries.list),
     range: (series, input) => run(tenant.timeSeries.get(series).range(input)),
     aggregate: (series, input) => run(tenant.timeSeries.get(series).aggregate(input)),
+    windows: (series, input) => run(tenant.timeSeries.get(series).windows(input)),
+    moving: (series, input) => run(tenant.timeSeries.get(series).moving(input)),
+    histogram: (series, input) => run(tenant.timeSeries.get(series).histogram(input)),
+    interpolate: (series, input) => run(tenant.timeSeries.get(series).interpolate(input)),
     ingest: (series) => run(tenant.timeSeries.ingest(series)),
   },
   backups: {

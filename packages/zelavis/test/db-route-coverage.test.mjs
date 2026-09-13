@@ -99,3 +99,59 @@ test("every documents operation is reachable through a route", async (t) => {
   // would pass by touching nothing.
   assert.ok(touched.size >= surface.length, "the recorder saw the routes reach the API");
 });
+
+test("every timeSeries operation is reachable through a route", async (t) => {
+  const { api } = await openTemporaryDatabase(t);
+  const touched = new Set();
+  const recordingTs = (baseApi) => ({
+    ...baseApi,
+    forTenant: (tenantId) => {
+      const tenant = baseApi.forTenant(tenantId);
+      return {
+        ...tenant,
+        timeSeries: new Proxy(tenant.timeSeries, {
+          get(target, property) {
+            if (typeof property === "string") touched.add(property);
+            const held = Reflect.get(target, property);
+            if (typeof held !== "function") return held;
+            return () => Promise.reject(new TypeError("reached"));
+          },
+        }),
+      };
+    },
+  });
+
+  const service = defineDatabaseService(recordingTs(api));
+
+  for (const route of routesOf(service)) {
+    try {
+      await Promise.resolve(route.handler({
+        service: recordingTs(api),
+        params: { collection: "items", id: "x", name: "n", series: "s", view: "v" },
+        query: new URLSearchParams({ tenantId: "acme" }),
+        body: {
+          tenantId: "acme",
+          interval: 1000,
+          step: 1000,
+          window: { count: 1 },
+          op: "sum",
+        },
+        headers: {},
+        request: undefined,
+      }));
+    } catch {
+      // The call is expected to fail; only the reach is being recorded.
+    }
+  }
+
+  const surface = Object.keys(api.forTenant("acme").timeSeries);
+  const unreachable = surface.filter((method) => !touched.has(method));
+
+  assert.deepEqual(
+    unreachable,
+    [],
+    `these timeSeries operations have no route: ${unreachable.join(", ")}. ` +
+      "Add one, or this capability exists only in process.",
+  );
+  assert.ok(touched.size >= surface.length, "the recorder saw the routes reach the timeSeries API");
+});

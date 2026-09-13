@@ -1262,18 +1262,23 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   configure -- a point carries its instant in the ordered lens and a window is
   one range over it. `db-time-series-buckets.test.mjs` is kept deliberately
   under its old name as the regression guard that those answers did not change.
-- [ ] Time-series slice two: operations that answer with a series rather than a
+- [x] Time-series slice two: operations that answer with a series rather than a
   number -- moving windows, histograms, interpolation -- which need a surface
-  of their own, since `aggregate` returns one number. Then rollups and
-  retention, which are new durable derived state and a policy for discarding
-  raw points; a rollup is a persisted coarser series, and must not become
-  hierarchical bucket postings again. Then late and out-of-order point
-  semantics with a duplicate/idempotency policy, event-time against
+  of their own, since `aggregate` returns one number. Bounded and tumbling
+  windows (`windows`), sliding windows (`step < interval`), gap interpolation
+  (`fill`: `"none" | "zero" | "previous" | "linear"`), rolling windows
+  (`moving` by time duration or point count), value distribution histograms
+  (`histogram` with bins, boundaries, steps, and summary statistics), and
+  grid resampling (`interpolate` with `"linear" | "previous" | "next"`).
+  Then rollups and retention, which are new durable derived state and a policy
+  for discarding raw points; a rollup is a persisted coarser series, and must
+  not become hierarchical bucket postings again. Then late and out-of-order
+  point semantics with a duplicate/idempotency policy, event-time against
   ingestion-time windows, and projection lag, health, retry and backfill
   controls.
-- [ ] The HTTP aggregate route does not pass `tags`, though `AggregateInput`
-  carries them and the runtime API honours them: tag-filtered aggregation works
-  in process and not over the wire.
+- [x] The HTTP time-series routes pass `tags` over the wire: both `aggregate`
+  and `range` accept tag-filter objects and narrow points before evaluating,
+  tested and matched with 100% route coverage across the runtime API.
 
 - [x] Aggregation over a measure lens, as a `MeasureDefinition` on a collection
   and `summarize`/`summarizeBy` reads. The filters resolve to identifiers first
