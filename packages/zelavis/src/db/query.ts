@@ -32,10 +32,13 @@ export interface EqualsQuery {
   readonly value: OrderedScalar;
 }
 
+export type EdgeDirection = "outbound" | "inbound";
+
 export interface EdgeQuery {
   readonly _tag: "Edge";
   readonly edgeType: string;
   readonly from: number;
+  readonly direction?: EdgeDirection;
 }
 
 export interface AndQuery {
@@ -82,7 +85,11 @@ export const Query: Schema.Codec<Query> = Schema.Union([
   Schema.TaggedStruct("Term", { field: Schema.String, term: Schema.String }),
   Schema.TaggedStruct("TermPrefix", { field: Schema.String, prefix: Schema.String }),
   Schema.TaggedStruct("Equals", { column: Schema.String, value: OrderedScalarWire }),
-  Schema.TaggedStruct("Edge", { edgeType: Schema.String, from: Schema.Finite }),
+  Schema.TaggedStruct("Edge", {
+    edgeType: Schema.String,
+    from: Schema.Finite,
+    direction: Schema.optional(Schema.Union([Schema.Literal("outbound"), Schema.Literal("inbound")])),
+  }),
   Schema.TaggedStruct("Range", {
     column: Schema.String,
     lower: Schema.optional(RangeBoundWire),
@@ -114,10 +121,11 @@ export const equals = (column: string, value: OrderedScalar): Query => ({
   value,
 });
 
-export const edge = (edgeType: string, from: number): Query => ({
+export const edge = (edgeType: string, from: number, direction: EdgeDirection = "outbound"): Query => ({
   _tag: "Edge",
   edgeType,
   from,
+  ...(direction !== "outbound" ? { direction } : {}),
 });
 
 export const and = (...of: ReadonlyArray<Query>): Query => ({ _tag: "And", of });

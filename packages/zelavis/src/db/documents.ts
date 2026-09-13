@@ -374,12 +374,49 @@ export interface SimilarFilter {
  * question about links, and a document with none has none.
  */
 export interface LinkFilter {
-  /** The collection that declares the edge. */
-  readonly collection: string;
-  /** The document whose links are followed. */
+  /** The collection that declares the edge (defaults to queried collection). */
+  readonly collection?: string;
+  /** The document whose links are followed (or target document for inbound). */
   readonly id: string;
   /** Which declared edge to follow. */
   readonly edge: string;
+  /**
+   * Direction of edge traversal:
+   * - "outbound" (default): documents linked from this document (source -> targets).
+   * - "inbound": documents linking to this document (sources -> target).
+   */
+  readonly direction?: "outbound" | "inbound";
+}
+
+export interface TraverseInput {
+  /** The collection containing the starting document. */
+  readonly collection: string;
+  /** The collection declaring the edge; defaults to collection or discovered target. */
+  readonly edgeCollection?: string;
+  /** The starting document identifier. */
+  readonly id: string;
+  /** Which declared edge to follow. */
+  readonly edge: string;
+  /** Traversal direction: "outbound" (default), "inbound", or "both". */
+  readonly direction?: "outbound" | "inbound" | "both";
+  /** Maximum traversal depth from starting document (default: 1, max: 20). */
+  readonly maxDepth?: number;
+  /** Maximum number of distinct documents to visit (default: 100, max: 1000). */
+  readonly maxVisits?: number;
+  /** Optional filter applied to traversed documents. */
+  readonly where?: ReadonlyArray<DocumentFilter>;
+}
+
+export interface TraverseStep {
+  readonly document: Document;
+  readonly depth: number;
+}
+
+export interface TraverseResult {
+  readonly documents: ReadonlyArray<Document>;
+  readonly steps: ReadonlyArray<TraverseStep>;
+  readonly visited: number;
+  readonly maxDepthReached: number;
 }
 
 export type MeasureOperation =
@@ -1633,6 +1670,16 @@ export interface DocumentsApi {
     /** Which references to resolve; every one the collection declares when omitted. */
     readonly references?: ReadonlyArray<string>;
   }) => Effect.Effect<ReadonlyArray<RelatedDocuments>, UnknownReference>;
+  /**
+   * Bounded breadth-first graph traversal from a starting document along declared edges.
+   */
+  readonly traverse: (
+    input: TraverseInput,
+  ) => Effect.Effect<
+    TraverseResult,
+    | UnknownEdge | UnknownReference | UnanalyzedCollection
+    | UnindexedGeometry | UnembeddedCollection | InvalidVectorQuery
+  >;
   readonly update: (input: {
     readonly collection: string;
     /** Do this at most once; see `insert`. */
@@ -3268,23 +3315,40 @@ const generateHighlights = (
     });
 
   /**
-   * A plan narrowed to what one document links to, or undefined when there is
-   * nothing to link from -- an absent document has no links, which is an empty
-   * answer rather than a failure.
+   * A plan narrowed to what one document links to (outbound) or what links to
+   * it (inbound), or undefined when there is nothing to link from -- an absent
+   * document has no links, which is an empty answer rather than a failure.
    */
   const withLink = (
     plan: Plan,
     filter: LinkFilter,
+    currentCollection: string,
   ): Effect.Effect<Plan | undefined, UnknownEdge> =>
     Effect.gen(function* () {
-      const source = yield* loadCollection(filter.collection);
-      const declared = (source?.edges ?? []).find((candidate) => candidate.name === filter.edge);
-      if (declared === undefined) {
-        return yield* new UnknownEdge({ collection: filter.collection, name: filter.edge });
+      const direction = filter.direction ?? "outbound";
+      let declaringCollection = filter.collection ?? currentCollection;
+      let colRecord = yield* loadCollection(declaringCollection);
+      let declared = (colRecord?.edges ?? []).find((candidate) => candidate.name === filter.edge);
+
+      if (declared === undefined && direction === "inbound" && filter.collection !== undefined) {
+        const queryCol = yield* loadCollection(currentCollection);
+        const queryDeclared = (queryCol?.edges ?? []).find(
+          (candidate) => candidate.name === filter.edge && candidate.collection === filter.collection,
+        );
+        if (queryDeclared !== undefined) {
+          declaringCollection = currentCollection;
+          declared = queryDeclared;
+        }
       }
-      const seq = yield* lookup(documentNs(tenant, filter.collection), filter.id);
+
+      if (declared === undefined) {
+        return yield* new UnknownEdge({ collection: declaringCollection, name: filter.edge });
+      }
+
+      const targetNsCollection = direction === "inbound" ? declared.collection : declaringCollection;
+      const seq = yield* lookup(documentNs(tenant, targetNsCollection), filter.id);
       if (seq === undefined) return undefined;
-      const clause = edgeQuery(edgeTypeFor(filter.collection, filter.edge), Number(seq));
+      const clause = edgeQuery(edgeTypeFor(declaringCollection, filter.edge), Number(seq), direction);
       return {
         query: and(plan.query, clause),
         fields: plan.fields === undefined ? clause : and(plan.fields, clause),
@@ -3417,7 +3481,7 @@ const generateHighlights = (
         plan = yield* withGeometry(collection, input.collection, plan, input.geometry);
       }
       if (input.linked !== undefined) {
-        const narrowed = yield* withLink(plan, input.linked);
+        const narrowed = yield* withLink(plan, input.linked, input.collection);
         if (narrowed === undefined) return undefined;
         plan = narrowed;
       }
@@ -3850,7 +3914,7 @@ const generateHighlights = (
           plan = yield* withGeometry(collection, input.collection, plan, geometry);
         }
         if (input.linked !== undefined) {
-          const narrowed = yield* withLink(plan, input.linked);
+          const narrowed = yield* withLink(plan, input.linked, input.collection);
           if (narrowed === undefined) return { documents: [] };
           plan = narrowed;
         }
@@ -3908,6 +3972,102 @@ const generateHighlights = (
           out.push({ document, related });
         }
         return out;
+      }),
+
+    traverse: (input) =>
+      Effect.gen(function* () {
+        let declaringCollection = input.edgeCollection ?? input.collection;
+        let colRecord = yield* loadCollection(declaringCollection);
+        let declared = (colRecord?.edges ?? []).find((candidate) => candidate.name === input.edge);
+
+        if (declared === undefined && input.edgeCollection === undefined) {
+          const startCol = yield* loadCollection(input.collection);
+          const startDeclared = (startCol?.edges ?? []).find((candidate) => candidate.name === input.edge);
+          if (startDeclared !== undefined) {
+            declaringCollection = input.collection;
+            declared = startDeclared;
+          }
+        }
+
+        if (declared === undefined) {
+          return yield* new UnknownEdge({ collection: declaringCollection, name: input.edge });
+        }
+
+        const targetCollection = declared.collection;
+        const maxDepth = Math.max(1, Math.min(input.maxDepth ?? 1, 20));
+        const maxVisits = Math.max(1, Math.min(input.maxVisits ?? 100, 1000));
+        const direction = input.direction ?? "outbound";
+
+        const startSeq = yield* lookup(documentNs(tenant, input.collection), input.id);
+        if (startSeq === undefined) {
+          return { documents: [], steps: [], visited: 0, maxDepthReached: 0 };
+        }
+
+        const visited = new Set<string>([`${input.collection}/${input.id}`]);
+        const queue: Array<{ collection: string; id: string; depth: number }> = [
+          { collection: input.collection, id: input.id, depth: 0 },
+        ];
+        const steps: Array<TraverseStep> = [];
+        let maxDepthReached = 0;
+
+        while (queue.length > 0 && steps.length < maxVisits) {
+          const current = queue.shift()!;
+          if (current.depth >= maxDepth) continue;
+          const nextDepth = current.depth + 1;
+          const currentStepDocs: Document[] = [];
+
+          if (direction === "outbound" || direction === "both") {
+            if (current.collection === declaringCollection) {
+              const outDocs = yield* findDocuments({
+                collection: targetCollection,
+                linked: {
+                  collection: declaringCollection,
+                  id: current.id,
+                  edge: input.edge,
+                  direction: "outbound",
+                },
+                where: input.where,
+              });
+              currentStepDocs.push(...outDocs);
+            }
+          }
+
+          if (direction === "inbound" || direction === "both") {
+            if (current.collection === targetCollection) {
+              const inDocs = yield* findDocuments({
+                collection: declaringCollection,
+                linked: {
+                  collection: declaringCollection,
+                  id: current.id,
+                  edge: input.edge,
+                  direction: "inbound",
+                },
+                where: input.where,
+              });
+              currentStepDocs.push(...inDocs);
+            }
+          }
+
+          for (const doc of currentStepDocs) {
+            const key = `${doc.collection}/${doc.id}`;
+            if (!visited.has(key)) {
+              visited.add(key);
+              steps.push({ document: doc, depth: nextDepth });
+              maxDepthReached = Math.max(maxDepthReached, nextDepth);
+              if (steps.length >= maxVisits) break;
+              if (nextDepth < maxDepth) {
+                queue.push({ collection: doc.collection, id: doc.id, depth: nextDepth });
+              }
+            }
+          }
+        }
+
+        return {
+          documents: steps.map((s) => s.document),
+          steps,
+          visited: steps.length,
+          maxDepthReached,
+        };
       }),
 
     update: (input) =>

@@ -1237,16 +1237,12 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   itself -- re-deriving rather than re-checking, so a target that has since
   gone leaves a link unposted instead of failing a rewrite that was only meant
   to rebuild postings.
-- [ ] Graph slice two: inbound adjacency, which this deliberately does not do.
-  The lens keys a posting by its source, so answering "which documents link to
-  this one" needs a reverse posting written into the target's manifest, which
-  would re-version the target on every source write -- that cost has to be
-  chosen, not stumbled into. Then bounded traversal with depth, visit, time and
-  memory limits; shortest path, reachability, neighbourhood and component
-  queries where they have stable distributed semantics; and edge properties or
-  first-class edge objects without losing `Seq` identity. `graphology` is worth
-  evaluating for operating on a bounded materialized subgraph, never as the
-  persistence layer.
+- [x] Graph slice two: inbound adjacency and bounded graph traversal. Answering
+  "which documents link to this one" via reverse edge postings (`Tag.EdgeReverse`)
+  owned by the source document's lifecycle without re-versioning target documents.
+  Bounded breadth-first graph traversal (`traverse`) with depth, visit limits,
+  cycle detection, direction (`outbound`, `inbound`, `both`), and filter
+  intersection. Parity across memory and SQLite engines, plus HTTP route.
 
 - [x] Time-series aggregations over the window's endpoints and its
   distribution: `quantile` with a fraction `p`, plus `first`, `last`, `delta`

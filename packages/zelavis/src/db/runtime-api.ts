@@ -23,6 +23,8 @@ import type {
   SummarizeInput,
   Summary,
   GroupedSummary,
+  TraverseInput,
+  TraverseResult,
 } from "./documents.js";
 import type { DomainEvent, ReadDomainEventsInput } from "./domain-events.js";
 import type { TenantBackupV1 } from "./backup.js";
@@ -112,6 +114,7 @@ export interface TenantRuntimeApi {
     }) => Promise<Document | undefined>;
     readonly findMany: (input: FindDocumentsInput) => Promise<ReadonlyArray<Document>>;
     readonly findPage: (input: FindPageInput) => Promise<DocumentPage>;
+    readonly traverse: (input: TraverseInput) => Promise<TraverseResult>;
     readonly update: (input: {
       collection: string;
       id: string;
@@ -218,6 +221,7 @@ const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
     findById: (input) => run(tenant.documents.findById(input)),
     findMany: (input) => run(tenant.documents.findMany(input)),
     findPage: (input) => run(tenant.documents.findPage(input)),
+    traverse: (input) => run(tenant.documents.traverse(input)),
     update: (input) => run(tenant.documents.update(input)),
     delete: (input) => run(tenant.documents.delete(input)),
   },

@@ -941,7 +941,7 @@ export function defineDatabaseDocumentsService(
                   prefix: { type: "boolean", description: "When true, terms match as prefixes (search-as-you-type)" },
                   highlight: { description: "When true or HighlightOptions, highlights matching terms in analyzed fields" },
                   geometry: { type: "object", description: "A spatial filter: { field, near+radius | within | intersects }" },
-                  linked: { type: "object", description: "Only what a document links to: { collection, id, edge }" },
+                  linked: { type: "object", description: "Only what a document links to or what links to it: { collection, id, edge, direction? }" },
                   similar: { type: "object", description: "Closest first by embedding: { field, vector, k }" },
                   orderBy: { type: "array", description: "Sorts" },
                   limit: { type: "number" },
@@ -1002,7 +1002,7 @@ export function defineDatabaseDocumentsService(
                   prefix: { type: "boolean", description: "When true, terms match as prefixes (search-as-you-type)" },
                   highlight: { description: "When true or HighlightOptions, highlights matching terms in analyzed fields" },
                   geometry: { type: "object", description: "A spatial filter: { field, near+radius | within | intersects }" },
-                  linked: { type: "object", description: "Only what a document links to: { collection, id, edge }" },
+                  linked: { type: "object", description: "Only what a document links to or what links to it: { collection, id, edge, direction? }" },
                   orderBy: { type: "array", description: "One field, or several that a composite index serves" },
                   limit: { type: "number", description: "Documents per page: 1 to 1000, 50 when omitted" },
                   after: { type: "string", description: "The next cursor from the previous page" },
@@ -1041,6 +1041,62 @@ export function defineDatabaseDocumentsService(
           },
         },
         {
+          id: "database.documents.traverse",
+          method: "POST",
+          path: "/:collection/traverse",
+          spec: {
+            operationId: "traverseDocuments",
+            summary: "Bounded breadth-first traversal along declared graph edges",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "Collection name of starting document" },
+            },
+            requestBody: {
+              required: true,
+              schema: {
+                type: "object",
+                required: ["tenantId", "id", "edge"],
+                properties: {
+                  tenantId: { type: "string", description: "Tenant ID" },
+                  id: { type: "string", description: "Starting document ID" },
+                  edge: { type: "string", description: "Edge name to traverse" },
+                  edgeCollection: { type: "string", description: "Collection that declares the edge (optional)" },
+                  direction: { type: "string", enum: ["outbound", "inbound", "both"], description: "Traversal direction" },
+                  maxDepth: { type: "number", description: "Maximum traversal depth (default: 1, max: 20)" },
+                  maxVisits: { type: "number", description: "Maximum documents to visit (default: 100, max: 1000)" },
+                  where: { type: "array", description: "Filters applied to traversed documents" },
+                },
+              },
+            },
+            responses: {
+              200: { description: "Traversed documents and traversal steps" },
+              404: { description: "Not found or unknown edge" },
+            },
+          },
+          handler: async ({ service, params, body }) => {
+            const input = readBodyObject(body);
+            try {
+              const tenantId = readTenantId(input.tenantId);
+              return {
+                body: await service.forTenant(tenantId).documents.traverse({
+                  collection: params.collection,
+                  id: String(input.id ?? ""),
+                  edge: String(input.edge ?? ""),
+                  ...(typeof input.edgeCollection === "string" ? { edgeCollection: input.edgeCollection } : {}),
+                  ...(input.direction === "outbound" || input.direction === "inbound" || input.direction === "both"
+                    ? { direction: input.direction }
+                    : {}),
+                  ...(typeof input.maxDepth === "number" ? { maxDepth: input.maxDepth } : {}),
+                  ...(typeof input.maxVisits === "number" ? { maxVisits: input.maxVisits } : {}),
+                  ...(Array.isArray(input.where) ? { where: readFilters(input.where) } : {}),
+                }),
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 404);
+            }
+          },
+        },
+        {
           id: "database.documents.summarize",
           method: "POST",
           path: "/:collection/summarize",
@@ -1064,7 +1120,7 @@ export function defineDatabaseDocumentsService(
                   related: { type: "array", description: "Joins, each { reference, where?, id? }" },
                   search: { type: "string", description: "Words or quoted \"phrases\" to find in the analyzed fields" },
                   geometry: { type: "object", description: "A spatial filter" },
-                  linked: { type: "object", description: "Only what a document links to: { collection, id, edge }" },
+                  linked: { type: "object", description: "Only what a document links to or what links to it: { collection, id, edge, direction? }" },
                 },
               },
             },
@@ -1117,7 +1173,7 @@ export function defineDatabaseDocumentsService(
                   related: { type: "array", description: "Joins, each { reference, where?, id? }" },
                   search: { type: "string", description: "Words or quoted \"phrases\" to find in the analyzed fields" },
                   geometry: { type: "object", description: "A spatial filter" },
-                  linked: { type: "object", description: "Only what a document links to: { collection, id, edge }" },
+                  linked: { type: "object", description: "Only what a document links to or what links to it: { collection, id, edge, direction? }" },
                 },
               },
             },

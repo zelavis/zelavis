@@ -204,4 +204,212 @@ for (const [engine, open] of engines) {
         );
       }
     })));
+
+  test(`${engine}: inbound adjacency: following an edge in reverse answers with all citing documents`, (t) =>
+    setup(t, (docs) => Effect.gen(function* () {
+      // "third" is cited by both "first" and "second"
+      assert.deepEqual(
+        yield* find(docs, { linked: { collection: "papers", id: "third", edge: "cites", direction: "inbound" } }),
+        ["first", "second"],
+      );
+      // "second" is cited only by "first"
+      assert.deepEqual(
+        yield* find(docs, { linked: { collection: "papers", id: "second", edge: "cites", direction: "inbound" } }),
+        ["first"],
+      );
+      // "fourth" is cited only by "first"
+      assert.deepEqual(
+        yield* find(docs, { linked: { collection: "papers", id: "fourth", edge: "cites", direction: "inbound" } }),
+        ["first"],
+      );
+      // "first" is cited by nobody
+      assert.deepEqual(
+        yield* find(docs, { linked: { collection: "papers", id: "first", edge: "cites", direction: "inbound" } }),
+        [],
+      );
+      // An absent document has no incoming citations; not an error
+      assert.deepEqual(
+        yield* find(docs, { linked: { collection: "papers", id: "absent", edge: "cites", direction: "inbound" } }),
+        [],
+      );
+    })));
+
+  test(`${engine}: inbound adjacency: neighbours are narrowed before read with where filter`, (t) =>
+    setup(t, (docs) => Effect.gen(function* () {
+      // "first" has field "physics", "second" has field "chemistry"
+      assert.deepEqual(
+        yield* find(docs, {
+          linked: { collection: "papers", id: "third", edge: "cites", direction: "inbound" },
+          where: [{ path: "field", value: "physics" }],
+        }),
+        ["first"],
+      );
+      assert.deepEqual(
+        yield* find(docs, {
+          linked: { collection: "papers", id: "third", edge: "cites", direction: "inbound" },
+          where: [{ path: "field", value: "chemistry" }],
+        }),
+        ["second"],
+      );
+      assert.deepEqual(
+        yield* find(docs, {
+          linked: { collection: "papers", id: "third", edge: "cites", direction: "inbound" },
+          where: [{ path: "year", op: "gte", value: 2021 }],
+        }),
+        ["second"],
+      );
+    })));
+
+  test(`${engine}: inbound adjacency: neighbours page correctly`, (t) =>
+    setup(t, (docs) => Effect.gen(function* () {
+      const firstPage = yield* docs.findPage({
+        collection: "papers",
+        linked: { collection: "papers", id: "third", edge: "cites", direction: "inbound" },
+        limit: 1,
+      });
+      assert.equal(firstPage.documents.length, 1);
+      assert.ok(firstPage.next !== undefined, "another citing paper follows");
+      const secondPage = yield* docs.findPage({
+        collection: "papers",
+        linked: { collection: "papers", id: "third", edge: "cites", direction: "inbound" },
+        limit: 1,
+        after: firstPage.next,
+      });
+      assert.equal(secondPage.documents.length, 1);
+      assert.deepEqual(
+        [...firstPage.documents, ...secondPage.documents].map((d) => d.id).sort(),
+        ["first", "second"],
+      );
+      assert.equal(secondPage.next, undefined, "no more citing papers");
+    })));
+
+  test(`${engine}: inbound adjacency: target document is never re-versioned on source write`, (t) =>
+    setup(t, (docs) => Effect.gen(function* () {
+      const thirdBefore = yield* docs.findById({ collection: "papers", id: "third" });
+      assert.equal(thirdBefore.version, 1);
+
+      // Write a new paper citing "third"
+      yield* docs.insert({
+        collection: "papers",
+        id: "newcomer",
+        data: { cites: ["third"], field: "math", year: 2026 },
+      });
+
+      const thirdAfter = yield* docs.findById({ collection: "papers", id: "third" });
+      assert.equal(thirdAfter.version, 1, "target version was not touched by incoming edge write");
+      assert.deepEqual(
+        yield* find(docs, { linked: { collection: "papers", id: "third", edge: "cites", direction: "inbound" } }),
+        ["first", "newcomer", "second"],
+      );
+    })));
+
+  test(`${engine}: inbound adjacency: retraction and updates drop reverse edge postings`, (t) =>
+    setup(t, (docs) => Effect.gen(function* () {
+      // Delete "first"
+      yield* docs.delete({ collection: "papers", id: "first" });
+      assert.deepEqual(
+        yield* find(docs, { linked: { collection: "papers", id: "third", edge: "cites", direction: "inbound" } }),
+        ["second"],
+      );
+      assert.deepEqual(
+        yield* find(docs, { linked: { collection: "papers", id: "fourth", edge: "cites", direction: "inbound" } }),
+        [],
+      );
+
+      // Update "second" to no longer cite "third"
+      yield* docs.update({
+        collection: "papers",
+        id: "second",
+        data: { cites: [], field: "chemistry", year: 2021 },
+      });
+      assert.deepEqual(
+        yield* find(docs, { linked: { collection: "papers", id: "third", edge: "cites", direction: "inbound" } }),
+        [],
+      );
+
+      // Update "second" to cite "fourth"
+      yield* docs.update({
+        collection: "papers",
+        id: "second",
+        data: { cites: ["fourth"], field: "chemistry", year: 2021 },
+      });
+      assert.deepEqual(
+        yield* find(docs, { linked: { collection: "papers", id: "fourth", edge: "cites", direction: "inbound" } }),
+        ["second"],
+      );
+    })));
+
+  test(`${engine}: inbound adjacency works across different collections`, (t) =>
+    setup(t, (docs) => Effect.gen(function* () {
+      yield* docs.createCollection({ name: "posts" });
+      yield* docs.createCollection({
+        name: "comments",
+        edges: [{ name: "on_post", path: "postId", collection: "posts" }],
+      });
+
+      yield* docs.insert({ collection: "posts", id: "post-1", data: { title: "First" } });
+      yield* docs.insert({ collection: "posts", id: "post-2", data: { title: "Second" } });
+      yield* docs.insert({ collection: "comments", id: "c1", data: { postId: "post-1", text: "great" } });
+      yield* docs.insert({ collection: "comments", id: "c2", data: { postId: "post-1", text: "agree" } });
+      yield* docs.insert({ collection: "comments", id: "c3", data: { postId: "post-2", text: "disagree" } });
+
+      // Inbound query on comments linking to post-1
+      const commentsOnPost1 = yield* docs.findMany({
+        collection: "comments",
+        linked: { collection: "comments", id: "post-1", edge: "on_post", direction: "inbound" },
+      });
+      assert.deepEqual(commentsOnPost1.map((c) => c.id).sort(), ["c1", "c2"]);
+
+      // Specifying collection as target "posts" also resolves seamlessly
+      const viaPostsCollection = yield* docs.findMany({
+        collection: "comments",
+        linked: { collection: "posts", id: "post-1", edge: "on_post", direction: "inbound" },
+      });
+      assert.deepEqual(viaPostsCollection.map((c) => c.id).sort(), ["c1", "c2"]);
+    })));
+
+  test(`${engine}: bounded graph traversal (traverse) with depth, visit bounds and cycle handling`, (t) =>
+    setup(t, (docs) => Effect.gen(function* () {
+      // Multi-hop outbound from "first":
+      // first -> [second, third, fourth]
+      // second -> [third]
+      const outD1 = yield* docs.traverse({ collection: "papers", id: "first", edge: "cites", direction: "outbound", maxDepth: 1 });
+      assert.deepEqual(outD1.documents.map((d) => d.id).sort(), ["fourth", "second", "third"]);
+      assert.equal(outD1.maxDepthReached, 1);
+
+      // Inbound traversal from "third":
+      // Depth 1: cited by ["first", "second"]
+      const inD1 = yield* docs.traverse({ collection: "papers", id: "third", edge: "cites", direction: "inbound", maxDepth: 1 });
+      assert.deepEqual(inD1.documents.map((d) => d.id).sort(), ["first", "second"]);
+      assert.equal(inD1.maxDepthReached, 1);
+
+      // With visit limit: maxVisits: 1
+      const limited = yield* docs.traverse({ collection: "papers", id: "third", edge: "cites", direction: "inbound", maxVisits: 1 });
+      assert.equal(limited.documents.length, 1);
+      assert.equal(limited.visited, 1);
+
+      // Traversal with where filtering
+      const filtered = yield* docs.traverse({
+        collection: "papers", id: "third", edge: "cites", direction: "inbound",
+        where: [{ path: "field", value: "physics" }],
+      });
+      assert.deepEqual(filtered.documents.map((d) => d.id), ["first"]);
+
+      // Cycle handling: chain with cycle A -> B -> C -> A
+      yield* docs.createCollection({
+        name: "nodes",
+        edges: [{ name: "link", path: "target", collection: "nodes" }],
+      });
+      yield* docs.insert({ collection: "nodes", id: "n3", data: { target: "n3" } });
+      yield* docs.insert({ collection: "nodes", id: "n2", data: { target: "n3" } });
+      yield* docs.insert({ collection: "nodes", id: "n1", data: { target: "n2" } });
+      // Close the cycle: n3 links to n1
+      yield* docs.update({ collection: "nodes", id: "n3", data: { target: "n1" } });
+
+      const cycleResult = yield* docs.traverse({
+        collection: "nodes", id: "n1", edge: "link", direction: "outbound", maxDepth: 10,
+      });
+      assert.deepEqual(cycleResult.documents.map((d) => d.id).sort(), ["n2", "n3"]);
+      assert.equal(cycleResult.visited, 2);
+    })));
 }

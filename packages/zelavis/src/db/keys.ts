@@ -36,6 +36,7 @@ export const Tag = {
   Ordered: 0x0d,
   Dirty: 0x0e,
   Snapshot: 0x0f,
+  EdgeReverse: 0x10,
 } as const;
 
 export type Tag = (typeof Tag)[keyof typeof Tag];
@@ -471,6 +472,19 @@ export const edgePrefix = (edgeType: string, src: number): Uint8Array =>
     writeU32(out, src);
   });
 
+export const reverseEdgeKey = (edgeType: string, dst: number, src: number): Uint8Array =>
+  build(Tag.EdgeReverse, (out) => {
+    writeString(out, edgeType);
+    writeU32(out, dst);
+    writeU32(out, src);
+  });
+
+export const reverseEdgePrefix = (edgeType: string, dst: number): Uint8Array =>
+  build(Tag.EdgeReverse, (out) => {
+    writeString(out, edgeType);
+    writeU32(out, dst);
+  });
+
 /** `[tag][namespace][key]` → seq. The caller's own name for a record. */
 export const identityKey = (namespace: string, key: string): Uint8Array =>
   build(Tag.Identity, (out) => {
@@ -558,6 +572,9 @@ export const seqOf = (key: Uint8Array): number => readU32(key, key.length - 4);
 
 /** The identifier a `[tag][etype][src][dst]` edge key points at. */
 export const dstOf = (key: Uint8Array): number => readU32(key, key.length - 4);
+
+/** The identifier a `[tag][etype][dst][src]` reverse edge key points at. */
+export const srcOf = (key: Uint8Array): number => readU32(key, key.length - 4);
 
 export const positionOf = (key: Uint8Array): number => readU32(key, 1);
 
