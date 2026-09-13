@@ -45,8 +45,8 @@ import {
   type BoundingBox, type Geometry, type Position as GeoPosition,
 } from "./spatial.js";
 import {
-  isUsableVector, normalized, similarity,
-  type DistanceMetric,
+  isUsableVector, normalized, similarity, loadUsearch, createProjectionIndex,
+  type DistanceMetric, type VectorQuantization, type VectorProjectionIndex,
 } from "./vectors.js";
 import type { IndexManifest, OrderedScalar, Seq } from "./model.js";
 import {
@@ -139,6 +139,8 @@ export interface EmbeddingIndex {
   readonly dimension: number;
   /** How distance between two of them is measured. */
   readonly metric: DistanceMetric;
+  /** Quantization format for storage and approximate indexing ("f32" | "f16" | "i8" | "b1"). */
+  readonly quantization?: VectorQuantization;
   /**
    * Vectors are stored as given and compared as given. With `normalize`, each is
    * scaled to unit length as it is written, which makes cosine and dot the same
@@ -368,8 +370,12 @@ export interface SimilarFilter {
   readonly field: string;
   /** The vector to compare against, of the dimension the index declares. */
   readonly vector: ReadonlyArray<number>;
-  /** How many documents to return. */
-  readonly k: number;
+  /** How many documents to return. If omitted on findPage, page limit determines the count. */
+  readonly k?: number;
+  /** Distance metric override for this read. */
+  readonly metric?: DistanceMetric;
+  /** Whether to use approximate index (defaults to true if approximate index is available, false for exact scan). */
+  readonly approximate?: boolean;
 }
 
 /**
@@ -478,9 +484,6 @@ export interface FindDocumentsInput {
   readonly linked?: LinkFilter;
   /**
    * Order by closeness to a vector instead of by a field; see `SimilarFilter`.
-   *
-   * Not on `findPage`: an order by score has no cursor that survives a write,
-   * so a page after the first could not be the page the reader asked for.
    */
   readonly similar?: SimilarFilter;
   readonly orderBy?: ReadonlyArray<DocumentSort>;
@@ -598,6 +601,11 @@ export interface FindPageInput {
   readonly geometry?: SpatialFilter;
   /** Also: only the documents another document links to; see `LinkFilter`. */
   readonly linked?: LinkFilter;
+  /**
+   * Order by closeness to a vector instead of by a field; see `SimilarFilter`.
+   * Paging order is score descending (score DESC, seq ASC) with a cursor that survives concurrent writes.
+   */
+  readonly similar?: SimilarFilter;
   /** One field, or several that a composite index serves: see `CollectionIndex`. */
   readonly orderBy?: ReadonlyArray<DocumentSort>;
   /** Documents per page: 50 unless given, and at most 1000. */
@@ -1190,6 +1198,7 @@ const measuresFor = (
 };
 
 const METRICS: ReadonlySet<string> = new Set(["cosine", "dot", "euclidean"]);
+const QUANTIZATIONS: ReadonlySet<string> = new Set(["f32", "f16", "i8", "b1"]);
 
 /**
  * Why this value cannot be the vector the embedding declares, or undefined when
@@ -1223,6 +1232,9 @@ const normalizeEmbedding = (
   if (!METRICS.has(embedding.metric)) {
     return invalid(`metric is one of ${[...METRICS].join(", ")}`);
   }
+  if (embedding.quantization !== undefined && !QUANTIZATIONS.has(embedding.quantization)) {
+    return invalid(`quantization is one of ${[...QUANTIZATIONS].join(", ")}`);
+  }
   if (!Number.isInteger(embedding.version) || embedding.version < 1) {
     return invalid("an embedding's version is a whole number from one, raised when its rules change");
   }
@@ -1230,6 +1242,7 @@ const normalizeEmbedding = (
     field: path,
     dimension: embedding.dimension,
     metric: embedding.metric,
+    ...(embedding.quantization === undefined ? {} : { quantization: embedding.quantization }),
     ...(embedding.normalize === undefined ? {} : { normalize: embedding.normalize }),
     ...(embedding.model === undefined ? {} : { model: embedding.model }),
     ...(embedding.modelVersion === undefined ? {} : { modelVersion: embedding.modelVersion }),
@@ -1587,7 +1600,8 @@ type Position =
   | { readonly phase: "values"; readonly cursor: OrderedCursor }
   | { readonly phase: "rest"; readonly seq: number }
   | { readonly phase: "seq"; readonly seq: number }
-  | { readonly phase: "distance"; readonly distance: number; readonly seq: number };
+  | { readonly phase: "distance"; readonly distance: number; readonly seq: number }
+  | { readonly phase: "score"; readonly score: number; readonly seq: number };
 
 interface Placed {
   readonly document: Document;
@@ -1679,7 +1693,7 @@ export interface DocumentsApi {
   ) => Effect.Effect<
     DocumentPage,
     | CursorMismatch | UnsupportedOrdering | UnknownReference | UnanalyzedCollection
-    | UnindexedGeometry | UnknownEdge
+    | UnindexedGeometry | UnknownEdge | UnembeddedCollection | InvalidVectorQuery
   >;
 
   /**
@@ -1826,6 +1840,30 @@ export interface DocumentsApi {
     { readonly embedding: EmbeddingIndex; readonly documents: number },
     CollectionNotFound | InvalidConstraint | TenantMoving | VectorShapeMismatch
   >;
+
+  /**
+   * Drops and rebuilds the vector projection index for a collection from its documents.
+   */
+  readonly rebuildVectorIndex: (input: {
+    readonly collection: string;
+  }) => Effect.Effect<
+    { readonly indexed: number },
+    CollectionNotFound | UnembeddedCollection
+  >;
+
+  /**
+   * Drops the in-memory vector projection index for a collection.
+   */
+  readonly dropVectorIndex: (input: {
+    readonly collection: string;
+  }) => Effect.Effect<boolean, CollectionNotFound>;
+
+  /**
+   * Returns the current vector projection index for a collection if built, or undefined.
+   */
+  readonly getVectorIndex: (input: {
+    readonly collection: string;
+  }) => Effect.Effect<VectorProjectionIndex | undefined, CollectionNotFound>;
 
   /**
    * One number over a declared measure, across the documents a query admits.
@@ -1990,6 +2028,8 @@ export const documentsFor = (
   const termsOf = (field: string, prefix?: string) => Effect.orDie(store.terms(field, prefix));
   const write = (f: (txn: Txn) => Effect.Effect<void, DbError>): Effect.Effect<void> =>
     Effect.orDie(store.transact(f));
+
+  const projectionIndexes = new Map<string, VectorProjectionIndex>();
 
   /**
    * What a key was used for last time, if it has been used.
@@ -2387,12 +2427,24 @@ export const documentsFor = (
         namespace: documentNs(tenant, doc.collection), key: doc.id,
       });
       remember(pending, collection, doc, seq);
+      const proj = projectionIndexes.get(doc.collection);
+      if (proj !== undefined && collection?.embedding !== undefined) {
+        const held = readPath(doc.data, collection.embedding.field);
+        if (isUsableVector(held) && held.length === collection.embedding.dimension) {
+          const unit = collection.embedding.normalize === true;
+          proj.add(Number(seq), unit ? normalized(held) : held);
+        }
+      }
     });
 
   const documentRetract = (txn: Txn, doc: Document, seq: Seq, pending: Pending) =>
     Effect.gen(function* () {
       yield* txn.retract(seq);
       forget(pending, doc, seq);
+      const proj = projectionIndexes.get(doc.collection);
+      if (proj !== undefined) {
+        proj.remove(Number(seq));
+      }
     });
 
   /**
@@ -2922,11 +2974,14 @@ export const documentsFor = (
           reason: "the collection's indexes changed since this cursor was issued; start the read again",
         });
       }
-      const { phase, seq, cursor: inner, distance } = p as Record<string, unknown>;
+      const { phase, seq, cursor: inner, distance, score } = p as Record<string, unknown>;
       if (shape.order.length === 0) {
         if (phase === "seq" && typeof seq === "number") return { phase, seq };
         if (phase === "distance" && typeof distance === "number" && typeof seq === "number") {
           return { phase, distance, seq };
+        }
+        if (phase === "score" && typeof score === "number" && typeof seq === "number") {
+          return { phase, score, seq };
         }
       } else if (phase === "rest" && typeof seq === "number" && shape.via === undefined) {
         return { phase, seq };
@@ -3224,6 +3279,13 @@ const generateHighlights = (
       if (embedding === undefined || embedding.field !== filter.field) {
         return yield* new UnembeddedCollection({ collection: name });
       }
+      if (filter.metric !== undefined && !METRICS.has(filter.metric)) {
+        return yield* new InvalidVectorQuery({
+          collection: name,
+          field: filter.field,
+          reason: `metric override is one of ${[...METRICS].join(", ")}, not ${String(filter.metric)}`,
+        });
+      }
       const wrong = !Array.isArray(filter.vector)
         ? "the query is not a vector"
         : filter.vector.length !== embedding.dimension
@@ -3297,6 +3359,114 @@ const generateHighlights = (
         value: filter as unknown as Json,
       };
       return withCells(plan, filter.field, spatialCells(h3, spatial, filter), exact);
+    });
+
+  const rebuildIndex = (collectionName: string, embedding: EmbeddingIndex) =>
+    Effect.gen(function* () {
+      const usearch = yield* Effect.orDie(loadUsearch);
+      const index = createProjectionIndex(usearch, {
+        dimensions: embedding.dimension,
+        metric: embedding.metric,
+        quantization: embedding.quantization,
+      });
+      const unit = embedding.normalize === true;
+      let indexed = 0;
+      for (const seq of yield* Stream.runCollect(resolveQuery(equals(collectionColumn(tenant), collectionName)))) {
+        const doc = yield* readDocument(seq);
+        if (doc === undefined) continue;
+        const held = readPath(doc.data, embedding.field);
+        if (isUsableVector(held) && held.length === embedding.dimension) {
+          index.add(Number(seq), unit ? normalized(held) : held);
+          indexed += 1;
+        }
+      }
+      projectionIndexes.set(collectionName, index);
+      return { indexed };
+    });
+
+  /** Matching documents in similarity order from a query vector. */
+  const inSimilarityOrder = (
+    plan: Plan,
+    collectionName: string,
+    filter: SimilarFilter,
+    take: number,
+    from: Position | undefined,
+  ) =>
+    Effect.gen(function* () {
+      const collection = yield* loadCollection(collectionName);
+      const embedding = yield* embeddingFor(collection, collectionName, filter);
+      const metric = filter.metric ?? embedding.metric;
+      const unit = embedding.normalize === true;
+      const query = unit ? normalized(filter.vector) : filter.vector;
+      const keep = keeps(plan);
+
+      let projIndex = projectionIndexes.get(collectionName);
+      if (projIndex === undefined && filter.approximate === true) {
+        yield* rebuildIndex(collectionName, embedding);
+        projIndex = projectionIndexes.get(collectionName);
+      }
+
+      const candidates: Array<{ document: Document; seq: number; score: number }> = [];
+
+      if (
+        filter.approximate !== false &&
+        projIndex !== undefined &&
+        projIndex.metric === metric &&
+        plan.fields === undefined &&
+        plan.residual.length === 0
+      ) {
+        const limitK = Math.min(projIndex.size(), Math.max(filter.k ?? take, take * 4, 200));
+        const matches = projIndex.search(query, limitK);
+        for (const match of matches) {
+          const doc = yield* readDocument(match.seq as Seq);
+          if (doc && keep(doc)) {
+            const held = readPath(doc.data, embedding.field);
+            if (isUsableVector(held) && held.length === embedding.dimension) {
+              const exactScore = similarity(query, unit ? normalized(held) : held, metric).score;
+              candidates.push({
+                document: { ...doc, score: exactScore },
+                seq: match.seq,
+                score: exactScore,
+              });
+            }
+          }
+        }
+      } else {
+        for (const seq of yield* Stream.runCollect(resolveQuery(plan.query))) {
+          const doc = yield* readDocument(seq);
+          if (doc && keep(doc)) {
+            const held = readPath(doc.data, embedding.field);
+            if (isUsableVector(held) && held.length === embedding.dimension) {
+              const score = similarity(query, unit ? normalized(held) : held, metric).score;
+              candidates.push({
+                document: { ...doc, score },
+                seq: Number(seq),
+                score,
+              });
+            }
+          }
+        }
+      }
+
+      candidates.sort((a, b) => b.score - a.score || a.seq - b.seq);
+
+      const after = from?.phase === "score"
+        ? { score: from.score, seq: from.seq }
+        : undefined;
+
+      const out: Array<Placed> = [];
+      for (const entry of candidates) {
+        if (after !== undefined) {
+          if (entry.score > after.score) continue;
+          if (entry.score === after.score && entry.seq <= after.seq) continue;
+        }
+        out.push({
+          document: entry.document,
+          position: { phase: "score", score: entry.score, seq: entry.seq },
+        });
+        if (out.length >= take) break;
+      }
+      return out;
     });
 
   const measureOf = (column: string) => Effect.orDie(store.measure(column));
@@ -3464,33 +3634,69 @@ const generateHighlights = (
             "a similarity read comes back closest first, so it cannot also be ordered by a field.",
           ));
         }
-        if (!Number.isInteger(wanted.k) || wanted.k < 1) {
+        const k = wanted.k ?? input.limit ?? 10;
+        if (!Number.isInteger(k) || k < 1) {
           return yield* Effect.die(new RangeError(
-            `a similarity read returns a whole number of documents from one, not ${wanted.k}.`,
+            `a similarity read returns a whole number of documents from one, not ${k}.`,
           ));
         }
         const embedding = yield* embeddingFor(collection, input.collection, wanted);
+        const metric = wanted.metric ?? embedding.metric;
         // Unit length is a property of the comparison, not of the stored data:
         // the document keeps the vector it was given either way.
         const unit = embedding.normalize === true;
         const query = unit ? normalized(wanted.vector) : wanted.vector;
         const keep = keeps(plan);
+
+        let projIndex = projectionIndexes.get(input.collection);
+        if (projIndex === undefined && wanted.approximate === true) {
+          yield* rebuildIndex(input.collection, embedding);
+          projIndex = projectionIndexes.get(input.collection);
+        }
+
         const scored: Array<{ document: Document; seq: number; score: number }> = [];
-        for (const seq of yield* Stream.runCollect(resolveQuery(plan.query))) {
-          const doc = yield* readDocument(seq);
-          if (!keep(doc)) continue;
-          const held = readPath(doc.data, embedding.field);
-          // A document without a usable vector is not an answer, and not an
-          // error either: `embed` is what refuses one that has the wrong shape.
-          if (!isUsableVector(held) || held.length !== embedding.dimension) continue;
-          scored.push({
-            document: doc,
-            seq: Number(seq),
-            score: similarity(query, unit ? normalized(held) : held, embedding.metric).score,
-          });
+
+        if (
+          wanted.approximate !== false &&
+          projIndex !== undefined &&
+          projIndex.metric === metric &&
+          plan.fields === undefined &&
+          plan.residual.length === 0
+        ) {
+          const limitK = Math.min(projIndex.size(), Math.max(k, 100));
+          const matches = projIndex.search(query, limitK);
+          for (const match of matches) {
+            const doc = yield* readDocument(match.seq as Seq);
+            if (doc && keep(doc)) {
+              const held = readPath(doc.data, embedding.field);
+              if (isUsableVector(held) && held.length === embedding.dimension) {
+                const score = similarity(query, unit ? normalized(held) : held, metric).score;
+                scored.push({
+                  document: { ...doc, score },
+                  seq: match.seq,
+                  score,
+                });
+              }
+            }
+          }
+        } else {
+          for (const seq of yield* Stream.runCollect(resolveQuery(plan.query))) {
+            const doc = yield* readDocument(seq);
+            if (!keep(doc)) continue;
+            const held = readPath(doc.data, embedding.field);
+            // A document without a usable vector is not an answer, and not an
+            // error either: `embed` is what refuses one that has the wrong shape.
+            if (!isUsableVector(held) || held.length !== embedding.dimension) continue;
+            const score = similarity(query, unit ? normalized(held) : held, metric).score;
+            scored.push({
+              document: { ...doc, score },
+              seq: Number(seq),
+              score,
+            });
+          }
         }
         scored.sort((a, b) => b.score - a.score || a.seq - b.seq);
-        return slice(scored.slice(0, wanted.k).map((entry) => entry.document));
+        return slice(scored.slice(0, k).map((entry) => entry.document));
       }
       const attachDistance = (doc: Document): Document => {
         if (input.geometry === undefined || !("near" in input.geometry) || doc.distance !== undefined) {
@@ -3826,6 +4032,11 @@ const generateHighlights = (
         const indexed = sorts.length === 0
           ? undefined
           : chooseIndex(collection?.indexes ?? [], sorts, equalityBindings(where));
+        if (input.similar !== undefined && sorts.length > 0) {
+          return yield* Effect.die(new RangeError(
+            "a similarity read comes back closest first, so it cannot also be ordered by a field.",
+          ));
+        }
         if (sorts.length > 1 && indexed === undefined) {
           return yield* new UnsupportedOrdering({
             reason:
@@ -3834,7 +4045,7 @@ const generateHighlights = (
               "or use findMany",
           });
         }
-        const limit = input.limit ?? 50;
+        const limit = input.limit ?? input.similar?.k ?? 50;
         if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
           return yield* Effect.die(new RangeError(`findPage takes 1 to 1000 documents per page, not ${limit}.`));
         }
@@ -3879,13 +4090,15 @@ const generateHighlights = (
           };
         };
         // One more than the page, to know whether another document follows.
-        const found = sorts.length === 0
-          ? (geometry !== undefined && "near" in geometry
-              ? yield* inDistanceOrder(plan, input.collection, geometry, limit + 1, from)
-              : yield* inIdentifierOrder(plan, limit + 1, from))
-          : indexed !== undefined
-            ? yield* inIndexOrder(plan, indexed, limit + 1, from)
-            : yield* inOrder(plan, input.collection, sorts[0]!, limit + 1, from);
+        const found = input.similar !== undefined
+          ? yield* inSimilarityOrder(plan, input.collection, input.similar, limit + 1, from)
+          : sorts.length === 0
+            ? (geometry !== undefined && "near" in geometry
+                ? yield* inDistanceOrder(plan, input.collection, geometry, limit + 1, from)
+                : yield* inIdentifierOrder(plan, limit + 1, from))
+            : indexed !== undefined
+              ? yield* inIndexOrder(plan, indexed, limit + 1, from)
+              : yield* inOrder(plan, input.collection, sorts[0]!, limit + 1, from);
         const highlightOpts = typeof input.highlight === "object" ? input.highlight : {};
         const attachHighlights = (doc: Document): Document => {
           if (!input.highlight || words === undefined || collection?.analyzer === undefined) {
@@ -4343,6 +4556,28 @@ const generateHighlights = (
           });
         }
         return { embedding, documents };
+      }),
+
+    rebuildVectorIndex: (input) =>
+      Effect.gen(function* () {
+        const collection = yield* loadCollection(input.collection);
+        if (collection === undefined) return yield* new CollectionNotFound({ name: input.collection });
+        if (collection.embedding === undefined) return yield* new UnembeddedCollection({ collection: input.collection });
+        return yield* rebuildIndex(input.collection, collection.embedding);
+      }),
+
+    dropVectorIndex: (input) =>
+      Effect.gen(function* () {
+        const collection = yield* loadCollection(input.collection);
+        if (collection === undefined) return yield* new CollectionNotFound({ name: input.collection });
+        return projectionIndexes.delete(input.collection);
+      }),
+
+    getVectorIndex: (input) =>
+      Effect.gen(function* () {
+        const collection = yield* loadCollection(input.collection);
+        if (collection === undefined) return yield* new CollectionNotFound({ name: input.collection });
+        return projectionIndexes.get(input.collection);
       }),
 
     addReference: (input) =>

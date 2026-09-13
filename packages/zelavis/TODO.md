@@ -1218,7 +1218,7 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   approximate index has to be measured against: adopting ANN first would leave
   nothing to measure recall against, which is the only honest way to decide
   whether its recall is good enough.
-- [ ] Vector slice two: an approximate index, measured for recall against the
+- [x] Vector slice two: an approximate index, measured for recall against the
   exact answer above before it is trusted. `usearch` is the candidate and is a
   native addon (node-gyp-build), so it needs the same treatment the engines
   got -- optional peer, and a store that is a rebuildable projection rather

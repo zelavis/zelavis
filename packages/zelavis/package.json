@@ -200,7 +200,8 @@
     "libsql": "^0.5.29",
     "lmdb": "^3.4.3",
     "rocksdb": "^5.2.1",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "usearch": "^2.26.2"
   },
   "keywords": [
     "zelavis",
@@ -216,10 +217,11 @@
   },
   "peerDependencies": {
     "@libsql/client": "^0.15.0",
+    "h3-js": "^4.5.0",
     "libsql": "^0.5.29",
     "lmdb": "^3.4.3",
     "rocksdb": "^5.2.1",
-    "h3-js": "^4.5.0"
+    "usearch": "^2.15.0"
   },
   "peerDependenciesMeta": {
     "libsql": {
@@ -235,6 +237,9 @@
       "optional": true
     },
     "h3-js": {
+      "optional": true
+    },
+    "usearch": {
       "optional": true
     }
   }

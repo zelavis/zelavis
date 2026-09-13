@@ -198,6 +198,7 @@ for (const [engine, open] of engines) {
         { field: "vec", dimension: 3, metric: "manhattan", version: 1 },
         { field: "vec", dimension: 3, metric: "cosine", version: 0 },
         { field: "", dimension: 3, metric: "cosine", version: 1 },
+        { field: "vec", dimension: 3, metric: "cosine", quantization: "i4", version: 1 },
       ]) {
         assert.equal(
           yield* tagOf(docs.embed({ collection: "notes", embedding: bad })),
@@ -206,4 +207,47 @@ for (const [engine, open] of engines) {
         );
       }
     }), { embedding: NONE }));
+
+  test(`${engine}: per-read metric override changes ranking and score`, (t) =>
+    setup(t, (docs) => Effect.gen(function* () {
+      // With vectors of different magnitudes:
+      yield* docs.insert({ collection: "notes", id: "far-long", data: { vec: [10, 0, 0], kind: "edge" } });
+
+      // Under default cosine metric: [1, 0, 0] and [10, 0, 0] both have cosine score 1.0 (identical direction)
+      const cosResult = yield* docs.findMany({
+        collection: "notes",
+        similar: { field: "vec", vector: [1, 0, 0], k: 2, metric: "cosine" },
+      });
+      assert.equal(cosResult.length, 2);
+      assert.equal(cosResult[0].score, 1);
+
+      // Under euclidean override: [1, 0, 0] is distance 0 from north, but distance 9 from far-long!
+      // Score for euclidean is -distance, so north has score 0, near has score -dist, far-long is far away.
+      const eucResult = yield* docs.findMany({
+        collection: "notes",
+        similar: { field: "vec", vector: [1, 0, 0], k: 3, metric: "euclidean" },
+      });
+      assert.equal(eucResult[0].id, "north");
+      assert.equal(eucResult[0].score, 0); // distance is 0
+      assert.equal(eucResult[1].id, "near");
+      assert.notEqual(eucResult[2].id, "far-long"); // far-long is much further away in euclidean space
+
+      // Invalid metric override is rejected
+      const badMetric = docs.findMany({
+        collection: "notes",
+        similar: { field: "vec", vector: [1, 0, 0], k: 1, metric: "bogus" },
+      });
+      assert.equal(yield* tagOf(badMetric), "InvalidVectorQuery");
+    })));
+
+  test(`${engine}: vector quantization can be declared on embedding`, (t) =>
+    setup(t, (docs) => Effect.gen(function* () {
+      for (const q of ["f32", "f16", "i8", "b1"]) {
+        const result = yield* docs.embed({
+          collection: "notes",
+          embedding: { field: "vec", dimension: 3, metric: "cosine", quantization: q, version: 2 },
+        });
+        assert.equal(result.embedding.quantization, q);
+      }
+    })));
 }
