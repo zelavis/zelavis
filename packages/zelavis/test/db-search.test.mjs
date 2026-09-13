@@ -143,4 +143,67 @@ for (const [engine, open] of engines) {
       yield* docs.delete({ collection: "posts", id: "b" });
       assert.deepEqual(yield* found(docs, { search: "brown" }), ["a", "e"], "a tombstone removes it from a blob");
     })));
+
+  test(`${engine}: BM25 relevance scores and orders search results by relevance`, (t) =>
+    setup(t, (docs) => Effect.gen(function* () {
+      // Document "b" ("Brown bread and butter") has length 3 and contains "brown" once.
+      // Document "a" ("The Quick Brown Fox jumps over the lazy dog") has length 7 and contains "brown" once.
+      // Under BM25 length normalization, shorter document "b" is more concentrated on "brown" and ranks first.
+      const ranked = yield* docs.findMany({ collection: "posts", search: "brown" });
+      assert.equal(ranked.length, 2);
+      assert.equal(ranked[0].id, "b");
+      assert.equal(ranked[1].id, "a");
+      assert.ok(typeof ranked[0].score === "number" && ranked[0].score > 0);
+      assert.ok(typeof ranked[1].score === "number" && ranked[1].score > 0);
+      assert.ok(ranked[0].score >= ranked[1].score, "shorter document with same term count scores higher");
+
+      // Term frequency boost: inserting a document with multiple occurrences
+      yield* docs.insert({
+        collection: "posts",
+        id: "repeat",
+        data: { title: "Brown brown brown", body: "brown fox", tier: "paid" },
+      });
+      const repeated = yield* docs.findMany({ collection: "posts", search: "brown" });
+      assert.equal(repeated[0].id, "repeat", "multiple term occurrences rank highest");
+      assert.ok(repeated[0].score > repeated[1].score);
+
+      // Explicit orderBy overrides score ranking while preserving search filter
+      const explicit = yield* docs.findMany({
+        collection: "posts",
+        search: "brown",
+        orderBy: [{ path: "tier", direction: "asc" }],
+      });
+      assert.deepEqual(explicit.map((d) => d.data.tier), ["free", "paid", "paid"]);
+    })));
+
+  test(`${engine}: phrase search matches consecutive words in analyzed fields`, (t) =>
+    setup(t, (docs) => Effect.gen(function* () {
+      // Document "a" has title "The Quick Brown Fox" -> tokens: quick, brown, fox.
+      // Document "inverted" has "Fox brown quick" -> tokens: fox, brown, quick.
+      yield* docs.insert({
+        collection: "posts",
+        id: "inverted",
+        data: { title: "Fox brown quick", body: "lazy dog", tier: "free" },
+      });
+
+      // Unquoted search matches both because both contain "quick", "brown", "fox"
+      assert.deepEqual(yield* found(docs, { search: "quick brown fox" }), ["a", "inverted"]);
+
+      // Quoted phrase matches only "a" where "quick brown fox" appears in that exact order
+      assert.deepEqual(yield* found(docs, { search: '"quick brown fox"' }), ["a"]);
+      assert.deepEqual(yield* found(docs, { search: '"quick brown"' }), ["a"]);
+      assert.deepEqual(yield* found(docs, { search: '"brown quick"' }), ["inverted"]);
+      assert.deepEqual(yield* found(docs, { search: '"fox quick"' }), [], "separated words do not match phrase");
+
+      // Quoted phrase on "inverted"
+      assert.deepEqual(yield* found(docs, { search: '"fox brown"' }), ["inverted"]);
+
+      // Phrase search in findPage
+      const page = yield* docs.findPage({ collection: "posts", search: '"quick brown fox"' });
+      assert.equal(page.documents.length, 1);
+      assert.equal(page.documents[0].id, "a");
+
+      const emptyPage = yield* docs.findPage({ collection: "posts", search: '"brown quick fox"' });
+      assert.equal(emptyPage.documents.length, 0);
+    })));
 }

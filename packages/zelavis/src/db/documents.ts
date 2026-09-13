@@ -264,9 +264,11 @@ export interface Document<TData extends JsonObject = JsonObject> {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly version: number;
+  /** Present when a search query is scored, closest/most relevant first. */
+  readonly score?: number;
 }
 
-export type FilterOperator = "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "in" | "geometry";
+export type FilterOperator = "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "in" | "geometry" | "phrase";
 
 export interface DocumentFilter {
   readonly path: string;
@@ -1303,11 +1305,62 @@ const comparison = (actual: Json | undefined, expected: Json): number | undefine
     : compareOrderedValues(a, e);
 };
 
+const countPhraseMatches = (
+  tokens: ReadonlyArray<string>,
+  phrase: ReadonlyArray<string>,
+): number => {
+  if (tokens.length < phrase.length || phrase.length === 0) return 0;
+  let count = 0;
+  for (let i = 0; i <= tokens.length - phrase.length; i++) {
+    let match = true;
+    for (let j = 0; j < phrase.length; j++) {
+      if (tokens[i + j] !== phrase[j]) {
+        match = false;
+        break;
+      }
+    }
+    if (match) {
+      count += 1;
+      i += phrase.length - 1;
+    }
+  }
+  return count;
+};
+
+const matchesPhrases = (
+  data: JsonObject,
+  phrases: ReadonlyArray<ReadonlyArray<string>>,
+  analyzer: Analyzer,
+): boolean => {
+  for (const phrase of phrases) {
+    if (phrase.length === 0) continue;
+    let found = false;
+    for (const field of analyzer.fields) {
+      const val = readPath(data, field);
+      if (typeof val !== "string") continue;
+      const tokens = tokenize(val, analyzer);
+      if (countPhraseMatches(tokens, phrase) > 0) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) return false;
+  }
+  return true;
+};
+
 const matches = (data: JsonObject, filter: DocumentFilter): boolean => {
   const actual = readPath(data, filter.path);
   const op = filter.op ?? "eq";
   // A spatial filter carries its own shape, and decides on the coordinates.
   if (op === "geometry") return matchesGeometry(filter.value as unknown as SpatialFilter, data);
+  if (op === "phrase") {
+    const { phrases, analyzer } = filter.value as unknown as {
+      phrases: ReadonlyArray<ReadonlyArray<string>>;
+      analyzer: Analyzer;
+    };
+    return matchesPhrases(data, phrases, analyzer);
+  }
   if (op === "in") {
     const values = Array.isArray(filter.value) ? filter.value : [filter.value];
     return values.some((v) => actual === v);
@@ -2803,6 +2856,40 @@ export const documentsFor = (
       return filters;
     });
 
+interface ParsedSearchQuery {
+  readonly terms: ReadonlyArray<string>;
+  readonly phrases: ReadonlyArray<ReadonlyArray<string>>;
+}
+
+const parseSearchQuery = (
+  text: string,
+  analyzer: Analyzer,
+): ParsedSearchQuery | undefined => {
+  const terms = new Set<string>();
+  const phrases: Array<ReadonlyArray<string>> = [];
+
+  const pattern = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    const quoted = match[1] ?? match[2];
+    if (quoted !== undefined) {
+      const phraseTokens = tokenize(quoted, analyzer);
+      if (phraseTokens.length > 1) {
+        phrases.push(phraseTokens);
+        for (const t of phraseTokens) terms.add(t);
+      } else if (phraseTokens.length === 1) {
+        terms.add(phraseTokens[0]!);
+      }
+    } else if (match[3] !== undefined) {
+      const wordTokens = tokenize(match[3], analyzer);
+      for (const t of wordTokens) terms.add(t);
+    }
+  }
+
+  if (terms.size === 0) return undefined;
+  return { terms: [...terms], phrases };
+};
+
   /**
    * What a search becomes: the words of the query, analyzed the way the
    * documents were, over the postings the writer produced.
@@ -2818,18 +2905,22 @@ export const documentsFor = (
     analyzer: Analyzer | undefined,
     collection: string,
     text: string,
-  ): Effect.Effect<Query | undefined, UnanalyzedCollection> =>
+  ): Effect.Effect<
+    { readonly query: Query; readonly parsed: ParsedSearchQuery } | undefined,
+    UnanalyzedCollection
+  > =>
     Effect.gen(function* () {
       if (analyzer === undefined) {
         return yield* new UnanalyzedCollection({ collection });
       }
-      const words = tokenize(text, analyzer);
-      if (words.length === 0) return undefined;
-      const clauses = words.map((word) => {
+      const parsed = parseSearchQuery(text, analyzer);
+      if (parsed === undefined) return undefined;
+      const clauses = parsed.terms.map((word) => {
         const fields = analyzer.fields.map((path) => term(path, word));
         return fields.length === 1 ? fields[0]! : or(...fields);
       });
-      return clauses.length === 1 ? clauses[0]! : and(...clauses);
+      const query = clauses.length === 1 ? clauses[0]! : and(...clauses);
+      return { query, parsed };
     });
 
   /**
@@ -3006,7 +3097,11 @@ export const documentsFor = (
       readonly linked?: LinkFilter;
     },
   ): Effect.Effect<
-    { readonly plan: Plan; readonly where: ReadonlyArray<DocumentFilter> } | undefined,
+    {
+      readonly plan: Plan;
+      readonly where: ReadonlyArray<DocumentFilter>;
+      readonly words?: { readonly query: Query; readonly parsed: ParsedSearchQuery };
+    } | undefined,
     UnknownReference | UnanalyzedCollection | UnindexedGeometry | UnknownEdge
   > =>
     Effect.gen(function* () {
@@ -3017,7 +3112,20 @@ export const documentsFor = (
         ? undefined
         : yield* searchQuery(collection?.analyzer, input.collection, input.search);
       if (input.search !== undefined && words === undefined) return undefined;
-      let plan = withSearch(planQuery(tenant, input.collection, where), words);
+      let plan = withSearch(planQuery(tenant, input.collection, where), words?.query);
+      if (words !== undefined && words.parsed.phrases.length > 0 && collection?.analyzer !== undefined) {
+        plan = {
+          ...plan,
+          residual: [
+            ...plan.residual,
+            {
+              path: "*phrase",
+              op: "phrase",
+              value: { phrases: words.parsed.phrases, analyzer: collection.analyzer } as unknown as Json,
+            },
+          ],
+        };
+      }
       if (input.geometry !== undefined) {
         plan = yield* withGeometry(collection, input.collection, plan, input.geometry);
       }
@@ -3026,7 +3134,7 @@ export const documentsFor = (
         if (narrowed === undefined) return undefined;
         plan = narrowed;
       }
-      return { plan, where };
+      return { plan, where, ...(words !== undefined ? { words } : {}) };
     });
 
   /** A plan narrowed to the documents that have a value for this measure. */
@@ -3123,11 +3231,111 @@ export const documentsFor = (
         }
       }
       const keep = keeps(plan);
-      const docs: Document[] = [];
+      const candidates: Array<{ document: Document; seq: number }> = [];
       for (const seq of yield* Stream.runCollect(resolveQuery(plan.query))) {
         const doc = yield* readDocument(seq);
-        if (keep(doc)) docs.push(doc);
+        if (doc && keep(doc)) candidates.push({ document: doc, seq: Number(seq) });
       }
+
+      if (planned.words !== undefined && collection?.analyzer !== undefined) {
+        const analyzer = collection.analyzer;
+        const { terms, phrases } = planned.words.parsed;
+
+        interface ScoredCandidate {
+          document: Document;
+          seq: number;
+          docLength: number;
+          termCounts: Map<string, number>;
+          phraseOccurrences: number;
+          adjacentPairs: number;
+        }
+
+        const scoredCandidates: ScoredCandidate[] = [];
+        for (const item of candidates) {
+          let docLength = 0;
+          const termCounts = new Map<string, number>();
+          let phraseOccurrences = 0;
+          let adjacentPairs = 0;
+
+          for (const field of analyzer.fields) {
+            const val = readPath(item.document.data, field);
+            if (typeof val !== "string") continue;
+            const tokens = tokenize(val, analyzer);
+            docLength += tokens.length;
+            for (const token of tokens) {
+              if (terms.includes(token)) {
+                termCounts.set(token, (termCounts.get(token) ?? 0) + 1);
+              }
+            }
+            for (const phrase of phrases) {
+              phraseOccurrences += countPhraseMatches(tokens, phrase);
+            }
+            if (terms.length > 1) {
+              for (let i = 0; i < tokens.length - 1; i++) {
+                const t1 = tokens[i]!;
+                const t2 = tokens[i + 1]!;
+                if (terms.includes(t1) && terms.includes(t2) && t1 !== t2) {
+                  adjacentPairs += 1;
+                }
+              }
+            }
+          }
+
+          scoredCandidates.push({
+            document: item.document,
+            seq: item.seq,
+            docLength,
+            termCounts,
+            phraseOccurrences,
+            adjacentPairs,
+          });
+        }
+
+        const N = scoredCandidates.length;
+        const totalLength = scoredCandidates.reduce((acc, c) => acc + c.docLength, 0);
+        const avgdl = N > 0 ? totalLength / N : 1;
+        const k1 = 1.2;
+        const b = 0.75;
+
+        const idf = new Map<string, number>();
+        for (const term of terms) {
+          const docCount = scoredCandidates.filter((c) => (c.termCounts.get(term) ?? 0) > 0).length;
+          idf.set(term, Math.log(1 + (N - docCount + 0.5) / (docCount + 0.5)));
+        }
+
+        const scoredDocs: Array<{ document: Document; seq: number }> = [];
+        for (const c of scoredCandidates) {
+          let bm25 = 0;
+          for (const term of terms) {
+            const tf = c.termCounts.get(term) ?? 0;
+            if (tf > 0) {
+              const termIdf = idf.get(term) ?? 0;
+              const denom = tf + k1 * (1 - b + (b * (avgdl > 0 ? c.docLength / avgdl : 1)));
+              const tfScore = denom > 0 ? (tf * (k1 + 1)) / denom : 0;
+              bm25 += termIdf * tfScore;
+            }
+          }
+          const phraseBoost = c.phraseOccurrences * 2.0;
+          const proximityBoost = c.adjacentPairs * 0.5;
+          const totalScore = Math.round((bm25 + phraseBoost + proximityBoost) * 10000) / 10000;
+          scoredDocs.push({
+            document: {
+              ...c.document,
+              score: totalScore,
+            },
+            seq: c.seq,
+          });
+        }
+
+        if (sorts.length === 0) {
+          scoredDocs.sort((a, b) => (b.document.score ?? 0) - (a.document.score ?? 0) || a.seq - b.seq);
+          return slice(scoredDocs.map((item) => item.document));
+        }
+        const docs = scoredDocs.map((item) => item.document);
+        return slice(docs.sort(compareDocuments(sorts)));
+      }
+
+      const docs = candidates.map((c) => c.document);
       // No index serves these fields, so they are sorted here — in the
       // lens's order, so the answer matches what an index would give.
       return slice(sorts.length === 0 ? docs : docs.sort(compareDocuments(sorts)));
@@ -3314,7 +3522,20 @@ export const documentsFor = (
         if (related === undefined || (input.search !== undefined && words === undefined)) {
           return { documents: [] };
         }
-        let plan = withSearch(planQuery(tenant, input.collection, where), words);
+        let plan = withSearch(planQuery(tenant, input.collection, where), words?.query);
+        if (words !== undefined && words.parsed.phrases.length > 0 && collection?.analyzer !== undefined) {
+          plan = {
+            ...plan,
+            residual: [
+              ...plan.residual,
+              {
+                path: "*phrase",
+                op: "phrase",
+                value: { phrases: words.parsed.phrases, analyzer: collection.analyzer } as unknown as Json,
+              },
+            ],
+          };
+        }
         if (geometry !== undefined) {
           plan = yield* withGeometry(collection, input.collection, plan, geometry);
         }
