@@ -39,3 +39,4 @@ export * from "./database.js";
 export * from "./database-service.js";
 export * from "./stemmer.js";
 export * from "./search-parser.js";
+export * from "./vectors.js";

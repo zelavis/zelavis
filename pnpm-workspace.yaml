@@ -72,6 +72,7 @@ allowBuilds:
   rocksdb: false
   sharp: true
   unrs-resolver: true
+  usearch: true
 
 minimumReleaseAgeExclude:
   - '@astrojs/markdown-satteri@0.4.1'
