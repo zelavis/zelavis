@@ -32,6 +32,7 @@ import {
   UnindexedGeometry,
   UnembeddedCollection,
   UnknownEdge,
+  UnknownMeasure,
   VectorShapeMismatch,
   InvalidVectorQuery,
   UnknownReference,
@@ -48,7 +49,9 @@ import {
   type DistanceMetric,
 } from "./vectors.js";
 import type { IndexManifest, OrderedScalar, Seq } from "./model.js";
-import { and, edge as edgeQuery, equals, or, term, type Query, type RangeBound } from "./query.js";
+import {
+  and, between, edge as edgeQuery, equals, or, term, type Query, type RangeBound,
+} from "./query.js";
 import type { SchemasApi } from "./schemas.js";
 import type { ObjectStoreApi, OrderedCursor, Txn } from "./store.js";
 import type { TenantId } from "./topology.js";
@@ -76,6 +79,8 @@ export interface Collection {
   readonly embedding?: EmbeddingIndex;
   /** Typed links to many other documents; see `EdgeDefinition`. */
   readonly edges?: ReadonlyArray<EdgeDefinition>;
+  /** Numeric fields kept in the measure lens; see `MeasureDefinition`. */
+  readonly measures?: ReadonlyArray<MeasureDefinition>;
   /** The references other collections — or this one — make to this collection's documents. */
   readonly referencedBy?: ReadonlyArray<{ readonly collection: string; readonly reference: string }>;
 }
@@ -161,6 +166,26 @@ export interface EdgeDefinition {
   readonly path: string;
   /** The collection those ids name documents of. */
   readonly collection: string;
+}
+
+/**
+ * A numeric field kept where aggregation can read it without the documents.
+ *
+ * The measure lens holds one number per document per measure, so summing a
+ * million rows reads a million doubles rather than a million payloads. The
+ * ordered lens already holds the same value; what this adds is a dense vector
+ * indexed by identifier, which is the shape an aggregate wants.
+ *
+ * Only finite numbers are kept. A field that is absent, null, a string, or a
+ * non-finite number has no measure posting, and a document without one is not
+ * counted -- which is why `avg` divides by the documents that carried a value
+ * rather than by the documents that matched.
+ */
+export interface MeasureDefinition {
+  /** Letters, numbers, underscores and hyphens, like a collection name. */
+  readonly name: string;
+  /** The field holding the number. */
+  readonly path: string;
 }
 
 export interface Analyzer {
@@ -340,6 +365,38 @@ export interface LinkFilter {
   readonly id: string;
   /** Which declared edge to follow. */
   readonly edge: string;
+}
+
+export type MeasureOperation =
+  | "count" | "sum" | "avg" | "min" | "max" | "variance" | "stddev" | "countDistinct";
+
+export interface SummarizeInput {
+  readonly collection: string;
+  /** Which declared measure to read; see `MeasureDefinition`. */
+  readonly measure: string;
+  readonly op: MeasureOperation;
+  readonly where?: ReadonlyArray<DocumentFilter>;
+  readonly related?: ReadonlyArray<RelatedFilter>;
+  readonly search?: string;
+  readonly geometry?: SpatialFilter;
+  readonly linked?: LinkFilter;
+}
+
+export interface Summary {
+  readonly value: number;
+  /**
+   * How many documents carried a value for the measure.
+   *
+   * Not how many matched: a document whose field is absent, null, or not a
+   * finite number has no measure to read, and is not counted. This is the
+   * denominator `avg` used, handed back so it does not have to be guessed at.
+   */
+  readonly documents: number;
+}
+
+export interface GroupedSummary extends Summary {
+  /** The value at the grouped field, as the ordered lens holds it. */
+  readonly key: OrderedScalar;
 }
 
 export interface FindDocumentsInput {
@@ -999,6 +1056,57 @@ const normalizeEdge = (
   return Effect.succeed({ name: edge.name, path, collection: edge.collection });
 };
 
+/**
+ * The measure lens column one measure keeps its values in.
+ *
+ * `~` separates it: a field's column uses `.` and an index's uses `:`, and a
+ * collection name holds none of the three, so these three namespaces never meet.
+ */
+const measureColumnFor = (tenant: TenantId, collection: string, name: string) =>
+  `${tenant}/${collection}~${name}`;
+
+/** A measure definition in the shape it is stored, or why it cannot be used. */
+const normalizeMeasure = (
+  collection: string,
+  measure: MeasureDefinition,
+): Effect.Effect<MeasureDefinition, InvalidConstraint> => {
+  const invalid = (reason: string) =>
+    Effect.fail(new InvalidConstraint({ collection, name: String(measure.name), reason }));
+  if (typeof measure.name !== "string" || !COLLECTION_NAME_PATTERN.test(measure.name)) {
+    return invalid(
+      "a measure name must start with a letter or underscore and contain only letters, numbers, underscores, or hyphens",
+    );
+  }
+  const path: unknown = measure.path;
+  if (typeof path !== "string" || path === "" || path.split(".").some((segment) => segment === "")) {
+    return invalid(`${JSON.stringify(path) ?? "undefined"} is not a field path`);
+  }
+  return Effect.succeed({ name: measure.name, path });
+};
+
+/**
+ * The measure postings a document contributes.
+ *
+ * Non-finite numbers are skipped rather than written: the ordered lens cannot
+ * hold one either, so a measure that kept them would disagree with the presence
+ * set an aggregate intersects against.
+ */
+const measuresFor = (
+  tenant: TenantId,
+  collection: string,
+  defined: ReadonlyArray<MeasureDefinition>,
+  data: JsonObject,
+): Array<readonly [string, number]> => {
+  const out: Array<readonly [string, number]> = [];
+  for (const measure of defined) {
+    const value = readPath(data, measure.path);
+    if (typeof value === "number" && Number.isFinite(value)) {
+      out.push([measureColumnFor(tenant, collection, measure.name), value]);
+    }
+  }
+  return out;
+};
+
 const METRICS: ReadonlySet<string> = new Set(["cosine", "dot", "euclidean"]);
 
 /**
@@ -1372,6 +1480,8 @@ export interface DocumentsApi {
     readonly embedding?: EmbeddingIndex;
     /** This collection's typed links to other documents; see `EdgeDefinition`. */
     readonly edges?: ReadonlyArray<EdgeDefinition>;
+    /** This collection's numeric fields to aggregate; see `MeasureDefinition`. */
+    readonly measures?: ReadonlyArray<MeasureDefinition>;
   }) => Effect.Effect<
     Collection,
     InvalidCollectionName | CollectionExists | InvalidIndex | InvalidConstraint | TenantMoving
@@ -1564,6 +1674,41 @@ export interface DocumentsApi {
   }) => Effect.Effect<
     { readonly embedding: EmbeddingIndex; readonly documents: number },
     CollectionNotFound | InvalidConstraint | TenantMoving | VectorShapeMismatch
+  >;
+
+  /**
+   * One number over a declared measure, across the documents a query admits.
+   *
+   * The filters resolve first and the measure is read only then, as one dense
+   * vector indexed by identifier -- so this costs the identifiers the query
+   * returns plus the measure, rather than a payload each. A filter no lens can
+   * answer is the exception: it is decided on the document, at a read each.
+   */
+  readonly summarize: (
+    input: SummarizeInput,
+  ) => Effect.Effect<
+    Summary,
+    UnknownMeasure | UnknownReference | UnanalyzedCollection | UnindexedGeometry | UnknownEdge
+  >;
+
+  /**
+   * The same, one answer per value at a field.
+   *
+   * Group keys come from the ordered lens beside the identifiers, so grouping
+   * reads no documents either. Groups come in the lens's order, and a group
+   * whose documents all lack the measure is not one.
+   */
+  readonly summarizeBy: (
+    input: SummarizeInput & {
+      /** The field whose values separate the groups. */
+      readonly groupBy: string;
+      /** Groups to return: 100 unless given, and at most 1000. */
+      readonly groups?: number;
+    },
+  ) => Effect.Effect<
+    ReadonlyArray<GroupedSummary>,
+    | UnknownMeasure | UnknownReference | UnanalyzedCollection | UnindexedGeometry | UnknownEdge
+    | CursorMismatch
   >;
 
   /**
@@ -1902,13 +2047,14 @@ export const documentsFor = (
     spatial?: SpatialIndex,
     h3?: Parameters<typeof cellsFor>[0],
     edges: ReadonlyArray<readonly [string, Seq]> = [],
+    measures: ReadonlyArray<MeasureDefinition> = [],
   ): IndexManifest => ({
     terms: [...termsFor(analyzer, doc.data), ...cellTermsFor(spatial, h3, doc.data)],
     columns: [
       ...columnsFor(tenant, doc.collection, doc.data),
       ...indexes.map((index) => [index.column, indexTuple(index, doc.data)] as const),
     ],
-    measures: [],
+    measures: measuresFor(tenant, doc.collection, measures, doc.data),
     edges: [...edges],
   });
 
@@ -2084,6 +2230,7 @@ export const documentsFor = (
       const cells = yield* spatialHandle(collection?.spatial);
       yield* txn.put(seq, encode(doc), manifestFor(
         doc, collection?.indexes ?? [], collection?.analyzer, collection?.spatial, cells, edges,
+        collection?.measures ?? [],
       ), {
         namespace: documentNs(tenant, doc.collection), key: doc.id,
       });
@@ -2508,7 +2655,9 @@ export const documentsFor = (
                   if (at !== undefined) links.push([type, at]);
                 }
               }
-              yield* txn.put(seq, object.bytes, manifestFor(doc, indexes, analyzer, spatial, cells, links), {
+              yield* txn.put(seq, object.bytes, manifestFor(
+                doc, indexes, analyzer, spatial, cells, links, record?.measures ?? [],
+              ), {
                 namespace: documentNs(tenant, collection), key: doc.id,
               });
               written += 1;
@@ -2790,6 +2939,124 @@ export const documentsFor = (
       return withCells(plan, filter.field, spatialCells(h3, spatial, filter), exact);
     });
 
+  const measureOf = (column: string) => Effect.orDie(store.measure(column));
+
+  /**
+   * What an operation makes of the values it was given.
+   *
+   * Spread is population, not sample: these are the values the window holds,
+   * not a sample drawn from a larger set, so dividing by n is what the numbers
+   * mean. Min and max fold rather than spreading into `Math.min`, which throws
+   * on an argument list the size of a collection.
+   */
+  const foldMeasure = (op: MeasureOperation, values: ReadonlyArray<number>): number => {
+    if (op === "count") return values.length;
+    if (values.length === 0) return 0;
+    if (op === "countDistinct") return new Set(values).size;
+    if (op === "min" || op === "max") {
+      let held = values[0]!;
+      for (const value of values) {
+        if (op === "min" ? value < held : value > held) held = value;
+      }
+      return held;
+    }
+    let total = 0;
+    for (const value of values) total += value;
+    if (op === "sum") return total;
+    const mean = total / values.length;
+    if (op === "avg") return mean;
+    let squares = 0;
+    for (const value of values) squares += (value - mean) * (value - mean);
+    const variance = squares / values.length;
+    return op === "variance" ? variance : Math.sqrt(variance);
+  };
+
+  /** Every finite number in a column: what having a value for a measure means. */
+  const hasNumber = (column: string) => between(column, -Number.MAX_VALUE, Number.MAX_VALUE);
+
+  const declaredMeasure = (
+    collection: StoredCollection | undefined,
+    name: string,
+    measure: string,
+  ): Effect.Effect<MeasureDefinition, UnknownMeasure> => {
+    const found = (collection?.measures ?? []).find((candidate) => candidate.name === measure);
+    return found === undefined
+      ? Effect.fail(new UnknownMeasure({ collection: name, name: measure }))
+      : Effect.succeed(found);
+  };
+
+  /**
+   * What the filtering clauses of a read come to, or undefined when nothing can
+   * match and the collection is never touched.
+   *
+   * Shared, because a read that filters and a read that aggregates have to
+   * narrow the same way: an aggregate that understood `linked` differently from
+   * `findMany` would answer a different question in the same words. The merged
+   * `where` comes back too, because choosing an index needs the equality
+   * bindings and not only the plan.
+   */
+  const planFor = (
+    collection: StoredCollection | undefined,
+    input: {
+      readonly collection: string;
+      readonly where?: ReadonlyArray<DocumentFilter>;
+      readonly related?: ReadonlyArray<RelatedFilter>;
+      readonly search?: string;
+      readonly geometry?: SpatialFilter;
+      readonly linked?: LinkFilter;
+    },
+  ): Effect.Effect<
+    { readonly plan: Plan; readonly where: ReadonlyArray<DocumentFilter> } | undefined,
+    UnknownReference | UnanalyzedCollection | UnindexedGeometry | UnknownEdge
+  > =>
+    Effect.gen(function* () {
+      const related = yield* relatedFilters(collection, input.collection, input.related);
+      if (related === undefined) return undefined;
+      const where = [...(input.where ?? []), ...related];
+      const words = input.search === undefined
+        ? undefined
+        : yield* searchQuery(collection?.analyzer, input.collection, input.search);
+      if (input.search !== undefined && words === undefined) return undefined;
+      let plan = withSearch(planQuery(tenant, input.collection, where), words);
+      if (input.geometry !== undefined) {
+        plan = yield* withGeometry(collection, input.collection, plan, input.geometry);
+      }
+      if (input.linked !== undefined) {
+        const narrowed = yield* withLink(plan, input.linked);
+        if (narrowed === undefined) return undefined;
+        plan = narrowed;
+      }
+      return { plan, where };
+    });
+
+  /** A plan narrowed to the documents that have a value for this measure. */
+  const overMeasure = (plan: Plan, column: string): Plan => ({
+    query: and(plan.query, hasNumber(column)),
+    fields: plan.fields === undefined ? hasNumber(column) : and(plan.fields, hasNumber(column)),
+    residual: plan.residual,
+  });
+
+  /**
+   * The identifiers a plan admits, with the residual filters applied.
+   *
+   * The residual costs a document read each, which is the one case an aggregate
+   * touches payloads: a filter the lenses cannot answer has to be decided on the
+   * document itself.
+   */
+  const identifiersFor = (plan: Plan) =>
+    Effect.gen(function* () {
+      const keep = keeps(plan);
+      const out: Array<number> = [];
+      for (const seq of yield* Stream.runCollect(resolveQuery(plan.query))) {
+        if (plan.residual.length > 0) {
+          const doc = yield* readDocument(seq);
+          if (!keep(doc)) continue;
+        }
+        out.push(Number(seq));
+      }
+      return out;
+    });
+
   const findDocuments = (
     input: FindDocumentsInput,
   ): Effect.Effect<
@@ -2799,22 +3066,10 @@ export const documentsFor = (
   > =>
     Effect.gen(function* () {
       const collection = yield* loadCollection(input.collection);
-      const related = yield* relatedFilters(collection, input.collection, input.related);
-      if (related === undefined) return [];
-      const where = [...(input.where ?? []), ...related];
-      const words = input.search === undefined
-        ? undefined
-        : yield* searchQuery(collection?.analyzer, input.collection, input.search);
-      if (input.search !== undefined && words === undefined) return [];
-      let plan = withSearch(planQuery(tenant, input.collection, where), words);
-      if (input.geometry !== undefined) {
-        plan = yield* withGeometry(collection, input.collection, plan, input.geometry);
-      }
-      if (input.linked !== undefined) {
-        const narrowed = yield* withLink(plan, input.linked);
-        if (narrowed === undefined) return [];
-        plan = narrowed;
-      }
+      const planned = yield* planFor(collection, input);
+      if (planned === undefined) return [];
+      const where = planned.where;
+      let plan = planned.plan;
       const offset = input.offset ?? 0;
       const take = input.limit === undefined ? undefined : offset + input.limit;
       const slice = (docs: ReadonlyArray<Document>) =>
@@ -2918,6 +3173,16 @@ export const documentsFor = (
         const embedding = input.embedding === undefined
           ? undefined
           : yield* normalizeEmbedding(input.name, input.embedding);
+        const measures: Array<MeasureDefinition> = [];
+        for (const definition of input.measures ?? []) {
+          const declared = yield* normalizeMeasure(input.name, definition);
+          if (measures.some((other) => other.name === declared.name)) {
+            return yield* new InvalidConstraint({
+              collection: input.name, name: declared.name, reason: "the name is given twice",
+            });
+          }
+          measures.push(declared);
+        }
         const edges: Array<EdgeDefinition> = [];
         for (const definition of input.edges ?? []) {
           const declared = yield* normalizeEdge(input.name, definition);
@@ -2940,6 +3205,7 @@ export const documentsFor = (
           ...(spatial === undefined ? {} : { spatial }),
           ...(embedding === undefined ? {} : { embedding }),
           ...(edges.length === 0 ? {} : { edges }),
+          ...(measures.length === 0 ? {} : { measures }),
         };
         const seq = yield* nextSeq;
         // The collection and the back-references its targets carry, together:
@@ -3307,6 +3573,73 @@ export const documentsFor = (
           }));
         if (!recorded) return yield* new CollectionNotFound({ name: input.collection });
         return { spatial, documents: yield* rewriteDocuments(input.collection) };
+      }),
+
+    summarize: (input) =>
+      Effect.gen(function* () {
+        const collection = yield* loadCollection(input.collection);
+        const measure = yield* declaredMeasure(collection, input.collection, input.measure);
+        const planned = yield* planFor(collection, input);
+        if (planned === undefined) return { value: foldMeasure(input.op, []), documents: 0 };
+        const plan = overMeasure(planned.plan, columnFor(tenant, input.collection, measure.path));
+        // Resolved first, and only then is the measure read: the point of the
+        // lens is that the payloads are never touched, so reading it before the
+        // answer is narrow would spend exactly what it exists to save.
+        const identifiers = yield* identifiersFor(plan);
+        if (identifiers.length === 0) return { value: foldMeasure(input.op, []), documents: 0 };
+        const vector = yield* measureOf(measureColumnFor(tenant, input.collection, measure.name));
+        const values: Array<number> = [];
+        for (const seq of identifiers) if (seq < vector.length) values.push(vector[seq]!);
+        return { value: foldMeasure(input.op, values), documents: values.length };
+      }),
+
+    summarizeBy: (input) =>
+      Effect.gen(function* () {
+        const collection = yield* loadCollection(input.collection);
+        const measure = yield* declaredMeasure(collection, input.collection, input.measure);
+        const planned = yield* planFor(collection, input);
+        if (planned === undefined) return [];
+        const groups = input.groups ?? 100;
+        if (!Number.isInteger(groups) || groups < 1 || groups > 1000) {
+          return yield* Effect.die(new RangeError(`summarizeBy takes 1 to 1000 groups, not ${groups}.`));
+        }
+        const plan = overMeasure(planned.plan, columnFor(tenant, input.collection, measure.path));
+        const keep = keeps(plan);
+        // The group key comes from the ordered lens beside the identifier, so
+        // grouping reads no documents either -- the rows carry both.
+        const held = new Map<string, { key: OrderedScalar; seqs: Array<number> }>();
+        let after: OrderedCursor | undefined;
+        do {
+          const page = yield* orderedPage({
+            column: columnFor(tenant, input.collection, input.groupBy),
+            where: plan.query,
+            limit: 1000,
+            ...(after === undefined ? {} : { after }),
+          });
+          for (const row of page.rows) {
+            // Document columns hold only ordered scalars; bytes cannot reach here.
+            if (row.value instanceof Uint8Array) continue;
+            if (plan.residual.length > 0) {
+              const doc = yield* readDocument(row.seq);
+              if (!keep(doc)) continue;
+            }
+            const at = `${typeof row.value}:${String(row.value)}`;
+            const group = held.get(at) ?? { key: row.value, seqs: [] };
+            group.seqs.push(Number(row.seq));
+            held.set(at, group);
+          }
+          after = page.next;
+        } while (after !== undefined);
+        const vector = yield* measureOf(measureColumnFor(tenant, input.collection, measure.name));
+        const out: Array<GroupedSummary> = [];
+        for (const { key, seqs } of held.values()) {
+          const values: Array<number> = [];
+          for (const seq of seqs) if (seq < vector.length) values.push(vector[seq]!);
+          if (values.length === 0) continue;
+          out.push({ key, value: foldMeasure(input.op, values), documents: values.length });
+          if (out.length >= groups) break;
+        }
+        return out;
       }),
 
     embed: (input) =>

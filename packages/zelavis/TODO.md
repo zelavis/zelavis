@@ -1263,6 +1263,27 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   carries them and the runtime API honours them: tag-filtered aggregation works
   in process and not over the wire.
 
+- [x] Aggregation over a measure lens, as a `MeasureDefinition` on a collection
+  and `summarize`/`summarizeBy` reads. The filters resolve to identifiers first
+  and the measure is read only then, as one dense vector indexed by identifier
+  -- which is what the store's own `measure` comment always said the shape was
+  for, and nothing had ever used it: `manifestFor` wrote an empty measure list
+  for every document.
+- [x] Presence taken from the field's ordered postings rather than from the
+  measure vector. `store.measure` returns a dense `Float64Array` with every
+  unwritten slot zero, so a document with no value is indistinguishable there
+  from one measuring exactly zero. Taking presence from the ordered lens keeps a
+  stored zero counted and an absent, null, string or non-finite field out, which
+  is what makes `avg`'s denominator honest.
+- [ ] Measures slice two: covariance and other statistics that name two
+  measures; histograms, which answer with a distribution rather than a number;
+  and materialized aggregate projections with explicit refresh and checkpoints,
+  so a repeated aggregate stops being recomputed from scratch.
+- [ ] A document holding a non-finite number at an indexed path cannot be
+  written: `writeNumber` refuses it and nothing in `documents.ts` guards against
+  it first, so the write dies rather than being refused. Pre-existing and
+  untested; measures skip non-finite values rather than adding to it.
+
 ## Later
 
 - [ ] Remote, separately supervised Zelavis Agents.
