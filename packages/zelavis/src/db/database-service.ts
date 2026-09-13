@@ -18,6 +18,7 @@ import type {
   DocumentWrite,
   Analyzer,
   Document,
+  HighlightOptions,
   SpatialFilter,
   SpatialIndex,
   EmbeddingIndex,
@@ -105,6 +106,11 @@ function readQueryClauses(input: Record<string, unknown>) {
       ? { related: input.related as ReadonlyArray<RelatedFilter> }
       : {}),
     ...(typeof input.search === "string" ? { search: input.search } : {}),
+    ...(typeof input.fuzzy === "boolean" || typeof input.fuzzy === "number" ? { fuzzy: input.fuzzy } : {}),
+    ...(typeof input.prefix === "boolean" ? { prefix: input.prefix } : {}),
+    ...(typeof input.highlight === "boolean" || (input.highlight && typeof input.highlight === "object")
+      ? { highlight: input.highlight as HighlightOptions | boolean }
+      : {}),
     ...(input.geometry && typeof input.geometry === "object"
       ? { geometry: input.geometry as SpatialFilter }
       : {}),
@@ -930,7 +936,10 @@ export function defineDatabaseDocumentsService(
                   tenantId: { type: "string", description: "Tenant ID" },
                   where: { type: "array", description: "Filters" },
                   related: { type: "array", description: "Joins, each { reference, where?, id? }" },
-                  search: { type: "string", description: "Words or quoted \"phrases\" to find in analyzed fields, ranked by BM25 relevance" },
+                  search: { type: "string", description: "Words, prefixes (comput*), fuzzy terms (macbok~), or quoted \"phrases\" to find in analyzed fields, ranked by BM25 relevance" },
+                  fuzzy: { description: "When true or edit distance (1 or 2), terms match fuzzily within edit distance" },
+                  prefix: { type: "boolean", description: "When true, terms match as prefixes (search-as-you-type)" },
+                  highlight: { description: "When true or HighlightOptions, highlights matching terms in analyzed fields" },
                   geometry: { type: "object", description: "A spatial filter: { field, near+radius | within | intersects }" },
                   linked: { type: "object", description: "Only what a document links to: { collection, id, edge }" },
                   similar: { type: "object", description: "Closest first by embedding: { field, vector, k }" },
@@ -988,7 +997,10 @@ export function defineDatabaseDocumentsService(
                   tenantId: { type: "string", description: "Tenant ID" },
                   where: { type: "array", description: "Filters" },
                   related: { type: "array", description: "Joins, each { reference, where?, id? }" },
-                  search: { type: "string", description: "Words or quoted \"phrases\" to find in the analyzed fields" },
+                  search: { type: "string", description: "Words, prefixes (comput*), fuzzy terms (macbok~), or quoted \"phrases\" to find in the analyzed fields" },
+                  fuzzy: { description: "When true or edit distance (1 or 2), terms match fuzzily within edit distance" },
+                  prefix: { type: "boolean", description: "When true, terms match as prefixes (search-as-you-type)" },
+                  highlight: { description: "When true or HighlightOptions, highlights matching terms in analyzed fields" },
                   geometry: { type: "object", description: "A spatial filter: { field, near+radius | within | intersects }" },
                   linked: { type: "object", description: "Only what a document links to: { collection, id, edge }" },
                   orderBy: { type: "array", description: "One field, or several that a composite index serves" },

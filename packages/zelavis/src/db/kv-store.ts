@@ -7,7 +7,7 @@ import {
   edgeKey, edgePrefix, eventKey, eventPrefix,
   identityBySeqKey, identityKey, manifestKey, measureKey, measurePrefix,
   compareKeys, metaKey, payloadKey, positionOf, segmentIndexOf, segmentKey, segmentPrefix,
-  seqOf, Tag, termKey, termPrefix, tombstoneKey, tombstonePrefix,
+  seqOf, Tag, termKey, termPrefix, termPrefixKey, readTermKey, tombstoneKey, tombstonePrefix,
   decodeOrderedKey, dirtyKey, inPrefixRange, orderedColumnPrefix, orderedKey, orderedKindRange,
   snapshotKey, snapshotPrefix,
   orderedValuePrefix, prefixEnd, type OrderedValue,
@@ -742,6 +742,7 @@ export const storeOverKv = (
     switch (query._tag) {
       case "Range": return rangePostings(query);
       case "Term": return postingsUnder(termPrefix(query.field, query.term));
+      case "TermPrefix": return postingsUnder(termPrefixKey(query.field, query.prefix));
       case "Equals": return postingsUnder(orderedValuePrefix(query.column, query.value));
       case "Edge": return postingsUnder(edgePrefix(query.edgeType, query.from));
       case "And": return Effect.map(Effect.forEach(query.of, evaluate), Postings.andAll);
@@ -1361,6 +1362,27 @@ export const storeOverKv = (
         const vector = new Float64Array(max + 1);
         for (const { seq, value } of found) vector[seq] = value;
         return vector;
+      }),
+
+    terms: (field, prefix = "") =>
+      Effect.gen(function* () {
+        const terms = new Set<string>();
+        const startKey = termPrefixKey(field, prefix);
+        yield* Stream.runForEach(engine.scan(startKey), (entry) =>
+          Effect.sync(() => {
+            const parsed = readTermKey(entry.key);
+            if (parsed !== undefined && parsed.field === field && parsed.term.startsWith(prefix)) {
+              terms.add(parsed.term);
+            }
+          }));
+        yield* Stream.runForEach(engine.scan(segmentPrefix(startKey)), (entry) =>
+          Effect.sync(() => {
+            const parsed = readTermKey(entry.key);
+            if (parsed !== undefined && parsed.field === field && parsed.term.startsWith(prefix)) {
+              terms.add(parsed.term);
+            }
+          }));
+        return [...terms].sort();
       }),
   } satisfies ObjectStoreApi;
 };

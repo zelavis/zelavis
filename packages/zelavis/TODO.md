@@ -898,9 +898,14 @@ Independent of parity, and needed before an official recipe mounts `dbnew`:
   results by relevance score descending when no explicit order is specified;
   quoted phrase queries (`"quick brown"`) verified consecutively against
   analyzed fields; and `score` exposed on matching documents.
+- [x] Search, prefix and fuzzy matching and highlights: prefix range queries
+  (`comput*` or `prefix: true`) over term postings in KV storage; fuzzy matching
+  (`macbok~` / `~N` or `fuzzy: true | number`) with Damerau-Levenshtein edit
+  distance and distance-discounted BM25 scoring; and customizable contextual
+  highlights (`<mark>...</mark>`, ellipsis bounding, case-preserving snippets)
+  on returned documents across `findMany` and `findPage`.
 - [ ] Search, the rest of it: positional postings in the KV storage format;
-  prefix and fuzzy matching; highlights; stemming and synonyms behind the
-  analyzer's language; and result ordering across shards.
+  stemming and synonyms behind the analyzer's language; and result ordering across shards.
 - [ ] Take libsql's keys back off hex once the Buffer-parameter panic is
   released. Binding a lone Buffer routed it down the named-parameter path,
   where an anonymous `?` has no name and the unwrap panicked out of the

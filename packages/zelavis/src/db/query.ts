@@ -16,6 +16,12 @@ export interface TermQuery {
   readonly term: string;
 }
 
+export interface TermPrefixQuery {
+  readonly _tag: "TermPrefix";
+  readonly field: string;
+  readonly prefix: string;
+}
+
 /**
  * Objects holding exactly this value in a column, read from the ordered lens.
  * Typed, as the lens is: `10`, `"10"` and `true` are three different values.
@@ -67,13 +73,14 @@ export interface RangeQuery {
   readonly upper?: RangeBound;
 }
 
-export type Query = TermQuery | EqualsQuery | EdgeQuery | RangeQuery | AndQuery | OrQuery;
+export type Query = TermQuery | TermPrefixQuery | EqualsQuery | EdgeQuery | RangeQuery | AndQuery | OrQuery;
 
 const OrderedScalarWire = Schema.Union([Schema.Null, Schema.Boolean, Schema.Finite, Schema.String]);
 const RangeBoundWire = Schema.Struct({ value: OrderedScalarWire, inclusive: Schema.Boolean });
 
 export const Query: Schema.Codec<Query> = Schema.Union([
   Schema.TaggedStruct("Term", { field: Schema.String, term: Schema.String }),
+  Schema.TaggedStruct("TermPrefix", { field: Schema.String, prefix: Schema.String }),
   Schema.TaggedStruct("Equals", { column: Schema.String, value: OrderedScalarWire }),
   Schema.TaggedStruct("Edge", { edgeType: Schema.String, from: Schema.Finite }),
   Schema.TaggedStruct("Range", {
@@ -93,6 +100,12 @@ export const term = (field: string, value: string): Query => ({
   _tag: "Term",
   field,
   term: value,
+});
+
+export const termPrefixQuery = (field: string, prefix: string): Query => ({
+  _tag: "TermPrefix",
+  field,
+  prefix,
 });
 
 export const equals = (column: string, value: OrderedScalar): Query => ({

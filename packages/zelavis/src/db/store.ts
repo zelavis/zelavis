@@ -259,6 +259,9 @@ export interface ObjectStoreApi {
    * already small.
    */
   readonly measure: (column: string) => Effect.Effect<Float64Array, DbError>;
+
+  /** Distinct terms indexed under a field, optionally matching a prefix. */
+  readonly terms: (field: string, prefix?: string) => Effect.Effect<ReadonlyArray<string>, DbError>;
 }
 
 /**
