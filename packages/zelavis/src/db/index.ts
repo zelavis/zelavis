@@ -37,3 +37,5 @@ export * from "./migrations.js";
 export * from "./runtime-api.js";
 export * from "./database.js";
 export * from "./database-service.js";
+export * from "./stemmer.js";
+export * from "./search-parser.js";
