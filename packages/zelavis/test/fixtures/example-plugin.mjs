@@ -30,6 +30,7 @@ const service = Object.freeze({
   version: "1.0.0",
   kind: "plugin",
   capabilities: Object.freeze(["api:routes", "dashboard:menu"]),
+  packageDir: new URL("example-plugin", import.meta.url).href,
   menu: Object.freeze({
     title: "Catalog",
     path: "/catalog",
@@ -46,16 +47,6 @@ const service = Object.freeze({
         page: Object.freeze({ id: "items", title: "Items", file: "items.html" }),
       }),
     ]),
-  }),
-  pageAssets: Object.freeze({
-    "catalog.html": Object.freeze({
-      contentType: "text/html; charset=utf-8",
-      body: "<!doctype html><title>Catalog</title><main>Catalog workspace</main>",
-    }),
-    "items.html": Object.freeze({
-      contentType: "text/html; charset=utf-8",
-      body: "<!doctype html><title>Items</title><main>Items</main>",
-    }),
   }),
   // Registered during setup, the way a plugin that owns an API surface does.
   // The health route reports the setup context back, which is what makes this

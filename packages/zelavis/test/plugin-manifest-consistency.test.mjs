@@ -14,7 +14,7 @@ import { validatePluginPackageManifest } from "../dist/core/index.js";
  * removed `kind` — installing either would have been refused at validation,
  * and nothing noticed because they were only ever composed in code.
  */
-const ROOTS = ["../../../plugins", "../product-services"];
+const ROOTS = ["../../../plugins", "../services"];
 
 async function findManifests(directory, depth = 0) {
   const found = [];
@@ -84,5 +84,54 @@ test("no first-party plugin carries a legacy main", async () => {
   for (const { manifest } of await manifests()) {
     if (manifest.zelavis.kind === "frontend") continue;
     assert.equal(manifest.main, undefined, `${manifest.name} declares main`);
+  }
+});
+
+test("no first-party plugin carries a legacy entry", async () => {
+  for (const { manifest } of await manifests()) {
+    assert.equal(manifest.entry, undefined, `${manifest.name} declares entry`);
+    assert.equal(manifest.zelavis.entry, undefined, `${manifest.name} declares zelavis.entry`);
+  }
+});
+
+test("validatePluginPackageManifest rejects legacy entry", () => {
+  assert.throws(
+    () =>
+      validatePluginPackageManifest({
+        name: "test-pkg",
+        type: "module",
+        exports: "./index.js",
+        entry: "./index.js",
+        zelavis: { kind: "plugin", namespace: "test" },
+      }),
+    /entry.*not supported/i,
+  );
+  assert.throws(
+    () =>
+      validatePluginPackageManifest({
+        name: "test-pkg",
+        type: "module",
+        exports: "./index.js",
+        zelavis: { kind: "plugin", namespace: "test", entry: "./index.js" },
+      }),
+    /entry.*not supported/i,
+  );
+});
+
+test("no first-party service carries src/manifest.ts or exports ./manifest", async () => {
+  for (const { path: manifestPath, manifest } of await manifests()) {
+    const pkgDir = join(manifestPath, "..");
+    const srcManifestTs = join(pkgDir, "src", "manifest.ts");
+    let hasManifestTs = false;
+    try {
+      await stat(srcManifestTs);
+      hasManifestTs = true;
+    } catch {
+      hasManifestTs = false;
+    }
+    assert.equal(hasManifestTs, false, `${manifest.name} must not have src/manifest.ts`);
+    if (typeof manifest.exports === "object" && manifest.exports !== null) {
+      assert.equal(manifest.exports["./manifest"], undefined, `${manifest.name} must not export ./manifest`);
+    }
   }
 });

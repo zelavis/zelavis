@@ -1,20 +1,32 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
-import { AUTH_SETTINGS_MANIFEST } from "../dist/manifest.js";
+import { resolveLocalPackageManifest } from "../../../dist/adapters/_local-runtime.js";
 
-test("the declared manifest matches package.json", async () => {
-  // The service is loaded through the ordinary plugin loader, which needs the
-  // manifest as a value because a package shipping inside the Platform has no
-  // install step to read package.json from. The two drifting apart would load
-  // a service describing something this package is not.
-  const actual = JSON.parse(
-    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+test("the package.json manifest is automatically resolved and validated", async () => {
+  const manifest = resolveLocalPackageManifest(new URL("..", import.meta.url).pathname);
+  assert.ok(manifest);
+  assert.equal(manifest.name, "@zelavis/auth");
+  assert.equal(manifest.type, "module");
+  assert.equal(manifest.zelavis.kind, "plugin");
+  assert.equal(manifest.zelavis.namespace, "auth");
+  assert.deepEqual(manifest.zelavis.capabilities, ["dashboard:menu"]);
+});
+
+test("the service cannot be imported outside a plugin context", async () => {
+  await assert.rejects(
+    () => import("../dist/index.js"),
+    /plugin execution context/,
   );
+});
 
-  assert.equal(AUTH_SETTINGS_MANIFEST.name, actual.name);
-  assert.equal(AUTH_SETTINGS_MANIFEST.version, actual.version);
-  assert.equal(AUTH_SETTINGS_MANIFEST.type, actual.type);
-  assert.deepEqual(AUTH_SETTINGS_MANIFEST.zelavis, actual.zelavis);
-  assert.deepEqual(AUTH_SETTINGS_MANIFEST.exports["."], actual.exports["."]);
+test("the auth settings page is a complete document that styles itself from the Platform", async () => {
+  const page = await readFile(
+    new URL("../dashboard/auth.html", import.meta.url),
+    "utf8",
+  );
+  assert.match(page, /^<!doctype html>/i);
+  assert.match(page, /<title>Auth<\/title>/i);
+  assert.match(page, /service-page\.css/);
+  assert.match(page, /const OWNER = "zelavis\/auth"/);
 });

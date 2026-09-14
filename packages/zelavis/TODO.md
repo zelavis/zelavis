@@ -491,11 +491,11 @@ an exported type is never mistaken for an operational distributed feature.
   routes, pages, components, and hardcoded nav entries were removed from
   `@zelavis/ui`, so a broken extension point now breaks the Platform's own
   marketplace rather than hiding behind a private path.
-- [x] A service can ship the pages its menus point at, through
-  `pageAssets`. A page reaches the dashboard the same way whether its service
-  was installed from an archive into the bundle store or composed into the
-  Platform, and core services — which are not registry entries — resolve a
-  fetchable `page.src` like any other.
+- [x] A service ships the pages its menus point at directly from disk
+  (`dashboard/` or package directory) with classic webspace semantics. A page
+  reaches the dashboard whether its service was installed from an archive into
+  the bundle store or loaded from disk, and services resolve a fetchable
+  `page.src` like any other.
 - [x] A service page composes real components. The Platform serves an element
   library at `runtime/service-elements.js` beside the design tokens it already
   served at `runtime/service-page.css`, and a frontend may supply its own —

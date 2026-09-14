@@ -24,7 +24,7 @@ test("ecommercePlugin defines standard Zelavis plugin structure with OpenAPI spe
 test("ecommercePlugin registers and exposes recurring subscription endpoints", async (t) => {
   const dummyStripeProvider = {
     name: "@zelavis/ecommerce-stripe-test",
-    kind: "provider",
+    kind: "plugin",
     capabilities: ["@zelavis/ecommerce:payments"],
     service: {
       name: "stripe-test",

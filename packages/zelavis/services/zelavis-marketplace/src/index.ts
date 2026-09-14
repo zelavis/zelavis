@@ -18,8 +18,6 @@
  */
 import { zelavis } from "zelavis/sdk";
 
-import { MARKETPLACE_PAGE } from "./page.js";
-
 export const ZELAVIS_MARKETPLACE_SERVICE_NAME = "@zelavis/marketplace";
 
 /**
@@ -37,6 +35,7 @@ zelavis.plugins.ui.menus.create({
   page: {
     id: "marketplace",
     title: "Marketplace",
+    bundle: "dashboard",
     file: "marketplace.html",
   },
   access: {
@@ -60,6 +59,7 @@ zelavis.plugins.ui.menus.create({
   page: {
     id: "project-marketplace",
     title: "Marketplace",
+    bundle: "dashboard",
     file: "marketplace.html",
   },
   access: {
@@ -78,13 +78,6 @@ zelavis.plugins.ui.menus.create({
 export default {
   name: ZELAVIS_MARKETPLACE_SERVICE_NAME,
   basePath: "/marketplace",
-  capabilities: ["dashboard:menu", "marketplace:services"] as const,
-  pageAssets: {
-    "marketplace.html": {
-      contentType: "text/html; charset=utf-8",
-      body: MARKETPLACE_PAGE,
-    },
-  },
   api: {},
   service: {},
 };

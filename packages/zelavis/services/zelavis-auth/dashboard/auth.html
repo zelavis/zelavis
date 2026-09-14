@@ -1,18 +1,4 @@
-/**
- * The auth settings page.
- *
- * Served through the service page asset route and rendered in a frame that is
- * same-origin with the Platform, so it calls the same versioned API the
- * dashboard does, with the same session, using plain `fetch`. Nothing here is
- * privileged: every endpoint it touches is one the CLI and any other client
- * can use.
- *
- * It shows three things — how someone signs in today, the OAuth providers
- * configured for this installation, and the plugins that extend auth. The
- * third is a catalogue scoped to one service rather than a general one: a list
- * of everything installable tells nobody which of it is an auth method.
- */
-export const AUTH_SETTINGS_PAGE = `<!doctype html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -100,7 +86,7 @@ export const AUTH_SETTINGS_PAGE = `<!doctype html>
     <script type="module">
       // Four levels up from /runtime/service-page-assets/<service>/<bundle>/<file>
       // is the API root this page was served from.
-      const apiRoot = new URL("../../../../", location.href).pathname.replace(/\\/$/, "");
+      const apiRoot = new URL("../../../../", location.href).pathname.replace(/\/$/, "");
       const OWNER = "zelavis/auth";
 
       const el = (id) => document.getElementById(id);
@@ -113,7 +99,7 @@ export const AUTH_SETTINGS_PAGE = `<!doctype html>
         const text = await response.text();
         const body = text ? JSON.parse(text) : undefined;
         if (!response.ok) {
-          throw new Error(body?.error ?? \`Request failed (\${response.status})\`);
+          throw new Error(body?.error ?? `Request failed (${response.status})`);
         }
         return body;
       }
@@ -167,7 +153,7 @@ export const AUTH_SETTINGS_PAGE = `<!doctype html>
           const { providers = [] } = await api("/auth/oauth/connections");
           for (const connection of providers) {
             const detail = connection.configured
-              ? \`\${connection.clientId}\${connection.hasClientSecret ? " · secret set" : ""}\`
+              ? `${connection.clientId}${connection.hasClientSecret ? " · secret set" : ""}`
               : "not configured";
             list.append(
               card([
@@ -188,7 +174,7 @@ export const AUTH_SETTINGS_PAGE = `<!doctype html>
           // Scoped to what extends auth. A general catalogue would list a
           // dashboard theme beside a sign-in method and mean nothing here.
           const { extensionPoints = [] } = await api(
-            \`/runtime/extensions?owner=\${encodeURIComponent(OWNER)}\`,
+            `/runtime/extensions?owner=${encodeURIComponent(OWNER)}`,
           );
           const point = extensionPoints[0];
           const extensions = point?.extensions ?? [];
@@ -204,7 +190,7 @@ export const AUTH_SETTINGS_PAGE = `<!doctype html>
               action.disabled = true;
               try {
                 await api(
-                  \`/runtime/services/\${encodeURIComponent(extension.name)}\`,
+                  `/runtime/services/${encodeURIComponent(extension.name)}`,
                   {
                     method: "PATCH",
                     headers: { "content-type": "application/json" },
@@ -242,7 +228,7 @@ export const AUTH_SETTINGS_PAGE = `<!doctype html>
         status.textContent = "Saving…";
         try {
           const provider = el("provider").value.trim();
-          await api(\`/auth/oauth/connections/\${encodeURIComponent(provider)}\`, {
+          await api(`/auth/oauth/connections/${encodeURIComponent(provider)}`, {
             method: "PUT",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
@@ -258,7 +244,7 @@ export const AUTH_SETTINGS_PAGE = `<!doctype html>
               redirectUri: el("redirectUri").value.trim(),
             }),
           });
-          status.textContent = \`Saved \${provider}.\`;
+          status.textContent = `Saved ${provider}.`;
           el("clientSecret").value = "";
           await renderConnections();
         } catch (cause) {
@@ -271,4 +257,3 @@ export const AUTH_SETTINGS_PAGE = `<!doctype html>
     </script>
   </body>
 </html>
-`;

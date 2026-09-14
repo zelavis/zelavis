@@ -1,5 +1,4 @@
 import { zelavis } from "zelavis/sdk";
-import { ecommerceDashboardPages } from "./generated/dashboard-pages.js";
 import {
   createJsonErrorResponse,
   createMappedJsonErrorResponse,
@@ -457,7 +456,8 @@ zelavis.plugins.ui.menus.create({
   page: {
     id: "dashboard",
     title: "Commerce",
-      file: "dashboard.html",
+    bundle: "dashboard",
+    file: "dashboard.html",
   },
   items: [
     {
@@ -466,7 +466,8 @@ zelavis.plugins.ui.menus.create({
       page: {
         id: "products",
         title: "Products",
-      file: "products.html",
+        bundle: "dashboard",
+        file: "products.html",
       },
     },
     {
@@ -475,7 +476,8 @@ zelavis.plugins.ui.menus.create({
       page: {
         id: "orders",
         title: "Orders",
-      file: "orders.html",
+        bundle: "dashboard",
+        file: "orders.html",
       },
     },
     {
@@ -484,7 +486,8 @@ zelavis.plugins.ui.menus.create({
       page: {
         id: "payments",
         title: "Payments",
-      file: "payments.html",
+        bundle: "dashboard",
+        file: "payments.html",
       },
     },
     {
@@ -496,7 +499,8 @@ zelavis.plugins.ui.menus.create({
           page: {
             id: "customers",
             title: "Customers",
-      file: "customers.html",
+            bundle: "dashboard",
+            file: "customers.html",
           },
         },
         {
@@ -505,24 +509,19 @@ zelavis.plugins.ui.menus.create({
           page: {
             id: "coupons",
             title: "Coupons",
-      file: "coupons.html",
+            bundle: "dashboard",
+            file: "coupons.html",
           },
         },
       ],
     },
   ],
-  });
+});
+
+export const ECOMMERCE_PLUGIN_NAME = "@zelavis/ecommerce";
 
 export const ecommercePlugin = Object.freeze({
-  name: "@zelavis/ecommerce",
-  // Shipped as page assets rather than a bundle. The menu used to point at
-  // `bundle: "dashboard"`, which resolves through the bundle store, and
-  // nothing ever uploaded these files into one — so every page answered
-  // "Service asset not found" while the plugin looked installed.
-  pageAssets: ecommerceDashboardPages,
-  version: "1.0.1-alpha.2",
-  kind: "plugin",
-  capabilities: Object.freeze(["api:routes", "dashboard:menu"]),
+  name: ECOMMERCE_PLUGIN_NAME,
   async setup(context: ZelavisServiceSetupContext) {
     // Dynamic provider discovery: discover payment providers by declared capability
     const paymentServices = context.registry

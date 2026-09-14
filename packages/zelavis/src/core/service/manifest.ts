@@ -113,6 +113,15 @@ export function validatePluginPackageManifest(
         `Invalid Zelavis service "${name}":\n"main" is not supported.\nUse the modern "exports" field instead.`,
       );
     }
+
+    if (
+      manifest.entry !== undefined ||
+      (zelavis as Record<string, unknown>).entry !== undefined
+    ) {
+      throw new TypeError(
+        `Invalid Zelavis service "${name}":\n"entry" is not supported.\nUse the standard package.json "exports" field instead.`,
+      );
+    }
   }
 
   // Validated rather than merely carried. A capability is how a provider finds

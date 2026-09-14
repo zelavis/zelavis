@@ -4,6 +4,7 @@ import {
   type ZelavisServerErrorStatusRule,
   type ZelavisRuntimeService,
   type ZelavisServerRoute,
+  type ZelavisRequestAuthenticator,
 } from "../../core/index.js";
 import type { AuthApi, AuthMethodPlugin } from "./core/types.js";
 import type { AuthBootstrapCapability } from "./core/types.js";
@@ -929,6 +930,34 @@ export function defineAuthService(
   });
 }
 
+/**
+ * The Platform Identity & Permissions Subsystem.
+ *
+ * A foundational Platform OS capability providing accounts, sessions,
+ * passwords, credentials, and authenticators. This is a native platform
+ * subsystem, not a loadable plugin service.
+ */
+export interface AuthSubsystem {
+  readonly auth: AuthApi;
+  readonly authenticators: readonly ZelavisRequestAuthenticator[];
+  readonly routes: readonly ZelavisServerRoute<AuthApi>[];
+  /** Backwards-compatible runtime service definition. */
+  readonly definition: AuthServiceDefinition;
+}
+
+export function defineAuthSubsystem(
+  auth: AuthApi,
+  options: DefineAuthServiceOptions = {},
+): AuthSubsystem {
+  const definition = defineAuthService(auth, options);
+  return Object.freeze({
+    auth,
+    authenticators: definition.authenticators ?? [auth.requestAuthenticator],
+    routes: (definition.api?.v1 ?? []) as readonly ZelavisServerRoute<AuthApi>[],
+    definition,
+  });
+}
+
 export interface AuthServiceOptions {
   /** Options for the built-in password provider. */
   password?: PasswordProviderOptions;
@@ -943,9 +972,9 @@ export interface AuthServiceOptions {
   definition?: DefineAuthServiceOptions;
 }
 
-export async function authService(
+export async function createAuthSubsystem(
   options: AuthServiceOptions = {},
-): Promise<AuthServiceDefinition> {
+): Promise<AuthSubsystem> {
   const auth =
     options.auth ??
     (await createAuth({
@@ -956,5 +985,12 @@ export async function authService(
       ],
     }));
 
-  return defineAuthService(auth, options.definition);
+  return defineAuthSubsystem(auth, options.definition);
+}
+
+export async function authService(
+  options: AuthServiceOptions = {},
+): Promise<AuthServiceDefinition> {
+  const subsystem = await createAuthSubsystem(options);
+  return subsystem.definition;
 }

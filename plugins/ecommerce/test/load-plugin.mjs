@@ -1,5 +1,5 @@
 import { loadPluginPackage } from "../../../packages/zelavis/dist/service.js";
-import { ECOMMERCE_MANIFEST } from "../dist/manifest.js";
+import { resolveLocalPackageManifest } from "../../../packages/zelavis/dist/adapters/_local-runtime.js";
 
 /**
  * Loads the plugin the way an installation does.
@@ -17,7 +17,7 @@ let cached;
 
 export function loadEcommercePlugin() {
   cached ??= loadPluginPackage({
-    manifest: ECOMMERCE_MANIFEST,
+    manifest: resolveLocalPackageManifest(new URL("..", import.meta.url).pathname),
     importer: () => import("../dist/index.js"),
   });
   return cached;

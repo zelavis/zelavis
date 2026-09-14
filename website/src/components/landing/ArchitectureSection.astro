@@ -1,0 +1,643 @@
+---
+const capabilities = [
+	{
+		id: 'database',
+		number: '01',
+		label: 'Database',
+		title: 'Sharded from the first project',
+		body: 'Every official Zelavis App routes stable virtual ranges across physical shards—even when they all live on one node. Scaling out simply redistributes shard placements rather than changing your application model.',
+		accent: 'blue',
+	},
+	{
+		id: 'fabric',
+		number: '02',
+		label: 'Platform Fabric',
+		title: 'Placement is authority, not a URL',
+		body: 'The control plane owns nodes, allocation, routing, generation fencing, and lifecycle orchestration. Project runtimes execute in bounded envelopes and never become the scheduling authority.',
+		accent: 'violet',
+	},
+	{
+		id: 'surfaces',
+		number: '03',
+		label: 'Open surfaces',
+		title: 'Use the dashboard—or do not',
+		body: 'Stable endpoints and typed SDK boundaries keep every capability open to CLIs, coding agents, background scripts, custom frontends, and external automation tools without lock-in.',
+		accent: 'coral',
+	},
+];
+---
+
+<section class="amp-section amp-together" id="architecture" data-local-content>
+	<div class="amp-wrap">
+		<div class="amp-heading centered" data-reveal>
+			<p class="amp-eyebrow">Better together</p>
+			<h2>One platform. Clean boundaries.</h2>
+			<p>The control plane and project runtimes work as one cohesive product without sharing one failure domain.</p>
+		</div>
+
+		<div class="together-grid">
+			<div class="together-copy">
+				{capabilities.map((item, index) => (
+					<button
+						class:list={['together-item', index === 0 && 'active']}
+						type="button"
+						data-capability-id={item.id}
+						data-capability-accent={item.accent}
+					>
+						<span class="item-num">{item.number}</span>
+						<div class="item-text">
+							<b>{item.label}</b>
+							<p>{item.title}</p>
+						</div>
+						<i class="item-arrow">→</i>
+					</button>
+				))}
+			</div>
+
+			<div class="together-visual" data-accent="blue" data-reveal>
+				<!-- Visual 1: Database Topology -->
+				<div class="topo-view active" data-view="database">
+					<div class="topology-head">
+						<span>App Data Topology</span>
+						<b>4 shards · 64 ranges · version 18</b>
+					</div>
+					<div class="topology-map">
+						<div class="topology-node root">
+							<span>Logical App Database</span>
+							<b>northstar</b>
+						</div>
+						<div class="topology-router">
+							<span>hash(tenant_id) router</span>
+						</div>
+						<div class="topology-links"></div>
+						<div class="topology-shards">
+							<div class="shard-box">
+								<span class="shard-num">Shard 01</span>
+								<b>0000–3fff</b>
+								<small>tenants a–f</small>
+							</div>
+							<div class="shard-box">
+								<span class="shard-num">Shard 02</span>
+								<b>4000–7fff</b>
+								<small>tenants g–m</small>
+							</div>
+							<div class="shard-box">
+								<span class="shard-num">Shard 03</span>
+								<b>8000–bfff</b>
+								<small>tenants n–s</small>
+							</div>
+							<div class="shard-box">
+								<span class="shard-num">Shard 04</span>
+								<b>c000–ffff</b>
+								<small>tenants t–z</small>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Visual 2: Platform Fabric -->
+				<div class="topo-view" data-view="fabric">
+					<div class="topology-head">
+						<span>Fabric Architecture</span>
+						<b>Control Plane vs. Data Plane</b>
+					</div>
+					<div class="fabric-stack">
+						<div class="fabric-card control-plane">
+							<span class="layer-tag">Platform Fabric · Privileged Control Plane</span>
+							<b>Fleet Placement · Generation Fences · Lease Authority</b>
+						</div>
+						<div class="gateway-barrier">
+							<span>Project Gateway Boundary</span>
+						</div>
+						<div class="fabric-workers">
+							<div class="worker-card">
+								<span>Worker 01</span>
+								<b>northstar-api</b>
+								<small>Node Process</small>
+							</div>
+							<div class="worker-card">
+								<span>Worker 02</span>
+								<b>atlas-jobs</b>
+								<small>Isolated Container</small>
+							</div>
+							<div class="worker-card">
+								<span>Worker 03</span>
+								<b>storefront</b>
+								<small>Static Edge</small>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Visual 3: Open surfaces -->
+				<div class="topo-view" data-view="surfaces">
+					<div class="topology-head">
+						<span>Universal Access Surface</span>
+						<b>Every client maps to stable endpoints</b>
+					</div>
+					<div class="surfaces-stack">
+						<div class="clients-row">
+							<div class="client-pill">
+								<span>UI</span>
+								<b>@zelavis/ui</b>
+							</div>
+							<div class="client-pill">
+								<span>CLI</span>
+								<b>npx zelavis</b>
+							</div>
+							<div class="client-pill">
+								<span>AI</span>
+								<b>Agent API</b>
+							</div>
+							<div class="client-pill">
+								<span>SDK</span>
+								<b>zelavis/core</b>
+							</div>
+						</div>
+						<div class="surfaces-line"></div>
+						<div class="endpoint-card">
+							<span class="layer-tag">Typed Gateway Contracts &amp; RPC</span>
+							<b>Unified System &amp; Project Service API</b>
+							<code>GET/POST /api/v1/projects/:id/*</code>
+						</div>
+					</div>
+				</div>
+
+				<p class="together-desc" data-capability-description>{capabilities[0].body}</p>
+			</div>
+		</div>
+	</div>
+</section>
+
+<script id="capability-data" type="application/json" set:html={JSON.stringify(capabilities)}></script>
+
+<script is:inline>
+	(function () {
+		var capabilityData = JSON.parse(document.getElementById('capability-data').textContent || '[]');
+		var buttons = Array.from(document.querySelectorAll('[data-capability-id]'));
+		var visual = document.querySelector('.together-visual');
+		var description = document.querySelector('[data-capability-description]');
+		var views = document.querySelectorAll('.topo-view');
+
+		buttons.forEach(function (button, index) {
+			button.addEventListener('click', function () {
+				buttons.forEach(function (item) {
+					item.classList.toggle('active', item === button);
+				});
+
+				var item = capabilityData[index];
+				if (!item) return;
+
+				if (visual) visual.dataset.accent = item.accent;
+				if (description) description.textContent = item.body;
+
+				views.forEach(function (view) {
+					view.classList.toggle('active', view.dataset.view === item.id);
+				});
+			});
+		});
+	})();
+</script>
+
+<style>
+	.amp-together {
+		padding: 120px 0;
+	}
+
+	.amp-wrap {
+		width: min(1180px, calc(100% - 64px));
+		margin: 0 auto;
+	}
+
+	.amp-heading {
+		max-width: 780px;
+		margin-bottom: 56px;
+	}
+
+	.amp-heading.centered {
+		margin-left: auto;
+		margin-right: auto;
+		text-align: center;
+	}
+
+	.amp-eyebrow {
+		margin: 0 0 14px;
+		font-size: 13px;
+		line-height: 1.2;
+		font-weight: 750;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: #5846cf;
+	}
+
+	.amp-heading h2 {
+		margin: 0;
+		font-size: clamp(38px, 4.8vw, 58px);
+		line-height: 1.08;
+		letter-spacing: -0.035em;
+		font-weight: 750;
+		color: #121422;
+	}
+
+	.amp-heading > p:last-child {
+		max-width: 680px;
+		margin: 20px auto 0;
+		font-size: 17.5px;
+		line-height: 1.6;
+		color: #636676;
+	}
+
+	.together-grid {
+		display: grid;
+		grid-template-columns: 0.85fr 1.15fr;
+		gap: 64px;
+		align-items: center;
+	}
+
+	.together-copy {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.together-item {
+		width: 100%;
+		padding: 24px 0;
+		display: grid;
+		grid-template-columns: 36px 1fr 30px;
+		gap: 16px;
+		align-items: center;
+		text-align: left;
+		border: 0;
+		border-bottom: 1px solid #e2e5ec;
+		background: transparent;
+		color: #6f7281;
+		cursor: pointer;
+		transition: all 0.2s ease;
+	}
+
+	.together-item:first-child {
+		border-top: 1px solid #e2e5ec;
+	}
+
+	.item-num {
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 12px;
+		font-weight: 700;
+		color: #9295a6;
+	}
+
+	.item-text b {
+		display: block;
+		font-size: 18px;
+		color: #1b1d28;
+		transition: color 0.18s ease;
+	}
+
+	.item-text p {
+		margin: 4px 0 0;
+		font-size: 14px;
+		color: #6a6e7d;
+		line-height: 1.45;
+	}
+
+	.item-arrow {
+		font-style: normal;
+		font-size: 18px;
+		color: #9da0b2;
+		transition: transform 0.2s ease, color 0.2s ease;
+	}
+
+	.together-item:hover .item-text b {
+		color: #3b3399;
+	}
+
+	.together-item.active {
+		color: #2b238d;
+	}
+
+	.together-item.active .item-num {
+		color: #5544ce;
+	}
+
+	.together-item.active .item-text b {
+		color: #1b1574;
+	}
+
+	.together-item.active .item-arrow {
+		color: #5544ce;
+		transform: translateX(4px);
+	}
+
+	/* Visual Container */
+	.together-visual {
+		min-height: 440px;
+		padding: 36px;
+		border-radius: 24px;
+		background: #edf1ff;
+		border: 1px solid #dbe2fb;
+		transition: background 0.3s ease, border-color 0.3s ease;
+		box-shadow: 0 16px 40px rgba(25, 30, 68, 0.05);
+	}
+
+	.together-visual[data-accent="violet"] {
+		background: #f4efff;
+		border-color: #e4d8fb;
+	}
+
+	.together-visual[data-accent="coral"] {
+		background: #fff1ef;
+		border-color: #fadcd8;
+	}
+
+	.topology-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 36px;
+		font-size: 12px;
+		font-weight: 600;
+		color: #66697d;
+	}
+
+	.topology-head b {
+		color: #5444bc;
+	}
+
+	.topo-view {
+		display: none;
+	}
+
+	.topo-view.active {
+		display: block;
+		animation: topoFade 0.25s ease;
+	}
+
+	@keyframes topoFade {
+		from { opacity: 0; transform: translateY(4px); }
+		to { opacity: 1; transform: translateY(0); }
+	}
+
+	/* Topology 1: Database */
+	.topology-map {
+		text-align: center;
+	}
+
+	.topology-node.root {
+		width: 190px;
+		margin: 0 auto;
+		padding: 14px 18px;
+		border-radius: 12px;
+		background: #191c2b;
+		color: #fff;
+		box-shadow: 0 8px 20px rgba(18, 20, 42, 0.15);
+	}
+
+	.topology-node span {
+		display: block;
+		font-size: 10px;
+		color: #9ea2b6;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+
+	.topology-node b {
+		display: block;
+		font-size: 15px;
+		margin-top: 2px;
+	}
+
+	.topology-router {
+		margin: 10px auto 0;
+		display: inline-block;
+		padding: 3px 10px;
+		border-radius: 999px;
+		background: #e2e7fa;
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 10px;
+		color: #4b44a8;
+	}
+
+	.topology-links {
+		width: 76%;
+		height: 40px;
+		margin: 0 auto;
+		border-left: 2px dashed #9ca8e8;
+		border-right: 2px dashed #9ca8e8;
+		border-bottom: 2px dashed #9ca8e8;
+	}
+
+	.topology-shards {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 10px;
+		margin-top: 14px;
+	}
+
+	.shard-box {
+		padding: 14px 8px;
+		border-radius: 10px;
+		background: #fff;
+		border: 1px solid #e1e4f0;
+		box-shadow: 0 8px 18px rgba(35, 30, 80, 0.05);
+	}
+
+	.shard-num {
+		display: block;
+		font-size: 10px;
+		color: #7b7e8d;
+		font-weight: 600;
+	}
+
+	.shard-box b {
+		display: block;
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 11px;
+		color: #1a1c26;
+		margin: 3px 0;
+	}
+
+	.shard-box small {
+		display: block;
+		font-size: 9.5px;
+		color: #898d9e;
+	}
+
+	/* Topology 2: Fabric */
+	.fabric-stack {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	.fabric-card.control-plane {
+		padding: 16px 20px;
+		border-radius: 12px;
+		background: #231e3d;
+		color: #fff;
+		text-align: center;
+	}
+
+	.layer-tag {
+		display: block;
+		font-size: 10px;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: #a79cff;
+		margin-bottom: 4px;
+	}
+
+	.fabric-card.control-plane b {
+		display: block;
+		font-size: 13.5px;
+	}
+
+	.gateway-barrier {
+		padding: 6px 12px;
+		border-radius: 6px;
+		background: #e9e2fb;
+		border: 1px dashed #7a5be8;
+		text-align: center;
+		font-size: 11px;
+		font-weight: 600;
+		color: #4c2fb4;
+	}
+
+	.fabric-workers {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 10px;
+	}
+
+	.worker-card {
+		padding: 14px 12px;
+		border-radius: 10px;
+		background: #fff;
+		border: 1px solid #e3dcfa;
+		text-align: center;
+	}
+
+	.worker-card span {
+		display: block;
+		font-size: 9.5px;
+		color: #7e7a92;
+	}
+
+	.worker-card b {
+		display: block;
+		font-size: 12px;
+		color: #1e1b2e;
+		margin: 2px 0;
+	}
+
+	.worker-card small {
+		display: block;
+		font-size: 9.5px;
+		color: #5d3bc7;
+	}
+
+	/* Topology 3: Surfaces */
+	.surfaces-stack {
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+	}
+
+	.clients-row {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 8px;
+	}
+
+	.client-pill {
+		padding: 12px 8px;
+		border-radius: 10px;
+		background: #fff;
+		border: 1px solid #f2dad7;
+		text-align: center;
+	}
+
+	.client-pill span {
+		display: block;
+		font-size: 9px;
+		font-weight: 700;
+		color: #a84234;
+		text-transform: uppercase;
+	}
+
+	.client-pill b {
+		display: block;
+		font-size: 11.5px;
+		color: #261f21;
+		margin-top: 2px;
+	}
+
+	.surfaces-line {
+		width: 80%;
+		height: 1px;
+		margin: 0 auto;
+		background: #e8c6c2;
+	}
+
+	.endpoint-card {
+		padding: 18px;
+		border-radius: 12px;
+		background: #fff;
+		border: 1px solid #f2dad7;
+		text-align: center;
+	}
+
+	.endpoint-card b {
+		display: block;
+		font-size: 14px;
+		color: #241d1e;
+		margin: 3px 0 6px;
+	}
+
+	.endpoint-card code {
+		display: inline-block;
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 10.5px;
+		padding: 3px 8px;
+		border-radius: 6px;
+		background: #faebea;
+		color: #9e362a;
+	}
+
+	.together-desc {
+		max-width: 580px;
+		margin: 36px auto 0;
+		text-align: center;
+		color: #5a5f70;
+		font-size: 14.5px;
+		line-height: 1.6;
+	}
+
+	@media (max-width: 960px) {
+		.together-grid {
+			grid-template-columns: 1fr;
+			gap: 40px;
+		}
+	}
+
+	@media (max-width: 640px) {
+		.amp-together {
+			padding: 80px 0;
+		}
+
+		.together-visual {
+			padding: 20px;
+		}
+
+		.topology-shards {
+			grid-template-columns: repeat(2, 1fr);
+		}
+
+		.fabric-workers {
+			grid-template-columns: 1fr;
+		}
+
+		.clients-row {
+			grid-template-columns: repeat(2, 1fr);
+		}
+	}
+</style>

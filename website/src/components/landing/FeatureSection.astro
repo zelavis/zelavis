@@ -1,0 +1,511 @@
+---
+---
+
+<section class="amp-section amp-features" id="hosting" data-local-content>
+	<div class="amp-wrap">
+		<!-- Feature 1: Run anywhere -->
+		<article class="feature-row" data-reveal>
+			<div class="feature-copy">
+				<p class="amp-eyebrow">Run anywhere</p>
+				<h2>Start on one machine.<br />Keep the architecture.</h2>
+				<p>Small single-node installations and larger distributed fleets use the exact same sharded topology. Scaling out changes shard placements and replicas—not your application code or data model.</p>
+				<ul class="feature-points">
+					<li>Zero architectural rewrites when moving from local dev to production</li>
+					<li>Physical SQLite shards mapped via deterministic virtual hash ranges</li>
+					<li>Plug in RocksDB, LMDB, or libSQL with identical query semantics</li>
+				</ul>
+			</div>
+			<div class="feature-visual servers-visual">
+				<div class="server-rack">
+					<div class="server-node node-1">
+						<div class="node-lights"><i></i><i></i><i></i></div>
+						<div class="node-meta">
+							<span>Node 01 (Primary)</span>
+							<code>fra1 · 4 shards</code>
+						</div>
+						<div class="node-bar"><div class="bar-fill" style="width: 45%"></div></div>
+					</div>
+					<div class="server-node node-2">
+						<div class="node-lights"><i></i><i></i><i></i></div>
+						<div class="node-meta">
+							<span>Node 02 (Worker)</span>
+							<code>ams1 · 2 replicas</code>
+						</div>
+						<div class="node-bar"><div class="bar-fill" style="width: 68%"></div></div>
+					</div>
+					<div class="server-node node-3">
+						<div class="node-lights"><i></i><i></i><i></i></div>
+						<div class="node-meta">
+							<span>Node 03 (Worker)</span>
+							<code>lhr1 · 2 replicas</code>
+						</div>
+						<div class="node-bar"><div class="bar-fill" style="width: 52%"></div></div>
+					</div>
+				</div>
+				<div class="cluster-badge">
+					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+						<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
+					</svg>
+					<span>One Logical App Platform</span>
+				</div>
+			</div>
+		</article>
+
+		<!-- Feature 2: Explicit authority -->
+		<article class="feature-row reverse" data-reveal>
+			<div class="feature-copy">
+				<p class="amp-eyebrow">Explicit authority</p>
+				<h2>A child knows its parent.<br />It never becomes it.</h2>
+				<p>Customer projects receive scoped runtime envelopes and services while the Platform Fabric retains node, placement, generation, and fleet authority. No child process can escalate privileges or compromise other tenants.</p>
+				<ul class="feature-points">
+					<li>Control plane and data plane never share a single failure domain</li>
+					<li>Generation leases prevent split-brain writes during node failover</li>
+					<li>Gateway-enforced authentication with zero implicit default projects</li>
+				</ul>
+			</div>
+			<div class="feature-visual authority-visual">
+				<div class="authority-box">
+					<div class="authority-root">
+						<span class="auth-shield">🛡</span>
+						<div>
+							<b>Platform Fabric Authority</b>
+							<small>Node Leases · Generation Fencing · Schedulers</small>
+						</div>
+					</div>
+					<div class="authority-flow-lines">
+						<span></span><span></span><span></span>
+					</div>
+					<div class="authority-children">
+						<div class="child-envelope">
+							<b>Project Alpha</b>
+							<span>Scoped Envelope</span>
+						</div>
+						<div class="child-envelope">
+							<b>Project Beta</b>
+							<span>Scoped Envelope</span>
+						</div>
+						<div class="child-envelope">
+							<b>Project Gamma</b>
+							<span>Scoped Envelope</span>
+						</div>
+					</div>
+				</div>
+			</div>
+		</article>
+
+		<!-- Feature 3: Extensible by design -->
+		<article class="feature-row" data-reveal>
+			<div class="feature-copy">
+				<p class="amp-eyebrow">Extensible by design</p>
+				<h2>Plugins contribute.<br />Contracts decide.</h2>
+				<p>Third-party and community packages extend validated, namespaced capabilities. Trusted core services define the schemas and privileged boundaries, preventing unauthorized runtime side-effects.</p>
+				<ul class="feature-points">
+					<li>Typed capability discovery (`zelavis/auth:*`, `zelavis/storage:*`)</li>
+					<li>Zero magic monkey-patching or hidden global state mutations</li>
+					<li>First-class package ecosystem installable via standard npm</li>
+				</ul>
+			</div>
+			<div class="feature-visual plugins-visual">
+				<div class="plugins-core">
+					<div class="core-tag">Core Registry</div>
+					<b>zelavis/core</b>
+					<code>Typed Capability Broker</code>
+				</div>
+				<div class="plugins-grid">
+					<div class="plugin-card">
+						<span class="plug-icon">🔑</span>
+						<b>auth</b>
+						<small>OAuth &amp; WebAuthn</small>
+					</div>
+					<div class="plugin-card">
+						<span class="plug-icon">💳</span>
+						<b>payments</b>
+						<small>Stripe &amp; Webhooks</small>
+					</div>
+					<div class="plugin-card">
+						<span class="plug-icon">📦</span>
+						<b>storage</b>
+						<small>S3 &amp; Local Disk</small>
+					</div>
+					<div class="plugin-card">
+						<span class="plug-icon">🌐</span>
+						<b>frontend</b>
+						<small>Astro &amp; Static</small>
+					</div>
+				</div>
+			</div>
+		</article>
+	</div>
+</section>
+
+<style>
+	.amp-features {
+		padding: 60px 0 120px;
+	}
+
+	.amp-wrap {
+		width: min(1180px, calc(100% - 64px));
+		margin: 0 auto;
+		display: flex;
+		flex-direction: column;
+		gap: 120px;
+	}
+
+	.feature-row {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 80px;
+		align-items: center;
+	}
+
+	.feature-row.reverse .feature-copy {
+		order: 2;
+	}
+
+	.feature-row.reverse .feature-visual {
+		order: 1;
+	}
+
+	.amp-eyebrow {
+		margin: 0 0 14px;
+		font-size: 13px;
+		line-height: 1.2;
+		font-weight: 750;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: #5846cf;
+	}
+
+	.feature-copy h2 {
+		margin: 0;
+		font-size: clamp(36px, 4.4vw, 54px);
+		line-height: 1.1;
+		letter-spacing: -0.035em;
+		font-weight: 750;
+		color: #121422;
+	}
+
+	.feature-copy > p {
+		margin: 20px 0 24px;
+		font-size: 16.5px;
+		line-height: 1.65;
+		color: #616576;
+	}
+
+	.feature-points {
+		list-style: none;
+		padding: 0;
+		margin: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+
+	.feature-points li {
+		position: relative;
+		padding-left: 22px;
+		font-size: 14px;
+		color: #3b3e4f;
+		font-weight: 500;
+		line-height: 1.5;
+	}
+
+	.feature-points li::before {
+		content: "✓";
+		position: absolute;
+		left: 0;
+		top: 0;
+		color: #5846cf;
+		font-weight: 800;
+	}
+
+	/* Visual Containers */
+	.feature-visual {
+		min-height: 380px;
+		border-radius: 24px;
+		position: relative;
+		overflow: hidden;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 40px;
+		box-sizing: border-box;
+	}
+
+	/* Feature 1: Servers Visual */
+	.servers-visual {
+		background: linear-gradient(135deg, #eef2ff, #f3f5fe);
+		border: 1px solid #dce2f9;
+		flex-direction: column;
+		gap: 20px;
+	}
+
+	.server-rack {
+		width: 100%;
+		max-width: 360px;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+
+	.server-node {
+		padding: 14px 16px;
+		border-radius: 12px;
+		background: #fff;
+		border: 1px solid #e2e6f4;
+		box-shadow: 0 8px 20px rgba(30, 35, 75, 0.05);
+	}
+
+	.node-lights {
+		display: flex;
+		gap: 5px;
+		margin-bottom: 8px;
+	}
+
+	.node-lights i {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: #3bb26c;
+	}
+
+	.node-lights i:nth-child(2) { background: #5a49d4; }
+	.node-lights i:nth-child(3) { background: #ffaa5b; }
+
+	.node-meta {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		font-size: 12px;
+		font-weight: 600;
+		color: #1a1c29;
+	}
+
+	.node-meta code {
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 10.5px;
+		color: #727689;
+	}
+
+	.node-bar {
+		margin-top: 10px;
+		height: 5px;
+		border-radius: 3px;
+		background: #eef1f8;
+		overflow: hidden;
+	}
+
+	.bar-fill {
+		height: 100%;
+		border-radius: 3px;
+		background: linear-gradient(90deg, #5846cf, #7766f0);
+	}
+
+	.cluster-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 6px 14px;
+		border-radius: 999px;
+		background: #fff;
+		border: 1px solid #d9dff4;
+		font-size: 11px;
+		font-weight: 700;
+		color: #4b3ec2;
+		box-shadow: 0 4px 12px rgba(40, 30, 100, 0.06);
+	}
+
+	/* Feature 2: Authority Visual */
+	.authority-visual {
+		background: linear-gradient(135deg, #f6f0ff, #f9f5ff);
+		border: 1px solid #e7dcfa;
+	}
+
+	.authority-box {
+		width: 100%;
+		max-width: 380px;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 16px;
+	}
+
+	.authority-root {
+		width: 100%;
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 16px 20px;
+		border-radius: 14px;
+		background: #231c3d;
+		color: #fff;
+		box-shadow: 0 12px 28px rgba(35, 28, 61, 0.2);
+	}
+
+	.auth-shield {
+		font-size: 24px;
+	}
+
+	.authority-root b {
+		display: block;
+		font-size: 14px;
+	}
+
+	.authority-root small {
+		display: block;
+		font-size: 10px;
+		color: #b7addd;
+		margin-top: 2px;
+	}
+
+	.authority-flow-lines {
+		display: flex;
+		justify-content: space-around;
+		width: 80%;
+	}
+
+	.authority-flow-lines span {
+		width: 2px;
+		height: 24px;
+		background: linear-gradient(180deg, #8162e8, #c6b4f7);
+	}
+
+	.authority-children {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 8px;
+		width: 100%;
+	}
+
+	.child-envelope {
+		padding: 12px 8px;
+		border-radius: 10px;
+		background: #fff;
+		border: 1px solid #e5dbf7;
+		text-align: center;
+		box-shadow: 0 6px 16px rgba(45, 30, 85, 0.05);
+	}
+
+	.child-envelope b {
+		display: block;
+		font-size: 11.5px;
+		color: #1f1b2b;
+	}
+
+	.child-envelope span {
+		display: block;
+		font-size: 9px;
+		color: #6952b8;
+		margin-top: 3px;
+	}
+
+	/* Feature 3: Plugins Visual */
+	.plugins-visual {
+		background: linear-gradient(135deg, #fff0ed, #fff6f4);
+		border: 1px solid #fce0da;
+		flex-direction: column;
+		gap: 18px;
+	}
+
+	.plugins-core {
+		width: 100%;
+		max-width: 360px;
+		padding: 16px 20px;
+		border-radius: 14px;
+		background: #251e22;
+		color: #fff;
+		text-align: center;
+		box-shadow: 0 10px 24px rgba(40, 25, 30, 0.15);
+	}
+
+	.core-tag {
+		font-size: 9.5px;
+		font-weight: 700;
+		color: #ff9885;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		margin-bottom: 2px;
+	}
+
+	.plugins-core b {
+		display: block;
+		font-size: 15px;
+	}
+
+	.plugins-core code {
+		display: block;
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 10px;
+		color: #b7a9ad;
+		margin-top: 3px;
+	}
+
+	.plugins-grid {
+		display: grid;
+		grid-template-columns: repeat(2, 1fr);
+		gap: 10px;
+		width: 100%;
+		max-width: 360px;
+	}
+
+	.plugin-card {
+		padding: 14px 12px;
+		border-radius: 10px;
+		background: #fff;
+		border: 1px solid #fae0da;
+		text-align: center;
+		box-shadow: 0 6px 14px rgba(60, 25, 30, 0.04);
+	}
+
+	.plug-icon {
+		display: block;
+		font-size: 18px;
+		margin-bottom: 4px;
+	}
+
+	.plugin-card b {
+		display: block;
+		font-size: 12px;
+		color: #211c1d;
+	}
+
+	.plugin-card small {
+		display: block;
+		font-size: 9.5px;
+		color: #8c7b7f;
+	}
+
+	@media (max-width: 960px) {
+		.feature-row {
+			grid-template-columns: 1fr;
+			gap: 48px;
+		}
+
+		.feature-row.reverse .feature-copy {
+			order: 1;
+		}
+
+		.feature-row.reverse .feature-visual {
+			order: 2;
+		}
+	}
+
+	@media (max-width: 640px) {
+		.amp-features {
+			padding: 40px 0 80px;
+		}
+
+		.amp-wrap {
+			gap: 80px;
+		}
+
+		.feature-visual {
+			padding: 24px 16px;
+			min-height: 320px;
+		}
+
+		.authority-children {
+			grid-template-columns: 1fr;
+		}
+	}
+</style>

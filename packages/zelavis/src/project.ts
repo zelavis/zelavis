@@ -438,7 +438,7 @@ function applySnapshot(
 }
 
 function projectKindFromRecipe(recipeName: string): ZelavisProjectKind {
-  if (recipeName === "zelavis/app") {
+  if (recipeName === "zelavis/app" || recipeName === "@zelavis/app") {
     return "zelavis";
   }
 
@@ -674,7 +674,16 @@ export async function createProjectManager(options: {
         (entry) =>
           entry.service.kind === "app" || entry.service.kind === "frontend",
       )
-      .map((entry) => [entry.service.name, entry]),
+      .flatMap((entry) => [
+        [entry.service.name, entry] as const,
+        ...(entry.specifier ? [[entry.specifier, entry] as const] : []),
+        ...(entry.service.name === "zelavis/app" || entry.specifier === "zelavis/app"
+          ? [["@zelavis/app", entry] as const]
+          : []),
+        ...(entry.service.name === "@zelavis/app" || entry.specifier === "@zelavis/app"
+          ? [["zelavis/app", entry] as const]
+          : []),
+      ]),
   );
 
   /**

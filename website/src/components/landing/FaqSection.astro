@@ -1,0 +1,243 @@
+---
+const faqs = [
+	{
+		question: 'What does Zelavis replace?',
+		answer: 'Zelavis combines the platform capabilities engineering teams usually stitch together from separate tools: backend-as-a-service (auth, database, real-time), CMS (schemas, entries, media), hosting control panels (domains, deployments, logs), and functions/workloads platforms. You can run the entire platform unified or embed specific subpaths.',
+	},
+	{
+		question: 'Can I run it completely on my own infrastructure?',
+		answer: 'Yes. Self-hosting is a foundational architectural requirement, not an afterthought or enterprise-only export. Zelavis is designed to host applications directly on your own VPS, bare-metal servers, or private cloud, with managed Zelavis Cloud offered as a seamless option.',
+	},
+	{
+		question: 'Is Zelavis tied strictly to SQLite?',
+		answer: 'No. The database storage engine operates over an ordered key-value boundary. While SQLite is the zero-config default, libSQL, RocksDB, and LMDB drivers are built in and operate behind the identical logical database API and multi-model projections.',
+	},
+	{
+		question: 'Does a single-node setup still use the sharded architecture?',
+		answer: 'Yes. Every official Zelavis App is physically and locally sharded from the moment of creation. On a single server, the virtual shard ranges simply colocate on one machine. When you scale horizontally, the platform moves shard placements rather than forcing an architectural rewrite.',
+	},
+	{
+		question: 'Which parts are implemented and usable today?',
+		answer: 'The core runtime, Node process isolation, multi-model document/column/measure/graph projections, authentication foundations, background workloads, official @zelavis/ui dashboard, and native server hosting are implemented. Real-time multiplayer collaboration and team issue planning are committed roadmap milestones.',
+	},
+];
+---
+
+<section class="amp-dark amp-faq" id="questions" data-local-content>
+	<div class="amp-wrap faq-wrap">
+		<div class="faq-head" data-reveal>
+			<p class="amp-eyebrow">Clear answers</p>
+			<h2>Frequently asked questions</h2>
+			<p>Everything you need to know about self-hosting, architecture, and technology choices.</p>
+		</div>
+
+		<div class="faq-list" data-reveal>
+			{faqs.map((faq, index) => (
+				<details open={index === 0} class="faq-item">
+					<summary class="faq-summary">
+						<span>{faq.question}</span>
+						<span class="faq-toggle" aria-hidden="true">
+							<i></i><i></i>
+						</span>
+					</summary>
+					<div class="faq-answer">
+						<p>{faq.answer}</p>
+					</div>
+				</details>
+			))}
+		</div>
+
+		<div class="faq-footer-cta" data-reveal>
+			<p>Have questions about your specific stack or deployment?</p>
+			<div class="faq-cta-links">
+				<a href="/docs" class="faq-link">Browse Documentation →</a>
+				<a href="https://github.com/zelavis/zelavis/discussions" class="faq-link" target="_blank" rel="noopener">Join Community Discussions →</a>
+			</div>
+		</div>
+	</div>
+</section>
+
+<style>
+	.amp-dark {
+		background: #0d0e14;
+		color: #f7f7f9;
+	}
+
+	.amp-faq {
+		padding: 100px 0 160px;
+	}
+
+	.amp-wrap {
+		width: min(1180px, calc(100% - 64px));
+		margin: 0 auto;
+	}
+
+	.faq-wrap {
+		max-width: 860px;
+	}
+
+	.faq-head {
+		text-align: center;
+		margin-bottom: 56px;
+	}
+
+	.amp-eyebrow {
+		margin: 0 0 14px;
+		font-size: 13px;
+		line-height: 1.2;
+		font-weight: 750;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: #a49aff;
+	}
+
+	.faq-head h2 {
+		margin: 0;
+		font-size: clamp(36px, 4.5vw, 52px);
+		line-height: 1.1;
+		letter-spacing: -0.035em;
+		font-weight: 750;
+		color: #fff;
+	}
+
+	.faq-head p:last-child {
+		max-width: 600px;
+		margin: 16px auto 0;
+		font-size: 17px;
+		line-height: 1.6;
+		color: #9295a6;
+	}
+
+	.faq-list {
+		display: flex;
+		flex-direction: column;
+		border-top: 1px solid rgba(255, 255, 255, 0.12);
+	}
+
+	.faq-item {
+		border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+		transition: background 0.2s ease;
+	}
+
+	.faq-summary {
+		padding: 24px 0;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 20px;
+		cursor: pointer;
+		font-size: 18px;
+		font-weight: 650;
+		color: #f0f2fa;
+		list-style: none;
+		user-select: none;
+	}
+
+	.faq-summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.faq-summary:hover {
+		color: #fff;
+	}
+
+	.faq-toggle {
+		position: relative;
+		width: 20px;
+		height: 20px;
+		flex-shrink: 0;
+	}
+
+	.faq-toggle i {
+		position: absolute;
+		background: #a49aff;
+		border-radius: 2px;
+		transition: transform 0.25s ease;
+	}
+
+	.faq-toggle i:first-child {
+		top: 9px;
+		left: 2px;
+		width: 16px;
+		height: 2px;
+	}
+
+	.faq-toggle i:last-child {
+		top: 2px;
+		left: 9px;
+		width: 2px;
+		height: 16px;
+	}
+
+	.faq-item[open] .faq-toggle i:last-child {
+		transform: rotate(90deg);
+		opacity: 0;
+	}
+
+	.faq-answer {
+		padding-bottom: 24px;
+	}
+
+	.faq-answer p {
+		margin: 0;
+		color: #9fa2b4;
+		font-size: 15.5px;
+		line-height: 1.68;
+		max-width: 740px;
+	}
+
+	.faq-footer-cta {
+		margin-top: 64px;
+		padding: 32px;
+		border-radius: 18px;
+		background: #141622;
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		text-align: center;
+	}
+
+	.faq-footer-cta p {
+		margin: 0 0 16px;
+		font-size: 15px;
+		color: #cbd0e2;
+	}
+
+	.faq-cta-links {
+		display: flex;
+		justify-content: center;
+		flex-wrap: wrap;
+		gap: 20px;
+	}
+
+	.faq-link {
+		color: #a49aff;
+		font-size: 14px;
+		font-weight: 650;
+		text-decoration: none;
+		transition: color 0.18s ease;
+	}
+
+	.faq-link:hover {
+		color: #c4bdff;
+		text-decoration: underline;
+	}
+
+	@media (max-width: 640px) {
+		.amp-faq {
+			padding: 70px 0 110px;
+		}
+
+		.faq-summary {
+			font-size: 16px;
+			padding: 20px 0;
+		}
+
+		.faq-answer p {
+			font-size: 14px;
+		}
+
+		.faq-cta-links {
+			flex-direction: column;
+			gap: 10px;
+		}
+	}
+</style>

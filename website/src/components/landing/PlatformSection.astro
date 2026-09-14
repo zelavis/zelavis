@@ -1,0 +1,969 @@
+---
+import SegmentedControl from '../SegmentedControl.astro';
+
+const platformTabs = [
+	{
+		id: 'apps',
+		label: 'Apps',
+		title: 'Projects that start production-ready',
+		body: 'Create isolated projects with their runtime, version, services, and data boundary already locked. Every project runs in its own process envelope without touching the parent platform.',
+		link: '/architecture/project-model',
+		linkLabel: 'Explore the project model',
+		highlights: [
+			'Isolated child runtime (Node process or container)',
+			'Recipe version locking prevents silent breakages',
+			'Project Gateway handles auth and proxying',
+		],
+	},
+	{
+		id: 'data',
+		label: 'Data',
+		title: 'One object, many useful lenses',
+		body: 'Write once through the documents API and query document, column, measure, and graph projections. All lenses share one partition-local identifier space for instant zero-exchange joins.',
+		link: '/api/database',
+		linkLabel: 'Read the database API',
+		highlights: [
+			'Single payload projected into 4 data models',
+			'Deterministic event-log replication stream',
+			'Pluggable engines: SQLite, libSQL, RocksDB, LMDB',
+		],
+	},
+	{
+		id: 'workloads',
+		label: 'Workloads',
+		title: 'Code that lives beside the product',
+		body: 'Run project-scoped functions, jobs, schedules, and webhooks in the long-running Zelavis runtime. No cold starts, external workers, or third-party cron services needed.',
+		link: '/packages/app',
+		linkLabel: 'Learn about workloads',
+		highlights: [
+			'Cron schedules and background queue workers',
+			'Typed webhooks with automatic signature verification',
+			'Shared state and direct database tenant context',
+		],
+	},
+	{
+		id: 'hosting',
+		label: 'Hosting',
+		title: 'Your server is a first-class target',
+		body: 'Host websites on infrastructure you control, with domains, logs, backups, and lifecycle operations in one place. Managed deploy providers remain optional adapters.',
+		link: '/architecture/website-core-service',
+		linkLabel: 'Inspect hosting architecture',
+		highlights: [
+			'Automated SSL certificates via Let’s Encrypt',
+			'Zero-downtime rolling deploys and rollbacks',
+			'Built-in reverse proxy and edge routing',
+		],
+	},
+	{
+		id: 'content',
+		label: 'Content',
+		title: 'Structured content without another system',
+		body: 'Model content types, entries, schemas, and media on top of the same tenant-aware data foundation. Deliver headless JSON to any frontend or Astro site.',
+		link: '/packages/app',
+		linkLabel: 'Explore content features',
+		highlights: [
+			'Visual schema modeler with typed field definitions',
+			'Built-in media storage with image transformation',
+			'Tenant-partitioned collections and drafts',
+		],
+	},
+];
+---
+
+<section class="amp-section amp-platform" id="platform" data-local-content>
+	<div class="amp-wrap">
+		<div class="amp-heading centered platform-heading" data-reveal>
+			<p class="amp-eyebrow">One platform, end to end</p>
+			<h2>Everything your app requires.<br />Under one unified boundary.</h2>
+			<p>No stitching third-party SaaS services together. Zelavis gives you auth, data, workloads, and hosting with zero compromise on ownership.</p>
+		</div>
+
+		<div class="amp-tabs-wrap" data-reveal>
+			<SegmentedControl
+				id="platform-tabs"
+				label="Platform capabilities"
+				value="apps"
+				width="560px"
+				options={platformTabs.map((tab) => ({ value: tab.id, label: tab.label }))}
+			/>
+		</div>
+
+		<div class="amp-platform-panel" data-reveal>
+			<div class="platform-visual">
+				<!-- Tab 1: Apps -->
+				<div class="visual-pane active" data-pane="apps">
+					<div class="visual-window">
+						<div class="visual-toolbar">
+							<div class="toolbar-dots"><i></i><i></i><i></i></div>
+							<span class="toolbar-url">zelavis://northstar/runtime</span>
+							<span class="toolbar-badge">isolated</span>
+						</div>
+						<div class="visual-body apps-body">
+							<div class="apps-sidebar">
+								<span class="apps-title">Workloads</span>
+								<div class="apps-item active">
+									<b>northstar-api</b>
+									<small>zelavis/app@1.0.4</small>
+								</div>
+								<div class="apps-item">
+									<b>atlas-worker</b>
+									<small>queue-processor</small>
+								</div>
+								<div class="apps-item">
+									<b>storefront</b>
+									<small>astro-static</small>
+								</div>
+							</div>
+							<div class="apps-detail">
+								<div class="apps-detail-header">
+									<div>
+										<h5>northstar-api</h5>
+										<span class="status-chip"><i class="dot"></i> Running (pid: 14920)</span>
+									</div>
+									<code>node:22-alpine</code>
+								</div>
+								<div class="apps-specs">
+									<div class="spec-cell">
+										<span>Recipe Lock</span>
+										<b>zelavis/app@1.0.4</b>
+									</div>
+									<div class="spec-cell">
+										<span>Data Boundary</span>
+										<b>.zelavis/data/</b>
+									</div>
+									<div class="spec-cell">
+										<span>Gateway Route</span>
+										<b>/projects/northstar/*</b>
+									</div>
+								</div>
+								<div class="apps-code-preview">
+									<code>&gt; Gateway proxy active: localhost:4000 -&gt; isolated:5173</code>
+									<code>&gt; Tenant isolation verified. 4 shards connected.</code>
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Tab 2: Data -->
+				<div class="visual-pane" data-pane="data">
+					<div class="visual-window">
+						<div class="visual-toolbar">
+							<div class="toolbar-dots"><i></i><i></i><i></i></div>
+							<span class="toolbar-url">tenant.documents.put()</span>
+							<span class="toolbar-badge purple">4 lenses</span>
+						</div>
+						<div class="visual-body data-body">
+							<div class="data-code-block">
+								<span class="code-comment">// 1 write payload</span>
+								<pre><code>{`db.forTenant("acme").documents.put({
+  id: "ord_102",
+  total: 420.00,
+  customer: "c_88",
+  status: "verified"
+})`}</code></pre>
+							</div>
+							<div class="data-lenses-strip">
+								<div class="lens-tag">
+									<b>◫ Document</b>
+									<span>JSON Object Store</span>
+								</div>
+								<div class="lens-tag">
+									<b>▥ Column</b>
+									<span>Fast Aggregations</span>
+								</div>
+								<div class="lens-tag">
+									<b>⌁ Measure</b>
+									<span>Metric Signals</span>
+								</div>
+								<div class="lens-tag">
+									<b>⌘ Graph</b>
+									<span>Customer Rel</span>
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Tab 3: Workloads -->
+				<div class="visual-pane" data-pane="workloads">
+					<div class="visual-window">
+						<div class="visual-toolbar">
+							<div class="toolbar-dots"><i></i><i></i><i></i></div>
+							<span class="toolbar-url">zelavis.workloads.config</span>
+							<span class="toolbar-badge green">active</span>
+						</div>
+						<div class="visual-body workloads-body">
+							<div class="workload-row">
+								<div class="workload-icon cron">⏱</div>
+								<div class="workload-info">
+									<b>Reconcile Inventory</b>
+									<code>cron("*/10 * * * *")</code>
+								</div>
+								<span class="badge-success">Scheduled</span>
+							</div>
+							<div class="workload-row">
+								<div class="workload-icon webhook">⚡</div>
+								<div class="workload-info">
+									<b>Stripe Webhook Handler</b>
+									<code>POST /webhooks/stripe-checkout</code>
+								</div>
+								<span class="badge-success">Verified</span>
+							</div>
+							<div class="workload-row">
+								<div class="workload-icon worker">⚙</div>
+								<div class="workload-info">
+									<b>Report PDF Generator</b>
+									<code>{`worker.queue("reports", { concurrency: 4 })`}</code>
+								</div>
+								<span class="badge-success">Idle</span>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Tab 4: Hosting -->
+				<div class="visual-pane" data-pane="hosting">
+					<div class="visual-window">
+						<div class="visual-toolbar">
+							<div class="toolbar-dots"><i></i><i></i><i></i></div>
+							<span class="toolbar-url">https://northstar.app</span>
+							<span class="toolbar-badge blue">SSL Active</span>
+						</div>
+						<div class="visual-body hosting-body">
+							<div class="hosting-card">
+								<div class="hosting-card-head">
+									<div>
+										<b>Production Domain</b>
+										<span>northstar.app · 142.93.18.42</span>
+									</div>
+									<span class="status-chip"><i class="dot"></i> Active</span>
+								</div>
+								<div class="hosting-metrics">
+									<div><span>SSL Cert</span><b>Auto-renew (89d)</b></div>
+									<div><span>Edge Cache</span><b>Enabled (Hit 98%)</b></div>
+									<div><span>Deploy Mode</span><b>Zero-downtime</b></div>
+								</div>
+								<div class="hosting-deploy-status">
+									<span>Active Release: <b>v1.0.4 (commit 8f92ab)</b></span>
+									<small>Deployed 12m ago via git push</small>
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- Tab 5: Content -->
+				<div class="visual-pane" data-pane="content">
+					<div class="visual-window">
+						<div class="visual-toolbar">
+							<div class="toolbar-dots"><i></i><i></i><i></i></div>
+							<span class="toolbar-url">schema: documentation_articles</span>
+							<span class="toolbar-badge orange">CMS</span>
+						</div>
+						<div class="visual-body content-body">
+							<div class="schema-tree">
+								<div class="schema-field">
+									<span class="field-name">title</span>
+									<span class="field-type">string · required</span>
+								</div>
+								<div class="schema-field">
+									<span class="field-name">slug</span>
+									<span class="field-type">slug · unique</span>
+								</div>
+								<div class="schema-field">
+									<span class="field-name">content</span>
+									<span class="field-type">richText · lexical</span>
+								</div>
+								<div class="schema-field">
+									<span class="field-name">coverImage</span>
+									<span class="field-type">media · image/webp</span>
+								</div>
+							</div>
+							<div class="schema-summary">
+								<span>Output format: <b>Headless REST &amp; TypeScript SDK</b></span>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<div class="platform-copy">
+				<p class="amp-eyebrow" data-panel-label>{platformTabs[0].label}</p>
+				<h3 data-panel-title>{platformTabs[0].title}</h3>
+				<p data-panel-body>{platformTabs[0].body}</p>
+
+				<ul class="platform-highlights" data-panel-highlights>
+					{platformTabs[0].highlights.map((item) => (
+						<li>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+								<polyline points="20 6 9 17 4 12" />
+							</svg>
+							<span>{item}</span>
+						</li>
+					))}
+				</ul>
+
+				<a class="platform-cta-link" data-panel-link href={platformTabs[0].link}>
+					<span data-panel-link-text>{platformTabs[0].linkLabel}</span>
+					<span class="link-arrow">→</span>
+				</a>
+			</div>
+		</div>
+	</div>
+</section>
+
+<script id="platform-tab-data" type="application/json" set:html={JSON.stringify(platformTabs)}></script>
+
+<script is:inline>
+	(function () {
+		var tabControl = document.getElementById('platform-tabs');
+		var data = JSON.parse(document.getElementById('platform-tab-data').textContent || '[]');
+		var label = document.querySelector('[data-panel-label]');
+		var title = document.querySelector('[data-panel-title]');
+		var body = document.querySelector('[data-panel-body]');
+		var link = document.querySelector('[data-panel-link]');
+		var linkText = document.querySelector('[data-panel-link-text]');
+		var highlightsList = document.querySelector('[data-panel-highlights]');
+		var panelCopy = document.querySelector('.platform-copy');
+		var visualPanes = document.querySelectorAll('.visual-pane');
+
+		function updatePanel(selected) {
+			function setContent() {
+				if (label) label.textContent = selected.label;
+				if (title) title.textContent = selected.title;
+				if (body) body.textContent = selected.body;
+				if (link && linkText) {
+					link.setAttribute('href', selected.link);
+					linkText.textContent = selected.linkLabel;
+				}
+				if (highlightsList && selected.highlights) {
+					highlightsList.innerHTML = selected.highlights.map(function (item) {
+						return '<li><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg><span>' + item + '</span></li>';
+					}).join('');
+				}
+			}
+
+			// Switch visual pane
+			visualPanes.forEach(function (pane) {
+				pane.classList.toggle('active', pane.dataset.pane === selected.id);
+			});
+
+			if (!panelCopy || !panelCopy.animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+				setContent();
+				return;
+			}
+
+			panelCopy.getAnimations().forEach(function (animation) { animation.cancel(); });
+			var out = panelCopy.animate(
+				[{ opacity: 1, transform: 'translateY(0)' }, { opacity: 0, transform: 'translateY(-6px)' }],
+				{ duration: 110, easing: 'ease-in', fill: 'forwards' }
+			);
+			out.onfinish = function () {
+				setContent();
+				panelCopy.animate(
+					[{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'translateY(0)' }],
+					{ duration: 220, easing: 'cubic-bezier(.16,1,.3,1)', fill: 'both' }
+				);
+			};
+		}
+
+		if (tabControl) {
+			tabControl.addEventListener('segmented-change', function (event) {
+				var selected = data.find(function (item) { return item.id === event.detail.value; });
+				if (selected) updatePanel(selected);
+			});
+		}
+	})();
+</script>
+
+<style>
+	.amp-platform {
+		padding: 120px 0;
+	}
+
+	.amp-wrap {
+		width: min(1180px, calc(100% - 64px));
+		margin: 0 auto;
+	}
+
+	.platform-heading {
+		max-width: 760px;
+		margin: 0 auto 36px;
+		text-align: center;
+	}
+
+	.amp-eyebrow {
+		margin: 0 0 14px;
+		font-size: 13px;
+		line-height: 1.2;
+		font-weight: 750;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: #5846cf;
+	}
+
+	.amp-heading h2 {
+		margin: 0;
+		font-size: clamp(38px, 4.8vw, 56px);
+		line-height: 1.08;
+		letter-spacing: -0.035em;
+		font-weight: 750;
+		color: #121422;
+	}
+
+	.amp-heading > p:last-child {
+		max-width: 660px;
+		margin: 18px auto 0;
+		font-size: 17px;
+		line-height: 1.6;
+		color: #636676;
+	}
+
+	.amp-tabs-wrap {
+		display: flex;
+		justify-content: center;
+		width: 100%;
+		margin: 0 auto;
+		padding-bottom: 40px;
+	}
+
+	.amp-platform-panel {
+		min-height: 440px;
+		padding: 48px;
+		display: grid;
+		grid-template-columns: 1.16fr 0.84fr;
+		gap: 56px;
+		align-items: center;
+		border-radius: 26px;
+		background: #f5f6fa;
+		border: 1px solid #e7e9f2;
+		box-shadow: 0 12px 36px rgba(24, 28, 60, 0.04);
+	}
+
+	/* Visual Panes */
+	.visual-pane {
+		display: none;
+	}
+
+	.visual-pane.active {
+		display: block;
+		animation: paneFade 0.28s ease;
+	}
+
+	@keyframes paneFade {
+		from { opacity: 0; transform: translateY(6px); }
+		to { opacity: 1; transform: translateY(0); }
+	}
+
+	.visual-window {
+		border: 1px solid #dfe2eb;
+		border-radius: 16px;
+		overflow: hidden;
+		background: #fff;
+		box-shadow: 0 24px 50px rgba(25, 30, 65, 0.08);
+	}
+
+	.visual-toolbar {
+		height: 40px;
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 0 14px;
+		background: #f7f8fc;
+		border-bottom: 1px solid #e7e9ef;
+	}
+
+	.toolbar-dots {
+		display: flex;
+		gap: 5px;
+	}
+
+	.toolbar-dots i {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: #d4d7e2;
+	}
+
+	.toolbar-url {
+		margin-left: auto;
+		margin-right: auto;
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 11px;
+		color: #7a7d8e;
+	}
+
+	.toolbar-badge {
+		padding: 2px 7px;
+		border-radius: 5px;
+		background: #eeeffa;
+		color: #4943b8;
+		font-size: 9.5px;
+		font-weight: 700;
+		text-transform: uppercase;
+	}
+
+	.toolbar-badge.purple { background: #f0ecfc; color: #5831b8; }
+	.toolbar-badge.green { background: #eaf7ef; color: #27834b; }
+	.toolbar-badge.blue { background: #e8f0fe; color: #1967d2; }
+	.toolbar-badge.orange { background: #fff0eb; color: #b84f18; }
+
+	.visual-body {
+		min-height: 280px;
+		padding: 20px;
+		box-sizing: border-box;
+	}
+
+	/* Tab 1: Apps Body */
+	.apps-body {
+		display: grid;
+		grid-template-columns: 130px 1fr;
+		gap: 16px;
+		padding: 16px;
+	}
+
+	.apps-sidebar {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		border-right: 1px solid #edf0f6;
+		padding-right: 12px;
+	}
+
+	.apps-title {
+		font-size: 10px;
+		font-weight: 750;
+		color: #8c8f9f;
+		text-transform: uppercase;
+		margin-bottom: 4px;
+	}
+
+	.apps-item {
+		padding: 8px 10px;
+		border-radius: 8px;
+		background: #fafbfe;
+		font-size: 11px;
+	}
+
+	.apps-item.active {
+		background: #eceeff;
+		border-left: 3px solid #5846cf;
+	}
+
+	.apps-item b {
+		display: block;
+		color: #1a1c29;
+		font-size: 11.5px;
+	}
+
+	.apps-item small {
+		display: block;
+		font-size: 9px;
+		color: #797c8e;
+	}
+
+	.apps-detail {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	.apps-detail-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.apps-detail-header h5 {
+		margin: 0;
+		font-size: 14px;
+		color: #171926;
+	}
+
+	.status-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		font-size: 10.5px;
+		color: #27834b;
+		font-weight: 600;
+	}
+
+	.status-chip .dot {
+		width: 5px;
+		height: 5px;
+		border-radius: 50%;
+		background: #27834b;
+	}
+
+	.apps-specs {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 8px;
+	}
+
+	.spec-cell {
+		padding: 8px 10px;
+		border-radius: 8px;
+		background: #f6f7fc;
+		border: 1px solid #e7eaf2;
+	}
+
+	.spec-cell span {
+		display: block;
+		font-size: 9.5px;
+		color: #7e8293;
+	}
+
+	.spec-cell b {
+		display: block;
+		font-size: 11px;
+		color: #191b26;
+		margin-top: 2px;
+	}
+
+	.apps-code-preview {
+		padding: 10px 12px;
+		border-radius: 8px;
+		background: #141727;
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 10.5px;
+		color: #cbd0ec;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	/* Tab 2: Data Body */
+	.data-body {
+		display: flex;
+		flex-direction: column;
+		gap: 16px;
+	}
+
+	.data-code-block {
+		padding: 14px 16px;
+		border-radius: 10px;
+		background: #15182a;
+		color: #f1f2f8;
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 11.5px;
+		line-height: 1.5;
+	}
+
+	.code-comment {
+		color: #7980a3;
+		font-size: 10.5px;
+		display: block;
+		margin-bottom: 4px;
+	}
+
+	.data-code-block pre {
+		margin: 0;
+	}
+
+	.data-lenses-strip {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 8px;
+	}
+
+	.lens-tag {
+		padding: 10px;
+		border-radius: 8px;
+		background: #f4f6fc;
+		border: 1px solid #e5e8f2;
+	}
+
+	.lens-tag b {
+		display: block;
+		font-size: 11.5px;
+		color: #3b379e;
+	}
+
+	.lens-tag span {
+		display: block;
+		font-size: 9.5px;
+		color: #797c8e;
+		margin-top: 2px;
+	}
+
+	/* Tab 3: Workloads Body */
+	.workloads-body {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+
+	.workload-row {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 12px 14px;
+		border-radius: 10px;
+		background: #fafbfe;
+		border: 1px solid #e7eaf4;
+	}
+
+	.workload-icon {
+		width: 32px;
+		height: 32px;
+		display: grid;
+		place-items: center;
+		border-radius: 8px;
+		font-size: 14px;
+	}
+
+	.workload-icon.cron { background: #edeafe; color: #5836c7; }
+	.workload-icon.webhook { background: #eaf7ef; color: #27834b; }
+	.workload-icon.worker { background: #e8f0fe; color: #1967d2; }
+
+	.workload-info {
+		flex: 1;
+	}
+
+	.workload-info b {
+		display: block;
+		font-size: 12.5px;
+		color: #1a1c28;
+	}
+
+	.workload-info code {
+		display: block;
+		font-size: 10px;
+		color: #717588;
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+	}
+
+	.badge-success {
+		padding: 3px 8px;
+		border-radius: 999px;
+		background: #eaf7ef;
+		color: #237b46;
+		font-size: 10px;
+		font-weight: 650;
+	}
+
+	/* Tab 4: Hosting Body */
+	.hosting-body {
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+	}
+
+	.hosting-card {
+		padding: 16px;
+		border-radius: 12px;
+		background: #fafbfe;
+		border: 1px solid #e7eaf4;
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+	}
+
+	.hosting-card-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.hosting-card-head b {
+		display: block;
+		font-size: 13.5px;
+		color: #191b28;
+	}
+
+	.hosting-card-head span {
+		font-size: 11px;
+		color: #777a8d;
+	}
+
+	.hosting-metrics {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 8px;
+	}
+
+	.hosting-metrics div {
+		padding: 8px 10px;
+		border-radius: 8px;
+		background: #fff;
+		border: 1px solid #e8eaf2;
+	}
+
+	.hosting-metrics span {
+		display: block;
+		font-size: 9.5px;
+		color: #828597;
+	}
+
+	.hosting-metrics b {
+		display: block;
+		font-size: 11px;
+		color: #1a1d2c;
+		margin-top: 2px;
+	}
+
+	.hosting-deploy-status {
+		padding: 10px 12px;
+		border-radius: 8px;
+		background: #edf0f8;
+		font-size: 11px;
+	}
+
+	.hosting-deploy-status b {
+		color: #272588;
+	}
+
+	.hosting-deploy-status small {
+		display: block;
+		font-size: 9.5px;
+		color: #797c8f;
+		margin-top: 2px;
+	}
+
+	/* Tab 5: Content Body */
+	.content-body {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	.schema-tree {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.schema-field {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 10px 14px;
+		border-radius: 8px;
+		background: #fafbfe;
+		border: 1px solid #e7eaf4;
+	}
+
+	.field-name {
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 12px;
+		font-weight: 650;
+		color: #242270;
+	}
+
+	.field-type {
+		font-size: 11px;
+		color: #797c8f;
+	}
+
+	.schema-summary {
+		padding: 10px 14px;
+		border-radius: 8px;
+		background: #fff0eb;
+		color: #8f370a;
+		font-size: 11px;
+	}
+
+	/* Copy Column */
+	.platform-copy h3 {
+		margin: 0;
+		font-size: 32px;
+		line-height: 1.15;
+		letter-spacing: -0.03em;
+		font-weight: 750;
+		color: #121422;
+	}
+
+	.platform-copy > p:not(.amp-eyebrow) {
+		margin: 16px 0 22px;
+		color: #636676;
+		line-height: 1.62;
+		font-size: 15.5px;
+	}
+
+	.platform-highlights {
+		list-style: none;
+		padding: 0;
+		margin: 0 0 24px;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+
+	.platform-highlights li {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		font-size: 13.5px;
+		color: #373a48;
+		font-weight: 500;
+	}
+
+	.platform-highlights svg {
+		color: #5846cf;
+		flex-shrink: 0;
+	}
+
+	.platform-cta-link {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		color: #2b288a;
+		font-weight: 700;
+		text-decoration: none;
+		font-size: 15px;
+		transition: color 0.18s ease;
+	}
+
+	.platform-cta-link:hover {
+		color: #5544d6;
+	}
+
+	.link-arrow {
+		transition: transform 0.18s ease;
+	}
+
+	.platform-cta-link:hover .link-arrow {
+		transform: translateX(3px);
+	}
+
+	@media (max-width: 960px) {
+		.amp-platform-panel {
+			grid-template-columns: 1fr;
+			padding: 32px;
+			gap: 40px;
+		}
+	}
+
+	@media (max-width: 640px) {
+		.amp-platform {
+			padding: 80px 0;
+		}
+
+		.amp-platform-panel {
+			padding: 20px;
+		}
+
+		.apps-body {
+			grid-template-columns: 1fr;
+		}
+
+		.apps-sidebar {
+			display: none;
+		}
+
+		.data-lenses-strip {
+			grid-template-columns: repeat(2, 1fr);
+		}
+
+		.apps-specs {
+			grid-template-columns: 1fr;
+		}
+
+		.hosting-metrics {
+			grid-template-columns: 1fr;
+		}
+	}
+</style>

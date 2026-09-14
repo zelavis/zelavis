@@ -1,26 +1,4 @@
-/**
- * The marketplace page.
- *
- * Served through the service page asset route and rendered in a frame, which
- * is same-origin with the Platform — so it calls the same versioned API the
- * dashboard does, with the same session, using plain `fetch`. There is no
- * privileged channel here: everything this page can do, an installed service's
- * page can do, which is the point of building the marketplace this way.
- *
- * It composes the Platform's service page elements rather than its own markup.
- * That is the difference between this and the placeholder it replaces: the
- * page describes what it shows — a section, a card, a title with a detail
- * line, a badge — and the design system decides how those look. A frontend
- * that supplies its own element library restyles this page without it
- * changing, and a service that wants to look like the marketplace writes the
- * same tags rather than copying its CSS.
- *
- * The frame stays. Shadow DOM scopes styles, not scripts, and rendering an
- * installed service's page inside the dashboard's document would give its code
- * the dashboard's origin and its session. The frame is the isolation boundary;
- * the elements are how a page inside it stops looking like a placeholder.
- */
-export const MARKETPLACE_PAGE = `<!doctype html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -76,7 +54,7 @@ export const MARKETPLACE_PAGE = `<!doctype html>
       // <api>/runtime/service-page-assets/<service>/<bundle>/<file>, so the API
       // root is four segments up. Derived rather than hardcoded, because the
       // dashboard's root path is configurable.
-      const apiRoot = new URL("../../../../", location.href).pathname.replace(/\\/$/, "");
+      const apiRoot = new URL("../../../../", location.href).pathname.replace(/\/$/, "");
 
       const servicesEl = document.getElementById("services");
       const statusEl = document.getElementById("acquire-status");
@@ -97,7 +75,7 @@ export const MARKETPLACE_PAGE = `<!doctype html>
         });
         const body = await response.json().catch(() => ({}));
         if (!response.ok) {
-          throw new Error(body.error || \`Request failed (\${response.status}).\`);
+          throw new Error(body.error || `Request failed (${response.status}).`);
         }
         return body;
       }
@@ -144,8 +122,8 @@ export const MARKETPLACE_PAGE = `<!doctype html>
         sectionEl.setAttribute(
           "description",
           matching.length === services.length
-            ? \`\${services.length} registered\`
-            : \`\${matching.length} of \${services.length} registered\`,
+            ? `${services.length} registered`
+            : `${matching.length} of ${services.length} registered`,
         );
 
         servicesEl.replaceChildren(
@@ -201,7 +179,7 @@ export const MARKETPLACE_PAGE = `<!doctype html>
 
         installEl.setAttribute("busy", "");
         statusEl.removeAttribute("tone");
-        statusEl.textContent = \`Installing \${reference}…\`;
+        statusEl.textContent = `Installing ${reference}…`;
 
         try {
           await api("/runtime/services", {
@@ -212,7 +190,7 @@ export const MARKETPLACE_PAGE = `<!doctype html>
             },
             body: JSON.stringify({ packageSource: reference }),
           });
-          statusEl.textContent = \`Installed \${reference}.\`;
+          statusEl.textContent = `Installed ${reference}.`;
           referenceEl.value = "";
           await refresh();
         } catch (error) {
@@ -228,4 +206,3 @@ export const MARKETPLACE_PAGE = `<!doctype html>
     </script>
   </body>
 </html>
-`;

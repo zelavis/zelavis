@@ -42,8 +42,8 @@ placements; it does not introduce sharding for the first time.
 | Project | The universal first-level hosted workload and hard isolation boundary. |
 | Project Recipe | A versioned create-project definition and runtime entrypoint represented by a service with `kind: "app"`, such as Zelavis App or WordPress. Marketplace apps and starters are user-facing recipe categories. |
 | Plugin | A service with `kind: "plugin"` that extends the Platform or a Project runtime. It is not a create-project option. Trusted plugins are distinguished by `scope: "system"`, not by their kind. |
-| Frontend | A service with `kind: "frontend"`: the face of an installation or a Project, declaring a `zelavis.frontend` block with a `static` or `server` runtime. |
-| Zelavis App | A Project kind with native Zelavis auth, data, storage, jobs, realtime, and future Tenant placement. |
+| Frontend | A service with `kind: "frontend"`: the face of an installation or a Project, declaring a `zelavis.frontend` block with a `static` or `server` runtime. Functions like themes/templates in WordPress for modern headless apps (e.g. `@zelavis/ui`, blog themes, ecommerce storefronts). |
+| Zelavis App | The official Project recipe (`@zelavis/app` in `packages/zelavis/services/zelavis-app`) with native Zelavis auth, data, storage, jobs, realtime, and future Tenant placement. |
 | Tenant | An application-owned logical data and workload boundary inside a Zelavis App. It is not a Project or a User. |
 | Principal / User | An authenticated identity with roles, permissions, and scoped grants. |
 | Node | Capacity registered with the Platform Fabric. |

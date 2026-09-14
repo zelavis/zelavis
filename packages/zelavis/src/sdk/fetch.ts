@@ -17,6 +17,7 @@ import type {
 import type { ZelavisServiceMenuDefinition } from "../core/service/definition.js";
 import { createPluginClients, validateOperationName, type RegisteredPluginClients, type PluginOperation } from "./plugins.js";
 export type { PluginClients, PluginApiRegistry, RegisteredPluginClients, PluginOperation, PluginOperationOptions } from "./plugins.js";
+import { isSandboxedServicePage, createServicePageFetch } from "./service-page.js";
 
 export type { AuthApi, DatabaseRuntimeApi, DatabaseJsonObject };
 export {
@@ -60,7 +61,7 @@ export interface ZelavisSdkSurfaceManifest {
 }
 
 export interface ZelavisClientOptions {
-  baseUrl: string | URL;
+  baseUrl?: string | URL;
   rootPath?: string;
   apiPrefix?: string;
   apiVersion?: string;
@@ -98,7 +99,6 @@ export interface ZelavisDashboardSettingsResponse {
     current: string;
     desired: string;
     available: readonly string[];
-    restartRequired: boolean;
   };
   [key: string]: unknown;
 }
@@ -113,15 +113,18 @@ export interface ZelavisDashboardSettingsUpdate {
 
 export interface ZelavisClient {
   readonly plugins: RegisteredPluginClients;
-  pluginOperations(): Promise<readonly PluginOperation[]>;
   readonly baseUrl: URL;
   readonly rootPath: string;
-  request(path: string, options?: ZelavisClientRequestOptions): Promise<Response>;
+  pluginOperations(): Promise<readonly PluginOperation[]>;
+  request(
+    path: string,
+    options?: ZelavisClientRequestOptions,
+  ): Promise<Response>;
   json<T = unknown>(
     path: string,
     options?: ZelavisClientRequestOptions,
   ): Promise<T>;
-  runtime: {
+  readonly runtime: {
     config(): Promise<ZelavisRuntimeConfigResponse>;
     settings(): Promise<ZelavisDashboardSettingsResponse>;
     updateSettings(
@@ -146,20 +149,36 @@ export const fetchSdkSurface: ZelavisSdkSurfaceManifest = {
 };
 
 export function createZelavisClient(
-  options: ZelavisClientOptions,
+  options: ZelavisClientOptions = {},
 ): ZelavisClient {
-  const fetchImplementation = options.fetch ?? globalThis.fetch;
-  if (typeof fetchImplementation !== "function") {
+  const sandboxed = isSandboxedServicePage();
+  const resolvedFetch: typeof fetch =
+    options.fetch ??
+    (sandboxed
+      ? createServicePageFetch()
+      : typeof globalThis.fetch === "function"
+        ? globalThis.fetch.bind(globalThis)
+        : (undefined as unknown as typeof fetch));
+
+  if (typeof resolvedFetch !== "function") {
     throw new TypeError(
       "createZelavisClient requires a fetch implementation for this environment.",
     );
   }
 
-  const baseUrl = new URL(options.baseUrl);
-  const rootPath = normalizeRootPath(options.rootPath ?? "/zelavis");
-  const apiPrefix = normalizeRootPath(options.apiPrefix ?? "/api");
-  const apiVersion = options.apiVersion ?? "v1";
-  if (!/^[a-zA-Z0-9_-]+$/.test(apiVersion)) throw new TypeError("Invalid API version.");
+  const defaultBaseUrl =
+    typeof location !== "undefined" && location.origin && location.origin !== "null"
+      ? location.origin
+      : "http://localhost";
+  const baseUrl = new URL(options.baseUrl ?? defaultBaseUrl);
+  const rootPath = normalizeRootPath(
+    options.rootPath ?? (sandboxed ? "" : "/zelavis"),
+  );
+  const apiPrefix = normalizeRootPath(
+    options.apiPrefix ?? (sandboxed ? "" : "/api"),
+  );
+  const apiVersion = options.apiVersion ?? (sandboxed ? "" : "v1");
+  if (apiVersion && !/^[a-zA-Z0-9_-]+$/.test(apiVersion)) throw new TypeError("Invalid API version.");
 
   async function resolveHeaders(headers?: HeadersInit): Promise<Headers> {
     const resolved = new Headers(
@@ -195,7 +214,11 @@ export function createZelavisClient(
     }
 
     const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-    return fetchImplementation(new URL(`${rootPath}${apiPrefix}/${apiVersion}${normalizedPath}`, baseUrl), init);
+    const prefix = [rootPath, apiPrefix, apiVersion ? `/${apiVersion}` : ""]
+      .join("")
+      .replace(/\/+/g, "/");
+    const fullPath = `${prefix}${normalizedPath}`.replace(/\/+/g, "/");
+    return resolvedFetch(new URL(fullPath, baseUrl), init);
   }
 
   async function json<T = unknown>(

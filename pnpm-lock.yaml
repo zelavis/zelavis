@@ -139,6 +139,9 @@ importers:
 
   packages/zelavis:
     dependencies:
+      '@zelavis/app':
+        specifier: workspace:*
+        version: link:services/zelavis-app
       '@zelavis/auth':
         specifier: workspace:*
         version: link:services/zelavis-auth
@@ -195,6 +198,16 @@ importers:
       '@zelavis/ui':
         specifier: workspace:*
         version: link:services/zelavis-ui
+
+  packages/zelavis/services/zelavis-app:
+    dependencies:
+      zelavis:
+        specifier: workspace:*
+        version: link:../..
+    devDependencies:
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
 
   packages/zelavis/services/zelavis-auth:
     dependencies:

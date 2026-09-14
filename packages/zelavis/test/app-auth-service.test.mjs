@@ -57,7 +57,7 @@ function passwordMethodService() {
   };
   return {
     name: "@example/auth-email-password",
-    kind: "provider",
+    kind: "plugin",
     capabilities: ["zelavis/auth:credentials"],
     service: method,
   };

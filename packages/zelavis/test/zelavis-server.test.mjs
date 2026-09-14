@@ -461,7 +461,7 @@ test("auth method plugins register through the public auth capability", async ()
         {
           service: {
             name: "@example/test-auth-provider",
-            kind: "provider",
+            kind: "plugin",
             capabilities: ["zelavis/auth:credentials"],
             service: {
               name: "test-auth",
@@ -1029,10 +1029,6 @@ test("node adapter installs uploaded ZIP service packages", async () => {
         export default {
           name: "@example/zip-uploaded-service",
           version: "0.0.3",
-          menu: {
-            title: "Zip Uploaded",
-            path: "/zip-uploaded"
-          },
           setup() {
             return {
               runtimeServices: [
