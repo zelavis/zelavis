@@ -186,7 +186,7 @@
     "@zelavis/auth": "workspace:*",
     "@zelavis/marketplace": "workspace:*",
     "better-sqlite3": "^13.0.3",
-    "effect": "4.0.0-rc.112",
+    "effect": "4.0.0-rc.113",
     "jose": "^6.2.12"
   },
   "devDependencies": {
