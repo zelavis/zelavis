@@ -195,7 +195,7 @@
     "@harperfast/rocksdb-js": "2.9.0",
     "@libsql/client": "^0.15.15",
     "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^26.4.0",
+    "@types/node": "^26.5.1",
     "h3-js": "^4.5.0",
     "libsql": "^0.5.29",
     "lmdb": "^3.4.3",
