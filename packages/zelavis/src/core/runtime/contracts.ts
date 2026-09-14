@@ -251,6 +251,11 @@ export interface ZelavisRuntimeService<TService = unknown> {
   kind?: string;
   basePath?: string;
   /**
+   * Root directory of the package on the local filesystem, if backed by one.
+   * When present, static service page assets can be resolved directly from disk.
+   */
+  packageDir?: string;
+  /**
    * Versioned HTTP routes. Optional: provider plugins register through a
    * domain contract and mount no routes of their own.
    */

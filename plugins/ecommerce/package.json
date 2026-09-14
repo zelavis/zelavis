@@ -19,15 +19,11 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./manifest": {
-      "types": "./dist/manifest.d.ts",
-      "import": "./dist/manifest.js"
     }
   },
   "scripts": {
-    "build": "node scripts/generate-dashboard-pages.mjs && tsc -p tsconfig.json",
-    "typecheck": "node scripts/generate-dashboard-pages.mjs && tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm run typecheck && node --test \"test/**/*.test.mjs\""
   },
   "files": [

@@ -15,8 +15,6 @@
  */
 import { zelavis } from "zelavis/sdk";
 
-import { AUTH_SETTINGS_PAGE } from "./page.js";
-
 export const ZELAVIS_AUTH_SETTINGS_SERVICE_NAME = "@zelavis/auth";
 
 /**
@@ -39,6 +37,7 @@ zelavis.plugins.ui.menus.create({
   page: {
     id: "auth-settings",
     title: "Auth",
+    bundle: "dashboard",
     file: "auth.html",
   },
   access: {
@@ -53,17 +52,5 @@ zelavis.plugins.ui.menus.create({
 export default {
   name: ZELAVIS_AUTH_SETTINGS_SERVICE_NAME,
   basePath: "/auth-settings",
-  capabilities: Object.freeze(["dashboard:menu"]),
-  marketplace: Object.freeze({
-    title: "Auth",
-    summary: "Configure sign-in and install auth providers.",
-    categories: Object.freeze(["auth"]),
-  }),
-  pageAssets: {
-    "auth.html": {
-      contentType: "text/html; charset=utf-8",
-      body: AUTH_SETTINGS_PAGE,
-    },
-  },
   service: {},
 };

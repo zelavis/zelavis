@@ -521,6 +521,7 @@ export const scatterOver = (options: {
               ...(input.orderBy === undefined ? {} : { orderBy: input.orderBy }),
               limit: count,
               ...(leg.at.position === undefined ? {} : { after: leg.at.position }),
+              cursors: true,
             }).pipe(
               Effect.catchTags({
                 UnknownEdge: Effect.die,

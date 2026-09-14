@@ -1,0 +1,536 @@
+---
+---
+
+<section class="amp-section amp-soft" id="data" data-local-content>
+	<div class="amp-wrap">
+		<div class="amp-heading centered" data-reveal>
+			<p class="amp-eyebrow">Data without the seams</p>
+			<h2>One write. Many ways to understand it.</h2>
+			<p>The event log is the single source of truth. Document, column, measure, and graph lenses stay close enough to intersect without moving data between disparate database engines.</p>
+		</div>
+
+		<div class="lens-stage" data-reveal>
+			<div class="lens-flow">
+				<div class="lens-source-card">
+					<div class="lens-card-header">
+						<span class="step-tag">01 · Origin Write</span>
+						<span class="step-api">documents API</span>
+					</div>
+					<b>tenant.documents.put()</b>
+					<code>{`{ id: "ord_102", customer: "c_88", total: 420.00, items: 2 }`}</code>
+				</div>
+
+				<div class="lens-flow-arrow" aria-hidden="true">
+					<div class="flow-line"></div>
+					<div class="flow-pulse"></div>
+				</div>
+
+				<div class="lens-event-card">
+					<div class="lens-card-header">
+						<span class="step-tag">02 · Replication Stream</span>
+						<span class="step-badge">Append-Only</span>
+					</div>
+					<b>Event Log Stream</b>
+					<small>Deterministic replication stream with cryptographic cursor and generation fencing.</small>
+				</div>
+			</div>
+
+			<div class="lens-projections-head">
+				<span class="step-tag">03 · One Identifier Space, Four Lens Projections</span>
+				<p>Click any lens below to view how the same write is projected without data duplication:</p>
+			</div>
+
+			<div class="lens-grid" role="tablist" aria-label="Database projections">
+				<button class="lens-card active" type="button" role="tab" aria-selected="true" data-lens-id="document">
+					<span class="lens-icon">◫</span>
+					<b>Document Lens</b>
+					<span>Objects, nested fields &amp; JSON schema</span>
+				</button>
+				<button class="lens-card" type="button" role="tab" aria-selected="false" data-lens-id="column">
+					<span class="lens-icon">▥</span>
+					<b>Column Lens</b>
+					<span>Vectorized columnar scans &amp; fast aggregations</span>
+				</button>
+				<button class="lens-card" type="button" role="tab" aria-selected="false" data-lens-id="measure">
+					<span class="lens-icon">⌁</span>
+					<b>Measure Lens</b>
+					<span>Time-series metrics &amp; signal rollups</span>
+				</button>
+				<button class="lens-card" type="button" role="tab" aria-selected="false" data-lens-id="graph">
+					<span class="lens-icon">⌘</span>
+					<b>Graph Lens</b>
+					<span>Relational traversal across entity pointers</span>
+				</button>
+			</div>
+
+			<div class="lens-output-box">
+				<div class="lens-output-bar">
+					<span class="output-dot"></span>
+					<span class="output-label" data-output-title>Document Projection (JSON Store)</span>
+					<span class="output-perf">0.12ms query</span>
+				</div>
+				<pre class="lens-code"><code data-output-code>{`// Projected Document Lens
+{
+  "id": "ord_102",
+  "tenant_id": "acme",
+  "customer": "c_88",
+  "total": 420.00,
+  "items": [{ "sku": "ZEL-10", "qty": 2, "unitPrice": 210.00 }],
+  "_version": 1,
+  "_cursor": "0000000000000001"
+}`}</code></pre>
+			</div>
+		</div>
+	</div>
+</section>
+
+<!-- Brand Statement & Architecture Proof Quote -->
+<section class="amp-section amp-statement" data-local-content>
+	<div class="amp-wrap narrow" data-reveal>
+		<p class="amp-eyebrow">Fewer seams. Clearer ownership.</p>
+		<h2>Your app should not feel like five vendors sitting next to each other.</h2>
+		<p>Zelavis gives every project one boundary for its runtime, data, services, version, and lifecycle—without giving up the option to replace the physical engines underneath.</p>
+	</div>
+</section>
+
+<section class="amp-proof" data-local-content>
+	<div class="amp-wrap proof-inner" data-reveal>
+		<div class="proof-mark">Z</div>
+		<blockquote>“The platform shell is a client of Zelavis—not the place where Zelavis happens.”</blockquote>
+		<p>Every dashboard action maps to a stable endpoint and capability, so the exact same system remains open to coding agents, CLIs, automation scripts, and your own custom frontend.</p>
+	</div>
+</section>
+
+<script is:inline>
+	(function () {
+		var lensData = {
+			document: {
+				title: 'Document Projection (JSON Store)',
+				perf: '0.12ms query',
+				code: '// Projected Document Lens\n{\n  "id": "ord_102",\n  "tenant_id": "acme",\n  "customer": "c_88",\n  "total": 420.00,\n  "items": [{ "sku": "ZEL-10", "qty": 2, "unitPrice": 210.00 }],\n  "_version": 1,\n  "_cursor": "0000000000000001"\n}'
+			},
+			column: {
+				title: 'Column Lens (Vectorized Fast Intersections)',
+				perf: '0.04ms scan',
+				code: '// Columnar Scan & Filter (zero row deserialization)\nSCAN columns ["id", "total", "customer"]\nWHERE customer == "c_88" AND total > 100.00\n-> match bitset: 0b0000000000000001\n-> result: [{ id: "ord_102", total: 420.00 }] (evaluated via SIMD vector)'
+			},
+			measure: {
+				title: 'Measure Lens (Time-Series Rollup)',
+				perf: '0.08ms rollup',
+				code: '// Time-Series Metric Signal\nROLLUP metric "orders.gmv" BUCKET 1h\n[2026-09-13T19:00:00Z] total: $3,210.00 (7 events)\n[2026-09-13T20:00:00Z] total: $420.00   (1 event: ord_102) -> projected in real-time'
+			},
+			graph: {
+				title: 'Graph Lens (Connected Entity Records)',
+				perf: '0.16ms hop',
+				code: '// Graph Lens Entity Pointers\n(Customer: c_88)\n  --[:PLACED_ORDER { at: 1726250520 }]-> (Order: ord_102)\n  --[:INCLUDES_ITEM { qty: 2 }]-> (CatalogItem: ZEL-10)\n  --[:SHIPPED_BY]-> (Carrier: "dhl-express")'
+			}
+		};
+
+		var lensButtons = document.querySelectorAll('[data-lens-id]');
+		var titleEl = document.querySelector('[data-output-title]');
+		var perfEl = document.querySelector('.output-perf');
+		var codeEl = document.querySelector('[data-output-code]');
+
+		lensButtons.forEach(function (btn) {
+			btn.addEventListener('click', function () {
+				var id = btn.dataset.lensId;
+				var target = lensData[id];
+				if (!target) return;
+
+				lensButtons.forEach(function (b) {
+					var active = b === btn;
+					b.classList.toggle('active', active);
+					b.setAttribute('aria-selected', String(active));
+				});
+
+				if (titleEl) titleEl.textContent = target.title;
+				if (perfEl) perfEl.textContent = target.perf;
+				if (codeEl) codeEl.textContent = target.code;
+			});
+		});
+	})();
+</script>
+
+<style>
+	.amp-soft {
+		padding: 120px 0;
+		background: #f4f5f9;
+	}
+
+	.amp-wrap {
+		width: min(1180px, calc(100% - 64px));
+		margin: 0 auto;
+	}
+
+	.amp-heading {
+		max-width: 780px;
+		margin-bottom: 52px;
+	}
+
+	.amp-heading.centered {
+		margin-left: auto;
+		margin-right: auto;
+		text-align: center;
+	}
+
+	.amp-eyebrow {
+		margin: 0 0 14px;
+		font-size: 13px;
+		line-height: 1.2;
+		font-weight: 750;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: #5846cf;
+	}
+
+	.amp-heading h2 {
+		margin: 0;
+		font-size: clamp(38px, 4.8vw, 58px);
+		line-height: 1.08;
+		letter-spacing: -0.035em;
+		font-weight: 750;
+		color: #121422;
+	}
+
+	.amp-heading > p:last-child {
+		max-width: 680px;
+		margin: 20px auto 0;
+		font-size: 17.5px;
+		line-height: 1.6;
+		color: #636676;
+	}
+
+	/* Lens Stage */
+	.lens-stage {
+		position: relative;
+		max-width: 980px;
+		margin: 0 auto;
+		padding: 48px;
+		border-radius: 26px;
+		background: linear-gradient(145deg, #131522 0%, #1e1b36 100%);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		color: #fff;
+		box-shadow: 0 30px 70px rgba(12, 14, 40, 0.35);
+	}
+
+	.lens-flow {
+		display: grid;
+		grid-template-columns: 1fr auto 1fr;
+		gap: 24px;
+		align-items: center;
+		margin-bottom: 40px;
+	}
+
+	.lens-source-card {
+		padding: 20px 22px;
+		border-radius: 14px;
+		background: rgba(255, 255, 255, 0.06);
+		border: 1px solid rgba(255, 255, 255, 0.14);
+		backdrop-filter: blur(8px);
+	}
+
+	.lens-card-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 8px;
+	}
+
+	.step-tag {
+		font-size: 10.5px;
+		font-weight: 750;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: #9f94ff;
+	}
+
+	.step-api {
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 10px;
+		padding: 2px 7px;
+		border-radius: 5px;
+		background: rgba(146, 137, 247, 0.2);
+		color: #c4beff;
+	}
+
+	.lens-source-card b {
+		display: block;
+		font-size: 15px;
+		color: #fff;
+		margin-bottom: 8px;
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+	}
+
+	.lens-source-card code {
+		display: block;
+		font-size: 11px;
+		color: #aeb1c4;
+		line-height: 1.45;
+	}
+
+	.lens-flow-arrow {
+		position: relative;
+		width: 48px;
+		height: 2px;
+		background: linear-gradient(90deg, #6c5be2, #a88aff);
+	}
+
+	.flow-pulse {
+		position: absolute;
+		top: -3px;
+		left: 0;
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: #fff;
+		box-shadow: 0 0 10px #fff;
+		animation: pulseFlow 2s infinite ease-in-out;
+	}
+
+	@keyframes pulseFlow {
+		0% { left: 0; opacity: 0; }
+		50% { opacity: 1; }
+		100% { left: 40px; opacity: 0; }
+	}
+
+	.lens-event-card {
+		padding: 20px 22px;
+		border-radius: 14px;
+		background: linear-gradient(135deg, rgba(88, 70, 207, 0.4), rgba(46, 33, 133, 0.4));
+		border: 1px solid rgba(136, 119, 255, 0.35);
+	}
+
+	.step-badge {
+		font-size: 9.5px;
+		font-weight: 700;
+		padding: 2px 7px;
+		border-radius: 5px;
+		background: #27c93f;
+		color: #0b2e13;
+		text-transform: uppercase;
+	}
+
+	.lens-event-card b {
+		display: block;
+		font-size: 15px;
+		margin-bottom: 6px;
+	}
+
+	.lens-event-card small {
+		display: block;
+		font-size: 11.5px;
+		color: #c7cbdb;
+		line-height: 1.5;
+	}
+
+	.lens-projections-head {
+		border-top: 1px solid rgba(255, 255, 255, 0.1);
+		padding-top: 28px;
+		margin-bottom: 18px;
+	}
+
+	.lens-projections-head p {
+		margin: 6px 0 0;
+		font-size: 13.5px;
+		color: #9ea2b5;
+	}
+
+	.lens-grid {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 12px;
+		margin-bottom: 24px;
+	}
+
+	.lens-card {
+		padding: 16px 14px;
+		border-radius: 12px;
+		background: rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		color: #fff;
+		text-align: left;
+		cursor: pointer;
+		transition: all 0.2s ease;
+	}
+
+	.lens-card:hover {
+		background: rgba(255, 255, 255, 0.09);
+		border-color: rgba(255, 255, 255, 0.25);
+	}
+
+	.lens-card.active {
+		background: linear-gradient(135deg, rgba(100, 84, 227, 0.35), rgba(64, 48, 179, 0.25));
+		border-color: #8375e7;
+		box-shadow: 0 0 20px rgba(105, 87, 240, 0.25);
+	}
+
+	.lens-icon {
+		display: block;
+		font-size: 20px;
+		margin-bottom: 10px;
+		color: #a498ff;
+	}
+
+	.lens-card b {
+		display: block;
+		font-size: 13.5px;
+		margin-bottom: 4px;
+	}
+
+	.lens-card span:last-child {
+		display: block;
+		font-size: 10.5px;
+		color: #9ea1af;
+		line-height: 1.4;
+	}
+
+	.lens-output-box {
+		border-radius: 12px;
+		background: #0d0f19;
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		overflow: hidden;
+	}
+
+	.lens-output-bar {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 10px 16px;
+		background: rgba(255, 255, 255, 0.04);
+		border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+		font-size: 11px;
+	}
+
+	.output-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: #3bb26c;
+	}
+
+	.output-label {
+		color: #cbd0e2;
+		font-weight: 600;
+	}
+
+	.output-perf {
+		margin-left: auto;
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 10px;
+		color: #8c82eb;
+		background: rgba(140, 130, 235, 0.12);
+		padding: 2px 7px;
+		border-radius: 4px;
+	}
+
+	.lens-code {
+		margin: 0;
+		padding: 18px 20px;
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 12px;
+		line-height: 1.55;
+		color: #e2e5f5;
+		overflow-x: auto;
+	}
+
+	/* Statement Section */
+	.amp-statement {
+		min-height: 580px;
+		display: grid;
+		place-items: center;
+		text-align: center;
+		padding: 120px 0;
+	}
+
+	.amp-statement .narrow {
+		max-width: 900px;
+	}
+
+	.amp-statement h2 {
+		margin: 0;
+		font-size: clamp(40px, 5.5vw, 68px);
+		line-height: 1.07;
+		letter-spacing: -0.04em;
+		font-weight: 750;
+		color: #121422;
+	}
+
+	.amp-statement p:last-child {
+		max-width: 680px;
+		margin: 24px auto 0;
+		font-size: 18px;
+		line-height: 1.65;
+		color: #636676;
+	}
+
+	/* Proof Quote Section */
+	.amp-proof {
+		padding: 110px 0;
+		background: linear-gradient(108deg, #e8effe 0%, #ede7fc 50%, #fdecef 100%);
+		text-align: center;
+	}
+
+	.proof-inner {
+		max-width: 820px;
+	}
+
+	.proof-mark {
+		width: 48px;
+		height: 48px;
+		display: grid;
+		place-items: center;
+		margin: 0 auto 28px;
+		border-radius: 14px;
+		background: linear-gradient(135deg, #4437bf, #6453d8);
+		color: #fff;
+		font-weight: 900;
+		font-size: 20px;
+		box-shadow: 0 10px 24px rgba(75, 59, 196, 0.28);
+	}
+
+	.amp-proof blockquote {
+		margin: 0;
+		font-size: clamp(30px, 3.8vw, 46px);
+		line-height: 1.18;
+		letter-spacing: -0.035em;
+		font-weight: 700;
+		color: #121422;
+	}
+
+	.amp-proof p {
+		max-width: 660px;
+		margin: 22px auto 0;
+		color: #5d6173;
+		font-size: 16px;
+		line-height: 1.65;
+	}
+
+	@media (max-width: 960px) {
+		.lens-flow {
+			grid-template-columns: 1fr;
+			gap: 16px;
+		}
+
+		.lens-flow-arrow {
+			display: none;
+		}
+
+		.lens-grid {
+			grid-template-columns: repeat(2, 1fr);
+		}
+	}
+
+	@media (max-width: 640px) {
+		.amp-soft {
+			padding: 80px 0;
+		}
+
+		.lens-stage {
+			padding: 24px;
+		}
+
+		.lens-grid {
+			grid-template-columns: 1fr;
+		}
+	}
+</style>

@@ -30,6 +30,10 @@ import {
 import { officialProjectRecipes } from "../project-recipes.js";
 import { createBuiltinDeploymentBackends } from "../backends/index.js";
 export {
+  resolveLocalPackageManifest,
+  createLocalRuntimeServiceManifestResolver,
+} from "./_local-runtime.js";
+export {
   createNodeFileArtifactStore,
   type NodeFileArtifactStoreOptions,
 } from "./_node-artifact-store.js";

@@ -225,6 +225,20 @@ const faqs = [
 
 						<p class="plan-note">{plan.note}</p>
 
+						<div class="plan-features-wrap">
+							<div class="plan-divider" aria-hidden="true"></div>
+							<p class="features-kicker">Key features</p>
+							<ul class="plan-features">
+								{plan.features.map((feature, idx) => (
+									<li class="feature-item" data-feature-index={idx}>
+										<svg class="feature-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+											<polyline points="20 6 9 17 4 12" />
+										</svg>
+										<span>{feature}</span>
+									</li>
+								))}
+							</ul>
+						</div>
 					</article>
 				))
 			}
@@ -380,7 +394,39 @@ const faqs = [
 
 			if (billingControl) billingControl.addEventListener('segmented-change', function (event) {
 				selectCycle(event.detail.value);
+				setTimeout(autoFitFeatures, 50);
 			});
+
+			function autoFitFeatures() {
+				var cards = document.querySelectorAll('.plan');
+				if (!cards.length) return;
+
+				cards.forEach(function (card) {
+					var wrap = card.querySelector('.plan-features-wrap');
+					if (!wrap) return;
+					var list = wrap.querySelector('.plan-features');
+					if (!list) return;
+					var items = Array.from(list.querySelectorAll('.feature-item'));
+
+					items.forEach(function (item) { item.style.display = ''; });
+
+					var cardRect = card.getBoundingClientRect();
+					var thresholdBottom = cardRect.bottom - 10;
+
+					for (var i = items.length - 1; i >= 0; i--) {
+						var item = items[i];
+						if (item.offsetParent === null) continue;
+						var itemRect = item.getBoundingClientRect();
+						if (itemRect.bottom > thresholdBottom) {
+							item.style.display = 'none';
+						}
+					}
+				});
+			}
+
+			autoFitFeatures();
+			window.addEventListener('resize', autoFitFeatures, { passive: true });
+			document.addEventListener('astro:page-load', autoFitFeatures);
 		})();
 	</script>
 </MarketingLayout>
@@ -431,11 +477,11 @@ const faqs = [
 		position: relative;
 		height: 100vh;
 		height: 100svh;
+		height: 100dvh;
 		min-height: 0;
-		display: flex;
-		flex-direction: column;
-		padding: 100px 0 104px;
-		overflow: hidden;
+		display: grid;
+		grid-template-rows: auto minmax(0, 1fr) auto;
+		overflow: clip;
 		border-radius: 0 0 34px 34px;
 		background:
 			radial-gradient(circle at 84% 18%, rgba(255, 148, 143, 0.72), transparent 31%),
@@ -446,7 +492,7 @@ const faqs = [
 	.p-hero {
 		position: relative;
 		flex: none;
-		padding: 12px 0 28px;
+		padding: clamp(112px, 15svh, 134px) 0 clamp(10px, 1.5svh, 18px);
 		text-align: center;
 		overflow: visible;
 		background: transparent;
@@ -472,7 +518,7 @@ const faqs = [
 	.pricing-controls {
 		display: grid;
 		justify-items: center;
-		row-gap: 18px;
+		row-gap: 12px;
 		width: 100%;
 	}
 
@@ -490,9 +536,8 @@ const faqs = [
 	/* ---------- plans ---------- */
 
 	.p-plans {
-		flex: 1;
 		min-height: 0;
-		padding: 0 0 18px;
+		padding: 0 0 clamp(8px, 1.3svh, 14px);
 		margin-top: 0;
 		position: relative;
 		z-index: 2;
@@ -503,7 +548,7 @@ const faqs = [
 		height: 100%;
 		display: grid;
 		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 18px;
+		gap: clamp(12px, 1.4vw, 18px);
 		align-items: stretch;
 		transform: none;
 		margin-bottom: 0;
@@ -511,14 +556,17 @@ const faqs = [
 
 	.plan {
 		position: relative;
+		height: 100%;
+		min-height: 0;
 		display: flex;
 		flex-direction: column;
-		padding: clamp(22px, 3.1svh, 32px);
+		padding: clamp(14px, 1.8svh, 22px);
 		border: 1px solid #e5e5eb;
-		border-radius: 24px;
+		border-radius: 22px;
 		background: #fff;
 		color: #17181d;
 		box-shadow: 0 18px 45px rgba(35, 30, 80, .08);
+		overflow: hidden;
 	}
 
 	.plans .plan:hover {
@@ -543,29 +591,30 @@ const faqs = [
 
 	.plan-flag {
 		position: absolute;
-		top: 18px;
-		right: 18px;
+		top: 14px;
+		right: 14px;
 		background: rgba(255,255,255,.16);
 		color: #fff;
-		font-size: 0.7rem;
+		font-size: 0.68rem;
 		font-weight: 750;
 		letter-spacing: 0.05em;
 		text-transform: uppercase;
-		padding: 0.35rem 0.7rem;
+		padding: 0.28rem 0.6rem;
 		border-radius: 999px;
 	}
 
 	.plan h2 {
-		font-size: 1.35rem;
-		margin: 0 0 0.5rem;
+		font-size: 1.3rem;
+		margin: 0 0 0.35rem;
 		letter-spacing: -0.02em;
 	}
 
 	.plan-tagline {
 		color: #71727c;
-		font-size: 0.93rem;
-		margin: 0 0 clamp(.8rem, 2svh, 1.35rem);
-		min-height: 2.6em;
+		font-size: 0.88rem;
+		margin: 0 0 clamp(0.3rem, 0.85svh, 0.65rem);
+		min-height: 2.3em;
+		line-height: 1.35;
 	}
 
 	.plan.is-featured .plan-tagline,
@@ -579,18 +628,18 @@ const faqs = [
 		display: flex;
 		align-items: baseline;
 		gap: 0.2rem;
-		margin-bottom: clamp(.8rem, 2svh, 1.3rem);
-		min-height: 3rem;
+		margin-bottom: clamp(0.35rem, 0.9svh, 0.7rem);
+		min-height: 2.5rem;
 	}
 
 	.price-cur {
-		font-size: 1.3rem;
+		font-size: 1.25rem;
 		font-weight: 700;
 		color: #777883;
 	}
 
 	.price-amount {
-		font-size: 2.9rem;
+		font-size: 2.7rem;
 		font-weight: 700;
 		letter-spacing: -0.04em;
 		line-height: 1;
@@ -600,12 +649,12 @@ const faqs = [
 	.price-unit,
 	.price-custom {
 		color: #777883;
-		font-size: 0.87rem;
+		font-size: 0.84rem;
 		margin-left: 0.3rem;
 	}
 
 	.price-custom {
-		font-size: 2rem;
+		font-size: 1.9rem;
 		font-weight: 800;
 		color: #17181d;
 		letter-spacing: -0.03em;
@@ -614,12 +663,14 @@ const faqs = [
 
 	.plan-cta {
 		width: 100%;
-		min-height: 52px;
+		min-height: clamp(38px, 4.2svh, 44px);
 		border-radius: 999px;
 		background: #17181d;
 		border-color: #17181d;
 		color: #fff;
 		box-shadow: none;
+		font-size: 0.92rem;
+		font-weight: 650;
 	}
 
 	.plan.is-featured .plan-cta {
@@ -630,12 +681,119 @@ const faqs = [
 
 	.plan-note {
 		color: #858690;
-		font-size: 0.8rem;
+		font-size: 0.76rem;
 		text-align: center;
-		margin: 0.7rem 0 0;
+		margin: clamp(0.25rem, 0.6svh, 0.45rem) 0 0;
 	}
 
-	.hero-brand-dock { position: absolute; z-index: 4; right: 0; bottom: 0; left: 0; }
+	/* Feature list inside plan card */
+	.plan-features-wrap {
+		flex: 1 1 auto;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+
+	.plan-divider {
+		height: 1px;
+		background: #e9ecf2;
+		margin: clamp(8px, 1.1svh, 12px) 0 clamp(6px, 0.8svh, 9px);
+	}
+
+	.plan.is-featured .plan-divider {
+		background: rgba(255, 255, 255, 0.16);
+	}
+
+	.features-kicker {
+		margin: 0 0 clamp(4px, 0.6svh, 6px);
+		font-size: 9.5px;
+		font-weight: 750;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: #838696;
+	}
+
+	.plan.is-featured .features-kicker {
+		color: rgba(255, 255, 255, 0.65);
+	}
+
+	.plan-features {
+		list-style: none;
+		padding: 0;
+		margin: 0;
+		display: flex;
+		flex-direction: column;
+		gap: clamp(4px, 0.65svh, 7px);
+		flex: 1;
+		min-height: 0;
+		overflow: hidden;
+	}
+
+	.feature-item {
+		display: flex;
+		align-items: flex-start;
+		gap: 7px;
+		font-size: clamp(11px, 1.2svh, 12px);
+		line-height: 1.3;
+		color: #272935;
+	}
+
+	.plan.is-featured .feature-item {
+		color: rgba(255, 255, 255, 0.92);
+	}
+
+	.feature-check {
+		flex-shrink: 0;
+		margin-top: 1px;
+		color: #5544cf;
+	}
+
+	.plan.is-featured .feature-check {
+		color: #ffd0bd;
+	}
+
+	/* Responsive feature visibility based on viewport height */
+	.feature-item:nth-child(n+5) {
+		display: none;
+	}
+
+	@media (min-height: 1000px) {
+		.feature-item:nth-child(5) {
+			display: flex;
+		}
+	}
+
+	@media (max-height: 840px) {
+		.feature-item:nth-child(n+4) {
+			display: none;
+		}
+	}
+
+	@media (max-height: 740px) {
+		.feature-item:nth-child(n+3) {
+			display: none;
+		}
+	}
+
+	@media (max-height: 640px) {
+		.feature-item:nth-child(n+2) {
+			display: none;
+		}
+	}
+
+	@media (max-height: 540px) {
+		.plan-features-wrap {
+			display: none;
+		}
+	}
+
+	.hero-brand-dock {
+		position: relative;
+		z-index: 4;
+		width: 100%;
+		min-width: 0;
+	}
 
 	/* ---------- Plus pillars ---------- */
 
@@ -924,13 +1082,13 @@ const faqs = [
 
 	@media (max-width: 820px) {
 		.p-hero {
-			padding: 2px 0 22px;
+			padding: clamp(104px, 13.5svh, 120px) 0 clamp(10px, 1.4svh, 16px);
 		}
 
 		.plans {
 			grid-template-columns: none;
 			grid-auto-flow: column;
-			grid-auto-columns: min(82vw, 330px);
+			grid-auto-columns: min(84vw, 320px);
 			justify-content: start;
 			overflow-x: auto;
 			overflow-y: hidden;
@@ -956,13 +1114,12 @@ const faqs = [
 	}
 
 	@media (max-width: 560px) {
-		.pricing-intro { padding: 88px 0 88px; }
-		.p-hero { padding: 0 20px 16px; }
-		.pricing-controls { row-gap: 10px; }
-		.plan { padding: 20px; }
-		.plan-tagline { margin-bottom: .65rem; }
-		.plan-price { margin-bottom: .7rem; }
-		.plan-cta { min-height: 44px; }
+		.p-hero { padding: clamp(98px, 12.5svh, 114px) 16px clamp(8px, 1.2svh, 14px); }
+		.pricing-controls { row-gap: 8px; }
+		.plan { padding: 14px; }
+		.plan-tagline { margin-bottom: 0.3rem; }
+		.plan-price { margin-bottom: 0.35rem; }
+		.plan-cta { min-height: 38px; font-size: 0.88rem; }
 		.billing-switch { width: min(286px, 100%); }
 		.pillars-section { padding: 82px 0 90px; }
 		.pillars-head { margin-bottom: 38px; }
@@ -970,14 +1127,13 @@ const faqs = [
 	}
 
 	@media (max-height: 700px) {
-		.pricing-intro { padding-top: 82px; }
-		.p-hero { padding-bottom: 12px; }
-		.pricing-controls { row-gap: 9px; }
-		.plan { padding: 18px 22px; }
-		.plan-tagline { display: none; }
-		.plan-price { min-height: 2.5rem; margin-bottom: .6rem; }
-		.price-amount { font-size: 2.35rem; }
-		.plan-cta { min-height: 42px; }
-		.plan-note { margin-top: .45rem; }
+		.p-hero { padding-top: 102px; }
+		.pricing-controls { row-gap: 8px; }
+		.plan { padding: 12px 16px; }
+		.plan-tagline { font-size: 0.82rem; min-height: auto; margin-bottom: 0.25rem; }
+		.plan-price { min-height: 2.2rem; margin-bottom: 0.3rem; }
+		.price-amount { font-size: 2.3rem; }
+		.plan-cta { min-height: 38px; }
+		.plan-note { margin-top: 0.25rem; font-size: 0.74rem; }
 	}
 </style>

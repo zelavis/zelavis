@@ -1,5 +1,4 @@
-import { MARKETPLACE_MANIFEST } from "@zelavis/marketplace/manifest";
-
+import { resolveLocalPackageManifest } from "../adapters/_local-runtime.js";
 import { loadPluginPackage } from "../service.js";
 
 /**
@@ -27,9 +26,15 @@ export function createZelavisMarketplaceService() {
   // no menus at all. Memoizing is also the honest model: these are static
   // declarations about what the service is, not per-runtime state, and the
   // service `loadPluginPackage` returns is frozen.
+  const manifest = resolveLocalPackageManifest("@zelavis/marketplace");
+  if (!manifest) {
+    throw new Error("Unable to resolve package manifest for @zelavis/marketplace");
+  }
+
   cached ??= loadPluginPackage({
-    manifest: MARKETPLACE_MANIFEST,
+    manifest,
     importer: () => import("@zelavis/marketplace"),
+    packageDir: manifest.packageDir,
   });
   return cached;
 }

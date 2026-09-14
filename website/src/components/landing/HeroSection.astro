@@ -1,0 +1,1015 @@
+---
+import BrandMarquee from '../BrandMarquee.astro';
+---
+
+<section class="amp-hero">
+	<div class="amp-orb amp-orb-one" aria-hidden="true"></div>
+	<div class="amp-orb amp-orb-two" aria-hidden="true"></div>
+	<div class="amp-grid-overlay" aria-hidden="true"></div>
+
+	<div class="amp-hero-inner">
+		<div class="amp-hero-copy">
+			<div class="hero-badge" data-reveal>
+				<span class="hero-badge-pill">v1.0 Preview</span>
+				<span class="hero-badge-text">The Agentic App Platform</span>
+				<svg class="hero-badge-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+					<path d="M5 12h14M12 5l7 7-7 7" />
+				</svg>
+			</div>
+
+			<h1 data-reveal style="--delay: 70">
+				Plan. Build. Manage.<br />
+				<span class="hero-gradient-text">Own every layer.</span>
+			</h1>
+
+			<p class="amp-hero-lede" data-reveal style="--delay: 140">
+				Data & content management, apps & websites, collaboration, and project management—one unified platform to build, market, and scale.
+			</p>
+
+			<div class="amp-actions" data-reveal style="--delay: 210">
+				<a class="amp-button amp-button-light" href="/getting-started/installation">
+					<span>Start building</span>
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+						<path d="M5 12h14M12 5l7 7-7 7" />
+					</svg>
+				</a>
+				<a class="amp-button amp-button-outline" href="/docs">Read the docs</a>
+			</div>
+
+			<div class="hero-terminal" data-reveal style="--delay: 280">
+				<span class="hero-terminal-prompt" aria-hidden="true">$</span>
+				<code class="hero-terminal-code">npx zelavis create my-app</code>
+				<button class="hero-terminal-copy" type="button" data-copy-cmd="npx zelavis create my-app" aria-label="Copy install command to clipboard">
+					<svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+						<rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+						<path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+					</svg>
+					<svg class="check-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+						<polyline points="20 6 9 17 4 12" />
+					</svg>
+				</button>
+			</div>
+		</div>
+
+		<div class="amp-product-stage" aria-label="Zelavis project overview dashboard" data-reveal style="--delay: 180">
+			<div class="stage-glow"></div>
+			<div class="stage-window">
+				<div class="stage-topbar">
+					<div class="window-controls" aria-hidden="true">
+						<span class="dot dot-red"></span>
+						<span class="dot dot-amber"></span>
+						<span class="dot dot-green"></span>
+					</div>
+					<div class="stage-address">
+						<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+							<rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+							<path d="M7 11V7a5 5 0 0 1 10 0v4" />
+						</svg>
+						<span>zelavis://northstar</span>
+						<span class="stage-env">prod</span>
+					</div>
+					<div class="stage-status">
+						<i aria-hidden="true"></i>
+						<span>healthy</span>
+					</div>
+				</div>
+
+				<div class="stage-body">
+					<aside class="stage-sidebar">
+						<div class="stage-brand-row">
+							<span class="stage-logo">Z</span>
+							<div class="stage-proj-meta">
+								<b>northstar</b>
+								<small>v1.0.4 · isolated</small>
+							</div>
+						</div>
+						<nav class="stage-nav" aria-label="Dashboard preview navigation">
+							<span class="nav-item active">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+									<rect width="7" height="9" x="3" y="3" rx="1" /><rect width="7" height="5" x="14" y="3" rx="1" /><rect width="7" height="9" x="14" y="12" rx="1" /><rect width="7" height="5" x="3" y="16" rx="1" />
+								</svg>
+								Overview
+							</span>
+							<span class="nav-item">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+									<ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" /><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3" />
+								</svg>
+								Database
+								<small class="pill-badge">4</small>
+							</span>
+							<span class="nav-item">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+									<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
+								</svg>
+								Auth
+							</span>
+							<span class="nav-item">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+									<polygon points="12 2 2 7 12 12 22 7 12 2" /><polyline points="2 17 12 22 22 17" /><polyline points="2 12 12 17 22 12" />
+								</svg>
+								Workloads
+							</span>
+							<span class="nav-item">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+									<rect width="20" height="8" x="2" y="2" rx="2" ry="2" /><rect width="20" height="8" x="2" y="14" rx="2" ry="2" /><line x1="6" x2="6.01" y1="6" y2="6" /><line x1="6" x2="6.01" y1="18" y2="18" />
+								</svg>
+								Hosting
+							</span>
+						</nav>
+					</aside>
+
+					<div class="stage-canvas">
+						<div class="stage-canvas-head">
+							<div>
+								<span class="canvas-kicker">Cluster Overview</span>
+								<h4>Data Fabric & Runtime</h4>
+							</div>
+							<div class="canvas-tag">Node Process #2411</div>
+						</div>
+
+						<div class="stage-metrics-row">
+							<div class="metric-card">
+								<span>Virtual Shards</span>
+								<b>4 physical</b>
+								<small>64 virtual ranges</small>
+							</div>
+							<div class="metric-card">
+								<span>Event Ingestion</span>
+								<b>18,420/s</b>
+								<small class="positive">↑ 14% peak</small>
+							</div>
+							<div class="metric-card">
+								<span>P95 Latency</span>
+								<b>0.68ms</b>
+								<small>SQLite · in-memory WAL</small>
+							</div>
+						</div>
+
+						<div class="stage-chart-card">
+							<div class="chart-header">
+								<span>Event Stream Activity (Last 60s)</span>
+								<div class="chart-legend">
+									<span class="legend-dot legend-doc"></span><span>Writes</span>
+									<span class="legend-dot legend-proj"></span><span>Projections</span>
+								</div>
+							</div>
+							<div class="stage-chart" aria-hidden="true">
+								<i style="--h: 42%"></i>
+								<i style="--h: 68%"></i>
+								<i style="--h: 54%"></i>
+								<i style="--h: 88%"></i>
+								<i style="--h: 72%"></i>
+								<i style="--h: 96%"></i>
+								<i style="--h: 85%"></i>
+								<i style="--h: 100%"></i>
+								<i style="--h: 78%"></i>
+								<i style="--h: 91%"></i>
+								<i style="--h: 65%"></i>
+								<i style="--h: 89%"></i>
+							</div>
+						</div>
+
+						<div class="stage-shard-pills">
+							<div class="shard-pill active">
+								<span class="shard-dot"></span>
+								<span>shard-01</span>
+								<code>0000–3fff</code>
+							</div>
+							<div class="shard-pill">
+								<span class="shard-dot"></span>
+								<span>shard-02</span>
+								<code>4000–7fff</code>
+							</div>
+							<div class="shard-pill">
+								<span class="shard-dot"></span>
+								<span>shard-03</span>
+								<code>8000–bfff</code>
+							</div>
+							<div class="shard-pill">
+								<span class="shard-dot"></span>
+								<span>shard-04</span>
+								<code>c000–ffff</code>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<div class="stage-float stage-float-top">
+				<div class="float-icon float-icon-green" aria-hidden="true">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+						<polyline points="20 6 9 17 4 12" />
+					</svg>
+				</div>
+				<div class="float-content">
+					<span>Deployment Complete</span>
+					<b>Release v1.0.4 · Zero-downtime</b>
+				</div>
+			</div>
+
+			<div class="stage-float stage-float-bottom">
+				<div class="float-icon float-icon-purple" aria-hidden="true">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+						<ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" /><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3" />
+					</svg>
+				</div>
+				<div class="float-content">
+					<span>Multi-Model Store</span>
+					<b>Document · Column · Graph</b>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<div class="hero-brand-dock"><BrandMarquee /></div>
+</section>
+
+<script is:inline>
+	(function () {
+		// 3D tilt interaction on mouse move
+		var stage = document.querySelector('.amp-product-stage');
+		var windowCard = document.querySelector('.stage-window');
+		if (stage && windowCard && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+			stage.addEventListener('mousemove', function (e) {
+				var rect = stage.getBoundingClientRect();
+				var x = (e.clientX - rect.left) / rect.width - 0.5;
+				var y = (e.clientY - rect.top) / rect.height - 0.5;
+				windowCard.style.transform = 'rotateY(' + (x * 10) + 'deg) rotateX(' + (-y * 10) + 'deg) translateZ(6px)';
+			});
+			stage.addEventListener('mouseleave', function () {
+				windowCard.style.transform = 'rotateY(-4deg) rotateX(2deg) translateZ(0)';
+			});
+		}
+
+		// Copy CLI command
+		var copyBtn = document.querySelector('[data-copy-cmd]');
+		if (copyBtn) {
+			copyBtn.addEventListener('click', function () {
+				var cmd = copyBtn.getAttribute('data-copy-cmd');
+				if (cmd && navigator.clipboard) {
+					navigator.clipboard.writeText(cmd).then(function () {
+						copyBtn.classList.add('copied');
+						setTimeout(function () {
+							copyBtn.classList.remove('copied');
+						}, 2000);
+					});
+				}
+			});
+		}
+	})();
+</script>
+
+<style>
+	.amp-hero {
+		position: relative;
+		min-height: 100vh;
+		min-height: 100svh;
+		min-height: 100dvh;
+		display: grid;
+		grid-template-rows: minmax(0, 1fr) auto;
+		overflow: clip;
+		color: #fff;
+		border-radius: 0 0 36px 36px;
+		background:
+			radial-gradient(circle at 86% 25%, rgba(251, 131, 130, 0.65), transparent 35%),
+			radial-gradient(circle at 45% 108%, rgba(76, 36, 149, 0.88), transparent 42%),
+			linear-gradient(118deg, #123386 0%, #20338f 32%, #5f3e9e 68%, #9e537c 100%);
+		font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+	}
+
+	.amp-orb {
+		position: absolute;
+		border-radius: 999px;
+		filter: blur(4px);
+		opacity: 0.35;
+		pointer-events: none;
+	}
+
+	.amp-orb-one {
+		width: 640px;
+		height: 640px;
+		right: -240px;
+		top: 10px;
+		background: radial-gradient(circle, #ffa475, transparent 66%);
+	}
+
+	.amp-orb-two {
+		width: 560px;
+		height: 560px;
+		left: 24%;
+		bottom: -320px;
+		background: radial-gradient(circle, #5b21be, transparent 72%);
+	}
+
+	.amp-grid-overlay {
+		position: absolute;
+		inset: 0;
+		background-image: linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+			linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+		background-size: 48px 48px;
+		mask-image: radial-gradient(circle at 50% 40%, rgba(0, 0, 0, 0.8), transparent 75%);
+		pointer-events: none;
+	}
+
+	.amp-hero-inner {
+		position: relative;
+		z-index: 2;
+		width: min(1200px, calc(100% - 64px));
+		margin: 0 auto;
+		padding: clamp(96px, 14dvh, 120px) 0 clamp(20px, 3dvh, 32px);
+		display: grid;
+		grid-template-columns: 1fr 1.08fr;
+		gap: clamp(32px, 4vw, 64px);
+		align-items: center;
+	}
+
+	.hero-brand-dock {
+		position: relative;
+		z-index: 4;
+		min-width: 0;
+	}
+
+	/* Hero Copy Styles */
+	.hero-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		padding: 5px 12px 5px 6px;
+		border-radius: 999px;
+		border: 1px solid rgba(255, 255, 255, 0.28);
+		background: rgba(255, 255, 255, 0.12);
+		-webkit-backdrop-filter: blur(12px);
+		backdrop-filter: blur(12px);
+		font-size: 12px;
+		font-weight: 500;
+		color: #fff;
+		margin-bottom: clamp(14px, 2.2dvh, 20px);
+		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+	}
+
+	.hero-badge-pill {
+		padding: 2px 8px;
+		border-radius: 999px;
+		background: #fff;
+		color: #242270;
+		font-size: 10px;
+		font-weight: 750;
+		letter-spacing: 0.02em;
+		text-transform: uppercase;
+	}
+
+	.hero-badge-arrow {
+		opacity: 0.7;
+		transition: transform 0.2s ease;
+	}
+
+	.hero-badge:hover .hero-badge-arrow {
+		transform: translateX(2px);
+	}
+
+	.amp-hero h1 {
+		max-width: 660px;
+		margin: 0;
+		font-size: clamp(40px, 7.5dvh, 62px);
+		line-height: 1.07;
+		letter-spacing: -1.4px;
+		font-weight: 750;
+	}
+
+	.hero-gradient-text {
+		background: linear-gradient(135deg, #ffffff 40%, #ffd0bd 100%);
+		-webkit-background-clip: text;
+		-webkit-text-fill-color: transparent;
+	}
+
+	.amp-hero-lede {
+		max-width: 560px;
+		margin: clamp(16px, 3dvh, 26px) 0 0;
+		font-size: clamp(16px, 2.1dvh, 18px);
+		line-height: 1.45;
+		font-weight: 400;
+		color: rgba(255, 255, 255, 0.88);
+	}
+
+	.amp-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 14px;
+		margin-top: clamp(20px, 3.5dvh, 32px);
+	}
+
+	.amp-button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+		min-height: 52px;
+		padding: 0 26px;
+		border-radius: 999px;
+		text-decoration: none;
+		font-size: 15px;
+		font-weight: 650;
+		transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+	}
+
+	.amp-button:hover {
+		transform: translateY(-2px);
+	}
+
+	.amp-button-light {
+		background: #fff;
+		color: #121324;
+		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+	}
+
+	.amp-button-light:hover {
+		background: #f5f6fc;
+		box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
+	}
+
+	.amp-button-outline {
+		border: 1px solid rgba(255, 255, 255, 0.45);
+		color: #fff;
+		background: rgba(255, 255, 255, 0.08);
+		-webkit-backdrop-filter: blur(8px);
+		backdrop-filter: blur(8px);
+	}
+
+	.amp-button-outline:hover {
+		background: rgba(255, 255, 255, 0.16);
+		border-color: rgba(255, 255, 255, 0.7);
+	}
+
+	/* Terminal CLI snippet */
+	.hero-terminal {
+		display: inline-flex;
+		align-items: center;
+		gap: 12px;
+		margin-top: clamp(18px, 3dvh, 26px);
+		padding: 9px 14px 9px 16px;
+		border-radius: 12px;
+		border: 1px solid rgba(255, 255, 255, 0.18);
+		background: rgba(14, 16, 38, 0.65);
+		-webkit-backdrop-filter: blur(16px);
+		backdrop-filter: blur(16px);
+		box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
+	}
+
+	.hero-terminal-prompt {
+		color: #928df7;
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 13px;
+		font-weight: 700;
+	}
+
+	.hero-terminal-code {
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 13px;
+		color: #e5e7f8;
+		letter-spacing: -0.01em;
+	}
+
+	.hero-terminal-copy {
+		display: grid;
+		place-items: center;
+		width: 28px;
+		height: 28px;
+		padding: 0;
+		border-radius: 7px;
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		background: rgba(255, 255, 255, 0.08);
+		color: #d1d4f0;
+		cursor: pointer;
+		transition: background 0.18s ease, color 0.18s ease;
+	}
+
+	.hero-terminal-copy:hover {
+		background: rgba(255, 255, 255, 0.18);
+		color: #fff;
+	}
+
+	.hero-terminal-copy .check-icon {
+		display: none;
+	}
+
+	.hero-terminal-copy.copied {
+		background: #27834b;
+		color: #fff;
+		border-color: #3bb26c;
+	}
+
+	.hero-terminal-copy.copied .copy-icon {
+		display: none;
+	}
+
+	.hero-terminal-copy.copied .check-icon {
+		display: block;
+	}
+
+	/* 3D Product Stage */
+	.amp-product-stage {
+		position: relative;
+		min-height: clamp(340px, 52dvh, 510px);
+		display: grid;
+		place-items: center;
+		perspective: 1100px;
+	}
+
+	.stage-glow {
+		position: absolute;
+		inset: 6% 0%;
+		border-radius: 50%;
+		background: radial-gradient(circle, rgba(255, 255, 255, 0.32), rgba(162, 134, 255, 0.25) 50%, transparent 72%);
+		filter: blur(75px);
+		pointer-events: none;
+	}
+
+	.stage-window {
+		position: relative;
+		width: 100%;
+		border: 1px solid rgba(255, 255, 255, 0.4);
+		border-radius: 18px;
+		overflow: hidden;
+		background: rgba(247, 249, 254, 0.98);
+		color: #1a1c26;
+		box-shadow: 0 35px 80px rgba(12, 14, 52, 0.4), 0 1px 0 rgba(255, 255, 255, 0.8) inset;
+		transform: rotateY(-4deg) rotateX(2deg);
+		transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+		will-change: transform;
+	}
+
+	.stage-topbar {
+		height: 46px;
+		padding: 0 16px;
+		display: flex;
+		align-items: center;
+		gap: 14px;
+		border-bottom: 1px solid #e5e7f0;
+		background: #f8f9fd;
+		font-size: 12px;
+	}
+
+	.window-controls {
+		display: flex;
+		gap: 6px;
+	}
+
+	.dot {
+		width: 9px;
+		height: 9px;
+		border-radius: 50%;
+	}
+
+	.dot-red { background: #ff5f56; }
+	.dot-amber { background: #ffbd2e; }
+	.dot-green { background: #27c93f; }
+
+	.stage-address {
+		margin-left: 6px;
+		display: inline-flex;
+		align-items: center;
+		gap: 7px;
+		padding: 4px 10px;
+		border-radius: 8px;
+		background: #eeeff6;
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 11px;
+		color: #565868;
+	}
+
+	.stage-env {
+		padding: 1px 5px;
+		border-radius: 5px;
+		background: #25287c;
+		color: #fff;
+		font-size: 9px;
+		font-weight: 700;
+		text-transform: uppercase;
+	}
+
+	.stage-status {
+		margin-left: auto;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 4px 9px;
+		border-radius: 999px;
+		background: #eaf7ef;
+		color: #237b46;
+		font-size: 11px;
+		font-weight: 600;
+	}
+
+	.stage-status i {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: #3eb469;
+		box-shadow: 0 0 8px #3eb469;
+	}
+
+	.stage-body {
+		min-height: 310px;
+		display: grid;
+		grid-template-columns: 140px 1fr;
+	}
+
+	.stage-sidebar {
+		padding: 16px 12px;
+		display: flex;
+		flex-direction: column;
+		gap: 16px;
+		border-right: 1px solid #e7e9f2;
+		background: #f4f5fb;
+	}
+
+	.stage-brand-row {
+		display: flex;
+		align-items: center;
+		gap: 9px;
+		padding-bottom: 12px;
+		border-bottom: 1px solid #e5e7f0;
+	}
+
+	.stage-logo {
+		width: 26px;
+		height: 26px;
+		display: grid;
+		place-items: center;
+		border-radius: 7px;
+		background: linear-gradient(135deg, #2a2599, #5444bc);
+		color: #fff;
+		font-weight: 850;
+		font-size: 13px;
+	}
+
+	.stage-proj-meta b {
+		display: block;
+		font-size: 12px;
+		color: #1a1c26;
+		line-height: 1.15;
+	}
+
+	.stage-proj-meta small {
+		display: block;
+		font-size: 9px;
+		color: #797c8d;
+	}
+
+	.stage-nav {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.nav-item {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 6px 8px;
+		border-radius: 7px;
+		font-size: 11.5px;
+		font-weight: 500;
+		color: #656778;
+		cursor: default;
+	}
+
+	.nav-item.active {
+		background: #e5e6fa;
+		color: #272488;
+		font-weight: 650;
+	}
+
+	.pill-badge {
+		margin-left: auto;
+		padding: 1px 5px;
+		border-radius: 999px;
+		background: #d8d9f3;
+		color: #272488;
+		font-size: 9px;
+		font-weight: 700;
+	}
+
+	.stage-canvas {
+		padding: 18px 22px;
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+	}
+
+	.stage-canvas-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.canvas-kicker {
+		font-size: 10px;
+		font-weight: 700;
+		color: #6253d7;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	.stage-canvas-head h4 {
+		margin: 2px 0 0;
+		font-size: 14px;
+		font-weight: 700;
+		color: #171822;
+	}
+
+	.canvas-tag {
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 10px;
+		color: #6a6c7c;
+		padding: 3px 7px;
+		border-radius: 6px;
+		background: #edf0f8;
+	}
+
+	.stage-metrics-row {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 8px;
+	}
+
+	.metric-card {
+		padding: 10px 12px;
+		border-radius: 10px;
+		background: #fff;
+		border: 1px solid #e7e9f2;
+		box-shadow: 0 2px 6px rgba(20, 24, 50, 0.03);
+	}
+
+	.metric-card span {
+		display: block;
+		font-size: 10px;
+		color: #797c8e;
+		font-weight: 500;
+	}
+
+	.metric-card b {
+		display: block;
+		margin: 2px 0 1px;
+		font-size: 15px;
+		color: #161822;
+		font-weight: 750;
+	}
+
+	.metric-card small {
+		font-size: 9.5px;
+		color: #888b9c;
+	}
+
+	.metric-card small.positive {
+		color: #27834b;
+		font-weight: 650;
+	}
+
+	.stage-chart-card {
+		padding: 12px 14px;
+		border-radius: 11px;
+		background: #fff;
+		border: 1px solid #e7e9f2;
+	}
+
+	.chart-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 10px;
+		font-size: 10.5px;
+		color: #66697a;
+		font-weight: 600;
+	}
+
+	.chart-legend {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		font-size: 9.5px;
+	}
+
+	.legend-dot {
+		display: inline-block;
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		margin-right: 3px;
+	}
+
+	.legend-doc { background: #5f52dd; }
+	.legend-proj { background: #ff9170; }
+
+	.stage-chart {
+		height: 72px;
+		display: flex;
+		gap: 8px;
+		align-items: end;
+	}
+
+	.stage-chart i {
+		flex: 1;
+		height: var(--h);
+		border-radius: 4px 4px 2px 2px;
+		background: linear-gradient(180deg, #6c5ee6, #4135bf);
+		transition: height 0.4s ease;
+	}
+
+	.stage-chart i:nth-child(even) {
+		background: linear-gradient(180deg, #7c72f0, #ff8f70);
+	}
+
+	.stage-shard-pills {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 6px;
+	}
+
+	.shard-pill {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		padding: 7px 8px;
+		border-radius: 8px;
+		background: #f4f6fc;
+		border: 1px solid #e7e9f4;
+		font-size: 10px;
+	}
+
+	.shard-pill.active {
+		border-color: #c9cbfa;
+		background: #f0f1fd;
+	}
+
+	.shard-pill span {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		font-weight: 650;
+		color: #26283b;
+	}
+
+	.shard-dot {
+		width: 5px;
+		height: 5px;
+		border-radius: 50%;
+		background: #3bb26c;
+	}
+
+	.shard-pill code {
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 8.5px;
+		color: #6d7082;
+	}
+
+	/* Floating glass cards */
+	.stage-float {
+		position: absolute;
+		z-index: 3;
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 12px 16px;
+		border: 1px solid rgba(255, 255, 255, 0.6);
+		border-radius: 14px;
+		background: rgba(255, 255, 255, 0.94);
+		-webkit-backdrop-filter: blur(20px);
+		backdrop-filter: blur(20px);
+		color: #1d1f2b;
+		box-shadow: 0 20px 45px rgba(22, 17, 72, 0.22);
+	}
+
+	.float-icon {
+		width: 32px;
+		height: 32px;
+		display: grid;
+		place-items: center;
+		border-radius: 9px;
+		flex-shrink: 0;
+	}
+
+	.float-icon-green {
+		background: #e8f7ee;
+		color: #237b46;
+	}
+
+	.float-icon-purple {
+		background: #ede9fe;
+		color: #5b21be;
+	}
+
+	.float-content span {
+		display: block;
+		font-size: 10.5px;
+		color: #797c8d;
+		font-weight: 500;
+	}
+
+	.float-content b {
+		display: block;
+		font-size: 12.5px;
+		color: #171924;
+		font-weight: 700;
+	}
+
+	.stage-float-top {
+		right: -24px;
+		top: 48px;
+	}
+
+	.stage-float-bottom {
+		left: -22px;
+		bottom: 32px;
+	}
+
+	/* Responsive Breakpoints */
+	@media (max-width: 960px) {
+		.amp-hero-inner {
+			grid-template-columns: 1fr;
+			padding: clamp(96px, 14dvh, 116px) 0 24px;
+			gap: 40px;
+		}
+
+		.amp-hero-copy {
+			max-width: 680px;
+		}
+
+		.amp-product-stage {
+			max-width: 640px;
+			width: 100%;
+			margin: 0 auto;
+		}
+	}
+
+	@media (max-width: 640px) {
+		.amp-hero {
+			border-radius: 0 0 24px 24px;
+		}
+
+		.amp-hero-inner {
+			width: calc(100% - 32px);
+			padding: 92px 0 16px;
+			gap: 32px;
+		}
+
+		.amp-hero h1 {
+			font-size: 34px;
+			line-height: 1.12;
+			letter-spacing: -0.8px;
+		}
+
+		.amp-hero-lede {
+			font-size: 15px;
+		}
+
+		.amp-actions {
+			flex-direction: column;
+		}
+
+		.amp-button {
+			width: 100%;
+		}
+
+		.hero-terminal {
+			width: 100%;
+			justify-content: space-between;
+			box-sizing: border-box;
+		}
+
+		.stage-body {
+			grid-template-columns: 1fr;
+		}
+
+		.stage-sidebar {
+			display: none;
+		}
+
+		.stage-float-top {
+			right: 4px;
+			top: -16px;
+		}
+
+		.stage-float-bottom {
+			left: 4px;
+			bottom: -16px;
+		}
+
+		.stage-float {
+			padding: 8px 12px;
+		}
+
+		.float-icon {
+			width: 26px;
+			height: 26px;
+		}
+
+		.stage-metrics-row {
+			grid-template-columns: 1fr;
+		}
+
+		.stage-shard-pills {
+			grid-template-columns: repeat(2, 1fr);
+		}
+	}
+</style>

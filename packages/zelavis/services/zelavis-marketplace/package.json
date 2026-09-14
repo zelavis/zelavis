@@ -7,20 +7,28 @@
   "type": "module",
   "zelavis": {
     "kind": "plugin",
-    "namespace": "marketplace"
+    "namespace": "marketplace",
+    "capabilities": [
+      "dashboard:menu",
+      "marketplace:services"
+    ],
+    "marketplace": {
+      "title": "Marketplace",
+      "summary": "Official Zelavis marketplace product service.",
+      "categories": [
+        "marketplace"
+      ]
+    }
   },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./manifest": {
-      "types": "./dist/manifest.d.ts",
-      "import": "./dist/manifest.js"
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "dashboard"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

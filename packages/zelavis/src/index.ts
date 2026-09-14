@@ -1764,22 +1764,93 @@ async function resolveRuntimeManagementCore(
 
     const normalizedPath = normalizeBundleAssetPath(assetPath);
 
-    // A service that ships its own pages serves them from its declaration.
-    // The lookup is scoped to this registry entry, so one service can never
-    // reach another's assets, and no bundle store needs to exist at all.
-    const shipped = entry.service.pageAssets?.[normalizedPath.replace(/^\/+/, "")];
-    if (shipped) {
-      const body =
-        typeof shipped.body === "string"
-          ? new TextEncoder().encode(shipped.body)
-          : shipped.body;
-      const shippedHeaders = new Headers();
-      shippedHeaders.set(
-        "content-type",
-        shipped.contentType ?? guessServiceAssetContentType(normalizedPath),
-      );
-      shippedHeaders.set("cache-control", shipped.cacheControl ?? "no-cache");
-      return { status: 200, headers: shippedHeaders, body };
+    // Static service page assets served directly from disk (classic webspace behavior).
+    // If the service has a package directory on disk, resolve files within it.
+    let packageDir = entry.service.packageDir ?? (entry as any).packageDir;
+    if (typeof packageDir === "string" && packageDir.startsWith("file://")) {
+      try {
+        const { fileURLToPath } = await import("node:url");
+        packageDir = fileURLToPath(packageDir);
+      } catch {
+        // ignore
+      }
+    }
+
+    if (!packageDir && (entry as any).specifier) {
+      const spec = (entry as any).specifier as string;
+      if (spec.startsWith("file://") || spec.startsWith("/") || spec.startsWith(".")) {
+        try {
+          const { fileURLToPath } = await import("node:url");
+          const { dirname, join } = await import("node:path");
+          const { stat, readFile } = await import("node:fs/promises");
+          const filePath = spec.startsWith("file://") ? fileURLToPath(spec) : spec;
+          const s = await stat(filePath).catch(() => undefined);
+          if (s?.isDirectory()) {
+            packageDir = filePath;
+          } else if (s?.isFile()) {
+            let cur = dirname(filePath);
+            while (cur !== dirname(cur)) {
+              const hasPkg = await readFile(join(cur, "package.json")).then(
+                () => true,
+                () => false,
+              );
+              if (hasPkg) {
+                packageDir = cur;
+                break;
+              }
+              cur = dirname(cur);
+            }
+            if (!packageDir) {
+              packageDir = dirname(filePath);
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    if (packageDir) {
+      try {
+        const { resolve, join, sep } = await import("node:path");
+        const { stat, readFile } = await import("node:fs/promises");
+        const root = resolve(packageDir);
+
+        const isContained = (candidate: string) => {
+          const res = resolve(candidate);
+          return res === root || res.startsWith(`${root}${sep}`);
+        };
+
+        const cleanBundle = bundle.replace(/^[/\\]+/, "");
+        const cleanPath = normalizedPath.replace(/^[/\\]+/, "");
+
+        const candidates = [
+          join(root, cleanBundle, cleanPath),
+          join(root, cleanPath),
+        ];
+
+        for (const candidate of candidates) {
+          if (isContained(candidate)) {
+            try {
+              const candidateStat = await stat(candidate);
+              if (candidateStat.isFile()) {
+                const body = await readFile(candidate);
+                const headers = new Headers();
+                headers.set(
+                  "content-type",
+                  guessServiceAssetContentType(candidate),
+                );
+                headers.set("cache-control", "no-cache");
+                return { status: 200, headers, body };
+              }
+            } catch {
+              // File not accessible or not found, try next candidate
+            }
+          }
+        }
+      } catch {
+        // dynamic import failed in non-node/bun environment
+      }
     }
 
     const asset = await context.bundleStore?.read(
@@ -4064,11 +4135,18 @@ export async function zelavis(
     return composedFetch(request, context);
   };
 
-  return Object.assign(runtime, { fetch: guardedFetch, close });
+  return Object.assign(runtime, {
+    fetch: guardedFetch,
+    close,
+    auth: authService?.service as AuthApi | undefined,
+    database: databaseSubsystem?.api as DatabaseRuntimeApi | undefined,
+  });
 }
 
 export interface ZelavisRuntime extends ZelavisServerRuntime<unknown> {
   close(): Promise<void>;
+  auth?: AuthApi;
+  database?: DatabaseRuntimeApi;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -4573,7 +4651,7 @@ export class Zelavis {
     }
 
     const runtime = await this.runtime();
-    const service = runtime.services["zelavis/auth"]?.service;
+    const service = runtime.auth ?? runtime.services["zelavis/auth"]?.service;
     assertResolvedServiceApi<AuthApi>(service, "zelavis/auth");
     this.resolvedAuthApi = service;
     return service;
@@ -4585,7 +4663,7 @@ export class Zelavis {
     }
 
     const runtime = await this.runtime();
-    const service = runtime.services["@zelavis/db"]?.service;
+    const service = runtime.database ?? runtime.services["@zelavis/db"]?.service;
     assertResolvedServiceApi<DatabaseRuntimeApi>(service, "@zelavis/db");
     this.resolvedDatabaseApi = service;
     return service;

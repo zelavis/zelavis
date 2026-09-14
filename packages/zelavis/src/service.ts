@@ -28,7 +28,6 @@ import type {
   ZelavisServiceAppShellRenderContext,
   ZelavisServiceAppShellResult,
   ZelavisServiceCapability,
-  ZelavisServicePageAsset,
   ZelavisServiceCatalogCompatibility,
   ZelavisServiceCatalogEntry,
   ZelavisServiceCatalogLinks,
@@ -105,13 +104,6 @@ export interface ZelavisServiceRegistryEntry<TContext = unknown> {
     marketplace?: ZelavisServiceMarketplaceMetadata;
     project?: ZelavisProjectRecipeDefinition;
     capabilities?: readonly ZelavisServiceCapability[];
-    /**
-     * Pages this service ships itself, keyed by bundle-relative path. Served
-     * through the same service page asset route as a bundle-store page, so a
-     * service that arrives inside the Platform reaches the dashboard the same
-     * way an installed one does.
-     */
-    pageAssets?: Readonly<Record<string, ZelavisServicePageAsset>>;
     runtimeServices?: readonly ZelavisAnyRuntimeServiceInput[];
     setup?: (
       context: TContext,
@@ -133,6 +125,7 @@ export interface ZelavisServiceRegistryModuleEntry {
   source?: "official" | "community";
   order?: number;
   manifest?: ZelavisPackageManifest;
+  packageDir?: string;
 }
 
 export interface ZelavisServiceRegistryStateEntry {
@@ -161,6 +154,7 @@ export interface ZelavisServiceLoadOptions {
   importer?: (specifier: string) => Promise<unknown>;
   manifest?: ZelavisPackageManifest;
   manifestResolver?: ZelavisServiceManifestResolver;
+  packageDir?: string;
 }
 
 /**
@@ -326,6 +320,7 @@ export function resolveServiceModule<TContext = unknown>(
       name: raw.name,
       namespace: manifest?.zelavis?.namespace ?? raw.namespace as string | undefined,
       basePath: typeof raw.basePath === "string" ? raw.basePath : undefined,
+      packageDir: (raw.packageDir as string | undefined) ?? (manifest as any)?.packageDir,
       api: (raw.api as Record<string, any>) ?? {},
       service: raw.service ?? raw,
       menu: raw.menu as any,
@@ -373,11 +368,24 @@ export function resolveServiceModule<TContext = unknown>(
 
 export async function loadPluginPackage(options: {
   manifest: unknown;
+  specifier?: string;
   importer?: (entry: string) => Promise<unknown>;
+  packageDir?: string;
 }): Promise<Readonly<ZelavisServiceRegistryEntry<any>["service"]>> {
   const manifest = validatePluginPackageManifest(options.manifest);
-  const entrypoint = resolvePackageExportsEntry(manifest.exports);
+  const rawEntrypoint = resolvePackageExportsEntry(manifest.exports);
   const context = createPluginExecutionContext(manifest);
+
+  const initialPackageDir =
+    options.packageDir ??
+    (manifest as any)?.packageDir;
+
+  const entrypoint =
+    initialPackageDir && rawEntrypoint.startsWith(".")
+      ? (initialPackageDir.endsWith("/")
+          ? `${initialPackageDir}${rawEntrypoint.replace(/^\.\//, "")}`
+          : `${initialPackageDir}/${rawEntrypoint.replace(/^\.\//, "")}`)
+      : rawEntrypoint;
 
   const importer =
     options.importer ??
@@ -402,7 +410,7 @@ export async function loadPluginPackage(options: {
           // loader and silently dropped from what it built.
           | "capabilities"
           | "marketplace"
-          | "pageAssets"
+          | "packageDir"
           | "setup"
           | "runtimeServices"
           | "scope"
@@ -420,11 +428,16 @@ export async function loadPluginPackage(options: {
     throw new TypeError(`Package "${manifest.name}" cannot override its manifest namespace.`);
   }
 
+  const packageDir =
+    initialPackageDir ??
+    resolvedService?.packageDir;
+
   const runtimeService: ZelavisServiceRegistryEntry<any>["service"] = {
     name: manifest.name,
     namespace: manifest.zelavis?.namespace,
     version: manifest.version,
     kind: manifest.zelavis?.kind ?? "plugin",
+    packageDir,
     // Declared on the module, not through an SDK call: these describe what the
     // service *is*, and a plugin that failed to load should not be registered
     // with a half-built identity.
@@ -435,8 +448,8 @@ export async function loadPluginPackage(options: {
     // loaded and registered, then was never found by the plugin it named.
     capabilities:
       resolvedService?.capabilities ?? (manifest.zelavis?.capabilities as any),
-    marketplace: resolvedService?.marketplace,
-    pageAssets: resolvedService?.pageAssets,
+    marketplace:
+      resolvedService?.marketplace ?? (manifest.zelavis?.marketplace as any),
     basePath: manifest.zelavis?.namespace ? `/plugins/${manifest.zelavis.namespace}` : undefined,
     api: {
       v1: [
@@ -513,6 +526,7 @@ export async function loadService<TContext = unknown>(
     return loadPluginPackage({
       manifest: options.manifest,
       importer: options.importer,
+      packageDir: options.packageDir ?? (options.manifest as any)?.packageDir,
     }) as any;
   }
 
@@ -527,7 +541,9 @@ export async function loadService<TContext = unknown>(
     }
     return loadPluginPackage({
       manifest,
+      specifier,
       importer: options.importer,
+      packageDir: options.packageDir ?? (manifest as any)?.packageDir,
     }) as any;
   }
 
@@ -558,6 +574,7 @@ export async function loadServiceRegistry<TContext = unknown>(
       const service = await loadService<TContext>(entry.specifier, {
         ...options,
         manifest: entry.manifest ?? options.manifest,
+        packageDir: entry.packageDir ?? (entry.manifest as any)?.packageDir ?? options.packageDir,
       });
 
       return {
@@ -566,6 +583,7 @@ export async function loadServiceRegistry<TContext = unknown>(
         status: entry.status ?? "installed",
         source: entry.source,
         manifest: entry.manifest,
+        packageDir: entry.packageDir ?? service.packageDir,
         ...(entry.order !== undefined ? { order: entry.order } : {}),
       };
     }),
@@ -697,7 +715,6 @@ export async function activateServiceRegistry<
     // and its pages were unreachable while everything looked installed.
     service.menu !== undefined ||
     Boolean(service.menus?.length) ||
-    Boolean(service.pageAssets && Object.keys(service.pageAssets).length > 0) ||
     Object.values(service.api ?? {}).some((routes) => routes.length > 0);
 
   for (const entry of installedServices) {

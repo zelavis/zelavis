@@ -17,5 +17,9 @@
   // inheriting it would compile the whole tree — including the very modules
   // that import the packages this pass exists to unblock.
   "include": [],
-  "files": ["src/sdk/node.ts", "src/sdk/browser.ts"]
+  "files": [
+    "src/sdk/node.ts",
+    "src/sdk/browser.ts",
+    "src/app/workloads/index.ts"
+  ]
 }

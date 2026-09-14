@@ -1,0 +1,96 @@
+---
+interface Props {
+	gradient?: string;
+	height?: string;
+}
+
+const {
+	gradient = 'linear-gradient(90deg, #8034FF 0%, #D255FE 100%)',
+	height = '2px',
+} = Astro.props;
+---
+
+<div
+	class="scroll-progress-bar"
+	aria-hidden="true"
+	style={`--progress-gradient: ${gradient}; --progress-height: ${height};`}
+>
+</div>
+
+<script>
+	function initScrollProgress() {
+		if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+		const bar = document.querySelector<HTMLElement>('.scroll-progress-bar');
+		if (!bar) return;
+
+		// If the browser natively supports scroll-driven animations, CSS handles it directly.
+		if (window.CSS && CSS.supports('animation-timeline', 'scroll()')) {
+			return;
+		}
+
+		let rafId = 0;
+		let ticking = false;
+
+		const update = () => {
+			ticking = false;
+			const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+			const progress = maxScroll > 0 ? Math.min(1, Math.max(0, window.scrollY / maxScroll)) : 0;
+			bar.style.setProperty('--scroll-progress', String(progress));
+		};
+
+		const onScroll = () => {
+			if (!ticking) {
+				ticking = true;
+				rafId = requestAnimationFrame(update);
+			}
+		};
+
+		update();
+		window.addEventListener('scroll', onScroll, { passive: true });
+		window.addEventListener('resize', onScroll, { passive: true });
+	}
+
+	initScrollProgress();
+	document.addEventListener('astro:page-load', initScrollProgress);
+</script>
+
+<style>
+	.scroll-progress-bar {
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		height: var(--progress-height, 2px);
+		z-index: 1001;
+		transform-origin: 0 50%;
+		transform: scaleX(var(--scroll-progress, 0));
+		background: var(--progress-gradient, linear-gradient(90deg, #8034FF 0%, #D255FE 100%));
+		will-change: transform;
+		pointer-events: none;
+	}
+
+	/* Native CSS Scroll-Driven Animation (Compositor Thread) */
+	@supports (animation-timeline: scroll()) {
+		@media (prefers-reduced-motion: no-preference) {
+			@keyframes scroll-progress-grow {
+				from {
+					transform: scaleX(0);
+				}
+				to {
+					transform: scaleX(1);
+				}
+			}
+
+			.scroll-progress-bar {
+				animation: scroll-progress-grow auto linear;
+				animation-timeline: scroll(root);
+			}
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.scroll-progress-bar {
+			display: none;
+		}
+	}
+</style>

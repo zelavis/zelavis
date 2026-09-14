@@ -1,22 +1,21 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { resolveLocalPackageManifest } from "../../../dist/adapters/_local-runtime.js";
 
-import { MARKETPLACE_MANIFEST } from "../dist/manifest.js";
-import { MARKETPLACE_PAGE } from "../dist/page.js";
+const MARKETPLACE_PAGE = await readFile(
+  new URL("../dashboard/marketplace.html", import.meta.url),
+  "utf8",
+);
 
-test("the manifest module matches package.json", async () => {
-  const packageJson = JSON.parse(
-    await readFile(new URL("../package.json", import.meta.url), "utf8"),
-  );
-
-  // The loader needs the manifest as a value, so it is duplicated as a module.
-  // Drift would mean the marketplace loads under a stale identity.
-  for (const field of ["name", "version", "type"]) {
-    assert.equal(MARKETPLACE_MANIFEST[field], packageJson[field], field);
-  }
-  assert.deepEqual(MARKETPLACE_MANIFEST.exports["."], packageJson.exports["."]);
-  assert.deepEqual(MARKETPLACE_MANIFEST.zelavis, packageJson.zelavis);
+test("the package.json manifest is automatically resolved and validated", async () => {
+  const manifest = resolveLocalPackageManifest(new URL("..", import.meta.url).pathname);
+  assert.ok(manifest);
+  assert.equal(manifest.name, "@zelavis/marketplace");
+  assert.equal(manifest.type, "module");
+  assert.equal(manifest.zelavis.kind, "plugin");
+  assert.equal(manifest.zelavis.namespace, "marketplace");
+  assert.deepEqual(manifest.zelavis.capabilities, ["dashboard:menu", "marketplace:services"]);
 });
 
 test("the page is a complete document that styles itself from the Platform", () => {

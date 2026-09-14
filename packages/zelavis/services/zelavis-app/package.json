@@ -1,22 +1,31 @@
 {
-  "name": "@zelavis/auth",
+  "name": "@zelavis/app",
   "version": "1.0.1-alpha.2",
   "private": false,
-  "description": "Auth settings page for the Zelavis dashboard, with a catalogue of installable auth plugins.",
+  "description": "Official Zelavis App project recipe with database, auth, and workloads.",
   "license": "MIT",
   "type": "module",
   "types": "./dist/index.d.ts",
   "zelavis": {
-    "kind": "plugin",
-    "namespace": "auth",
+    "kind": "app",
+    "namespace": "app",
     "capabilities": [
-      "dashboard:menu"
+      "app:project",
+      "dashboard:menu",
+      "api:routes"
     ],
     "marketplace": {
-      "title": "Auth",
-      "summary": "Configure sign-in and install auth providers.",
+      "title": "Zelavis App",
+      "summary": "The official Zelavis-native project backend with database, auth, and workloads.",
       "categories": [
-        "auth"
+        "apps",
+        "official"
+      ],
+      "tags": [
+        "backend",
+        "database",
+        "auth",
+        "workloads"
       ]
     }
   },
@@ -32,8 +41,7 @@
     "test": "node --test \"test/**/*.test.mjs\""
   },
   "files": [
-    "dist",
-    "dashboard"
+    "dist"
   ],
   "publishConfig": {
     "access": "public"
@@ -41,7 +49,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/zelavis/zelavis.git",
-    "directory": "packages/zelavis/services/zelavis-auth"
+    "directory": "packages/zelavis/services/zelavis-app"
   },
   "peerDependencies": {
     "zelavis": "workspace:*"
@@ -51,8 +59,11 @@
   },
   "keywords": [
     "zelavis",
+    "app",
+    "recipe",
+    "backend",
+    "database",
     "auth",
-    "settings",
-    "dashboard"
+    "workloads"
   ]
 }

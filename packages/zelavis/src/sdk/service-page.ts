@@ -69,12 +69,24 @@ export function createServicePageFetch(
   let nextId = 0;
 
   return async function brokeredFetch(input, init) {
-    const path =
+    let rawPath =
       typeof input === "string"
         ? input
         : input instanceof URL
-          ? input.toString()
-          : input.url;
+          ? input.pathname + input.search
+          : typeof (input as any)?.url === "string"
+            ? (input as any).url
+            : String(input);
+
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(rawPath)) {
+      try {
+        const parsed = new URL(rawPath);
+        rawPath = parsed.pathname + parsed.search;
+      } catch {
+        // keep as is
+      }
+    }
+    const path = rawPath;
 
     const id = `${Date.now()}-${(nextId += 1)}`;
     const body =

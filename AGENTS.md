@@ -105,27 +105,44 @@ current automatically.
   orchestration.
 - **Zelavis App** is the official Firebase/Supabase-style project stack made
   from app-facing database, auth, storage, and workload services. It is an
-  official Project recipe implemented as a `kind: "app"` service, not the
-  Platform OS itself.
+  official Project recipe implemented as a `kind: "app"` service in
+  `packages/zelavis/services/zelavis-app` (`@zelavis/app`), bundled and shipped
+  with the Platform OS release at the same version.
 - **Project recipes** are the versioned create-project definitions and runtime
   entrypoints behind Marketplace apps and starters. They are services with
   `kind: "app"`; optional Project recipe metadata declares runtime
   compatibility.
-  The official Zelavis App recipe lives inside the same package at
-  `zelavis/app`. Every Project locks its exact recipe/runtime version, so a
-  newer parent Platform can keep running older Projects without silently
+  Every Project locks its exact recipe/runtime version (`{ name, version, specifier }`),
+  so a newer parent Platform can keep running older Projects without silently
   rewriting them. Project recipes own setup/provisioning behavior, default
   files, menu metadata, and the runtime services mounted in the created
   Project.
+- **Multi-Version Recipe Support**: The Platform must architecturally support
+  multiple installed/available versions of any Project recipe (e.g. 50 distinct
+  WordPress versions, multiple Laravel or Drupal versions, or historical and
+  newer `@zelavis/app` versions). While the Platform distribution always ships
+  with the current `@zelavis/app` version built-in under `packages/zelavis/services/zelavis-app`,
+  operators and projects can install and lock alternative recipe versions via
+  marketplaces. Runtime drivers execute the exact version locked in the
+  Project's runtime database.
+- **Frontends (The WordPress Theme Analogy)**: Services with `kind: "frontend"`
+  are the visual "face" of an installation or a Project, functioning exactly
+  like themes and templates do in WordPress, but for headless, modern web apps.
+  - The Platform itself uses `@zelavis/ui` (`kind: "frontend"`) as its face (the dashboard).
+  - A blog project uses the `zelavis/app` recipe for backend infrastructure + a Blog Frontend theme (`kind: "frontend"`).
+  - An ecommerce project uses `zelavis/app` + `@zelavis/ecommerce` plugin + a Storefront theme (`kind: "frontend"`).
+  - Swapping a frontend (e.g. from an Astro blog to a Next.js blog) leaves all project data, auth accounts, and schemas untouched.
+- **Standardized Nested Child Marketplaces**: The marketplace architecture is
+  strictly hierarchical and standardized across CLI, REST API, and UI for all
+  three service kinds (`app`, `plugin`, `frontend`):
+  - **Root Platform Marketplace** (`/zelavis/marketplace`): Platform-level Project recipes (`kind: "app"` starters/apps), server provider plugins, and control plane themes.
+  - **Project Child Marketplace** (`/zelavis/projects/:projectId/marketplace`): Project-scoped plugins (`kind: "plugin"` e.g. ecommerce, payment gateways, custom auth) and themes/storefronts (`kind: "frontend"`).
+  - A uniform command structure (`zelavis marketplace search|install|list`) and uniform REST API routes operate across both scopes.
 - **Plugins** use `kind: "plugin"` and extend the Platform or a Project
   runtime. Auth, Database, Workloads, Fabric, UI, and Marketplace are plugins
   the operator composed rather than a separate kind: what makes them trusted is
   `scope: "system"`, not a label. A plugin is not a Project recipe and does not
   appear in the create-project selector merely because it is built in.
-- **Frontends** use `kind: "frontend"` and are the face of an installation or a
-  Project. They declare a `zelavis.frontend` block choosing a `static` or
-  `server` runtime, and are loaded from their manifest without executing
-  JavaScript.
 - There is no `core` kind, and no `web-app`, `website`, `dashboard-extension`,
   `provider`, or `template`. Each described who shipped a service or restated a
   capability, and nothing ever branched on them. A provider is discovered by
@@ -155,9 +172,23 @@ current automatically.
 - Trusted product-specific control-plane services live under
   `packages/zelavis/src/platform`. First-party product surfaces are their own
   packages under `packages/zelavis/services/*`: `@zelavis/ui` owns
-  dashboard delivery, `@zelavis/marketplace` owns the marketplace. These
-  internal services assemble the public core primitives into the Zelavis
+  dashboard delivery, `@zelavis/marketplace` owns the marketplace, and
+  `@zelavis/auth` owns the auth settings dashboard page and provider catalogue.
+  These internal services assemble the public core primitives into the Zelavis
   product and are not separate public framework brands.
+- **Core Subsystems vs. Services**: Foundational capabilities built into the
+  Platform OS — Identity & Permissions, Database engine, Fabric scheduler,
+  and Server Control Plane — are **Platform Subsystems**, not "services".
+  They are core platform primitives providing native runtime APIs (`runtime.auth`,
+  `runtime.database`, authenticators, and core routes), not pseudo-plugins
+  disguised with `kind: "plugin"` in `runtime.services`. "Services" is a concept
+  strictly reserved for loadable components: first-party services in
+  `packages/zelavis/services/*`, domain plugins in `plugins/*`, Project recipes,
+  and external extensions.
+- **Service Dashboard Pages**: `pageAssets` is obsolete and removed. All service
+  dashboard pages and static assets stream directly from disk via `packageDir`
+  (resolved from `dashboard/` or package root) with classic 90s webspace
+  semantics. Inlined asset string maps are not supported.
 
 `zelavis/core` owns the generic service definition, loading, composition,
 endpoint, and contribution transport contracts. Product services may define

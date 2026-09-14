@@ -7,7 +7,9 @@
 import {
   existsSync,
   mkdirSync,
+  readFileSync,
   renameSync,
+  statSync,
 } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
@@ -881,32 +883,92 @@ export function createLocalRuntimeServiceImporter(
 // ---------------------------------------------------------------------------
 
 /**
+ * Automatically discovers and resolves the `package.json` manifest for a given
+ * package specifier, filesystem path, or file URL.
+ *
+ * For bare package names (e.g. `@zelavis/auth`), uses Node's standard `import.meta.resolve`
+ * and walks up to the owning directory to read `package.json`.
+ * For filesystem paths and file URLs, walks up from the entry module or directory to find `package.json`.
+ *
+ * Injects `packageDir` directly as the absolute path of the directory containing `package.json`.
+ */
+export function resolveLocalPackageManifest(
+  specifierOrPath: string,
+): (ZelavisPackageManifest & { packageDir: string }) | undefined {
+  if (!specifierOrPath || typeof specifierOrPath !== "string") {
+    return undefined;
+  }
+
+  if (
+    isRemoteSpecifier(specifierOrPath) ||
+    isDataSpecifier(specifierOrPath)
+  ) {
+    return undefined;
+  }
+
+  const isBareSpecifier =
+    !specifierOrPath.startsWith("file://") &&
+    !specifierOrPath.startsWith("/") &&
+    !specifierOrPath.startsWith("./") &&
+    !specifierOrPath.startsWith("../");
+
+  let startPath: string;
+  if (specifierOrPath.startsWith("file://")) {
+    startPath = fileURLToPath(specifierOrPath);
+  } else if (!isBareSpecifier) {
+    startPath = resolve(specifierOrPath);
+  } else {
+    try {
+      const resolvedUrl = import.meta.resolve(specifierOrPath);
+      startPath = fileURLToPath(resolvedUrl);
+    } catch {
+      startPath = resolve(specifierOrPath);
+    }
+  }
+
+  const parseAndValidate = (manifestPath: string, packageDir: string) => {
+    if (!existsSync(manifestPath)) return undefined;
+    const raw = JSON.parse(readFileSync(manifestPath, "utf-8")) as ZelavisPackageManifest;
+    if (!raw || typeof raw !== "object" || !raw.zelavis || typeof raw.zelavis !== "object" || !raw.zelavis.kind) {
+      return undefined;
+    }
+    if (isBareSpecifier && raw.name !== specifierOrPath) {
+      return undefined;
+    }
+    return {
+      ...raw,
+      packageDir,
+    };
+  };
+
+  try {
+    let current = startPath;
+    if (existsSync(current) && statSync(current).isDirectory()) {
+      const result = parseAndValidate(join(current, "package.json"), current);
+      if (result) return result;
+    }
+
+    current = dirname(startPath);
+    while (current && current !== dirname(current)) {
+      const result = parseAndValidate(join(current, "package.json"), current);
+      if (result) return result;
+      current = dirname(current);
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+}
+
+/**
  * Resolves the `package.json` manifest that sits beside a local service
  * specifier. This lives in the local-runtime adapter, not the runtime core,
  * because filesystem plugin scanning is an explicit core non-goal.
  */
 export function createLocalRuntimeServiceManifestResolver(): ZelavisServiceManifestResolver {
   return async (specifier) => {
-    if (isRemoteSpecifier(specifier) || isDataSpecifier(specifier)) {
-      return undefined;
-    }
-
-    const candidatePath = specifier.startsWith("file://")
-      ? fileURLToPath(specifier)
-      : specifier;
-
-    try {
-      const entry = await stat(candidatePath);
-      const manifestPath = entry.isDirectory()
-        ? join(candidatePath, "package.json")
-        : join(dirname(candidatePath), "package.json");
-      return JSON.parse(
-        await readFile(manifestPath, "utf-8"),
-      ) as ZelavisPackageManifest;
-    } catch {
-      // Not a local filesystem path, or it has no adjacent package.json.
-      return undefined;
-    }
+    return resolveLocalPackageManifest(specifier);
   };
 }
 
@@ -1058,12 +1120,13 @@ export async function discoverProductServices(
       specifier: entryUrl,
       status: "installed",
       source: "community",
+      packageDir: packageDirectory,
       // `exports` is rewritten to the entry this scan actually resolved and
       // containment-checked. Plugin loading imports the manifest's `exports`
       // string verbatim, so leaving it relative would import "./index.js"
       // against the Platform's working directory rather than against the
       // package the file came from.
-      manifest: { ...manifest, exports: entryUrl },
+      manifest: { ...manifest, exports: entryUrl, packageDir: packageDirectory },
     });
   }
 

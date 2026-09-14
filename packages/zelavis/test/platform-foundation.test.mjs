@@ -559,6 +559,51 @@ test("Project manager repairs the retired official App package lock without chan
   assert.equal((await store.get("projects", "legacy-app")).value.app, undefined);
 });
 
+test("Project manager accepts both zelavis/app and @zelavis/app as recipe specifiers", async () => {
+  const store = createMemorySystemStore();
+  const appService = {
+    service: {
+      name: "zelavis/app",
+      kind: "app",
+      version: "1.0.1-alpha.2",
+      marketplace: { title: "Zelavis App" },
+    },
+    specifier: "@zelavis/app",
+    status: "installed",
+    source: "official",
+  };
+  const runtime = {
+    name: "recipe-spec-runtime",
+    capabilities: () => ({
+      persistentFilesystem: true,
+      managedStorage: true,
+      managedDatabase: true,
+      runtimeOwnership: "platform-process",
+    }),
+    async prepare() {},
+    async start() { return { status: "running", url: "http://127.0.0.1:49152" }; },
+    async stop() { return { status: "stopped" }; },
+    async status() { return { status: "stopped" }; },
+    async logs() { return []; },
+    async destroy() {},
+    async close() {},
+  };
+
+  const manager = await createProjectManager({
+    store,
+    projectRecipes: [appService],
+    runtime,
+  });
+
+  const proj1 = await manager.create({ name: "App One", recipeName: "zelavis/app" });
+  assert.equal(proj1.recipe.name, "zelavis/app");
+  assert.equal(proj1.kind, "zelavis");
+
+  const proj2 = await manager.create({ name: "App Two", recipeName: "@zelavis/app" });
+  assert.equal(proj2.recipe.name, "zelavis/app");
+  assert.equal(proj2.kind, "zelavis");
+});
+
 test("Project startup reconciliation is bounded and closes through the runtime driver", async () => {
   const store = createMemorySystemStore();
   const starts = [];
