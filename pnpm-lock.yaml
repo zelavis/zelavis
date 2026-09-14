@@ -424,8 +424,8 @@ importers:
         specifier: workspace:*
         version: link:../..
       stripe:
-        specifier: ^22.6.1
-        version: 22.6.1(@types/node@26.4.1)
+        specifier: ^22.6.2
+        version: 22.6.2(@types/node@26.4.1)
     devDependencies:
       typescript:
         specifier: ^7.0.2
@@ -6779,8 +6779,8 @@ packages:
     resolution: {integrity: sha512-aulFJcD6YK8V1G7iRB5tigAP4TsHBZZrOV8pjV++zdUwmeV8uzbY7yn6h9MswN62adStNZFuCIx4haBnRuMDaw==}
     engines: {node: '>=18'}
 
-  stripe@22.6.1:
-    resolution: {integrity: sha512-hAKSkGeVt2u46TRYhmnvwmVHxBNtOCJnPjc+SH5sP2B2ypElYzAAY3Ljx0Ar8C2w8nfpFQiZ95qoDCDsFkXMTA==}
+  stripe@22.6.2:
+    resolution: {integrity: sha512-PwRE2scocvXqDKPiskMa5vRJEAEkq46W69XyUYmAwrNSLr675lQnfqLwnsndAWizwgihOWw/irLmoFRo3ez7ew==}
     engines: {node: '>=18'}
     peerDependencies:
       '@types/node': '>=18'
@@ -14538,7 +14538,7 @@ snapshots:
 
   strip-final-newline@4.0.0: {}
 
-  stripe@22.6.1(@types/node@26.4.1):
+  stripe@22.6.2(@types/node@26.4.1):
     optionalDependencies:
       '@types/node': 26.4.1
 
