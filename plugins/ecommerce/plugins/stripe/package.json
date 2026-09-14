@@ -42,7 +42,7 @@
   },
   "dependencies": {
     "@zelavis/ecommerce": "workspace:*",
-    "stripe": "^22.6.1"
+    "stripe": "^22.6.2"
   },
   "peerDependencies": {
     "zelavis": ">=1.0.1-alpha.2"
