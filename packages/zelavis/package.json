@@ -187,7 +187,7 @@
     "@zelavis/marketplace": "workspace:*",
     "better-sqlite3": "^13.0.3",
     "effect": "4.0.0-rc.112",
-    "jose": "^6.2.10"
+    "jose": "^6.2.12"
   },
   "devDependencies": {
     "@effect/language-service": "^0.87.2",
