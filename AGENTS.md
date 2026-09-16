@@ -21,7 +21,7 @@ real-time collaboration complete the lifecycle the product positioning claims �
 manage in one self-hosted platform — and self-hosting a team's tickets, roadmap, and discussion is
 a stronger ownership claim than self-hosting a database alone. No implementation exists yet. Do not
 describe either as available in docs, README, dashboard, or marketing copy until it ships, and keep
-them out of `packages/zelavis/TODO.md`, which tracks core, App-versioning, and Fabric capabilities
+them out of `pnotes/TODO.md`, which tracks core, App-versioning, and Fabric capabilities
 rather than product scope.
 
 The difference from Firebase/Supabase is depth and ownership: Zelavis is fully self-hostable, runtime-neutral, and built to scale beyond a single database engine. The database layer is the deepest differentiator — `zelavis/db` is a multi-model object store (event-sourced, tenant-aware, one payload projected through document, column, measure, and graph lenses) on a swappable storage engine. SQLite, libSQL, RocksDB and LMDB drivers ship today, all over the same store logic through an ordered key-value interface. Official Zelavis Apps are locally physically sharded from creation: one logical App database routes stable virtual shard ranges across several SQLite files even when every placement is on one Node. Tenant placement, replication, failover, shard movement, and exceptional Tenant subdivision build on that same topology instead of introducing a second distributed architecture later. The event log is the natural replication stream and `tenant_id` is the normal first partition key. That is the same role Vitess plays for MySQL, but Zelavis is not coupled to any single SQL engine. Replicas do not imply multiple writable owners; multi-writer consistency requires a separate explicit data specification.
@@ -769,7 +769,11 @@ those grants, while endpoints remain the authority layer.
   routing, access enforcement, runtime lifecycle, and generic
   Fabric/workload/Agent/runtime-driver machinery. It is exported through
   focused `zelavis/*` subpaths and does not own product menus or root authority.
-- `packages/zelavis/TODO.md` is the maintained implementation roadmap. Update
+- `pnotes/` is the ignored, separate private repository for confidential design
+  notes, evaluations, security reviews, and the implementation roadmap. Never
+  stage or publish its contents in the main repository, and never make public
+  documentation checks or CI depend on those local files.
+- When available, `pnotes/TODO.md` is the maintained private implementation roadmap. Update
   its Done, Prepared, Next, and Later sections when a core, App-versioning, or
   Fabric capability changes state; never mark an exported contract as
   operational behavior before its implementation exists.

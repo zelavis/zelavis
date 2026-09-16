@@ -174,7 +174,11 @@ before editing.
   See AGENTS.md's "JS, HTTP, and CLI parity" rule for the full contract.
 - Do not implement Platform behavior only in UI routes, framework server
   actions, local component state, or dashboard-only helpers.
-- Keep `packages/zelavis/TODO.md` current when core, runtime, App versioning, or
+- Keep confidential architecture notes, evaluations, security reviews, and the
+  implementation roadmap in the ignored `pnotes/` private repository. Never
+  stage or publish them in the main repository; public checks must work without
+  access to those notes.
+- When available, keep `pnotes/TODO.md` current when core, runtime, App versioning, or
   Fabric work changes a capability from planned to prepared or operational.
 - Keep `AGENTS.md` as the canonical durable instruction source; do not add
   project rules to `CLAUDE.md`.
@@ -219,7 +223,7 @@ before editing.
 3. Define the domain capability before the transport or dashboard surface.
 4. Expose dashboard operations through versioned service endpoints.
 5. Keep defaults ergonomic and authority explicit.
-6. Update the nearest README and `packages/zelavis/TODO.md` when behavior changes.
+6. Update the nearest public README and, when available, private `pnotes/TODO.md` when behavior changes. Keep confidential design details out of the public README.
 7. Add or update focused tests in `packages/zelavis/test`.
 
 ## Validation
