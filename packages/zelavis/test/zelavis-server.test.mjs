@@ -561,19 +561,19 @@ test("service registry install state controls service activation on boot", async
   const config = await configResponse.json();
 
   assert.equal(config.serviceRegistry[0].status, "installed");
-  // The plugin ships its pages as page assets rather than through the bundle
-  // store. The bundle store above is still populated so this test proves the
+  // The plugin ships its pages in its tracked dashboard directory. The bundle
+  // store above is still populated so this test proves the
   // registry state drives activation either way, but the page the menu offers
   // is the one the plugin carries.
   assert.equal(
     config.serviceRegistry[0].menu.page.src,
-    "/zelavis/api/v1/runtime/service-page-assets/%40example%2Fcatalog/dist/catalog.html",
+    "/zelavis/api/v1/runtime/service-page-assets/%40example%2Fcatalog/dashboard/catalog.html",
   );
   assert.ok(config.services.some((service) => service.name === "catalog"));
 
   const servicePageResponse = await runtime.fetch(
     new Request(
-      "http://localhost/zelavis/api/v1/runtime/service-page-assets/%40example%2Fcatalog/dist/catalog.html",
+      "http://localhost/zelavis/api/v1/runtime/service-page-assets/%40example%2Fcatalog/dashboard/catalog.html",
     ),
     PLATFORM_OWNER_CONTEXT,
   );

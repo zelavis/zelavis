@@ -38,13 +38,14 @@ const service = Object.freeze({
     page: Object.freeze({
       id: "catalog",
       title: "Catalog",
+      bundle: "dashboard",
       file: "catalog.html",
     }),
     items: Object.freeze([
       Object.freeze({
         title: "Items",
         path: "/catalog/items",
-        page: Object.freeze({ id: "items", title: "Items", file: "items.html" }),
+        page: Object.freeze({ id: "items", title: "Items", bundle: "dashboard", file: "items.html" }),
       }),
     ]),
   }),
