@@ -18,66 +18,52 @@
  */
 import { zelavis } from "zelavis/sdk";
 
-export const ZELAVIS_MARKETPLACE_SERVICE_NAME = "@zelavis/marketplace";
-
 /**
  * Installation-wide marketplace: Project recipes presented as apps and
  * starters, plus templates and server provider plugins for the Platform as a
  * whole.
  */
-zelavis.plugins.ui.menus.create({
-  title: "Marketplace",
-  path: "/marketplace",
-  pageLabel: "Marketplace",
-  sectionLabel: "Explore",
-  order: 30,
-  surface: "platform",
-  page: {
-    id: "marketplace",
+export function register() {
+  zelavis.plugins.ui.menus.create({
     title: "Marketplace",
-    bundle: "dashboard",
-    file: "marketplace.html",
-  },
-  access: {
-    permissions: ["marketplace.view"],
-    scope: { type: "system" },
-  },
-});
+    path: "/marketplace",
+    pageLabel: "Marketplace",
+    sectionLabel: "Explore",
+    order: 30,
+    surface: "platform",
+    page: {
+      id: "marketplace",
+      title: "Marketplace",
+      bundle: "dashboard",
+      file: "marketplace.html",
+    },
+    access: {
+      permissions: ["marketplace.view"],
+      scope: { type: "system" },
+    },
+  });
 
-/**
- * Project-scoped marketplace: plugins and services installed into one Project.
- *
- * A separate contribution rather than a variant of the one above — a different
- * surface, a different permission, and a different catalogue.
- */
-zelavis.plugins.ui.menus.create({
-  title: "Marketplace",
-  path: "/marketplace",
-  pageLabel: "Marketplace",
-  sectionLabel: "Extend",
-  surface: "root",
-  page: {
-    id: "project-marketplace",
+  /**
+   * Project-scoped marketplace: plugins and services installed into one Project.
+   *
+   * A separate contribution rather than a variant of the one above — a different
+   * surface, a different permission, and a different catalogue.
+   */
+  zelavis.plugins.ui.menus.create({
     title: "Marketplace",
-    bundle: "dashboard",
-    file: "marketplace.html",
-  },
-  access: {
-    permissions: ["project.marketplace.manage"],
-    scope: { type: "project", projectIdParam: "projectId" },
-  },
-});
-
-/**
- * What the SDK does not cover: identity, and the page bytes themselves.
- *
- * `zelavis.plugins.ui.menus.create` declares that a page exists and where it lives; the
- * file has to come from somewhere, and for a service that ships inside the
- * Platform there is no package archive to unpack it from.
- */
-export default {
-  name: ZELAVIS_MARKETPLACE_SERVICE_NAME,
-  basePath: "/marketplace",
-  api: {},
-  service: {},
-};
+    path: "/marketplace",
+    pageLabel: "Marketplace",
+    sectionLabel: "Extend",
+    surface: "root",
+    page: {
+      id: "project-marketplace",
+      title: "Marketplace",
+      bundle: "dashboard",
+      file: "marketplace.html",
+    },
+    access: {
+      permissions: ["project.marketplace.manage"],
+      scope: { type: "project", projectIdParam: "projectId" },
+    },
+  });
+}

@@ -6,6 +6,17 @@ an exported type is never mistaken for an operational distributed feature.
 
 ## Done
 
+- [x] Bundled UI, Auth, Marketplace and App packages register through per-load
+  SDK hooks. UI metadata comes from its manifest; shell behavior uses
+  `createAPI` and `frontend.configure`. No UI service factory or shared loaded
+  product-service cache remains. Frontend HTML and plugin API mounts stay separate.
+
+- [x] `zelavis.createAPI` declares resource methods once for discovered SDK,
+  HTTP and CLI operations. Loading-context registries prevent cross-runtime
+  handler leaks; namespace checks and atomic collision rejection protect
+  declarations. Menus use the same authoring registry without loading the UI.
+  Explicit `operations.create` remains the schema/custom-response surface.
+
 - [x] Web-standard `fetch(request)` runtime surface.
 - [x] Adapter-neutral dispatch and plain object-in/object-out surfaces.
 - [x] Node HTTP adapter; Bun and other fetch-native hosts can call `fetch`

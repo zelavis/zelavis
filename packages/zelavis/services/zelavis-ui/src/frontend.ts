@@ -1,3 +1,5 @@
+import manifest from "@zelavis/ui/package.json" with { type: "json" };
+import { loadPluginPackage } from "zelavis/service";
 /**
  * `@zelavis/ui` as a Platform frontend.
  *
@@ -8,7 +10,6 @@
  */
 import {
   createZelavisDashboardBundleStore,
-  createZelavisDashboardService,
   defaultZelavisDashboardClientRoutes,
 } from "./dashboard-service.js";
 import { zelavisServicePageStylesheet } from "./generated/service-page-styles.js";
@@ -21,21 +22,20 @@ export interface ZelavisUiFrontendContext {
   readonly createRuntimeConfig: () => Promise<unknown>;
 }
 
-export function zelavisUiFrontend(context: ZelavisUiFrontendContext) {
+export async function zelavisUiFrontend(context: ZelavisUiFrontendContext) {
   const dashboardBundleStore = createZelavisDashboardBundleStore(
     context.rootPath,
   );
 
   return {
-    service: createZelavisDashboardService({
-      ...(context.title ? { title: context.title } : {}),
-      ...(context.subtitle ? { subtitle: context.subtitle } : {}),
-      rootPath: context.rootPath,
-      ...(context.devServerUrl ? { devServerUrl: context.devServerUrl } : {}),
-      createRuntimeConfig: context.createRuntimeConfig,
-    }) as never,
+    service: await loadPluginPackage({
+      manifest,
+      scope: "system",
+      configuration: context,
+      importer: () => import("./dashboard-service.js"),
+    }),
     bundleStore: {
-      async read(scope: never, path: string) {
+      async read(scope: { projectId?: string; serviceName: string; bundle: string }, path: string) {
         return dashboardBundleStore.read(scope, path);
       },
     },

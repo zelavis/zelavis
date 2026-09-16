@@ -84,6 +84,13 @@ export function validatePluginPackageManifest(
     );
   }
 
+  // Server frontends run in their Project process. Their npm exports are not
+  // control-plane plugin entrypoints. A static frontend may opt into the SDK.
+  const executesInHost = kind !== "frontend" || (
+    ((zelavis as Record<string, unknown>).frontend as { runtime?: string } | undefined)?.runtime === "static" &&
+    manifest.exports !== undefined
+  );
+
   // Applied to every kind that ships JavaScript, not only "plugin".
   //
   // These checks are about the package being modern ESM with a resolvable
@@ -91,7 +98,7 @@ export function validatePluginPackageManifest(
   // Gating them on the "plugin" label meant a first-party service had to
   // mislabel itself as a plugin to get its manifest validated at all.
   // A frontend is exempt because it may be files with no JavaScript entry.
-  if (kind !== "frontend") {
+  if (executesInHost) {
     if (manifest.type !== "module") {
       throw new TypeError(
         `Invalid Zelavis service "${name}":\npackage.json must contain "type": "module".`,
@@ -153,7 +160,7 @@ export function validatePluginPackageManifest(
   // Code-providing packages choose their public name; it is never inferred
   // from an npm package name. File-only frontends may opt into a namespace.
   const namespace = (zelavis as Record<string, unknown>).namespace;
-  if (kind !== "frontend" || namespace !== undefined) {
+  if (executesInHost || namespace !== undefined) {
     validatePluginNamespace(namespace);
   }
 

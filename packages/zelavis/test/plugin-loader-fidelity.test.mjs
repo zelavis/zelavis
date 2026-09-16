@@ -17,9 +17,10 @@ const MANIFEST = Object.freeze({
  * forgets is silently dropped — the plugin installs, looks present, and does
  * less than it declared.
  */
-async function load(service) {
+async function load(service, options = {}) {
   return loadPluginPackage({
     manifest: MANIFEST,
+    ...options,
     importer: async () => ({ default: service }),
   });
 }
@@ -30,7 +31,7 @@ test("package menus must be registered through the SDK", async () => {
     { menus: [{ title: "Example", path: "/example" }] },
   ]) {
     await assert.rejects(
-      load({ name: "@acme/complete", ...fields }),
+      load(fields),
       /must register menus with zelavis\.plugins\.ui\.menus\.create\(\)/,
     );
   }
@@ -38,7 +39,6 @@ test("package menus must be registered through the SDK", async () => {
 
 test("a plugin that registers services during setup keeps its setup", async () => {
   const service = {
-    name: "@acme/complete",
     setup(context) {
       context.addService({ name: "acme-inner", basePath: "/inner", service: {} });
     },
@@ -54,12 +54,12 @@ test("a plugin that registers services during setup keeps its setup", async () =
 test("the loader carries the rest of what a plugin declares", async () => {
   const authenticator = { name: "acme", authenticate: async () => undefined };
   const loaded = await load({
-    name: "@acme/complete",
-    scope: "system",
     authenticators: [authenticator],
     runtimeServices: [{ name: "acme-runtime", service: {} }],
     app: { mount: "/", bundle: "build" },
-    project: { id: "acme", title: "Acme" },
+  }, {
+    scope: "system",
+    manifest: { ...MANIFEST, zelavis: { ...MANIFEST.zelavis, project: { runtimeKinds: ["native"] } } },
   });
 
   assert.equal(loaded.scope, "system");
@@ -70,11 +70,33 @@ test("the loader carries the rest of what a plugin declares", async () => {
 });
 
 test("a plugin declaring none of them is unchanged", async () => {
-  const loaded = await load({ name: "@acme/complete" });
+  const loaded = await load({});
 
   // Absent rather than present-and-undefined, so a service that declares
   // nothing is not mistaken for one that declared an empty value.
   assert.equal("setup" in loaded, false);
   assert.equal("app" in loaded, false);
   assert.equal("project" in loaded, false);
+});
+
+test("manifest-backed module resolution preserves default setup and API fields", async () => {
+  const { resolveServiceModule } = await import("../dist/service.js");
+  const setup = () => {};
+  const api = { v1: [] };
+  const resolved = resolveServiceModule({ default: { setup, api } }, MANIFEST);
+  assert.equal(resolved.setup, setup);
+  assert.equal(resolved.api, api);
+  assert.equal(resolveServiceModule({ default: setup }, MANIFEST).setup, setup);
+  assert.equal((await load(setup)).setup, setup);
+});
+
+test("SDK and exported authenticators are both preserved", async () => {
+  const { zelavis } = await import("../dist/sdk/fetch.js");
+  const sdkAuthenticator = { name: "sdk", authenticate: async () => undefined };
+  const exportedAuthenticator = { name: "export", authenticate: async () => undefined };
+  const loaded = await loadPluginPackage({ manifest: MANIFEST, importer: async () => {
+    zelavis.context().authenticators.push(sdkAuthenticator);
+    return { default: { authenticators: [exportedAuthenticator] } };
+  } });
+  assert.deepEqual(loaded.authenticators, [exportedAuthenticator, sdkAuthenticator]);
 });

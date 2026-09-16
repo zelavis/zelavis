@@ -86,21 +86,9 @@ Use `app` for a **Project recipe**: a versioned create-project definition and
 runtime entrypoint. It is something from which Zelavis can create a Project.
 It does not mean “a package that happens to serve a web application.”
 
-An app recipe can declare compatible runtime-driver families through its
-exported service definition:
-
-```ts
-export default {
-  name: "@acme/my-project-recipe",
-  kind: "app",
-  capabilities: ["app:project"],
-  project: {
-    runtimeKinds: ["native"],
-  },
-  service: {},
-  api: {},
-};
-```
+An app recipe declares compatible runtime-driver families in its
+`package.json` under `zelavis.project.runtimeKinds`. Static metadata is never
+exported from its JavaScript module.
 
 Its package manifest still uses modern ESM:
 
@@ -112,6 +100,7 @@ Its package manifest still uses modern ESM:
   "exports": "./dist/index.js",
   "zelavis": {
     "kind": "app",
+    "project": { "runtimeKinds": ["native"] },
     "capabilities": [
       "app:project"
     ],
@@ -320,26 +309,29 @@ zelavis.plugins.ui.menus.create({
 });
 ```
 
-Wrapping registration in a function is valid only if the function runs while
-the package entry is being evaluated:
+Export `register(configuration)` to run declarations for every package load,
+including when its ESM module is cached:
 
 ```ts
 import { zelavis } from "zelavis/sdk";
 
-function registerPlugin() {
+export function register() {
   zelavis.plugins.ui.menus.create({ title: "Example", path: "/example" });
 }
-
-registerPlugin();
 ```
 
-Calling a registration API outside an active plugin execution context throws.
-Exporting an uncalled registration function contributes nothing.
+Calling registration APIs outside an active plugin execution context throws.
+Other exported helper functions run only when explicitly called. Ordinary
+exported domain values may still be consumed by a plugin's public contract;
+package identity and API declarations come from the manifest and SDK.
 
-The package can also export ordinary domain values or a service definition.
-The loader merges exported service fields with SDK contributions. SDK menus,
-routes, commands, events, and nested services are attributed to the package
-whose module is currently loading.
+File-only frontends load directly from their manifest. A static frontend with an ESM
+`exports` entry also declares its namespace and runs through the SDK loader.
+Server frontend code runs in its Project process; its npm exports are never
+evaluated as control-plane plugin code.
+Package evaluation is serialized so concurrently requested loads cannot mix
+registrations. Registration hooks declare their own package; compose other
+packages at the host rather than recursively loading them inside `register`.
 
 ## SDK overview
 
@@ -347,13 +339,145 @@ whose module is currently loading.
 import { zelavis } from "zelavis/sdk";
 ```
 
+### Package registration and frontend behavior
+
+Export a `register(configuration)` function for declarations that must run on
+every load. `loadPluginPackage` invokes it inside a fresh SDK context even when
+ESM has already cached the module. Host configuration is passed explicitly;
+`register` should register behavior, while `zelavis.setup` handles work that
+requires the running runtime.
+
+```ts
+import { zelavis } from "zelavis/sdk";
+
+export function register() {
+  zelavis.createAPI({ health: { list() { return { ready: true }; } } });
+}
+```
+
+The manifest owns name, version, kind, namespace, capabilities, Project recipe
+metadata and Marketplace metadata. Exported package metadata and raw `api`
+objects are rejected. The host supplies `packageDir` and trusted `scope` through
+loading options; a package cannot grant itself system authority.
+
+A static frontend declares its bundle, mode and base-path convention in
+`zelavis.frontend` in `package.json`. It attaches runtime behavior through
+`zelavis.frontend.configure({ shell: { render }, devUrl, devUrlExcludePaths })`.
+That helper only accepts runtime behavior, rejects metadata overrides, and
+requires a static frontend manifest. `@zelavis/ui` follows this same path: it
+uses `createAPI(..., { routes: false })` for its in-process shell API and the
+frontend SDK to attach it. The host mounts the resulting HTML surface;
+HTTP plugin operations still live under `/api/v1/plugins/ui/...`.
+
+These are package-authoring declarations, supplied remotely through a package
+artifact rather than serialized executable closures. Runtime calls still use
+the discovered SDK, HTTP and CLI operations described below.
+
+### Declare an API with `createAPI`
+
+During package evaluation, `createAPI` uses the manifest's `zelavis.namespace`
+and registers resource methods as discoverable HTTP operations:
+
+```ts
+import { zelavis } from "zelavis/sdk";
+
+export const inventory = zelavis.createAPI({
+  items: {
+    async list(input: { category?: string }) {
+      return [{ id: "book", category: input.category }];
+    },
+    async get(input: { id: string }) {
+      return { id: input.id, status: "available" };
+    },
+  },
+}, {
+  access: { permissions: ["inventory.read"], scope: { type: "system" } },
+});
+```
+
+With `"namespace": "inventory"`, these methods are available through all three
+client surfaces. Configure credentials with the required permission:
+
+```ts
+const client = zelavis.createClient({ baseUrl: "http://localhost:3000" });
+await client.plugins.inventory.items.list(undefined, { query: { category: "books" } });
+await client.plugins.inventory.items.get(undefined, { params: { id: "book" } });
+```
+
+```http
+GET /zelavis/api/v1/plugins/inventory/items?category=books
+GET /zelavis/api/v1/plugins/inventory/items/book
+```
+
+```sh
+zelavis plugins inventory items list --query category=books --json
+zelavis plugins inventory items get --param id=book --json
+zelavis plugins inventory --help
+```
+
+The configured runtime root, API prefix/version, and Project Gateway apply in
+exactly the same way as explicit `operations.create` declarations.
+
+| Method name | HTTP method | Resource path |
+| --- | --- | --- |
+| `list`, `find` | GET | `/items` |
+| `get`, `read` | GET | `/items/:id` |
+| `create`, `add` | POST | `/items` |
+| `update`, `put` | PUT | `/items/:id` |
+| `delete`, `remove` | DELETE | `/items/:id` |
+| Other resource actions | POST | `/items/<action>` |
+
+Choose one name per HTTP route: declaring both `list` and `find` is rejected.
+Names use the same validated identifier rules as plugin namespaces. Registration
+is atomic: invalid names, duplicate methods, or route collisions publish nothing
+from that call. Further calls may add new resources or methods, but cannot replace
+an existing method.
+
+Handlers receive `(input, routeContext)`. GET and DELETE input contains query
+values and path parameters; other methods receive the parsed request body, with
+any path `id` applied last. The path ID takes precedence over query/body IDs.
+Return values are JSON data with status 200, including objects containing fields
+named `status`, `body`, or `headers`. Use `zelavis.operations.create` for custom
+status codes, schemas, paths, or per-operation access rules. `createAPI` applies
+its `access` option to every generated route and otherwise uses normal runtime
+access defaults. It does not infer validation schemas from TypeScript.
+
+Both synchronous and asynchronous resource methods generate routes; this also
+supports ordinary functions that return promises. Pass `{ routes: false }` for
+in-process authoring helpers. `plugins.ui.menus.create` uses the shared registry
+mechanism to collect menu wire data and never creates an HTTP route. Headless
+Project runtimes need no dashboard import for this declaration.
+
+`createAPI("tools", { hello() { return "world"; } })` outside package evaluation
+creates a local in-process API only. Top-level functions are local helpers;
+HTTP operations use the two-level resource/action shape above. Inside package
+evaluation, an explicit namespace must match the manifest. Authoring registries
+are isolated per loading context and are not a global directory of installed
+runtime handlers. Keep the returned typed API for local calls; use
+`createClient().plugins` for installed operations, including cross-plugin calls.
+Unavailable or uninstalled services expose no discoverable operations.
+
+The return value preserves the definition's TypeScript type. To type dynamic
+lookups, augment `PluginAuthoringApiRegistry` for authoring and
+`PluginApiRegistry` for remote clients in `declare module "zelavis/sdk"`:
+
+```ts
+declare module "zelavis/sdk" {
+  interface PluginAuthoringApiRegistry {
+    inventory: typeof inventory;
+  }
+}
+```
+
 The current `zelavis` SDK object exposes:
 
 ```ts
 interface ZelavisSdk {
+  createAPI(api, options?): Record<string, any>;
+  createAPI(namespace, api, options?): Record<string, any>;
   plugins: { ui: { menus: {
     create(menu): MenuDefinition;
-  } } };
+  } } } & Record<string, any>;
   operations: {
     create(operation): void;
   };
@@ -660,27 +784,21 @@ parent-maintained child-name allow-lists, `childServices`, or service
 inheritance. A provider is discovered through a declared capability and the
 owning plugin's public registration contract.
 
-`zelavis.services.add()` runs during module evaluation, so it can only declare
-a service that needs nothing from the runtime. A service built from the
-registry, a database, or platform resources is added from `setup(context)`
-instead:
+`zelavis.services.add()` runs during package registration. Runtime-dependent
+work is registered with `zelavis.setup` instead:
 
 ```ts
-export default {
-  name: "@acme/example-plugin",
-  setup(context) {
-    context.addService({
-      name: "example-api",
-      basePath: "/example",
-      service: buildService(context.core.database),
-      api: { v1: routes },
-    });
-  },
-};
+export function register() {
+  zelavis.setup(context => {
+    context.addService(buildService(context.core.database));
+  });
+}
 ```
 
-Both are official. Which one applies is decided by whether the service can be
-described before the runtime exists, not by preference.
+The callback receives the runtime's scoped setup context once that runtime is
+available. Register it once per package load. Service objects created inside
+runtime setup are runtime components; they do not replace the owning package's
+manifest or its SDK API declarations.
 
 ## Reading the active context
 

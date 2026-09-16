@@ -9,13 +9,13 @@ import BrandMarquee from '../BrandMarquee.astro';
 
 	<div class="amp-hero-inner">
 		<div class="amp-hero-copy">
-			<div class="hero-badge" data-reveal>
+			<a href="#agentic" class="hero-badge" data-reveal>
 				<span class="hero-badge-pill">v1.0 Preview</span>
 				<span class="hero-badge-text">The Agentic App Platform</span>
 				<svg class="hero-badge-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
 					<path d="M5 12h14M12 5l7 7-7 7" />
 				</svg>
-			</div>
+			</a>
 
 			<h1 data-reveal style="--delay: 70">
 				Plan. Build. Manage.<br />
@@ -114,6 +114,13 @@ import BrandMarquee from '../BrandMarquee.astro';
 									<rect width="20" height="8" x="2" y="2" rx="2" ry="2" /><rect width="20" height="8" x="2" y="14" rx="2" ry="2" /><line x1="6" x2="6.01" y1="6" y2="6" /><line x1="6" x2="6.01" y1="18" y2="18" />
 								</svg>
 								Hosting
+							</span>
+							<span class="nav-item">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+									<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+								</svg>
+								Assistant
+								<small class="pill-badge agentic-sparkle">AI</small>
 							</span>
 						</nav>
 					</aside>
@@ -343,8 +350,17 @@ import BrandMarquee from '../BrandMarquee.astro';
 		font-size: 12px;
 		font-weight: 500;
 		color: #fff;
+		text-decoration: none;
+		cursor: pointer;
 		margin-bottom: clamp(14px, 2.2dvh, 20px);
 		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+		transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+	}
+
+	.hero-badge:hover {
+		background: rgba(255, 255, 255, 0.18);
+		border-color: rgba(255, 255, 255, 0.45);
+		transform: translateY(-1px);
 	}
 
 	.hero-badge-pill {
@@ -688,6 +704,12 @@ import BrandMarquee from '../BrandMarquee.astro';
 		color: #272488;
 		font-size: 9px;
 		font-weight: 700;
+	}
+
+	.pill-badge.agentic-sparkle {
+		background: linear-gradient(135deg, #6366f1, #8b5cf6);
+		color: #ffffff;
+		box-shadow: 0 2px 6px rgba(99, 102, 241, 0.4);
 	}
 
 	.stage-canvas {

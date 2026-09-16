@@ -3,6 +3,7 @@ import MarketingLayout from '../layouts/MarketingLayout.astro';
 import StickyLocalNav from '../components/StickyLocalNav.astro';
 import HeroSection from '../components/landing/HeroSection.astro';
 import PlatformSection from '../components/landing/PlatformSection.astro';
+import AgenticSection from '../components/landing/AgenticSection.astro';
 import DataSection from '../components/landing/DataSection.astro';
 import ArchitectureSection from '../components/landing/ArchitectureSection.astro';
 import FeatureSection from '../components/landing/FeatureSection.astro';
@@ -18,6 +19,7 @@ import FaqSection from '../components/landing/FaqSection.astro';
 		showAfterId="platform"
 		items={[
 			{ id: 'platform', label: 'Platform' },
+			{ id: 'agentic', label: 'Agentic' },
 			{ id: 'data', label: 'Data' },
 			{ id: 'architecture', label: 'Architecture' },
 			{ id: 'hosting', label: 'Hosting' },
@@ -27,6 +29,7 @@ import FaqSection from '../components/landing/FaqSection.astro';
 
 	<HeroSection />
 	<PlatformSection />
+	<AgenticSection />
 	<DataSection />
 	<ArchitectureSection />
 	<FeatureSection />

@@ -113,6 +113,15 @@ Available parsers: `parseAsString`, `parseAsStringLiteral`. Add new parsers to `
 
 ## Working rules
 
+- All bundled packages, including UI, load through `loadPluginPackage` using
+  their `package.json` identity and static metadata. Exported metadata and raw
+  `api` objects are rejected. Host options supply scope and package location.
+- Use `register(configuration)` for per-load SDK declarations, `createAPI` or
+  `operations.create` for APIs, `zelavis.setup` for runtime-dependent work, and
+  `zelavis.frontend.configure` for static-frontend runtime shell/dev behavior.
+  Do not restore a dashboard service factory or cache loaded product services
+  globally to compensate for ESM module caching.
+
 - Use `pnpm dev` for end-to-end Zelavis runtime and dashboard work
 - Treat the dashboard as a client of Zelavis endpoints. If a dashboard page can perform a platform action, the same action must exist as a server capability and endpoint.
 - Official public capabilities also require matching JS SDK and CLI operations.

@@ -1,10 +1,11 @@
+import type { ZelavisServiceSetupContext } from "../../service.js";
 import type {
   ZelavisAnyRuntimeServiceInput,
   ZelavisRuntimeServiceMenuDefinition,
   ZelavisServerRoute,
 } from "../runtime/contracts.js";
 import type { ZelavisRequestAuthenticator } from "../runtime/authentication.js";
-import type { ZelavisServiceMenuDefinition } from "./definition.js";
+import type { ZelavisServiceAppDefinition, ZelavisServiceMenuDefinition } from "./definition.js";
 import type { ZelavisPackageManifest } from "./manifest.js";
 
 export interface ZelavisCommandDefinition {
@@ -12,6 +13,14 @@ export interface ZelavisCommandDefinition {
   description?: string;
   handler: (...args: unknown[]) => unknown | Promise<unknown>;
 }
+
+/** Runtime behavior supplied by a frontend through the SDK. Identity and bundle metadata stay in its manifest. */
+export type PluginFrontendBehavior = Pick<ZelavisServiceAppDefinition,
+  "shell" | "devUrl" | "devUrlExcludePaths">;
+
+export type PluginSetupHandler = (context: ZelavisServiceSetupContext) =>
+  void | { runtimeServices?: readonly ZelavisAnyRuntimeServiceInput[] } |
+  Promise<void | { runtimeServices?: readonly ZelavisAnyRuntimeServiceInput[] }>;
 
 export interface PluginExecutionContext {
   name: string;
@@ -26,6 +35,8 @@ export interface PluginExecutionContext {
   authenticators: ZelavisRequestAuthenticator[];
   providers: Map<string, unknown>;
   metadata: Record<string, unknown>;
+  frontend?: PluginFrontendBehavior;
+  setup?: PluginSetupHandler;
 }
 
 export interface PluginContextStorage {

@@ -87,8 +87,9 @@ let cached;
 export function loadExamplePlugin() {
   cached ??= loadPluginPackage({
     manifest: EXAMPLE_PLUGIN_MANIFEST,
+    packageDir: service.packageDir,
     importer: async () => {
-      const { menu, ...definition } = service;
+      const { menu, name, version, kind, capabilities, packageDir, ...definition } = service;
       zelavis.plugins.ui.menus.create(menu);
       return { default: definition };
     },

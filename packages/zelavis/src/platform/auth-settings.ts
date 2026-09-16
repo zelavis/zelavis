@@ -16,20 +16,14 @@ import { loadPluginPackage } from "../service.js";
  * way a first-party service tests a public contract.
  */
 export function createZelavisAuthSettingsService() {
-  // Loaded once and reused: the SDK contributes menus by side effect during
-  // module evaluation, and a module evaluates only on its first import, so a
-  // second load would produce a service with no menus at all.
   const manifest = resolveLocalPackageManifest("@zelavis/auth");
   if (!manifest) {
     throw new Error("Unable to resolve package manifest for @zelavis/auth");
   }
 
-  cached ??= loadPluginPackage({
+  return loadPluginPackage({
     manifest,
     importer: () => import("@zelavis/auth"),
     packageDir: manifest.packageDir,
   });
-  return cached;
 }
-
-let cached: ReturnType<typeof loadPluginPackage> | undefined;

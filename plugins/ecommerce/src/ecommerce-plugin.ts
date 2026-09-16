@@ -521,7 +521,6 @@ zelavis.plugins.ui.menus.create({
 export const ECOMMERCE_PLUGIN_NAME = "@zelavis/ecommerce";
 
 export const ecommercePlugin = Object.freeze({
-  name: ECOMMERCE_PLUGIN_NAME,
   async setup(context: ZelavisServiceSetupContext) {
     // Dynamic provider discovery: discover payment providers by declared capability
     const paymentServices = context.registry

@@ -20,6 +20,8 @@
   "files": [
     "src/sdk/node.ts",
     "src/sdk/browser.ts",
+    "src/service.ts",
+    "src/app/index.ts",
     "src/app/workloads/index.ts"
   ]
 }

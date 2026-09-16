@@ -20,6 +20,15 @@ before editing.
 
 ## Working rules
 
+- All bundled packages, including UI, load through `loadPluginPackage` using
+  their `package.json` identity and static metadata. Exported metadata and raw
+  `api` objects are rejected. Host options supply scope and package location.
+- Use `register(configuration)` for per-load SDK declarations, `createAPI` or
+  `operations.create` for APIs, `zelavis.setup` for runtime-dependent work, and
+  `zelavis.frontend.configure` for static-frontend runtime shell/dev behavior.
+  Do not restore a dashboard service factory or cache loaded product services
+  globally to compensate for ESM module caching.
+
 - Treat `new Zelavis(...)` as the public Platform entrypoint and the `zelavis`
   package as the one official framework/App Platform distribution.
 - Do not recreate separate `@zelavis/server`, `@zelavis/app`, or
@@ -70,9 +79,9 @@ before editing.
   Trust comes from `scope` (`system` for what the operator composed,
   `extension` for what was installed at runtime), never from the kind.
 - Plugins and services are configured via `package.json` manifests (`"zelavis": { "kind": "plugin", "capabilities": [...] }`, `"type": "module"`, `"exports"`, no legacy `main` outside `frontend`). Plugin code uses the official Zelavis SDK (`zelavis.plugins.ui.menus.create`, `zelavis.routes.create`, `zelavis.services.add`); `defineService` is completely removed. See `website/src/content/docs/guides/plugin-api.md`.
-- The SDK contributes during module evaluation, so it only works inside the
-  loader's execution context. A service that needs the registry, a database, or
-  platform resources is added from `setup(context)` with `context.addService`
+- The SDK contributes during package registration, inside the loader's
+  execution context. A service that needs the registry, a database, or
+  platform resources is added from a `zelavis.setup` callback with `context.addService`
   instead. Both are official; which applies is decided by whether the service
   can be described before the runtime exists.
 - Package menus are registered only with `zelavis.plugins.ui.menus.create`; the loader
