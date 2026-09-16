@@ -23,7 +23,9 @@ export function createZelavisAuthSettingsService() {
 
   return loadPluginPackage({
     manifest,
-    importer: () => import("@zelavis/auth"),
+    // Resolve at runtime so the SDK bootstrap does not require this package's
+    // declarations before the product-service build has emitted them.
+    importer: () => import(manifest.name),
     packageDir: manifest.packageDir,
   });
 }

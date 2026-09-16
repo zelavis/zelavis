@@ -38,6 +38,9 @@ Adjustments to the draft plan:
 Validation:
 
 - Root `pnpm run verify`: passed, including every workspace build and typecheck.
+- Repeated verification without existing bundled-service build outputs: passed.
+  Auth and Marketplace imports resolve from the validated manifest at runtime so
+  the bootstrap stage does not depend on declarations emitted by a later build.
 - Core suite: 1,099 passed, two environment-dependent skips, and one existing
   RocksDB TODO. UI: 67 passed. App: 8 passed. Auth: 3 passed. Marketplace: 3
   passed. Ecommerce and the remaining workspace package suites also passed.

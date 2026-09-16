@@ -24,7 +24,9 @@ export function createZelavisMarketplaceService() {
 
   return loadPluginPackage({
     manifest,
-    importer: () => import("@zelavis/marketplace"),
+    // Resolve at runtime so the SDK bootstrap does not require this package's
+    // declarations before the product-service build has emitted them.
+    importer: () => import(manifest.name),
     packageDir: manifest.packageDir,
   });
 }
