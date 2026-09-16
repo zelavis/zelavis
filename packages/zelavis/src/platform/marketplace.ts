@@ -5,8 +5,8 @@ import { loadPluginPackage } from "../service.js";
  * Loads the marketplace through the same plugin loader an installed
  * third-party service goes through.
  *
- * This is the point of shipping the marketplace as its own package. The module
- * body runs inside a plugin execution context, so its `zelavis.plugins.ui.menus.create`
+ * This is the point of shipping the marketplace as its own package. Its register hook
+ * runs inside a fresh plugin execution context, so its `zelavis.plugins.ui.menus.create`
  * calls are the real SDK calls and its menus reach the dashboard through the
  * ordinary extension path. If that path is broken, the Platform's own
  * marketplace is broken with it — which is the only way a first-party service
@@ -17,26 +17,16 @@ import { loadPluginPackage } from "../service.js";
  * or the two packages cannot both be built from a clean checkout.
  */
 export function createZelavisMarketplaceService() {
-  // Loaded exactly once, and the resolved service reused.
-  //
-  // The SDK contributes menus by side effect during module evaluation, and a
-  // module evaluates only on its first import. Loading twice in one process —
-  // two Platform runtimes, or a test composing a second one — would run the
-  // loader against an already-evaluated module and produce a marketplace with
-  // no menus at all. Memoizing is also the honest model: these are static
-  // declarations about what the service is, not per-runtime state, and the
-  // service `loadPluginPackage` returns is frozen.
   const manifest = resolveLocalPackageManifest("@zelavis/marketplace");
   if (!manifest) {
     throw new Error("Unable to resolve package manifest for @zelavis/marketplace");
   }
 
-  cached ??= loadPluginPackage({
+  return loadPluginPackage({
     manifest,
-    importer: () => import("@zelavis/marketplace"),
+    // Resolve at runtime so the SDK bootstrap does not require this package's
+    // declarations before the product-service build has emitted them.
+    importer: () => import(manifest.name),
     packageDir: manifest.packageDir,
   });
-  return cached;
 }
-
-let cached: ReturnType<typeof loadPluginPackage> | undefined;

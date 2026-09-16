@@ -98,16 +98,13 @@ test("manifest capabilities reach the loaded service", async () => {
   // registered, and was then never discovered by the plugin it named.
   const declared = await loadPluginPackage({
     manifest,
-    importer: async () => ({ default: { name: "@acme/provider", service: { register() {} } } }),
+    importer: async () => ({ default: { service: { register() {} } } }),
   });
   assert.deepEqual(declared.capabilities, ["zelavis/auth:credentials"]);
 
-  // A module that names its own capabilities still wins.
-  const explicit = await loadPluginPackage({
+  // Exported metadata is rejected so it cannot silently diverge from the manifest.
+  await assert.rejects(loadPluginPackage({
     manifest,
-    importer: async () => ({
-      default: { name: "@acme/provider", capabilities: ["api:routes"], service: {} },
-    }),
-  });
-  assert.deepEqual(explicit.capabilities, ["api:routes"]);
+    importer: async () => ({ default: { capabilities: ["api:routes"] } }),
+  }), /not a module export/);
 });

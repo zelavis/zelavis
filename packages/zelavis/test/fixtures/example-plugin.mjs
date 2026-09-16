@@ -38,13 +38,14 @@ const service = Object.freeze({
     page: Object.freeze({
       id: "catalog",
       title: "Catalog",
+      bundle: "dashboard",
       file: "catalog.html",
     }),
     items: Object.freeze([
       Object.freeze({
         title: "Items",
         path: "/catalog/items",
-        page: Object.freeze({ id: "items", title: "Items", file: "items.html" }),
+        page: Object.freeze({ id: "items", title: "Items", bundle: "dashboard", file: "items.html" }),
       }),
     ]),
   }),
@@ -87,8 +88,9 @@ let cached;
 export function loadExamplePlugin() {
   cached ??= loadPluginPackage({
     manifest: EXAMPLE_PLUGIN_MANIFEST,
+    packageDir: service.packageDir,
     importer: async () => {
-      const { menu, ...definition } = service;
+      const { menu, name, version, kind, capabilities, packageDir, ...definition } = service;
       zelavis.plugins.ui.menus.create(menu);
       return { default: definition };
     },

@@ -2,7 +2,7 @@
   "name": "@zelavis/ui",
   "version": "1.0.1-alpha.2",
   "private": false,
-  "description": "Zelavis dashboard SPA packaged as a system plugin.",
+  "description": "Zelavis dashboard frontend, registered through the Zelavis SDK.",
   "license": "MIT",
   "author": "Ivan Jeremic",
   "type": "module",
@@ -17,7 +17,6 @@
     },
     "namespace": "ui"
   },
-  "main": "./dist/dashboard-service.js",
   "types": "./dist/dashboard-service.d.ts",
   "exports": {
     ".": {
@@ -39,7 +38,8 @@
     "./dashboard-assets": {
       "types": "./dist/generated/dashboard-assets.d.ts",
       "import": "./dist/generated/dashboard-assets.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",

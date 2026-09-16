@@ -79,6 +79,50 @@ function resolveDatabase(
   );
 }
 
+export async function mountAppServices(
+  context: ZelavisServiceSetupContext,
+  options: ZelavisAppServiceOptions = {},
+): Promise<{ runtimeServices: readonly ZelavisAnyRuntimeServiceInput[] }> {
+  const runtimeServices: ZelavisAnyRuntimeServiceInput[] = [];
+  const database = resolveDatabase(context, options.database);
+  runtimeServices.push(defineDatabaseService(database));
+
+  if (options.auth !== false) {
+    const authOptions =
+      options.auth === undefined ? {} : options.auth;
+    runtimeServices.push(
+      await authService({
+        ...authOptions,
+        authOptions: {
+          ...(authOptions.authOptions ?? {}),
+          projectId:
+            typeof context.platform?.metadata?.projectId === "string"
+              ? context.platform.metadata.projectId
+              : authOptions.authOptions?.projectId,
+          repositories: {
+            ...createDatabaseAuthRepositories(database),
+            ...(authOptions.authOptions?.repositories ?? {}),
+          },
+        },
+        methods: [
+          ...(authOptions.methods ?? []),
+          ...collectAuthMethodPlugins(context),
+        ],
+      }),
+    );
+  }
+
+  if (options.workloads !== false) {
+    runtimeServices.push(
+      workloadsService(
+        options.workloads === undefined ? {} : options.workloads,
+      ),
+    );
+  }
+
+  return { runtimeServices };
+}
+
 export function zelavisAppService(options: ZelavisAppServiceOptions = {}) {
   return Object.freeze({
     name: options.name ?? "zelavis/app",
@@ -106,45 +150,8 @@ export function zelavisAppService(options: ZelavisAppServiceOptions = {}) {
         scope: { type: "project" as const, projectIdParam: "projectId" },
       },
     },
-    async setup(context: ZelavisServiceSetupContext) {
-      const runtimeServices: ZelavisAnyRuntimeServiceInput[] = [];
-      const database = resolveDatabase(context, options.database);
-      runtimeServices.push(defineDatabaseService(database));
-
-      if (options.auth !== false) {
-        const authOptions =
-          options.auth === undefined ? {} : options.auth;
-        runtimeServices.push(
-          await authService({
-            ...authOptions,
-            authOptions: {
-              ...(authOptions.authOptions ?? {}),
-              projectId:
-                typeof context.platform?.metadata?.projectId === "string"
-                  ? context.platform.metadata.projectId
-                  : authOptions.authOptions?.projectId,
-              repositories: {
-                ...createDatabaseAuthRepositories(database),
-                ...(authOptions.authOptions?.repositories ?? {}),
-              },
-            },
-            methods: [
-              ...(authOptions.methods ?? []),
-              ...collectAuthMethodPlugins(context),
-            ],
-          }),
-        );
-      }
-
-      if (options.workloads !== false) {
-        runtimeServices.push(
-          workloadsService(
-            options.workloads === undefined ? {} : options.workloads,
-          ),
-        );
-      }
-
-      return { runtimeServices };
+    setup(context: ZelavisServiceSetupContext) {
+      return mountAppServices(context, options);
     },
   });
 }

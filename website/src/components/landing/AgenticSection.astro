@@ -1,0 +1,976 @@
+---
+import SegmentedControl from '../SegmentedControl.astro';
+
+const agenticFeatures = [
+	{
+		id: 'app',
+		label: 'App Creation',
+		badge: 'Recipe Lock',
+		userPrompt: 'Zelavis, spin up a multi-tenant B2B workspace called "Northstar". Lock it to the latest Zelavis App recipe with 4 physical shards, an isolated Node process envelope, and an Astro marketing storefront.',
+		agentStatus: 'Fabric Verified · Generation Lease Acquired',
+		agentSteps: [
+			'Provisioned project recipe @zelavis/app@1.0.4 (locked)',
+			'Configured 64 virtual shard ranges across 4 SQLite files',
+			'Mounted Project Gateway proxy at /projects/northstar/*',
+			'Initialized isolated Node child process (pid: 14920)',
+		],
+		agentReply: 'Northstar is ready in production-isolated mode. The runtime version is locked in your project’s System Store so future platform updates will never cause silent breakages.',
+		actionPills: [
+			{ label: 'Open Northstar Dashboard', href: '/zelavis' },
+			{ label: 'Inspect Gateway Proxy', href: '/architecture/project-model' },
+		],
+		codeTitle: 'project.manifest.json · .zelavis/projects/northstar/',
+		codeSnippet: `{
+  "project": "northstar",
+  "recipe": {
+    "name": "@zelavis/app",
+    "version": "1.0.4",
+    "locked": true
+  },
+  "runtime": {
+    "driver": "node-process",
+    "pid": 14920,
+    "envelope": "isolated"
+  },
+  "topology": {
+    "physical_shards": 4,
+    "virtual_ranges": 64,
+    "router": "hash(tenant_id)"
+  },
+  "gateway": {
+    "route": "/projects/northstar/*",
+    "auth": "crypto-token"
+  }
+}`,
+		metrics: [
+			{ label: 'Virtual Shards', value: '64 ranges', hint: '4 physical SQLite files' },
+			{ label: 'Runtime Isolation', value: 'PID 14920', hint: 'Zero parent leaks' },
+			{ label: 'Gateway Routing', value: 'Active', hint: 'Sub-millisecond proxy' },
+		],
+	},
+	{
+		id: 'database',
+		label: 'Database & Schema',
+		badge: '4 Lenses',
+		userPrompt: 'Zelavis, create an "orders" collection in Northstar. Include customer ID, total, items, and status. Enable columnar projections for analytics, time-series revenue metrics, and listen to order creation events.',
+		agentStatus: 'Schema Validated · Event Stream Appended',
+		agentSteps: [
+			'Registered "orders" collection in System Store',
+			'Configured Document lens (nested JSON) & Column lens (aggregates)',
+			'Provisioned Measure lens rollups (orders.volume, orders.revenue)',
+			'Attached append-only replication stream cursor',
+		],
+		agentReply: 'The "orders" collection is live across all 4 shards. A single write to the documents API is automatically projected into 4 data lenses with zero data duplication.',
+		actionPills: [
+			{ label: 'Open Database Studio', href: '/api/database' },
+			{ label: 'Inspect Event Stream', href: '/api/database' },
+		],
+		codeTitle: 'orders.projection.ts · Multi-Model Lenses',
+		codeSnippet: `// 1 single write -> 4 simultaneous lenses
+await db.forTenant("acme").documents.put({
+  collection: "orders",
+  id: "ord_8921",
+  customer: "cust_901",
+  total: 489.00,
+  currency: "USD",
+  status: "confirmed",
+  items: [{ sku: "zl-scale", qty: 2, price: 244.50 }]
+});
+
+// Column lens query for instant zero-exchange aggregations:
+const stats = await db.forTenant("acme").columns("orders").aggregate({
+  sum: "total",
+  groupBy: "status"
+});`,
+		metrics: [
+			{ label: 'Origin Write', value: 'documents.put()', hint: 'Single source of truth' },
+			{ label: 'Data Lenses', value: '4 Active', hint: 'Doc, Col, Measure, Graph' },
+			{ label: 'Replication', value: '0.4ms WAL', hint: 'Deterministic stream' },
+		],
+	},
+	{
+		id: 'auth',
+		label: 'Users & Auth',
+		badge: 'Passkeys & RBAC',
+		userPrompt: 'Zelavis, invite "marcus@acme.com" as an Auditor. Enforce hardware passkeys via WebAuthn, grant read-only access to orders and workloads, and strictly block billing access.',
+		agentStatus: 'Cryptographic Identity Registered · RBAC Enforced',
+		agentSteps: [
+			'Created user principal in Platform Identity Subsystem',
+			'Enforced WebAuthn / Passkey hardware credential policy',
+			'Generated fine-grained RBAC rule matrix with billing denial',
+			'Dispatched signed cryptographic invitation link (expires 24h)',
+		],
+		agentReply: 'Marcus has been invited with enforced passkeys. The RBAC policy denies billing and restricts all database reads to tenant "acme" without exposing parent platform grants.',
+		actionPills: [
+			{ label: 'View Team Permissions', href: '/architecture/access-control' },
+			{ label: 'Audit Active Sessions', href: '/architecture/access-control' },
+		],
+		codeTitle: 'rbac.policy.json · Identity Subsystem',
+		codeSnippet: `{
+  "principal": "usr_marcus_77",
+  "email": "marcus@acme.com",
+  "role": "auditor",
+  "auth_policy": {
+    "enforce_passkey": true,
+    "webauthn_uv": "preferred"
+  },
+  "grants": {
+    "allow": ["database:read:orders", "workloads:view", "logs:read"],
+    "deny": ["billing:*", "server:*", "admin:*"]
+  },
+  "tenant_boundary": "tenant_acme"
+}`,
+		metrics: [
+			{ label: 'Auth Provider', value: 'WebAuthn / Passkeys', hint: 'Hardware-backed keys' },
+			{ label: 'Permission Check', value: '0.05ms', hint: 'In-memory token check' },
+			{ label: 'Session Security', value: 'Cryptographic', hint: 'Hardware bound' },
+		],
+	},
+	{
+		id: 'content',
+		label: 'Content & Media',
+		badge: 'Headless CMS',
+		userPrompt: 'Zelavis, create a "Documentation Article" content model with title, slug, lexical markdown body, author relation, and automatic WebP image compression with 2x retina thumbnails.',
+		agentStatus: 'Content Schema Created · Media Pipeline Ready',
+		agentSteps: [
+			'Created typed schema "documentation_articles"',
+			'Mounted asset bucket with Sharp on-the-fly WebP converter',
+			'Generated typed TypeScript SDK client & Headless REST route',
+			'Indexed slug field for sub-millisecond static site generation',
+		],
+		agentReply: 'Documentation Article schema is published. Your frontend can fetch content via headless REST or use the generated TypeScript SDK with full compile-time type safety.',
+		actionPills: [
+			{ label: 'Open Content Editor', href: '/packages/app' },
+			{ label: 'View REST Endpoints', href: '/packages/app' },
+		],
+		codeTitle: 'schema.content.ts · Headless API',
+		codeSnippet: `import { defineContentType } from "zelavis/content";
+
+export const DocArticle = defineContentType({
+  name: "documentation_articles",
+  fields: {
+    title: { type: "string", required: true },
+    slug: { type: "slug", unique: true },
+    body: { type: "richText", format: "markdown" },
+    author: { type: "relation", target: "users" },
+    coverImage: {
+      type: "media",
+      transform: { format: "webp", widths: [320, 640, 1280] }
+    }
+  }
+});`,
+		metrics: [
+			{ label: 'Media Pipeline', value: 'Auto-WebP', hint: 'Sharp image engine' },
+			{ label: 'Delivery', value: 'Headless REST', hint: 'Zero layout coupling' },
+			{ label: 'Type Safety', value: 'Generated SDK', hint: 'Compile-time verified' },
+		],
+	},
+	{
+		id: 'workloads',
+		label: 'Workloads & Crons',
+		badge: 'In-Runtime',
+		userPrompt: 'Zelavis, listen to Stripe "checkout.session.completed" webhooks, verify the HMAC signature, update the tenant subscription, and run a nightly inventory reconciliation at 2 AM UTC.',
+		agentStatus: 'Webhook Registered · Cron Job Scheduled',
+		agentSteps: [
+			'Registered POST /webhooks/stripe-checkout with HMAC verification',
+			'Mounted nightlyReconciliation cron ("0 2 * * *") in runtime scheduler',
+			'Bound tenant database transaction context to event payload',
+			'Configured automated retry queue with exponential backoff',
+		],
+		agentReply: 'Stripe webhook and 2 AM nightly reconciliation are active inside the long-running Zelavis runtime. No external AWS Lambda or Celery workers required.',
+		actionPills: [
+			{ label: 'View Workload Monitor', href: '/packages/app' },
+			{ label: 'Trigger Test Event', href: '/packages/app' },
+		],
+		codeTitle: 'workloads.config.ts · In-Runtime Scheduling',
+		codeSnippet: `import { defineWebhook, defineWorkload } from "zelavis/workload";
+
+export const stripeWebhook = defineWebhook({
+  path: "/webhooks/stripe-checkout",
+  secretEnv: "STRIPE_SECRET",
+  async handle({ event, db }) {
+    if (event.type === "checkout.session.completed") {
+      const tenantId = event.data.metadata.tenantId;
+      await db.forTenant(tenantId).documents.patch("tenants", tenantId, {
+        plan: "enterprise",
+        active: true
+      });
+    }
+  }
+});
+
+export const nightlyReconciliation = defineWorkload({
+  schedule: "0 2 * * *", // 2 AM UTC daily
+  async run({ db, logger }) {
+    logger.info("Executing shard-wide tenant audit...");
+  }
+});`,
+		metrics: [
+			{ label: 'Cold Start', value: '0.0ms', hint: 'Long-running runtime' },
+			{ label: 'Webhook Signature', value: 'HMAC-SHA256', hint: 'Auto-verified' },
+			{ label: 'Database Latency', value: 'Direct memory', hint: 'No HTTP roundtrip' },
+		],
+	},
+];
+
+const agenticFoundations = [
+	{
+		title: 'Deterministic Contracts',
+		subtitle: 'No Hallucinated Schemas',
+		body: 'The Assistant builds against typed Platform manifests. If an AI suggests an invalid field type or broken syntax, the platform contract compiler rejects it before it ever hits disk.',
+		badge: 'Compile-Time Safe',
+	},
+	{
+		title: 'Isolated Process Envelopes',
+		subtitle: 'Fenced Runtime Authority',
+		body: 'A project knows its parent, but never becomes it. Agent operations execute strictly inside the project’s sandboxed boundary, protecting the parent control plane and neighboring tenants.',
+		badge: 'Zero Privilege Escalation',
+	},
+	{
+		title: 'Zero-Downtime Event Log',
+		subtitle: 'Audit, Replay & Rollback',
+		body: 'Every change commanded conversationally appends to the deterministic event stream. View complete audit logs, replay state transitions, or roll back changes with one click.',
+		badge: 'Append-Only Truth',
+	},
+	{
+		title: 'Model-Agnostic Engine',
+		subtitle: 'Claude, GPT-4o, or Local LLMs',
+		body: 'Powered by an open responder contract. Use Anthropic Claude, OpenAI, or run completely offline with local Ollama models. Your data and credentials never leave your infrastructure.',
+		badge: 'Zero Vendor Lock-In',
+	},
+];
+---
+
+<section class="amp-section amp-agentic" id="agentic" data-local-content>
+	<div class="amp-wrap">
+		<!-- Section Header -->
+		<div class="amp-heading centered agentic-heading" data-reveal>
+			<div class="agentic-pill-badge">
+				<span class="pulse-dot"></span>
+				<span>The Agentic App Platform</span>
+			</div>
+			<h2>Talk to your stack.<br />Watch it build in real time.</h2>
+			<p>
+				From app scaffolding to multi-model database design, auth rules, and background workloads—command Zelavis through native AI chat. Backed by deterministic contracts and generation leases so your AI never breaks production.
+			</p>
+		</div>
+
+		<!-- Segmented Tab Bar -->
+		<div class="amp-tabs-wrap" data-reveal>
+			<SegmentedControl
+				id="agentic-tabs"
+				label="Agentic capabilities"
+				value="app"
+				width="760px"
+				options={agenticFeatures.map((tab) => ({ value: tab.id, label: tab.label }))}
+			/>
+		</div>
+
+		<!-- Main Interactive Agentic Console Stage -->
+		<div class="agentic-stage" data-reveal>
+			<div class="agentic-window">
+				<!-- Window Header Bar -->
+				<div class="agentic-topbar">
+					<div class="window-controls" aria-hidden="true">
+						<span class="dot dot-red"></span>
+						<span class="dot dot-amber"></span>
+						<span class="dot dot-green"></span>
+					</div>
+					<div class="agentic-address">
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+							<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+						</svg>
+						<span>assistant://zelavis/runtime</span>
+						<span class="agentic-env-badge" data-agent-badge>{agenticFeatures[0].badge}</span>
+					</div>
+					<div class="agentic-status">
+						<span class="agent-live-dot"></span>
+						<span>Resident Agent Active</span>
+					</div>
+				</div>
+
+				<!-- Dual-Pane Stage Body -->
+				<div class="agentic-body">
+					<!-- Left Pane: The Conversational Assistant -->
+					<div class="agentic-chat-pane">
+						<div class="chat-header">
+							<div class="chat-avatar">Z</div>
+							<div class="chat-meta">
+								<b>Zelavis Assistant</b>
+								<small data-agent-status-text>{agenticFeatures[0].agentStatus}</small>
+							</div>
+						</div>
+
+						<div class="chat-conversation">
+							<!-- User Message -->
+							<div class="chat-msg chat-msg-user">
+								<div class="msg-author">You</div>
+								<div class="msg-bubble" data-user-prompt>
+									"{agenticFeatures[0].userPrompt}"
+								</div>
+							</div>
+
+							<!-- Assistant Message -->
+							<div class="chat-msg chat-msg-agent">
+								<div class="msg-author">
+									<span class="agent-icon-sparkle">✦</span> Zelavis Agent
+								</div>
+								<div class="msg-bubble">
+									<div class="agent-checklist" data-agent-steps>
+										{agenticFeatures[0].agentSteps.map((step) => (
+											<div class="step-item">
+												<svg class="step-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true">
+													<polyline points="20 6 9 17 4 12" />
+												</svg>
+												<span>{step}</span>
+											</div>
+										))}
+									</div>
+
+									<p class="agent-reply-text" data-agent-reply>
+										{agenticFeatures[0].agentReply}
+									</p>
+
+									<div class="agent-actions" data-agent-actions>
+										{agenticFeatures[0].actionPills.map((action) => (
+											<a href={action.href} class="agent-action-btn">
+												<span>{action.label}</span>
+												<span class="arrow">→</span>
+											</a>
+										))}
+									</div>
+								</div>
+							</div>
+						</div>
+					</div>
+
+					<!-- Right Pane: Real-Time Architectural Diff & Output -->
+					<div class="agentic-output-pane">
+						<div class="output-topbar">
+							<div class="output-file-info">
+								<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+									<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+									<polyline points="14 2 14 8 20 8" />
+								</svg>
+								<span data-code-title>{agenticFeatures[0].codeTitle}</span>
+							</div>
+							<span class="output-tag">Live State Verified</span>
+						</div>
+
+						<div class="output-code-container">
+							<pre class="output-code"><code data-code-snippet>{agenticFeatures[0].codeSnippet}</code></pre>
+						</div>
+
+						<div class="output-metrics-strip" data-metrics-strip>
+							{agenticFeatures[0].metrics.map((m) => (
+								<div class="metric-block">
+									<span class="m-label">{m.label}</span>
+									<b class="m-val">{m.value}</b>
+									<small class="m-hint">{m.hint}</small>
+								</div>
+							))}
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- 4 Foundational Guarantees Grid -->
+		<div class="agentic-foundations-grid" data-reveal>
+			{agenticFoundations.map((card) => (
+				<div class="foundation-card">
+					<div class="foundation-badge">{card.badge}</div>
+					<h4>{card.title}</h4>
+					<div class="foundation-subtitle">{card.subtitle}</div>
+					<p>{card.body}</p>
+				</div>
+			))}
+		</div>
+	</div>
+</section>
+
+<!-- Embedded Tab Data for Client Interactions -->
+<script id="agentic-tab-data" type="application/json" set:html={JSON.stringify(agenticFeatures)}></script>
+
+<script is:inline>
+	(function () {
+		var tabControl = document.getElementById('agentic-tabs');
+		var dataEl = document.getElementById('agentic-tab-data');
+		if (!tabControl || !dataEl) return;
+
+		var tabs = JSON.parse(dataEl.textContent || '[]');
+		var currentId = 'app';
+
+		var userPromptEl = document.querySelector('[data-user-prompt]');
+		var agentBadgeEl = document.querySelector('[data-agent-badge]');
+		var agentStatusEl = document.querySelector('[data-agent-status-text]');
+		var agentStepsEl = document.querySelector('[data-agent-steps]');
+		var agentReplyEl = document.querySelector('[data-agent-reply]');
+		var agentActionsEl = document.querySelector('[data-agent-actions]');
+		var codeTitleEl = document.querySelector('[data-code-title]');
+		var codeSnippetEl = document.querySelector('[data-code-snippet]');
+		var metricsStripEl = document.querySelector('[data-metrics-strip]');
+
+		function switchTab(id) {
+			if (id === currentId) return;
+			var tab = tabs.find(function (t) { return t.id === id; });
+			if (!tab) return;
+			currentId = id;
+
+			if (userPromptEl) userPromptEl.textContent = '"' + tab.userPrompt + '"';
+			if (agentBadgeEl) agentBadgeEl.textContent = tab.badge || '';
+			if (agentStatusEl) agentStatusEl.textContent = tab.agentStatus;
+			if (agentReplyEl) agentReplyEl.textContent = tab.agentReply;
+			if (codeTitleEl) codeTitleEl.textContent = tab.codeTitle;
+			if (codeSnippetEl) codeSnippetEl.textContent = tab.codeSnippet;
+
+			// Update steps
+			if (agentStepsEl) {
+				agentStepsEl.innerHTML = tab.agentSteps.map(function (step) {
+					return '<div class="step-item">' +
+						'<svg class="step-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true">' +
+						'<polyline points="20 6 9 17 4 12" />' +
+						'</svg>' +
+						'<span>' + step + '</span>' +
+						'</div>';
+				}).join('');
+			}
+
+			// Update action pills
+			if (agentActionsEl) {
+				agentActionsEl.innerHTML = tab.actionPills.map(function (act) {
+					return '<a href="' + (act.href || '#') + '" class="agent-action-btn">' +
+						'<span>' + act.label + '</span>' +
+						'<span class="arrow">→</span>' +
+						'</a>';
+				}).join('');
+			}
+
+			// Update metrics
+			if (metricsStripEl) {
+				metricsStripEl.innerHTML = tab.metrics.map(function (m) {
+					return '<div class="metric-block">' +
+						'<span class="m-label">' + m.label + '</span>' +
+						'<b class="m-val">' + m.value + '</b>' +
+						'<small class="m-hint">' + m.hint + '</small>' +
+						'</div>';
+				}).join('');
+			}
+		}
+
+		tabControl.addEventListener('segmented-change', function (event) {
+			if (event.detail && event.detail.value) {
+				switchTab(event.detail.value);
+			}
+		});
+	})();
+</script>
+
+<style>
+	.amp-agentic {
+		position: relative;
+		padding: 108px 0 116px;
+		background: radial-gradient(ellipse at 50% 0%, rgba(99, 102, 241, 0.08) 0%, transparent 70%), #ffffff;
+		border-top: 1px solid #edf0f4;
+		border-bottom: 1px solid #edf0f4;
+		overflow: hidden;
+	}
+
+	.agentic-heading {
+		max-width: 820px;
+		margin: 0 auto 36px;
+		text-align: center;
+	}
+
+	.agentic-pill-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		margin-bottom: 16px;
+		padding: 6px 14px;
+		border-radius: 999px;
+		background: rgba(99, 102, 241, 0.08);
+		border: 1px solid rgba(99, 102, 241, 0.22);
+		color: #4f46e5;
+		font-size: 12.5px;
+		font-weight: 700;
+		letter-spacing: 0.02em;
+	}
+
+	.pulse-dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: #6366f1;
+		box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.7);
+		animation: agent-pulse 2s infinite cubic-bezier(0.66, 0, 0, 1);
+	}
+
+	@keyframes agent-pulse {
+		to {
+			box-shadow: 0 0 0 8px rgba(99, 102, 241, 0);
+		}
+	}
+
+	.agentic-heading h2 {
+		margin: 0 0 18px;
+		font-size: clamp(36px, 4.5vw, 56px);
+		line-height: 1.08;
+		letter-spacing: -0.035em;
+		font-weight: 750;
+		color: #0f111a;
+	}
+
+	.agentic-heading p {
+		margin: 0 auto;
+		max-width: 680px;
+		font-size: 17.5px;
+		line-height: 1.6;
+		color: #555869;
+	}
+
+	.amp-tabs-wrap {
+		margin-bottom: 38px;
+		display: flex;
+		justify-content: center;
+		width: 100%;
+	}
+
+	@media (max-width: 820px) {
+		.amp-tabs-wrap {
+			overflow-x: auto;
+			padding: 4px 16px 14px;
+			justify-content: flex-start;
+			-webkit-overflow-scrolling: touch;
+			scrollbar-width: none;
+		}
+		.amp-tabs-wrap::-webkit-scrollbar {
+			display: none;
+		}
+		:global(#agentic-tabs.segmented) {
+			width: max-content !important;
+			min-width: 720px;
+		}
+	}
+
+	/* Window Stage */
+	.agentic-stage {
+		max-width: 1120px;
+		margin: 0 auto 52px;
+	}
+
+	.agentic-window {
+		border-radius: 20px;
+		background: #0f111a;
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		box-shadow: 0 32px 80px rgba(15, 17, 26, 0.28), 0 0 0 1px rgba(0, 0, 0, 0.05);
+		overflow: hidden;
+	}
+
+	/* Window Topbar */
+	.agentic-topbar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		height: 48px;
+		padding: 0 18px;
+		background: rgba(255, 255, 255, 0.03);
+		border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+	}
+
+	.window-controls {
+		display: flex;
+		gap: 7px;
+	}
+
+	.window-controls .dot {
+		width: 11px;
+		height: 11px;
+		border-radius: 50%;
+	}
+
+	.dot-red { background: #ff5f56; }
+	.dot-amber { background: #ffbd2e; }
+	.dot-green { background: #27c93f; }
+
+	.agentic-address {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 4px 14px;
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.06);
+		color: #9da3ae;
+		font-family: var(--mono);
+		font-size: 11.5px;
+	}
+
+	.agentic-env-badge {
+		padding: 1px 7px;
+		border-radius: 999px;
+		background: rgba(99, 102, 241, 0.2);
+		color: #a5b4fc;
+		font-size: 10px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+
+	.agentic-status {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		color: #10b981;
+		font-size: 12px;
+		font-weight: 600;
+	}
+
+	.agent-live-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: #10b981;
+	}
+
+	/* Window Body (Dual Pane) */
+	.agentic-body {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		min-height: 480px;
+	}
+
+	/* Left Pane: Chat Interface */
+	.agentic-chat-pane {
+		display: flex;
+		flex-direction: column;
+		padding: 24px;
+		border-right: 1px solid rgba(255, 255, 255, 0.08);
+		background: rgba(18, 20, 32, 0.4);
+	}
+
+	.chat-header {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding-bottom: 18px;
+		margin-bottom: 20px;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+	}
+
+	.chat-avatar {
+		width: 34px;
+		height: 34px;
+		border-radius: 10px;
+		background: linear-gradient(135deg, #6366f1, #8b5cf6);
+		color: #ffffff;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-weight: 800;
+		font-size: 14px;
+		box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
+	}
+
+	.chat-meta b {
+		display: block;
+		color: #f1f5f9;
+		font-size: 13.5px;
+		font-weight: 650;
+	}
+
+	.chat-meta small {
+		display: block;
+		color: #818cf8;
+		font-size: 11.5px;
+		font-family: var(--mono);
+	}
+
+	.chat-conversation {
+		display: flex;
+		flex-direction: column;
+		gap: 20px;
+	}
+
+	.chat-msg {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.msg-author {
+		font-size: 11px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: #64748b;
+	}
+
+	.chat-msg-user .msg-author {
+		color: #94a3b8;
+	}
+
+	.chat-msg-agent .msg-author {
+		color: #a5b4fc;
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+
+	.agent-icon-sparkle {
+		color: #818cf8;
+	}
+
+	.msg-bubble {
+		padding: 16px 18px;
+		border-radius: 14px;
+		font-size: 13.5px;
+		line-height: 1.55;
+	}
+
+	.chat-msg-user .msg-bubble {
+		background: rgba(255, 255, 255, 0.07);
+		color: #e2e8f0;
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		font-style: italic;
+	}
+
+	.chat-msg-agent .msg-bubble {
+		background: rgba(99, 102, 241, 0.08);
+		border: 1px solid rgba(99, 102, 241, 0.2);
+		color: #f8fafc;
+	}
+
+	.agent-checklist {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		margin-bottom: 16px;
+		padding-bottom: 14px;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+	}
+
+	.step-item,
+	:global(.step-item) {
+		display: flex;
+		align-items: center;
+		gap: 9px;
+		font-size: 12.5px;
+		color: #cbd5e1;
+	}
+
+	.step-check,
+	:global(.step-check) {
+		color: #34d399;
+		flex-shrink: 0;
+		min-width: 13px;
+	}
+
+	.agent-reply-text {
+		margin: 0 0 14px;
+		font-size: 13.5px;
+		line-height: 1.55;
+		color: #e2e8f0;
+	}
+
+	.agent-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+
+	.agent-action-btn,
+	:global(.agent-action-btn) {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 6px 12px;
+		border-radius: 8px;
+		background: rgba(255, 255, 255, 0.08);
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		color: #ffffff;
+		font-size: 12px;
+		font-weight: 600;
+		text-decoration: none;
+		transition: background 0.2s, border-color 0.2s, transform 0.2s;
+	}
+
+	.agent-action-btn:hover,
+	:global(.agent-action-btn:hover) {
+		background: rgba(255, 255, 255, 0.14);
+		border-color: rgba(255, 255, 255, 0.3);
+		transform: translateY(-1px);
+	}
+
+	.agent-action-btn .arrow,
+	:global(.agent-action-btn .arrow) {
+		color: #818cf8;
+	}
+
+	/* Right Pane: Code & Metrics */
+	.agentic-output-pane {
+		display: flex;
+		flex-direction: column;
+		background: #090a10;
+	}
+
+	.output-topbar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 12px 18px;
+		background: rgba(255, 255, 255, 0.02);
+		border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+	}
+
+	.output-file-info {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		color: #94a3b8;
+		font-family: var(--mono);
+		font-size: 11.5px;
+	}
+
+	.output-tag {
+		font-size: 10.5px;
+		font-weight: 700;
+		color: #34d399;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+	}
+
+	.output-code-container {
+		flex: 1;
+		padding: 18px;
+		overflow-x: auto;
+	}
+
+	.output-code {
+		margin: 0;
+		font-family: var(--mono);
+		font-size: 12.5px;
+		line-height: 1.6;
+		color: #e2e8f0;
+	}
+
+	.output-metrics-strip {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 1px;
+		background: rgba(255, 255, 255, 0.07);
+		border-top: 1px solid rgba(255, 255, 255, 0.07);
+	}
+
+	.metric-block,
+	:global(.metric-block) {
+		padding: 12px 16px;
+		background: #0d0f17;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.m-label,
+	:global(.m-label) {
+		font-size: 10px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: #64748b;
+	}
+
+	.m-val,
+	:global(.m-val) {
+		font-size: 13.5px;
+		font-weight: 700;
+		color: #f1f5f9;
+	}
+
+	.m-hint,
+	:global(.m-hint) {
+		font-size: 11px;
+		color: #818cf8;
+	}
+
+	/* 4 Foundations Cards Grid */
+	.agentic-foundations-grid {
+		display: grid;
+		grid-template-columns: repeat(4, 1fr);
+		gap: 18px;
+		margin-top: 24px;
+	}
+
+	.foundation-card {
+		padding: 24px 20px;
+		border-radius: 16px;
+		background: #ffffff;
+		border: 1px solid #e2e8f0;
+		box-shadow: 0 4px 18px rgba(15, 17, 26, 0.04);
+		transition: transform 0.25s ease, box-shadow 0.25s ease;
+	}
+
+	.foundation-card:hover {
+		transform: translateY(-2px);
+		box-shadow: 0 10px 28px rgba(15, 17, 26, 0.08);
+	}
+
+	.foundation-badge {
+		display: inline-block;
+		margin-bottom: 12px;
+		padding: 3px 8px;
+		border-radius: 6px;
+		background: rgba(99, 102, 241, 0.08);
+		color: #4f46e5;
+		font-size: 11px;
+		font-weight: 700;
+		letter-spacing: 0.02em;
+	}
+
+	.foundation-card h4 {
+		margin: 0 0 4px;
+		font-size: 16.5px;
+		font-weight: 750;
+		color: #0f111a;
+		letter-spacing: -0.02em;
+	}
+
+	.foundation-subtitle {
+		margin-bottom: 10px;
+		font-size: 12.5px;
+		font-weight: 600;
+		color: #6366f1;
+	}
+
+	.foundation-card p {
+		margin: 0;
+		font-size: 13.5px;
+		line-height: 1.55;
+		color: #64748b;
+	}
+
+	/* Responsive */
+	@media (max-width: 960px) {
+		.agentic-body {
+			grid-template-columns: 1fr;
+		}
+
+		.agentic-chat-pane {
+			border-right: 0;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+		}
+
+		.agentic-foundations-grid {
+			grid-template-columns: repeat(2, 1fr);
+		}
+	}
+
+	@media (max-width: 640px) {
+		.agentic-foundations-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.output-metrics-strip {
+			grid-template-columns: 1fr;
+		}
+	}
+</style>

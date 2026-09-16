@@ -1,15 +1,9 @@
+import { zelavis } from "zelavis/sdk";
 import {
   embeddedDashboardAssets,
   embeddedDashboardShell,
   type EmbeddedDashboardAsset,
 } from "./generated/dashboard-assets.js";
-
-export interface ZelavisDashboardServiceRoute {
-  id: string;
-  method: string;
-  path: string;
-  handler: unknown;
-}
 
 export interface ZelavisDashboardBundleAsset {
   path: string;
@@ -45,9 +39,8 @@ export interface ZelavisDashboardServiceOptions {
   title?: string;
   subtitle?: string;
   rootPath?: string;
-  routes?: readonly ZelavisDashboardServiceRoute[];
   devServerUrl?: string;
-  createRuntimeConfig: () => unknown | Promise<unknown>;
+  createRuntimeConfig?: () => unknown | Promise<unknown>;
 }
 
 export const defaultZelavisDashboardClientRoutes = Object.freeze([
@@ -112,15 +105,6 @@ function normalizeRootPath(path: string | undefined): string {
 
   const normalized = trimmed.replace(/^\/+/, "").replace(/\/+$/, "");
   return normalized ? `/${normalized}` : "/";
-}
-
-function joinPathParts(...parts: (string | undefined)[]): string {
-  const normalized = parts
-    .filter((part): part is string => Boolean(part))
-    .flatMap((part) => part.split("/"))
-    .filter(Boolean);
-
-  return normalized.length > 0 ? `/${normalized.join("/")}` : "/";
 }
 
 function collectDashboardAssets(): DashboardAsset[] {
@@ -260,6 +244,7 @@ function readDashboardAsset(asset: DashboardAsset, rootPath: string): Uint8Array
 }
 
 function injectDashboardRuntimeConfig(html: string, config: unknown): string {
+  if (config === undefined) return html;
   const script = `<script>window.__ZELAVIS_RUNTIME_CONFIG__=${JSON.stringify(config).replaceAll("<", "\\u003c")};</script>`;
   return html.includes("</head>")
     ? html.replace("</head>", `${script}</head>`)
@@ -304,8 +289,8 @@ export function createZelavisDashboardBundleStore(
   };
 }
 
-export function createZelavisDashboardService(
-  options: ZelavisDashboardServiceOptions,
+export function register(
+  options: ZelavisDashboardServiceOptions = {},
 ) {
   const rootPath = normalizeRootPath(options.rootPath ?? "/zelavis");
   const title = options.title ?? "zelavis";
@@ -358,54 +343,16 @@ export function createZelavisDashboardService(
       },
       body: injectDashboardRuntimeConfig(
         baseShell,
-        await options.createRuntimeConfig(),
+        await options.createRuntimeConfig?.(),
       ),
     };
   };
 
-  return Object.freeze({
-    name: "@zelavis/ui",
-    namespace: "ui",
-    // The dashboard is a frontend — the default face of the outermost
-    // installation — not a plugin that happens to serve HTML. Its manifest
-    // declares the same thing, truthfully: a static frontend over the
-    // `build/client` bundle this package ships.
-    //
-    // It is composed rather than loaded from that manifest, which is what lets
-    // it supply the `app.shell` below. A JSON manifest cannot express a render
-    // function, and this one needs to: the installation's root path is a
-    // runtime setting, so the built SPA's absolute `/assets/...` references are
-    // rewritten per request. A future frontend installed purely from its
-    // manifest gets no shell, and would need to be built for a fixed base path.
-    kind: "frontend" as const,
-    scope: "system",
-    basePath: "/",
-    menu: {
-      title: "Dashboard",
-      path: "/",
-      surface: "root" as const,
-    },
-    service: {
-      title,
-      subtitle,
-      assetRoot: joinPathParts(rootPath, "assets"),
-    },
-    app: {
-      mount: "/" as const,
-      mode: "spa" as const,
-      domainPolicy: "optional" as const,
-      shell: { render },
-      devUrl: options.devServerUrl,
-      devUrlExcludePaths: ["api"],
-    },
-    api: {
-      v1: Object.freeze([...(options.routes ?? [])]),
-    },
+  const api = zelavis.createAPI({ shell: { render } }, { routes: false });
+  zelavis.plugins.ui.menus.create({ title: "Dashboard", path: "/", surface: "root" });
+  zelavis.frontend.configure({
+    shell: api.shell,
+    devUrl: options.devServerUrl,
+    devUrlExcludePaths: ["api"],
   });
 }
-
-export const dashboardService = createZelavisDashboardService({
-  createRuntimeConfig: () => undefined,
-});
-
-export default dashboardService;

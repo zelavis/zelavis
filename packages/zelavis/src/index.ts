@@ -893,6 +893,7 @@ async function readDashboardServiceRegistryCreate(
   body: unknown,
   options: {
     importer?: ZelavisServiceLoadOptions["importer"];
+    manifestResolver?: ZelavisServiceLoadOptions["manifestResolver"];
     packageInstaller?: ZelavisServicePackageInstaller;
   } = {},
 ): Promise<ZelavisServiceRegistryStateEntry> {
@@ -979,6 +980,7 @@ async function readDashboardServiceRegistryCreate(
     try {
       const service = await loadService<ZelavisServiceSetupContext>(specifier, {
         importer: options.importer,
+        manifestResolver: options.manifestResolver,
       });
       serviceName = service.name;
     } catch (error) {
@@ -2274,6 +2276,7 @@ async function resolveRuntimeManagementCore(
             try {
               const created = await readDashboardServiceRegistryCreate(body, {
                 importer: context.serviceImporter,
+                manifestResolver: context.serviceManifestResolver,
                 packageInstaller: context.servicePackageInstaller,
               });
               const currentEntries = await context.serviceRegistryStore.read();
@@ -3620,7 +3623,7 @@ function createServicePrefixes(
       continue;
     }
 
-    if (frontendServices.has(service.name)) {
+    if (frontendServices.has(service.name) && !service.namespace) {
       prefixes[service.name] = mountAtRoot ? options.rootPath : "/";
       continue;
     }

@@ -71,7 +71,7 @@ test("a create package writes its scaffold into the working directory", async ()
   const paths = await scaffoldRun(`
     import { writeFile, mkdir } from "node:fs/promises";
     await mkdir("src", { recursive: true });
-    await writeFile("package.json", JSON.stringify({ name: "@acme/site" }));
+    await writeFile("package.json", JSON.stringify({ name: "@acme/site", nodeEnv: process.env.NODE_ENV }));
     await writeFile("src/index.js", "export default 1;");
   `);
 
@@ -82,6 +82,8 @@ test("a create package writes its scaffold into the working directory", async ()
     runDirectory: paths.runDirectory,
   });
 
+  const scaffold = JSON.parse(await readFile(join(paths.outputDirectory, "package.json"), "utf8"));
+  assert.equal(scaffold.nodeEnv, "production");
   const entries = await readScaffoldOutput(paths.outputDirectory);
   assert.deepEqual(
     entries.map((entry) => entry.path).sort(),

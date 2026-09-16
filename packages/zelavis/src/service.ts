@@ -155,6 +155,8 @@ export interface ZelavisServiceLoadOptions {
   manifest?: ZelavisPackageManifest;
   manifestResolver?: ZelavisServiceManifestResolver;
   packageDir?: string;
+  configuration?: unknown;
+  scope?: ZelavisServiceScope;
 }
 
 /**
@@ -309,16 +311,46 @@ export function resolveServiceModule<TContext = unknown>(
   module: unknown,
   manifest?: ZelavisPackageManifest,
 ): Readonly<ZelavisServiceRegistryEntry<TContext>["service"]> {
+  if (typeof module === "function" && manifest) {
+    return Object.freeze({
+      name: manifest.name,
+      namespace: manifest.zelavis?.namespace,
+      kind: manifest.zelavis?.kind ?? "plugin",
+      version: manifest.version,
+      packageDir: (manifest as any)?.packageDir,
+      api: {},
+      service: {},
+      marketplace: (manifest.zelavis as any)?.marketplace,
+      project: (manifest.zelavis as any)?.project,
+      capabilities: (manifest.zelavis?.capabilities as any) ?? [],
+      setup: module as any,
+      ...frontendServiceFields(manifest),
+    }) as any;
+  }
+
   if (!module || typeof module !== "object") {
     throw new TypeError("A service module object is required.");
   }
 
   const raw = module as Record<string, unknown>;
 
-  if ("name" in raw && typeof raw.name === "string") {
+  if (!("name" in raw) && "default" in raw && raw.default !== undefined) {
+    return resolveServiceModule(raw.default, manifest);
+  }
+
+  if (("name" in raw && typeof raw.name === "string") || manifest) {
+    const name =
+      "name" in raw && typeof raw.name === "string" ? raw.name : manifest!.name;
+    const setupFn =
+      typeof raw.setup === "function"
+        ? (raw.setup as any)
+        : typeof (raw as any).default === "function"
+          ? (raw as any).default
+          : undefined;
+
     return Object.freeze({
-      name: raw.name,
-      namespace: manifest?.zelavis?.namespace ?? raw.namespace as string | undefined,
+      name,
+      namespace: manifest?.zelavis?.namespace ?? (raw.namespace as string | undefined),
       basePath: typeof raw.basePath === "string" ? raw.basePath : undefined,
       packageDir: (raw.packageDir as string | undefined) ?? (manifest as any)?.packageDir,
       api: (raw.api as Record<string, any>) ?? {},
@@ -327,17 +359,15 @@ export function resolveServiceModule<TContext = unknown>(
       menus: raw.menus as any,
       services: raw.services as any,
       authenticators: raw.authenticators as any,
-      kind: (raw.kind as string) ?? manifest?.zelavis?.kind,
+      kind: (raw.kind as string) ?? manifest?.zelavis?.kind ?? "plugin",
       version: (raw.version as string) ?? manifest?.version,
-      marketplace: raw.marketplace as any,
-      project: raw.project as any,
-      // Falls back to the manifest, which is where capabilities are declared
-      // and validated. A service object that omits them is not opting out; it
-      // simply did not restate what its package.json already says.
-      capabilities: (raw.capabilities ?? manifest?.zelavis?.capabilities) as any,
+      marketplace: (raw.marketplace as any) ?? (manifest?.zelavis as any)?.marketplace,
+      project: (raw.project as any) ?? (manifest?.zelavis as any)?.project,
+      capabilities: ((raw.capabilities ?? manifest?.zelavis?.capabilities) as any) ?? [],
       app: raw.app as any,
-      setup: typeof raw.setup === "function" ? (raw.setup as any) : undefined,
+      setup: setupFn,
       runtimeServices: raw.runtimeServices as any,
+      ...(manifest ? frontendServiceFields(manifest) : {}),
     }) as any;
   }
 
@@ -349,28 +379,24 @@ export function resolveServiceModule<TContext = unknown>(
     return resolveServiceModule(raw.default, manifest);
   }
 
-  if (manifest) {
-    return Object.freeze({
-      name: manifest.name,
-      kind: manifest.zelavis?.kind,
-      version: manifest.version,
-      api: {},
-      service: raw,
-      capabilities: manifest.zelavis?.capabilities as any,
-      ...frontendServiceFields(manifest),
-    }) as any;
-  }
-
   throw new TypeError(
     "Service modules must export a service definition either directly, as `service`, or as `default`.",
   );
 }
+
+// The portable context store is synchronous. Serialize package evaluation so
+// concurrent loads cannot register into another package's active context.
+let pluginEvaluation: Promise<unknown> = Promise.resolve();
 
 export async function loadPluginPackage(options: {
   manifest: unknown;
   specifier?: string;
   importer?: (entry: string) => Promise<unknown>;
   packageDir?: string;
+  /** Host configuration passed to the package's per-load SDK registration hook. */
+  configuration?: unknown;
+  /** Trust is granted by the host, never by a package export. */
+  scope?: ZelavisServiceScope;
 }): Promise<Readonly<ZelavisServiceRegistryEntry<any>["service"]>> {
   const manifest = validatePluginPackageManifest(options.manifest);
   const rawEntrypoint = resolvePackageExportsEntry(manifest.exports);
@@ -391,46 +417,66 @@ export async function loadPluginPackage(options: {
     options.importer ??
     ((specifier: string) => import(specifier));
 
-  const moduleResult = await activePluginStorage.run(context, async () => {
-    return importer(entrypoint);
-  });
+  const evaluation = pluginEvaluation.then(() => activePluginStorage.run(context, async () => {
+    const module = await importer(entrypoint);
+    if (module && typeof module === "object" && "register" in module) {
+      if (typeof module.register !== "function") {
+        throw new TypeError("A package register export must be a function.");
+      }
+      await module.register(options.configuration);
+    }
+    return module;
+  }));
+  pluginEvaluation = evaluation.then(() => undefined, () => undefined);
+  const moduleResult = await evaluation;
 
-  const resolvedService = (
-    moduleResult && typeof moduleResult === "object" && "name" in moduleResult
-      ? moduleResult
-      : (moduleResult as any)?.default && typeof (moduleResult as any).default === "object" && "name" in (moduleResult as any).default
-        ? (moduleResult as any).default
-        : undefined
-  ) as
-    | (ZelavisRuntimeService<any> &
-        Pick<
-          ZelavisServiceRegistryEntry<any>["service"],
-          // `setup` and `runtimeServices` were missing here, so the fields a
-          // plugin uses to register its own services were invisible to the
-          // loader and silently dropped from what it built.
-          | "capabilities"
-          | "marketplace"
-          | "packageDir"
-          | "setup"
-          | "runtimeServices"
-          | "scope"
-          | "project"
-          | "app"
-        >)
-    | undefined;
+  const rawExport =
+    moduleResult && typeof moduleResult === "object" && "default" in moduleResult
+      ? (moduleResult as any).default
+      : moduleResult;
 
-  if (resolvedService?.menu !== undefined || resolvedService?.menus !== undefined) {
+  const exportObj =
+    rawExport && typeof rawExport === "object"
+      ? (rawExport as Record<string, any>)
+      : moduleResult && typeof moduleResult === "object"
+        ? (moduleResult as Record<string, any>)
+        : undefined;
+
+  const setupFunction =
+    typeof rawExport === "function"
+      ? rawExport
+      : typeof exportObj?.setup === "function"
+        ? exportObj.setup
+        : typeof (moduleResult as any)?.setup === "function"
+          ? (moduleResult as any).setup
+          : undefined;
+
+  if (exportObj?.menu !== undefined || exportObj?.menus !== undefined) {
     throw new TypeError(
       `Package "${manifest.name}" must register menus with zelavis.plugins.ui.menus.create() from zelavis/sdk, not exported menu or menus fields.`,
     );
   }
-  if (resolvedService?.namespace !== undefined && resolvedService.namespace !== manifest.zelavis?.namespace) {
+  if (exportObj?.namespace !== undefined && exportObj.namespace !== manifest.zelavis?.namespace) {
     throw new TypeError(`Package "${manifest.name}" cannot override its manifest namespace.`);
   }
 
-  const packageDir =
-    initialPackageDir ??
-    resolvedService?.packageDir;
+  for (const field of ["name", "namespace", "version", "kind", "basePath", "scope", "capabilities", "marketplace", "project", "packageDir"]) {
+    if (exportObj?.[field] !== undefined) {
+      throw new TypeError(`Package "${manifest.name}" must declare ${field} through its manifest or host loading options, not a module export.`);
+    }
+  }
+  if (exportObj?.api !== undefined) {
+    throw new TypeError(`Package "${manifest.name}" must register APIs through zelavis.createAPI or zelavis.operations.create, not an api export.`);
+  }
+  const packageDir = initialPackageDir;
+
+  const project = manifest.zelavis?.project as ZelavisProjectRecipeDefinition | undefined;
+  const capabilities = manifest.zelavis?.capabilities ?? [];
+  const marketplace = manifest.zelavis?.marketplace;
+  const frontendFields = frontendServiceFields(manifest);
+  const frontendApp = frontendFields.app
+    ? { ...frontendFields.app, ...context.frontend }
+    : undefined;
 
   const runtimeService: ZelavisServiceRegistryEntry<any>["service"] = {
     name: manifest.name,
@@ -438,54 +484,28 @@ export async function loadPluginPackage(options: {
     version: manifest.version,
     kind: manifest.zelavis?.kind ?? "plugin",
     packageDir,
-    // Declared on the module, not through an SDK call: these describe what the
-    // service *is*, and a plugin that failed to load should not be registered
-    // with a half-built identity.
-    //
-    // Falls back to the manifest, which is where capabilities are declared and
-    // validated. A service object that does not restate them is not opting
-    // out, and dropping them made an installed provider extend nothing: it
-    // loaded and registered, then was never found by the plugin it named.
-    capabilities:
-      resolvedService?.capabilities ?? (manifest.zelavis?.capabilities as any),
-    marketplace:
-      resolvedService?.marketplace ?? (manifest.zelavis?.marketplace as any),
+    capabilities,
+    marketplace,
     basePath: manifest.zelavis?.namespace ? `/plugins/${manifest.zelavis.namespace}` : undefined,
-    api: {
-      v1: [
-        ...(resolvedService?.api?.v1 ?? []),
-        ...context.routes,
-      ],
-    },
-    // `menu` is the primary-menu view used by the service catalogue. `menus`
-    // carries every SDK registration; it does not supplement that first menu.
+    api: { v1: [...context.routes] },
     menu: context.menus[0],
     menus: context.menus.length > 0 ? context.menus : undefined,
     services: [
-      ...(resolvedService?.services ?? []),
+      ...(exportObj?.services ?? []),
       ...context.services,
     ],
     authenticators: [
-      ...(resolvedService?.authenticators ?? []),
+      ...(exportObj?.authenticators ?? []),
       ...context.authenticators,
     ],
-    service: resolvedService?.service ?? moduleResult,
-    // Carried through, and it was not before. A plugin that registers its
-    // services during setup lost all of them when loaded through this path,
-    // so installing such a package produced a service with a menu and no
-    // endpoints while composing the same object in code worked.
-    ...(typeof resolvedService?.setup === "function"
-      ? { setup: resolvedService.setup }
+    service: exportObj?.service ?? (typeof rawExport === "object" ? rawExport : moduleResult),
+    ...(context.setup || setupFunction ? { setup: context.setup ?? setupFunction } : {}),
+    ...(exportObj?.runtimeServices
+      ? { runtimeServices: exportObj.runtimeServices }
       : {}),
-    ...(resolvedService?.authenticators
-      ? { authenticators: resolvedService.authenticators }
-      : {}),
-    ...(resolvedService?.runtimeServices
-      ? { runtimeServices: resolvedService.runtimeServices }
-      : {}),
-    ...(resolvedService?.app ? { app: resolvedService.app } : {}),
-    ...(resolvedService?.project ? { project: resolvedService.project } : {}),
-    ...(resolvedService?.scope ? { scope: resolvedService.scope } : {}),
+    ...(frontendApp ? { app: frontendApp } : exportObj?.app ? { app: exportObj.app } : {}),
+    ...(project ? { project } : {}),
+    ...(options.scope ? { scope: options.scope } : {}),
   };
 
   return Object.freeze(runtimeService);
@@ -520,11 +540,13 @@ export async function loadService<TContext = unknown>(
   }
 
   if (options.manifest) {
-    if (options.manifest.zelavis?.kind === "frontend") {
+    if (options.manifest.zelavis?.kind === "frontend" && (options.manifest.exports === undefined || readFrontendManifest(options.manifest)?.runtime === "server")) {
       return loadFrontendPackage(options.manifest) as any;
     }
     return loadPluginPackage({
       manifest: options.manifest,
+      configuration: options.configuration,
+      scope: options.scope,
       importer: options.importer,
       packageDir: options.packageDir ?? (options.manifest as any)?.packageDir,
     }) as any;
@@ -536,12 +558,14 @@ export async function loadService<TContext = unknown>(
   const manifest = resolver ? await resolver(specifier) : undefined;
 
   if (manifest) {
-    if (manifest.zelavis?.kind === "frontend") {
+    if (manifest.zelavis?.kind === "frontend" && (manifest.exports === undefined || readFrontendManifest(manifest)?.runtime === "server")) {
       return loadFrontendPackage(manifest) as any;
     }
     return loadPluginPackage({
       manifest,
       specifier,
+      configuration: options.configuration,
+      scope: options.scope,
       importer: options.importer,
       packageDir: options.packageDir ?? (manifest as any)?.packageDir,
     }) as any;

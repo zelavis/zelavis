@@ -19,19 +19,11 @@ async function dropPackage(root, directoryName, manifest, entry) {
   await writeFile(join(packageDirectory, "index.js"), entry);
 }
 
-function servicePackage(name, basePath, body) {
-  return `export default {
-    name: ${JSON.stringify(name)},
-    kind: "plugin",
-    basePath: ${JSON.stringify(basePath)},
-    capabilities: ["api:routes"],
-    api: { v1: [{
-      id: "folder.get",
-      method: "GET",
-      path: "/",
-      handler: async () => ({ status: 200, body: ${JSON.stringify(body)} }),
-    }] },
-  };`;
+function servicePackage(body) {
+  return `import { zelavis } from ${JSON.stringify(new URL("../dist/sdk/fetch.js", import.meta.url).href)};
+    export function register() {
+      zelavis.createAPI({ hello: { list() { return ${JSON.stringify(body)}; } } });
+    }`;
 }
 
 async function runtime(root) {
@@ -56,11 +48,11 @@ test("a service dropped into the folder serves its own endpoint", async () => {
       exports: "./index.js",
       zelavis: { kind: "plugin", namespace: "example", capabilities: ["api:routes"] },
     },
-    servicePackage("@acme/hello", "/hello", { hello: "from the folder" }),
+    servicePackage({ hello: "from the folder" }),
   );
 
   const zv = await runtime(root);
-  assert.deepEqual(await get(zv, "/zelavis/api/v1/plugins/example/"), {
+  assert.deepEqual(await get(zv, "/zelavis/api/v1/plugins/example/hello"), {
     status: 200,
     body: { hello: "from the folder" },
   });
@@ -77,7 +69,7 @@ test("a folder package cannot take over a core service name", async () => {
       exports: "./index.js",
       zelavis: { kind: "plugin", namespace: "example" },
     },
-    servicePackage("zelavis/auth", "/pwned", { pwned: true }),
+    servicePackage({ pwned: true }),
   );
 
   // Refused before loading. Reaching the activation guard instead throws, so
@@ -105,12 +97,12 @@ test("a broken package leaves the rest of the installation working", async () =>
       exports: "./index.js",
       zelavis: { kind: "plugin", namespace: "example", capabilities: ["api:routes"] },
     },
-    servicePackage("@acme/working", "/working", { ok: true }),
+    servicePackage({ ok: true }),
   );
 
   const zv = await runtime(root);
   assert.equal((await get(zv, "/zelavis/api/v1/runtime/config")).status, 200);
-  assert.deepEqual(await get(zv, "/zelavis/api/v1/plugins/example/"), {
+  assert.deepEqual(await get(zv, "/zelavis/api/v1/plugins/example/hello"), {
     status: 200,
     body: { ok: true },
   });
@@ -127,12 +119,12 @@ test("nothing is discovered when the folder scan is turned off", async () => {
       exports: "./index.js",
       zelavis: { kind: "plugin", namespace: "example", capabilities: ["api:routes"] },
     },
-    servicePackage("@acme/hello", "/hello", { hello: "from the folder" }),
+    servicePackage({ hello: "from the folder" }),
   );
 
   const zv = new Zelavis({
     adapter: nodeAdapter({ dataDirectory: root, productServices: false }),
   });
   test.after(() => zv.close());
-  assert.equal((await get(zv, "/zelavis/api/v1/plugins/example/")).status, 404);
+  assert.equal((await get(zv, "/zelavis/api/v1/plugins/example/hello")).status, 404);
 });

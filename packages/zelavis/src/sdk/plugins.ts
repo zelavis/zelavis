@@ -70,3 +70,5 @@ export function createPluginClients(
   });
   return proxy([]) as PluginClients;
 }
+
+export type { PluginApiTree, ZelavisCreateApiFunction } from "./create-api.js";

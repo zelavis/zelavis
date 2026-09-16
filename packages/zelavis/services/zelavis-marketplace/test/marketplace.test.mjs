@@ -34,13 +34,8 @@ test("the page is a complete document that styles itself from the Platform", () 
   assert.doesNotMatch(MARKETPLACE_PAGE, /--background:|#[0-9a-f]{6}/i);
 });
 
-test("the service cannot be imported outside a plugin context", async () => {
-  // The module contributes its menus by calling the SDK at evaluation time.
-  // Importing it directly — composing it as a plain object the way the old
-  // in-tree marketplace was — must fail loudly rather than yield a service
-  // with no menus.
-  await assert.rejects(
-    () => import("../dist/index.js"),
-    /plugin execution context/,
-  );
+test("the service register hook requires a plugin context", async () => {
+  const { register } = await import("../dist/index.js");
+  assert.equal(typeof register, "function");
+  assert.throws(() => register(), /plugin execution context/);
 });

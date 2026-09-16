@@ -251,6 +251,7 @@ export async function runCreatePackage(
       env: {
         HOME: runDirectory,
         NO_COLOR: "1",
+        NODE_ENV: "production",
         CI: "1",
       },
       stdio: ["ignore", "pipe", "pipe"],

@@ -204,6 +204,18 @@ by a declared capability and validated against the owning domain's explicit
 public registration contract. Plugins may also expose their own endpoint-backed
 capabilities as normal services.
 
+Bundled product packages, including `@zelavis/ui`, use the same manifest and
+SDK registration path as installed packages. Static identity, capabilities,
+Marketplace and Project recipe metadata belong only in `package.json`.
+`loadPluginPackage` rejects exported metadata and raw `api` objects. Trust
+(`scope`) and package location come from host loading options, never exports.
+Use a package `register(configuration)` hook for per-load SDK declarations,
+`zelavis.createAPI`/`zelavis.operations.create` for APIs, and `zelavis.setup`
+for runtime-dependent setup. Static frontends attach runtime shell/dev behavior
+through `zelavis.frontend.configure`; do not revive a parallel UI service factory.
+The register hook runs for every load despite ESM caching, so do not cache a
+first-party service globally to preserve module-evaluation side effects.
+
 Dashboard menu semantics belong to `@zelavis/ui`: it defines what a menu
 contribution means and renders it. `zelavis/core` may carry runtime-neutral
 menu/contribution wire data so headless Project runtimes do not need to bundle

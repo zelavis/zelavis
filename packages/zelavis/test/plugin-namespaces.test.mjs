@@ -61,7 +61,7 @@ test("the manifest owns the namespace and the old menu SDK alias is gone", async
     manifest: manifest(),
     importer: async () => {
       zelavis.plugins.ui.menus.create({ title: "SEO", path: "/seo" });
-      return { name: "@example/seo", basePath: "/ui" };
+      return {};
     },
   });
   assert.equal(service.namespace, "seotool");

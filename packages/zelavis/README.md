@@ -729,3 +729,12 @@ not silently upgrade child Apps.
 The dashboard, project registry, Platform settings, and service registry state
 persist through the separate System Store. Zelavis App capabilities run inside
 created Project runtimes.
+
+## Plugin API authoring
+
+Use `zelavis.createAPI({ resource: { async list(input) { /* ... */ } } })`
+from `zelavis/sdk` while a package is loaded. The manifest namespace owns its
+generated routes, and the existing SDK and CLI discover those operations.
+Use `{ routes: false }` for local authoring helpers and `operations.create`
+for explicit schemas, response codes, and route contracts. See the
+[plugin API guide](../../website/src/content/docs/guides/plugin-api.md).

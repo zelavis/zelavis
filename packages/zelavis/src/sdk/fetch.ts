@@ -8,15 +8,18 @@ import {
   getActivePluginContext,
   type PluginExecutionContext,
   type ZelavisCommandDefinition,
+  type PluginFrontendBehavior,
+  type PluginSetupHandler,
 } from "../core/service/context.js";
 import type {
-  ZelavisRuntimeServiceMenuDefinition,
   ZelavisServerRoute,
   ZelavisAnyRuntimeServiceInput,
 } from "../core/runtime/contracts.js";
-import type { ZelavisServiceMenuDefinition } from "../core/service/definition.js";
 import { createPluginClients, validateOperationName, type RegisteredPluginClients, type PluginOperation } from "./plugins.js";
 export type { PluginClients, PluginApiRegistry, RegisteredPluginClients, PluginOperation, PluginOperationOptions } from "./plugins.js";
+import { createAPI, pluginsProxy, type CreateApiOptions, type PluginApiTree, type RegisteredPluginApis } from "./create-api.js";
+export { createAPI, type CreateApiOptions, type PluginApiTree, type RegisteredPluginApis };
+export type { PluginAuthoringApiRegistry, ZelavisCreateApiFunction, ZelavisMenuApi } from "./create-api.js";
 import { isSandboxedServicePage, createServicePageFetch } from "./service-page.js";
 
 export type { AuthApi, DatabaseRuntimeApi, DatabaseJsonObject };
@@ -276,12 +279,6 @@ export class ZelavisClientHttpError extends Error {
   }
 }
 
-export interface ZelavisMenuApi {
-  create(
-    menu: ZelavisServiceMenuDefinition | ZelavisRuntimeServiceMenuDefinition,
-  ): ZelavisServiceMenuDefinition | ZelavisRuntimeServiceMenuDefinition;
-}
-
 export interface ZelavisRoutesApi {
   create(
     routes: ZelavisServerRoute | readonly ZelavisServerRoute[],
@@ -303,16 +300,21 @@ export interface ZelavisPluginServicesApi {
   add(service: ZelavisAnyRuntimeServiceInput): void;
 }
 
+export type { PluginFrontendBehavior, PluginSetupHandler } from "../core/service/context.js";
+
 export interface ZelavisSdk {
   readonly operations: {
     create(operation: ZelavisServerRoute & { resource: string; action: string }): void;
   };
-  readonly plugins: { readonly ui: { readonly menus: ZelavisMenuApi } };
+  readonly plugins: RegisteredPluginApis;
   readonly routes: ZelavisRoutesApi;
   readonly commands: ZelavisCommandsApi;
   readonly events: ZelavisEventsApi;
   readonly services: ZelavisPluginServicesApi;
   readonly context: () => PluginExecutionContext | undefined;
+  readonly createAPI: typeof createAPI;
+  readonly frontend: { configure(behavior: PluginFrontendBehavior): void };
+  readonly setup: (handler: PluginSetupHandler) => void;
   createClient(options: ZelavisClientOptions): ZelavisClient;
 }
 
@@ -332,13 +334,7 @@ export const zelavis: ZelavisSdk = {
       context.routes.push({ ...route, meta: { ...route.meta, pluginResource: resource, pluginAction: action } });
     },
   },
-  plugins: { ui: { menus: {
-    create(menu) {
-      const context = requireActivePluginContext("zelavis.plugins.ui.menus.create");
-      context.menus.push(menu);
-      return menu;
-    },
-  } } },
+  plugins: pluginsProxy,
   routes: {
     create(routes) {
       const context = requireActivePluginContext("zelavis.routes.create");
@@ -372,6 +368,31 @@ export const zelavis: ZelavisSdk = {
     },
   },
   context: () => getActivePluginContext(),
+  createAPI,
+  setup(handler) {
+    const context = requireActivePluginContext("zelavis.setup");
+    if (context.setup) throw new TypeError("Plugin setup is already registered.");
+    if (typeof handler !== "function") throw new TypeError("Plugin setup requires a function.");
+    context.setup = handler;
+  },
+  frontend: {
+    configure(behavior) {
+      const context = requireActivePluginContext("zelavis.frontend.configure");
+      if (context.kind !== "frontend" || (context.manifest.zelavis?.frontend as { runtime?: string } | undefined)?.runtime !== "static") {
+        throw new TypeError("Frontend behavior requires a static frontend manifest.");
+      }
+      if (context.frontend) throw new TypeError("Frontend behavior is already registered.");
+      for (const key of Object.keys(behavior)) {
+        if (!["shell", "devUrl", "devUrlExcludePaths"].includes(key)) {
+          throw new TypeError(`Frontend metadata belongs in package.json: ${key}`);
+        }
+      }
+      if (behavior.shell && typeof behavior.shell.render !== "function") {
+        throw new TypeError("A frontend shell requires a render function.");
+      }
+      context.frontend = Object.freeze({ ...behavior });
+    },
+  },
   createClient: createZelavisClient,
 };
 

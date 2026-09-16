@@ -561,19 +561,19 @@ test("service registry install state controls service activation on boot", async
   const config = await configResponse.json();
 
   assert.equal(config.serviceRegistry[0].status, "installed");
-  // The plugin ships its pages as page assets rather than through the bundle
-  // store. The bundle store above is still populated so this test proves the
+  // The plugin ships its pages in its tracked dashboard directory. The bundle
+  // store above is still populated so this test proves the
   // registry state drives activation either way, but the page the menu offers
   // is the one the plugin carries.
   assert.equal(
     config.serviceRegistry[0].menu.page.src,
-    "/zelavis/api/v1/runtime/service-page-assets/%40example%2Fcatalog/dist/catalog.html",
+    "/zelavis/api/v1/runtime/service-page-assets/%40example%2Fcatalog/dashboard/catalog.html",
   );
   assert.ok(config.services.some((service) => service.name === "catalog"));
 
   const servicePageResponse = await runtime.fetch(
     new Request(
-      "http://localhost/zelavis/api/v1/runtime/service-page-assets/%40example%2Fcatalog/dist/catalog.html",
+      "http://localhost/zelavis/api/v1/runtime/service-page-assets/%40example%2Fcatalog/dashboard/catalog.html",
     ),
     PLATFORM_OWNER_CONTEXT,
   );
@@ -1026,34 +1026,10 @@ test("node adapter installs uploaded ZIP service packages", async () => {
         zelavis: { kind: "plugin", namespace: "example" },
       }),
       "dist/index.mjs": `
-        export default {
-          name: "@example/zip-uploaded-service",
-          version: "0.0.3",
-          setup() {
-            return {
-              runtimeServices: [
-                {
-                  name: "zip-uploaded",
-                  basePath: "/zip-uploaded",
-                  service: {},
-                  api: {
-                    v1: [
-                      {
-                        id: "zip-uploaded.health",
-                        method: "GET",
-                        path: "/health",
-                        handler: () => ({
-                          status: 200,
-                          body: { ok: true, source: "zip-package" }
-                        })
-                      }
-                    ]
-                  }
-                }
-              ]
-            };
-          }
-        };
+        import { zelavis } from ${JSON.stringify(new URL("../dist/sdk/fetch.js", import.meta.url).href)};
+        export function register() {
+          zelavis.createAPI({ health: { list() { return { ok: true, source: "zip-package" }; } } });
+        }
       `,
     });
     const form = new FormData();
@@ -1082,6 +1058,7 @@ test("node adapter installs uploaded ZIP service packages", async () => {
       PLATFORM_OWNER_CONTEXT,
     );
     const created = await createResponse.json();
+    assert.equal(createResponse.status, 201, JSON.stringify(created));
     const service = created.services.find(
       (service) => service.name === "@example/zip-uploaded-service",
     );
@@ -1093,7 +1070,7 @@ test("node adapter installs uploaded ZIP service packages", async () => {
     assert.match(service.specifier, /services\/packages\/[a-f0-9]{64}\/dist\/index\.mjs$/);
 
     const healthResponse = await app.fetch(
-      new Request("http://localhost/zelavis/api/v1/zip-uploaded/health"),
+      new Request("http://localhost/zelavis/api/v1/plugins/example/health"),
     );
     const health = await healthResponse.json();
 

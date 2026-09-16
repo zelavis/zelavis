@@ -65,18 +65,21 @@ Keep assistant-ui on the presentation side of the boundary. Provider calls,
 thread persistence, tools, approvals, and privileged operations belong behind
 Zelavis capabilities and endpoints.
 
-## Service
+## SDK registration
 
-`@zelavis/ui/service` exports the dashboard service definition helpers used by the
-main `zelavis` runtime:
+`package.json` is the source of package identity and static frontend metadata.
+The `@zelavis/ui/service` entry exports `register`, which the standard
+`loadPluginPackage` loader calls once per load. It uses:
 
-```ts
-import { createZelavisDashboardService } from "@zelavis/ui/service";
-```
+- `zelavis.createAPI` to define the local shell rendering API.
+- `zelavis.plugins.ui.menus.create` to declare its dashboard menu.
+- `zelavis.frontend.configure` to attach the shell and development URL.
 
-The service declares `app: { mount: "/", mode: "spa" }` and ships the built
-dashboard bundle from this package. The runtime decides the effective mount
-(`/zelavis` by default) and turns the service `app` field into SPA routes.
+`@zelavis/ui/frontend` supplies the host adapter, passing runtime configuration
+and trusted scope to the loader. The runtime mounts the resulting frontend at
+`/zelavis` by default. There is no parallel dashboard service factory or
+exported metadata object. Cached ESM modules are safe to load in another runtime:
+the register hook runs again with that runtime's configuration.
 
 ## Development
 
