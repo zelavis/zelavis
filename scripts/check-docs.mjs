@@ -7,8 +7,6 @@ const docsRoot = "website/src/content/docs";
 const targets = [
   docsRoot,
   "packages/zelavis/README.md",
-  "packages/zelavis/ARCHITECTURE.md",
-  "packages/zelavis/TODO.md",
   "packages/zelavis/services/zelavis-ui/README.md",
 ];
 
