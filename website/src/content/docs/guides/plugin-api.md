@@ -112,6 +112,24 @@ Its package manifest still uses modern ESM:
 Every created Project locks the exact recipe/runtime version. A parent
 Platform update must not silently rewrite that lock.
 
+A recipe may also declare isolation intent under `zelavis.project.isolation`,
+for example `{ "boundary": { "minimum": "microvm", "enforcement": "required" },
+"network": "advisory" }`. The other dimensions are `filesystem` and `process`.
+Per-Project ceilings go under `resources`, each `{ "limit": integer,
+"enforcement": "required" | "advisory" }`: `cpuMillicores` (10–1,024,000),
+`memoryMiB` (16–16,777,216), `pids` (8–4,194,304) and `diskMiB`
+(16–1,073,741,824). Unknown keys or out-of-range limits fail package loading.
+The intent is locked with the recipe version and handed to the driver.
+
+If the server's default deployment backend does not advertise everything a
+recipe *requires*, creation uses the first other backend the administrator has
+enabled, that is healthy and can run Projects, and that does; otherwise it
+refuses rather than running with weaker isolation. Advisory items never change
+the backend and are reported on the Project. An existing Project keeps its
+backend: start and restart refuse instead of moving it. No shipped backend
+advertises hardened isolation or resource controls yet, so required intent
+cannot currently be satisfied.
+
 ### `kind: "frontend"`
 
 Use `frontend` for the public-facing frontend of an installation or Project.
@@ -271,7 +289,11 @@ With manifest namespace `seotool`, the operation is available as:
 
 Create a connected JS client with
 `zelavis.createClient({ baseUrl: "http://localhost:3000", headers: ... })`.
-Its `plugins` tree discovers mounted operations from runtime configuration.
+Its `plugins` tree discovers mounted operations from
+`GET /zelavis/api/v1/runtime/plugin-operations`, a catalogue revisioned by an
+ETag. Every call revalidates it, so a disabled or uninstalled operation stops
+working immediately, but an unchanged catalogue is answered with a bodyless
+304 instead of being transferred again.
 `client.pluginOperations()` lists their resource/action identities, methods,
 paths and specs. Plugin packages can publish typed client declarations through
 the exported `PluginApiRegistry` interface; otherwise discovered operations
@@ -346,6 +368,15 @@ every load. `loadPluginPackage` invokes it inside a fresh SDK context even when
 ESM has already cached the module. Host configuration is passed explicitly;
 `register` should register behavior, while `zelavis.setup` handles work that
 requires the running runtime.
+
+Under the Node and Bun adapters, each package's import and `register` hook must
+finish within 30 seconds (`admissionTimeoutMs` on `loadPluginPackage`), and up
+to eight packages load at once. A package that misses the deadline is not
+admitted, and any registration it attempts afterwards throws. The deadline
+cannot interrupt synchronous code that never yields. Hosts without async
+context propagation load packages one at a time with no deadline. A
+`zelavis.setup` handler has 60 seconds to finish; one that does not fails
+composition with the service's name, and it cannot add services afterwards.
 
 ```ts
 import { zelavis } from "zelavis/sdk";

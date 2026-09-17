@@ -8,6 +8,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   statSync,
 } from "node:fs";
@@ -78,10 +79,24 @@ function isFileSpecifier(specifier: string): boolean {
  * Compares resolved paths with a separator-terminated prefix so a sibling
  * directory such as `.zelavis/services-evil` does not match.
  */
-function isManagedServicePath(path: string, serviceDirectory: string): boolean {
+function isPathWithin(path: string, serviceDirectory: string): boolean {
   const resolved = resolve(path);
   const root = resolve(serviceDirectory);
   return resolved === root || resolved.startsWith(`${root}${sep}`);
+}
+
+/** Both the named path and its physical target must belong to the managed root. */
+function isManagedServicePath(path: string, serviceDirectory: string): boolean {
+  try {
+    const physicalRoot = realpathSync(serviceDirectory);
+    // Discovery imports canonical URLs. Hosts such as macOS expose the same
+    // managed root through /var and /private/var, so accept either root name.
+    if (!isPathWithin(path, serviceDirectory) && !isPathWithin(path, physicalRoot)) return false;
+    return isPathWithin(realpathSync(path), physicalRoot);
+  } catch {
+    // Missing paths and broken links cannot qualify as host-managed code.
+    return false;
+  }
 }
 
 function looksLikePathSpecifier(specifier: string): boolean {
@@ -792,12 +807,22 @@ export function createLocalFrontendDirectoryResolver(
       );
     }
 
-    let current = dirname(resolve(specifier));
     // Bounded by the service directory: a lock pointing outside the place
     // packages are installed is not something to walk the filesystem for.
     const root = serviceDirectory;
-    while (current.startsWith(root) && current !== root) {
-      if (existsSync(join(current, "package.json"))) {
+    if (!isManagedServicePath(specifier, root)) {
+      throw new Error(
+        `Frontend "${recipe.name}" recipe lock does not point at an installed package.`,
+      );
+    }
+    const physicalRoot = realpathSync(root);
+    let current = dirname(realpathSync(specifier));
+    while (isPathWithin(current, physicalRoot) && current !== physicalRoot) {
+      const manifestPath = join(current, "package.json");
+      if (existsSync(manifestPath)) {
+        if (!isManagedServicePath(manifestPath, current)) {
+          throw new Error(`Frontend "${recipe.name}" manifest does not point at an installed package.`);
+        }
         return current;
       }
       const parent = dirname(current);
@@ -862,14 +887,18 @@ export function createLocalRuntimeServiceImporter(
       if (!sources.filesystem && !isManaged(fileURLToPath(specifier))) {
         refuse("file:", "filesystem");
       }
-      return import(specifier);
+      const originalUrl = new URL(specifier);
+      const physicalUrl = pathToFileURL(realpathSync(fileURLToPath(originalUrl)));
+      physicalUrl.search = originalUrl.search;
+      physicalUrl.hash = originalUrl.hash;
+      return import(physicalUrl.href);
     }
 
     if (looksLikePathSpecifier(specifier)) {
       if (!sources.filesystem && !isManaged(specifier)) {
         refuse("Filesystem path", "filesystem");
       }
-      return importFilePath(specifier);
+      return importFilePath(realpathSync(specifier));
     }
 
     // A bare package specifier resolves through the host's own installed
@@ -1106,7 +1135,7 @@ export async function discoverProductServices(
     // exports path is not allowed to reach out of the package it belongs to.
     // Without this an `exports` of "../../../etc/something" would make the
     // Platform import a file the operator never put in this folder.
-    if (!isManagedServicePath(entryPath, packageDirectory)) {
+    if (!isPathWithin(entryPath, packageDirectory)) {
       skip(packageName, 'its "exports" entry resolves outside the package directory.');
       continue;
     }
@@ -1115,7 +1144,14 @@ export async function discoverProductServices(
       continue;
     }
 
-    const entryUrl = pathToFileURL(entryPath).href;
+    if (!isManagedServicePath(packageDirectory, root) ||
+        !isManagedServicePath(join(packageDirectory, "package.json"), packageDirectory) ||
+        !isManagedServicePath(entryPath, packageDirectory)) {
+      skip(packageName, 'its physical source resolves outside the package directory or discovery root.');
+      continue;
+    }
+
+    const entryUrl = pathToFileURL(realpathSync(entryPath)).href;
     discovered.push({
       specifier: entryUrl,
       status: "installed",

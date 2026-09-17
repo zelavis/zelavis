@@ -1,7 +1,17 @@
-import type {
-  ZelavisHostOperationExecutor,
-  ZelavisHostOperationRequest,
+import {
+  resolveTrustedEd25519Key,
+  type ZelavisHostOperationExecutor,
+  type ZelavisHostOperationRequest,
+  type ZelavisHostOperationTrustStore,
 } from "../deployment/index.js";
+
+/**
+ * Platform authority keys an Agent accepts envelopes from. Same structure and
+ * rules as the release trust store; a different file with different owners.
+ */
+export type ZelavisAgentAuthorityTrustStore = ZelavisHostOperationTrustStore;
+
+const AGENT_AUTHORITY_CONTEXT = "zelavis-agent-authority-v2\n";
 
 export type ZelavisAgentOperationStatus =
   | "queued"
@@ -39,6 +49,9 @@ export interface ZelavisAgentOperationSummary {
   readonly attempts: number;
   readonly leaseExpiresAt?: string;
   readonly exitCode?: number;
+  /** A manifest-declared JSON result. */
+  readonly result?: Readonly<Record<string, unknown>>;
+  readonly resultError?: string;
   readonly startedAt?: string;
   readonly finishedAt?: string;
   readonly createdAt: string;
@@ -68,11 +81,19 @@ export interface ZelavisAgentOperationManagerOptions {
 }
 
 export interface ZelavisAgentAuthorityClaims {
+  /** The Platform key that signs the envelope; must be in the Agent's trust store. */
+  readonly keyId: string;
   readonly agentId: string;
   readonly operationId: string;
   readonly operation: string;
   readonly version: string;
   readonly artifactDigest: string;
+  /**
+   * SHA-256 of the request's arguments (`hostOperationArgumentsDigest`), so an
+   * envelope authorizes exactly one argument set rather than any values the
+   * manifest would accept.
+   */
+  readonly argumentsDigest: string;
   readonly projectId?: string;
   readonly actorId: string;
   readonly issuedAt: number;
@@ -96,13 +117,26 @@ function base64UrlDecode(value: string): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
+/** Digest of a host operation's arguments, independent of key order. */
+export async function hostOperationArgumentsDigest(
+  args: Readonly<Record<string, string>>,
+): Promise<string> {
+  const canonical = JSON.stringify(
+    Object.keys(args).sort().map((name) => [name, args[name]]),
+  );
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
+  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
 function canonicalAgentClaims(claims: ZelavisAgentAuthorityClaims): string {
   return JSON.stringify([
+    claims.keyId,
     claims.agentId,
     claims.operationId,
     claims.operation,
     claims.version,
     claims.artifactDigest,
+    claims.argumentsDigest,
     claims.projectId ?? null,
     claims.actorId,
     claims.issuedAt,
@@ -111,28 +145,17 @@ function canonicalAgentClaims(claims: ZelavisAgentAuthorityClaims): string {
   ]);
 }
 
-async function importAgentSigningKey(secret: string): Promise<CryptoKey> {
-  if (secret.length < 32) {
-    throw new TypeError("Agent authority secret must contain at least 32 characters.");
-  }
-  return crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign", "verify"],
-  );
-}
-
 function validateAgentAuthorityClaims(claims: ZelavisAgentAuthorityClaims) {
   const boundedId = (value: string, maximum = 256) =>
     typeof value === "string" && value.length > 0 && value.length <= maximum;
   if (
+    !boundedId(claims.keyId, 128) ||
     !boundedId(claims.agentId) ||
     !boundedId(claims.operationId, 128) ||
     !boundedId(claims.operation, 128) ||
     !boundedId(claims.version, 64) ||
     !/^[a-f0-9]{64}$/.test(claims.artifactDigest) ||
+    !/^[a-f0-9]{64}$/.test(claims.argumentsDigest) ||
     (claims.projectId !== undefined && !boundedId(claims.projectId)) ||
     !boundedId(claims.actorId) ||
     !boundedId(claims.nonce) ||
@@ -145,26 +168,33 @@ function validateAgentAuthorityClaims(claims: ZelavisAgentAuthorityClaims) {
   }
 }
 
-/** Signs one short-lived, operation-specific Agent authority envelope. */
+/**
+ * Signs one short-lived, operation-specific Agent authority envelope with the
+ * Platform's Ed25519 key. Only the Platform holds the private key; an Agent
+ * verifies with the public half, so compromising an Agent does not let it
+ * issue authority to itself or any other Agent.
+ */
 export async function signAgentAuthority(
-  secret: string,
+  privateKey: CryptoKey,
   claims: ZelavisAgentAuthorityClaims,
 ): Promise<string> {
   validateAgentAuthorityClaims(claims);
-  const payload = canonicalAgentClaims(claims);
+  const payload = new TextEncoder().encode(canonicalAgentClaims(claims));
   const signature = await crypto.subtle.sign(
-    "HMAC",
-    await importAgentSigningKey(secret),
-    new TextEncoder().encode(payload),
+    "Ed25519",
+    privateKey,
+    new TextEncoder().encode(`${AGENT_AUTHORITY_CONTEXT}${canonicalAgentClaims(claims)}`),
   );
-  return `${base64UrlEncode(new TextEncoder().encode(payload))}.${base64UrlEncode(
-    new Uint8Array(signature),
-  )}`;
+  return `${base64UrlEncode(payload)}.${base64UrlEncode(new Uint8Array(signature))}`;
 }
 
-/** Verifies audience, request binding, expiry, and optional replay consumption. */
+/**
+ * Verifies signer trust, audience, exact request binding (including
+ * arguments), expiry, and optional replay consumption, in that order: a nonce
+ * is only consumed by an envelope that is otherwise valid.
+ */
 export async function verifyAgentAuthority(
-  secret: string,
+  trust: ZelavisAgentAuthorityTrustStore,
   token: string,
   request: ZelavisHostOperationRequest,
   options: {
@@ -173,35 +203,28 @@ export async function verifyAgentAuthority(
     readonly consumeNonce?: (nonce: string, expiresAt: number) => boolean;
   },
 ): Promise<ZelavisAgentAuthorityClaims | undefined> {
+  if (typeof token !== "string" || token.length > 16_384) return undefined;
   const separator = token.indexOf(".");
   if (separator <= 0 || separator === token.length - 1) return undefined;
-  let payloadBytes: Uint8Array<ArrayBuffer>;
+  let payloadText: string;
   let signatureBytes: Uint8Array<ArrayBuffer>;
-  try {
-    payloadBytes = base64UrlDecode(token.slice(0, separator));
-    signatureBytes = base64UrlDecode(token.slice(separator + 1));
-  } catch {
-    return undefined;
-  }
-  if (!(await crypto.subtle.verify(
-    "HMAC",
-    await importAgentSigningKey(secret),
-    signatureBytes,
-    payloadBytes,
-  ))) return undefined;
   let decoded: unknown;
   try {
-    decoded = JSON.parse(new TextDecoder().decode(payloadBytes));
+    payloadText = new TextDecoder("utf-8", { fatal: true }).decode(base64UrlDecode(token.slice(0, separator)));
+    signatureBytes = base64UrlDecode(token.slice(separator + 1));
+    decoded = JSON.parse(payloadText);
   } catch {
     return undefined;
   }
-  if (!Array.isArray(decoded) || decoded.length !== 10) return undefined;
+  if (!Array.isArray(decoded) || decoded.length !== 12) return undefined;
   const [
+    keyId,
     agentId,
     operationId,
     operation,
     version,
     artifactDigest,
+    argumentsDigest,
     projectId,
     actorId,
     issuedAt,
@@ -209,11 +232,13 @@ export async function verifyAgentAuthority(
     nonce,
   ] = decoded;
   if (
+    typeof keyId !== "string" ||
     typeof agentId !== "string" ||
     typeof operationId !== "string" ||
     typeof operation !== "string" ||
     typeof version !== "string" ||
     typeof artifactDigest !== "string" ||
+    typeof argumentsDigest !== "string" ||
     (projectId !== null && typeof projectId !== "string") ||
     typeof actorId !== "string" ||
     typeof issuedAt !== "number" ||
@@ -221,12 +246,23 @@ export async function verifyAgentAuthority(
     typeof nonce !== "string"
   ) return undefined;
   const now = options.now ?? Date.now();
+  // The key must be trusted now, not merely when the envelope claims it was
+  // issued: authority is short-lived, so a closed or revoked key issues none.
+  const publicKey = await resolveTrustedEd25519Key(trust, keyId, now);
+  if (!publicKey || signatureBytes.byteLength !== 64) return undefined;
+  if (!(await crypto.subtle.verify(
+    "Ed25519",
+    publicKey,
+    signatureBytes,
+    new TextEncoder().encode(`${AGENT_AUTHORITY_CONTEXT}${payloadText}`),
+  ))) return undefined;
   if (
     agentId !== options.audienceAgentId ||
     operationId !== request.operationId ||
     operation !== request.operation ||
     version !== request.version ||
     artifactDigest !== request.artifactDigest ||
+    argumentsDigest !== await hostOperationArgumentsDigest(request.arguments) ||
     (projectId ?? undefined) !== request.projectId ||
     issuedAt > now + 5_000 ||
     expiresAt <= now ||
@@ -236,11 +272,13 @@ export async function verifyAgentAuthority(
     return undefined;
   }
   return {
+    keyId,
     agentId,
     operationId,
     operation,
     version,
     artifactDigest,
+    argumentsDigest,
     ...(projectId ? { projectId } : {}),
     actorId,
     issuedAt,

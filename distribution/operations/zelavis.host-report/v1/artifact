@@ -1,0 +1,66 @@
+#!/bin/sh
+# zelavis.host-report v1 — read-only facts about the Agent's host, as one JSON
+# object on stdout. No arguments, no writes, no network. Every string is
+# reduced to a safe character set and every number is checked, so the output
+# is valid JSON without an escaping library. Unknown facts are null.
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+str() { # str <value> -> "value" with only [A-Za-z0-9._+-], or null
+  cleaned=$(printf '%s' "$1" | tr -cd 'A-Za-z0-9._+-' | cut -c1-64)
+  if [ -n "$cleaned" ]; then printf '"%s"' "$cleaned"; else printf 'null'; fi
+}
+num() { # num <value> -> integer or null
+  case "$1" in
+    ''|*[!0-9]*) printf 'null' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+bool() { if "$@" >/dev/null 2>&1; then printf 'true'; else printf 'false'; fi; }
+meminfo() { # meminfo <Key> -> kB value
+  [ -r /proc/meminfo ] || return 0
+  while read -r key value _unit; do
+    [ "$key" = "$1:" ] && { printf '%s' "$value"; return 0; }
+  done < /proc/meminfo
+}
+
+os=$(uname -s 2>/dev/null)
+kernel=$(uname -r 2>/dev/null)
+machine=$(uname -m 2>/dev/null)
+cpus=$(getconf _NPROCESSORS_ONLN 2>/dev/null)
+
+cgroup=null
+if [ -f /sys/fs/cgroup/cgroup.controllers ]; then cgroup='"v2"'
+elif [ -d /sys/fs/cgroup/memory ]; then cgroup='"v1"'
+fi
+own_cgroup=""
+if [ -r /proc/self/cgroup ]; then
+  while IFS= read -r line; do
+    case "$line" in 0::*) own_cgroup="/sys/fs/cgroup${line#0::}" ;; esac
+  done < /proc/self/cgroup
+fi
+cgroup_kill=false
+[ -n "$own_cgroup" ] && [ -e "$own_cgroup/cgroup.kill" ] && cgroup_kill=true
+
+wsl=false
+[ -r /proc/version ] && grep -qi microsoft /proc/version 2>/dev/null && wsl=true
+
+root_free=""
+df_line=$(df -Pk / 2>/dev/null | tail -n 1)
+[ -n "$df_line" ] && root_free=$(printf '%s\n' "$df_line" | awk '{print $4}')
+
+printf '{"schema":1'
+printf ',"os":%s' "$(str "$os")"
+printf ',"kernelRelease":%s' "$(str "$kernel")"
+printf ',"architecture":%s' "$(str "$machine")"
+printf ',"cpus":%s' "$(num "$cpus")"
+printf ',"memoryTotalKiB":%s' "$(num "$(meminfo MemTotal)")"
+printf ',"memoryAvailableKiB":%s' "$(num "$(meminfo MemAvailable)")"
+printf ',"rootFilesystemFreeKiB":%s' "$(num "$root_free")"
+printf ',"cgroup":%s' "$cgroup"
+printf ',"cgroupKill":%s' "$cgroup_kill"
+printf ',"kvmDevice":%s' "$(bool test -e /dev/kvm)"
+printf ',"kvmReadWrite":%s' "$( { [ -r /dev/kvm ] && [ -w /dev/kvm ]; } && printf true || printf false)"
+printf ',"wsl":%s' "$wsl"
+printf '}\n'

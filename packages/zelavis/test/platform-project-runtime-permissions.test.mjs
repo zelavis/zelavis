@@ -93,3 +93,14 @@ test("the forwarded envelope stays bounded", () => {
 test("nobody gets anything without a principal", () => {
   assert.deepEqual(projectRuntimePermissions(undefined, PROJECT), []);
 });
+
+test("runtime-wide grants do not become Project grants and Project grants cannot delegate host code installation", () => {
+  for (const scope of [undefined, { type: "system" }, { type: "service", serviceName: "shop" }]) {
+    assert.deepEqual(projectRuntimePermissions({ id: "user", type: "user", grants: [{ permission: "project.view", scope }] }, PROJECT), []);
+  }
+  const scoped = projectRuntimePermissions({ id: "user", type: "user", grants: [{ permission: "system.services.manage", scope: { type: "project", projectId: PROJECT } }] }, PROJECT);
+  assert.deepEqual(scoped, []);
+  for (const scope of [undefined, { type: "system" }]) {
+    assert.ok(projectRuntimePermissions({ id: "operator", type: "user", grants: [{ permission: "system.services.manage", scope }] }, PROJECT).includes("system.services.manage"));
+  }
+});

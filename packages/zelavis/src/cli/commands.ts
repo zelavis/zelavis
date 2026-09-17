@@ -5,6 +5,8 @@ import {
 } from "./bootstrap.js";
 import { runAgentCommand } from "./agent.js";
 import { runPluginsCommand } from "./plugins.js";
+import { runProjectsCommand } from "./projects.js";
+import { runHostOperationsCommand } from "./host-operations.js";
 import { ZelavisClientHttpError } from "../sdk/fetch.js";
 import { promptSecret, readAllStdin } from "./prompt.js";
 import {
@@ -13,6 +15,7 @@ import {
   listRuntimeExtensions,
   formatRuntimeServiceList,
   listRuntimeServices,
+  listRuntimeServiceSources,
   registerRuntimeService,
   updateRuntimeService,
   type RuntimeServiceSource,
@@ -50,6 +53,13 @@ interface ParsedArgs {
   provider?: string;
   token?: string;
   forService?: string;
+  operationsRoot?: string;
+  operationTrust?: string;
+  platformAuthority?: string;
+  operationCgroup?: string;
+  operationMemoryMaxBytes?: number;
+  operationPidsMax?: number;
+  requireRootOwnedOperations: boolean;
   passwordStdin: boolean;
   install: boolean;
   help: boolean;
@@ -63,14 +73,19 @@ Usage:
   zelavis plugins <namespace> <resource> <action> [--file input.json] [--url <url>] [--json]
   zelavis plugins [<namespace> [<resource>]] --help [--url <url>]
   zelavis serve [--host <host>] [--port <port>] [--data-dir <path>]
+  zelavis projects <list|recipes|get|create|start|stop|restart|logs|remove> [id|name] [--recipe <name>] [--id <id>] [--no-start] [--url <url>] [--token <token>] [--json]
+  zelavis host-operations <catalog|submit|get|audit> [operation|id] [--version <v>] [--project <id>] [--arg name=value] [--json]
   zelavis services list [--url <url>]
+  zelavis services sources [--url <url>] [--token <session-token>]
   zelavis services install <name> [--url <url>]
   zelavis services disable <name> [--url <url>]
   zelavis services register --specifier <specifier> [--name <name>] [--install] [--url <url>]
   zelavis bootstrap --email <email> [--display-name <name>] [--password-stdin] [--url <url>]
   zelavis bootstrap status [--url <url>]
   zelavis extensions [--for <service>] [--url <url>]
-  zelavis agent [--data-dir <path>]
+  zelavis agent [--data-dir <path>] [--operations-root <dir> --operation-trust <file> --platform-authority <file>]
+                [--operation-cgroup delegated|<path>] [--operation-memory-max <bytes>]
+                [--operation-pids-max <n>] [--require-root-owned-operations]
 
 Commands:
   serve                     Run the long-lived Zelavis Platform OS.
@@ -80,7 +95,10 @@ Commands:
   agent                     Run the Zelavis Agent, which executes Project
                             processes. Supervise it yourself: it is meant to
                             outlive the Platform that drives it.
+  projects                  List, create, start, stop, restart, remove and read
+                            logs of Projects; recipes lists Project recipes.
   services list             List runtime service registry entries.
+  services sources          Inspect administrative source diagnostics as JSON.
   services install          Mark a registered service as installed.
   services disable          Mark an installed service as available.
   services register         Register an ESM service specifier.
@@ -100,7 +118,8 @@ Options:
   --display-name <name>     Owner display name.
   --provider <provider>     Credential provider. Defaults to password.
   --for <service>           Limit extensions to those extending this service.
-  --token <token>           Bootstrap token. Defaults to ZELAVIS_BOOTSTRAP_TOKEN.
+  --token <token>           Bootstrap token for bootstrap; session token for services.
+                            Bootstrap defaults to ZELAVIS_BOOTSTRAP_TOKEN.
   --password-stdin          Read the owner password from standard input.
   --version, -v             Print the CLI version.
   --help, -h                Show this help message.
@@ -133,6 +152,7 @@ function parseOrder(value: string): number {
 
 function parseArgs(args: readonly string[]): ParsedArgs {
   const parsed: ParsedArgs = {
+    requireRootOwnedOperations: false,
     passwordStdin: false,
     install: false,
     help: false,
@@ -197,6 +217,28 @@ function parseArgs(args: readonly string[]): ParsedArgs {
       index += 1;
     } else if (arg.startsWith("--for=")) {
       parsed.forService = arg.slice("--for=".length);
+    } else if (arg === "--require-root-owned-operations") {
+      parsed.requireRootOwnedOperations = true;
+    } else if (
+      ["--operations-root", "--operation-trust", "--platform-authority", "--operation-cgroup", "--operation-memory-max", "--operation-pids-max"]
+        .some((flag) => arg === flag || arg.startsWith(`${flag}=`))
+    ) {
+      const separator = arg.indexOf("=");
+      const flag = separator === -1 ? arg : arg.slice(0, separator);
+      const value = separator === -1 ? readValue(args, index, arg) : arg.slice(separator + 1);
+      if (separator === -1) index += 1;
+      if (flag === "--operations-root") parsed.operationsRoot = value;
+      if (flag === "--operation-trust") parsed.operationTrust = value;
+      if (flag === "--platform-authority") parsed.platformAuthority = value;
+      if (flag === "--operation-cgroup") parsed.operationCgroup = value;
+      if (flag === "--operation-memory-max" || flag === "--operation-pids-max") {
+        const number = Number(value);
+        if (!Number.isSafeInteger(number) || number <= 0) {
+          throw new Error(`${flag} requires a positive integer.`);
+        }
+        if (flag === "--operation-memory-max") parsed.operationMemoryMaxBytes = number;
+        else parsed.operationPidsMax = number;
+      }
     } else if (arg === "--password-stdin") {
       parsed.passwordStdin = true;
     } else if (arg === "--password" || arg.startsWith("--password=")) {
@@ -250,8 +292,17 @@ function parseArgs(args: readonly string[]): ParsedArgs {
 }
 
 async function runServicesCommand(parsed: ParsedArgs): Promise<void> {
+  const clientOptions = {
+    url: parsed.url,
+    headers: parsed.token ? { authorization: `Bearer ${parsed.token}` } : undefined,
+  };
+  if (parsed.target === "sources") {
+    const sources = await listRuntimeServiceSources(clientOptions);
+    console.log(JSON.stringify({ sources }, null, 2));
+    return;
+  }
   if (parsed.target === "list") {
-    const services = await listRuntimeServices({ url: parsed.url });
+    const services = await listRuntimeServices(clientOptions);
     console.log(formatRuntimeServiceList(services));
     return;
   }
@@ -261,7 +312,7 @@ async function runServicesCommand(parsed: ParsedArgs): Promise<void> {
     const result = await updateRuntimeService(
       parsed.name,
       { status: "installed" },
-      { url: parsed.url },
+      clientOptions,
     );
     console.log(`Installed ${parsed.name}.`);
     const activation = formatActivationResult(result.activation);
@@ -274,7 +325,7 @@ async function runServicesCommand(parsed: ParsedArgs): Promise<void> {
     const result = await updateRuntimeService(
       parsed.name,
       { status: "available" },
-      { url: parsed.url },
+      clientOptions,
     );
     console.log(`Disabled ${parsed.name}.`);
     const activation = formatActivationResult(result.activation);
@@ -292,10 +343,10 @@ async function runServicesCommand(parsed: ParsedArgs): Promise<void> {
         order: parsed.order,
         status: parsed.install ? "installed" : "available",
       },
-      { url: parsed.url },
+      clientOptions,
     );
     const service = result.services.find(
-      (entry) => entry.specifier === parsed.specifier || entry.name === parsed.name,
+      (entry) => entry.name === parsed.name,
     );
     console.log(`Registered ${service?.name ?? parsed.specifier}.`);
     const activation = formatActivationResult(result.activation);
@@ -304,7 +355,7 @@ async function runServicesCommand(parsed: ParsedArgs): Promise<void> {
   }
 
   throw new Error(
-    `Unknown services command "${parsed.target ?? ""}". Expected list, register, install, or disable.`,
+    `Unknown services command "${parsed.target ?? ""}". Expected list, sources, register, install, or disable.`,
   );
 }
 
@@ -394,6 +445,14 @@ export async function runCli(
       await runPluginsCommand(args.slice(1));
       return;
     }
+    if (args[0] === "projects") {
+      await runProjectsCommand(args.slice(1));
+      return;
+    }
+    if (args[0] === "host-operations") {
+      await runHostOperationsCommand(args.slice(1));
+      return;
+    }
     const parsed = parseArgs(args);
 
     if (parsed.version) {
@@ -429,6 +488,11 @@ export async function runCli(
       return;
     }
     if (parsed.command === "agent") {
+      const env = process.env;
+      const operationsRoot = parsed.operationsRoot ?? env.ZELAVIS_AGENT_OPERATIONS_ROOT;
+      const operationTrust = parsed.operationTrust ?? env.ZELAVIS_AGENT_OPERATION_TRUST;
+      const operationCgroup = parsed.operationCgroup ?? env.ZELAVIS_AGENT_OPERATION_CGROUP;
+      const platformAuthority = parsed.platformAuthority ?? env.ZELAVIS_AGENT_PLATFORM_AUTHORITY;
       await runAgentCommand({
         ...(parsed.dataDirectory ?? process.env.ZELAVIS_DATA_DIR
           ? {
@@ -436,6 +500,16 @@ export async function runCli(
                 process.env.ZELAVIS_DATA_DIR) as string,
             }
           : {}),
+        ...(operationsRoot ? { operationsRoot } : {}),
+        ...(operationTrust ? { operationTrust } : {}),
+        ...(platformAuthority ? { platformAuthority } : {}),
+        ...(operationCgroup ? { operationCgroup } : {}),
+        ...(parsed.operationMemoryMaxBytes !== undefined
+          ? { operationMemoryMaxBytes: parsed.operationMemoryMaxBytes }
+          : {}),
+        ...(parsed.operationPidsMax !== undefined ? { operationPidsMax: parsed.operationPidsMax } : {}),
+        requireRootOwnedOperations:
+          parsed.requireRootOwnedOperations || env.ZELAVIS_AGENT_REQUIRE_ROOT_OWNED_OPERATIONS === "1",
       });
       return;
     }
@@ -449,7 +523,7 @@ export async function runCli(
     }
     throw new Error(`Unknown command "${parsed.command}".`);
   } catch (error) {
-    if (args[0] === "plugins") {
+    if (args[0] === "plugins" || ((args[0] === "projects" || args[0] === "host-operations") && args.includes("--json"))) {
       console.error(JSON.stringify({
         error: error instanceof Error ? error.message : String(error),
         ...(error instanceof ZelavisClientHttpError ? { status: error.response.status, details: error.body } : {}),

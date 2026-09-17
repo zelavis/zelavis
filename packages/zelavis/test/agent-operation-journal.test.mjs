@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   ZelavisAgentOperationConflictError,
   createAgentNonceTracker,
+  hostOperationArgumentsDigest,
   createAgentOperationManager,
   createMemorySystemStore,
   signAgentAuthority,
@@ -27,22 +28,31 @@ function request(overrides = {}) {
 }
 
 test("Agent authority is short-lived, audience-bound, request-bound, and replay-aware", async () => {
-  const secret = "agent-test-secret-that-is-at-least-32-characters";
+  const { privateKey, publicKey } = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+  const trustedKey = {
+    keyId: "platform-a",
+    publicKey: Buffer.from(await crypto.subtle.exportKey("raw", publicKey)).toString("base64"),
+    notBefore: new Date(Date.now() - 60_000).toISOString(),
+    notAfter: new Date(Date.now() + 3_600_000).toISOString(),
+  };
+  const secret = { keys: [trustedKey] };
   const input = request();
   const now = Date.now();
   const claims = {
+    keyId: "platform-a",
     agentId: "agent-a",
     operationId: input.operationId,
     operation: input.operation,
     version: input.version,
     artifactDigest: input.artifactDigest,
+    argumentsDigest: await hostOperationArgumentsDigest(input.arguments),
     projectId: input.projectId,
     actorId: "owner-a",
     issuedAt: now,
     expiresAt: now + 30_000,
     nonce: "nonce-a",
   };
-  const authority = await signAgentAuthority(secret, claims);
+  const authority = await signAgentAuthority(privateKey, claims);
   const signedRequest = { ...input, authority };
   const consumeNonce = createAgentNonceTracker();
 
@@ -73,6 +83,37 @@ test("Agent authority is short-lived, audience-bound, request-bound, and replay-
     await verifyAgentAuthority(secret, authority, {
       ...signedRequest,
       projectId: "site-b",
+    }, {
+      audienceAgentId: "agent-a",
+      now: now + 1,
+    }),
+    undefined,
+  );
+  // Only a trusted, unrevoked key signs authority; a forged key id or a
+  // revoked key issues nothing.
+  for (const trust of [
+    { keys: [{ ...trustedKey, keyId: "platform-b" }] },
+    { keys: [trustedKey], revokedKeyIds: ["platform-a"] },
+    { keys: [{ ...trustedKey, notAfter: new Date(now - 1).toISOString() }] },
+  ]) {
+    assert.equal(
+      await verifyAgentAuthority(trust, authority, signedRequest, { audienceAgentId: "agent-a", now: now + 1 }),
+      undefined,
+    );
+  }
+  const stranger = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+  assert.equal(
+    await verifyAgentAuthority(secret, await signAgentAuthority(stranger.privateKey, claims), signedRequest, {
+      audienceAgentId: "agent-a", now: now + 1,
+    }),
+    undefined,
+  );
+
+  // The envelope authorizes one argument set, not whatever the manifest accepts.
+  assert.equal(
+    await verifyAgentAuthority(secret, authority, {
+      ...signedRequest,
+      arguments: { project: "site-b" },
     }, {
       audienceAgentId: "agent-a",
       now: now + 1,

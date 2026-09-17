@@ -47,10 +47,20 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build the runtime used by distribution contracts
+        run: pnpm --filter zelavis build
+
       - name: Validate distribution contracts
         run: pnpm distribution:test
 
       - name: Build target-native release artifacts
+        env:
+          # Host operations shipped in distribution/operations are signed with
+          # the release key. Tag builds must sign them; manual builds without
+          # the secret omit them rather than shipping unsigned operations.
+          ZELAVIS_OPERATION_SIGNING_KEY: ${{ secrets.ZELAVIS_OPERATION_SIGNING_KEY }}
+          ZELAVIS_OPERATION_SIGNING_KEY_ID: ${{ secrets.ZELAVIS_OPERATION_SIGNING_KEY_ID }}
+          ZELAVIS_SKIP_UNSIGNED_OPERATIONS: ${{ startsWith(github.ref, 'refs/tags/') && '0' || '1' }}
         run: pnpm distribution:build
 
       - name: Smoke-test packaged CLI

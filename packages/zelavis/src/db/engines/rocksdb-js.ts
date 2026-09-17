@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Array as Arr, Effect, Stream, type Scope } from "effect";
 import { StoreError } from "../errors.js";
 import { compareKeys } from "../keys.js";
 import { scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
+import { exclusiveKvEngine } from "./exclusive-kv.js";
 import { openStoreOverKv } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
 import type { ObjectStoreApi } from "../store.js";
@@ -159,10 +160,10 @@ export const makeRocksdbJsEngine = (
     ),
     (db) => Effect.orDie(Effect.sync(() => db.close())),
   ).pipe(
-    Effect.map((db): KvEngine => {
+    Effect.flatMap((db) => {
       const fail = (op: string) => (cause: unknown) => new StoreError({ op, cause });
 
-      return {
+      return exclusiveKvEngine({
         get: (key) =>
           Effect.tryPromise({
             try: async () => {
@@ -262,7 +263,7 @@ export const makeRocksdbJsEngine = (
           }).pipe(Effect.asVoid),
 
         close: Effect.orDie(Effect.sync(() => db.close())),
-      };
+      }, realpathSync(join(directory, partition)));
     }),
   );
 

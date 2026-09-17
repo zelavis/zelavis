@@ -1,7 +1,7 @@
 import { Effect, Stream, type Scope } from "effect";
 import { StoreError } from "../errors.js";
 import { compareKeys } from "../keys.js";
-import { scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
+import { equalBytes, scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
 import { openStoreOverKv } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
 import type { ObjectStoreApi } from "../store.js";
@@ -17,7 +17,7 @@ interface LmdbDatabase {
   get(key: Uint8Array): Uint8Array | undefined;
   put(key: Uint8Array, value: Uint8Array): unknown;
   remove(key: Uint8Array): unknown;
-  transaction<A>(run: () => A): Promise<A>;
+  childTransaction<A>(run: () => A): Promise<A>;
   getRange(options: {
     start?: Uint8Array;
     end?: Uint8Array;
@@ -135,10 +135,10 @@ export const makeLmdbEngine = (
         write: (writes: ReadonlyArray<KvWrite>) =>
           Effect.tryPromise({
             try: () =>
-              // One LMDB transaction per batch. The single-writer design means
+              // One abortable LMDB child transaction per batch. The single-writer design means
               // nothing else is inside it, which is the atomicity the store
               // depends on rather than a property it has to arrange.
-              db.transaction(() => {
+              db.childTransaction(() => {
                 for (const write of writes) {
                   if (write.op === "put") db.put(write.key, write.value);
                   else db.remove(write.key);
@@ -146,6 +146,21 @@ export const makeLmdbEngine = (
               }),
             catch: fail("lmdb.write"),
           }).pipe(Effect.asVoid),
+
+        conditionalWrite: (writes, conditions) => Effect.tryPromise({
+          try: () => db.childTransaction(() => {
+            for (const condition of conditions) {
+              if (!equalBytes(db.get(condition.key), condition.value)) return false;
+            }
+            for (const write of writes) {
+              if (write.op === "put") db.put(write.key, write.value);
+              else db.remove(write.key);
+            }
+            return true;
+          }),
+          catch: fail("lmdb.conditionalWrite"),
+        }),
+        coordination: "host",
 
         close: Effect.orDie(Effect.promise(() => db.close())),
       };

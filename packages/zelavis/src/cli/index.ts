@@ -14,4 +14,6 @@
 export * from "./agent.js";
 export * from "./bootstrap.js";
 export * from "./commands.js";
+export * from "./projects.js";
+export * from "./host-operations.js";
 export * from "./services.js";

@@ -1,3 +1,4 @@
+import { createMemoryServiceRegistryStore } from "../dist/platform/settings.js";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -252,8 +253,8 @@ test("Zelavis applies adapter resolve output as platform resources, metadata, an
         metadata: { runtime: "custom", marker: true },
         resources: {
           kv: {
-            get() {
-              return "alpha";
+            get(key) {
+              return key === "x" ? "alpha" : undefined;
             },
             set() {},
             delete() {
@@ -349,20 +350,9 @@ test("Zelavis platform resources back dashboard settings, storage service, and p
               order: 0,
             },
           ],
-          store: {
-            read() {
-              return [
-                {
-                  name: "@example/catalog",
-                  status: "installed",
-                  order: 0,
-                },
-              ];
-            },
-            write(entries) {
-              return entries;
-            },
-          },
+          store: createMemoryServiceRegistryStore([
+            { name: "@example/catalog", status: "installed", order: 0 },
+          ]),
         },
       };
     },

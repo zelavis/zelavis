@@ -129,12 +129,47 @@ before editing.
   contracts. The local Node process driver is Platform-owned and stops children
   during `Zelavis.close()`; production worker Agents should be separately
   supervised.
+- Project/service grants require exact route scopes and cannot authorize
+  unscoped routes. Unscoped/system grants match runtime-wide routes; top-level
+  permissions span scopes. Signed Gateway audiences confine concrete local
+  permissions to a child runtime; Project grants never imply Platform host-code
+  installation authority. Preserve this boundary across JS, HTTP, and CLI.
 - Keep deployment backend adapters centralized under `src/backends/<id>` with
   one shared registry/policy contract. Native, Docker, and future backend logic
   must not be scattered as Platform or Node-adapter special cases. Keep signed
   authority, durable leases, audit state, and privileged execution in the
   shared Agent subsystem rather than duplicating queues or command runners per
   backend.
+- Centralized backend policy/capability/intent stays in `src/backends`, while
+  concrete host filesystem/process/socket/native/command/virtualization work
+  belongs behind runtime/Agent bindings in `src/adapters`. Share implementations
+  only for supported APIs or use injected host interfaces; `_shared.ts` currently
+  imports Node APIs. Runtime-neutral domain logic remains in core/App/Platform,
+  and browser SDK imports cannot reach host implementations. Firecracker requires
+  Linux/KVM and is a conditional host dependency; Windows/macOS native paths
+  need separate qualification. The intended adapter flow automatically provisions
+  pinned, verified dependencies through the authorized Agent and selects
+  Firecracker when the adopted profile requires it on a qualified Linux host.
+  Check usable KVM, permissions, compatible guest images and confinement, not OS
+  alone. Provisioning/selection remain planned until implemented. Required microVM
+  intent rejects unavailable hosts; VM/WSL labels alone do not establish usable
+  KVM or authorize a downgrade. Preserve explicit intent and Project locks.
+- `zelavis/backends` stays free of `node:` imports (enforced by
+  `test/backends-host-boundary.test.mjs`); detection uses injected
+  `ZelavisBackendHostProbes` from `src/adapters/_node-backend-host.ts`.
+  ID-only lifecycle dispatch refuses a missing/malformed stored assignment;
+  only the Project manager's explicit stored-record repair may fill one in.
+- Recipe isolation intent (`zelavis.project.isolation`, `src/project-isolation.ts`)
+  is validated at package load, locked with the recipe version, and assessed
+  against advertised backend capability. `required` shortfalls refuse create,
+  start and restart (409); never downgrade. Only creation may select another
+  enabled, healthy, executable backend that satisfies it; never move existing Projects.
+  Only `available` satisfies; advertised capability is not enforcement proof.
+- Gate authoritative file-storage access by declared coordination scope and a
+  successful session probe. Local replacement remains process-local. Registry
+  mutations use observed revisions, bounded fresh-read retries of intent, and
+  no unconditional fallback. System Store CAS must atomically compare the
+  optional observed value as well as its timestamp when supplied.
 - Treat Project deletion as a durable lifecycle operation. Persist its
   tombstone, stop execution, run stable idempotent cleanup participants, remove
   runtime data last, and delete the registry record only after all participants
@@ -199,6 +234,15 @@ before editing.
   ranges across several SQLite files even when all placements share one Node.
   Keep the low-level one-shard topology available only as the collapsed form of
   the same router-backed architecture for embedding and focused tests.
+- Every ordered-KV store batch atomically checks generation, fresh writer
+  session and the revision observed before dependent reads, then advances the
+  revision. Include replication, allocator, maintenance and format writes;
+  acquire generations conditionally and refuse exhaustion. Reject unsupported
+  coordination rather than using read-then-write fencing. RocksDB exclusive-file
+  mode does not support concurrent process takeover. Use LMDB's abortable child
+  transactions for batches; queued transaction callbacks can retain partial
+  writes on failure. Widen existing generation metadata without rewriting events
+  or cursors, and retain current ownership metadata during recovery.
 - Never expose a physical database driver, filename, or one-file global event
   sequence as the normal App data API. Bind ordinary data access to an explicit
   logical Tenant, keep cross-shard semantics explicit, and require current
@@ -214,6 +258,37 @@ before editing.
   preserves the old source artifact and stops on ambiguous merges. Canonicalize
   retired official locks as stored-data migrations; never restore retired
   package aliases merely to make an old Project boot.
+
+Host-operation validation must retain an immutable snapshot of request fields
+and arguments across asynchronous authorization/journal work, require own
+manifest argument declarations, enforce protocol and manifest bounds, and
+revalidate the deadline immediately before execution. The Node executor must
+re-prove artifact/parent inode identity at execution, spawn a private copy of
+the verified bytes rather than the registered path, and kill the operation's
+process group at the deadline and when its leader exits. Host operations are
+installed only with Ed25519 release-signed manifests verified against the
+operator trust store; scripts name their interpreter inside the signature.
+On Linux, use `cgroup-v2` supervision (a new session escapes a process group)
+and never fall back from it silently. This does not substitute for pinned
+shared libraries or destination fencing.
+
+Agent authority is Ed25519: only the Platform holds the private key, Agents
+trust its public file, and envelopes bind the exact arguments
+(`argumentsDigest`). The Platform issues authority only through the host
+operation broker, for installed operations whose release-signed manifest names
+the permission and scope, after recording an audit entry; there is no general
+command runner. Agents reach operations only over their local socket.
+Operation output is journaled only when the signed manifest declares a bounded
+JSON `result`; submissions are rate limited per actor, and audit reads never
+return argument values.
+Service setup hooks have a deadline; an abandoned setup cannot add services.
+
+Plugin discovery is the ETag-revisioned `/runtime/plugin-operations`
+catalogue: clients revalidate every call and never cache past revocation.
+Package admission may only run concurrently or enforce a deadline when the
+plugin context storage propagates async context; an abandoned package's
+context is sealed. Recipe `isolation.resources` limits and required intent may
+select another enabled, healthy, executable backend at creation only.
 
 ## Design checklist
 

@@ -39,7 +39,16 @@ export function projectRuntimePermissions(
   if (!principal) return [];
 
   const granted = new Set<string>();
-  const global = principal.permissions ?? [];
+  const global = [
+    ...(principal.permissions ?? []),
+    // System grants authorize runtime-wide routes, but are not blanket
+    // Project grants. Only host-code installation is explicitly delegated
+    // from this authority below; other Project authority requires a scope.
+    ...(principal.grants ?? [])
+      .filter((grant) => !grant.scope || grant.scope.type === "system")
+      .filter((grant) => grant.permission === "system.services.manage" || grant.permission === "*")
+      .map(() => "system.services.manage"),
+  ];
   const hasGlobalWildcard = global.includes("*");
 
   const addProjectAuthority = (permission: string) => {
@@ -57,9 +66,9 @@ export function projectRuntimePermissions(
   for (const grant of principal.grants ?? []) {
     const scope = grant.scope;
     const appliesToProject =
-      scope === undefined ||
-      (scope.type === "project" && scope.projectId === projectId);
+      scope?.type === "project" && scope.projectId === projectId;
     if (!appliesToProject) continue;
+    if (grant.permission === "system.services.manage") continue;
     if (grant.permission === "*") {
       for (const permission of ZELAVIS_PROJECT_PERMISSIONS) {
         addProjectAuthority(permission);

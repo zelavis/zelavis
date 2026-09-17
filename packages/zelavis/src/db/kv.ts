@@ -11,6 +11,17 @@ export type KvWrite =
   | { readonly op: "put"; readonly key: Uint8Array; readonly value: Uint8Array }
   | { readonly op: "delete"; readonly key: Uint8Array };
 
+/** Byte equality, including an explicit absent-key expectation. */
+export interface KvCondition {
+  readonly key: Uint8Array;
+  readonly value: Uint8Array | undefined;
+}
+
+export const equalBytes = (a: Uint8Array | undefined, b: Uint8Array | undefined): boolean =>
+  a === undefined || b === undefined
+    ? a === b
+    : a.length === b.length && a.every((byte, index) => byte === b[index]);
+
 /**
  * An ordered key-value engine.
  *
@@ -30,8 +41,8 @@ export type KvWrite =
  *
  * Effect and Stream rather than plain values, so an asynchronous engine is a
  * driver and not a redesign. That is safe here in a way it was not for SQL: a
- * write is one atomic batch, so there is no open transaction another caller
- * could interleave into.
+ * write is one atomic batch. Conditional commits keep their checks inside
+ * that batch's destination transaction.
  */
 export interface KvEngine {
   readonly get: (key: Uint8Array) => Effect.Effect<Uint8Array | undefined, StoreError>;
@@ -45,8 +56,19 @@ export interface KvEngine {
     options?: KvScanOptions,
   ) => Stream.Stream<KvEntry, StoreError>;
 
-  /** Every write lands or none does. This is the whole transaction mechanism. */
+  /** Raw trusted batch: every write lands or none does; no ownership check. */
   readonly write: (writes: ReadonlyArray<KvWrite>) => Effect.Effect<void, StoreError>;
+
+  /**
+   * Check every expected value and apply the batch in one destination operation.
+   * False leaves all keys unchanged. No read-then-unconditional-write fallback.
+   * Scope describes coordination, not fsync durability or backup rollback safety.
+   */
+  readonly conditionalWrite?: (
+    writes: ReadonlyArray<KvWrite>,
+    conditions: ReadonlyArray<KvCondition>,
+  ) => Effect.Effect<boolean, StoreError>;
+  readonly coordination?: "engine" | "host" | "remote";
 
   readonly close: Effect.Effect<void>;
 }

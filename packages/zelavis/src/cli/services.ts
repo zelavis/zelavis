@@ -1,14 +1,9 @@
 export type RuntimeServiceStatus = "installed" | "available";
 export type RuntimeServiceSource = "official" | "community";
 
-export interface RuntimeServiceRegistryEntry {
-  name: string;
-  version?: string;
-  specifier?: string;
-  status: RuntimeServiceStatus;
-  source?: RuntimeServiceSource;
-  order?: number;
-}
+import type { PublicServiceRegistryIdentity, ServiceSourceDiagnostic } from "../platform/service-registry-view.js";
+
+export interface RuntimeServiceRegistryEntry extends PublicServiceRegistryIdentity {}
 
 export interface RuntimeServiceActivationResult {
   status: "active" | "pending";
@@ -37,6 +32,7 @@ export interface RuntimeServiceRegistryUpdateInput {
 export interface RuntimeServicesClientOptions {
   url?: string;
   fetch?: typeof fetch;
+  headers?: HeadersInit;
 }
 
 const DEFAULT_RUNTIME_URL = "http://localhost:3000/zelavis";
@@ -87,9 +83,11 @@ async function requestJson<TBody>(
   const fetcher = options.fetch ?? fetch;
   const apiBase = resolveRuntimeApiBase(options.url);
   const url = `${apiBase}${path}`;
+  const headers = new Headers(options.headers);
+  if (options.body) headers.set("content-type", "application/json");
   const response = await fetcher(url, {
     method: options.method,
-    headers: options.body ? { "content-type": "application/json" } : undefined,
+    headers,
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
 
@@ -105,6 +103,15 @@ export async function listRuntimeServices(
   );
 
   return body.services;
+}
+
+export async function listRuntimeServiceSources(
+  options: RuntimeServicesClientOptions = {},
+): Promise<readonly ServiceSourceDiagnostic[]> {
+  const body = await requestJson<{ sources: readonly ServiceSourceDiagnostic[] }>(
+    "/runtime/services/sources", options,
+  );
+  return body.sources;
 }
 
 export async function registerRuntimeService(
@@ -177,7 +184,6 @@ export interface RuntimeServiceExtension {
   version?: string;
   status: RuntimeServiceStatus;
   source?: RuntimeServiceSource;
-  specifier?: string;
   capabilities: readonly string[];
   marketplace?: { title?: string; summary?: string };
 }

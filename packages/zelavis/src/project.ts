@@ -13,6 +13,14 @@ import type {
 } from "./service.js";
 
 export type { ZelavisProjectRuntimeKind } from "./service.js";
+import type { ZelavisDeploymentBackendCapabilities } from "./backends/registry.js";
+import {
+  assessProjectIsolation,
+  normalizeProjectIsolationIntent,
+  type ZelavisProjectIsolationAssessment,
+  type ZelavisProjectIsolationIntent,
+} from "./project-isolation.js";
+export * from "./project-isolation.js";
 import type {
   ZelavisSystemStore,
   ZelavisSystemStoreValue,
@@ -55,6 +63,8 @@ export interface ZelavisProjectRecipeLock {
   specifier: string;
   /** Runtime families allowed by this exact recipe lock. */
   runtimeKinds: readonly ZelavisProjectRuntimeKind[];
+  /** Isolation declared by this exact recipe version, locked with it. */
+  isolation?: ZelavisProjectIsolationIntent;
 }
 
 export interface ZelavisProjectDescriptor {
@@ -96,6 +106,12 @@ export interface ZelavisProjectPlacementState {
 
 export interface ZelavisProjectRecord extends ZelavisProjectDescriptor {
   capabilities: ZelavisProjectDriverCapabilities;
+  /**
+   * The locked isolation intent compared with the assigned backend, present
+   * only when the recipe declares intent. Derived on every read, like
+   * `capabilities`, because backend capability can change under a lock.
+   */
+  isolation?: ZelavisProjectIsolationAssessment;
   desiredState: "running" | "stopped";
   runtime: ZelavisProjectRuntimeState;
   /** Set only while the Project belongs to a node this host is not. */
@@ -246,6 +262,27 @@ export class ZelavisProjectNotFoundError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ZelavisProjectNotFoundError";
+  }
+}
+
+/**
+ * A recipe's required isolation cannot be proven by the assigned backend.
+ *
+ * A conflict with server policy rather than bad input: the same request can
+ * succeed once an administrator makes a backend that satisfies it the default.
+ */
+export class ZelavisProjectIsolationError extends ZelavisProjectConflictError {
+  readonly assessment: ZelavisProjectIsolationAssessment;
+
+  constructor(projectLabel: string, assessment: ZelavisProjectIsolationAssessment) {
+    const unmet = assessment.shortfalls
+      .filter((shortfall) => shortfall.enforcement === "required")
+      .map((shortfall) => `${shortfall.requirement} (needs ${shortfall.expected}, backend has ${shortfall.actual})`);
+    super(
+      `${projectLabel} requires isolation the "${assessment.runtimeKind}" deployment backend does not provide: ${unmet.join(", ")}. Zelavis refuses rather than running it with weaker isolation.`,
+    );
+    this.name = "ZelavisProjectIsolationError";
+    this.assessment = assessment;
   }
 }
 
@@ -472,7 +509,25 @@ function recipeLockFromRegistryEntry(
     version: entry.service.version,
     specifier: entry.specifier ?? entry.service.name,
     runtimeKinds: normalizeRecipeRuntimeKinds(entry.service.project?.runtimeKinds),
+    ...isolationIntentField(
+      entry.service.project?.isolation,
+      `Project recipe "${entry.service.name}"`,
+    ),
   };
+}
+
+function isolationIntentField(
+  value: unknown,
+  label: string,
+): { isolation?: ZelavisProjectIsolationIntent } {
+  try {
+    const isolation = normalizeProjectIsolationIntent(value);
+    return isolation ? { isolation } : {};
+  } catch (error) {
+    throw new ZelavisProjectValidationError(
+      `${label} declares invalid isolation intent: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 function normalizeRuntimeKind(value: unknown): ZelavisProjectRuntimeKind {
@@ -529,6 +584,7 @@ function readStoredRecipeLock(rawProject: Record<string, unknown>): ZelavisProje
         ? rawRecipe.runtimeKinds as ZelavisProjectRuntimeKind[]
         : undefined,
     ),
+    ...isolationIntentField(rawRecipe.isolation, "Stored Project recipe lock"),
   };
 }
 
@@ -588,6 +644,21 @@ export async function createProjectManager(options: {
   projectRecipes: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[];
   runtime: ZelavisProjectRuntimeDriver;
   resolveDefaultRuntimeKind?: () => Promise<ZelavisProjectRuntimeKind>;
+  /**
+   * Other backends policy lets a new Project use, in administrator order:
+   * enabled, healthy and executable. Consulted only when the default cannot
+   * satisfy a recipe's required isolation, and only at creation — an existing
+   * Project's assignment is never changed by it.
+   */
+  resolveAlternativeRuntimeKinds?: () => Promise<readonly ZelavisProjectRuntimeKind[]>;
+  /**
+   * What a deployment backend advertises, for comparing with a recipe's locked
+   * isolation intent. Absent on a host with no backend registry, where any
+   * required intent is refused because nothing can prove it.
+   */
+  backendCapabilities?: (
+    runtimeKind: ZelavisProjectRuntimeKind,
+  ) => ZelavisDeploymentBackendCapabilities | undefined;
   cleanupParticipants?: readonly ZelavisProjectCleanupParticipant[];
   /**
    * Resolved lazily because Fabric is composed after the Project manager, and
@@ -623,6 +694,75 @@ export async function createProjectManager(options: {
     );
   }
   const startupConcurrency = normalizeConcurrency(runtime.startupConcurrency);
+
+  function assessIsolation(
+    descriptor: Readonly<ZelavisProjectDescriptor>,
+  ): ZelavisProjectIsolationAssessment | undefined {
+    const intent = descriptor.recipe.isolation;
+    return intent
+      ? assessProjectIsolation(
+          intent,
+          descriptor.runtimeKind,
+          options.backendCapabilities?.(descriptor.runtimeKind),
+        )
+      : undefined;
+  }
+
+  /**
+   * Chooses the backend for a new Project.
+   *
+   * The administrator's default, unless the recipe requires isolation it cannot
+   * provide; then the first alternative policy allows that satisfies every
+   * required item. Never a backend policy has not enabled, never a weaker one,
+   * and with no satisfying backend the default's shortfall is the refusal.
+   */
+  async function selectRuntimeKind(
+    recipe: ZelavisProjectRecipeLock,
+    defaultKind: ZelavisProjectRuntimeKind,
+  ): Promise<ZelavisProjectRuntimeKind> {
+    const usable = (kind: ZelavisProjectRuntimeKind) =>
+      recipe.runtimeKinds.includes(kind) && availableRuntimeKinds.includes(kind);
+    const assess = (kind: ZelavisProjectRuntimeKind) =>
+      recipe.isolation
+        ? assessProjectIsolation(recipe.isolation, kind, options.backendCapabilities?.(kind))
+        : undefined;
+    const defaultAssessment = assess(defaultKind);
+    if (usable(defaultKind) && (!defaultAssessment || defaultAssessment.satisfied)) {
+      return defaultKind;
+    }
+    if (defaultAssessment && !defaultAssessment.satisfied && options.resolveAlternativeRuntimeKinds) {
+      for (const candidate of await options.resolveAlternativeRuntimeKinds()) {
+        const kind = normalizeRuntimeKind(candidate);
+        if (kind !== defaultKind && usable(kind) && assess(kind)?.satisfied) {
+          return kind;
+        }
+      }
+    }
+    if (!recipe.runtimeKinds.includes(defaultKind)) {
+      throw new ZelavisProjectValidationError(
+        `Project recipe "${recipe.name}" does not support the "${defaultKind}" runtime. Supported runtimes: ${recipe.runtimeKinds.join(", ")}.`,
+      );
+    }
+    if (!availableRuntimeKinds.includes(defaultKind)) {
+      throw new ZelavisProjectValidationError(
+        `Project runtime "${defaultKind}" is not available on this Zelavis server. Available runtimes: ${availableRuntimeKinds.join(", ")}.`,
+      );
+    }
+    throw new ZelavisProjectIsolationError(
+      `Project recipe "${recipe.name}"`,
+      defaultAssessment!,
+    );
+  }
+
+  /** The refusal for a Project whose required isolation is not proven. */
+  function isolationRefusal(
+    project: Readonly<ZelavisProjectDescriptor>,
+  ): ZelavisProjectIsolationError | undefined {
+    const assessment = assessIsolation(project);
+    return assessment && !assessment.satisfied
+      ? new ZelavisProjectIsolationError(`Project "${project.id}"`, assessment)
+      : undefined;
+  }
   let closing = false;
   let reconciliationPromise: Promise<void> | undefined;
   let closePromise: Promise<void> | undefined;
@@ -739,9 +879,11 @@ export async function createProjectManager(options: {
         : normalizeRuntimeKind(rawRecord.runtimeKind),
     };
     const capabilities = runtime.capabilities(descriptor);
+    const isolation = assessIsolation(descriptor);
     const project: ZelavisProjectRecord = {
       ...descriptor,
       capabilities,
+      ...(isolation ? { isolation } : {}),
       desiredState: rawProject.desiredState,
       runtime:
         rawProject.runtime?.driver && rawProject.runtime.status
@@ -765,6 +907,7 @@ export async function createProjectManager(options: {
         rawProject.kind !== project.kind ||
         JSON.stringify(rawRecord.capabilities) !==
           JSON.stringify(capabilities) ||
+        JSON.stringify(rawRecord.isolation) !== JSON.stringify(isolation) ||
         rawProject.runtime !== project.runtime,
     };
   }
@@ -1106,6 +1249,10 @@ export async function createProjectManager(options: {
     });
 
     try {
+      // Refused inside the try so it is recorded as a failure with its reason,
+      // and before `prepare`, so the driver never runs for it.
+      const refusal = isolationRefusal(project);
+      if (refusal) throw refusal;
       await runtime.prepare(project, project.recipe);
       return write(applySnapshot(project, await runtime.start(project)));
     } catch (error) {
@@ -1250,21 +1397,12 @@ export async function createProjectManager(options: {
         );
       }
       const recipe = recipeLockFromRegistryEntry(projectRecipe);
-      const runtimeKind = normalizeRuntimeKind(
+      const defaultKind = normalizeRuntimeKind(
         options.resolveDefaultRuntimeKind
           ? await options.resolveDefaultRuntimeKind()
           : defaultRuntimeKind,
       );
-      if (!recipe.runtimeKinds.includes(runtimeKind)) {
-        throw new ZelavisProjectValidationError(
-          `Project recipe "${recipe.name}" does not support the "${runtimeKind}" runtime. Supported runtimes: ${recipe.runtimeKinds.join(", ")}.`,
-        );
-      }
-      if (!availableRuntimeKinds.includes(runtimeKind)) {
-        throw new ZelavisProjectValidationError(
-          `Project runtime "${runtimeKind}" is not available on this Zelavis server. Available runtimes: ${availableRuntimeKinds.join(", ")}.`,
-        );
-      }
+      const runtimeKind = await selectRuntimeKind(recipe, defaultKind);
       const now = new Date().toISOString();
       const ownerProjectId = input.ownerProjectId
         ? normalizeProjectId(input.ownerProjectId)
@@ -1304,9 +1442,19 @@ export async function createProjectManager(options: {
         recipe,
         runtimeKind,
       };
+      // Refused before the identifier is claimed: nothing is provisioned for a
+      // Project this server cannot run with the isolation its recipe requires.
+      const isolation = assessIsolation(descriptor);
+      if (isolation && !isolation.satisfied) {
+        throw new ZelavisProjectIsolationError(
+          `Project recipe "${recipe.name}"`,
+          isolation,
+        );
+      }
       let project: ZelavisProjectRecord = {
         ...descriptor,
         capabilities: runtime.capabilities(descriptor),
+        ...(isolation ? { isolation } : {}),
         desiredState: input.start === false ? "stopped" : "running",
         runtime: {
           driver: runtime.name,
@@ -1391,6 +1539,10 @@ export async function createProjectManager(options: {
       return withProjectLifecycle(normalizeProjectId(id), async () => {
       let project = await requireProject(id);
       assertProjectIsOperable(project, "restarted");
+      // Refused before stopping: a running Project is not taken down only to
+      // discover it may not be started again.
+      const refusal = isolationRefusal(project);
+      if (refusal) throw refusal;
       project = await write({
         ...project,
         desiredState: "running",

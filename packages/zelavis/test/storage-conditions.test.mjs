@@ -16,7 +16,11 @@ import {
   createS3CompatibleFileStorage,
   probeFileStorageGuarantees,
   ZelavisStorageConditionError,
+  requireFileStorageGuarantees,
+  createFileStorageServiceRegistryStore,
+  ZelavisStorageGuaranteeError,
 } from "zelavis";
+import { mutateServiceRegistry } from "../dist/platform/settings.js";
 import { createLocalFileStorage } from "../dist/adapters/_shared.js";
 
 const LOCAL_ADAPTER = new URL("../dist/adapters/_shared.js", import.meta.url).href;
@@ -89,7 +93,7 @@ test("an S3 store that enforces conditions passes, and is sent the conditions", 
   assert.deepEqual(await probeFileStorageGuarantees(storage), { conformant: true });
   const conditional = requests.filter((r) => r.method === "PUT");
   assert.deepEqual(conditional.map((r) => (r.ifNoneMatch ? `none-match ${r.ifNoneMatch}` : "match")),
-    ["none-match *", "none-match *", "match", "match"]);
+    ["none-match *", "none-match *", "match", "match", "match"]);
   assert.equal(objects.size, 0, "the probe left its object behind");
 });
 
@@ -189,4 +193,104 @@ test("a store that answers a create of an absent object with 404 is inconclusive
   const { storage } = fakeS3("notFoundOnCreate");
   await assert.rejects(probeFileStorageGuarantees(storage), (error) =>
     /could not complete step 1/.test(error.message) && /\(404\)/.test(error.cause?.message));
+});
+
+
+test("probe rejects missing read/write etags and stale reads", async (t) => {
+  for (const mode of ["missing-read", "missing-write", "stale-read", "absent-match"]) {
+    await t.test(mode, async () => {
+      const { storage } = fakeS3();
+      let first;
+      const faulty = {
+        ...storage,
+        async get(path) {
+          const object = await storage.get(path);
+          if (!object) return object;
+          first ??= object;
+          if (mode === "stale-read") return first;
+          return mode === "missing-read" ? { ...object, etag: undefined } : object;
+        },
+        async put(input) {
+          if (mode === "absent-match" && input.condition?.ifMatch && !(await storage.get(input.path))) {
+            return storage.put({ ...input, condition: undefined });
+          }
+          const entry = await storage.put(input);
+          return mode === "missing-write" ? { ...entry, etag: undefined } : entry;
+        },
+      };
+      assert.equal((await probeFileStorageGuarantees(faulty)).conformant, false);
+    });
+  }
+});
+
+test("authority gate caches only a successful configured session and retries outages", async () => {
+  const { storage, requests } = fakeS3();
+  await Promise.all([requireFileStorageGuarantees(storage), requireFileStorageGuarantees(storage)]);
+  const count = requests.length;
+  await requireFileStorageGuarantees(storage);
+  assert.equal(requests.length, count);
+  storage.capabilities = { ...storage.capabilities };
+  await requireFileStorageGuarantees(storage);
+  assert.ok(requests.length > count, "new configuration/session must be probed");
+  const original = storage.put;
+  let outage = true;
+  storage.put = (input) => { if (outage) throw new Error("offline"); return original(input); };
+  await assert.rejects(requireFileStorageGuarantees(storage), /could not complete/);
+  outage = false;
+  await requireFileStorageGuarantees(storage);
+});
+
+test("file registry gates before touching authority when conditions are ignored", async () => {
+  const { storage, requests, objects } = fakeS3("ignoresConditions");
+  const registry = createFileStorageServiceRegistryStore(storage);
+  await assert.rejects(registry.compareAndSet(null, [{ name: "plugin" }]), ZelavisStorageGuaranteeError);
+  assert.equal(objects.has("zelavis/services.json"), false);
+  assert.ok(requests.every((request) => request.key !== "zelavis/services.json"));
+});
+
+test("local sequential probe does not qualify cross-process or cross-host replacement", async (t) => {
+  const storage = createLocalFileStorage(localDir(t));
+  assert.deepEqual(storage.capabilities, { conditionalCreate: "host", conditionalReplace: "process" });
+  assert.equal((await probeFileStorageGuarantees(storage)).conformant, true);
+  for (const scope of ["host", "distributed"]) {
+    await assert.rejects(requireFileStorageGuarantees(storage, scope), /does not support/);
+  }
+  await assert.rejects(createFileStorageServiceRegistryStore(storage).read(), /does not support/);
+  await requireFileStorageGuarantees(storage, "process");
+});
+
+test("S3 configuration is captured; mutating caller options cannot reuse qualification", async () => {
+  const endpoints = [];
+  const options = { bucket: "old", region: "r", accessKeyId: "k", secretAccessKey: "s", endpoint: "https://old.example", fetch: async (url) => {
+    endpoints.push(String(url)); return new Response(null, { status: 404 });
+  } };
+  const adapter = createS3CompatibleFileStorage(options);
+  options.endpoint = "https://new.example";
+  options.bucket = "new";
+  await adapter.get("test");
+  assert.match(endpoints[0], /^https:\/\/old.example\/old\/test/);
+});
+
+
+test("S3 registry uses conditional creates and retries a real stale-etag conflict", async () => {
+  const { storage, requests } = fakeS3();
+  const left = createFileStorageServiceRegistryStore(storage);
+  const right = createFileStorageServiceRegistryStore({ ...storage });
+  let arrived = 0;
+  let release;
+  const barrier = new Promise((resolve) => { release = resolve; });
+  const attempts = [0, 0];
+  await Promise.all([left, right].map((store, i) => mutateServiceRegistry(store, async (entries) => {
+    attempts[i]++;
+    if (attempts[i] === 1) {
+      if (++arrived === 2) release();
+      await barrier;
+    }
+    return [...entries, { name: `s3-${i}`, specifier: `file:///source-${i}` }];
+  })));
+  assert.deepEqual((await left.read()).map((e) => e.name).sort(), ["s3-0", "s3-1"]);
+  const writes = requests.filter((r) => r.key === "zelavis/services.json" && r.method === "PUT");
+  assert.ok(writes.every((r) => r.ifNoneMatch === "*" || r.ifMatch));
+  assert.ok(writes.some((r) => r.ifMatch));
+  assert.equal(attempts.reduce((a, b) => a + b), 3);
 });

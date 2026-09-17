@@ -67,6 +67,7 @@ export async function createBunSqliteSystemStore(options: {
     UPDATE zelavis_system_records
     SET value_json = ?, updated_at = ?
     WHERE namespace = ? AND record_key = ? AND updated_at = ?
+      AND (? = 0 OR value_json = ?)
   `);
   const compareAndDeleteStatement = database.query(`
     DELETE FROM zelavis_system_records
@@ -112,7 +113,7 @@ export async function createBunSqliteSystemStore(options: {
       if (!row) throw new Error("System Store failed to read an atomic create.");
       return { created, record: toRecord(row) };
     },
-    compareAndSet(namespace, key, expectedUpdatedAt, value) {
+    compareAndSet(namespace, key, expectedUpdatedAt, value, expectedValue) {
       const updatedAt = new Date(
         Math.max(Date.now(), Date.parse(expectedUpdatedAt) + 1),
       ).toISOString();
@@ -122,6 +123,8 @@ export async function createBunSqliteSystemStore(options: {
         namespace,
         key,
         expectedUpdatedAt,
+        expectedValue === undefined ? 0 : 1,
+        expectedValue === undefined ? null : JSON.stringify(expectedValue),
       ).changes > 0;
       return changed ? { namespace, key, value, updatedAt } : undefined;
     },

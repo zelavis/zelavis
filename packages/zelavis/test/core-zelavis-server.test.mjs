@@ -234,6 +234,64 @@ test("createServiceRuntime allows project-scoped grants on matching project rout
   assert.deepEqual(denied.body, { error: "Missing required permission" });
 });
 
+test("grant scopes cannot escape to runtime-wide routes or another named scope", async () => {
+  const scopes = [
+    undefined,
+    { type: "system" },
+    { type: "project", projectId: "alpha" },
+    { type: "service", serviceName: "shop" },
+  ];
+  const runtime = await createServiceRuntime({
+    services: [{
+      name: "matrix",
+      service: {},
+      api: { v1: scopes.map((scope, index) => ({
+        id: `matrix.${index}`,
+        method: "GET",
+        path: `/${index}`,
+        access: { permissions: ["manage"], ...(scope ? { scope } : {}) },
+        handler: () => ({ status: 204 }),
+      })) },
+    }],
+  });
+  // Unscoped and system grants are runtime-wide-route grants. Project/service
+  // grants authorize only an exact named scope; top-level permissions span all.
+  const expected = [
+    [204, 204, 403, 403],
+    [204, 204, 403, 403],
+    [403, 403, 204, 403],
+    [403, 403, 403, 204],
+  ];
+  for (let grantIndex = 0; grantIndex < scopes.length; grantIndex++) {
+    for (let routeIndex = 0; routeIndex < scopes.length; routeIndex++) {
+      const principal = {
+        id: "scoped", type: "user",
+        grants: [{ permission: "manage", scope: scopes[grantIndex] }],
+      };
+      const result = await runtime.plain({ url: `/matrix/${routeIndex}`, principal });
+      assert.equal(result.status, expected[grantIndex][routeIndex], `grant ${grantIndex}, route ${routeIndex}`);
+    }
+  }
+  for (const permission of ["manage", "*"]) {
+    for (let index = 0; index < scopes.length; index++) {
+      const result = await runtime.plain({
+        url: `/matrix/${index}`,
+        principal: { id: "global", type: "user", permissions: [permission] },
+      });
+      assert.equal(result.status, 204);
+    }
+  }
+  for (const scope of [
+    { type: "project" }, { type: "project", projectId: "beta" },
+    { type: "service" }, { type: "service", serviceName: "other" },
+  ]) {
+    const principal = { id: "wrong", type: "user", grants: [{ permission: "*", scope }] };
+    for (let index = 0; index < scopes.length; index++) {
+      assert.equal((await runtime.plain({ url: `/matrix/${index}`, principal })).status, 403);
+    }
+  }
+});
+
 test("createServiceRuntime supports runtime principal resolvers and custom authorizers", async () => {
   const runtime = await createServiceRuntime({
     resolvePrincipal: ({ request }) => {

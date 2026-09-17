@@ -1,12 +1,14 @@
-import { runBackendProbeCommand } from "../_node-command.js";
+import type { ZelavisBackendHostProbes } from "../host.js";
 import type {
   ZelavisDeploymentBackendAdapter,
   ZelavisDeploymentBackendDetection,
 } from "../registry.js";
 
-async function detectDockerBackend(): Promise<ZelavisDeploymentBackendDetection> {
+async function detectDockerBackend(
+  host: ZelavisBackendHostProbes,
+): Promise<ZelavisDeploymentBackendDetection> {
   const checkedAt = new Date().toISOString();
-  const result = await runBackendProbeCommand("docker", [
+  const result = await host.runProbeCommand("docker", [
     "version",
     "--format",
     "{{json .}}",
@@ -45,7 +47,7 @@ async function detectDockerBackend(): Promise<ZelavisDeploymentBackendDetection>
     if (!value.Server || typeof value.Server.Version !== "string") {
       throw new Error("Docker did not report a server version.");
     }
-    const info = await runBackendProbeCommand("docker", [
+    const info = await host.runProbeCommand("docker", [
       "info",
       "--format",
       "{{json .SecurityOptions}}",
@@ -82,7 +84,9 @@ async function detectDockerBackend(): Promise<ZelavisDeploymentBackendDetection>
 }
 
 /** Built-in read-only Docker adapter. It advertises no Project driver yet. */
-export function createDockerDeploymentBackend(): ZelavisDeploymentBackendAdapter {
+export function createDockerDeploymentBackend(options: {
+  readonly host: ZelavisBackendHostProbes;
+}): ZelavisDeploymentBackendAdapter {
   return Object.freeze({
     id: "docker",
     title: "Docker",
@@ -91,7 +95,12 @@ export function createDockerDeploymentBackend(): ZelavisDeploymentBackendAdapter
       filesystemIsolation: "available" as const,
       processIsolation: "available" as const,
       networkIsolation: "available" as const,
-      resourceLimits: "available" as const,
+      resourceControls: Object.freeze({
+        cpu: "available" as const,
+        memory: "available" as const,
+        pids: "available" as const,
+        disk: "planned" as const,
+      }),
       exec: "available" as const,
       persistentStorage: "available" as const,
       snapshots: "planned" as const,
@@ -99,6 +108,6 @@ export function createDockerDeploymentBackend(): ZelavisDeploymentBackendAdapter
       description:
         "Docker is detected read-only as optional host infrastructure. Zelavis does not yet register a Docker Project driver or grant the Platform access to the Docker control socket.",
     }),
-    detect: detectDockerBackend,
+    detect: () => detectDockerBackend(options.host),
   });
 }

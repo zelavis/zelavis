@@ -339,6 +339,80 @@ test("a move whose routing already landed is finished, not copied again", async 
   );
 });
 
+test("SQLite reopening finishes routed movement cleanup without recopying or changing history", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "zv-move-restart-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const initial = partitionMapFor(["s0", "s1"]);
+  const tenant = ["acme", "bravo", "cosmo", "delta"].find((name) => shardFor(initial, name) === "s0");
+  assert.ok(tenant !== undefined);
+  let cleanupInterrupted = false;
+  const openAt = (interruptCleanup, body) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const stores = new Map();
+    let db;
+    db = yield* makeDatabase({
+      partitionMap: initial,
+      openShard: (shard) => Effect.map(makeNodeSqliteStore(shard, dir), (store) => {
+        stores.set(shard, store);
+        if (!interruptCleanup || shard !== "s0") return store;
+        return {
+          ...store,
+          transact: (change) => Effect.suspend(() => {
+            if (db?.partitionMap.version === 2) {
+              cleanupInterrupted = true;
+              return Effect.die(new Error("injected interruption before source cleanup"));
+            }
+            return store.transact(change);
+          }),
+        };
+      }),
+    });
+    return yield* body(db, stores);
+  })));
+  let before;
+  let routedEvents;
+  await openAt(true, (db, stores) => Effect.gen(function* () {
+    yield* seed(db, [tenant]);
+    before = yield* snapshot(db, tenant);
+    const history = yield* db.forTenant(tenant).events.read();
+    const interrupted = yield* Effect.exit(db.movement.rebalance(allOn("s1", 2)));
+    assert.equal(interrupted._tag, "Failure");
+    assert.equal(cleanupInterrupted, true, "the injected cleanup interruption was reached");
+    assert.equal(db.partitionMap.version, 2);
+    assert.equal(db.shardOf(tenant), "s1");
+    assert.equal((yield* db.movement.pending)[0].phase, "routed");
+    assert.ok((yield* stores.get("s0").liveRecords).length > 0, "source cleanup has not happened");
+    routedEvents = yield* db.forTenant(tenant).events.read();
+    // Physical event identities change when copied to another shard.
+    const logicalHistory = (events) => events.map(({ cursor, eventId, ...event }) => event);
+    assert.deepEqual(logicalHistory(routedEvents), logicalHistory(history));
+  }));
+  // The scope above closes every SQLite handle before any is reopened.
+  await openAt(false, (db, stores) => Effect.gen(function* () {
+    assert.equal(db.partitionMap.version, 2, "persisted routing outranks the original map");
+    assert.equal((yield* db.movement.pending)[0].phase, "routed");
+    assert.deepEqual(yield* snapshot(db, tenant), before);
+    assert.deepEqual(yield* db.forTenant(tenant).events.read(), routedEvents);
+    const results = yield* db.movement.resume;
+    assert.equal(results.length, 1);
+    assert.equal(results[0].resumed, true);
+    assert.equal(results[0].copied, 0);
+    assert.ok(results[0].removed > 0, "the real source records were cleaned up");
+    assert.deepEqual(yield* stores.get("s0").liveRecords, []);
+    assert.equal(db.partitionMap.version, 2);
+    assert.deepEqual(yield* snapshot(db, tenant), before);
+    assert.deepEqual(yield* db.forTenant(tenant).events.read(), routedEvents);
+    assert.deepEqual(yield* db.movement.pending, []);
+  }));
+  await openAt(false, (db, stores) => Effect.gen(function* () {
+    assert.equal(db.partitionMap.version, 2);
+    assert.equal(stores.has("s0"), false, "completed moves no longer require opening the retired source");
+    assert.deepEqual(yield* db.movement.pending, []);
+    assert.deepEqual(yield* db.movement.resume, [], "completed cleanup stays completed after another restart");
+    assert.deepEqual(yield* snapshot(db, tenant), before);
+    assert.deepEqual(yield* db.forTenant(tenant).events.read(), routedEvents);
+  }));
+});
+
 test("a tenant can be written while it is being moved", async (t) => {
   await withDatabase(t, (db) =>
     Effect.gen(function* () {

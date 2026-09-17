@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -75,6 +75,33 @@ test("an exports path escaping its package is refused", async () => {
   const { discovered, skipped } = await discover(directory);
   assert.deepEqual(discovered, []);
   assert.match(skipped[0].reason, /outside the package directory/u);
+});
+
+test("discovery rejects external entry, manifest, and package symlinks", async () => {
+  const directory = await folder();
+  const outside = await folder();
+  const external = await writePackage(outside, "external", VALID, "export default {};");
+  const entry = await writePackage(directory, "entry-link", VALID);
+  await symlink(join(external, "index.js"), join(entry, "index.js"));
+  const manifest = join(directory, "manifest-link");
+  await mkdir(manifest);
+  await symlink(join(external, "package.json"), join(manifest, "package.json"));
+  await writeFile(join(manifest, "index.js"), "export default {};");
+  await symlink(external, join(directory, "package-link"), "dir");
+  const { discovered, skipped } = await discover(directory);
+  assert.deepEqual(discovered, []);
+  assert.equal(skipped.length, 3);
+  for (const item of skipped) assert.match(item.reason, /physical source resolves outside/);
+});
+
+test("discovery permits an entry symlink whose target stays within its package", async () => {
+  const directory = await folder();
+  const pkg = await writePackage(directory, "internal", { ...VALID, exports: "./alias.js" }, "export default {};");
+  await symlink(join(pkg, "index.js"), join(pkg, "alias.js"));
+  const { discovered, skipped } = await discover(directory);
+  assert.deepEqual(skipped, []);
+  assert.equal(discovered.length, 1);
+  assert.match(discovered[0].specifier, /internal\/index\.js$/);
 });
 
 test("an invalid capability is refused at discovery, not silently ignored", async () => {

@@ -1,6 +1,6 @@
 import { Effect, Stream } from "effect";
 import { StoreError } from "../errors.js";
-import { scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
+import { equalBytes, scanRange, type KvCondition, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
 
 /**
  * The handle a SQLite-shaped binding provides.
@@ -104,6 +104,32 @@ export const sqliteKvEngineOver = (
 
   const fail = (op: string) => (cause: unknown) => new StoreError({ op, cause });
 
+  const batch = (writes: ReadonlyArray<KvWrite>, conditions: ReadonlyArray<KvCondition>) =>
+    Effect.try({
+      try: () => {
+        db.exec("BEGIN IMMEDIATE");
+        try {
+          for (const condition of conditions) {
+            const row = statements.get.get(toKey(condition.key)) as { value: unknown } | undefined;
+            if (!equalBytes(row === undefined ? undefined : toBytes(row.value), condition.value)) {
+              db.exec("ROLLBACK");
+              return false;
+            }
+          }
+          for (const write of writes) {
+            if (write.op === "put") statements.put.run(toKey(write.key), Buffer.from(write.value));
+            else statements.del.run(toKey(write.key));
+          }
+          db.exec("COMMIT");
+          return true;
+        } catch (cause) {
+          db.exec("ROLLBACK");
+          throw cause;
+        }
+      },
+      catch: fail("sqlite-kv.write"),
+    });
+
   return {
     get: (key) =>
       Effect.try({
@@ -144,25 +170,9 @@ export const sqliteKvEngineOver = (
         }),
       ),
 
-    write: (writes: ReadonlyArray<KvWrite>) =>
-      Effect.try({
-        try: () => {
-          // The transaction opens and closes inside this call, so nothing a
-          // concurrent caller does can land inside it.
-          db.exec("BEGIN");
-          try {
-            for (const write of writes) {
-              if (write.op === "put") statements.put.run(toKey(write.key), Buffer.from(write.value));
-              else statements.del.run(toKey(write.key));
-            }
-            db.exec("COMMIT");
-          } catch (cause) {
-            db.exec("ROLLBACK");
-            throw cause;
-          }
-        },
-        catch: fail("sqlite-kv.write"),
-      }),
+    write: (writes) => batch(writes, []).pipe(Effect.asVoid),
+    conditionalWrite: batch,
+    coordination: "host",
 
     close: Effect.sync(() => db.close()),
   };

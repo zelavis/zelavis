@@ -6,5 +6,9 @@
   "installPrefix": "/opt/zelavis",
   "dataDirectory": "/var/lib/zelavis",
   "aptRepository": "https://apt.zelavis.com",
-  "aptSuite": "stable"
+  "aptSuite": "stable",
+  "operationTrust": {
+    "keys": [],
+    "revokedKeyIds": []
+  }
 }

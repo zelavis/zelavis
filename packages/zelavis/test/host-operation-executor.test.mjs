@@ -6,6 +6,9 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createNodeHostOperationExecutor } from "../dist/adapters/_node-host-operation-executor.js";
+import { createReleaseSigner } from "./fixtures/host-operation-signing.mjs";
+
+const signer = await createReleaseSigner();
 
 test("Node host operation executor verifies authority, manifest digest, arguments, and idempotency", async () => {
   const directory = await mkdtemp(join(tmpdir(), "zelavis-host-operation-"));
@@ -18,16 +21,18 @@ test("Node host operation executor verifies authority, manifest digest, argument
   try {
     const executor = await createNodeHostOperationExecutor({
       rootDirectory: directory,
+      trust: signer.trust,
       operations: [{
         file: "verify.sh",
-        manifest: {
+        signed: await signer.sign({
           id: "native.verify",
           version: "v1",
           sha256,
+          interpreter: "/bin/sh",
           arguments: {
             project: { required: true, pattern: "^[a-z0-9-]+$", maxLength: 64 },
           },
-        },
+        }),
       }],
       authorize: async (request) => request.authority === "signed-test-authority",
     });
@@ -67,4 +72,46 @@ test("Node host operation executor verifies authority, manifest digest, argument
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("host requests use immutable snapshots, own argument declarations and bounded argv", async () => {
+  const { validateHostOperationRequest, validateHostOperationRequestShape } = await import("../dist/core/deployment/index.js");
+  const manifest = { id: "native.verify", version: "v1", sha256: "a".repeat(64), arguments: {} };
+  const request = { operationId: "operation_0123456789abcdef", operation: manifest.id, version: manifest.version,
+    artifactDigest: manifest.sha256, authority: "test", arguments: {}, deadline: new Date(Date.now()+30_000).toISOString() };
+  for (const name of ["constructor", "toString", "__proto__"]) {
+    assert.throws(() => validateHostOperationRequest({ ...request, arguments: JSON.parse(`{"${name}":"value"}`) }, manifest), /undeclared argument|protocol bounds/);
+  }
+  for (const args of [{ value: "\0" }, { value: "x".repeat(16_385) }, { value: "😀".repeat(16_000) },
+    Object.fromEntries(Array.from({length:65}, (_,i)=>[`arg${i}`, "x"]))]) {
+    assert.throws(() => validateHostOperationRequestShape({ ...request, arguments: args }), /protocol bounds/);
+  }
+  const original = { ...request, arguments: { project: "before" } };
+  const snapshot = validateHostOperationRequestShape(original);
+  original.arguments.project = "after";
+  original.operation = "other.operation";
+  assert.equal(snapshot.arguments.project, "before");
+  assert.equal(snapshot.operation, "native.verify");
+  assert.ok(Object.isFrozen(snapshot) && Object.isFrozen(snapshot.arguments));
+});
+
+test("executor retains the authorized snapshot and refuses deadlines expired during authorization", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "zelavis-host-snapshot-"));
+  const body = "#!/bin/sh\nprintf '%s' \"$2\"\n";
+  await writeFile(join(directory, "verify.sh"), body, { mode: 0o700 });
+  const sha256 = createHash("sha256").update(body).digest("hex");
+  const request = { operationId:"operation_0123456789abcdef", operation:"native.verify", version:"v1",
+    artifactDigest:sha256, authority:"test", arguments:{project:"before"}, deadline:new Date(Date.now()+30_000).toISOString() };
+  try {
+    const executor = await createNodeHostOperationExecutor({ rootDirectory:directory,
+      trust: signer.trust, operations:[{file:"verify.sh", signed: await signer.sign({id:request.operation,version:request.version,sha256,interpreter:"/bin/sh",arguments:{project:{required:true}}})}],
+      authorize:async snapshot => { request.arguments.project="after"; assert.equal(snapshot.arguments.project,"before"); return true; },
+    });
+    assert.equal((await executor.execute(request)).stdout,"before");
+    const expired = await createNodeHostOperationExecutor({rootDirectory:directory,
+      trust: signer.trust, operations:[{file:"verify.sh", signed: await signer.sign({id:request.operation,version:request.version,sha256,interpreter:"/bin/sh",arguments:{project:{required:true}}})}],
+      authorize:async snapshot => { while(Date.now() <= Date.parse(snapshot.deadline)) await new Promise(resolve=>setTimeout(resolve,5)); return true; },
+    });
+    await assert.rejects(expired.execute({...request,operationId:"operation_abcdef0123456789",deadline:new Date(Date.now()+50).toISOString()}),/deadline/);
+  } finally {await rm(directory,{recursive:true,force:true});}
 });

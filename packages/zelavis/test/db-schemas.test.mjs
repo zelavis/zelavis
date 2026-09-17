@@ -103,7 +103,7 @@ test("validation: writes are rejected against the active schema", async (t) => {
       const rejected = (data) =>
         documents.insert({ collection: "posts", data }).pipe(
           Effect.as(undefined),
-          Effect.catchTag("SchemaViolation", (e) => Effect.succeed(e)),
+          Effect.catchTag(["SchemaViolation", "InvalidDocumentValue"], (e) => Effect.succeed(e)),
         );
 
       const missingRequired = yield* rejected({ views: 1 });
@@ -114,8 +114,8 @@ test("validation: writes are rejected against the active schema", async (t) => {
 
       assert.ok(yield* rejected({ title: 42 }), "wrong type rejected");
       assert.ok(yield* rejected({ title: "way too long a title" }), "maxLength enforced");
-      assert.ok(yield* rejected({ title: "ok", views: Number.NaN }), "NaN rejected");
-      assert.ok(yield* rejected({ title: "ok", views: Number.POSITIVE_INFINITY }), "infinity rejected");
+      assert.equal((yield* rejected({ title: "ok", views: Number.NaN }))._tag, "InvalidDocumentValue");
+      assert.equal((yield* rejected({ title: "ok", views: Number.POSITIVE_INFINITY }))._tag, "InvalidDocumentValue");
       assert.ok(yield* rejected({ title: "ok", stray: true }), "unknown field rejected");
 
       // Nothing partial was written by any rejected insert.

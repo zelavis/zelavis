@@ -29,6 +29,13 @@ import {
 } from "./_local-runtime.js";
 import { officialProjectRecipes } from "../project-recipes.js";
 import { createBuiltinDeploymentBackends } from "../backends/index.js";
+import { createNodeBackendHostProbes } from "./_node-backend-host.js";
+import { installAsyncPluginContextStorage } from "./_async-plugin-context.js";
+import { readOrCreatePlatformAuthorityKey } from "./_platform-authority-key.js";
+import {
+  createHostOperationBroker,
+  type ZelavisHostOperationBroker,
+} from "../platform/host-operations.js";
 export {
   resolveLocalPackageManifest,
   createLocalRuntimeServiceManifestResolver,
@@ -110,6 +117,7 @@ export const createNodeServicePackageInstaller = createLocalRuntimeServicePackag
 export const createNodeServiceImporter = createLocalRuntimeServiceImporter;
 
 export function nodeAdapter(options: NodeAdapterOptions = {}) {
+  installAsyncPluginContextStorage();
   let projectRuntime: ReturnType<typeof createLocalProjectRuntime> | undefined;
 
   return defineAdapter({
@@ -193,6 +201,8 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         options.projects !== false &&
         (!isProjectRuntime || normalizedProjectOptions !== undefined);
       const projectOptions = projectsEnabled ? normalizedProjectOptions : undefined;
+      let agentClient: Awaited<ReturnType<typeof createAgentProcessClient>> | undefined;
+      let platformAuthority: Awaited<ReturnType<typeof readOrCreatePlatformAuthorityKey>> | undefined;
       if (projectsEnabled && !projectRuntime) {
         const runtimeOptions: LocalProjectRuntimeOptions = {
           directory: projectOptions?.directory
@@ -229,14 +239,24 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         // The Agent is resolved here rather than left to the driver so the
         // sweep below can run: the adapter's `resolve` is async, and a driver
         // constructor is not.
-        runtimeOptions.agent = projectOptions?.agentEndpoint
+        // The authority key exists before the Agent is contacted, so an Agent
+        // started first finds the trust file as soon as the Platform starts.
+        if (projectOptions?.agentEndpoint && systemStore && !isProjectRuntime) {
+          platformAuthority = await readOrCreatePlatformAuthorityKey(
+            join(dataDirectory, "system", "agent-authority"),
+          );
+        }
+        agentClient = projectOptions?.agentEndpoint
+          ? await createAgentProcessClient({
+              directory: resolve(projectOptions.agentEndpoint),
+            })
+          : undefined;
+        runtimeOptions.agent = agentClient
           ? // Fails rather than falling back to in-process execution: a host
             // that asked for a supervised Agent and silently got Projects
             // inside the Platform has the opposite of what it configured, and
             // would only find out when the Platform next died.
-            await createAgentProcessClient({
-              directory: resolve(projectOptions.agentEndpoint),
-            })
+            agentClient
           : createLocalAgentProcessRunner({
               stateDirectory: join(runtimeOptions.directory, ".agent-processes"),
             });
@@ -256,6 +276,17 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         // started again — and so would never be reclaimed at all.
         await runtimeOptions.agent.reclaim?.().catch(() => undefined);
       }
+      // Signed host operations are requestable only through a supervised Agent,
+      // and only the Platform holds the key the Agent trusts.
+      let hostOperations: ZelavisHostOperationBroker | undefined;
+      if (agentClient && platformAuthority && systemStore) {
+        hostOperations = createHostOperationBroker({
+          agent: agentClient,
+          signer: platformAuthority.signer,
+          store: systemStore,
+        });
+      }
+
       const fileStorage =
         options.files === false
           ? undefined
@@ -297,8 +328,10 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           deploymentBackends: isProjectRuntime
             ? undefined
             : createBuiltinDeploymentBackends({
+                host: createNodeBackendHostProbes(),
                 nativeProjectRuntime: projectsEnabled ? projectRuntime : undefined,
               }),
+          ...(hostOperations ? { hostOperations } : {}),
           kv: options.kv === false ? undefined : createMemoryKeyValueStore(),
           files: fileStorage,
           servicePackages:

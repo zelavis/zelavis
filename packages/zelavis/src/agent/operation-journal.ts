@@ -35,7 +35,7 @@ interface StoredAgentOperation {
   };
   readonly result?: Pick<
     ZelavisHostOperationResult,
-    "exitCode" | "startedAt" | "finishedAt"
+    "exitCode" | "startedAt" | "finishedAt" | "result" | "resultError"
   >;
   readonly events: readonly ZelavisAgentOperationEvent[];
   readonly createdAt: string;
@@ -86,6 +86,8 @@ function toSummary(operation: StoredAgentOperation): ZelavisAgentOperationSummar
           exitCode: operation.result.exitCode,
           startedAt: operation.result.startedAt,
           finishedAt: operation.result.finishedAt,
+          ...(operation.result.result ? { result: operation.result.result } : {}),
+          ...(operation.result.resultError ? { resultError: operation.result.resultError } : {}),
         }
       : {}),
     createdAt: operation.createdAt,
@@ -223,6 +225,10 @@ export async function createAgentOperationManager(options: {
                 exitCode: result.exitCode,
                 startedAt: result.startedAt,
                 finishedAt: result.finishedAt,
+                // Only a result the signed manifest declared reaches this;
+                // raw stdout and stderr are still never journaled.
+                ...(result.result ? { result: result.result } : {}),
+                ...(result.resultError ? { resultError: result.resultError } : {}),
               },
             }
           : {}),
@@ -290,7 +296,7 @@ export async function createAgentOperationManager(options: {
     },
     async submit(request) {
       if (closed) throw new Error("Agent operation manager is closed.");
-      validateHostOperationRequestShape(request);
+      request = validateHostOperationRequestShape(request);
       const fingerprint = await requestFingerprint(request);
       const now = new Date().toISOString();
       const operation: StoredAgentOperation = {

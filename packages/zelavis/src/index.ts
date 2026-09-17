@@ -1,3 +1,4 @@
+import { publicServiceRegistryIdentity } from "./platform/service-registry-view.js";
 import {
   authService as createAuthService,
   createAuth,
@@ -116,6 +117,7 @@ import {
   parseStoredServiceRegistryStateEntry,
   readDashboardSettingsUpdate,
   readInitialServiceRegistryState,
+  mutateServiceRegistry,
   resolveRuntimeSettingsStore,
   resolveServiceRegistryStore,
 } from "./platform/settings.js";
@@ -161,6 +163,7 @@ import {
 export * from "./service.js";
 export * from "./system-store.js";
 export * from "./project.js";
+export * from "./platform/host-operations.js";
 export * from "./assistant.js";
 export * from "./bundle-store.js";
 export * from "./tls.js";
@@ -175,6 +178,7 @@ import {
 import {
   createProjectManager,
   ZelavisProjectConflictError,
+  ZelavisProjectIsolationError,
   ZelavisProjectNotFoundError,
   ZelavisProjectRuntimeError,
   ZelavisProjectValidationError,
@@ -183,6 +187,14 @@ import {
   type ZelavisProjectManager,
   type ZelavisProjectRecord,
 } from "./project.js";
+import {
+  ZelavisHostOperationForbiddenError,
+  ZelavisHostOperationNotFoundError,
+  ZelavisHostOperationRateLimitedError,
+  type ZelavisHostOperationBroker,
+} from "./platform/host-operations.js";
+import { ZelavisHostOperationValidationError } from "./core/deployment/index.js";
+import type { ZelavisPrincipal as HostOperationPrincipal } from "./core/runtime/contracts.js";
 import {
   createAssistantManager,
   ZelavisAssistantNotFoundError,
@@ -232,6 +244,8 @@ export type {
   ZelavisFileReference,
   ZelavisFileStorage,
   ZelavisFileStorageCondition,
+  ZelavisFileStorageScope,
+  ZelavisFileStorageCapabilities,
   ZelavisFileStorageEntry,
   ZelavisFileStorageObject,
   ZelavisFileStoragePutInput,
@@ -444,6 +458,8 @@ export interface ZelavisServerOptions {
   deploymentBackends?: readonly ZelavisDeploymentBackendAdapter[];
   /** Read-only connection to a separately supervised Agent operation journal. */
   agentOperations?: ZelavisAgentOperationReader;
+  /** Issues authority for release-signed host operations on a supervised Agent. */
+  hostOperations?: ZelavisHostOperationBroker;
   assistant?: false | ZelavisAssistantResponder;
   bootstrap?: {
     /** One-time secret required to claim the first Platform owner account. */
@@ -534,6 +550,8 @@ export interface ZelavisPlatformResources {
   projectRuntime?: ZelavisProjectRuntimeDriver;
   deploymentBackends?: readonly ZelavisDeploymentBackendAdapter[];
   agentOperations?: ZelavisAgentOperationReader;
+  /** Issues authority for release-signed host operations on a supervised Agent. */
+  hostOperations?: ZelavisHostOperationBroker;
   kv?: ZelavisKeyValueStore;
   files?: ZelavisFileStorage;
   services?: ZelavisServiceActivationController;
@@ -1664,8 +1682,10 @@ async function resolveRuntimeManagementCore(
         .filter((route: string) => route !== "/"),
     ),
   ];
-  const readResolvedServiceRegistry = async () => {
-    const storedEntries = await context.serviceRegistryStore.read();
+  const readResolvedServiceRegistry = async (
+    entries?: readonly ZelavisServiceRegistryStateEntry[],
+  ) => {
+    const storedEntries = entries ?? await context.serviceRegistryStore.read();
     const storedServiceRegistry = await loadStoredServiceRegistryModules(
       storedEntries,
       context.serviceImporter,
@@ -1888,17 +1908,25 @@ async function resolveRuntimeManagementCore(
       body: asset.body,
     };
   };
+  const listPluginOperations = () =>
+    context.getServices().flatMap((service) =>
+      service.namespace
+        ? Object.values(service.api ?? {}).flatMap((routes) => routes.flatMap((route) =>
+            typeof route.meta?.pluginResource === "string" && typeof route.meta?.pluginAction === "string"
+              ? [{
+                  namespace: service.namespace,
+                  resource: route.meta.pluginResource,
+                  action: route.meta.pluginAction,
+                  method: route.method,
+                  path: joinPathParts(service.basePath, route.path),
+                  spec: route.spec,
+                }]
+              : []))
+        : []);
   const createDashboardRuntimeConfig = async () => {
     const serviceRegistry = await readResolvedServiceRegistry();
     const serializedServices = serviceRegistry.map((entry) => ({
-      name: entry.service.name,
-      namespace: entry.service.namespace,
-      version: entry.service.version,
-      kind: entry.service.kind,
-      specifier: entry.specifier,
-      status: entry.status,
-      source: entry.source,
-      order: entry.order,
+      ...publicServiceRegistryIdentity(entry),
       marketplace: entry.service.marketplace,
       // Present only on a service that extends another. A client listing a
       // general catalogue leaves these out and shows them beside the plugin
@@ -1913,20 +1941,7 @@ async function resolveRuntimeManagementCore(
 
     return {
       name: "zelavis",
-      pluginOperations: context.getServices().flatMap((service) =>
-        service.namespace
-          ? Object.values(service.api ?? {}).flatMap((routes) => routes.flatMap((route) =>
-              typeof route.meta?.pluginResource === "string" && typeof route.meta?.pluginAction === "string"
-                ? [{
-                    namespace: service.namespace,
-                    resource: route.meta.pluginResource,
-                    action: route.meta.pluginAction,
-                    method: route.method,
-                    path: joinPathParts(service.basePath, route.path),
-                    spec: route.spec,
-                  }]
-                : []))
-          : []),
+      pluginOperations: listPluginOperations(),
       rootPath,
       api: {
         prefix: context.apiPrefix,
@@ -2011,9 +2026,7 @@ async function resolveRuntimeManagementCore(
     {
       const serviceRegistry = await readResolvedServiceRegistry();
       const serialized = serviceRegistry.map((entry) => ({
-        name: entry.service.name,
-        version: entry.service.version,
-        kind: entry.service.kind,
+        ...publicServiceRegistryIdentity(entry),
         // The trust boundary a client needs to render this service's page
         // safely. "extension" means the service was installed at runtime and is
         // not part of what the operator composed; the dashboard sandboxes its
@@ -2027,10 +2040,6 @@ async function resolveRuntimeManagementCore(
           context.apiVersion,
           entry.service.basePath ?? entry.service.name,
         ),
-        specifier: entry.specifier,
-        status: entry.status,
-        source: entry.source,
-        order: entry.order,
         marketplace: entry.service.marketplace,
         // Present only on a service that extends another. A client listing a
         // general catalogue leaves these out and shows them beside the plugin
@@ -2050,11 +2059,7 @@ async function resolveRuntimeManagementCore(
         ...(storedEntries ?? [])
           .filter((entry) => !seen.has(entry.name))
           .map((entry) => ({
-            name: entry.name,
-            specifier: entry.specifier,
-            status: entry.status ?? "available",
-            source: entry.source,
-            order: entry.order,
+            ...publicServiceRegistryIdentity(entry),
           })),
       ];
     };
@@ -2143,6 +2148,46 @@ async function resolveRuntimeManagementCore(
           }),
         },
         {
+          id: "runtime.plugin-operations.list",
+          spec: {
+            operationId: "listPluginOperations",
+            summary: "The installed plugin operation catalogue",
+            description:
+              "Revisioned by an ETag. Clients revalidate with If-None-Match on every call, so a disabled or uninstalled operation disappears immediately while an unchanged catalogue costs a bodyless 304.",
+            tags: ["runtime"],
+            responses: {
+              200: { description: "Operations and their revision" },
+              304: { description: "Unchanged since the revision the client holds" },
+            },
+          },
+          method: "GET",
+          path: joinPathParts(
+            context.apiPrefix,
+            context.apiVersion,
+            "runtime/plugin-operations",
+          ),
+          handler: async ({ request }: { request: Request }) => {
+            const operations = listPluginOperations();
+            const serialized = JSON.stringify(operations);
+            const digest = await crypto.subtle.digest(
+              "SHA-256",
+              new TextEncoder().encode(serialized),
+            );
+            const revision = [...new Uint8Array(digest)]
+              .map((value) => value.toString(16).padStart(2, "0"))
+              .join("");
+            const etag = `"${revision}"`;
+            // Never cached by intermediaries without revalidation: an
+            // uninstalled operation must not stay callable from a cache.
+            const headers = { etag, "cache-control": "no-cache" };
+            const presented = request.headers.get("if-none-match");
+            if (presented?.split(",").some((value) => value.trim() === etag)) {
+              return { status: 304, headers };
+            }
+            return { status: 200, headers, body: { revision, operations } };
+          },
+        },
+        {
           id: "runtime.services.read",
           spec: {
             operationId: "listRuntimeServices",
@@ -2169,6 +2214,32 @@ async function resolveRuntimeManagementCore(
             } catch (error) {
               return zelavisErrorResponse(error, 400);
             }
+          },
+        },
+        {
+          id: "runtime.services.sources",
+          method: "GET",
+          path: joinPathParts(context.apiPrefix, context.apiVersion, "runtime/services/sources"),
+          access: { permissions: ["system.services.manage"] },
+          spec: {
+            operationId: "listRuntimeServiceSources",
+            summary: "Inspect private service acquisition references",
+            tags: ["runtime"],
+            responses: { 200: { description: "Administrative source diagnostics" } },
+          },
+          handler: async () => {
+            const registry = await readResolvedServiceRegistry();
+            const names = new Set(registry.map((entry) => entry.service.name));
+            const stored = await context.serviceRegistryStore.read();
+            return {
+              status: 200,
+              headers: { "cache-control": "no-store" },
+              body: { sources: [
+                ...registry.map((entry) => ({ ...publicServiceRegistryIdentity(entry), specifier: entry.specifier })),
+                ...(stored ?? []).filter((entry) => !names.has(entry.name))
+                  .map((entry) => ({ ...publicServiceRegistryIdentity(entry), specifier: entry.specifier })),
+              ] },
+            };
           },
         },
         {
@@ -2230,7 +2301,6 @@ async function resolveRuntimeManagementCore(
                     version: service.version,
                     status: service.status,
                     source: service.source,
-                    specifier: service.specifier,
                     capabilities: point.capabilities,
                     marketplace: service.marketplace,
                   });
@@ -2263,6 +2333,7 @@ async function resolveRuntimeManagementCore(
             responses: {
               200: { description: "Service registered" },
               400: { description: "Invalid registration" },
+              409: { description: "Registry mutation conflicted after bounded retries" },
             },
           },
           method: "POST",
@@ -2279,15 +2350,10 @@ async function resolveRuntimeManagementCore(
                 manifestResolver: context.serviceManifestResolver,
                 packageInstaller: context.servicePackageInstaller,
               });
-              const currentEntries = await context.serviceRegistryStore.read();
-              const nextEntries = [
-                ...(currentEntries ?? []).filter(
-                  (entry) => entry.name !== created.name,
-                ),
-                created,
-              ];
-
-              await context.serviceRegistryStore.write(nextEntries);
+              const nextEntries = await mutateServiceRegistry(context.serviceRegistryStore, (entries) => [
+                ...entries.filter((entry) => entry.name !== created.name),
+                { ...entries.find((entry) => entry.name === created.name), ...created },
+              ]);
               const activation = await activateServiceRegistryChange(
                 {
                   serviceName: created.name,
@@ -2426,6 +2492,7 @@ async function resolveRuntimeManagementCore(
             responses: {
               200: { description: "Service updated" },
               400: { description: "Invalid update or unmet extension owner" },
+              409: { description: "Registry mutation conflicted after bounded retries" },
             },
           },
           method: "PATCH",
@@ -2443,79 +2510,11 @@ async function resolveRuntimeManagementCore(
               }
 
               const update = readDashboardServiceRegistryUpdate(body);
-              const currentEntries =
-                (await context.serviceRegistryStore.read()) ?? [];
-              const currentRegistry = await readResolvedServiceRegistry();
-              const nextRegistry = createServiceRegistry(
-                currentRegistry.map((entry) =>
-                  entry.service.name === serviceName
-                    ? {
-                        ...entry,
-                        ...(update.status ? { status: update.status } : {}),
-                        ...(update.source !== undefined
-                          ? { source: update.source }
-                          : {}),
-                        ...(update.order !== undefined
-                          ? { order: update.order }
-                          : {}),
-                      }
-                    : entry,
-                ),
-              );
-              const updatedRegistryEntry = nextRegistry.find(
-                (entry) => entry.service.name === serviceName,
-              );
-              const updatedStoredEntry = currentEntries.find(
-                (entry) => entry.name === serviceName,
-              );
-
-              if (!updatedRegistryEntry && !updatedStoredEntry) {
-                throw new ZelavisValidationError(
-                  `Unknown service "${serviceName}".`,
-                );
-              }
-
-              // An extension does nothing until what it extends is running:
-              // the plugin it points at is what discovers it. Installing one
-              // on its own would look like it worked and quietly do nothing.
-              if (update.status === "installed" && updatedRegistryEntry) {
-                // Composed services as well as installed registry entries. A
-                // core service like `zelavis/auth` never appears in the
-                // registry, so checking only that would refuse every extension
-                // of one — which is most of them.
-                const installedNames = new Set([
-                  ...nextRegistry
-                    .filter((entry) => entry.status === "installed")
-                    .map((entry) => entry.service.name),
-                  ...context.getServices().map((service) => service.name),
-                ]);
-                const missing = serviceExtensionOwners(
-                  updatedRegistryEntry.service,
-                ).filter((owner) => !installedNames.has(owner));
-                if (missing.length > 0) {
-                  throw new ZelavisValidationError(
-                    `"${serviceName}" extends ${missing.join(", ")}, which ${
-                      missing.length === 1 ? "is" : "are"
-                    } not installed.`,
-                  );
-                }
-              }
-
-              const serializedNextRegistry = serializeServiceRegistryState(
-                nextRegistry,
-              );
-              const registryNames = new Set(
-                serializedNextRegistry.map((entry) => entry.name),
-              );
-              const serializedNextEntries = updatedRegistryEntry
-                ? [
-                    ...serializedNextRegistry,
-                    ...currentEntries.filter(
-                      (entry) => !registryNames.has(entry.name),
-                    ),
-                  ]
-                : currentEntries.map((entry) =>
-                    entry.name === serviceName
+              const serializedNextEntries = await mutateServiceRegistry(context.serviceRegistryStore, async (currentEntries) => {
+                const currentRegistry = await readResolvedServiceRegistry(currentEntries);
+                const nextRegistry = createServiceRegistry(
+                  currentRegistry.map((entry) =>
+                    entry.service.name === serviceName
                       ? {
                           ...entry,
                           ...(update.status ? { status: update.status } : {}),
@@ -2527,9 +2526,55 @@ async function resolveRuntimeManagementCore(
                             : {}),
                         }
                       : entry,
-                  );
+                  ),
+                );
+                const updatedRegistryEntry = nextRegistry.find(
+                  (entry) => entry.service.name === serviceName,
+                );
+                const updatedStoredEntry = currentEntries.find(
+                  (entry) => entry.name === serviceName,
+                );
 
-              await context.serviceRegistryStore.write(serializedNextEntries);
+                if (!updatedRegistryEntry && !updatedStoredEntry) {
+                  throw new ZelavisValidationError(
+                    `Unknown service "${serviceName}".`,
+                  );
+                }
+
+                // An extension does nothing until what it extends is running:
+                // the plugin it points at is what discovers it. Installing one
+                // on its own would look like it worked and quietly do nothing.
+                if (update.status === "installed" && updatedRegistryEntry) {
+                  // Composed services as well as installed registry entries. A
+                  // core service like `zelavis/auth` never appears in the
+                  // registry, so checking only that would refuse every extension
+                  // of one — which is most of them.
+                  const installedNames = new Set([
+                    ...nextRegistry
+                      .filter((entry) => entry.status === "installed")
+                      .map((entry) => entry.service.name),
+                    ...context.getServices().map((service) => service.name),
+                  ]);
+                  const missing = serviceExtensionOwners(
+                    updatedRegistryEntry.service,
+                  ).filter((owner) => !installedNames.has(owner));
+                  if (missing.length > 0) {
+                    throw new ZelavisValidationError(
+                      `"${serviceName}" extends ${missing.join(", ")}, which ${
+                        missing.length === 1 ? "is" : "are"
+                      } not installed.`,
+                    );
+                  }
+                }
+
+                const base = updatedStoredEntry ?? (updatedRegistryEntry
+                  ? serializeServiceRegistryState([updatedRegistryEntry])[0]
+                  : undefined);
+                const changed = { ...base, name: serviceName, ...update };
+                return updatedStoredEntry
+                  ? currentEntries.map((entry) => entry.name === serviceName ? changed : entry)
+                  : [...currentEntries, changed];
+              });
               const activation = await activateServiceRegistryChange(
                 {
                   serviceName,
@@ -2539,9 +2584,7 @@ async function resolveRuntimeManagementCore(
                       : update.status === "available"
                         ? "uninstall"
                         : "update",
-                  specifier: nextRegistry.find(
-                    (entry) => entry.service.name === serviceName,
-                  )?.specifier ?? updatedStoredEntry?.specifier,
+                  specifier: serializedNextEntries.find((entry) => entry.name === serviceName)?.specifier,
                 },
                 serializedNextEntries,
               );
@@ -2868,6 +2911,161 @@ function resolveFabricCoreService(
   });
 }
 
+function hostOperationErrorResponse(error: unknown) {
+  if (error instanceof ZelavisHostOperationRateLimitedError) {
+    return {
+      status: 429,
+      headers: { "retry-after": String(error.retryAfterSeconds) },
+      body: { error: error.message, retryAfterSeconds: error.retryAfterSeconds },
+    };
+  }
+  if (error instanceof ZelavisHostOperationForbiddenError) {
+    return { status: error.status, body: { error: error.message } };
+  }
+  if (error instanceof ZelavisHostOperationNotFoundError) {
+    return { status: 404, body: { error: error.message } };
+  }
+  if (error instanceof ZelavisHostOperationValidationError) {
+    return { status: 400, body: { error: error.message } };
+  }
+  return createJsonErrorResponse(502, error);
+}
+
+/**
+ * Release-signed host operations: catalog, request, status. Authentication is
+ * the route requirement; the permission comes from each operation's signed
+ * manifest and is checked by the broker for the requested scope.
+ */
+function hostOperationRoutes(
+  broker: ZelavisHostOperationBroker | undefined,
+): ZelavisServerRoute<any>[] {
+  const unavailable = () => ({
+    status: 503,
+    body: { error: "Host operations require a supervised Agent with installed operations." },
+  });
+  type Context = {
+    principal?: HostOperationPrincipal;
+    body?: unknown;
+    params: Record<string, string>;
+    query: URLSearchParams;
+  };
+  return [
+    {
+      id: "runtime.host-operations.catalog",
+      spec: {
+        operationId: "listHostOperations",
+        summary: "Host operations the caller may request",
+        tags: ["host-operations"],
+        responses: { 200: { description: "Requestable operations" } },
+      },
+      method: "GET",
+      path: "/host-operations",
+      access: { authenticated: true },
+      handler: async ({ principal }: Context) => {
+        if (!broker) return unavailable();
+        try {
+          return { status: 200, body: { operations: await broker.catalog(principal) } };
+        } catch (error) {
+          return hostOperationErrorResponse(error);
+        }
+      },
+    },
+    {
+      id: "runtime.host-operations.submit",
+      spec: {
+        operationId: "submitHostOperation",
+        summary: "Request a release-signed host operation",
+        tags: ["host-operations"],
+        responses: {
+          202: { description: "Accepted by the Agent" },
+          400: { description: "Invalid request" },
+          403: { description: "Missing the operation's permission" },
+          404: { description: "Not installed or not requestable" },
+        },
+      },
+      method: "POST",
+      path: "/host-operations",
+      access: { authenticated: true },
+      handler: async ({ principal, body }: Context) => {
+        if (!broker) return unavailable();
+        try {
+          const input = (body && typeof body === "object" && !Array.isArray(body)
+            ? body
+            : {}) as Record<string, unknown>;
+          const args = input.arguments;
+          if (
+            args !== undefined &&
+            (!args || typeof args !== "object" || Array.isArray(args) ||
+              Object.values(args).some((value) => typeof value !== "string"))
+          ) {
+            throw new ZelavisHostOperationValidationError("arguments must be an object of strings.");
+          }
+          const operation = await broker.submit({
+            operation: typeof input.operation === "string" ? input.operation : "",
+            ...(typeof input.version === "string" ? { version: input.version } : {}),
+            ...(typeof input.projectId === "string" ? { projectId: input.projectId } : {}),
+            ...(args ? { arguments: args as Record<string, string> } : {}),
+            ...(typeof input.deadlineMs === "number" ? { deadlineMs: input.deadlineMs } : {}),
+          }, principal);
+          return { status: 202, body: { operation } };
+        } catch (error) {
+          return hostOperationErrorResponse(error);
+        }
+      },
+    },
+    {
+      id: "runtime.host-operations.audit",
+      spec: {
+        operationId: "listHostOperationAudit",
+        summary: "Host operation issuance records (never argument values)",
+        tags: ["host-operations"],
+        responses: { 200: { description: "Records, newest first" }, 403: { description: "Missing audit permission" } },
+      },
+      method: "GET",
+      path: "/host-operations/audit",
+      access: { authenticated: true },
+      handler: async ({ principal, query }: Context) => {
+        if (!broker) return unavailable();
+        try {
+          const limit = query.get("limit");
+          const projectId = query.get("projectId");
+          return {
+            status: 200,
+            body: {
+              records: await broker.audit({
+                ...(projectId ? { projectId } : {}),
+                ...(limit !== null ? { limit: Number(limit) } : {}),
+              }, principal),
+            },
+          };
+        } catch (error) {
+          return hostOperationErrorResponse(error);
+        }
+      },
+    },
+    {
+      id: "runtime.host-operations.get",
+      spec: {
+        operationId: "getHostOperation",
+        summary: "Read a requested host operation",
+        tags: ["host-operations"],
+        responses: { 200: { description: "Operation" }, 404: { description: "Not found" } },
+      },
+      method: "GET",
+      path: "/host-operations/:operationId",
+      access: { authenticated: true },
+      handler: async ({ principal, params }: Context) => {
+        if (!broker) return unavailable();
+        try {
+          return { status: 200, body: { operation: await broker.get(params.operationId ?? "", principal) } };
+        } catch (error) {
+          return hostOperationErrorResponse(error);
+        }
+      },
+    },
+  ];
+}
+
 async function resolvePlatformCoreService(
   projectRecipes: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
   projects?: ZelavisProjectManager,
@@ -2875,6 +3073,7 @@ async function resolvePlatformCoreService(
   systemStore?: ZelavisSystemStore,
   deploymentBackends?: ZelavisDeploymentBackendManager,
   agentOperations?: ZelavisAgentOperationReader,
+  hostOperations?: ZelavisHostOperationBroker,
   runtimeManagementRoutes: readonly ZelavisServerRoute<any>[] = [],
   assistantOption?: false | ZelavisAssistantResponder,
 ): Promise<ZelavisRuntimeService<any>> {
@@ -2897,6 +3096,18 @@ async function resolvePlatformCoreService(
   }
 
   function projectErrorResponse(error: unknown) {
+    if (error instanceof ZelavisProjectIsolationError) {
+      // A stable code and the assessment, so SDK and CLI callers can act on
+      // the refusal without parsing its message.
+      return {
+        status: 409,
+        body: {
+          error: error.message,
+          code: "project.isolation.unsatisfied",
+          isolation: error.assessment,
+        },
+      };
+    }
     const status =
       error instanceof ZelavisProjectNotFoundError
         ? 404
@@ -3006,6 +3217,7 @@ async function resolvePlatformCoreService(
               : { status: 404, body: { error: "Agent operation was not found." } };
           },
         },
+        ...hostOperationRoutes(hostOperations),
         {
           id: "runtime.deployment-backends.list",
           spec: {
@@ -3147,11 +3359,7 @@ async function resolvePlatformCoreService(
               projectRecipes: projectRecipes
                 .filter((entry) => entry.service.kind === "app")
                 .map((entry) => ({
-                  name: entry.service.name,
-                  version: entry.service.version,
-                  specifier: entry.specifier,
-                  status: entry.status,
-                  source: entry.source,
+                  ...publicServiceRegistryIdentity(entry),
                   title:
                     entry.service.marketplace?.title ??
                     entry.service.menu?.title ??
@@ -3159,6 +3367,9 @@ async function resolvePlatformCoreService(
                   summary: entry.service.marketplace?.summary,
                   marketplace: entry.service.marketplace,
                   runtimeKinds: entry.service.project?.runtimeKinds ?? ["native"],
+                  ...(entry.service.project?.isolation
+                    ? { isolation: entry.service.project.isolation }
+                    : {}),
                 })),
             },
           }),
@@ -3891,7 +4102,7 @@ export async function zelavis(
                 return false;
               }
               const value = record.value as Readonly<Record<string, unknown>>;
-              return (value.runtimeKind ?? "native") === backendId;
+              return value.runtimeKind === backendId;
             }).length,
         })
       : undefined;
@@ -3923,6 +4134,30 @@ export async function zelavis(
             ? {
                 resolveDefaultRuntimeKind: async () =>
                   (await deploymentBackends.getPolicy()).defaultBackend,
+                // Administrator order (the order backends were enabled in),
+                // restricted to ones that can run a Project here right now.
+                resolveAlternativeRuntimeKinds: async () => {
+                  const [policy, snapshots] = await Promise.all([
+                    deploymentBackends.getPolicy(),
+                    deploymentBackends.list(),
+                  ]);
+                  const runnable = new Set(
+                    snapshots
+                      .filter((backend) =>
+                        backend.executable && backend.detection.state === "ready")
+                      .map((backend) => backend.id),
+                  );
+                  return policy.enabledBackends.filter((id) => runnable.has(id));
+                },
+                // Only a backend that can execute Projects describes a
+                // Project's isolation; a detection-only adapter's capability
+                // literals prove nothing about how a Project would run.
+                backendCapabilities: (runtimeKind: string) => {
+                  const backend = options.deploymentBackends?.find(
+                    (candidate) => candidate.id === runtimeKind,
+                  );
+                  return backend?.projectRuntime ? backend.capabilities : undefined;
+                },
               }
             : {}),
           cleanupParticipants: [
@@ -4036,6 +4271,7 @@ export async function zelavis(
     systemStore,
     deploymentBackends,
     options.agentOperations,
+    options.hostOperations,
     runtimeManagement.routes,
     options.assistant,
   );
@@ -4378,6 +4614,7 @@ function mergeZelavisServerOptions(
     deploymentBackends:
       override.deploymentBackends ?? base.deploymentBackends,
     agentOperations: override.agentOperations ?? base.agentOperations,
+    hostOperations: override.hostOperations ?? base.hostOperations,
     serviceRegistry:
       serviceCatalog.length > 0 ||
       discoveredServices.length > 0 ||
@@ -4517,6 +4754,7 @@ function applyPlatformResourceDefaults(
     deploymentBackends:
       options.deploymentBackends ?? resources.deploymentBackends,
     agentOperations: options.agentOperations ?? resources.agentOperations,
+    hostOperations: options.hostOperations ?? resources.hostOperations,
   };
 }
 

@@ -260,6 +260,13 @@ export class ProjectionNotFound extends Schema.TaggedError<ProjectionNotFound>()
   { name: Schema.String },
 ) {}
 
+/** A scalar document field cannot be represented by the ordered index. */
+export class InvalidDocumentValue extends Schema.TaggedError<InvalidDocumentValue>()("InvalidDocumentValue", {
+  collection: Schema.String,
+  path: Schema.String,
+  reason: Schema.String,
+}) {}
+
 export class SchemaVersionExists extends Schema.TaggedError<SchemaVersionExists>()(
   "SchemaVersionExists",
   { collection: Schema.String, version: Schema.Finite },

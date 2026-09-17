@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile, symlink, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -147,7 +147,7 @@ test("an installed frontend package becomes a runnable Project", async () => {
     const resolve = createLocalFrontendDirectoryResolver({ directory });
     assert.equal(
       await resolve(frontend, frontend.recipe),
-      dirname(dirname(installed.specifier)),
+      await realpath(dirname(dirname(installed.specifier))),
     );
 
     await projects.close();
@@ -173,6 +173,44 @@ test("a frontend that was never installed is refused, not guessed at", async () 
       /does not point at an installed package/,
     );
   });
+});
+
+test("frontend recipe resolution refuses sibling prefixes and escaping symlinks", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "zelavis-frontend-containment-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const directory = join(root, "services");
+  const sibling = join(root, "services-evil", "theme");
+  const pkg = join(directory, "theme");
+  await mkdir(pkg, { recursive: true });
+  await mkdir(sibling, { recursive: true });
+  await writeFile(join(sibling, "package.json"), "{}");
+  await writeFile(join(sibling, "index.js"), "export default {};");
+  await writeFile(join(pkg, "package.json"), "{}");
+  await symlink(join(sibling, "index.js"), join(pkg, "index.js"));
+  const resolve = createLocalFrontendDirectoryResolver({ directory });
+  for (const specifier of [join(sibling, "index.js"), join(pkg, "index.js")]) {
+    await assert.rejects(resolve({}, { name: "@acme/theme", specifier }), /does not point at an installed package/);
+  }
+  await rm(join(pkg, "index.js"));
+  await writeFile(join(pkg, "index.js"), "export default {};");
+  await rm(join(pkg, "package.json"));
+  await symlink(join(sibling, "package.json"), join(pkg, "package.json"));
+  await assert.rejects(resolve({}, { name: "@acme/theme", specifier: join(pkg, "index.js") }), /does not point at an installed package/);
+  const neighbor = join(directory, "neighbor");
+  await mkdir(neighbor);
+  await writeFile(join(neighbor, "package.json"), "{}");
+  await rm(join(pkg, "package.json"));
+  await symlink(join(neighbor, "package.json"), join(pkg, "package.json"));
+  await assert.rejects(resolve({}, { name: "@acme/theme", specifier: join(pkg, "index.js") }), /does not point at an installed package/);
+  await rm(join(pkg, "package.json"));
+  await writeFile(join(pkg, "package.json"), "{}");
+  const linkedRoot = join(root, "linked-services");
+  await symlink(directory, linkedRoot, "dir");
+  const linked = createLocalFrontendDirectoryResolver({ directory: linkedRoot });
+  assert.equal(
+    await linked({}, { name: "@acme/theme", specifier: await realpath(join(pkg, "index.js")) }),
+    await realpath(pkg),
+  );
 });
 
 async function buildZip(files) {
@@ -274,6 +312,17 @@ test("preparing a frontend writes the record its own router reads back", async (
     );
     assert.equal(record.kind, "frontend");
     assert.equal(record.recipe.name, "@acme/theme");
+
+    // The local leaf driver executes only an explicit native assignment.
+    await assert.rejects(
+      async () => runtime.prepare({ ...project, id: "unassigned", runtimeKind: undefined }, project.recipe),
+      /explicit native runtime kind/,
+    );
+    await writeFile(
+      join(root, "projects", "shop-site", "project.json"),
+      JSON.stringify({ ...record, runtimeKind: undefined }),
+    );
+    await assert.rejects(runtime.stop("shop-site"), /explicit native runtime kind/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

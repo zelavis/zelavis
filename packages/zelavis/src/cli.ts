@@ -49,6 +49,12 @@ async function serve(options: ZelavisCliServeOptions): Promise<void> {
     ...(frontend ? { frontend } : {}),
     adapter: nodeAdapter({
       dataDirectory,
+      // Projects run through a separately supervised Agent when the host
+      // names its endpoint (the packaged zelavis-agent unit); otherwise they
+      // run in this process.
+      ...(process.env.ZELAVIS_AGENT_ENDPOINT
+        ? { projects: { agentEndpoint: process.env.ZELAVIS_AGENT_ENDPOINT } }
+        : {}),
     }),
     onError: ({ error }) => ({
       status: 400,
