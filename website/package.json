@@ -2,6 +2,14 @@
   "name": "@zelavis/website",
   "type": "module",
   "version": "0.0.1",
+  "zelavis": {
+    "kind": "frontend",
+    "frontend": {
+      "runtime": "static",
+      "bundle": "dist",
+      "mode": "mpa"
+    }
+  },
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
