@@ -202,6 +202,14 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
   }
 
   const topology = topologyFor(topologyStore, partitionMap, shards);
+  const movement = movementOver({ topologyStore, topology, shards });
+  // Routing may already have left a source shard whose cleanup is unfinished.
+  // Earlier phases also need target shards not yet named by the current map.
+  for (const move of yield* movement.pending) {
+    for (const shard of new Set([move.from, move.to, ...shardsOf(move.map)])) {
+      if (!shards.has(shard)) shards.set(shard, yield* options.openShard(shard));
+    }
+  }
 
   /**
    * Where a tenant lives *now*.
@@ -282,7 +290,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     },
     maintenance,
     scatter: scatterOver({ shards, tenantsOn, shardOf, documentsFor: documentsFor_ }),
-    movement: movementOver({ topologyStore, topology, shards }),
+    movement,
     topology,
     shardOf,
     forTenant: (tenant) => {

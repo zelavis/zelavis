@@ -78,7 +78,6 @@ export interface RuntimeServiceRegistryEntry {
   scope?: "system" | "extension";
   /** API namespace this service owns; the only surface its page may reach. */
   apiPath?: string;
-  specifier?: string;
   status: "installed" | "available";
   source?: "official" | "community";
   order?: number;
@@ -212,7 +211,7 @@ export interface RuntimeDeploymentBackendSnapshot {
     filesystemIsolation: RuntimeDeploymentBackendFeatureState;
     processIsolation: RuntimeDeploymentBackendFeatureState;
     networkIsolation: RuntimeDeploymentBackendFeatureState;
-    resourceLimits: RuntimeDeploymentBackendFeatureState;
+    resourceControls: Record<"cpu" | "memory" | "pids" | "disk", RuntimeDeploymentBackendFeatureState>;
     exec: RuntimeDeploymentBackendFeatureState;
     persistentStorage: RuntimeDeploymentBackendFeatureState;
     snapshots: RuntimeDeploymentBackendFeatureState;
@@ -379,7 +378,6 @@ export interface RuntimeProjectRecipe {
   name: string;
   title: string;
   version?: string;
-  specifier?: string;
   status: "installed" | "available";
   source?: "official" | "community";
   summary?: string;

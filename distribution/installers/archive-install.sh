@@ -16,7 +16,7 @@ fi
 mkdir -p "$PREFIX/releases" "$DATA_DIR" "$BIN_DIR"
 if [ ! -d "$RELEASE_DIR" ]; then
   mkdir -p "$RELEASE_DIR"
-  cp -R "$SOURCE_DIR/bin" "$SOURCE_DIR/platform" "$SOURCE_DIR/runtime" "$SOURCE_DIR/share" "$SOURCE_DIR/manifest.json" "$RELEASE_DIR/"
+  cp -R "$SOURCE_DIR/bin" "$SOURCE_DIR/platform" "$SOURCE_DIR/runtime" "$SOURCE_DIR/share" "$SOURCE_DIR/operations" "$SOURCE_DIR/manifest.json" "$RELEASE_DIR/"
 fi
 ln -sfn "$RELEASE_DIR" "$PREFIX/current"
 ln -sfn "$PREFIX/current/bin/zelavis" "$BIN_DIR/zelavis"
@@ -33,6 +33,17 @@ if [ "$(id -u)" -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
     -e "s|/opt/zelavis/current|$PREFIX/current|g" \
     -e "s|/var/lib/zelavis|$DATA_DIR|g" \
     "$SOURCE_DIR/share/zelavis.service" > /etc/systemd/system/zelavis.service
+  # Installed, not enabled; see the distribution README to run Projects and
+  # host operations through the Agent.
+  sed \
+    -e "s|/opt/zelavis/current|$PREFIX/current|g" \
+    -e "s|/var/lib/zelavis|$DATA_DIR|g" \
+    "$SOURCE_DIR/share/zelavis-agent.service" > /etc/systemd/system/zelavis-agent.service
+  # Operator-owned: an existing trust store (added or revoked keys) is kept.
+  if [ ! -f /etc/zelavis/operation-trust.json ]; then
+    install -d -m 0755 /etc/zelavis
+    install -m 0644 "$SOURCE_DIR/share/operation-trust.json" /etc/zelavis/operation-trust.json
+  fi
   systemctl daemon-reload
   systemctl enable --now zelavis.service
 fi

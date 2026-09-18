@@ -1,5 +1,5 @@
 import { Effect, Stream } from "effect";
-import { scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
+import { equalBytes, scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
 import { compareKeys } from "../keys.js";
 import { openStoreOverKv } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
@@ -80,6 +80,22 @@ export const memoryKvEngine = (): KvEngine => {
           throw cause;
         }
       }),
+
+    conditionalWrite: (writes, conditions) => Effect.sync(() => {
+      for (const condition of conditions) {
+        const at = indexOf(condition.key);
+        if (!equalBytes(at < 0 ? undefined : entries[at]!.value, condition.value)) return false;
+      }
+      const snapshot = [...entries];
+      try {
+        for (const write of writes) apply(write);
+        return true;
+      } catch (cause) {
+        entries = snapshot;
+        throw cause;
+      }
+    }),
+    coordination: "engine",
 
     close: Effect.sync(() => {
       entries = [];

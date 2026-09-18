@@ -1,4 +1,5 @@
 import { join, resolve } from "node:path";
+import { installAsyncPluginContextStorage } from "./_async-plugin-context.js";
 import {
   defineAdapter,
   type ZelavisOptions,
@@ -52,6 +53,7 @@ export interface BunAdapterOptions {
 }
 
 export function bunAdapter(options: BunAdapterOptions = {}) {
+  installAsyncPluginContextStorage();
   return defineAdapter({
     name: "bun",
     async resolve(

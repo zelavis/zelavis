@@ -1,3 +1,4 @@
+import { createMemoryServiceRegistryStore } from "../dist/platform/settings.js";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -537,15 +538,7 @@ test("service registry install state controls service activation on boot", async
           order: 0,
         },
       ],
-      store: {
-        read() {
-          return storeState;
-        },
-        write(entries) {
-          storeState.splice(0, storeState.length, ...entries);
-          return entries;
-        },
-      },
+      store: createMemoryServiceRegistryStore(storeState),
     },
   });
 
@@ -618,7 +611,7 @@ test("dashboard service registry can register ESM service sources", async () => 
     created.services.some(
       (service) =>
         service.name === "@example/uploaded-service" &&
-        service.specifier === specifier &&
+        service.specifier === undefined &&
         service.status === "available",
     ),
   );
@@ -634,15 +627,7 @@ test("dashboard service registry can register ESM service sources", async () => 
   const loadedRuntime = await zelavis({
     frontend: zelavisUiFrontend,
     serviceRegistry: {
-      store: {
-        read() {
-          return storeState;
-        },
-        write(entries) {
-          storeState.splice(0, storeState.length, ...entries);
-          return entries;
-        },
-      },
+      store: createMemoryServiceRegistryStore(storeState),
     },
   });
   const configResponse = await loadedRuntime.fetch(
@@ -654,7 +639,11 @@ test("dashboard service registry can register ESM service sources", async () => 
   );
 
   assert.equal(uploadedService.status, "installed");
-  assert.equal(uploadedService.specifier, specifier);
+  assert.equal(uploadedService.specifier, undefined);
+  const sources = await loadedRuntime.fetch(
+    new Request("http://localhost/zelavis/api/v1/runtime/services/sources"), PLATFORM_OWNER_CONTEXT,
+  );
+  assert.equal((await sources.json()).sources.find((entry) => entry.name === uploadedService.name).specifier, specifier);
   assert.equal(uploadedService.menu.path, "/uploaded");
 });
 
@@ -780,7 +769,11 @@ test("dashboard service upload derives metadata from the selected module", async
   assert.equal(createResponse.status, 201);
   assert.equal(service.version, "0.0.2");
   assert.equal(service.status, "available");
-  assert.match(service.specifier, /^data:text\/javascript;base64,/);
+  assert.equal(service.specifier, undefined);
+  const sources = await runtime.fetch(
+    new Request("http://localhost/zelavis/api/v1/runtime/services/sources"), PLATFORM_OWNER_CONTEXT,
+  );
+  assert.match((await sources.json()).sources.find((entry) => entry.name === service.name).specifier, /^data:text\/javascript;base64,/);
 });
 
 test("Zelavis instance recomposes runtime after service activation", async () => {
@@ -1067,7 +1060,12 @@ test("node adapter installs uploaded ZIP service packages", async () => {
     assert.equal(created.activation.status, "active");
     assert.equal(service.version, "0.0.3");
     assert.equal(service.status, "installed");
-    assert.match(service.specifier, /services\/packages\/[a-f0-9]{64}\/dist\/index\.mjs$/);
+    assert.equal(service.specifier, undefined);
+    const sources = await app.fetch(
+      new Request("http://localhost/zelavis/api/v1/runtime/services/sources"), PLATFORM_OWNER_CONTEXT,
+    );
+    assert.match((await sources.json()).sources.find((entry) => entry.name === service.name).specifier,
+      /services\/packages\/[a-f0-9]{64}\/dist\/index\.mjs$/);
 
     const healthResponse = await app.fetch(
       new Request("http://localhost/zelavis/api/v1/plugins/example/health"),
@@ -1339,7 +1337,9 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
     ),
     [
       "runtime.config",
+      "runtime.plugin-operations.list",
       "runtime.services.read",
+      "runtime.services.sources",
       "runtime.extensions.read",
       "runtime.services.create",
       "runtime.service-page-styles.read",
@@ -1353,6 +1353,10 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "runtime.agent.read",
       "runtime.agent.operations.list",
       "runtime.agent.operations.get",
+      "runtime.host-operations.catalog",
+      "runtime.host-operations.submit",
+      "runtime.host-operations.audit",
+      "runtime.host-operations.get",
       "runtime.deployment-backends.list",
       "runtime.deployment-backends.detect",
       "runtime.deployment-backends.enable",

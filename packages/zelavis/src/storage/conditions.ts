@@ -3,6 +3,7 @@ import type {
   ZelavisFileStorage,
   ZelavisFileStorageCondition,
   ZelavisFileStorageEntry,
+  ZelavisFileStorageScope,
 } from "../platform/storage-types.js";
 
 /** A conditional write whose condition did not hold. Nothing was written. */
@@ -37,17 +38,17 @@ const decoder = new TextDecoder();
  * Asks a store directly whether it enforces the conditional writes a lease, a
  * fence or an authoritative publication rests on.
  *
- * No provider documents this reliably, and a store can accept `If-None-Match`
- * and `If-Match` and ignore them — which fails late and silently, as two
- * owners of one thing. So the store is asked, on a fresh object, in the four
- * steps celld uses before a node serves (denoland/celld, `docs/guarantees.md`):
+ * A store can accept `If-None-Match` and `If-Match` and ignore them,
+ * which fails late and silently, as two
+ * owners of one thing. So the store is asked, on a fresh object:
  *
  *   1. a create of an absent object applies, and returns its version;
  *   2. a second create is rejected;
  *   3. an update carrying the current version applies;
- *   4. an update carrying the now-stale version is rejected.
+ *   4. an update carrying the now-stale version is rejected;
+ *   5. after deletion, an update carrying a version is rejected.
  *
- * Steps 2 and 4 are the fence. Between the steps, a read must return the last
+ * Rejections must leave state untouched. Between steps, a read must return the last
  * write — read-after-write — or no reader can act on what a writer published.
  *
  * A result is a verdict: the store answered, and either kept every guarantee
@@ -96,7 +97,7 @@ export async function probeFileStorageGuarantees(
           "cannot act on what a writer published",
       );
     }
-    if (object.etag !== undefined && object.etag !== etag) {
+    if (!object.etag || object.etag !== etag) {
       return violation(
         "a read returned a different version from the one the last write reported",
       );
@@ -109,7 +110,7 @@ export async function probeFileStorageGuarantees(
     if (created === undefined) {
       return violation("the store rejected a conditional create of an object that does not exist");
     }
-    if (created.etag === undefined) {
+    if (!created.etag) {
       return violation(
         "the store returned no version for a write, so no later write can be conditional on it",
       );
@@ -125,6 +126,9 @@ export async function probeFileStorageGuarantees(
           "both believe they created one thing",
       );
     }
+
+    const afterRejectedCreate = await readsBack("probe-create", first);
+    if (afterRejectedCreate) return afterRejectedCreate;
 
     const updated = await attempt("probe-update", { ifMatch: first }, "3");
     if (updated === undefined) {
@@ -149,10 +153,63 @@ export async function probeFileStorageGuarantees(
     const afterStale = await readsBack("probe-update", updated.etag);
     if (afterStale) return afterStale;
 
+    await storage.delete(path);
+    if ((await attempt("probe-missing", { ifMatch: updated.etag }, "5")) !== undefined) {
+      return violation("the store accepted ifMatch for an absent object");
+    }
+    if (await storage.get(path)) return violation("a rejected absent-object write created an object");
     return { conformant: true };
   } finally {
     // Debris on every path. A delete that fails leaves one small object under
     // the probe prefix, which nothing reads.
     await Promise.resolve(storage.delete(path)).catch(() => undefined);
+  }
+}
+
+/** Unsupported semantics or a completed probe that disproved the guarantees. */
+export class ZelavisStorageGuaranteeError extends Error {
+  constructor(message: string) { super(message); this.name = "ZelavisStorageGuaranteeError"; }
+}
+
+const checks = new WeakMap<ZelavisFileStorage, {
+  capabilities: ZelavisFileStorage["capabilities"];
+  get: ZelavisFileStorage["get"];
+  put: ZelavisFileStorage["put"];
+  delete: ZelavisFileStorage["delete"];
+  ready: Promise<void>;
+}>();
+
+export function invalidateFileStorageGuarantees(storage: ZelavisFileStorage): void {
+  checks.delete(storage);
+}
+
+/** Gate authoritative use. Scope is declared by the adapter and cannot be
+ * proved by a sequential probe. Outages reject and are never cached as success.
+ * Configuration changes must use a new adapter or capability descriptor.
+ */
+export async function requireFileStorageGuarantees(
+  storage: ZelavisFileStorage,
+  scope: ZelavisFileStorageScope = "distributed",
+): Promise<void> {
+  const ranks = { process: 1, host: 2, distributed: 3 };
+  const capabilities = storage.capabilities;
+  if (!capabilities || !capabilities.conditionalCreate || !capabilities.conditionalReplace ||
+      !(ranks[capabilities.conditionalCreate] >= ranks[scope]) ||
+      !(ranks[capabilities.conditionalReplace] >= ranks[scope])) {
+    throw new ZelavisStorageGuaranteeError(`Storage does not support conditional authority at ${scope} scope.`);
+  }
+  const cached = checks.get(storage);
+  if (cached && cached.capabilities === capabilities && cached.get === storage.get &&
+      cached.put === storage.put && cached.delete === storage.delete) return cached.ready;
+  const check = {
+    capabilities, get: storage.get, put: storage.put, delete: storage.delete,
+    ready: probeFileStorageGuarantees(storage).then((result) => {
+      if (!result.conformant) throw new ZelavisStorageGuaranteeError(result.violation);
+    }),
+  };
+  checks.set(storage, check);
+  try { await check.ready; } catch (error) {
+    if (checks.get(storage) === check) checks.delete(storage);
+    throw error;
   }
 }

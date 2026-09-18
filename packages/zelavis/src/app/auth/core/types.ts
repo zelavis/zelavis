@@ -37,6 +37,8 @@ export interface AuthMethodPlugin {
 }
 
 export interface AuthContext {
+  /** Explicit Project authority for this auth instance, when it is Project-owned. */
+  projectId?: string;
   config: Record<string, unknown>;
   methods: readonly AuthMethodPlugin[];
 }

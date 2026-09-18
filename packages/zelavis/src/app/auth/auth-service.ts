@@ -149,6 +149,12 @@ export function defineAuthService(
   const managePermission = options.authority === "platform"
     ? "system.users.manage"
     : "project.users.manage";
+  const manageAccess = {
+    permissions: [managePermission],
+    ...(options.authority !== "platform" && auth.context.projectId
+      ? { scope: { type: "project" as const, projectId: auth.context.projectId } }
+      : {}),
+  };
   const cookieOptions = options.sessionCookie === false
     ? undefined
     : options.sessionCookie;
@@ -158,7 +164,7 @@ export function defineAuthService(
           id: "auth.accounts.list",
           method: "GET",
           path: "/accounts",
-          access: { permissions: [managePermission] },
+          access: manageAccess,
           spec: {
             operationId: "listAccounts",
             summary: "List accounts",
@@ -176,7 +182,7 @@ export function defineAuthService(
           id: "auth.accounts.create",
           method: "POST",
           path: "/accounts",
-          access: { permissions: [managePermission] },
+          access: manageAccess,
           spec: {
             operationId: "createAccount",
             summary: "Create an account",
@@ -207,7 +213,7 @@ export function defineAuthService(
           id: "auth.credentials.create",
           method: "POST",
           path: "/credentials",
-          access: { permissions: [managePermission] },
+          access: manageAccess,
           spec: {
             operationId: "createCredentials",
             summary: "Create credentials",
@@ -526,7 +532,7 @@ export function defineAuthService(
           id: "auth.securityEvents.list",
           method: "GET",
           path: "/security/events",
-          access: { permissions: [managePermission] },
+          access: manageAccess,
           spec: {
             operationId: "listAuthSecurityEvents",
             summary: "List authentication security events",
@@ -542,7 +548,7 @@ export function defineAuthService(
           id: "auth.sessions.listByAccountId",
           method: "GET",
           path: "/accounts/:accountId/sessions",
-          access: { permissions: [managePermission] },
+          access: manageAccess,
           spec: {
             operationId: "listSessionsByAccountId",
             summary: "List sessions for an account",
@@ -622,7 +628,7 @@ export function defineAuthService(
           id: "auth.sessions.revokeManagedSession",
           method: "DELETE",
           path: "/accounts/:accountId/sessions/:sessionId",
-          access: { permissions: [managePermission] },
+          access: manageAccess,
           spec: {
             operationId: "revokeManagedAccountSession",
             summary: "Revoke one session for a managed account",
@@ -645,7 +651,7 @@ export function defineAuthService(
           id: "auth.sessions.revokeManagedAccountSessions",
           method: "DELETE",
           path: "/accounts/:accountId/sessions",
-          access: { permissions: [managePermission] },
+          access: manageAccess,
           spec: {
             operationId: "revokeManagedAccountSessions",
             summary: "Revoke every active session for a managed account",

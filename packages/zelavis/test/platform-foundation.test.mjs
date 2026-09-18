@@ -26,7 +26,7 @@ const TEST_BACKEND_CAPABILITIES = {
   filesystemIsolation: "planned",
   processIsolation: "planned",
   networkIsolation: "planned",
-  resourceLimits: "planned",
+  resourceControls: { cpu: "planned", memory: "planned", pids: "planned", disk: "planned" },
   exec: "available",
   persistentStorage: "available",
   snapshots: "planned",
@@ -166,6 +166,17 @@ test("deployment backend runtime registry dispatches from the stored Project ass
   await store.set("projects", project.id, project);
   assert.equal((await runtime.start(project)).url, "http://docker.internal");
   await runtime.stop(project.id);
+  assert.deepEqual(calls, ["docker:start:site-a", "docker:stop:site-a"]);
+
+  // ID-only lifecycle calls never infer a backend from a missing or malformed
+  // stored assignment; they refuse before any driver is touched.
+  await store.set("projects", "unassigned", { ...project, id: "unassigned", runtimeKind: undefined });
+  await store.set("projects", "malformed", { ...project, id: "malformed", runtimeKind: "Not A Slug" });
+  for (const id of ["missing", "unassigned", "malformed"]) {
+    for (const method of ["stop", "status", "logs", "destroy"]) {
+      await assert.rejects(runtime[method](id), /deployment backend assignment/);
+    }
+  }
   assert.deepEqual(calls, ["docker:start:site-a", "docker:stop:site-a"]);
 });
 

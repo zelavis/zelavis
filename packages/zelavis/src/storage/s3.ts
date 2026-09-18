@@ -367,7 +367,11 @@ async function headObject(
 export function createS3CompatibleFileStorage(
   options: S3CompatibleFileStorageOptions,
 ): ZelavisFileStorage {
+  // One adapter is one immutable configuration/session. Reconfigure by creating
+  // another adapter so a successful probe cannot follow a changed endpoint.
+  options = { ...options, defaultHeaders: options.defaultHeaders && { ...options.defaultHeaders } };
   return {
+    capabilities: Object.freeze({ conditionalCreate: "distributed", conditionalReplace: "distributed" }),
     async get(path): Promise<ZelavisFileStorageObject | undefined> {
       const response = await signedFetch(options, {
         method: "GET",

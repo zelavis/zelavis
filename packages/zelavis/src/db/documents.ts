@@ -18,6 +18,7 @@ import {
   DocumentNotFound,
   IdempotencyKeyReused,
   InvalidCollectionName,
+  InvalidDocumentValue,
   TenantMoving,
   CursorMismatch,
   IndexExists,
@@ -781,6 +782,24 @@ const columnsFor = (
   };
   walk(data, "");
   return out;
+};
+
+/** Follow exactly the object paths indexed by columnsFor; arrays are not columns. */
+const nonFiniteIndexedPath = (value: Json, path = ""): string | undefined => {
+  if (typeof value === "number") return Number.isFinite(value) ? undefined : path;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  for (const [key, child] of Object.entries(value)) {
+    const invalid = nonFiniteIndexedPath(child, path === "" ? key : `${path}.${key}`);
+    if (invalid !== undefined) return invalid;
+  }
+  return undefined;
+};
+
+const validateDocumentData = (collection: string, data: JsonObject): Effect.Effect<void, InvalidDocumentValue> => {
+  const path = nonFiniteIndexedPath(data);
+  return path === undefined
+    ? Effect.void
+    : Effect.fail(new InvalidDocumentValue({ collection, path, reason: "indexed numbers must be finite" }));
 };
 
 /** A value at a path as the ordered lens sees it, or undefined when it has no place in the order. */
@@ -1658,7 +1677,7 @@ export interface DocumentsApi {
   }) => Effect.Effect<
     Document,
     | CollectionNotFound | DocumentConflict | SchemaViolation | TenantMoving | IdempotencyKeyReused
-    | CheckViolation | UniqueViolation | ReferenceViolation | VectorShapeMismatch
+    | CheckViolation | UniqueViolation | ReferenceViolation | VectorShapeMismatch | InvalidDocumentValue
   >;
   readonly findById: (input: {
     readonly collection: string;
@@ -1733,7 +1752,7 @@ export interface DocumentsApi {
   }) => Effect.Effect<
     Document,
     | DocumentNotFound | DocumentConflict | SchemaViolation | TenantMoving | IdempotencyKeyReused
-    | CheckViolation | UniqueViolation | ReferenceViolation | VectorShapeMismatch
+    | CheckViolation | UniqueViolation | ReferenceViolation | VectorShapeMismatch | InvalidDocumentValue
   >;
   readonly delete: (input: {
     readonly collection: string;
@@ -1947,7 +1966,7 @@ export interface DocumentsApi {
     ReadonlyArray<DocumentWritten>,
     | CollectionNotFound | DocumentConflict | DocumentNotFound | SchemaViolation | TenantMoving
     | IdempotencyKeyReused | CheckViolation | UniqueViolation | ReferenceViolation
-    | VectorShapeMismatch
+    | VectorShapeMismatch | InvalidDocumentValue
   >;
 
   /**
@@ -2545,6 +2564,7 @@ export const documentsFor = (
   ) =>
     Effect.gen(function* () {
       const collection = yield* requireCollection(input.collection);
+      yield* validateDocumentData(input.collection, input.data);
       yield* enforceSchema(input.collection, input.data);
       const taken = yield* currentNamed(pending, input.collection, input.id);
       if (taken !== undefined && taken.document !== null) {
@@ -2581,6 +2601,7 @@ export const documentsFor = (
       const current = at.document;
       yield* expect(input.collection, current, input.expectedVersion, input.precondition);
       const data = (input.mode ?? "merge") === "replace" ? input.data : { ...current.data, ...input.data };
+      yield* validateDocumentData(input.collection, data);
       yield* enforceSchema(input.collection, data);
       const next: Document = {
         ...current, data, updatedAt: new Date().toISOString(), version: current.version + 1,
@@ -3985,6 +4006,7 @@ const generateHighlights = (
 
     insert: (input) =>
       Effect.gen(function* () {
+        yield* validateDocumentData(input.collection, input.data);
         const request = `insert into "${input.collection}"`;
         const fingerprint = fingerprintOf({
           op: "insert", collection: input.collection, id: input.id, data: input.data,
@@ -4247,6 +4269,7 @@ const generateHighlights = (
 
     update: (input) =>
       Effect.gen(function* () {
+        yield* validateDocumentData(input.collection, input.data);
         const request = `update "${input.collection}/${input.id}"`;
         const fingerprint = fingerprintOf({
           op: "update", collection: input.collection, id: input.id, data: input.data,
@@ -4653,6 +4676,9 @@ const generateHighlights = (
           return yield* Effect.die(
             new RangeError(`A batch takes 1 to ${MAX_BATCH} changes, not ${operations?.length}.`),
           );
+        }
+        for (const operation of operations) {
+          if (operation._tag !== "Delete") yield* validateDocumentData(operation.collection, operation.data);
         }
         const request = `write ${operations.length} documents`;
         const fingerprint = fingerprintOf({ op: "write", operations });

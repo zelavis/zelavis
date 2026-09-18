@@ -19,7 +19,13 @@ export interface ZelavisDeploymentBackendCapabilities {
   readonly filesystemIsolation: ZelavisDeploymentBackendFeatureState;
   readonly processIsolation: ZelavisDeploymentBackendFeatureState;
   readonly networkIsolation: ZelavisDeploymentBackendFeatureState;
-  readonly resourceLimits: ZelavisDeploymentBackendFeatureState;
+  /** Per-Project ceilings this backend enforces, by resource. */
+  readonly resourceControls: Readonly<{
+    readonly cpu: ZelavisDeploymentBackendFeatureState;
+    readonly memory: ZelavisDeploymentBackendFeatureState;
+    readonly pids: ZelavisDeploymentBackendFeatureState;
+    readonly disk: ZelavisDeploymentBackendFeatureState;
+  }>;
   readonly exec: ZelavisDeploymentBackendFeatureState;
   readonly persistentStorage: ZelavisDeploymentBackendFeatureState;
   readonly snapshots: ZelavisDeploymentBackendFeatureState;
@@ -424,13 +430,29 @@ export function createDeploymentBackendProjectRuntime(options: {
     }
     return runtime;
   };
+  // ID-only calls route by the stored assignment and nothing else. A missing
+  // or malformed record is refused rather than sent to native: the Project
+  // manager repairs stored records explicitly and writes them before it calls
+  // any lifecycle method, so an unreadable assignment here is an error, never
+  // an implicit backend choice.
   const forProjectId = async (projectId: string) => {
     const record = await options.store.get("projects", projectId);
     const value = record?.value;
-    const runtimeKind = isRecord(value) && typeof value.runtimeKind === "string"
-      ? value.runtimeKind
-      : NATIVE_BACKEND;
-    const runtime = runtimes.get(normalizeBackendId(runtimeKind));
+    if (!isRecord(value) || typeof value.runtimeKind !== "string") {
+      throw new ZelavisProjectRuntimeError(
+        `Project "${projectId}" has no stored deployment backend assignment.`,
+      );
+    }
+    const runtimeKind = value.runtimeKind;
+    let backendId: string;
+    try {
+      backendId = normalizeBackendId(runtimeKind);
+    } catch {
+      throw new ZelavisProjectRuntimeError(
+        `Project "${projectId}" has an invalid stored deployment backend assignment.`,
+      );
+    }
+    const runtime = runtimes.get(backendId);
     if (!runtime) {
       throw new ZelavisProjectRuntimeError(
         `No Project driver is registered for deployment backend "${runtimeKind}".`,

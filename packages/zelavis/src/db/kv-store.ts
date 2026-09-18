@@ -12,7 +12,7 @@ import {
   snapshotKey, snapshotPrefix,
   orderedValuePrefix, prefixEnd, type OrderedValue,
 } from "./keys.js";
-import type { KvEngine, KvScanOptions, KvWrite } from "./kv.js";
+import { equalBytes, type KvEngine, type KvScanOptions, type KvWrite } from "./kv.js";
 import {
   asSeq, type IndexManifest, type ObjectIdentity, type PartitionKey, type Seq,
 } from "./model.js";
@@ -66,6 +66,36 @@ const keyId = (key: Uint8Array): string => {
 const META_NEXT_SEQ = "next_seq";
 const META_NEXT_POSITION = "next_position";
 const META_GENERATION = "generation";
+const META_OWNER = "writer_session";
+const META_REVISION = "writer_revision";
+
+interface WriterClaim {
+  readonly generation: number;
+  readonly session: Uint8Array;
+}
+
+/** Old four-byte generations are widened without changing events or cursors. */
+const readGeneration = (bytes: Uint8Array | undefined): number => {
+  if (bytes === undefined) return 0;
+  if (bytes.length === 4) return readU32(bytes);
+  if (bytes.length !== 8) throw new Error("Malformed writer generation");
+  const value = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getBigUint64(0);
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Writer generation exhausted");
+  return Number(value);
+};
+
+const generationBytes = (generation: number): Uint8Array => {
+  const bytes = new Uint8Array(8);
+  new DataView(bytes.buffer).setBigUint64(0, BigInt(generation));
+  return bytes;
+};
+
+const generationOf = (engine: KvEngine) => engine.get(metaKey(META_GENERATION)).pipe(
+  Effect.flatMap((bytes) => Effect.try({
+    try: () => readGeneration(bytes),
+    catch: (cause) => new StoreError({ op: "generation.read", cause }),
+  })),
+);
 /** The position everything at or below has been compacted away. */
 const META_COMPACTED_TO = "compacted_to";
 
@@ -249,8 +279,9 @@ const decodeCursor = (partition: PartitionKey, cursor: EventCursor): number => {
 export const storeOverKv = (
   partition: PartitionKey,
   engine: KvEngine,
-  generation: number,
+  claim: WriterClaim,
 ): ObjectStoreApi => {
+  const { generation, session } = claim;
   const readMeta = (name: string) =>
     Effect.map(engine.get(metaKey(name)), (bytes) => (bytes === undefined ? 0 : readU32(bytes)));
 
@@ -267,13 +298,42 @@ export const storeOverKv = (
    * Reads take no permit: they see committed state, which is all they promise.
    * Nothing holding the permit calls another operation that takes it.
    */
-  const exclusive = Semaphore.withPermit(Semaphore.makeUnsafe(1));
+  const withPermit = Semaphore.withPermit(Semaphore.makeUnsafe(1));
+  let revision: Uint8Array | undefined;
 
   const assertCurrent = Effect.gen(function* () {
-    const current = yield* readMeta(META_GENERATION);
-    if (current !== generation) {
+    const current = yield* generationOf(engine);
+    const owner = yield* engine.get(metaKey(META_OWNER));
+    if (current !== generation || !equalBytes(owner, session)) {
       return yield* new WriterFenced({ partition, claimed: generation, current });
     }
+  });
+
+  const exclusive = <A, E, R>(effect: Effect.Effect<A, E, R>) => withPermit(
+    Effect.gen(function* () {
+      revision = yield* engine.get(metaKey(META_REVISION));
+      yield* assertCurrent;
+      return yield* effect;
+    }),
+  );
+
+  const write = Effect.fn("store.conditionalWrite")(function*(writes: ReadonlyArray<KvWrite>) {
+    if (engine.conditionalWrite === undefined) {
+      return yield* new StoreError({ op: "store.write", cause: "Engine has no conditional commit" });
+    }
+    const nextRevision = encoder.encode(crypto.randomUUID());
+    const accepted = yield* engine.conditionalWrite([
+      ...writes, { op: "put", key: metaKey(META_REVISION), value: nextRevision },
+    ], [
+      { key: metaKey(META_GENERATION), value: generationBytes(generation) },
+      { key: metaKey(META_OWNER), value: session },
+      { key: metaKey(META_REVISION), value: revision },
+    ]);
+    if (!accepted) {
+      yield* assertCurrent;
+      return yield* new StoreError({ op: "store.conflict", cause: "Store changed while building the batch; retry the complete operation" });
+    }
+    revision = nextRevision;
   });
 
   /**
@@ -443,7 +503,7 @@ export const storeOverKv = (
       const result = yield* f(view, txn, append);
       view.put(metaKey(META_NEXT_POSITION), u32(position));
       // One batch: the whole transaction lands, or none of it does.
-      yield* engine.write([...pending.values()]);
+      yield* write([...pending.values()]);
       return result;
     }));
 
@@ -969,7 +1029,7 @@ export const storeOverKv = (
       }
       count += 1;
     }
-    yield* engine.write([...pending.values()]);
+    yield* write([...pending.values()]);
     return count;
   }));
 
@@ -1034,7 +1094,7 @@ export const storeOverKv = (
           view.del(payloadKey(asSeq(event.seq)));
         }
       }
-      yield* engine.write([...pending.values()]);
+      yield* write([...pending.values()]);
       return restored + stored.length;
     })),
 
@@ -1068,7 +1128,7 @@ export const storeOverKv = (
         records += 1;
       }
       writes.push({ op: "put", key: metaKey(META_SNAPSHOT_AT), value: u32(position) });
-      yield* engine.write(writes);
+      yield* write(writes);
       return { records, position };
     })),
 
@@ -1122,7 +1182,7 @@ export const storeOverKv = (
       const swept = (yield* readMeta(META_SWEPT)) > 0;
       // Written before the first blob, so a removal arriving mid-seal writes a
       // tombstone it might not have needed rather than skipping one it did.
-      yield* engine.write([{ op: "put", key: metaKey(META_SEALED), value: u32(1) }]);
+      yield* write([{ op: "put", key: metaKey(META_SEALED), value: u32(1) }]);
       let examined = 0;
 
       const buffer = new SegmentBuffer();
@@ -1188,7 +1248,7 @@ export const storeOverKv = (
           // key and then the rest under the same key, the second put replacing
           // the first — a seal that silently loses postings.
           if (batch.length >= SEAL_BATCH) {
-            yield* engine.write(batch);
+            yield* write(batch);
             batch = [];
           }
           openPrefix = Uint8Array.from(prefix);
@@ -1246,7 +1306,7 @@ export const storeOverKv = (
       // it reads — so pass one's blobs have to have landed, or the additions
       // they carry are dropped by the write that follows.
       if (batch.length > 0) {
-        yield* engine.write(batch);
+        yield* write(batch);
         batch = [];
       }
 
@@ -1273,7 +1333,7 @@ export const storeOverKv = (
           }));
         batch.push({ op: "put", key: metaKey(META_SWEPT), value: u32(1) });
       }
-      if (batch.length > 0) yield* engine.write(batch);
+      if (batch.length > 0) yield* write(batch);
       return { segments, postings, examined };
     })),
 
@@ -1303,7 +1363,7 @@ export const storeOverKv = (
           .slice(0, cut)
           .map((position) => ({ op: "delete" as const, key: eventKey(position) }));
         writes.push({ op: "put", key: metaKey(META_COMPACTED_TO), value: u32(compactedTo) });
-        yield* engine.write(writes);
+        yield* write(writes);
         return { removed: cut, compactedTo };
       })),
 
@@ -1321,7 +1381,7 @@ export const storeOverKv = (
 
     nextSeq: exclusive(Effect.gen(function* () {
       const next = (yield* readMeta(META_NEXT_SEQ)) + 1;
-      yield* engine.write([{ op: "put", key: metaKey(META_NEXT_SEQ), value: u32(next) }]);
+      yield* write([{ op: "put", key: metaKey(META_NEXT_SEQ), value: u32(next) }]);
       return asSeq(next);
     })),
 
@@ -1420,7 +1480,8 @@ export const openStoreOverKv = (
   engine: KvEngine,
 ): Effect.Effect<ObjectStoreApi, StoreError> =>
   Effect.gen(function* () {
-    const store = storeOverKv(partition, engine, yield* claimGeneration(engine));
+    const claim = yield* claimGeneration(engine);
+    const store = storeOverKv(partition, engine, claim);
     const format = yield* engine.get(metaKey(META_FORMAT));
     if (format === undefined || readU32(format) < CURRENT_FORMAT) {
       if ((yield* engine.get(metaKey(META_NEXT_POSITION))) !== undefined) {
@@ -1429,16 +1490,43 @@ export const openStoreOverKv = (
             cause._tag === "StoreError" ? cause : new StoreError({ op: "format.upgrade", cause })),
         );
       }
-      yield* engine.write([{ op: "put", key: metaKey(META_FORMAT), value: u32(CURRENT_FORMAT) }]);
+      const revision = yield* engine.get(metaKey(META_REVISION));
+      const accepted = yield* engine.conditionalWrite!([
+        { op: "put", key: metaKey(META_REVISION), value: encoder.encode(crypto.randomUUID()) },
+        { op: "put", key: metaKey(META_FORMAT), value: u32(CURRENT_FORMAT) },
+      ], [
+        { key: metaKey(META_GENERATION), value: generationBytes(claim.generation) },
+        { key: metaKey(META_OWNER), value: claim.session },
+        { key: metaKey(META_FORMAT), value: format },
+        { key: metaKey(META_REVISION), value: revision },
+      ]);
+      if (!accepted) return yield* new StoreError({ op: "format.upgrade", cause: "Writer or format changed during upgrade" });
     }
     return store;
   });
 
-/** Claims the next writer generation, fencing whoever held the previous one. */
-export const claimGeneration = (engine: KvEngine): Effect.Effect<number, StoreError> =>
-  Effect.gen(function* () {
+/** Trusted store activation; this is not root Fabric takeover authority. */
+export const claimGeneration = Effect.fn("store.claimGeneration")(function*(engine: KvEngine): Effect.fn.Return<WriterClaim, StoreError> {
+  if (engine.conditionalWrite === undefined || engine.coordination === undefined) {
+    return yield* new StoreError({ op: "generation.claim", cause: "Engine cannot enforce conditional commits" });
+  }
+  const session = encoder.encode(crypto.randomUUID());
+  for (let attempt = 0; attempt < 32; attempt++) {
     const current = yield* engine.get(metaKey(META_GENERATION));
-    const next = (current === undefined ? 0 : readU32(current)) + 1;
-    yield* engine.write([{ op: "put", key: metaKey(META_GENERATION), value: u32(next) }]);
-    return next;
-  });
+    const generation = yield* Effect.try({
+      try: () => {
+        const previous = readGeneration(current);
+        if (previous === Number.MAX_SAFE_INTEGER) throw new Error("Writer generation exhausted");
+        return previous + 1;
+      },
+      catch: (cause) => new StoreError({ op: "generation.claim", cause }),
+    });
+    const accepted = yield* engine.conditionalWrite([
+      { op: "put", key: metaKey(META_GENERATION), value: generationBytes(generation) },
+      { op: "put", key: metaKey(META_OWNER), value: session },
+      { op: "put", key: metaKey(META_REVISION), value: encoder.encode(crypto.randomUUID()) },
+    ], [{ key: metaKey(META_GENERATION), value: current }]);
+    if (accepted) return { generation, session };
+  }
+  return yield* new StoreError({ op: "generation.claim", cause: "Writer acquisition conflict limit exceeded" });
+});

@@ -76,9 +76,13 @@ export function createLocalProjectRuntime(options: LocalProjectRuntimeOptions): 
   };
 
   const assertNative = (runtimeKind: unknown) => {
-    if (runtimeKind !== undefined && runtimeKind !== "native") {
+    // An absent kind is refused like a foreign one: this driver executes only
+    // an explicit native assignment and never infers one.
+    if (runtimeKind !== "native") {
       throw new ZelavisProjectRuntimeError(
-        `The local Project runtime cannot execute the "${String(runtimeKind)}" runtime kind.`,
+        runtimeKind === undefined
+          ? "The local Project runtime requires an explicit native runtime kind."
+          : `The local Project runtime cannot execute the "${String(runtimeKind)}" runtime kind.`,
       );
     }
   };

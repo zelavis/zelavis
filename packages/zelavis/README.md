@@ -4,6 +4,12 @@
 
 It owns the long-running control plane, dashboard composition, System Store,
 service lifecycle, official product services, and server/project orchestration.
+Local service sources qualify as host-managed only when both their named paths
+and resolved physical targets remain inside configured managed directories.
+Package discovery also checks entry and manifest targets against their package
+root. Internal symlinks are supported; arbitrary filesystem imports require the
+explicit filesystem source policy. Managed files must remain under host control
+while code is loaded; these checks do not sandbox executable plugins.
 Lower-level packages such as `zelavis/core`, `zelavis/app/db`, and
 `zelavis/app/auth` remain independently useful primitives.
 
@@ -49,6 +55,23 @@ before the first owner can be created. Configure it with
 an auth plugin that supports credential enrollment. The dashboard then uses
 the normal `/zelavis/api/v1/auth/*` endpoints for bootstrap, login, session
 rotation, and logout; `/runtime/access` never fabricates a demo owner.
+
+Access grants with a Project or service scope match only routes declaring the
+same explicit identity. Unscoped and system grants match runtime-wide routes;
+top-level principal permissions express authority spanning scopes. Project Auth
+instances created with `projectId` use that scope on administrative routes.
+The Gateway translates verified, audience-bound authority into concrete local
+permissions in the isolated child; a Project grant cannot delegate Platform
+host-code installation authority.
+
+Public runtime configuration, service/extension listings, and recipe catalogues
+share service identity fields and omit acquisition specifiers. Private registry
+state retains those references for activation; public discovery does not expose
+local package filenames or source URL credentials.
+Administrators with `system.services.manage` can inspect those references using
+`client.runtime.serviceSources()`, `GET /zelavis/api/v1/runtime/services/sources`,
+or `zelavis services sources --url http://localhost:3000/zelavis --token <session-token>`.
+The CLI emits JSON and the HTTP response uses `Cache-Control: no-store`.
 
 The System Store atomically claims first-owner bootstrap, so competing Platform
 writers cannot create two owners. Authentication failures use bounded durable
@@ -122,6 +145,44 @@ reports Zelavis Native plus a read-only Docker probe. Native is the enabled
 default; Docker cannot be enabled until a Docker Project driver and privileged
 Agent path exist. Ordinary Project creation does not accept a backend override.
 
+A Project recipe may declare isolation intent under
+`zelavis.project.isolation`: a minimum `boundary` (`process`, `os-container`,
+or `microvm`), `filesystem`, `process` and `network` requirements, and
+`resources` ceilings (`cpuMillicores`, `memoryMiB`, `pids`, `diskMiB`, each
+`{ limit, enforcement }`), each `required` or `advisory`. Backends advertise
+per-resource `resourceControls`. The intent is validated when the
+package loads (unknown keys are refused) and locked with the exact recipe
+version. Only a backend capability reported as `available` satisfies a
+dimension; `planned` does not. A `required` shortfall refuses creation before
+the Project ID is claimed (HTTP 409, `ZelavisProjectIsolationError`) and
+refuses start and restart; Zelavis never falls back to weaker isolation. When
+the default backend falls short of a required item, creation selects the first
+other backend in the administrator's enabled order that is healthy, executable
+and satisfies it; existing Projects are never moved. Advisory shortfalls are
+reported in the Project record's
+`isolation` assessment. The assessment compares advertised capability, not
+enforcement proof; no shipped backend currently advertises hardened isolation,
+so required intent is refused everywhere today. The refusal body carries
+`code: "project.isolation.unsatisfied"` and the `isolation` assessment.
+
+Projects are reachable through all three surfaces with the same routes:
+`GET|POST /zelavis/api/v1/runtime/projects`, `GET|DELETE .../projects/:id`,
+`POST .../projects/:id/start|stop|restart`, `GET .../projects/:id/logs` and
+`GET .../runtime/project-recipes`; `createZelavisClient().projects.*` from
+`zelavis/sdk`; and `zelavis projects <list|recipes|get|create|start|stop|restart|logs|remove> [--json]`.
+
+Plugin operation discovery is `GET /zelavis/api/v1/runtime/plugin-operations`,
+revisioned by an ETag with `cache-control: no-cache`. The SDK revalidates on
+every plugin call (revocation stays immediate) and receives a bodyless 304
+while the catalogue is unchanged; the catalogue is about 165 bytes per
+operation. Package loading under the Node and Bun adapters uses
+`AsyncLocalStorage` context: up to eight packages load concurrently, each with
+a 30-second admission deadline (`admissionTimeoutMs`), and a package that
+misses it is refused and sealed so later registrations throw. Without async
+context propagation, loads stay serialized with no deadline. Service setup
+hooks each have a 60-second deadline (`setupTimeoutMs`); a timeout fails
+composition naming the service and refuses its later `addService` calls.
+
 The current native driver is still intended for trusted applications on local
 or small self-hosted installations. Its capability report does not claim
 hardened filesystem, process, network, or resource isolation. The planned
@@ -130,13 +191,102 @@ filesystem views, cgroup v2 limits, systemd supervision, and policy confinement
 behind a separately supervised Agent.
 
 Deployment backends are centralized under `zelavis/backends`, with built-in
-`native` and `docker` adapters and a shared registry/policy contract. The
+`native` and `docker` adapters and a shared registry/policy contract. That
+subpath is runtime-neutral: detection reads through injected
+`ZelavisBackendHostProbes`, which the Node adapter supplies. Lifecycle calls
+that carry only a Project ID route by the stored backend assignment and refuse
+a missing or malformed one instead of assuming native. The
 `zelavis/agent` surface provides stable Agent identity, operation-bound signed
 authority, and a durable lease-based operation journal. Agent records can be
-read through `/zelavis/api/v1/runtime/agent`, but the Platform exposes no
-general command-submission endpoint. The current journal/executor components
-must still be assembled in a separately supervised process before they are a
-production privilege boundary.
+read through `/zelavis/api/v1/runtime/agent`. There is no general
+command-submission endpoint: only installed, release-signed operations can be
+requested, under the policy their signed manifest declares (see below). Host-operation validation returns an
+immutable request/argument snapshot retained by the journal and executor.
+Arguments require own manifest declarations, at most 64 entries, names up to
+64 characters, values up to 16,384 characters without NUL bytes, and a JSON
+UTF-8 envelope up to 65,536 bytes. These are protocol ceilings; manifest limits
+can be tighter. The executor rechecks the deadline after authorization and
+artifact reading, immediately before spawning. At execution it re-proves that
+the operation root, every parent and the artifact are still the registered
+inodes with the same owner and safe modes, reads the bytes through a no-follow
+handle, and spawns a private 0500 copy of those verified bytes from a 0700
+staging directory (`stagingDirectory`, default the OS temp directory) rather
+than the registered path. Operations must be installed with a release-signed
+manifest (`<root>/<id>/<version>/manifest.json` beside `artifact`,
+`loadInstalledHostOperations`): Ed25519 over canonical JSON, verified against
+the operator's trust store (`trust`: keys with validity windows; rotation by
+overlapping windows; `revokedKeyIds` invalidates everything a key signed).
+Scripts must name their interpreter in the signed manifest; a shebang without
+one is refused, and the interpreter and its directories are identity-proven
+like the artifact. Each operation runs in its own process group, which
+is killed at the deadline (`timedOut: true`) and when the operation's leader
+exits; output is abandoned 250 ms after the leader is gone, so a descendant
+holding the pipes cannot extend an operation. A descendant that starts a new
+session escapes the group and keeps running (verified). On Linux,
+`supervision: { kind: "cgroup-v2", root, limits }` runs each operation in its
+own cgroup below a delegated subtree: a join shell enters the cgroup before
+`exec`, `cgroup.kill` reaches every descendant, optional `memory.max`/`pids.max`
+apply, and leftover operation cgroups from a crashed Agent are killed and
+removed at startup. It refuses to start rather than fall back when the host is
+not Linux, the hierarchy is not cgroup v2, `cgroup.kill` is missing, or the
+subtree is not delegated. Shared libraries of an interpreter are not pinned,
+and destination ownership is not enforced.
+
+`zelavis agent --operations-root <dir> --operation-trust <file> --platform-authority <file>`
+assembles them in the separately supervised Agent: installed signed operations,
+the executor and a durable SQLite journal under `<data>/agent-operations`. The
+Agent socket accepts `operation.catalog`, `operation.submit` and
+`operation.get`. Each request carries a short-lived envelope signed with the
+Platform's Ed25519 authority key and bound to the Agent, operation, version,
+artifact digest, Project, actor and an `argumentsDigest`
+(`hostOperationArgumentsDigest`), so it authorizes exactly one argument set.
+The Agent verifies it against `--platform-authority`, a public trust file it
+re-reads for every request (a missing file refuses everything; a rotated key
+needs no restart). The Platform keeps the private key in
+`<data>/system/agent-authority/signing-keys.json` (0600) and publishes
+`platform-authority.json` beside it; keys are valid 365 days and rotate 30 days
+before expiry with overlap.
+
+A manifest's signed `authorization: { permission, scope: "project" | "system" }`
+decides who may request it; an operation without one cannot be requested.
+With an Agent configured, the Platform exposes that as
+`GET /zelavis/api/v1/runtime/host-operations` (what the caller may request),
+`POST .../host-operations` (`{ operation, version?, projectId?, arguments,
+deadlineMs? }`, 202) and `GET .../host-operations/:operationId`, and the same
+through `client.hostOperations.catalog|submit|get` and
+`zelavis host-operations catalog|submit|get [--json]`. The broker checks the
+caller's permission for the manifest's scope with the core grant rules, applies
+the Agent's argument validation before signing, and records an audit entry
+(actor, operation, Project, argument names and digest, never values) before the
+Agent sees the request. Status is readable by the requester or anyone who could
+request the operation for that scope; others get 404. Without an Agent the
+routes return 503.
+
+A manifest may declare `result: { format: "json", maxBytes }` (≤ 65,536). Then,
+and only then, stdout must be one JSON object within that size; it is kept in
+the journal and returned as `agent.result`, and anything else fails the
+operation with `resultError`. Undeclared output is never stored. Submissions
+are limited per actor (default 30 per minute, burst 10; `rateLimit` on
+`createHostOperationBroker`) after authorization, answering 429 with
+`Retry-After`. `GET .../host-operations/audit?projectId=&limit=`
+(`client.hostOperations.audit`, `zelavis host-operations audit`) lists issuance
+records newest first and needs `server.host-operations.audit`, or
+`project.host-operations.audit` for a Project; it reads the whole audit
+namespace, so pagination is a known gap. Custom route `authorize` hooks do not
+apply to host operations: their policy is the signed manifest plus core grants.
+
+The release ships one operation, `zelavis.host-report` v1: a read-only `/bin/sh`
+report (OS, kernel, architecture, CPUs, memory, root filesystem free space,
+cgroup mode, `cgroup.kill`, KVM device and access, WSL) with no arguments,
+requiring `server.host.report` at system scope. It is included only in builds
+signed with a release key listed in `release.json`.
+`--operation-cgroup delegated` moves the Agent into an `agent/` leaf of its
+systemd-delegated cgroup and contains operations under `operations/`, with
+`--operation-pids-max` and `--operation-memory-max`; `--require-root-owned-operations`
+enforces root ownership of the trust store, tree and interpreters. `zelavis
+serve` uses an Agent when `ZELAVIS_AGENT_ENDPOINT` is set. The packaged
+`zelavis-agent.service` is installed but not enabled, and no operations or
+release keys ship yet.
 
 The dashboard opens to Projects. Project-local Zelavis surfaces live under
 `/zelavis/projects/:projectId/*`, global app/server discovery lives under
@@ -349,6 +499,17 @@ exports and restores a Tenant's schema and exact event history; the matching
 maintenance endpoints require `database.inspect`, `database.backup`, or
 `database.restore` permissions.
 
+Indexed numeric document fields must be finite. Inserts, updates, and atomic
+batches reject `NaN`, `Infinity`, and `-Infinity` with `InvalidDocumentValue`,
+including the collection and field path, before recording an idempotency
+receipt. HTTP writes return `400`. SDK and CLI JSON requests reject non-finite
+numbers before serialization can silently turn them into `null`.
+
+Reopening a database also opens shards needed by unfinished Tenant moves,
+including source shards no longer present in the current partition map.
+`db.movement.resume` finishes pending work; a move whose routing already changed
+cleans up its source without copying the target again.
+
 Node hosts can persist content-addressed runtime objects with
 `createNodeFileArtifactStore({ directory })` from `zelavis/adapters/node`.
 Writes verify their SHA-256 key, existing objects remain immutable, and reads
@@ -469,6 +630,48 @@ zelavis/runtimes/deno          deno marker
 
 Runtime host utilities are separate subpath exports. Import only the runtime
 subpath you need so bundlers can drop code for the other host runtimes.
+
+## Database writer commits
+
+Ordered KV engines expose `conditionalWrite(writes, conditions)` alongside their
+raw atomic batch. Each condition binds a binary key to its observed bytes, or
+explicit absence. The engine checks every condition and commits the batch in one
+destination operation; rejection returns `false` and changes nothing. Engines
+without conditional commits and a declared coordination scope refuse writable
+store activation. `claimGeneration(engine)` returns `{ generation, session }`;
+`storeOverKv(partition, engine, claim)` requires that complete claim, while
+`openStoreOverKv(partition, engine)` performs activation and format preparation.
+
+Store activation claims a fresh writer session and increments the persisted
+generation atomically. Every store batch checks generation, session, and the
+revision read before building the operation, then advances that revision in the
+same commit. This covers events, lenses, document receipts, identifier allocation,
+replication application, format upgrades, and maintenance. A superseded session
+fails with `WriterFenced`; competing changes under the same claim fail with
+`StoreError` (`op: "store.conflict"`). Retry the complete operation after a clean
+conflict, never its previously built batch. Document checks and their Pending
+overlay remain within that operation; transactions remain shard-local.
+
+| Engine | Conditional commit and coordination |
+| --- | --- |
+| Memory | Synchronous checks and batch within the same engine instance. |
+| Node SQLite / local libSQL | Checks and writes inside `BEGIN IMMEDIATE`; independent local connections and SQLite processes are tested on macOS. Embedded replica/server configurations need separate qualification. |
+| LMDB | Checks and writes inside an abortable child transaction; local independent connections and process takeover are tested. Queued ordinary transaction callbacks alone do not guarantee rollback on callback failure. |
+| RocksDB bindings | Native exclusive process/file ownership plus a scoped permit around checks and batches. The evaluated binding shares permits across local handles for the same resolved directory. Concurrent process owners, shared filesystems, and remote takeover are unsupported. |
+| libSQL client | Dedicated write transaction with batched condition reads and mutations. Independent connections are tested using its local file transport; production network servers are not qualified by those tests. |
+
+Existing four-byte generations are read and atomically widened to eight bytes at
+activation, preserving document/event bytes and cursor interpretation. Generations
+remain safe integer numbers and activation refuses exhaustion at
+`Number.MAX_SAFE_INTEGER` or malformed state. Older binaries must not reopen a
+widened store. Recovery must retain the current generation/session metadata;
+restoring an old authority snapshot is not a supported takeover procedure.
+
+Opening an engine does not acquire a store writer claim. Writable store activation
+is a trusted low-level operation that supersedes prior store sessions; it does not
+implement authenticated Fabric placement, renewable ownership leases, distributed
+failover, backup rollback protection, or stronger acknowledgement durability.
+Direct raw-engine access remains trusted and must not bypass the store in App code.
 
 ## Project runtime lifecycle
 
@@ -614,6 +817,40 @@ recompose its service graph when supported, or require a process restart when
 live activation is unavailable. Runtime config exposes the current adapter's
 service activation capabilities so the dashboard can show whether uploaded
 specifiers, runtime installs, and isolated execution are actually supported.
+
+Registry stores implement `read()`, `readSnapshot()` and
+`compareAndSet(revision, entries)`. A snapshot carries an opaque revision;
+`null` means absence. Mutations retry at most eight clean conflicts, reading
+again and reapplying the requested change each time. Exhaustion returns HTTP
+409 through the existing service endpoints and CLI; the fetch SDK reaches the
+same endpoints through `client.json`. Storage errors and unknown write outcomes
+are not automatically retried. Startup rejects unreadable or malformed registry
+state. Existing `{ services: [...] }` documents remain readable; successful
+updates retain source references and unknown fields and add a fresh revision
+nonce. No database or file migration is required.
+
+File-backed registries call `requireFileStorageGuarantees` before authoritative
+access. The gate requires declared conditional-create and conditional-replace
+scope, then probes actual behavior. Successful checks belong to one adapter
+configuration/session; errors invalidate the registry's cached check. Create a
+new adapter (or replace its capability descriptor) when configuration changes.
+S3 adapter options are captured at construction. Writes always use `ifAbsent`
+or the observed `ifMatch` etag, including after conflicts.
+
+| Adapter | Registry guarantee and verified scope |
+| --- | --- |
+| In-memory registry/System Store | Conditional mutations within one process; no persistence. |
+| Node SQLite System Store | Atomic conditional mutations across local connections/processes and reopen, tested on macOS. |
+| Bun SQLite System Store | Conditional mutations across independent local connections, tested with Bun 1.3.4 on macOS. |
+| Local files | Conditional creation across processes; replacement only within one process using the same resolved paths. Registry use requires explicit `{ scope: "process" }` as the third factory argument; host/distributed authority is refused. |
+| S3-compatible files | Distributed condition protocol implemented and tested against a simulated endpoint; each configured session must pass the live gate. No production provider qualification is implied. |
+| Plain key-value resource | Existing registry data is readable; mutations refuse because the contract has no atomic compare-and-set. Use a System Store or qualified file storage for writes. |
+
+System Store `compareAndSet` accepts an optional fifth `expectedValue` argument;
+adapters must compare it atomically with the timestamp when supplied. Registry
+writes use both guards to reject timestamp reuse after recreation. These checks
+do not establish ownership generations, power-loss durability, hostile-writer
+containment, backup rollback safety, or distributed live service activation.
 
 `POST /runtime/services` registers a non-marketplace ESM source with
 `{ name, specifier }`. The best portable input is a module specifier or hosted

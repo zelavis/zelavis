@@ -327,6 +327,21 @@ test("auth administration requires the Project users permission", async () => {
   assert.equal(administrator.status, 200);
 });
 
+test("Project auth administration requires its explicit Project scope", async () => {
+  const auth = await createAuth({ projectId: "alpha" });
+  await auth.accounts.create({ id: "admin", username: "admin", permissions: ["project.users.manage"] });
+  const issued = await auth.sessions.create({ accountId: "admin", expiresAt: new Date(Date.now() + 60_000) });
+  const runtime = await createServiceRuntime({ services: [defineAuthService(auth)] });
+  assert.equal((await runtime.plain({ url: "/auth/accounts", headers: { authorization: `Bearer ${issued.token}` } })).status, 200);
+  for (const projectId of ["alpha", "beta"]) {
+    const response = await runtime.plain({
+      url: "/auth/accounts",
+      principal: { id: "scoped", type: "user", grants: [{ permission: "project.users.manage", scope: { type: "project", projectId } }] },
+    });
+    assert.equal(response.status, projectId === "alpha" ? 200 : 403);
+  }
+});
+
 test("opaque sessions authenticate Bearer and cookie requests without storing raw tokens", async () => {
   const auth = await createAuth({ projectId: "petshop" });
   await auth.accounts.create({

@@ -324,6 +324,7 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
       await rename(staged, filePath);
     } finally {
       await rm(staged, { force: true });
+      await pruneEmptyParents(path);
     }
   }
 
@@ -367,6 +368,7 @@ export function createLocalFileStorage(rootDirectory: string): ZelavisFileStorag
   }
 
   return {
+    capabilities: Object.freeze({ conditionalCreate: "host", conditionalReplace: "process" }),
     async get(path): Promise<ZelavisFileStorageObject | undefined> {
       const normalized = normalizeStoragePath(path);
       try {

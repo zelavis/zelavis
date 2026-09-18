@@ -355,6 +355,7 @@ const NOT_FOUND_TAGS = new Set([
 ]);
 
 const BAD_REQUEST_TAGS = new Set([
+  "InvalidDocumentValue",
   "BackupFormatUnsupported",
   "CursorMismatch",
   "UnsupportedOrdering",
@@ -389,6 +390,8 @@ function describeTaggedFailure(failure: TaggedFailure): string {
       return `Collection "${failure.name}" does not exist.`;
     case "InvalidCollectionName":
       return `Collection name "${failure.name}" is invalid: ${failure.reason}.`;
+    case "InvalidDocumentValue":
+      return `Document field "${failure.path}" in collection "${failure.collection}" is invalid: ${failure.reason}.`;
     case "DocumentNotFound":
       return `Document "${failure.id}" does not exist in collection "${failure.collection}".`;
     case "DocumentConflict":

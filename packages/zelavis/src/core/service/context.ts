@@ -37,11 +37,24 @@ export interface PluginExecutionContext {
   metadata: Record<string, unknown>;
   frontend?: PluginFrontendBehavior;
   setup?: PluginSetupHandler;
+  /**
+   * Set when the package's load was abandoned (its admission deadline passed).
+   * A continuation of that package that resumes later must not register
+   * anything, so every context accessor refuses a sealed context.
+   */
+  sealed?: string;
 }
 
 export interface PluginContextStorage {
   getStore(): PluginExecutionContext | undefined;
   run<R>(context: PluginExecutionContext, fn: () => R): R;
+  /**
+   * The context follows asynchronous continuations (e.g. `AsyncLocalStorage`),
+   * so a load can be abandoned or run beside another without its later
+   * continuations seeing the wrong package's context. The portable default is
+   * one global slot and does not.
+   */
+  readonly propagatesAsyncContext?: boolean;
 }
 
 const GLOBAL_PLUGIN_KEY = Symbol.for("zelavis.active_plugin_context");
@@ -111,6 +124,7 @@ export function requireActivePluginContext(
       `${apiName} can only be called within an active Zelavis plugin execution context.`,
     );
   }
+  assertNotSealed(context);
   return context;
 }
 
@@ -118,5 +132,15 @@ export function requireActivePluginContext(
  * Returns the currently active plugin execution context, or undefined if called outside.
  */
 export function getActivePluginContext(): PluginExecutionContext | undefined {
-  return activePluginStorage.getStore();
+  const context = activePluginStorage.getStore();
+  if (context) assertNotSealed(context);
+  return context;
+}
+
+function assertNotSealed(context: PluginExecutionContext) {
+  if (context.sealed) {
+    throw new Error(
+      `Package "${context.name}" can no longer register: ${context.sealed}`,
+    );
+  }
 }

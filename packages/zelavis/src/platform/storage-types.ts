@@ -62,7 +62,17 @@ export interface ZelavisFileReference {
   checksum?: string;
 }
 
+/** The widest coordination boundary an adapter can enforce, not durability. */
+export type ZelavisFileStorageScope = "process" | "host" | "distributed";
+
+export interface ZelavisFileStorageCapabilities {
+  /** Replace this descriptor when backend configuration/session changes. */
+  readonly conditionalCreate: ZelavisFileStorageScope | false;
+  readonly conditionalReplace: ZelavisFileStorageScope | false;
+}
+
 export interface ZelavisFileStorage {
+  readonly capabilities?: ZelavisFileStorageCapabilities;
   get(
     path: string,
   ):

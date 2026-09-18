@@ -86,6 +86,11 @@ const zv = new Zelavis({
           return {
             id: claims.subject,
             type: claims.subjectType as "user" | "system" | "service",
+            // The signed audience confines these concrete permissions to this
+            // isolated runtime. Its local administration routes have no outer
+            // Project parameter; do not weaken root dispatcher scope matching
+            // to make those routes accept a Project-scoped grant.
+            permissions: claims.permissions,
             // The caller's own Project permissions, never a wildcard.
             grants: claims.permissions.map((permission) => ({
               permission,

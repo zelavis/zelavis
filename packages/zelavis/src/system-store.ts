@@ -38,6 +38,8 @@ export interface ZelavisSystemStore {
     key: string,
     expectedUpdatedAt: string,
     value: ZelavisSystemStoreValue,
+    /** When supplied, compare the observed value atomically too (ABA protection). */
+    expectedValue?: ZelavisSystemStoreValue,
   ):
     | Promise<ZelavisSystemStoreRecord | undefined>
     | ZelavisSystemStoreRecord
@@ -135,12 +137,13 @@ export function createMemorySystemStore(): ZelavisSystemStore {
       records.set(id, record);
       return { created: true, record: cloneRecord(record) };
     },
-    compareAndSet(namespace, key, expectedUpdatedAt, value) {
+    compareAndSet(namespace, key, expectedUpdatedAt, value, expectedValue) {
       const normalizedNamespace = normalizePart(namespace, "namespace");
       const normalizedKey = normalizePart(key, "key");
       const id = recordId(normalizedNamespace, normalizedKey);
       const existing = records.get(id);
-      if (!existing || existing.updatedAt !== expectedUpdatedAt) return undefined;
+      if (!existing || existing.updatedAt !== expectedUpdatedAt ||
+          (expectedValue !== undefined && JSON.stringify(existing.value) !== JSON.stringify(expectedValue))) return undefined;
       const record: ZelavisSystemStoreRecord = {
         namespace: normalizedNamespace,
         key: normalizedKey,

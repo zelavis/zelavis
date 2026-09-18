@@ -45,6 +45,33 @@ command tree.
 - `serve` starts the Platform runtime and dashboard.
 - `bootstrap` creates the first Platform owner account.
 - `bootstrap status` reports whether an owner still has to be created.
+- `agent` runs the separately supervised Agent that executes Project processes.
+  With `--operations-root <dir> --operation-trust <file> --platform-authority <file>`
+  it also runs installed, release-signed host operations the Platform requests
+  over its local socket with Ed25519-signed, request-bound authority. `--operation-cgroup delegated` (Linux, cgroup v2,
+  systemd `Delegate=yes`) contains each operation in its own cgroup, optionally
+  limited by `--operation-pids-max` and `--operation-memory-max`; it refuses to
+  start rather than fall back when the host cannot provide that.
+  `--require-root-owned-operations` is for packaged installs. `zelavis serve`
+  runs Projects through an Agent when `ZELAVIS_AGENT_ENDPOINT` names its
+  directory.
+- `host-operations catalog|submit|get|audit` requests release-signed host operations
+  through the Platform (`client.hostOperations.*`,
+  `/zelavis/api/v1/runtime/host-operations`). `submit <operation> --project <id>
+  --arg name=value` needs the permission the operation's signed manifest names
+  for that Project (or system scope). An operation that declares a JSON result
+  returns it in `get`. `audit [--project <id>] [--limit N]` lists issuance
+  records (never argument values) with the audit permission. Submissions are
+  rate limited per caller (HTTP 429 with `Retry-After`). Available when the
+  Platform runs with an Agent.
+- `projects list|get|create|start|stop|restart|logs|remove` manages Projects,
+  and `projects recipes` lists Project recipes. Each command calls the same
+  route as the JavaScript client (`client.projects.*`) and
+  `/zelavis/api/v1/runtime/projects`. With `--json` the output is the SDK
+  result and failures are JSON with the HTTP status; a recipe whose required
+  isolation the server cannot provide fails with
+  `code: "project.isolation.unsatisfied"`. The backend is chosen by server
+  policy; there is no backend option.
 - `services list` lists service registry entries.
 - `services register` registers an ESM service specifier.
 - `services install` activates a registered service.

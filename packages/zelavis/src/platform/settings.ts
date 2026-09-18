@@ -8,6 +8,7 @@
  */
 import type {
   ZelavisFileStorage,
+  ZelavisFileStorageScope,
 } from "./storage-types.js";
 import {
   isBoolean,
@@ -16,17 +17,23 @@ import {
   readBodyObject,
   toSystemStoreValue,
   ZelavisValidationError,
+  ZelavisConflictError,
   type ZelavisKeyValueStore,
   type ZelavisRuntimeEngine,
 } from "./shared.js";
 import type {
   ZelavisServiceRegistryStateEntry,
   ZelavisServiceRegistryStore,
+  ZelavisServiceRegistrySnapshot,
 } from "../service.js";
 import type { ZelavisSystemStore } from "../system-store.js";
 import type {
   ZelavisServiceRegistryOptions,
 } from "../index.js";
+import {
+  requireFileStorageGuarantees, invalidateFileStorageGuarantees,
+  ZelavisStorageConditionError, ZelavisStorageGuaranteeError,
+} from "../storage/conditions.js";
 const DEFAULT_PLATFORM_DASHBOARD_SETTINGS_KEY =
   "zelavis/dashboard-settings.json";
 
@@ -247,7 +254,7 @@ export function parseStoredServiceRegistryStateEntry(
     );
   }
 
-  const entry: ZelavisServiceRegistryStateEntry = { name };
+  const entry: ZelavisServiceRegistryStateEntry = { ...input, name };
 
   if ("specifier" in input && input.specifier !== undefined) {
     if (typeof input.specifier !== "string" || !input.specifier.trim()) {
@@ -298,7 +305,7 @@ export function parseStoredServiceRegistryState(
   const input = readBodyObject(value);
 
   if (!("services" in input)) {
-    return [];
+    throw new ZelavisValidationError("Stored service registry is missing services; refusing an ambiguous overwrite.");
   }
 
   if (!Array.isArray(input.services)) {
@@ -307,7 +314,11 @@ export function parseStoredServiceRegistryState(
     );
   }
 
-  return input.services.map((entry) => parseStoredServiceRegistryStateEntry(entry));
+  const entries = input.services.map((entry) => parseStoredServiceRegistryStateEntry(entry));
+  if (new Set(entries.map((entry) => entry.name)).size !== entries.length) {
+    throw new ZelavisValidationError("Stored service registry has duplicate service names.");
+  }
+  return entries;
 }
 
 export function mergeDashboardPreferences(
@@ -382,16 +393,33 @@ export function createMemoryDashboardSettingsStore(): ZelavisDashboardSettingsSt
   };
 }
 
+/** Apply an intent again only after a clean conflict and a fresh read. */
+export async function mutateServiceRegistry(
+  store: ZelavisServiceRegistryStore,
+  mutation: (entries: readonly ZelavisServiceRegistryStateEntry[]) =>
+    readonly ZelavisServiceRegistryStateEntry[] | Promise<readonly ZelavisServiceRegistryStateEntry[]>,
+): Promise<readonly ZelavisServiceRegistryStateEntry[]> {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const snapshot = await store.readSnapshot();
+    const entries = await mutation(snapshot.entries);
+    if (await store.compareAndSet(snapshot.revision, entries)) return entries;
+  }
+  throw new ZelavisConflictError("Service registry changed during all 8 mutation attempts; retry the request.");
+}
+
 export function createMemoryServiceRegistryStore(
   initialEntries: readonly ZelavisServiceRegistryStateEntry[],
 ): ZelavisServiceRegistryStore {
-  let entries = [...initialEntries];
-
+  let entries = structuredClone([...initialEntries]);
+  let revision = crypto.randomUUID();
   return {
-    read: () => entries,
-    write(nextEntries) {
-      entries = [...nextEntries];
-      return entries;
+    read: () => structuredClone(entries),
+    readSnapshot: () => ({ entries: structuredClone(entries), revision }),
+    compareAndSet(expected, next) {
+      if (expected !== revision) return false;
+      entries = structuredClone(parseStoredServiceRegistryState({ services: next }));
+      revision = crypto.randomUUID();
+      return true;
     },
   };
 }
@@ -455,57 +483,48 @@ export function createKeyValueServiceRegistryStore(
   key = DEFAULT_PLATFORM_SERVICE_REGISTRY_KEY,
 ): ZelavisServiceRegistryStore {
   return {
-    async read() {
+    async read() { return (await this.readSnapshot()).entries; },
+    async readSnapshot() {
       const value = await store.get(key);
-      if (!value) {
-        return [];
-      }
+      return { entries: value === undefined ? [] : parseStoredServiceRegistryState(JSON.parse(value)), revision: value ?? null };
+    },
+    compareAndSet() {
+      throw new ZelavisStorageGuaranteeError("Key-value storage has no atomic conditional write contract; service registry is read-only. Use a System Store or qualified file storage.");
+    },
+  };
+}
 
-      return parseStoredServiceRegistryState(
-        readBodyObject(JSON.parse(value) as unknown),
-      );
-    },
-    async write(entries) {
-      const normalizedEntries = entries.map((entry) =>
-        parseStoredServiceRegistryStateEntry(entry),
-      );
-      await store.set(
-        key,
-        JSON.stringify(
-          {
-            kind: "service-registry",
-            services: normalizedEntries,
-          },
-          null,
-          2,
-        ),
-      );
-      return normalizedEntries;
-    },
+function registryDocument(value: unknown, entries: readonly ZelavisServiceRegistryStateEntry[]) {
+  return {
+    ...(value === undefined ? {} : readBodyObject(value)),
+    kind: "service-registry",
+    // Content etags may repeat. A fresh nonce makes cooperative registry writes
+    // distinct even for A -> B -> A, including recreation by this adapter.
+    revision: crypto.randomUUID(),
+    services: parseStoredServiceRegistryState({ services: entries }),
   };
 }
 
 export function createSystemStoreServiceRegistryStore(
   store: ZelavisSystemStore,
 ): ZelavisServiceRegistryStore {
+  const read = () => store.get(SYSTEM_STORE_SERVICES_NAMESPACE, SYSTEM_STORE_SERVICE_REGISTRY_KEY);
+  // Carry both the CAS token and the stored value: repeated timestamps after
+  // deletion/recreation must not silently match a caller's earlier snapshot.
+  const revisionOf = (record: NonNullable<Awaited<ReturnType<typeof read>>>) =>
+    JSON.stringify([record.updatedAt, record.value]);
   return {
-    async read() {
-      const record = await store.get(
-        SYSTEM_STORE_SERVICES_NAMESPACE,
-        SYSTEM_STORE_SERVICE_REGISTRY_KEY,
-      );
-      return record ? parseStoredServiceRegistryState(record.value) : [];
+    async read() { return (await this.readSnapshot()).entries; },
+    async readSnapshot() {
+      const record = await read();
+      return { entries: record ? parseStoredServiceRegistryState(record.value) : [], revision: record ? revisionOf(record) : null };
     },
-    async write(entries) {
-      const normalized = entries.map((entry) =>
-        parseStoredServiceRegistryStateEntry(entry),
-      );
-      await store.set(
-        SYSTEM_STORE_SERVICES_NAMESPACE,
-        SYSTEM_STORE_SERVICE_REGISTRY_KEY,
-        toSystemStoreValue({ services: normalized }),
-      );
-      return normalized;
+    async compareAndSet(revision, entries) {
+      const current = await read();
+      if ((current ? revisionOf(current) : null) !== revision) return false;
+      const value = toSystemStoreValue(registryDocument(current?.value, entries));
+      if (!current) return (await store.setIfAbsent(SYSTEM_STORE_SERVICES_NAMESPACE, SYSTEM_STORE_SERVICE_REGISTRY_KEY, value)).created;
+      return Boolean(await store.compareAndSet(SYSTEM_STORE_SERVICES_NAMESPACE, SYSTEM_STORE_SERVICE_REGISTRY_KEY, current.updatedAt, value, current.value));
     },
   };
 }
@@ -513,39 +532,52 @@ export function createSystemStoreServiceRegistryStore(
 export function createFileStorageServiceRegistryStore(
   storage: ZelavisFileStorage,
   path = DEFAULT_PLATFORM_SERVICE_REGISTRY_KEY,
+  options: { scope?: ZelavisFileStorageScope } = {},
 ): ZelavisServiceRegistryStore {
+  const scope = options.scope ?? "distributed";
+  const decode = (body: Uint8Array) => JSON.parse(new TextDecoder().decode(body)) as unknown;
+  const read = async () => {
+    await requireFileStorageGuarantees(storage, scope);
+    const file = await storage.get(path);
+    if (file && !file.etag) throw new ZelavisStorageGuaranteeError("Service registry storage returned no etag; refusing mutation.");
+    return file;
+  };
+  const guarded = async <T>(operation: () => Promise<T>): Promise<T> => {
+    try { return await operation(); } catch (error) {
+      if (!(error instanceof ZelavisStorageConditionError)) invalidateFileStorageGuarantees(storage);
+      throw error;
+    }
+  };
   return {
-    async read() {
-      const file = await storage.get(path);
-      if (!file) {
-        return [];
-      }
-
-      return parseStoredServiceRegistryState(
-        readBodyObject(
-          JSON.parse(new TextDecoder().decode(file.body)) as unknown,
-        ),
-      );
-    },
-    async write(entries) {
-      const normalizedEntries = entries.map((entry) =>
-        parseStoredServiceRegistryStateEntry(entry),
-      );
-
-      await storage.put({
-        path,
-        body: JSON.stringify(
-          {
-            kind: "service-registry",
-            services: normalizedEntries,
-          },
-          null,
-          2,
-        ),
-        contentType: "application/json; charset=utf-8",
+    async read() { return (await this.readSnapshot()).entries; },
+    readSnapshot() {
+      return guarded(async (): Promise<ZelavisServiceRegistrySnapshot> => {
+        const file = await read();
+        return { entries: file ? parseStoredServiceRegistryState(decode(file.body)) : [], revision: file?.etag ?? null };
       });
-
-      return normalizedEntries;
+    },
+    compareAndSet(revision, entries) {
+      return guarded(async () => {
+        const file = await read();
+        if ((file?.etag ?? null) !== revision) return false;
+        const previous = file ? decode(file.body) : undefined;
+        if (previous !== undefined) parseStoredServiceRegistryState(previous);
+        try {
+          const written = await storage.put({
+            path,
+            body: JSON.stringify(registryDocument(previous, entries), null, 2),
+            contentType: "application/json; charset=utf-8",
+            condition: revision === null ? { ifAbsent: true } : { ifMatch: revision },
+          });
+          if (!written.etag || written.etag === revision) {
+            throw new ZelavisStorageGuaranteeError("Registry write returned no fresh etag; outcome is unknown.");
+          }
+          return true;
+        } catch (error) {
+          if (error instanceof ZelavisStorageConditionError) return false;
+          throw error;
+        }
+      });
     },
   };
 }
@@ -574,11 +606,8 @@ export function resolveServiceRegistryStore(
 export async function readInitialServiceRegistryState(
   store: ZelavisServiceRegistryStore,
 ): Promise<readonly ZelavisServiceRegistryStateEntry[] | undefined> {
-  try {
-    return await store.read();
-  } catch {
-    return undefined;
-  }
+  // An outage or malformed persisted registry is not an empty installation.
+  return await store.read();
 }
 
 export function readDashboardSettingsUpdate(

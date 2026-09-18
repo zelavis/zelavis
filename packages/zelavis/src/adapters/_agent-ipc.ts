@@ -45,6 +45,11 @@ import type {
   ZelavisAgentProcessRunner,
   ZelavisAgentProcessStartOptions,
 } from "../core/agent/process-command.js";
+import type { ZelavisAgentOperationSummary } from "../core/agent/index.js";
+import type {
+  ZelavisHostOperationManifest,
+  ZelavisHostOperationRequest,
+} from "../core/deployment/index.js";
 
 /** One message is one line, and a line is bounded on both sides. */
 const MAX_MESSAGE_LENGTH = 1024 * 1024;
@@ -177,6 +182,17 @@ export interface AgentProcessServerOptions {
   readonly directory: string;
   /** What actually runs processes. The local runner, in the shipped Agent. */
   readonly runner: ZelavisAgentProcessRunner;
+  /**
+   * Signed host operations, when this Agent was started with an installed
+   * operation tree. Each request still carries its own signed authority; the
+   * socket token only proves the caller may talk to the Agent at all.
+   */
+  readonly operations?: {
+    catalog(): { readonly agentId: string; readonly operations: readonly ZelavisHostOperationManifest[] };
+    submit(request: ZelavisHostOperationRequest): Promise<ZelavisAgentOperationSummary>;
+    get(operationId: string): Promise<ZelavisAgentOperationSummary | undefined>;
+    close?(): Promise<void>;
+  };
 }
 
 /**
@@ -345,6 +361,27 @@ export async function createAgentProcessServer(
           return;
         }
 
+        if (message.type === "operation.catalog") {
+          if (!options.operations) {
+            send(socket, { id, type: "failed", error: "This Agent does not execute host operations." });
+            return;
+          }
+          send(socket, { id, type: "catalog", catalog: options.operations.catalog() });
+          return;
+        }
+
+        if (message.type === "operation.submit" || message.type === "operation.get") {
+          if (!options.operations) {
+            send(socket, { id, type: "failed", error: "This Agent does not execute host operations." });
+            return;
+          }
+          const operation = message.type === "operation.submit"
+            ? await options.operations.submit(message.request as ZelavisHostOperationRequest)
+            : await options.operations.get(String(message.operationId));
+          send(socket, { id, type: "operation", operation: operation ?? null });
+          return;
+        }
+
         fail(`unknown message type "${String(message.type)}"`);
       } catch (error) {
         send(socket, {
@@ -382,6 +419,7 @@ export async function createAgentProcessServer(
     socketPath,
     token,
     async close() {
+      await options.operations?.close?.();
       await options.runner.close();
       // `server.close` stops accepting and then waits for open connections. An
       // Agent shutting down cannot wait for a Platform to notice: the
@@ -399,6 +437,15 @@ export async function createAgentProcessServer(
 // Client: the Platform's view of the Agent
 // ---------------------------------------------------------------------------
 
+export interface AgentHostOperationClient {
+  hostOperationCatalog(): Promise<{
+    readonly agentId: string;
+    readonly operations: readonly ZelavisHostOperationManifest[];
+  }>;
+  submitHostOperation(request: ZelavisHostOperationRequest): Promise<ZelavisAgentOperationSummary>;
+  getHostOperation(operationId: string): Promise<ZelavisAgentOperationSummary | undefined>;
+}
+
 export interface AgentProcessClientOptions {
   readonly directory: string;
   /** Overrides the token file, for a host that delivers it another way. */
@@ -415,7 +462,7 @@ export interface AgentProcessClientOptions {
  */
 export async function createAgentProcessClient(
   options: AgentProcessClientOptions,
-): Promise<ZelavisAgentProcessRunner & { close(): Promise<void> }> {
+): Promise<ZelavisAgentProcessRunner & AgentHostOperationClient & { close(): Promise<void> }> {
   const socketPath = agentSocketPath(options.directory);
   const token = options.token ?? (await readAgentToken(options.directory));
 
@@ -608,6 +655,21 @@ export async function createAgentProcessClient(
           replay: value.replay ?? [],
         } satisfies ZelavisAgentAttachedProcess;
       });
+    },
+
+    async hostOperationCatalog() {
+      const result = await request({ type: "operation.catalog" });
+      return result.catalog as { agentId: string; operations: readonly ZelavisHostOperationManifest[] };
+    },
+
+    async submitHostOperation(operationRequest) {
+      const result = await request({ type: "operation.submit", request: operationRequest });
+      return result.operation as ZelavisAgentOperationSummary;
+    },
+
+    async getHostOperation(operationId) {
+      const result = await request({ type: "operation.get", operationId });
+      return (result.operation ?? undefined) as ZelavisAgentOperationSummary | undefined;
     },
 
     async reclaim(workloadId) {

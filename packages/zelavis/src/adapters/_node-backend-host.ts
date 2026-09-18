@@ -1,21 +1,18 @@
 import { spawn } from "node:child_process";
+import { access, readFile } from "node:fs/promises";
+import type {
+  ZelavisBackendHostProbes,
+  ZelavisBackendProbeCommandResult,
+} from "../backends/host.js";
 
 const COMMAND_TIMEOUT_MS = 5_000;
 const OUTPUT_LIMIT = 256 * 1024;
 
-export interface BackendCommandResult {
-  readonly code: number;
-  readonly stdout: string;
-  readonly stderr: string;
-  readonly missing: boolean;
-  readonly timedOut: boolean;
-}
-
 /** Runs a fixed read-only backend probe without a shell or inherited stdin. */
-export async function runBackendProbeCommand(
+async function runBackendProbeCommand(
   executable: string,
   args: readonly string[],
-): Promise<BackendCommandResult> {
+): Promise<ZelavisBackendProbeCommandResult> {
   return new Promise((resolveRun) => {
     const child = spawn(executable, [...args], {
       shell: false,
@@ -43,5 +40,16 @@ export async function runBackendProbeCommand(
       clearTimeout(timer);
       resolveRun({ code: code ?? 1, stdout, stderr, missing, timedOut });
     });
+  });
+}
+
+/** Node binding for backend detection probes. */
+export function createNodeBackendHostProbes(): ZelavisBackendHostProbes {
+  return Object.freeze({
+    platform: process.platform,
+    pathExists: (path: string) => access(path).then(() => true, () => false),
+    readTextFile: (path: string) =>
+      readFile(path, "utf8").then((value) => value, () => undefined),
+    runProbeCommand: runBackendProbeCommand,
   });
 }

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { Effect, Stream, type Scope } from "effect";
 import { StoreError } from "../errors.js";
 import { scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
+import { exclusiveKvEngine } from "./exclusive-kv.js";
 import { openStoreOverKv } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
 import type { ObjectStoreApi } from "../store.js";
@@ -109,7 +110,7 @@ export const makeRocksdbEngine = (
         Effect.promise(() => promisify<void>((done) => db.close((error) => done(error)))),
       ),
   ).pipe(
-    Effect.map((db): KvEngine => {
+    Effect.flatMap((db) => {
       const fail = (op: string) => (cause: unknown) => new StoreError({ op, cause });
 
       // The binding stringifies anything that is not a Buffer, so a plain
@@ -118,7 +119,7 @@ export const makeRocksdbEngine = (
       const buf = (bytes: Uint8Array) =>
         Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
 
-      return {
+      return exclusiveKvEngine({
         get: (key) =>
           Effect.tryPromise({
             try: () =>
@@ -197,7 +198,7 @@ export const makeRocksdbEngine = (
         close: Effect.orDie(
           Effect.promise(() => promisify<void>((done) => db.close((error) => done(error)))),
         ),
-      };
+      });
     }),
   );
 

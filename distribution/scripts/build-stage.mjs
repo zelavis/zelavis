@@ -147,6 +147,32 @@ async function main() {
     join(options.output, "share", "zelavis.service"),
   );
   await copyFile(
+    join(distributionDirectory, "runtime", "zelavis-agent.service"),
+    join(options.output, "share", "zelavis-agent.service"),
+  );
+  // The trust store ships beside the release; packages install it root-owned
+  // at /etc/zelavis/operation-trust.json. Operations are signed now, before
+  // the runtime artifact digest covers them.
+  await writeFile(
+    join(options.output, "share", "operation-trust.json"),
+    `${JSON.stringify(releaseConfig.operationTrust, null, 2)}\n`,
+    { mode: 0o644 },
+  );
+  const { stageSignedOperations } = await import("./operation-signing.mjs");
+  const operations = await stageSignedOperations({
+    source: join(distributionDirectory, "operations"),
+    output: join(options.output, "operations"),
+    trust: releaseConfig.operationTrust,
+    signingKey: process.env.ZELAVIS_OPERATION_SIGNING_KEY,
+    keyId: process.env.ZELAVIS_OPERATION_SIGNING_KEY_ID,
+    allowSkip: process.env.ZELAVIS_SKIP_UNSIGNED_OPERATIONS === "1",
+  });
+  if (operations.skipped) {
+    console.warn(`Host operations omitted: ${operations.reason ?? "no signing key"}.`);
+  } else if (operations.signed.length > 0) {
+    console.log(`Signed host operations: ${operations.signed.join(", ")}`);
+  }
+  await copyFile(
     join(distributionDirectory, "installers", "archive-install.sh"),
     join(options.output, "install.sh"),
   );

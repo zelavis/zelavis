@@ -47,6 +47,7 @@ export async function createAuth(options: CreateAuthOptions = {}): Promise<AuthA
 
   const api: AuthApi = {
     context: {
+      projectId: options.projectId,
       config: options.config ?? {},
       methods: Object.freeze([...(options.methods ?? [])]),
     },

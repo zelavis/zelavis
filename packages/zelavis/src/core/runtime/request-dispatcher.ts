@@ -3,6 +3,7 @@ import {
   genericErrorBody,
   publicErrorMessage,
 } from "./error-policy.js";
+import { stringifyJsonRequest } from "./json-request.js";
 import type {
   ZelavisAccessDecision,
   ZelavisAccessRequirement,
@@ -493,7 +494,7 @@ function toBodyInit(body: unknown, headers: Headers): BodyInit | undefined {
     headers.set("content-type", "application/json; charset=utf-8");
   }
 
-  return JSON.stringify(body);
+  return stringifyJsonRequest(body);
 }
 
 export function toResponse(payload: ZelavisRouteResponse): Response {
@@ -627,7 +628,7 @@ function scopesMatch(
   granted: ZelavisAccessScope | undefined,
 ): boolean {
   if (!required) {
-    return true;
+    return !granted || granted.type === "system";
   }
 
   if (!granted) {
@@ -672,6 +673,19 @@ function hasPermission(
         scopesMatch(scope, grant.scope),
     ) ?? false
   );
+}
+
+/**
+ * The default scoped permission check routes use, for authority decided
+ * inside a handler (for example by a signed operation manifest) rather than
+ * by a static route requirement.
+ */
+export function principalHasPermission(
+  principal: ZelavisPrincipal | undefined,
+  permission: string,
+  scope?: ZelavisAccessScope,
+): boolean {
+  return hasPermission(principal, permission, scope);
 }
 
 function defaultAccessDecision(

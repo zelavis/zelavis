@@ -1,6 +1,6 @@
 import { Effect, Stream, type Scope } from "effect";
 import { StoreError } from "../errors.js";
-import { scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
+import { equalBytes, scanRange, type KvEngine, type KvEntry, type KvWrite } from "../kv.js";
 import { openStoreOverKv } from "../kv-store.js";
 import type { PartitionKey } from "../model.js";
 import type { ObjectStoreApi } from "../store.js";
@@ -20,6 +20,14 @@ interface RemoteClient {
     statements: ReadonlyArray<{ sql: string; args: ReadonlyArray<unknown> }>,
     mode?: "write" | "read" | "deferred",
   ) => Promise<unknown>;
+  transaction: (mode: "write") => Promise<RemoteTransaction>;
+  close: () => void;
+}
+interface RemoteTransaction {
+  batch: (statements: ReadonlyArray<{ sql: string; args: ReadonlyArray<unknown> }>) =>
+    Promise<ReadonlyArray<{ rows: ReadonlyArray<Record<string, unknown>> }>>;
+  commit: () => Promise<void>;
+  rollback: () => Promise<void>;
   close: () => void;
 }
 
@@ -63,8 +71,9 @@ const loadClient = Effect.tryPromise({
  * Written against `KvEngine` directly rather than the shared SQLite layer,
  * which needs a synchronous handle a network client cannot give. Nothing above
  * it changes: the contract is already `Effect`-shaped, and it defines a write
- * as one atomic batch — which is exactly what the client's `batch` in write
- * mode is, so there is no open transaction for another caller to land inside.
+ * as one atomic batch. Conditional commits use a dedicated write transaction;
+ * condition reads and writes stay on that transaction, never on the client.
+ * Condition reads and mutations each use a batch to bound network round trips.
  *
  * Every round trip is a network hop, so this engine is for a database that has
  * to live elsewhere, not for one that could live on the node. An embedded
@@ -150,6 +159,41 @@ export const makeLibsqlRemoteEngine = (
               },
               catch: fail("libsql-remote.write"),
             }),
+
+          conditionalWrite: (writes, conditions) => Effect.tryPromise({
+            try: async () => {
+              const txn = await client.transaction("write");
+              try {
+                const results = conditions.length === 0 ? [] : await txn.batch(conditions.map(condition => ({
+                  sql: `SELECT value FROM ${table} WHERE key = ?`, args: [condition.key],
+                })));
+                for (let index = 0; index < conditions.length; index++) {
+                  const row = results[index]!.rows[0];
+                  if (!equalBytes(row === undefined ? undefined : toBytes(row.value), conditions[index]!.value)) {
+                    await txn.rollback();
+                    return false;
+                  }
+                }
+                if (writes.length > 0) await txn.batch(writes.map(write => write.op === "put"
+                  ? {
+                    sql: `INSERT INTO ${table} (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+                    args: [write.key, write.value],
+                  }
+                  : { sql: `DELETE FROM ${table} WHERE key = ?`, args: [write.key] }));
+                await txn.commit();
+                return true;
+              } catch (cause) {
+                // A failed commit may already have closed the transaction.
+                // Preserve its original error and unknown outcome.
+                try { await txn.rollback(); } catch {}
+                throw cause;
+              } finally {
+                txn.close();
+              }
+            },
+            catch: fail("libsql-remote.conditionalWrite"),
+          }),
+          coordination: "remote",
 
           close: Effect.sync(() => client.close()),
         };

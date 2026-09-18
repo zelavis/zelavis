@@ -34,6 +34,8 @@ export type ZelavisAccessScope =
 
 export interface ZelavisPrincipalGrant {
   permission: string;
+  /** Omitted/system scopes match runtime-wide routes; named scopes match only
+   * the same explicit Project or service and never an unscoped route. */
   scope?: ZelavisAccessScope;
 }
 
@@ -41,6 +43,7 @@ export interface ZelavisPrincipal {
   id: string;
   type: ZelavisPrincipalType;
   roles?: readonly string[];
+  /** Runtime-wide authority, including scoped routes. Use grants for narrower authority. */
   permissions?: readonly string[];
   grants?: readonly ZelavisPrincipalGrant[];
   metadata?: Record<string, unknown>;

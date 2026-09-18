@@ -1,4 +1,16 @@
 import type { AuthApi } from "../app/auth/index.js";
+import { stringifyJsonRequest } from "../core/runtime/json-request.js";
+import type { ServiceSourceDiagnostic } from "../platform/service-registry-view.js";
+import type {
+  ZelavisProjectLogEntry,
+  ZelavisProjectRecord,
+} from "../project.js";
+import type { ZelavisProjectIsolationIntent } from "../project-isolation.js";
+import type {
+  ZelavisHostOperationCatalogEntry,
+  ZelavisHostOperationRecord,
+  ZelavisHostOperationSubmitInput,
+} from "../platform/host-operations.js";
 import type {
   DatabaseRuntimeApi,
   JsonObject as DatabaseJsonObject,
@@ -127,13 +139,69 @@ export interface ZelavisClient {
     path: string,
     options?: ZelavisClientRequestOptions,
   ): Promise<T>;
+  /** Platform Projects, over `/runtime/projects`. Same contract as `zelavis projects`. */
+  readonly projects: ZelavisProjectsClient;
+  /** Release-signed host operations, over `/runtime/host-operations`. Same contract as `zelavis host-operations`. */
+  readonly hostOperations: ZelavisHostOperationsClient;
   readonly runtime: {
+    serviceSources(): Promise<{ sources: readonly ServiceSourceDiagnostic[] }>;
     config(): Promise<ZelavisRuntimeConfigResponse>;
     settings(): Promise<ZelavisDashboardSettingsResponse>;
     updateSettings(
       update: ZelavisDashboardSettingsUpdate,
     ): Promise<ZelavisDashboardSettingsResponse>;
   };
+}
+
+export interface ZelavisProjectCreateInput {
+  readonly name: string;
+  readonly id?: string;
+  readonly recipeName?: string;
+  /** Defaults to true. */
+  readonly start?: boolean;
+}
+
+export interface ZelavisProjectRecipeSummary {
+  readonly name: string;
+  readonly title: string;
+  readonly summary?: string;
+  readonly runtimeKinds: readonly string[];
+  readonly isolation?: ZelavisProjectIsolationIntent;
+  readonly [key: string]: unknown;
+}
+
+export interface ZelavisProjectListResponse {
+  readonly runtime: Readonly<Record<string, unknown>>;
+  readonly projects: readonly ZelavisProjectRecord[];
+}
+
+/**
+ * Project lifecycle operations.
+ *
+ * Every method is one HTTP route; refusals arrive as `ZelavisClientHttpError`
+ * with the route's status and body, including `code` and `isolation` when a
+ * recipe's required isolation is not met (409).
+ */
+export interface ZelavisProjectsClient {
+  list(): Promise<ZelavisProjectListResponse>;
+  get(projectId: string): Promise<ZelavisProjectRecord>;
+  create(input: ZelavisProjectCreateInput): Promise<ZelavisProjectRecord>;
+  start(projectId: string): Promise<ZelavisProjectRecord>;
+  stop(projectId: string): Promise<ZelavisProjectRecord>;
+  restart(projectId: string): Promise<ZelavisProjectRecord>;
+  logs(projectId: string): Promise<readonly ZelavisProjectLogEntry[]>;
+  remove(projectId: string): Promise<{ readonly deleted: boolean }>;
+  recipes(): Promise<readonly ZelavisProjectRecipeSummary[]>;
+}
+
+export interface ZelavisHostOperationsClient {
+  /** Operations the caller may request somewhere. */
+  catalog(): Promise<readonly ZelavisHostOperationCatalogEntry[]>;
+  /** Issues authority and hands the request to the Agent; resolves once accepted. */
+  submit(input: ZelavisHostOperationSubmitInput): Promise<ZelavisHostOperationRecord>;
+  get(operationId: string): Promise<ZelavisHostOperationRecord>;
+  /** Issuance records, newest first; needs the audit permission for the scope. */
+  audit(query?: { readonly projectId?: string; readonly limit?: number }): Promise<readonly ZelavisHostOperationRecord[]>;
 }
 
 export const fetchSdkSurface: ZelavisSdkSurfaceManifest = {
@@ -212,7 +280,7 @@ export function createZelavisClient(
         init.body = body;
       } else {
         headers.set("content-type", "application/json");
-        init.body = JSON.stringify(body);
+        init.body = stringifyJsonRequest(body);
       }
     }
 
@@ -237,19 +305,67 @@ export function createZelavisClient(
     return response.json() as Promise<T>;
   }
 
+  // The last catalogue and its ETag. Every discovery still asks the server,
+  // so revocation is immediate; an unchanged catalogue answers 304 and is not
+  // transferred again.
+  let catalogue: { etag: string; operations: readonly PluginOperation[] } | undefined;
+  async function discoverPluginOperations(): Promise<readonly PluginOperation[]> {
+    const response = await request("/runtime/plugin-operations", {
+      headers: catalogue ? { "if-none-match": catalogue.etag } : {},
+    });
+    if (response.status === 304 && catalogue) return catalogue.operations;
+    if (!response.ok) {
+      const body = await response.clone().json().catch(() => undefined);
+      throw new ZelavisClientHttpError(response, body);
+    }
+    const body = await response.json() as { operations?: readonly PluginOperation[] };
+    const operations = body.operations ?? [];
+    const etag = response.headers.get("etag");
+    catalogue = etag ? { etag, operations } : undefined;
+    return operations;
+  }
+
   return {
     plugins: createPluginClients(
-      async () => (await json<ZelavisRuntimeConfigResponse>("/runtime/config")).pluginOperations ?? [],
+      discoverPluginOperations,
       async (path, method, body) => json(path, { method, body: body as object | undefined }),
     ),
-    async pluginOperations() {
-      return (await json<ZelavisRuntimeConfigResponse>("/runtime/config")).pluginOperations ?? [];
+    pluginOperations: discoverPluginOperations,
+    projects: createProjectsClient(json),
+    hostOperations: {
+      catalog: async () =>
+        (await json<{ operations: readonly ZelavisHostOperationCatalogEntry[] }>("/runtime/host-operations")).operations,
+      submit: async (input) =>
+        (await json<{ operation: ZelavisHostOperationRecord }>("/runtime/host-operations", {
+          method: "POST",
+          body: input,
+        })).operation,
+      audit: async (query = {}) => {
+        const search = new URLSearchParams();
+        if (query.projectId !== undefined) search.set("projectId", query.projectId);
+        if (query.limit !== undefined) search.set("limit", String(query.limit));
+        const suffix = search.size ? `?${search}` : "";
+        return (await json<{ records: readonly ZelavisHostOperationRecord[] }>(
+          `/runtime/host-operations/audit${suffix}`,
+        )).records;
+      },
+      get: async (operationId) => {
+        if (typeof operationId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(operationId)) {
+          throw new TypeError("Invalid host operation id.");
+        }
+        return (await json<{ operation: ZelavisHostOperationRecord }>(
+          `/runtime/host-operations/${operationId}`,
+        )).operation;
+      },
     },
     baseUrl,
     rootPath,
     request,
     json,
     runtime: {
+      serviceSources() {
+        return json<{ sources: readonly ServiceSourceDiagnostic[] }>("/runtime/services/sources");
+      },
       config() {
         return json<ZelavisRuntimeConfigResponse>("/runtime/config");
       },
@@ -263,6 +379,41 @@ export function createZelavisClient(
         });
       },
     },
+  };
+}
+
+function projectPath(projectId: string, action?: string): string {
+  if (typeof projectId !== "string" || !projectId.trim()) {
+    throw new TypeError("A Project id is required.");
+  }
+  const encoded = encodeURIComponent(projectId);
+  if (encoded === "." || encoded === "..") throw new TypeError("Invalid Project id.");
+  return `/runtime/projects/${encoded}${action ? `/${action}` : ""}`;
+}
+
+function createProjectsClient(
+  json: <T>(path: string, options?: ZelavisClientRequestOptions) => Promise<T>,
+): ZelavisProjectsClient {
+  type ProjectBody = { project: ZelavisProjectRecord };
+  const lifecycle = (action: "start" | "stop" | "restart") =>
+    async (projectId: string) =>
+      (await json<ProjectBody>(projectPath(projectId, action), { method: "POST" })).project;
+  return {
+    list: () => json<ZelavisProjectListResponse>("/runtime/projects"),
+    get: async (projectId) => (await json<ProjectBody>(projectPath(projectId))).project,
+    create: async (input) =>
+      (await json<ProjectBody>("/runtime/projects", { method: "POST", body: input })).project,
+    start: lifecycle("start"),
+    stop: lifecycle("stop"),
+    restart: lifecycle("restart"),
+    logs: async (projectId) =>
+      (await json<{ logs: readonly ZelavisProjectLogEntry[] }>(projectPath(projectId, "logs"))).logs,
+    remove: (projectId) =>
+      json<{ deleted: boolean }>(projectPath(projectId), { method: "DELETE" }),
+    recipes: async () =>
+      (await json<{ projectRecipes: readonly ZelavisProjectRecipeSummary[] }>(
+        "/runtime/project-recipes",
+      )).projectRecipes,
   };
 }
 

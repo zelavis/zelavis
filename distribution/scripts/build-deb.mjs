@@ -30,11 +30,27 @@ await cp(
   join(stageDirectory, "share", "zelavis.service"),
   join(packageRoot, "lib", "systemd", "system", "zelavis.service"),
 );
+// Installed but not enabled: running Projects through the Agent is opted into
+// with `systemctl enable --now zelavis-agent` and a zelavis.service drop-in
+// setting ZELAVIS_AGENT_ENDPOINT=/var/lib/zelavis/agent.
+await cp(
+  join(stageDirectory, "share", "zelavis-agent.service"),
+  join(packageRoot, "lib", "systemd", "system", "zelavis-agent.service"),
+);
+await mkdir(join(packageRoot, "etc", "zelavis"), { recursive: true });
+await cp(
+  join(stageDirectory, "share", "operation-trust.json"),
+  join(packageRoot, "etc", "zelavis", "operation-trust.json"),
+);
+await chmod(join(packageRoot, "etc", "zelavis", "operation-trust.json"), 0o644);
 
 await writeFile(
   join(packageRoot, "DEBIAN", "control"),
   `Package: zelavis\nVersion: ${debianVersion}\nSection: admin\nPriority: optional\nArchitecture: ${architecture}\nMaintainer: Zelavis <support@zelavis.com>\nDepends: ca-certificates, nginx, php-fpm, php-cli, php-mysql, php-curl, php-gd, php-intl, php-mbstring, php-xml, php-zip, mariadb-server-core, mariadb-client-core, tar\nHomepage: https://zelavis.com\nDescription: Self-hostable Zelavis Platform OS\n Zelavis builds and manages apps, websites, data, content, and server workloads.\n`,
 );
+// The trust store is operator configuration: dpkg keeps local edits (added or
+// revoked keys) across upgrades instead of overwriting them.
+await writeFile(join(packageRoot, "DEBIAN", "conffiles"), "/etc/zelavis/operation-trust.json\n");
 await writeFile(
   join(packageRoot, "DEBIAN", "postinst"),
   `#!/bin/sh\nset -e\ngetent group zelavis >/dev/null 2>&1 || groupadd --system zelavis\nid zelavis >/dev/null 2>&1 || useradd --system --gid zelavis --home-dir /var/lib/zelavis --shell /usr/sbin/nologin zelavis\ninstall -d -o zelavis -g zelavis -m 0750 /var/lib/zelavis\nif command -v systemctl >/dev/null 2>&1; then\n  systemctl daemon-reload\n  systemctl enable zelavis.service >/dev/null 2>&1 || true\n  systemctl restart zelavis.service >/dev/null 2>&1 || true\nfi\n`,
