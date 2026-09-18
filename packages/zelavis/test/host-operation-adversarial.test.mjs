@@ -161,6 +161,26 @@ test("an operation's leftover descendants are killed when it exits", async (t) =
   assert.equal(await waitFor(() => !alive(leftover)), true, `leftover ${leftover} outlived its operation`);
 });
 
+test("a group kill refused after the leader's pid was recycled does not fail the operation", async (t) => {
+  // The group is killed again when the leader exits, at which point the leader
+  // has been reaped and its pid is free. A pid the kernel has already recycled
+  // into a group this process may not signal answers EPERM rather than ESRCH,
+  // which is the same benign race: the operation's descendants are gone either
+  // way. Throwing would escape the exit handler and crash the host instead.
+  const { executor, request } = await fixture(t, "#!/bin/sh\necho done\n");
+  const kill = process.kill.bind(process);
+  t.after(() => { process.kill = kill; });
+  let refused = 0;
+  process.kill = (pid, signal) => {
+    if (pid >= 0) return kill(pid, signal);
+    refused += 1;
+    throw Object.assign(new Error("kill EPERM"), { code: "EPERM", errno: -1, syscall: "kill" });
+  };
+  const result = await executor.execute(request());
+  assert.ok(refused > 0, "the executor never signalled the operation's process group");
+  assert.equal(result.status, "succeeded");
+});
+
 test("an operation recovered after an Agent crash is not executed a second time", async (t) => {
   const { executor, request, directory } = await fixture(
     t,

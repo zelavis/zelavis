@@ -160,7 +160,14 @@ function signalGroup(pid: number | undefined, signal: NodeJS.Signals) {
     // A negative pid addresses the whole process group the child leads.
     process.kill(-pid, signal);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    // The group is signalled again when the leader exits, and by then the
+    // leader has been reaped and its pid is free. ESRCH is that group being
+    // gone. EPERM is the same race one step further: the kernel recycled the
+    // pid into a group this process may not signal, which happens readily
+    // under the pid churn of a loaded host. Neither means a descendant of the
+    // operation survived, and throwing here would escape the exit handler.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ESRCH" && code !== "EPERM") throw error;
   }
 }
 
