@@ -8,19 +8,28 @@
  *   systemd-run --user --scope -p Delegate=yes --unit=zelavis-cgroup-test \
  *     sh -c 'line=$(grep "^0::" /proc/self/cgroup); CG="/sys/fs/cgroup${line#0::}"; \
  *       mkdir -p "$CG/agent" "$CG/operations" && echo $$ > "$CG/agent/cgroup.procs" && \
+ *       echo "+pids +memory" > "$CG/cgroup.subtree_control" && \
  *       ZELAVIS_TEST_CGROUP_ROOT="$CG/operations" node --test test/linux-cgroup-supervision.test.mjs'
+ *
+ * The process has to move into the `agent` leaf before the `+pids +memory`
+ * write: cgroup v2 refuses to enable subtree_control while the scope itself
+ * still holds a member process (the "no internal processes" rule), and
+ * without that write `operations/cgroup.controllers` stays empty even though
+ * the scope was delegated pids and memory, which is what actually gates the
+ * pids.max and full delegated-agent tests below.
  *
  * On a host running systemd's legacy/hybrid cgroup hierarchy (the unified v2
  * tree mounted at /sys/fs/cgroup/unified instead of /sys/fs/cgroup itself,
  * e.g. some WSL2 distros), replace /sys/fs/cgroup above with
  * /sys/fs/cgroup/unified. That hierarchy is real and delegated, but on such
  * hosts no resource controllers (pids, memory) are ever attached to it — they
- * stay on the legacy v1 side — so the pids.max and full delegated-agent tests
- * will fail there with "does not delegate the pids controller(s)"; the
- * escape, deadline and reclaim tests are unaffected and still prove
- * containment. A host with a genuine unified-only hierarchy (most current
- * distros; WSL2 with `systemd.unified_cgroup_hierarchy=1` on the kernel
- * command line) runs all of them.
+ * stay on the legacy v1 side — so the `+pids +memory` write above fails and
+ * the pids.max and full delegated-agent tests will fail there with "does not
+ * delegate the pids controller(s)"; the escape, deadline and reclaim tests
+ * are unaffected and still prove containment. A host with a genuine
+ * unified-only hierarchy (most current distros; WSL2 with
+ * `systemd.unified_cgroup_hierarchy=1` on the kernel command line) runs all
+ * of them.
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
