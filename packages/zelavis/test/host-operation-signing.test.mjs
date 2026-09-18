@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { chmod, copyFile, link, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, link, lstat, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -141,11 +141,23 @@ test("the interpreter is part of the proven identity and re-proven before every 
   // A working interpreter in a directory the test controls. Copies of signed
   // system binaries are killed on macOS, so hard-link Node where possible.
   const interpreter = join(tools, "node");
-  // Never chmod a hard link: it shares the real Node binary's inode.
-  await link(process.execPath, interpreter).catch(async () => {
+  // Hard-link where possible: a copy of a signed system Node binary is
+  // rejected by macOS Gatekeeper the moment it's touched from a new path.
+  // Never chmod a hard link in place, though -- it shares the real binary's
+  // inode, so a chmod would mutate that binary everywhere else it's used.
+  // If linking succeeds but leaves the interpreter group/other-writable (as
+  // GitHub's hosted Node toolcache installs it, worryingly, 0o777), the
+  // source itself fails this test's own safety bar and must not be trusted
+  // or modified in place, so fall back to an independent copy instead.
+  let linked = await link(process.execPath, interpreter).then(() => true, () => false);
+  if (linked && ((await lstat(interpreter)).mode & 0o022) !== 0) {
+    await rm(interpreter, { force: true });
+    linked = false;
+  }
+  if (!linked) {
     await copyFile(process.execPath, interpreter, fsConstants.COPYFILE_FICLONE);
     await chmod(interpreter, 0o755);
-  });
+  }
   const body = "process.stdout.write(\"interpreted\")\n";
   await writeFile(join(root, "op"), body, { mode: 0o700 });
   const signed = await release.sign(manifest({ sha256: sha(body), interpreter }));
