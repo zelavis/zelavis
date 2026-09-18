@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { resolveCliDataDirectory } from "./cli/data-directory.js";
 import { runCli, type ZelavisCliServeOptions } from "./cli/index.js";
 import { nodeAdapter } from "./adapters/node.js";
 import { Zelavis, type ZelavisPlatformFrontendFactory } from "./index.js";
@@ -43,7 +43,7 @@ async function resolveBundledFrontend(): Promise<
 
 
 async function serve(options: ZelavisCliServeOptions): Promise<void> {
-  const dataDirectory = resolve(options.dataDirectory ?? ".zelavis");
+  const dataDirectory = resolveCliDataDirectory(options.dataDirectory);
   const frontend = await resolveBundledFrontend();
   const zv = new Zelavis({
     ...(frontend ? { frontend } : {}),

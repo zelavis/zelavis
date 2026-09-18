@@ -70,6 +70,16 @@ zelavis serve
 The npm path requires Node.js 24 or newer. It exposes the same CLI as the
 operating-system packages.
 
+Platform data is written to `~/.local/share/zelavis`, or to
+`$XDG_DATA_HOME/zelavis` when that variable names an absolute path. The
+location does not depend on the directory `zelavis serve` runs from. Override
+it with `--data-dir`, or with `ZELAVIS_DATA_DIR` when running under a process
+supervisor:
+
+```bash
+zelavis serve --data-dir /srv/zelavis
+```
+
 ## After installation
 
 The service starts the dashboard at `http://127.0.0.1:3000/zelavis`. Put a

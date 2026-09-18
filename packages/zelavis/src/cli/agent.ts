@@ -15,6 +15,7 @@
 import { access } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
+import { resolveCliDataDirectory } from "./data-directory.js";
 import { createAgentProcessServer } from "../adapters/_agent-ipc.js";
 import { createLocalAgentProcessRunner } from "../adapters/_agent-process-runner.js";
 import {
@@ -58,7 +59,7 @@ export type RunAgentCommandReady = (agent: {
 export async function runAgentCommand(
   options: RunAgentCommandOptions & { readonly onReady?: RunAgentCommandReady } = {},
 ): Promise<void> {
-  const dataDirectory = resolve(options.dataDirectory ?? ".zelavis");
+  const dataDirectory = resolveCliDataDirectory(options.dataDirectory);
   const endpointDirectory = join(dataDirectory, "agent");
 
   const runner = createLocalAgentProcessRunner({
