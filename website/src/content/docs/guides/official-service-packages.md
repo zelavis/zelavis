@@ -16,7 +16,7 @@ An official service package is a top-level Zelavis plugin:
 
 Example:
 
-- [plugins/ecommerce](/Users/ivanjeremicx/Projects/zelavis/plugins/ecommerce)
+- `plugins/ecommerce`
 
 ## Recommended structure
 

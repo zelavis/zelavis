@@ -152,20 +152,20 @@ Core package and public surfaces:
 - [packages/zelavis/src/app](packages/zelavis/src/app)
   Public `zelavis/app`, `zelavis/app/auth`, and `zelavis/app/workloads`
   surfaces.
-- [packages/zelavis/src/dbnew](packages/zelavis/src/dbnew)
-  Public `zelavis/dbnew` multi-model object store and its Node opener.
+- [packages/zelavis/src/db](packages/zelavis/src/db)
+  Public `zelavis/db` multi-model object store and its Node opener.
 - [packages/zelavis/src/platform](packages/zelavis/src/platform)
   Trusted Platform control-plane and Marketplace product services.
-- [packages/zelavis/product-services/zelavis-ui](packages/zelavis/product-services/zelavis-ui)
+- [packages/zelavis/services/zelavis-ui](packages/zelavis/services/zelavis-ui)
   The admin/dashboard frontend used by the high-level runtime.
-- [packages/cli](packages/cli)
+- [packages/zelavis/src/cli](packages/zelavis/src/cli)
   Command-line tooling for Zelavis workflows.
 
 Database adapters:
 
-- `zelavis/dbnew/node`
+- `zelavis/db/node`
   Opens a sharded database for a Node host and closes it on shutdown.
-- `zelavis/dbnew/node-sqlite`
+- `zelavis/db/node-sqlite`
   The `node:sqlite` object store one shard is built on.
 
 Auth plugins:
@@ -270,7 +270,7 @@ That moves the dashboard and APIs together:
 /admin/api/v1/workloads
 ```
 
-Use scoped packages such as `zelavis/core`, `zelavis/dbnew`, and `zelavis/app/auth` when building lower-level primitives, adapters, plugins, or tests that need direct package APIs.
+Use scoped packages such as `zelavis/core`, `zelavis/db`, and `zelavis/app/auth` when building lower-level primitives, adapters, plugins, or tests that need direct package APIs.
 
 ## Core Services
 

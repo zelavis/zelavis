@@ -15,15 +15,15 @@ For core packages, the service definition should live in a named file near the t
 
 Examples:
 
-- [packages/zelavis/src/app/auth/auth-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/zelavis/src/app/auth/auth-service.ts)
-- [packages/zelavis/src/app/db/database-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/zelavis/src/app/db/database-service.ts)
+- `packages/zelavis/src/app/auth/auth-service.ts`
+- `packages/zelavis/src/db/database-service.ts`
 
 For service packages, the service definition should also live in a named file near the top of the package source.
 
 Examples:
 
-- [plugins/ecommerce/src/ecommerce-service.ts](/Users/ivanjeremicx/Projects/zelavis/plugins/ecommerce/src/ecommerce-service.ts)
-- [plugins/ecommerce/plugins/stripe/src/stripe-service.ts](/Users/ivanjeremicx/Projects/zelavis/plugins/ecommerce/plugins/stripe/src/stripe-service.ts)
+- `plugins/ecommerce/src/ecommerce-service.ts`
+- `plugins/ecommerce/plugins/stripe/src/stripe-service.ts`
 - `packages/zelavis/src/app/auth/providers/password.ts`
 
 Avoid hiding the real definition under paths like:
@@ -309,7 +309,7 @@ menu: {
 In that example, `Advanced` keeps `Create Tool`, `Danger Zone` shows no fixed
 actions, and `Recovery` reintroduces `Create Recovery Point`.
 
-The repo includes `examples/plugin-basic` as a minimal uploadable service. Build its upload package with `pnpm --filter @zelavis/example-plugin-basic package`, then select `examples/plugin-basic/dist/example-basic.zip` in a project Marketplace flow at `/zelavis/projects/:projectId/marketplace`. The service module defines its own `name`, `version`, menu, pages, and services, so the dashboard does not ask for a separate service name. The ZIP includes `zelavis.service.json`, whose `entry` field points at the ESM module the host adapter should import.
+The repo includes `examples/plugin-basic` as a minimal uploadable service. Build its upload package with `pnpm --filter @zelavis/example-plugin-basic package`, then select `examples/plugin-basic/dist/example-basic.zip` in a project Marketplace flow at `/zelavis/projects/:projectId/marketplace`. The service module defines its own `name`, `version`, menu, pages, and services, so the dashboard does not ask for a separate service name. The ZIP includes a standard `package.json`, whose `zelavis` field (`kind`, `namespace`) and `exports` field point at the ESM module the host adapter should import; the older `zelavis.service.json` sidecar with an `entry` field is retired and no longer read.
 
 ## Registry and activation
 
@@ -425,4 +425,4 @@ Avoid names that make the entrypoint harder to spot:
 
 - [Service Model](../architecture/service-model.md)
 - [Advanced Runtime Composition](./advanced-runtime-composition.md)
-- [zelavis/core](../packages/zelavis/src/core.md)
+- [zelavis/core](../packages/core.md)
