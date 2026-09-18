@@ -6,6 +6,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+// System temp directories (e.g. `/tmp`, mode 1777 on Linux/macOS) are
+// deliberately world-writable, which the interpreter-identity proof below
+// rejects on every ancestor of the interpreter path -- so a test interpreter
+// staged under `tmpdir()` fails that check before the test's own assertions
+// even run. Stage it under the checkout instead, whose ancestors carry no
+// group/other write bit.
+const localScratchRoot = join(import.meta.dirname, ".tmp");
+
 import {
   createNodeHostOperationExecutor,
   loadInstalledHostOperations,
@@ -89,6 +97,17 @@ async function operationRoot(t) {
   return { directory, root };
 }
 
+// For tests that stage an interpreter and need its identity proof to pass:
+// see the comment on localScratchRoot above.
+async function localOperationRoot(t) {
+  await mkdir(localScratchRoot, { recursive: true, mode: 0o755 });
+  const directory = await mkdtemp(join(localScratchRoot, "signed-ops-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const root = join(directory, "operations");
+  await mkdir(root, { mode: 0o700 });
+  return { directory, root };
+}
+
 test("the executor refuses unsigned, untrusted and shebang-without-interpreter operations", async (t) => {
   const release = await createReleaseSigner();
   const { root } = await operationRoot(t);
@@ -116,7 +135,7 @@ test("the executor refuses unsigned, untrusted and shebang-without-interpreter o
 
 test("the interpreter is part of the proven identity and re-proven before every run", async (t) => {
   const release = await createReleaseSigner();
-  const { directory, root } = await operationRoot(t);
+  const { directory, root } = await localOperationRoot(t);
   const tools = join(directory, "tools");
   await mkdir(tools, { mode: 0o755 });
   // A working interpreter in a directory the test controls. Copies of signed

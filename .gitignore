@@ -15,6 +15,7 @@ coverage/
 /distribution/.cache/
 /distribution/.tmp/
 /distribution/artifacts/
+/packages/zelavis/test/.tmp/
 
 # Logs
 *.log
