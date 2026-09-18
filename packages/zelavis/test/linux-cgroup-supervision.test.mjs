@@ -3,11 +3,24 @@
  *
  * The refusal tests run everywhere. The containment tests need Linux with a
  * delegated cgroup v2 subtree and run only when ZELAVIS_TEST_CGROUP_ROOT names
- * it, e.g. from the WSL qualification runbook:
+ * it, e.g. from the WSL qualification runbook (run from packages/zelavis):
  *
  *   systemd-run --user --scope -p Delegate=yes --unit=zelavis-cgroup-test \
- *     sh -c 'mkdir -p "$CG/agent" "$CG/operations" && echo $$ > "$CG/agent/cgroup.procs" && \
+ *     sh -c 'line=$(grep "^0::" /proc/self/cgroup); CG="/sys/fs/cgroup${line#0::}"; \
+ *       mkdir -p "$CG/agent" "$CG/operations" && echo $$ > "$CG/agent/cgroup.procs" && \
  *       ZELAVIS_TEST_CGROUP_ROOT="$CG/operations" node --test test/linux-cgroup-supervision.test.mjs'
+ *
+ * On a host running systemd's legacy/hybrid cgroup hierarchy (the unified v2
+ * tree mounted at /sys/fs/cgroup/unified instead of /sys/fs/cgroup itself,
+ * e.g. some WSL2 distros), replace /sys/fs/cgroup above with
+ * /sys/fs/cgroup/unified. That hierarchy is real and delegated, but on such
+ * hosts no resource controllers (pids, memory) are ever attached to it — they
+ * stay on the legacy v1 side — so the pids.max and full delegated-agent tests
+ * will fail there with "does not delegate the pids controller(s)"; the
+ * escape, deadline and reclaim tests are unaffected and still prove
+ * containment. A host with a genuine unified-only hierarchy (most current
+ * distros; WSL2 with `systemd.unified_cgroup_hierarchy=1` on the kernel
+ * command line) runs all of them.
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
