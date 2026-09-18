@@ -70,6 +70,22 @@ zelavis serve
 The npm path requires Node.js 24 or newer. It exposes the same CLI as the
 operating-system packages.
 
+Both paths install a command called `zelavis`, and npm's prefix is often the
+same directory the archive installer uses. The archive installer refuses to
+replace a `zelavis` it did not create, rather than overwriting an npm install
+silently; remove the other one, point `ZELAVIS_BIN_DIR` elsewhere, or set
+`ZELAVIS_FORCE_BIN=1` to replace it deliberately.
+
+A Debian package installs to `/usr/bin` and overwrites nothing, but
+`/usr/local/bin` comes first on the default path, so an npm install there
+answers instead. `zelavis --version` prints which installation is running:
+
+```bash
+zelavis --version
+# 1.0.1-alpha.2
+# packaged installation at /opt/zelavis
+```
+
 Platform data is written to `~/.local/share/zelavis`, or to
 `$XDG_DATA_HOME/zelavis` when that variable names an absolute path. The
 location does not depend on the directory `zelavis serve` runs from. Override
