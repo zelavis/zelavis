@@ -8,7 +8,19 @@ on:
   workflow_dispatch:
   push:
     tags:
+      # `changeset publish` tags the root package as `zelavis@<version>`, and
+      # that is the only tag a release actually creates. Listening for `v*`
+      # alone meant the release path in use could never trigger this workflow:
+      # no artifacts, and no error either, because a tag that matches nothing
+      # simply does not start a run.
+      #
+      # `*` does not match `/`, so `zelavis@*` covers the root package without
+      # catching the scoped `@zelavis/<name>@<version>` tags — otherwise every
+      # plugin and adapter publish would build all four targets too.
+      #
+      # `v*` is kept so a hand-cut release tag still works.
       - "v*"
+      - "zelavis@*"
 
 jobs:
   package:
