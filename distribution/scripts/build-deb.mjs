@@ -53,7 +53,7 @@ await writeFile(
 await writeFile(join(packageRoot, "DEBIAN", "conffiles"), "/etc/zelavis/operation-trust.json\n");
 await writeFile(
   join(packageRoot, "DEBIAN", "postinst"),
-  `#!/bin/sh\nset -e\ngetent group zelavis >/dev/null 2>&1 || groupadd --system zelavis\nid zelavis >/dev/null 2>&1 || useradd --system --gid zelavis --home-dir /var/lib/zelavis --shell /usr/sbin/nologin zelavis\ninstall -d -o zelavis -g zelavis -m 0750 /var/lib/zelavis\nif command -v systemctl >/dev/null 2>&1; then\n  systemctl daemon-reload\n  systemctl enable zelavis.service >/dev/null 2>&1 || true\n  systemctl restart zelavis.service >/dev/null 2>&1 || true\nfi\n`,
+  `#!/bin/sh\nset -e\ngetent group zelavis >/dev/null 2>&1 || groupadd --system zelavis\nid zelavis >/dev/null 2>&1 || useradd --system --gid zelavis --home-dir /var/lib/zelavis --shell /usr/sbin/nologin zelavis\ninstall -d -o zelavis -g zelavis -m 0750 /var/lib/zelavis\nif command -v systemctl >/dev/null 2>&1; then\n  systemctl daemon-reload\n  systemctl enable zelavis.service >/dev/null 2>&1 || true\n  systemctl restart zelavis.service >/dev/null 2>&1 || true\nfi\n\nRESOLVED=$(command -v zelavis 2>/dev/null || true)\nif [ -n "$RESOLVED" ] && [ "$RESOLVED" != /usr/bin/zelavis ]; then\n  echo "Warning: 'zelavis' on PATH resolves to $RESOLVED, not /usr/bin/zelavis." >&2\n  echo "  That installation answers instead of this package; it is usually a global npm install." >&2\n  echo "  Run 'zelavis --version' to see which one is in use." >&2\nfi\n`,
   { mode: 0o755 },
 );
 await writeFile(

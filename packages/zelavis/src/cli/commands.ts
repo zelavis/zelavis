@@ -4,6 +4,7 @@ import {
   readBootstrapStatus,
 } from "./bootstrap.js";
 import { runAgentCommand } from "./agent.js";
+import { describeInstallation, formatInstallation } from "./installation.js";
 import { runPluginsCommand } from "./plugins.js";
 import { runProjectsCommand } from "./projects.js";
 import { runHostOperationsCommand } from "./host-operations.js";
@@ -34,6 +35,14 @@ export interface ZelavisCliRuntime {
 export interface ZelavisCliOptions {
   runtime?: ZelavisCliRuntime;
   version?: string;
+  /**
+   * Real path of the running CLI entrypoint, symlinks resolved.
+   *
+   * Supplied by the binary rather than discovered here, so the CLI stays
+   * testable without a filesystem. `--version` names the installation it
+   * describes; see `./installation.js` for why that matters.
+   */
+  installationPath?: string;
 }
 
 interface ParsedArgs {
@@ -121,7 +130,7 @@ Options:
   --token <token>           Bootstrap token for bootstrap; session token for services.
                             Bootstrap defaults to ZELAVIS_BOOTSTRAP_TOKEN.
   --password-stdin          Read the owner password from standard input.
-  --version, -v             Print the CLI version.
+  --version, -v             Print the CLI version and which installation it is.
   --help, -h                Show this help message.
 `);
 }
@@ -456,7 +465,12 @@ export async function runCli(
     const parsed = parseArgs(args);
 
     if (parsed.version) {
+      // The bare version stays on its own first line, so anything parsing this
+      // keeps working; the installation goes underneath it.
       console.log(options.version ?? "unknown");
+      if (options.installationPath) {
+        console.log(formatInstallation(describeInstallation(options.installationPath)));
+      }
       return;
     }
     if (parsed.help || !parsed.command) {

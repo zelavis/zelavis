@@ -1,10 +1,20 @@
 #!/usr/bin/env node
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { resolveCliDataDirectory } from "./cli/data-directory.js";
 import { runCli, type ZelavisCliServeOptions } from "./cli/index.js";
 import { nodeAdapter } from "./adapters/node.js";
 import { Zelavis, type ZelavisPlatformFrontendFactory } from "./index.js";
 import { closeNodeServer, createNodeServer } from "./runtimes/node.js";
+
+/** Real path of this CLI, symlinks resolved; undefined if it cannot be read. */
+async function resolveInstallationPath(): Promise<string | undefined> {
+  try {
+    return await realpath(fileURLToPath(import.meta.url));
+  } catch {
+    return undefined;
+  }
+}
 
 async function readVersion(): Promise<string> {
   const source = await readFile(new URL("../package.json", import.meta.url), "utf8");
@@ -97,5 +107,8 @@ async function serve(options: ZelavisCliServeOptions): Promise<void> {
 
 await runCli(process.argv.slice(2), {
   version: await readVersion(),
+  // Resolved, not the raw argv path: /usr/local/bin/zelavis is a symlink, and
+  // what it points at is exactly the thing worth reporting.
+  installationPath: await resolveInstallationPath(),
   runtime: { serve },
 });

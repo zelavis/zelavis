@@ -19,7 +19,47 @@ if [ ! -d "$RELEASE_DIR" ]; then
   cp -R "$SOURCE_DIR/bin" "$SOURCE_DIR/platform" "$SOURCE_DIR/runtime" "$SOURCE_DIR/share" "$SOURCE_DIR/operations" "$SOURCE_DIR/manifest.json" "$RELEASE_DIR/"
 fi
 ln -sfn "$RELEASE_DIR" "$PREFIX/current"
+
+# `npm install --global zelavis` writes a `zelavis` into npm's prefix, which is
+# commonly this same directory. `ln -sfn` would replace it without a word, so
+# an install would silently destroy an unrelated one. Refuse instead: a stopped
+# install is recoverable, a deleted one is not.
+EXISTING="$BIN_DIR/zelavis"
+if [ -e "$EXISTING" ] || [ -L "$EXISTING" ]; then
+  EXISTING_TARGET=$(readlink "$EXISTING" 2>/dev/null || echo "$EXISTING")
+  case "$EXISTING_TARGET" in
+    "$PREFIX"/*)
+      # This installer's own link from an earlier release. Replacing it is the
+      # upgrade path, not a conflict.
+      ;;
+    *)
+      if [ "${ZELAVIS_FORCE_BIN:-0}" = "1" ]; then
+        echo "Replacing $EXISTING as ZELAVIS_FORCE_BIN=1 was set." >&2
+      else
+        echo "Refusing to replace $EXISTING, which this installer did not create." >&2
+        echo "  It currently resolves to: $EXISTING_TARGET" >&2
+        echo "  That is usually a global npm install; remove it with" >&2
+        echo "    npm uninstall --global zelavis" >&2
+        echo "  or set ZELAVIS_BIN_DIR to a different directory," >&2
+        echo "  or set ZELAVIS_FORCE_BIN=1 to replace it deliberately." >&2
+        exit 1
+      fi
+      ;;
+  esac
+fi
 ln -sfn "$PREFIX/current/bin/zelavis" "$BIN_DIR/zelavis"
+
+# Refusing above cannot catch the other direction. A `.deb` owns
+# /usr/bin/zelavis and nothing is overwritten, but /usr/local/bin precedes
+# /usr/bin on Debian and Ubuntu, so another copy earlier on PATH wins with
+# nothing overwritten and nothing to refuse. Say so rather than let the wrong
+# binary answer silently.
+RESOLVED=$(command -v zelavis 2>/dev/null || true)
+if [ -n "$RESOLVED" ] && [ "$RESOLVED" != "$BIN_DIR/zelavis" ]; then
+  echo "Warning: 'zelavis' on PATH resolves to $RESOLVED, not $BIN_DIR/zelavis." >&2
+  echo "  That installation will answer instead of this one." >&2
+  echo "  Run 'zelavis --version' to see which one is in use." >&2
+fi
 
 if [ "$(id -u)" -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
   if ! getent group zelavis >/dev/null 2>&1; then
