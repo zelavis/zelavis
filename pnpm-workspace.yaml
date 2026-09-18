@@ -1,3 +1,5 @@
+ignoreWorkspaceCycles: true
+
 packages:
   - "packages/*"
   - "packages/zelavis/services/*"
