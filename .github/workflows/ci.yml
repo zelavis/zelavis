@@ -52,6 +52,18 @@ jobs:
             [ "$p" = "/" ] && break
             p=$(dirname "$p")
           done
+          echo "-- node binary --"
+          node_path="$(command -v node)"
+          stat -c '%A %U:%G %n' "$node_path" || true
+          real_node_path="$(readlink -f "$node_path")"
+          echo "realpath: $real_node_path"
+          stat -c '%A %U:%G %n' "$real_node_path" || true
+          p="$(dirname "$real_node_path")"
+          while [ -n "$p" ]; do
+            stat -c '%A %U:%G %n' "$p" || true
+            [ "$p" = "/" ] && break
+            p=$(dirname "$p")
+          done
 
       - name: Run workspace typechecks and Zelavis runtime tests
         run: pnpm ci:runtime
