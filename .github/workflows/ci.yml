@@ -44,6 +44,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: DEBUG stat ancestor chain
+        run: |
+          p="${{ github.workspace }}/packages/zelavis/test"
+          while [ -n "$p" ]; do
+            stat -c '%A %U:%G %n' "$p" || true
+            [ "$p" = "/" ] && break
+            p=$(dirname "$p")
+          done
+
       - name: Run workspace typechecks and Zelavis runtime tests
         run: pnpm ci:runtime
 
