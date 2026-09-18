@@ -56,9 +56,9 @@ The pattern is:
 For example:
 
 - database package factory:
-  [packages/zelavis/src/app/db/database-service.ts](/Users/ivanjeremicx/Projects/zelavis/packages/zelavis/src/app/db/database-service.ts)
+  `packages/zelavis/src/db/database-service.ts`
 - high-level runtime assembly:
-  [packages/zelavis/src/index.ts](/Users/ivanjeremicx/Projects/zelavis/packages/zelavis/src/index.ts)
+  `packages/zelavis/src/index.ts`
 
 Concretely:
 
