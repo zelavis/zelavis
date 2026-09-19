@@ -1,17 +1,17 @@
 ignoreWorkspaceCycles: true
 
 packages:
-  - "packages/*"
-  - "packages/zelavis/services/*"
-  - "packages/zelavis/services/*/adapters/*"
-  - "packages/zelavis/services/*/plugins/*"
-  - "plugins/*"
-  - "plugins/*/adapters/*"
-  - "plugins/*/plugins/*"
-  - "packages/*/adapters/*"
-  - "packages/*/plugins/*"
+  # `**` so a package nested at any depth is found without a pattern per
+  # shape. Five of the eleven patterns this replaces matched nothing, and a
+  # nested one still had to be added by hand each time the layout changed.
+  # pnpm always ignores node_modules; build output is excluded below because
+  # it is globbed from the filesystem, not from git.
+  - "packages/**"
+  - "plugins/**"
   - "examples/*"
   - "website"
+  - "!**/dist/**"
+  - "!**/build/**"
 
 overrides:
   # `@astrojs/mdx` depends on an exact `@astrojs/markdown-satteri@0.4.0`, and
