@@ -2,6 +2,7 @@
   "name": "@zelavis/website",
   "type": "module",
   "version": "0.0.1",
+  "private": true,
   "zelavis": {
     "kind": "frontend",
     "frontend": {
