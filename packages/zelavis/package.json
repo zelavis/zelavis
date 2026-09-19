@@ -193,7 +193,7 @@
   "devDependencies": {
     "@effect/language-service": "^0.87.2",
     "@effect/tsgo": "^0.45.0",
-    "@harperfast/rocksdb-js": "2.9.0",
+    "@harperfast/rocksdb-js": "2.9.1",
     "@libsql/client": "^0.15.15",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^26.5.1",

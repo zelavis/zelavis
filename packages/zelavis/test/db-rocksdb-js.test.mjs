@@ -227,12 +227,17 @@ test("rocksdb-js: a point read of a corrupted block fails rather than answering"
 
 test("rocksdb-js: a scan over a corrupted block fails rather than ending early", {
   skip,
-  // The binding sees the iterator's failed status and returns "done" instead:
-  // src/binding/iterator/db_iterator.cpp, DBIterator::Next. Nothing reaches
-  // JavaScript, so this adapter cannot report it either. The discontinued
-  // binding threw. This test passing is a condition for switching engines.
-  // Reported as HarperFast/rocksdb-js#846.
-  todo: "@harperfast/rocksdb-js ends a scan quietly when RocksDB's iterator fails",
+  // A silent truncation is worse than a crash: the caller is handed a short
+  // answer with nothing to say it is short. The binding used to see the
+  // iterator's failed status and return "done" instead
+  // (src/binding/iterator/db_iterator.cpp, DBIterator::Next), so nothing
+  // reached JavaScript and this adapter could not report it either.
+  //
+  // Fixed upstream in @harperfast/rocksdb-js 2.9.1, which throws when a range
+  // iterator fails: HarperFast/rocksdb-js#846, fixed by #847. Kept as a guard
+  // because only the iterator path ever swallowed the error — the point read
+  // and the manifest pointer are checked separately, and both always failed
+  // correctly.
 }, async (t) => {
   const { dir, total } = await corruptedTable(t);
   const result = await withEngine(dir, (engine) => Effect.result(collect(engine.scan(EMPTY))));
