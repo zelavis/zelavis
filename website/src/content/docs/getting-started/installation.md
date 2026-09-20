@@ -1,64 +1,79 @@
 ---
 title: Installation
-description: Install the long-running Zelavis Platform OS with APT, a Debian package, an archive, or npm.
+description: Install the long-running Zelavis Platform OS with the quick installer, Debian package, archive, or npm.
 ---
 
 Zelavis is a long-running Platform OS. It is installed on a server or local
-machine; it is not deployed as a serverless function.
+machine; it is not deployed as an ephemeral serverless function.
 
 ## Quick install
 
-The quick installer detects the operating system and CPU. It configures the
-signed Zelavis APT repository on Debian and Ubuntu, and uses a self-contained
-archive on other supported Unix systems.
+The quick installer automatically detects your operating system and CPU
+architecture (`x86_64` / `amd64` and `arm64`). On production Linux servers
+(such as Hetzner, AWS, DigitalOcean, or bare metal), it pulls the
+verified standalone distribution bundle from the release registry, verifies its
+SHA-256 integrity, unpacks the private Node 24 runtime, registers the `zelavis`
+system user, and sets up systemd service units.
+
+Zero build dependencies are required on your server: no `git`, `node`, `pnpm`,
+or compilers are needed.
 
 ```bash
-curl -fsSL https://zelavis.com/install.sh | sudo sh
+# Production server installation (enables Edge Agent & Traefik management)
+curl -fsSL https://raw.githubusercontent.com/zelavis/zelavis/main/distribution/installers/install.sh | sudo ZELAVIS_ENABLE_AGENT=1 sh
 ```
 
-The packaged installation contains a private pinned Node runtime. It does not
-replace the machine's global Node installation.
-
-## APT
-
-Install the small repository bootstrap package once, then manage Zelavis with
-normal APT commands:
+Or via the canonical short URL:
 
 ```bash
-sudo apt install ./zelavis-repository_1.0.0_all.deb
-sudo apt update
-sudo apt install zelavis
+curl -fsSL https://zelavis.com/install.sh | sudo ZELAVIS_ENABLE_AGENT=1 sh
 ```
 
-Future releases then arrive through `sudo apt upgrade`. The repository package
-contains the source definition and public signing key only.
+The packaged installation contains an isolated, private pinned Node runtime. It
+does not replace or interfere with the host's global Node installation. Setting
+`ZELAVIS_ENABLE_AGENT=1` ensures the Zelavis Edge Agent service (`zelavis-agent.service`)
+is enabled alongside the main Platform OS (`zelavis.service`), allowing automated
+Let's Encrypt TLS certificate issuance and reverse-proxy cutovers via Traefik.
 
-## Direct Debian package
+## Direct Debian / Ubuntu package (.deb)
 
-Download the package matching the server CPU and install it locally:
+If you prefer managing packages natively with `apt`, download the `.deb` release
+matching your server CPU and install it:
 
 ```bash
-sudo apt install ./zelavis_<version>_amd64.deb
+# For x86_64 / amd64 servers (e.g. Hetzner CX22, standard cloud instances)
+curl -fsSLO https://github.com/zelavis/zelavis/releases/download/v1.0.1-alpha.2/zelavis_1.0.1.alpha.2_amd64.deb
+sudo apt install -y ./zelavis_1.0.1.alpha.2_amd64.deb
+
+# For ARM64 servers (e.g. AWS Graviton, Ampere)
+curl -fsSLO https://github.com/zelavis/zelavis/releases/download/v1.0.1-alpha.2/zelavis_1.0.1.alpha.2_arm64.deb
+sudo apt install -y ./zelavis_1.0.1.alpha.2_arm64.deb
 ```
 
-Use the `_arm64.deb` artifact on ARM64 servers. Installing through `apt` rather
-than invoking `dpkg` directly lets the system resolve package dependencies.
+Installing through `apt install ./<package>.deb` rather than `dpkg` directly
+allows the system package manager to verify dependencies and maintain package
+database integrity.
 
-## Manual archive
+## Manual release archive (.tar.gz)
 
-The `.tar.gz` and `.zip` releases are suitable for a traditional browser
-download, SFTP upload, or SSH transfer. Extract the matching OS and CPU archive,
-then run:
+The standalone `.tar.gz` and `.zip` archives are self-contained and suitable for
+manual download, SFTP upload, or air-gapped environments:
 
 ```bash
-sudo ./install.sh
+# 1. Download and extract the matching archive
+curl -fsSLO https://github.com/zelavis/zelavis/releases/latest/download/zelavis-linux-x64.tar.gz
+tar -xzf zelavis-linux-x64.tar.gz
+cd zelavis-*
+
+# 2. Run the archive installer
+sudo ZELAVIS_ENABLE_AGENT=1 ./install.sh
 ```
 
-The installer places versioned releases under `/opt/zelavis/releases`, points
-`/opt/zelavis/current` at the selected release, creates the `zelavis` system
-user, and enables the systemd service when systemd is present.
+The installer places versioned releases under `/opt/zelavis/releases/<version>`,
+symlinks `/opt/zelavis/current`, links the CLI binary to `/usr/local/bin/zelavis`,
+creates the dedicated `zelavis` system user, and enables the systemd services.
 
-## npm
+## npm (Self-managed Node runtime)
 
 Use npm when you deliberately manage the host runtime yourself:
 
@@ -70,15 +85,9 @@ zelavis serve
 The npm path requires Node.js 24 or newer. It exposes the same CLI as the
 operating-system packages.
 
-Both paths install a command called `zelavis`, and npm's prefix is often the
-same directory the archive installer uses. The archive installer refuses to
-replace a `zelavis` it did not create, rather than overwriting an npm install
-silently; remove the other one, point `ZELAVIS_BIN_DIR` elsewhere, or set
-`ZELAVIS_FORCE_BIN=1` to replace it deliberately.
-
-A Debian package installs to `/usr/bin` and overwrites nothing, but
-`/usr/local/bin` comes first on the default path, so an npm install there
-answers instead. `zelavis --version` prints which installation is running:
+Both paths install a command called `zelavis`. The archive installer refuses to
+replace a `zelavis` binary it did not create rather than overwriting an npm install
+silently. `zelavis --version` prints which installation is currently active:
 
 ```bash
 zelavis --version
@@ -86,100 +95,113 @@ zelavis --version
 # packaged installation at /opt/zelavis
 ```
 
-Platform data is written to `~/.local/share/zelavis`, or to
-`$XDG_DATA_HOME/zelavis` when that variable names an absolute path. The
-location does not depend on the directory `zelavis serve` runs from. Override
-it with `--data-dir`, or with `ZELAVIS_DATA_DIR` when running under a process
-supervisor:
+Platform data is written to `/var/lib/zelavis` for packaged systemd services, or
+to `~/.local/share/zelavis` for user-run npm processes.
+
+---
+
+## First-Run Setup & Ownership Claim
+
+When Zelavis finishes installing, it starts its HTTP service listener at
+`http://0.0.0.0:3000` (listening on port 3000).
+
+Public web ports (`80` and `443`) intentionally remain dormant during first install:
+Zelavis never hijacks public HTTP/HTTPS ports before you have explicitly configured
+your domain and verified DNS.
+
+A one-time **bootstrap token** is generated during installation and printed in
+your terminal output (also saved in `/var/lib/zelavis/system/bootstrap.token` with
+strict `0600` permissions).
+
+You have two primary ways to access the graphical onboarding wizard, plus an
+interactive terminal option:
+
+### Option A: Direct Browser Access (Without SSH Tunnel)
+
+If your server's cloud firewall allows inbound traffic on port 3000 (which is the
+default on new cloud instances like Hetzner CX22 unless an external firewall profile
+is attached):
+
+1. Open your browser and navigate directly to:
+   ```text
+   http://<your-server-ip>:3000/zelavis/setup
+   ```
+2. Paste the **bootstrap token** from `/var/lib/zelavis/system/bootstrap.token`.
+3. Enter your administrator email and password to claim the **Owner** account.
+4. In the **Edge Onboarding** step, enter your domain name (e.g. `app.example.com` or `example.com`).
+   Make sure your domain's DNS A/AAAA record points to your server's public IP.
+5. Select **Managed TLS** and click **Continue**.
+6. Zelavis performs DNS preflight verification, requests automated Let's Encrypt
+   certificates using pure RFC 8555 ACME v2, and switches Traefik to serve production
+   traffic on standard ports **80** and **443**.
+7. Once completed, port 3000 is no longer needed—you can close it in your firewall
+   and access your dashboard directly over secure HTTPS at:
+   ```text
+   https://yourdomain.com/zelavis
+   ```
+
+### Option B: Secure Access via SSH Port Forwarding (With SSH Tunnel)
+
+Use an SSH tunnel if port 3000 is blocked by a cloud firewall, or if you prefer not
+transmitting initial setup credentials over unencrypted HTTP over the public internet
+before TLS is active:
+
+1. On your **local machine**, open an SSH tunnel:
+   ```bash
+   ssh -L 3000:localhost:3000 root@<your-server-ip>
+   ```
+   *(Keep this terminal window open while you perform setup).*
+2. Open your local web browser to:
+   ```text
+   http://localhost:3000/zelavis/setup
+   ```
+3. Enter the **bootstrap token** and configure your Owner credentials.
+4. Select **Managed TLS** and provide your domain.
+5. When the wizard confirms your domain is live and certificates are active, close
+   the SSH tunnel (`Ctrl+C`).
+6. Access your platform directly at:
+   ```text
+   https://yourdomain.com/zelavis
+   ```
+
+### Option C: Interactive Terminal Setup (CLI)
+
+If you are logged into the server over SSH and prefer completing setup directly in the
+terminal without a web browser:
 
 ```bash
-zelavis serve --data-dir /srv/zelavis
+zelavis setup
 ```
 
-## After installation
+The CLI wizard prompts for the bootstrap token, creates the first Owner, runs
+DNS preflight checks on your domain, issues certificates, and activates Edge Traefik
+routing.
 
-The Platform starts its private dashboard listener at
-`http://127.0.0.1:3000/zelavis`. Packaged Linux installations also install the
-release-pinned, checksum-verified Traefik binary and
-`zelavis-traefik.service`, the first Zelavis Edge adapter. The unit remains
-disabled until Edge can stage and verify a complete publication. Its generated route
-directory starts empty: merely installing Zelavis never publishes an unknown
-hostname or an unverified TLS route.
-
-The setup wizards check Edge after the owner is claimed. Until the host adapter
-can stage and verify a complete route publication, keep using the private
-listener through an SSH tunnel and do not expose port 3000 directly. npm and
-source installations do not install an operating-system reverse proxy; their
-host adapter must be configured separately. Platform data defaults to
-`/var/lib/zelavis` for packaged installs.
-
-Before the first owner is created, configure a one-time bootstrap token with at
-least 32 characters. For an npm-managed process, for example:
-
+For unattended automation or cloud-init scripts, use the non-interactive equivalent:
 ```bash
-export ZELAVIS_BOOTSTRAP_TOKEN="replace-with-a-random-token-at-least-32-characters-long"
-zelavis serve
+zelavis bootstrap --email admin@example.com --password-stdin < my-password.txt
 ```
 
-Native package and archive installers generate this token in the private
-`/etc/zelavis/zelavis.env` service environment and print it once at the end of
-installation. Copy that value into either first-run wizard. Existing
-configuration is preserved on upgrades, so an installer never silently rotates
-an operator's bootstrap token.
-
-Open the dashboard, create the first owner with that token, then remove the
-bootstrap token from the service environment and restart Zelavis. The bootstrap
-endpoint permanently refuses to create another owner once an account exists.
-
-The first browser visit redirects to the guided setup wizard at
-`/zelavis/setup`. To perform the same guided setup from an SSH session instead,
-run:
-
-```bash
-zelavis setup --url http://127.0.0.1:3000/zelavis
-```
-
-Both wizards use the same one-time bootstrap endpoint. For unattended installs,
-use `zelavis bootstrap --email <email> --password-stdin`; it remains the
-non-interactive equivalent rather than a separate setup mechanism.
+---
 
 ## Completely uninstall a packaged installation
 
-Use the complete uninstall when you want to return a native packaged host to a
-state where the Zelavis installer can be exercised again. Inspect the exact
-scope first:
+To return a host to a clean state where the Zelavis installer can be run again
+from scratch, inspect the scope first with a dry run:
 
 ```bash
 sudo zelavis uninstall --all --dry-run
 ```
 
-Then run the destructive operation with its exact acknowledgement:
+Then execute the complete removal with the confirmation phrase:
 
 ```bash
 sudo zelavis uninstall --all --confirm DELETE-ALL-ZELAVIS-DATA
 ```
 
-This stops and removes the Zelavis Platform, Agent, and Zelavis-owned Traefik
-services; removes the
-packaged releases, command links, APT source and key, local configuration and
-trust material; deletes the installer-recorded data directory (by default
-`/var/lib/zelavis`), including every Project, database, log and runtime record;
-and removes the dedicated system account when it is safe to identify. The
-operation cannot be undone.
-
-Zelavis-owned Traefik binaries, service files, generated routes, and static
-adapter configuration below the installation paths are removed. Zelavis
-intentionally retains shared operating-system packages such as Nginx,
-PHP and MariaDB, systemd journal history, archives and backups outside the data
-directory, and operator-managed proxy, firewall, DNS and TLS configuration.
-Those resources may belong to other workloads, so a Zelavis installer cannot
-prove that it owns them.
-
-Complete uninstall is available only from a native packaged installation
-(quick install, APT, `.deb`, or the release archive). An npm or source checkout
-must be removed with the package manager or development workflow that created
-it; the CLI refuses to guess which data or host resources those workflows own.
-
-The first release matrix targets Linux and macOS on `x64` and `arm64` for
-archives, plus Debian/Ubuntu on `amd64` and `arm64` for APT and `.deb` packages.
-Windows packages and other Linux package repositories are not implemented yet.
+This:
+- Stops and disables `zelavis.service`, `zelavis-agent.service`, and `zelavis-traefik.service`.
+- Removes `/opt/zelavis`, `/usr/local/bin/zelavis`, and systemd unit files.
+- Removes configuration, signed host operations, and certificates.
+- Completely deletes `/var/lib/zelavis`, including all project databases and runtimes.
+- Removes the `zelavis` system account.
