@@ -1,0 +1,58 @@
+#!/bin/sh
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+action=""
+unit="zelavis-traefik.service"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --action) action="$2"; shift 2 ;;
+    --unit) unit="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+if [ -z "$action" ]; then
+  printf '{"error":"missing required argument: action"}\n'
+  exit 1
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+  case "$action" in
+    status)
+      if systemctl is-active --quiet "$unit" 2>/dev/null; then
+        printf '{"unit":"%s","action":"status","active":true,"status":"active"}\n' "$unit"
+      else
+        printf '{"unit":"%s","action":"status","active":false,"status":"inactive"}\n' "$unit"
+      fi
+      exit 0
+      ;;
+    start|stop|reload|restart)
+      if systemctl "$action" "$unit" 2>/dev/null; then
+        active=false
+        [ "$action" != "stop" ] && active=true
+        printf '{"unit":"%s","action":"%s","active":%s,"status":"success"}\n' "$unit" "$action" "$active"
+        exit 0
+      else
+        printf '{"unit":"%s","action":"%s","active":false,"status":"failed"}\n' "$unit" "$action"
+        exit 1
+      fi
+      ;;
+  esac
+else
+  # Non-systemd environment (e.g. dev/macOS/test container)
+  case "$action" in
+    status)
+      printf '{"unit":"%s","action":"status","active":false,"status":"not_installed"}\n' "$unit"
+      exit 0
+      ;;
+    *)
+      active=false
+      [ "$action" != "stop" ] && active=true
+      printf '{"unit":"%s","action":"%s","active":%s,"status":"acknowledged_no_systemd"}\n' "$unit" "$action" "$active"
+      exit 0
+      ;;
+  esac
+fi

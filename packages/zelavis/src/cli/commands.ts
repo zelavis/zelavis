@@ -8,8 +8,15 @@ import { describeInstallation, formatInstallation } from "./installation.js";
 import { runPluginsCommand } from "./plugins.js";
 import { runProjectsCommand } from "./projects.js";
 import { runHostOperationsCommand } from "./host-operations.js";
+import { runEdgeCommand } from "./edge.js";
 import { ZelavisClientHttpError } from "../sdk/fetch.js";
 import { promptSecret, readAllStdin } from "./prompt.js";
+import { runSetupWizard } from "./setup.js";
+import {
+  ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION,
+  type ZelavisInstallationUninstaller,
+  type ZelavisInstallationUninstallPlan,
+} from "../core/runtime/installation.js";
 import {
   formatActivationResult,
   formatRuntimeExtensions,
@@ -30,6 +37,11 @@ export interface ZelavisCliServeOptions {
 
 export interface ZelavisCliRuntime {
   serve(options: ZelavisCliServeOptions): Promise<void>;
+  createInstallationUninstaller?(options: {
+    dataDirectory?: string;
+  }):
+    | ZelavisInstallationUninstaller
+    | Promise<ZelavisInstallationUninstaller>;
 }
 
 export interface ZelavisCliOptions {
@@ -71,6 +83,10 @@ interface ParsedArgs {
   requireRootOwnedOperations: boolean;
   passwordStdin: boolean;
   install: boolean;
+  all: boolean;
+  dryRun: boolean;
+  json: boolean;
+  confirmation?: string;
   help: boolean;
   version: boolean;
 }
@@ -82,13 +98,17 @@ Usage:
   zelavis plugins <namespace> <resource> <action> [--file input.json] [--url <url>] [--json]
   zelavis plugins [<namespace> [<resource>]] --help [--url <url>]
   zelavis serve [--host <host>] [--port <port>] [--data-dir <path>]
+  zelavis uninstall --all --dry-run [--data-dir <path>] [--json]
+  sudo zelavis uninstall --all --confirm ${ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION} [--data-dir <path>] [--json]
   zelavis projects <list|recipes|get|create|start|stop|restart|logs|remove> [id|name] [--recipe <name>] [--id <id>] [--no-start] [--url <url>] [--token <token>] [--json]
   zelavis host-operations <catalog|submit|get|audit> [operation|id] [--version <v>] [--project <id>] [--arg name=value] [--json]
+  zelavis edge <status|plan|switch> [adapter] [--publication <id>@<revision>] [--routes <n>] [--require <capability>] [--certificate-ref <ref>] [--url <url>] [--token <token>] [--json]
   zelavis services list [--url <url>]
   zelavis services sources [--url <url>] [--token <session-token>]
   zelavis services install <name> [--url <url>]
   zelavis services disable <name> [--url <url>]
   zelavis services register --specifier <specifier> [--name <name>] [--install] [--url <url>]
+  zelavis setup [--url <url>] [--token <bootstrap-token>]
   zelavis bootstrap --email <email> [--display-name <name>] [--password-stdin] [--url <url>]
   zelavis bootstrap status [--url <url>]
   zelavis extensions [--for <service>] [--url <url>]
@@ -98,12 +118,17 @@ Usage:
 
 Commands:
   serve                     Run the long-lived Zelavis Platform OS.
+  uninstall                 Completely remove a packaged installation and all
+                            Zelavis-owned data from this host. Local-only.
+  setup                     Run the interactive first-install wizard.
   bootstrap                 Create the first Platform owner account.
   bootstrap status          Report whether an owner still has to be created.
   extensions                List services that extend another, by what they extend.
   agent                     Run the Zelavis Agent, which executes Project
                             processes. Supervise it yourself: it is meant to
                             outlive the Platform that drives it.
+  edge                      Inspect, preflight, and safely switch the reverse
+                            proxy behind the proxy-neutral Edge controller.
   projects                  List, create, start, stop, restart, remove and read
                             logs of Projects; recipes lists Project recipes.
   services list             List runtime service registry entries.
@@ -122,6 +147,11 @@ Options:
   --source <source>         Service source: official or community.
   --order <number>          Service display order.
   --install                 Register the service as installed.
+  --all                     Confirm the complete uninstall scope.
+  --dry-run                 Print the complete uninstall plan without changing the host.
+  --confirm <phrase>        Destructive uninstall acknowledgement.
+                            Required phrase: ${ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION}
+  --json                    Print machine-readable command output.
   --email <email>           Owner email address for bootstrap.
   --username <username>     Owner username, when not using an email identity.
   --display-name <name>     Owner display name.
@@ -164,6 +194,9 @@ function parseArgs(args: readonly string[]): ParsedArgs {
     requireRootOwnedOperations: false,
     passwordStdin: false,
     install: false,
+    all: false,
+    dryRun: false,
+    json: false,
     help: false,
     version: false,
   };
@@ -178,6 +211,17 @@ function parseArgs(args: readonly string[]): ParsedArgs {
       parsed.version = true;
     } else if (arg === "--install") {
       parsed.install = true;
+    } else if (arg === "--all") {
+      parsed.all = true;
+    } else if (arg === "--dry-run") {
+      parsed.dryRun = true;
+    } else if (arg === "--json") {
+      parsed.json = true;
+    } else if (arg === "--confirm") {
+      parsed.confirmation = readValue(args, index, arg);
+      index += 1;
+    } else if (arg.startsWith("--confirm=")) {
+      parsed.confirmation = arg.slice("--confirm=".length);
     } else if (arg === "--host") {
       parsed.host = readValue(args, index, arg);
       index += 1;
@@ -298,6 +342,21 @@ function parseArgs(args: readonly string[]): ParsedArgs {
   parsed.target = positional[1];
   parsed.name = parsed.name ?? positional[2];
   return parsed;
+}
+
+function formatUninstallPlan(plan: ZelavisInstallationUninstallPlan): string {
+  const lines = [
+    "Complete Zelavis uninstall plan:",
+    ...plan.targets.map((target) => {
+      const location = target.path ? ` (${target.path})` : "";
+      const absence = target.exists === false ? " [already absent]" : "";
+      return `  - ${target.description}${location}${absence}`;
+    }),
+    "",
+    "Intentionally retained:",
+    ...plan.retained.map((entry) => `  - ${entry}`),
+  ];
+  return lines.join("\n");
 }
 
 async function runServicesCommand(parsed: ParsedArgs): Promise<void> {
@@ -462,6 +521,10 @@ export async function runCli(
       await runHostOperationsCommand(args.slice(1));
       return;
     }
+    if (args[0] === "edge") {
+      await runEdgeCommand(args.slice(1));
+      return;
+    }
     const parsed = parseArgs(args);
 
     if (parsed.version) {
@@ -488,6 +551,46 @@ export async function runCli(
         port: parsed.port ?? parsePort(process.env.PORT ?? "3000"),
         dataDirectory: parsed.dataDirectory ?? process.env.ZELAVIS_DATA_DIR,
       });
+      return;
+    }
+    if (parsed.command === "uninstall") {
+      if (!parsed.all) {
+        throw new Error(
+          "Complete uninstall requires --all because it permanently deletes every Zelavis Project and all Platform data.",
+        );
+      }
+      if (!options.runtime?.createInstallationUninstaller) {
+        throw new Error(
+          "Complete uninstall is available only from a packaged Zelavis installation on a supported host adapter.",
+        );
+      }
+      const uninstaller = await options.runtime.createInstallationUninstaller({
+        dataDirectory:
+          parsed.dataDirectory ?? process.env.ZELAVIS_DATA_DIR,
+      });
+      if (parsed.dryRun) {
+        const plan = await uninstaller.plan();
+        console.log(
+          parsed.json
+            ? JSON.stringify({ dryRun: true, plan }, null, 2)
+            : `${formatUninstallPlan(plan)}\n\nNo changes were made.`,
+        );
+        return;
+      }
+      if (!parsed.confirmation) {
+        throw new Error(
+          `Complete uninstall requires --confirm ${ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION}. Run with --dry-run first.`,
+        );
+      }
+      const result = await uninstaller.uninstall({
+        confirmation: parsed.confirmation,
+      });
+      console.log(
+        parsed.json
+          ? JSON.stringify(result, null, 2)
+          : result.output ??
+              "Zelavis installation, configuration and data removed.",
+      );
       return;
     }
     if (parsed.command === "extensions") {
@@ -531,13 +634,23 @@ export async function runCli(
       await runBootstrapCommand(parsed);
       return;
     }
+    if (parsed.command === "setup") {
+      if (parsed.target) {
+        throw new Error("setup does not accept positional arguments.");
+      }
+      await runSetupWizard({
+        url: parsed.url,
+        bootstrapToken: parsed.token,
+      });
+      return;
+    }
     if (parsed.command === "services") {
       await runServicesCommand(parsed);
       return;
     }
     throw new Error(`Unknown command "${parsed.command}".`);
   } catch (error) {
-    if (args[0] === "plugins" || ((args[0] === "projects" || args[0] === "host-operations") && args.includes("--json"))) {
+    if (args[0] === "plugins" || args.includes("--json")) {
       console.error(JSON.stringify({
         error: error instanceof Error ? error.message : String(error),
         ...(error instanceof ZelavisClientHttpError ? { status: error.response.status, details: error.body } : {}),

@@ -13,16 +13,13 @@
  * `zelavis --version` reports the path it is running from, which turns "the
  * package upgrade did not take effect" into a question that answers itself.
  */
-export type ZelavisInstallationKind = "packaged" | "npm" | "source";
+import type {
+  ZelavisInstallationIdentity,
+  ZelavisInstallationKind,
+} from "../core/runtime/installation.js";
 
-export interface ZelavisInstallation {
-  /** How this copy was installed, as far as its location reveals. */
-  readonly kind: ZelavisInstallationKind;
-  /** Real path of the running CLI, with symlinks resolved. */
-  readonly path: string;
-  /** Root this copy belongs to: the release prefix, or the package directory. */
-  readonly root?: string;
-}
+export type { ZelavisInstallationKind };
+export type ZelavisInstallation = ZelavisInstallationIdentity;
 
 /**
  * Classifies an installation from the resolved path of its CLI entrypoint.
@@ -37,6 +34,17 @@ export function describeInstallation(cliPath: string): ZelavisInstallation {
   const release = /^(?<root>.*)\/releases\/[^/]+\/bin\/zelavis$/u.exec(cliPath);
   if (release?.groups?.root) {
     return { kind: "packaged", path: cliPath, root: release.groups.root };
+  }
+  const packagedRuntime =
+    /^(?<root>.*)\/(?:releases\/[^/]+|current)\/platform\/dist\/cli\.js$/u.exec(
+      cliPath,
+    );
+  if (packagedRuntime?.groups?.root) {
+    return {
+      kind: "packaged",
+      path: cliPath,
+      root: packagedRuntime.groups.root,
+    };
   }
   if (cliPath.startsWith("/opt/zelavis/")) {
     return { kind: "packaged", path: cliPath, root: "/opt/zelavis" };

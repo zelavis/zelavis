@@ -2,8 +2,12 @@
 import { readFile, realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { resolveCliDataDirectory } from "./cli/data-directory.js";
+import { describeInstallation } from "./cli/installation.js";
 import { runCli, type ZelavisCliServeOptions } from "./cli/index.js";
-import { nodeAdapter } from "./adapters/node.js";
+import {
+  createNodeInstallationUninstaller,
+  nodeAdapter,
+} from "./adapters/node.js";
 import { Zelavis, type ZelavisPlatformFrontendFactory } from "./index.js";
 import { closeNodeServer, createNodeServer } from "./runtimes/node.js";
 
@@ -105,10 +109,28 @@ async function serve(options: ZelavisCliServeOptions): Promise<void> {
   process.once("SIGTERM", shutdown);
 }
 
+const installationPath = await resolveInstallationPath();
+
 await runCli(process.argv.slice(2), {
   version: await readVersion(),
   // Resolved, not the raw argv path: /usr/local/bin/zelavis is a symlink, and
   // what it points at is exactly the thing worth reporting.
-  installationPath: await resolveInstallationPath(),
-  runtime: { serve },
+  installationPath,
+  runtime: {
+    serve,
+    createInstallationUninstaller({ dataDirectory }) {
+      if (!installationPath) {
+        throw new Error("The running Zelavis installation path could not be resolved.");
+      }
+      const installation = describeInstallation(installationPath);
+      return createNodeInstallationUninstaller({
+        installation,
+        dataDirectory:
+          dataDirectory ??
+          (installation.kind === "packaged"
+            ? undefined
+            : resolveCliDataDirectory()),
+      });
+    },
+  },
 });

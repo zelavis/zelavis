@@ -1,0 +1,24 @@
+#!/bin/sh
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+duration_ms="100"
+prev_adapter=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --duration-ms) duration_ms="$2"; shift 2 ;;
+    --previous-adapter) prev_adapter="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+sec=$((duration_ms / 1000))
+# For small test durations, sleep can be 0 or small
+if [ "$sec" -gt 0 ]; then
+  sleep "$sec"
+fi
+
+printf '{"status":"drained","durationMs":%s}\n' "$duration_ms"
+exit 0

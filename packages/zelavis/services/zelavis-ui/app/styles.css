@@ -151,6 +151,56 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+.setup-canvas {
+  background-image:
+    linear-gradient(to right, color-mix(in oklch, var(--border), transparent 65%) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklch, var(--border), transparent 65%) 1px, transparent 1px);
+  background-size: 3rem 3rem;
+}
+
+.setup-orb {
+  position: fixed;
+  width: 28rem;
+  height: 28rem;
+  border-radius: 9999px;
+  background: color-mix(in oklch, var(--primary), transparent 78%);
+  filter: blur(80px);
+  pointer-events: none;
+  animation: setup-drift 12s ease-in-out infinite alternate;
+}
+
+.setup-orb-one {
+  top: -12rem;
+  left: -8rem;
+}
+
+.setup-orb-two {
+  right: -12rem;
+  bottom: -14rem;
+  animation-delay: -5s;
+}
+
+.setup-panel {
+  animation: setup-enter 360ms cubic-bezier(.22, 1, .36, 1) both;
+}
+
+@keyframes setup-enter {
+  from { opacity: 0; transform: translateY(12px) scale(.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes setup-drift {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(3rem, 2rem, 0) scale(1.08); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .setup-orb,
+  .setup-panel {
+    animation: none;
+  }
+}
+
 [data-slot="sidebar"] {
   user-select: none;
 }

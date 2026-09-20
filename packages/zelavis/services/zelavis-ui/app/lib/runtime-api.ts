@@ -459,6 +459,35 @@ export interface RuntimeAuthSessionResult {
   };
 }
 
+export interface RuntimeEdgeAdapterStatus {
+  id: string;
+  title: string;
+  capabilities: readonly string[];
+  detection: {
+    state: "available" | "unavailable" | "unhealthy";
+    installed: boolean;
+    healthy: boolean;
+    version?: string;
+    detail?: string;
+  };
+  active: boolean;
+  desired: boolean;
+}
+
+export interface RuntimeEdgeStatus {
+  policy: {
+    desiredAdapterId: string;
+    activeAdapterId?: string;
+  };
+  adapters: readonly RuntimeEdgeAdapterStatus[];
+  activeSwitch?: {
+    id: string;
+    targetAdapterId: string;
+    phase: string;
+    error?: string;
+  };
+}
+
 export class RuntimeApiError extends Error {
   constructor(
     message: string,
@@ -1567,6 +1596,29 @@ export async function bootstrapPlatformOwner(
     `${config.api.basePath}/auth/bootstrap`,
     { method: "POST", body: JSON.stringify(input) },
   );
+}
+
+export async function getEdgeStatus(
+  config: RuntimeConfig,
+): Promise<RuntimeEdgeStatus> {
+  return readJson<RuntimeEdgeStatus>(`${config.api.basePath}/runtime/edge`);
+}
+
+export async function preflightEdgeHostname(
+  config: RuntimeConfig,
+  hostname: string,
+): Promise<{ hostname: string; valid: boolean; dnsResolved: boolean; addresses?: readonly string[]; error?: string }> {
+  return readJson(`${config.api.basePath}/runtime/edge/onboard/preflight?hostname=${encodeURIComponent(hostname)}`);
+}
+
+export async function onboardEdgeHostname(
+  config: RuntimeConfig,
+  input: { mode: "managed" | "external" | "later"; hostname?: string },
+): Promise<{ mode: string; status: string; hostname?: string; canonicalUrl?: string; error?: string }> {
+  return readJson(`${config.api.basePath}/runtime/edge/onboard`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 export async function authenticatePlatform(

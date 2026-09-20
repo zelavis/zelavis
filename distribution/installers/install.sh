@@ -46,6 +46,9 @@ install_with_archive() {
   trap 'rm -rf "$temporary"' EXIT INT TERM
   archive="$temporary/zelavis.tar.gz"
   checksum="$temporary/zelavis.tar.gz.sha256"
+  if [ -z "${ZELAVIS_DOWNLOADS:-}" ] && ! curl -fsI --connect-timeout 3 "$DOWNLOADS" >/dev/null 2>&1; then
+    DOWNLOADS="https://github.com/zelavis/zelavis/releases/latest/download"
+  fi
   url="$DOWNLOADS/zelavis-$os-$architecture.tar.gz"
   if command -v curl >/dev/null 2>&1; then
     curl -fsSL "$url" -o "$archive"
@@ -79,10 +82,23 @@ if [ -f /etc/os-release ]; then
   . /etc/os-release
 fi
 
-case "${ID:-}" in
-  debian|ubuntu) install_with_apt ;;
-  *) install_with_archive ;;
-esac
+method=${ZELAVIS_INSTALL_METHOD:-auto}
+if [ "$method" = "archive" ]; then
+  install_with_archive
+elif [ "$method" = "apt" ]; then
+  install_with_apt
+else
+  case "${ID:-}" in
+    debian|ubuntu)
+      if curl -fsI --connect-timeout 3 "$APT_REPOSITORY" >/dev/null 2>&1; then
+        install_with_apt
+      else
+        install_with_archive
+      fi
+      ;;
+    *) install_with_archive ;;
+  esac
+fi
 
 echo "Zelavis installed. Packaged Linux installs are started through systemd."
 echo "Dashboard: http://127.0.0.1:3000/zelavis"

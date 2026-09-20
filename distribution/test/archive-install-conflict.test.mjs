@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -65,14 +65,46 @@ test("a clean install links the command", async (t) => {
     await readlink(join(tree.binDir, "zelavis")),
     join(tree.prefix, "current", "bin", "zelavis"),
   );
+  assert.deepEqual(
+    JSON.parse(await readFile(join(tree.prefix, "installation.json"), "utf8")),
+    {
+      schemaVersion: 1,
+      dataDirectory: tree.dataDir,
+      commandPath: join(tree.binDir, "zelavis"),
+      ownsUser: false,
+      ownsGroup: false,
+    },
+  );
+});
+
+test("a clean install copies the bundled edge runtime when present", async (t) => {
+  const tree = await stage(t);
+  await mkdir(join(tree.source, "edge", "traefik"), { recursive: true });
+  await writeFile(join(tree.source, "edge", "traefik", "traefik"), "#!/bin/sh\n", { mode: 0o755 });
+  const result = install(tree);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    await readFile(join(tree.prefix, "current", "edge", "traefik", "traefik"), "utf8"),
+    "#!/bin/sh\n",
+  );
 });
 
 test("installing twice is an upgrade, not a conflict", async (t) => {
   const tree = await stage(t);
   assert.equal(install(tree).status, 0);
+  const receiptPath = join(tree.prefix, "installation.json");
+  const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
+  await writeFile(
+    receiptPath,
+    JSON.stringify({ ...receipt, ownsUser: true, ownsGroup: true }),
+  );
   const second = install(tree);
   assert.equal(second.status, 0, second.stderr);
   assert.doesNotMatch(second.stderr, /Refusing/u);
+  assert.equal(
+    JSON.parse(await readFile(receiptPath, "utf8")).ownsUser,
+    true,
+  );
 });
 
 test("a command this installer did not create is refused, not replaced", async (t) => {

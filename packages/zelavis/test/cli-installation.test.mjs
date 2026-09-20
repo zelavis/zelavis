@@ -15,6 +15,20 @@ test("a packaged release is recognised by its layout, not a fixed prefix", () =>
   const relocated = describeInstallation("/srv/zv/releases/9.9.9/bin/zelavis");
   assert.equal(relocated.kind, "packaged");
   assert.equal(relocated.root, "/srv/zv");
+
+  // The launcher executes this compiled entry point, so production detection
+  // must recognise the path Node actually observes rather than only bin/zelavis.
+  const runtimeCli = describeInstallation(
+    "/opt/zelavis/current/platform/dist/cli.js",
+  );
+  assert.equal(runtimeCli.kind, "packaged");
+  assert.equal(runtimeCli.root, "/opt/zelavis");
+
+  const versionedRuntimeCli = describeInstallation(
+    "/srv/zv/releases/9.9.9/platform/dist/cli.js",
+  );
+  assert.equal(versionedRuntimeCli.kind, "packaged");
+  assert.equal(versionedRuntimeCli.root, "/srv/zv");
 });
 
 test("a global npm install is recognised and reports its package root", () => {

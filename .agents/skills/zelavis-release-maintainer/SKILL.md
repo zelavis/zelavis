@@ -24,8 +24,11 @@ Use this skill for:
 1. Confirm which packages are actually affected.
 2. Add or review the relevant changeset.
 3. Verify public API and docs still match.
-4. Run the release validation commands before publishing.
-5. Keep alpha vs stable intent explicit.
+4. When the distribution footprint changes, verify the staged
+   `share/uninstall.sh` inventory, isolated destructive-path test, and public
+   complete-uninstall documentation cover every newly owned host resource.
+5. Run the release validation commands before publishing.
+6. Keep alpha vs stable intent explicit.
 
 ## Useful commands
 

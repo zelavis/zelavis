@@ -1,0 +1,60 @@
+#!/bin/sh
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+base_dir="/var/lib/zelavis/edge/traefik"
+target_gen=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --base-dir) base_dir="$2"; shift 2 ;;
+    --target-generation) target_gen="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+active_dir="$base_dir/active"
+state_file="$base_dir/active-generation.json"
+
+mkdir -p "$active_dir" || { printf '{"status":"failed","error":"failed to create active directory"}\n'; exit 1; }
+
+# If target_gen not specified, find previousGeneration from state_file
+if [ -z "$target_gen" ] && [ -f "$state_file" ]; then
+  parsed_prev=$(grep '"previousGeneration"' "$state_file" 2>/dev/null | sed -e 's/.*"previousGeneration": *"//' -e 's/".*//')
+  if [ -n "$parsed_prev" ] && [ "$parsed_prev" != "null" ]; then
+    target_gen="$parsed_prev"
+  fi
+fi
+
+if [ -n "$target_gen" ] && [ -f "$base_dir/generations/$target_gen/traefik-dynamic.json" ]; then
+  # Restore target generation
+  tmp_file="$active_dir/traefik-dynamic.json.tmp.$$"
+  cp "$base_dir/generations/$target_gen/traefik-dynamic.json" "$tmp_file"
+  chmod 0644 "$tmp_file"
+  mv -f "$tmp_file" "$active_dir/traefik-dynamic.json"
+  
+  if [ -f "$base_dir/generations/$target_gen/manifest.json" ]; then
+    cp "$base_dir/generations/$target_gen/manifest.json" "$active_dir/manifest.json.tmp.$$" 2>/dev/null && \
+    mv -f "$active_dir/manifest.json.tmp.$$" "$active_dir/manifest.json" 2>/dev/null || true
+  fi
+  
+  now=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "2026-09-20T00:00:00Z")
+  printf '{"activeGeneration":"%s","previousGeneration":null,"activatedAt":"%s"}\n' \
+    "$target_gen" "$now" > "$state_file.tmp.$$"
+  mv -f "$state_file.tmp.$$" "$state_file"
+  
+  printf '{"status":"rolled_back","restoredGeneration":"%s"}\n' "$target_gen"
+  exit 0
+else
+  # No previous generation exists; write empty dynamic configuration
+  tmp_file="$active_dir/traefik-dynamic.json.tmp.$$"
+  printf '{"http":{"routers":{},"services":{}}}\n' > "$tmp_file"
+  chmod 0644 "$tmp_file"
+  mv -f "$tmp_file" "$active_dir/traefik-dynamic.json"
+  
+  rm -f "$state_file" 2>/dev/null || true
+  
+  printf '{"status":"rolled_back","restoredGeneration":null}\n'
+  exit 0
+fi

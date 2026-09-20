@@ -1,0 +1,11 @@
+{
+  "id": "zelavis.edge-unit-control",
+  "version": "v1",
+  "interpreter": "/bin/sh",
+  "arguments": {
+    "action": { "required": true, "pattern": "^(start|stop|reload|restart|status)$", "maxLength": 16 },
+    "unit": { "pattern": "^[a-zA-Z0-9._-]+$", "maxLength": 64 }
+  },
+  "authorization": { "permission": "server.edge.manage", "scope": "system" },
+  "result": { "format": "json", "maxBytes": 8192 }
+}

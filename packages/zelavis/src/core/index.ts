@@ -8,6 +8,7 @@ export * from "./runtime/http-errors.js";
 export * from "./runtime/request-dispatcher.js";
 export * from "./runtime/resolve-endpoints.js";
 export * from "./runtime/create-runtime.js";
+export * from "./runtime/installation.js";
 export * from "./artifact/index.js";
 export * from "./provider/index.js";
 export * from "./workload/index.js";

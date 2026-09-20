@@ -7,6 +7,17 @@ import type {
 } from "../project.js";
 import type { ZelavisProjectIsolationIntent } from "../project-isolation.js";
 import type {
+  ZelavisEdgeAdapterStatus,
+  ZelavisEdgeCertificateSummary,
+  ZelavisEdgeCompiledPublication,
+  ZelavisEdgeHostname,
+  ZelavisEdgePolicy,
+  ZelavisEdgePublication,
+  ZelavisEdgeRoute,
+  ZelavisEdgeSwitchPlan,
+  ZelavisEdgeSwitchRecord,
+} from "../edge/index.js";
+import type {
   ZelavisHostOperationCatalogEntry,
   ZelavisHostOperationRecord,
   ZelavisHostOperationSubmitInput,
@@ -143,6 +154,8 @@ export interface ZelavisClient {
   readonly projects: ZelavisProjectsClient;
   /** Release-signed host operations, over `/runtime/host-operations`. Same contract as `zelavis host-operations`. */
   readonly hostOperations: ZelavisHostOperationsClient;
+  /** Proxy-neutral Edge management. Same contract as `zelavis edge`. */
+  readonly edge: ZelavisEdgeClient;
   readonly runtime: {
     serviceSources(): Promise<{ sources: readonly ServiceSourceDiagnostic[] }>;
     config(): Promise<ZelavisRuntimeConfigResponse>;
@@ -202,6 +215,102 @@ export interface ZelavisHostOperationsClient {
   get(operationId: string): Promise<ZelavisHostOperationRecord>;
   /** Issuance records, newest first; needs the audit permission for the scope. */
   audit(query?: { readonly projectId?: string; readonly limit?: number }): Promise<readonly ZelavisHostOperationRecord[]>;
+}
+
+export interface ZelavisEdgeStatusResponse {
+  readonly policy: ZelavisEdgePolicy;
+  readonly adapters: readonly ZelavisEdgeAdapterStatus[];
+  readonly activeSwitch?: ZelavisEdgeSwitchRecord;
+}
+
+export interface ZelavisEdgeSwitchInput {
+  readonly adapterId: string;
+  readonly publication: ZelavisEdgePublication;
+}
+
+export interface ZelavisEdgeRoutesResponse {
+  readonly routes: readonly ZelavisEdgeRoute[];
+  readonly hostnames: readonly ZelavisEdgeHostname[];
+  readonly publication?: ZelavisEdgeCompiledPublication;
+}
+
+export interface ZelavisEdgePutRouteInput {
+  readonly route: ZelavisEdgeRoute;
+  readonly hostname?: ZelavisEdgeHostname;
+}
+
+export interface ZelavisEdgePutRouteResponse {
+  readonly route: ZelavisEdgeRoute;
+  readonly hostname?: ZelavisEdgeHostname;
+}
+
+export interface ZelavisEdgeRoutesFilter {
+  readonly scope?: "platform" | "project";
+  readonly projectId?: string;
+  readonly hostname?: string;
+}
+
+export type ZelavisEdgeOnboardingMode = "managed" | "external" | "later";
+
+export interface ZelavisEdgeOnboardingRequest {
+  readonly mode: ZelavisEdgeOnboardingMode;
+  readonly hostname?: string;
+  readonly localTargetUrl?: string;
+}
+
+export interface ZelavisEdgeOnboardingPreflightResult {
+  readonly hostname: string;
+  readonly valid: boolean;
+  readonly dnsResolved: boolean;
+  readonly addresses?: readonly string[];
+  readonly error?: string;
+}
+
+export interface ZelavisEdgeOnboardingResult {
+  readonly mode: ZelavisEdgeOnboardingMode;
+  readonly status: "configured" | "deferred" | "failed";
+  readonly hostname?: string;
+  readonly canonicalUrl?: string;
+  readonly publication?: ZelavisEdgePublication;
+  readonly error?: string;
+}
+
+export interface ZelavisEdgeCertificatesResponse {
+  readonly certificates: readonly ZelavisEdgeCertificateSummary[];
+}
+
+export interface ZelavisEdgeRenewCertificatesInput {
+  readonly hostname?: string;
+  readonly renewIfWithinDays?: number;
+}
+
+export interface ZelavisEdgeRenewCertificatesResponse {
+  readonly checked?: number;
+  readonly renewed: readonly string[];
+  readonly failed?: readonly { readonly ref: string; readonly error: string }[];
+  readonly certificate?: ZelavisEdgeCertificateSummary;
+}
+
+export interface ZelavisEdgeClient {
+  status(): Promise<ZelavisEdgeStatusResponse>;
+  plan(input: ZelavisEdgeSwitchInput): Promise<ZelavisEdgeSwitchPlan>;
+  switch(input: ZelavisEdgeSwitchInput): Promise<ZelavisEdgeSwitchRecord>;
+  routes(filter?: ZelavisEdgeRoutesFilter): Promise<ZelavisEdgeRoutesResponse>;
+  putRoute(
+    input: ZelavisEdgePutRouteInput | ZelavisEdgeRoute,
+  ): Promise<ZelavisEdgePutRouteResponse>;
+  deleteRoute(routeId: string): Promise<boolean>;
+  publish(): Promise<ZelavisEdgeCompiledPublication>;
+  preflightHostname(
+    hostname: string,
+  ): Promise<ZelavisEdgeOnboardingPreflightResult>;
+  onboardHostname(
+    input: ZelavisEdgeOnboardingRequest,
+  ): Promise<ZelavisEdgeOnboardingResult>;
+  certificates(): Promise<ZelavisEdgeCertificatesResponse>;
+  renewCertificates(
+    input?: ZelavisEdgeRenewCertificatesInput,
+  ): Promise<ZelavisEdgeRenewCertificatesResponse>;
 }
 
 export const fetchSdkSurface: ZelavisSdkSurfaceManifest = {
@@ -332,6 +441,72 @@ export function createZelavisClient(
     ),
     pluginOperations: discoverPluginOperations,
     projects: createProjectsClient(json),
+    edge: {
+      status: () => json<ZelavisEdgeStatusResponse>("/runtime/edge"),
+      plan: async (input) =>
+        (await json<{ plan: ZelavisEdgeSwitchPlan }>("/runtime/edge/plan", {
+          method: "POST",
+          body: input,
+        })).plan,
+      switch: async (input) =>
+        (await json<{ edgeSwitch: ZelavisEdgeSwitchRecord }>(
+          "/runtime/edge/switch",
+          { method: "POST", body: input },
+        )).edgeSwitch,
+      routes: async (filter = {}) => {
+        const search = new URLSearchParams();
+        if (filter.scope) search.set("scope", filter.scope);
+        if (filter.projectId) search.set("projectId", filter.projectId);
+        if (filter.hostname) search.set("hostname", filter.hostname);
+        const suffix = search.size ? `?${search}` : "";
+        return json<ZelavisEdgeRoutesResponse>(`/runtime/edge/routes${suffix}`);
+      },
+      putRoute: async (input) => {
+        const body = "id" in input ? { route: input } : input;
+        return json<ZelavisEdgePutRouteResponse>("/runtime/edge/routes", {
+          method: "POST",
+          body,
+        });
+      },
+      deleteRoute: async (routeId) => {
+        try {
+          const response = await json<{ deleted?: boolean }>(
+            `/runtime/edge/routes/${encodeURIComponent(routeId)}`,
+            { method: "DELETE" },
+          );
+          return Boolean(response.deleted);
+        } catch (error) {
+          if (error instanceof ZelavisClientHttpError && error.status === 404) {
+            return false;
+          }
+          throw error;
+        }
+      },
+      publish: async () =>
+        (await json<{ publication: ZelavisEdgeCompiledPublication }>(
+          "/runtime/edge/publish",
+          { method: "POST" },
+        )).publication,
+      preflightHostname: async (hostname) =>
+        json<ZelavisEdgeOnboardingPreflightResult>(
+          `/runtime/edge/onboard/preflight?hostname=${encodeURIComponent(hostname)}`,
+        ),
+      onboardHostname: async (input) =>
+        json<ZelavisEdgeOnboardingResult>("/runtime/edge/onboard", {
+          method: "POST",
+          body: input,
+        }),
+      certificates: async () =>
+        json<ZelavisEdgeCertificatesResponse>("/runtime/edge/certificates"),
+      renewCertificates: async (input = {}) =>
+        json<ZelavisEdgeRenewCertificatesResponse>(
+          "/runtime/edge/certificates/renew",
+          {
+            method: "POST",
+            body: input,
+          },
+        ),
+    },
     hostOperations: {
       catalog: async () =>
         (await json<{ operations: readonly ZelavisHostOperationCatalogEntry[] }>("/runtime/host-operations")).operations,
@@ -427,6 +602,10 @@ export class ZelavisClientHttpError extends Error {
     this.name = "ZelavisClientHttpError";
     this.response = response;
     this.body = body;
+  }
+
+  get status(): number {
+    return this.response.status;
   }
 }
 

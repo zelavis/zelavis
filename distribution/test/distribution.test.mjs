@@ -12,10 +12,55 @@ test("release configuration pins a supported Node runtime", async () => {
   assert.match(release.aptRepository, /^https:\/\//);
 });
 
+test("release configuration pins a supported Traefik runtime", async () => {
+  const release = JSON.parse(await readFile(new URL("release.json", distribution), "utf8"));
+  assert.match(release.traefikVersion, /^3\./);
+});
+
+test("the Traefik unit uses bounded capabilities and restricts filesystem access", async () => {
+  const unit = await readFile(new URL("runtime/zelavis-traefik.service", distribution), "utf8");
+  assert.match(unit, /^AmbientCapabilities=CAP_NET_BIND_SERVICE$/m);
+  assert.match(unit, /^CapabilityBoundingSet=CAP_NET_BIND_SERVICE$/m);
+  assert.match(unit, /^ProtectSystem=strict$/m);
+  assert.match(unit, /^NoNewPrivileges=true$/m);
+  assert.match(unit, /^User=zelavis$/m);
+  assert.match(unit, /^Group=zelavis$/m);
+  assert.match(unit, /ReadWritePaths=\/var\/lib\/zelavis\/edge\/traefik/);
+  assert.match(unit, /ExecStart=\/opt\/zelavis\/current\/edge\/traefik\/traefik --configFile=\/etc\/zelavis\/edge\/traefik\/traefik\.yml/);
+});
+
+test("traefik static configuration watches active directory and disables dashboard", async () => {
+  const config = await readFile(new URL("runtime/traefik.yml", distribution), "utf8");
+  assert.match(config, /dashboard:\s*false/);
+  assert.match(config, /insecure:\s*false/);
+  assert.match(config, /directory:\s*\/var\/lib\/zelavis\/edge\/traefik\/active/);
+  assert.match(config, /watch:\s*true/);
+  assert.match(config, /address:\s*":80"/);
+  assert.match(config, /address:\s*":443"/);
+});
+
+test("the Debian package manages Traefik unit, conffiles, and leaves it disabled by default", async () => {
+  const builder = await readFile(new URL("scripts/build-deb.mjs", distribution), "utf8");
+  assert.match(builder, /zelavis-traefik\.service/);
+  assert.match(builder, /\/etc\/zelavis\/edge\/traefik\/traefik\.yml/);
+  assert.match(builder, /conffiles.*\/etc\/zelavis\/edge\/traefik\/traefik\.yml/s);
+  assert.match(builder, /systemctl disable zelavis-traefik\.service/);
+  assert.match(builder, /systemctl stop zelavis\.service zelavis-traefik\.service/);
+});
+
+test("the archive installer sets up Traefik unit and leaves it disabled by default", async () => {
+  const installer = await readFile(new URL("installers/archive-install.sh", distribution), "utf8");
+  assert.match(installer, /zelavis-traefik\.service/);
+  assert.match(installer, /\/etc\/zelavis\/edge\/traefik\/traefik\.yml/);
+  assert.match(installer, /\$DATA_DIR\/edge\/traefik\/active/);
+  assert.match(installer, /systemctl disable zelavis-traefik\.service/);
+});
+
 test("install and packaging shell scripts have valid syntax", () => {
   for (const path of [
     "installers/install.sh",
     "installers/archive-install.sh",
+    "installers/uninstall.sh",
     "scripts/build-all.sh",
     "scripts/build-apt-repository.sh",
     "runtime/zelavis",
@@ -35,12 +80,31 @@ test("the Debian package installs the native WordPress host stack", async () => 
   for (const dependency of ["nginx", "php-fpm", "php-mysql", "mariadb-server-core", "mariadb-client-core"]) {
     assert.match(builder, new RegExp(`Depends:.*\\b${dependency}\\b`));
   }
+  assert.match(builder, /ownsUser: previous\.ownsUser === true/u);
+  assert.match(builder, /ownsGroup: previous\.ownsGroup === true/u);
+  assert.match(builder, /randomBytes\(32\)/u);
+  assert.match(builder, /\/etc\/zelavis\/zelavis\.env/u);
+});
+
+test("the Platform service reads installer-generated first-run configuration", async () => {
+  const unit = await readFile(new URL("runtime/zelavis.service", distribution), "utf8");
+  assert.match(unit, /^EnvironmentFile=-\/etc\/zelavis\/zelavis\.env$/m);
+  const archiveInstaller = await readFile(new URL("installers/archive-install.sh", distribution), "utf8");
+  assert.match(archiveInstaller, /randomBytes\(32\)/u);
+  assert.match(archiveInstaller, /First-run bootstrap token/u);
 });
 
 test("the quick archive installer verifies its payload", async () => {
   const installer = await readFile(new URL("installers/install.sh", distribution), "utf8");
   assert.match(installer, /\.sha256/);
   assert.match(installer, /checksum verification failed/);
+});
+
+test("release staging bounds file hashing and includes complete uninstall", async () => {
+  const builder = await readFile(new URL("scripts/build-stage.mjs", distribution), "utf8");
+  assert.match(builder, /digestConcurrency = 32/u);
+  assert.doesNotMatch(builder, /Promise\.all\(files\.map/u);
+  assert.match(builder, /share", "uninstall\.sh/u);
 });
 
 test("the Agent unit delegates cgroups and runs signed operations from the release tree", async () => {
@@ -148,7 +212,7 @@ test("shipped host operation sources are valid, signable and produce their decla
       assert.ok(template.authorization, `${id.name} declares authorization`);
       validateHostOperationManifest({ ...template, sha256: "a".repeat(64) });
       if (template.interpreter === "/bin/sh") execFileSync("sh", ["-n", join(directory, "artifact")]);
-      if (template.result) {
+      if (template.result && Object.keys(template.arguments ?? {}).length === 0) {
         const output = execFileSync(template.interpreter ?? join(directory, "artifact"),
           template.interpreter ? [join(directory, "artifact")] : [], { encoding: "utf8" }).trim();
         assert.ok(Buffer.byteLength(output) <= template.result.maxBytes);

@@ -1,0 +1,11 @@
+{
+  "id": "zelavis.edge-rollback",
+  "version": "v1",
+  "interpreter": "/bin/sh",
+  "arguments": {
+    "base-dir": { "maxLength": 256 },
+    "target-generation": { "pattern": "^[a-zA-Z0-9_-]+$", "maxLength": 64 }
+  },
+  "authorization": { "permission": "server.edge.manage", "scope": "system" },
+  "result": { "format": "json", "maxBytes": 8192 }
+}
