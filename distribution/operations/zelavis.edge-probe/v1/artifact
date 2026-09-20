@@ -1,0 +1,66 @@
+#!/bin/sh
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+url=""
+host=""
+sni=""
+expected_status=""
+timeout_ms="5000"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --url) url="$2"; shift 2 ;;
+    --host) host="$2"; shift 2 ;;
+    --sni) sni="$2"; shift 2 ;;
+    --expected-status) expected_status="$2"; shift 2 ;;
+    --timeout-ms) timeout_ms="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+if [ -z "$url" ]; then
+  printf '{"healthy":false,"error":"missing required argument: url"}\n'
+  exit 1
+fi
+
+timeout_sec=$((timeout_ms / 1000))
+[ "$timeout_sec" -lt 1 ] && timeout_sec=1
+
+if command -v curl >/dev/null 2>&1; then
+  header_args=""
+  if [ -n "$host" ]; then
+    header_args="-H Host:$host"
+  fi
+  
+  # Probe using curl
+  # shellcheck disable=SC2086
+  status_code=$(curl -k -s -o /dev/null -w "%{http_code}" --max-time "$timeout_sec" $header_args "$url" 2>/dev/null || echo "000")
+  
+  if [ -n "$expected_status" ]; then
+    if [ "$status_code" = "$expected_status" ]; then
+      printf '{"healthy":true,"statusCode":%s,"url":"%s"}\n' "$status_code" "$url"
+      exit 0
+    else
+      printf '{"healthy":false,"statusCode":%s,"expectedStatus":%s,"url":"%s"}\n' "$status_code" "$expected_status" "$url"
+      exit 0
+    fi
+  else
+    # Default healthy check: status between 200 and 399
+    case "$status_code" in
+      2*|3*)
+        printf '{"healthy":true,"statusCode":%s,"url":"%s"}\n' "$status_code" "$url"
+        exit 0
+        ;;
+      *)
+        printf '{"healthy":false,"statusCode":%s,"url":"%s"}\n' "$status_code" "$url"
+        exit 0
+        ;;
+    esac
+  fi
+else
+  # curl not installed
+  printf '{"healthy":false,"error":"curl not available on host"}\n'
+  exit 0
+fi

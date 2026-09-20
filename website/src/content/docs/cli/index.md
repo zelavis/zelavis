@@ -43,7 +43,9 @@ migration limits. Only endpoints with operation declarations appear in this
 command tree.
 
 - `serve` starts the Platform runtime and dashboard.
-- `bootstrap` creates the first Platform owner account.
+- `setup` runs the animated, interactive first-install wizard and creates the
+  first Platform owner through the bootstrap API.
+- `bootstrap` creates the first Platform owner account non-interactively.
 - `bootstrap status` reports whether an owner still has to be created.
 - `agent` runs the separately supervised Agent that executes Project processes.
   With `--operations-root <dir> --operation-trust <file> --platform-authority <file>`
@@ -76,6 +78,11 @@ command tree.
 - `services register` registers an ESM service specifier.
 - `services install` activates a registered service.
 - `services disable` returns a service to the available state.
+- `uninstall --all --dry-run` shows every native packaged-install artifact that
+  complete removal owns. `uninstall --all --confirm DELETE-ALL-ZELAVIS-DATA`
+  then removes the Platform, Agent, releases, package records, Zelavis data and
+  local configuration. It is a host-local adapter operation, not an HTTP
+  endpoint, and it refuses npm and source installations.
 
 ## Runtime Operations
 
@@ -88,6 +95,13 @@ Adapter-specific behavior should stay behind adapter boundaries. The CLI can
 ship first-party commands for supported adapters, but concrete host mechanics
 such as local file caches or future Deno runtime setup should live in adapter
 modules that the CLI orchestrates.
+
+Complete host removal is the intentional exception to endpoint-backed command
+parity. It destroys the running Platform, its Agent, its authority material and
+all Project data, so it must be initiated locally on the machine. The
+runtime-neutral `ZelavisInstallationUninstaller` contract is exported by
+`zelavis/runtime`; the Node host implementation is
+`createNodeInstallationUninstaller` from `zelavis/adapters/node`.
 
 Framework bootstrap commands are intentionally absent. Zelavis is installed as
 a long-running Platform OS; framework bindings are adapters and provider
@@ -107,7 +121,15 @@ ZELAVIS_BOOTSTRAP_TOKEN="$(openssl rand -hex 32)" zelavis serve
 
 The endpoint stays closed unless that variable is set, so a Platform started
 without it cannot have an owner claimed by whoever reaches it first. With the
-Platform running, create the owner from the same machine:
+Platform running, use the guided setup from the same machine:
+
+```bash
+zelavis setup
+```
+
+The setup wizard checks the installation, guides the owner identity and
+security choices, and never prints the resulting owner session. It is the
+recommended interactive flow. The equivalent scriptable command is:
 
 ```bash
 zelavis bootstrap --email owner@example.com --display-name "Owner"

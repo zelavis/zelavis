@@ -1,0 +1,17 @@
+{
+  "id": "zelavis.edge-stage",
+  "version": "v1",
+  "interpreter": "/bin/sh",
+  "arguments": {
+    "generation": { "required": true, "pattern": "^[a-zA-Z0-9_-]+$", "maxLength": 64 },
+    "base-dir": { "maxLength": 256 },
+    "source-path": { "maxLength": 1024 },
+    "config-json": { "maxLength": 16384 },
+    "manifest-json": { "maxLength": 16384 },
+    "cert-name": { "pattern": "^[a-zA-Z0-9._-]+$", "maxLength": 128 },
+    "cert-pem": { "maxLength": 16384 },
+    "key-pem": { "maxLength": 16384 }
+  },
+  "authorization": { "permission": "server.edge.manage", "scope": "system" },
+  "result": { "format": "json", "maxBytes": 8192 }
+}

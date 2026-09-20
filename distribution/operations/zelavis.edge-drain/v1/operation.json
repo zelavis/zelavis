@@ -1,0 +1,11 @@
+{
+  "id": "zelavis.edge-drain",
+  "version": "v1",
+  "interpreter": "/bin/sh",
+  "arguments": {
+    "duration-ms": { "pattern": "^[0-9]+$", "maxLength": 8 },
+    "previous-adapter": { "maxLength": 64 }
+  },
+  "authorization": { "permission": "server.edge.manage", "scope": "system" },
+  "result": { "format": "json", "maxBytes": 8192 }
+}

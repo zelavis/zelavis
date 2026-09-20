@@ -107,6 +107,19 @@ before editing.
   menus or root Platform policy.
 - Put framework or host behavior in `adapters/*`; put optional provider or
   domain capabilities in `plugins/*`.
+- Treat complete native installation removal as a host-local lifecycle
+  capability: the runtime-neutral contract belongs in core, concrete removal
+  belongs in the host adapter/distribution, and the packaged CLI is the
+  operator surface. It intentionally has no HTTP/dashboard equivalent because
+  it deletes the Platform, Agent, authority material, and all Project data.
+  Require a dry run and exact acknowledgement; remove only provably
+  installer-owned resources and retain shared host/operator state. When an
+  installer starts owning a new resource, update the uninstall inventory,
+  staged script, destructive-path tests, and docs together.
+- Keep first-run setup as a presentation over the one durable first-owner
+  bootstrap capability. `zelavis setup`, scripted `zelavis bootstrap`, and the
+  dashboard `/setup` route must call the same endpoint and must not introduce
+  separate completion state or owner-creation authority.
 - Keep Zelavis runtime targets to self-hosted Node.js, Bun, and future Deno; do
   not make serverless function platforms the core runtime model.
 - Keep the canonical hierarchy explicit: the root Platform scales Projects,
@@ -182,6 +195,24 @@ before editing.
 - Keep traffic balancing, authoritative placement, replication, and
   infrastructure provisioning separate. A runtime URL is an Agent-reported
   target, not placement authority.
+- Keep Zelavis Edge proxy-neutral. Domains, canonical routes, endpoint
+  generations, certificates and cutover state are Platform authority in the
+  System Store; Traefik, Caddy, Nginx and external load balancers are execution
+  adapters whose configuration is generated output. A proxy switch must be a
+  durable preflight/stage/verify/shift/drain/commit workflow with rollback, and
+  apps plus certificates must survive it. Refuse required capability loss;
+  mark proxy-specific extensions non-portable and let them block an automatic
+  switch rather than silently dropping behavior. Keep certificate private keys
+  out of logs and audit records, and do not claim safe switching before its
+  reconciliation and failure tests pass.
+- Treat the first-run Platform hostname as authenticated Edge onboarding after
+  the one-time owner claim. Accept apex or subdomain hostnames, allow provider
+  automation to preseed one, and offer managed HTTPS, external TLS, or defer.
+  “Verify DNS & enable HTTPS” must verify routing before ACME and remain
+  retryable without reopening/rolling back owner bootstrap. Keep child-app
+  domains separate and prefer per-instance certificates over sharing one
+  wildcard key across a provider fleet. Do not add wizard-only hostname/TLS
+  authority; JS, HTTP, CLI and UI must consume the same Edge operations.
 - Keep Fabric replica policy independent of Node count and runtime-driver mode.
   Spare capacity alone must not create replicas, and drivers without stateless
   replica capability remain single-replica.

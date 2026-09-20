@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "nodeVersion": "24.12.0",
+  "traefikVersion": "3.7.13",
   "minimumNodeMajor": 24,
   "repositoryPackageVersion": "1.0.0",
   "installPrefix": "/opt/zelavis",
@@ -8,7 +9,14 @@
   "aptRepository": "https://apt.zelavis.com",
   "aptSuite": "stable",
   "operationTrust": {
-    "keys": [],
+    "keys": [
+      {
+        "keyId": "release-2026",
+        "publicKey": "3IerrMFEnqW0v8L7daBetm/MCclYnuyYKsOsdMYa534=",
+        "notBefore": "2026-09-20T09:05:54.039Z",
+        "notAfter": "2027-09-20T09:05:54.039Z"
+      }
+    ],
     "revokedKeyIds": []
   }
 }

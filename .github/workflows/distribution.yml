@@ -4,6 +4,9 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   PNPM_CONFIG_MINIMUM_RELEASE_AGE: "0"
 
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
   push:
@@ -87,3 +90,11 @@ jobs:
           name: zelavis-${{ matrix.target }}
           path: distribution/artifacts/*
           if-no-files-found: error
+
+      - name: Attach artifacts to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: distribution/artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

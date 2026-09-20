@@ -1,0 +1,62 @@
+#!/bin/sh
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+generation=""
+base_dir="/var/lib/zelavis/edge/traefik"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --generation) generation="$2"; shift 2 ;;
+    --base-dir) base_dir="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+if [ -z "$generation" ]; then
+  printf '{"status":"failed","error":"missing required argument: generation"}\n'
+  exit 1
+fi
+
+gen_dir="$base_dir/generations/$generation"
+source_file="$gen_dir/traefik-dynamic.json"
+
+if [ ! -f "$source_file" ]; then
+  printf '{"status":"failed","error":"generation dynamic config not found: %s"}\n' "$source_file"
+  exit 1
+fi
+
+active_dir="$base_dir/active"
+mkdir -p "$active_dir" || { printf '{"status":"failed","error":"failed to create active directory"}\n'; exit 1; }
+
+# Read previous generation if available
+prev_gen="null"
+state_file="$base_dir/active-generation.json"
+if [ -f "$state_file" ]; then
+  parsed_prev=$(grep '"activeGeneration"' "$state_file" 2>/dev/null | sed -e 's/.*"activeGeneration": *"//' -e 's/".*//')
+  if [ -n "$parsed_prev" ]; then
+    prev_gen="\"$parsed_prev\""
+  fi
+fi
+
+# Atomic exchange: write to temp file on same filesystem, then rename
+tmp_file="$active_dir/traefik-dynamic.json.tmp.$$"
+cp "$source_file" "$tmp_file" || { printf '{"status":"failed","error":"failed to copy to staging"}\n'; exit 1; }
+chmod 0644 "$tmp_file"
+mv -f "$tmp_file" "$active_dir/traefik-dynamic.json" || { printf '{"status":"failed","error":"atomic rename failed"}\n'; exit 1; }
+
+# Also copy manifest if present
+if [ -f "$gen_dir/manifest.json" ]; then
+  cp "$gen_dir/manifest.json" "$active_dir/manifest.json.tmp.$$" 2>/dev/null && \
+  mv -f "$active_dir/manifest.json.tmp.$$" "$active_dir/manifest.json" 2>/dev/null || true
+fi
+
+# Update active-generation.json
+now=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "2026-09-20T00:00:00Z")
+printf '{"activeGeneration":"%s","previousGeneration":%s,"activatedAt":"%s"}\n' \
+  "$generation" "$prev_gen" "$now" > "$state_file.tmp.$$"
+mv -f "$state_file.tmp.$$" "$state_file"
+
+printf '{"status":"activated","generation":"%s","previousGeneration":%s}\n' "$generation" "$prev_gen"
+exit 0

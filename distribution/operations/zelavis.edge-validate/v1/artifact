@@ -1,0 +1,68 @@
+#!/bin/sh
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+generation=""
+base_dir="/var/lib/zelavis/edge/traefik"
+traefik_bin="/opt/zelavis/current/edge/traefik/traefik"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --generation) generation="$2"; shift 2 ;;
+    --base-dir) base_dir="$2"; shift 2 ;;
+    --traefik-bin) traefik_bin="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+if [ -z "$generation" ]; then
+  printf '{"valid":false,"error":"missing required argument: generation"}\n'
+  exit 1
+fi
+
+gen_dir="$base_dir/generations/$generation"
+dynamic_config="$gen_dir/traefik-dynamic.json"
+manifest="$gen_dir/manifest.json"
+
+if [ ! -f "$dynamic_config" ]; then
+  printf '{"valid":false,"error":"dynamic configuration file not found"}\n'
+  exit 1
+fi
+
+if [ ! -f "$manifest" ]; then
+  printf '{"valid":false,"error":"generation manifest not found"}\n'
+  exit 1
+fi
+
+# Basic JSON check
+first_char=$(head -c 1 "$dynamic_config" 2>/dev/null || cut -c 1 "$dynamic_config")
+if [ "$first_char" != "{" ]; then
+  printf '{"valid":false,"error":"dynamic configuration is not valid JSON object"}\n'
+  exit 1
+fi
+
+# Size
+size=$(wc -c < "$dynamic_config" | tr -d ' ')
+
+# Verify certificates referenced in dynamic config exist
+cert_missing=false
+missing_file=""
+if grep -q '"certFile"' "$dynamic_config" 2>/dev/null; then
+  certs=$(grep '"certFile"' "$dynamic_config" | sed -e 's/.*"certFile": *"//' -e 's/".*//')
+  for c in $certs; do
+    if [ ! -f "$c" ]; then
+      cert_missing=true
+      missing_file="$c"
+      break
+    fi
+  done
+fi
+
+if [ "$cert_missing" = true ]; then
+  printf '{"valid":false,"error":"referenced certificate file missing: %s"}\n' "$missing_file"
+  exit 1
+fi
+
+printf '{"valid":true,"generation":"%s","dynamicConfigBytes":%s}\n' "$generation" "$size"
+exit 0

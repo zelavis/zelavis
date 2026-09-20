@@ -124,6 +124,18 @@ Available parsers: `parseAsString`, `parseAsStringLiteral`. Add new parsers to `
 
 - Use `pnpm dev` for end-to-end Zelavis runtime and dashboard work
 - Treat the dashboard as a client of Zelavis endpoints. If a dashboard page can perform a platform action, the same action must exist as a server capability and endpoint.
+- Fresh Platforms redirect to `/zelavis/setup` while the existing bootstrap
+  status says an owner is required. The setup wizard is only a client of
+  `/auth/bootstrap`; it must not keep a second completion flag or create an
+  owner through route-local authority. Completed Platforms route through the
+  normal authenticated dashboard/login flow instead.
+- Platform hostname and HTTPS onboarding follows the owner claim through
+  authenticated Zelavis Edge operations. Label the field **Platform hostname**
+  and accept apex or subdomain hostnames; do not present “full domain” as a
+  different mode. Offer “Verify DNS & enable HTTPS,” external TLS, and configure
+  later. DNS/ACME failure is retryable and must not roll back or reopen owner
+  bootstrap. Do not add a visual-only form before the matching JS/HTTP/CLI Edge
+  authority exists, and do not describe ingress TLS as securing the whole host.
 - Official public capabilities also require matching JS SDK and CLI operations.
   When adding or changing a capability for the UI, update all three adapters
   with the same schemas, permissions, errors, and lifecycle; follow AGENTS.md's

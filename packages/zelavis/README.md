@@ -55,6 +55,10 @@ before the first owner can be created. Configure it with
 an auth plugin that supports credential enrollment. The dashboard then uses
 the normal `/zelavis/api/v1/auth/*` endpoints for bootstrap, login, session
 rotation, and logout; `/runtime/access` never fabricates a demo owner.
+The first browser visit opens the `@zelavis/ui` setup wizard; operators can run
+the same guided flow with `zelavis setup`, while automation uses
+`zelavis bootstrap --password-stdin`. All three claim the same durable
+first-owner bootstrap operation.
 
 Access grants with a Project or service scope match only routes declaring the
 same explicit identity. Unscoped and system grants match runtime-wide routes;
@@ -322,6 +326,20 @@ zelavis services list
 
 See the public installation guide for APT, direct `.deb`, archive, and quick
 installer workflows.
+
+Native packaged installations also expose a host-local complete-removal flow:
+
+```bash
+sudo zelavis uninstall --all --dry-run
+sudo zelavis uninstall --all --confirm DELETE-ALL-ZELAVIS-DATA
+```
+
+The runtime-neutral `ZelavisInstallationUninstaller` contract is exported from
+`zelavis/runtime`; Node hosts use `createNodeInstallationUninstaller` from
+`zelavis/adapters/node`. This capability intentionally has no Platform HTTP
+route: it deletes the Platform, Agent, authority material, all Projects and all
+Zelavis-owned host state. npm and source installations are refused because
+their package manager or development workflow owns their lifecycle.
 
 Local Project recovery is data-safe across the pre-release App Data Fabric
 rewrite. When a Project still has the retired single-file App database, Zelavis

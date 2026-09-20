@@ -444,6 +444,34 @@ test("privileged project control routes declare explicit access requirements", a
       permissions: ["server.backends.manage"],
     });
   }
+  assert.deepEqual(routes.get("runtime.edge.read")?.access, {
+    permissions: ["server.edge.view"],
+  });
+  assert.deepEqual(routes.get("runtime.edge.routes.list")?.access, {
+    permissions: ["server.edge.view"],
+  });
+  assert.deepEqual(routes.get("runtime.edge.onboard.preflight")?.access, {
+    permissions: ["server.edge.view"],
+  });
+  assert.deepEqual(routes.get("runtime.edge.onboard")?.access, {
+    permissions: ["server.edge.manage"],
+  });
+  assert.deepEqual(routes.get("runtime.edge.certificates.list")?.access, {
+    permissions: ["server.edge.view"],
+  });
+  assert.deepEqual(routes.get("runtime.edge.certificates.renew")?.access, {
+    permissions: ["server.edge.manage"],
+  });
+  for (const action of ["plan", "switch", "publish"]) {
+    assert.deepEqual(routes.get(`runtime.edge.${action}`)?.access, {
+      permissions: ["server.edge.manage"],
+    });
+  }
+  for (const action of ["put", "delete"]) {
+    assert.deepEqual(routes.get(`runtime.edge.routes.${action}`)?.access, {
+      permissions: ["server.edge.manage"],
+    });
+  }
   // The Project's public front door stays an explicit public data-plane route.
   assert.equal(routes.get("project.frontend.placeholder")?.access, undefined);
   assert.equal(routes.get("storage.files.read")?.access, undefined);
@@ -1357,6 +1385,17 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "runtime.host-operations.submit",
       "runtime.host-operations.audit",
       "runtime.host-operations.get",
+      "runtime.edge.read",
+      "runtime.edge.plan",
+      "runtime.edge.switch",
+      "runtime.edge.routes.list",
+      "runtime.edge.routes.put",
+      "runtime.edge.routes.delete",
+      "runtime.edge.publish",
+      "runtime.edge.onboard.preflight",
+      "runtime.edge.onboard",
+      "runtime.edge.certificates.list",
+      "runtime.edge.certificates.renew",
       "runtime.deployment-backends.list",
       "runtime.deployment-backends.detect",
       "runtime.deployment-backends.enable",

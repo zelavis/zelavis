@@ -2,6 +2,7 @@ export {
   createNodeServiceImporter,
   createNodeServicePackageInstaller,
   createNodeFileArtifactStore,
+  createNodeInstallationUninstaller,
   nodeAdapter,
   nodeAdapter as zelavisNode,
 } from "./node.js";
@@ -11,6 +12,7 @@ export type {
   NodeAdapterProjectOptions,
   NodeAdapterServiceOptions,
   NodeFileArtifactStoreOptions,
+  NodeInstallationUninstallerOptions,
 } from "./node.js";
 
 export { bunAdapter, bunAdapter as zelavisBun } from "./bun.js";

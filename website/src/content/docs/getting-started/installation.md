@@ -98,10 +98,20 @@ zelavis serve --data-dir /srv/zelavis
 
 ## After installation
 
-The service starts the dashboard at `http://127.0.0.1:3000/zelavis`. Put a
-reverse proxy and TLS in front of it before exposing a production installation
-to the internet. Platform data defaults to `/var/lib/zelavis` for packaged
-installs.
+The Platform starts its private dashboard listener at
+`http://127.0.0.1:3000/zelavis`. Packaged Linux installations also install the
+release-pinned, checksum-verified Traefik binary and
+`zelavis-traefik.service`, the first Zelavis Edge adapter. The unit remains
+disabled until Edge can stage and verify a complete publication. Its generated route
+directory starts empty: merely installing Zelavis never publishes an unknown
+hostname or an unverified TLS route.
+
+The setup wizards check Edge after the owner is claimed. Until the host adapter
+can stage and verify a complete route publication, keep using the private
+listener through an SSH tunnel and do not expose port 3000 directly. npm and
+source installations do not install an operating-system reverse proxy; their
+host adapter must be configured separately. Platform data defaults to
+`/var/lib/zelavis` for packaged installs.
 
 Before the first owner is created, configure a one-time bootstrap token with at
 least 32 characters. For an npm-managed process, for example:
@@ -111,9 +121,64 @@ export ZELAVIS_BOOTSTRAP_TOKEN="replace-with-a-random-token-at-least-32-characte
 zelavis serve
 ```
 
+Native package and archive installers generate this token in the private
+`/etc/zelavis/zelavis.env` service environment and print it once at the end of
+installation. Copy that value into either first-run wizard. Existing
+configuration is preserved on upgrades, so an installer never silently rotates
+an operator's bootstrap token.
+
 Open the dashboard, create the first owner with that token, then remove the
 bootstrap token from the service environment and restart Zelavis. The bootstrap
 endpoint permanently refuses to create another owner once an account exists.
+
+The first browser visit redirects to the guided setup wizard at
+`/zelavis/setup`. To perform the same guided setup from an SSH session instead,
+run:
+
+```bash
+zelavis setup --url http://127.0.0.1:3000/zelavis
+```
+
+Both wizards use the same one-time bootstrap endpoint. For unattended installs,
+use `zelavis bootstrap --email <email> --password-stdin`; it remains the
+non-interactive equivalent rather than a separate setup mechanism.
+
+## Completely uninstall a packaged installation
+
+Use the complete uninstall when you want to return a native packaged host to a
+state where the Zelavis installer can be exercised again. Inspect the exact
+scope first:
+
+```bash
+sudo zelavis uninstall --all --dry-run
+```
+
+Then run the destructive operation with its exact acknowledgement:
+
+```bash
+sudo zelavis uninstall --all --confirm DELETE-ALL-ZELAVIS-DATA
+```
+
+This stops and removes the Zelavis Platform, Agent, and Zelavis-owned Traefik
+services; removes the
+packaged releases, command links, APT source and key, local configuration and
+trust material; deletes the installer-recorded data directory (by default
+`/var/lib/zelavis`), including every Project, database, log and runtime record;
+and removes the dedicated system account when it is safe to identify. The
+operation cannot be undone.
+
+Zelavis-owned Traefik binaries, service files, generated routes, and static
+adapter configuration below the installation paths are removed. Zelavis
+intentionally retains shared operating-system packages such as Nginx,
+PHP and MariaDB, systemd journal history, archives and backups outside the data
+directory, and operator-managed proxy, firewall, DNS and TLS configuration.
+Those resources may belong to other workloads, so a Zelavis installer cannot
+prove that it owns them.
+
+Complete uninstall is available only from a native packaged installation
+(quick install, APT, `.deb`, or the release archive). An npm or source checkout
+must be removed with the package manager or development workflow that created
+it; the CLI refuses to guess which data or host resources those workflows own.
 
 The first release matrix targets Linux and macOS on `x64` and `arm64` for
 archives, plus Debian/Ubuntu on `amd64` and `arm64` for APT and `.deb` packages.

@@ -258,6 +258,7 @@ export function DashboardShell({
   const isMobile = useIsMobile();
   const [activeDashboardData, setActiveDashboardData] = React.useState(dashboardData);
   const isLoginRoute = pathname === "/login" || pathname === "/login/";
+  const isSetupRoute = pathname === "/setup" || pathname === "/setup/";
 
   React.useEffect(() => {
     document.documentElement.dataset.zelavisHydrated = "true";
@@ -345,7 +346,7 @@ export function DashboardShell({
     };
   }, []);
 
-  if (isLoginRoute) {
+  if (isLoginRoute || isSetupRoute) {
     return (
       <TooltipProvider>
         <div className="h-svh w-full overflow-y-auto bg-background">

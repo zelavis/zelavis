@@ -169,6 +169,7 @@ export * from "./bundle-store.js";
 export * from "./tls.js";
 export * from "./domain-binding.js";
 export * from "./domain-verifier.js";
+export * from "./edge/index.js";
 import { createSharedBundleStore, type BundleStore } from "./bundle-store.js";
 import type { TlsProvider } from "./tls.js";
 import {
@@ -220,6 +221,50 @@ import {
   createMemorySystemStore,
   type ZelavisSystemStore,
 } from "./system-store.js";
+import {
+  createZelavisEdgeRouteStore,
+  createTraefikEdgeAdapter,
+  createTraefikCertificateDistributor,
+  performEdgeOnboarding,
+  preflightHostname,
+  ZelavisEdgeConflictError,
+  ZelavisEdgeSwitchError,
+  ZelavisEdgeValidationError,
+  createZelavisCertificateController,
+  createAcmeChallengeService,
+  createAcmeClient,
+  type ZelavisCertificateController,
+  type ZelavisEdgeCertificateRecord,
+  type ZelavisEdgeCertificateSummary,
+  type ZelavisEdgeResolvedCertificate,
+  type AcmeChallengeStore,
+  type OrderCertificateOptions,
+  type CheckRenewalsOptions,
+  type RenewalsResult,
+  type ZelavisEdgeHostname,
+  type ZelavisEdgeManager,
+  type ZelavisEdgeOnboardingRequest,
+  type ZelavisEdgePublication,
+  type ZelavisEdgeRoute,
+  type ZelavisEdgeRouteStore,
+} from "./edge/index.js";
+export {
+  createTraefikEdgeAdapter,
+  createTraefikCertificateDistributor,
+  createZelavisCertificateController,
+  createAcmeChallengeService,
+  createAcmeClient,
+  performEdgeOnboarding,
+  preflightHostname,
+  type ZelavisCertificateController,
+  type ZelavisEdgeCertificateRecord,
+  type ZelavisEdgeCertificateSummary,
+  type ZelavisEdgeResolvedCertificate,
+  type AcmeChallengeStore,
+  type OrderCertificateOptions,
+  type CheckRenewalsOptions,
+  type RenewalsResult,
+};
 import { createDomainChallengeService } from "./domain-verifier.js";
 import { synthesizeServiceAppService } from "./service-app.js";
 import { createPlatformAuthRepositories } from "./platform/auth-repositories.js";
@@ -344,6 +389,7 @@ export interface ZelavisSubsystemOptions {
   fabric?: ZelavisFabricOptions;
   storage?: ZelavisStorageOptions;
   workloads?: ZelavisWorkloadsOptions;
+  edgeCertificates?: ZelavisCertificateController;
   /**
    * Whether this installation serves the public root.
    *
@@ -460,6 +506,12 @@ export interface ZelavisServerOptions {
   agentOperations?: ZelavisAgentOperationReader;
   /** Issues authority for release-signed host operations on a supervised Agent. */
   hostOperations?: ZelavisHostOperationBroker;
+  /** Proxy-neutral ingress authority. Concrete proxy execution stays host-provided. */
+  edge?: ZelavisEdgeManager;
+  /** Canonical route and hostname authority. Defaults to System Store backing. */
+  edgeRoutes?: ZelavisEdgeRouteStore;
+  /** Edge certificate authority and ACME controller. */
+  edgeCertificates?: ZelavisCertificateController;
   assistant?: false | ZelavisAssistantResponder;
   bootstrap?: {
     /** One-time secret required to claim the first Platform owner account. */
@@ -552,6 +604,12 @@ export interface ZelavisPlatformResources {
   agentOperations?: ZelavisAgentOperationReader;
   /** Issues authority for release-signed host operations on a supervised Agent. */
   hostOperations?: ZelavisHostOperationBroker;
+  /** Proxy-neutral ingress authority. */
+  edge?: ZelavisEdgeManager;
+  /** Canonical route and hostname authority. */
+  edgeRoutes?: ZelavisEdgeRouteStore;
+  /** Edge certificate authority and ACME controller. */
+  edgeCertificates?: ZelavisCertificateController;
   kv?: ZelavisKeyValueStore;
   files?: ZelavisFileStorage;
   services?: ZelavisServiceActivationController;
@@ -3074,8 +3132,11 @@ async function resolvePlatformCoreService(
   deploymentBackends?: ZelavisDeploymentBackendManager,
   agentOperations?: ZelavisAgentOperationReader,
   hostOperations?: ZelavisHostOperationBroker,
+  edge?: ZelavisEdgeManager,
   runtimeManagementRoutes: readonly ZelavisServerRoute<any>[] = [],
   assistantOption?: false | ZelavisAssistantResponder,
+  edgeRoutes?: ZelavisEdgeRouteStore,
+  edgeCertificates?: ZelavisCertificateController,
 ): Promise<ZelavisRuntimeService<any>> {
   const assistant =
     systemStore && assistantOption !== false
@@ -3138,6 +3199,38 @@ async function resolvePlatformCoreService(
         ? 409
         : 500;
     return createJsonErrorResponse(status, error);
+  }
+
+  function edgeErrorResponse(error: unknown) {
+    const status = error instanceof ZelavisEdgeValidationError
+      ? 400
+      : error instanceof ZelavisEdgeConflictError
+        ? 409
+        : error instanceof ZelavisEdgeSwitchError
+          ? 503
+          : 500;
+    return createJsonErrorResponse(status, error);
+  }
+
+  function readEdgeSwitchInput(body: unknown): {
+    adapterId: string;
+    publication: ZelavisEdgePublication;
+  } {
+    const input = readBodyObject(body);
+    if (typeof input.adapterId !== "string") {
+      throw new ZelavisEdgeValidationError("Edge switch requires adapterId.");
+    }
+    if (!input.publication ||
+        typeof input.publication !== "object" ||
+        Array.isArray(input.publication)) {
+      throw new ZelavisEdgeValidationError(
+        "Edge switch requires a publication object.",
+      );
+    }
+    return {
+      adapterId: input.adapterId,
+      publication: input.publication as unknown as ZelavisEdgePublication,
+    };
   }
 
   return createZelavisCoreService({
@@ -3218,6 +3311,370 @@ async function resolvePlatformCoreService(
           },
         },
         ...hostOperationRoutes(hostOperations),
+        {
+          id: "runtime.edge.read",
+          spec: {
+            operationId: "getEdgeStatus",
+            summary: "Read Edge proxy policy, adapters, and active cutover",
+            tags: ["edge"],
+            responses: {
+              200: { description: "Edge status" },
+              503: { description: "Edge management unavailable" },
+            },
+          },
+          method: "GET",
+          path: "/edge",
+          access: { permissions: ["server.edge.view"] },
+          handler: async () => edge
+            ? {
+                status: 200,
+                body: {
+                  policy: await edge.getPolicy(),
+                  adapters: await edge.listAdapters(),
+                  activeSwitch: await edge.getActiveSwitch(),
+                },
+              }
+            : {
+                status: 503,
+                body: { error: "Edge management is unavailable." },
+              },
+        },
+        ...(["plan", "switch"] as const).map((action) => ({
+          id: `runtime.edge.${action}`,
+          spec: {
+            operationId: action === "plan" ? "planEdgeSwitch" : "switchEdgeAdapter",
+            summary: action === "plan"
+              ? "Preflight an Edge adapter cutover"
+              : "Run a staged, verified Edge adapter cutover",
+            tags: ["edge"],
+            responses: {
+              200: { description: action === "plan" ? "Cutover plan" : "Cutover result" },
+              400: { description: "Invalid publication or unsupported target" },
+              409: { description: "Another cutover is active" },
+              503: { description: "Edge management unavailable or cutover failed" },
+            },
+          },
+          method: "POST" as const,
+          path: `/edge/${action}`,
+          access: { permissions: ["server.edge.manage"] },
+          handler: async ({ body }: { body: unknown }) => {
+            if (!edge) {
+              return {
+                status: 503,
+                body: { error: "Edge management is unavailable." },
+              };
+            }
+            try {
+              const input = readEdgeSwitchInput(body);
+              return action === "plan"
+                ? {
+                    status: 200,
+                    body: {
+                      plan: await edge.planSwitch(
+                        input.adapterId,
+                        input.publication,
+                      ),
+                    },
+                  }
+                : {
+                    status: 200,
+                    body: {
+                      edgeSwitch: await edge.switchAdapter(
+                        input.adapterId,
+                        input.publication,
+                      ),
+                    },
+                  };
+            } catch (error) {
+              return edgeErrorResponse(error);
+            }
+          },
+        })),
+        {
+          id: "runtime.edge.routes.list",
+          spec: {
+            operationId: "listEdgeRoutes",
+            summary: "List canonical Edge routes, hostnames, and current publication",
+            tags: ["edge"],
+            responses: {
+              200: { description: "Edge routes, hostnames, and publication" },
+              503: { description: "Edge route management unavailable" },
+            },
+          },
+          method: "GET",
+          path: "/edge/routes",
+          access: { permissions: ["server.edge.view"] },
+          handler: async ({ query }: { query: URLSearchParams }) => {
+            if (!edgeRoutes) {
+              return {
+                status: 503,
+                body: { error: "Edge route management is unavailable." },
+              };
+            }
+            try {
+              const scope = query.get("scope") ?? undefined;
+              const projectId = query.get("projectId") ?? undefined;
+              const hostname = query.get("hostname") ?? undefined;
+              const [routes, hostnames, publication] = await Promise.all([
+                edgeRoutes.listRoutes({
+                  ...(scope === "platform" || scope === "project" ? { scope } : {}),
+                  ...(projectId ? { projectId } : {}),
+                  ...(hostname ? { hostname } : {}),
+                }),
+                edgeRoutes.listHostnames({
+                  ...(scope === "platform" || scope === "project" ? { scope } : {}),
+                  ...(projectId ? { projectId } : {}),
+                }),
+                edgeRoutes.getCurrentPublication(),
+              ]);
+              return {
+                status: 200,
+                body: { routes, hostnames, publication },
+              };
+            } catch (error) {
+              return edgeErrorResponse(error);
+            }
+          },
+        },
+        {
+          id: "runtime.edge.routes.put",
+          spec: {
+            operationId: "putEdgeRoute",
+            summary: "Create or update a canonical Edge route and optional hostname",
+            tags: ["edge"],
+            responses: {
+              200: { description: "Stored Edge route and optional hostname" },
+              400: { description: "Invalid route or hostname definition" },
+              503: { description: "Edge route management unavailable" },
+            },
+          },
+          method: "POST",
+          path: "/edge/routes",
+          access: { permissions: ["server.edge.manage"] },
+          handler: async ({ body }: { body: unknown }) => {
+            if (!edgeRoutes) {
+              return {
+                status: 503,
+                body: { error: "Edge route management is unavailable." },
+              };
+            }
+            try {
+              const input = readBodyObject(body);
+              const routeInput = "route" in input ? (input.route as ZelavisEdgeRoute) : (input as unknown as ZelavisEdgeRoute);
+              const hostnameInput = "hostname" in input && input.hostname && typeof input.hostname === "object"
+                ? (input.hostname as ZelavisEdgeHostname)
+                : undefined;
+              let storedHostname: ZelavisEdgeHostname | undefined;
+              if (hostnameInput) {
+                storedHostname = await edgeRoutes.putHostname(hostnameInput);
+              }
+              const storedRoute = await edgeRoutes.putRoute(routeInput);
+              return {
+                status: 200,
+                body: {
+                  route: storedRoute,
+                  ...(storedHostname ? { hostname: storedHostname } : {}),
+                },
+              };
+            } catch (error) {
+              return edgeErrorResponse(error);
+            }
+          },
+        },
+        {
+          id: "runtime.edge.routes.delete",
+          spec: {
+            operationId: "deleteEdgeRoute",
+            summary: "Delete a canonical Edge route",
+            tags: ["edge"],
+            responses: {
+              200: { description: "Deletion result" },
+              404: { description: "Route not found" },
+              503: { description: "Edge route management unavailable" },
+            },
+          },
+          method: "DELETE",
+          path: "/edge/routes/:routeId",
+          access: { permissions: ["server.edge.manage"] },
+          handler: async ({ params }: { params: Record<string, string> }) => {
+            if (!edgeRoutes) {
+              return {
+                status: 503,
+                body: { error: "Edge route management is unavailable." },
+              };
+            }
+            try {
+              const deleted = await edgeRoutes.deleteRoute(params.routeId);
+              return deleted
+                ? { status: 200, body: { deleted: true } }
+                : { status: 404, body: { error: `Route "${params.routeId}" was not found.` } };
+            } catch (error) {
+              return edgeErrorResponse(error);
+            }
+          },
+        },
+        {
+          id: "runtime.edge.publish",
+          spec: {
+            operationId: "publishEdgeRoutes",
+            summary: "Compile canonical routes and hostnames into an immutable publication",
+            tags: ["edge"],
+            responses: {
+              200: { description: "Compiled Edge publication" },
+              503: { description: "Edge route management unavailable" },
+            },
+          },
+          method: "POST",
+          path: "/edge/publish",
+          access: { permissions: ["server.edge.manage"] },
+          handler: async () => {
+            if (!edgeRoutes) {
+              return {
+                status: 503,
+                body: { error: "Edge route management is unavailable." },
+              };
+            }
+            try {
+              const publication = await edgeRoutes.compile();
+              return {
+                status: 200,
+                body: { publication },
+              };
+            } catch (error) {
+              return edgeErrorResponse(error);
+            }
+          },
+        },
+        {
+          id: "runtime.edge.onboard.preflight",
+          spec: {
+            operationId: "preflightEdgeHostname",
+            summary: "Preflight validate hostname syntax and DNS resolution",
+            tags: ["edge"],
+            responses: {
+              200: { description: "Hostname preflight check result" },
+            },
+          },
+          method: "GET",
+          path: "/edge/onboard/preflight",
+          access: { permissions: ["server.edge.view"] },
+          handler: async ({ query }: { query: URLSearchParams }) => {
+            const hostname = query.get("hostname") ?? "";
+            const result = await preflightHostname(hostname);
+            return { status: 200, body: result };
+          },
+        },
+        {
+          id: "runtime.edge.onboard",
+          spec: {
+            operationId: "onboardEdgeHostname",
+            summary: "Onboard a Platform hostname or defer public routing",
+            tags: ["edge"],
+            responses: {
+              200: { description: "Hostname onboarding result" },
+              400: { description: "Invalid onboarding request" },
+              503: { description: "Edge route management unavailable" },
+            },
+          },
+          method: "POST",
+          path: "/edge/onboard",
+          access: { permissions: ["server.edge.manage"] },
+          handler: async ({ body }: { body: unknown }) => {
+            if (!edgeRoutes) {
+              return {
+                status: 503,
+                body: { error: "Edge route management is unavailable." },
+              };
+            }
+            try {
+              const input = readBodyObject(body) as unknown as ZelavisEdgeOnboardingRequest;
+              const result = await performEdgeOnboarding(
+                {
+                  routeStore: edgeRoutes,
+                  edgeManager: edge,
+                  certificateController: edgeCertificates,
+                },
+                input,
+              );
+              return {
+                status: result.status === "failed" ? 400 : 200,
+                body: result,
+              };
+            } catch (error) {
+              return edgeErrorResponse(error);
+            }
+          },
+        },
+        {
+          id: "runtime.edge.certificates.list",
+          spec: {
+            operationId: "listEdgeCertificates",
+            summary: "List managed and manual TLS certificates",
+            tags: ["edge"],
+            responses: {
+              200: { description: "Certificate records" },
+              503: { description: "Certificate management unavailable" },
+            },
+          },
+          method: "GET",
+          path: "/edge/certificates",
+          access: { permissions: ["server.edge.view"] },
+          handler: async () => {
+            if (!edgeCertificates) {
+              return {
+                status: 503,
+                body: { error: "Certificate management is unavailable." },
+              };
+            }
+            try {
+              const certificates = await edgeCertificates.listCertificates();
+              return { status: 200, body: { certificates } };
+            } catch (error) {
+              return edgeErrorResponse(error);
+            }
+          },
+        },
+        {
+          id: "runtime.edge.certificates.renew",
+          spec: {
+            operationId: "renewEdgeCertificates",
+            summary: "Renew certificates nearing expiry or order a specific certificate",
+            tags: ["edge"],
+            responses: {
+              200: { description: "Renewal result" },
+              400: { description: "Renewal failed" },
+              503: { description: "Certificate management unavailable" },
+            },
+          },
+          method: "POST",
+          path: "/edge/certificates/renew",
+          access: { permissions: ["server.edge.manage"] },
+          handler: async ({ body }: { body: unknown }) => {
+            if (!edgeCertificates) {
+              return {
+                status: 503,
+                body: { error: "Certificate management is unavailable." },
+              };
+            }
+            try {
+              const input = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+              const hostname = typeof input.hostname === "string" ? input.hostname : undefined;
+              if (hostname) {
+                const certificate = await edgeCertificates.orderCertificate({
+                  hostname,
+                  forceRenew: true,
+                });
+                return { status: 200, body: { renewed: [certificate.ref], certificate } };
+              }
+              const result = await edgeCertificates.checkRenewals({
+                renewIfWithinDays: typeof input.renewIfWithinDays === "number" ? input.renewIfWithinDays : undefined,
+              });
+              return { status: 200, body: result };
+            } catch (error) {
+              return edgeErrorResponse(error);
+            }
+          },
+        },
         {
           id: "runtime.deployment-backends.list",
           spec: {
@@ -4087,6 +4544,12 @@ export async function zelavis(
   const deletionAssistant = systemStore
     ? createAssistantManager({ store: systemStore })
     : undefined;
+  const edgeRoutes =
+    options.edgeRoutes ??
+    (systemStore ? createZelavisEdgeRouteStore({ store: systemStore }) : undefined);
+  const edgeCertificates =
+    options.edgeCertificates ??
+    options.subsystems?.edgeCertificates;
   const deploymentBackends =
     systemStore && options.deploymentBackends?.length
       ? createDeploymentBackendManager({
@@ -4193,6 +4656,15 @@ export async function zelavis(
                   },
                 }]
               : []),
+            ...(edgeRoutes
+              ? [{
+                  id: "edge-routes",
+                  cleanup: (project: Readonly<ZelavisProjectRecord>) =>
+                    edgeRoutes.deleteProjectRoutes(project.id).then(
+                      () => undefined,
+                    ),
+                }]
+              : []),
           ],
         })
       : undefined;
@@ -4272,8 +4744,11 @@ export async function zelavis(
     deploymentBackends,
     options.agentOperations,
     options.hostOperations,
+    options.edge,
     runtimeManagement.routes,
     options.assistant,
+    edgeRoutes,
+    edgeCertificates,
   );
   const subsystemServices = [
     platformCoreService,
@@ -4299,6 +4774,11 @@ export async function zelavis(
   const domainChallengeService = options.domainBindings
     ? createDomainChallengeService(options.domainBindings)
     : undefined;
+  // Mount the ACME HTTP-01 challenge responder when Edge certificate
+  // controller is active, allowing automated issuance and renewal.
+  const acmeChallengeService = edgeCertificates
+    ? createAcmeChallengeService(edgeCertificates.challengeStore)
+    : undefined;
   runtimeConfigServices = [
     sanitizedDashboardService,
     ...subsystemServices,
@@ -4309,6 +4789,7 @@ export async function zelavis(
     sanitizedDashboardService,
     dashboardAppService,
     domainChallengeService,
+    acmeChallengeService,
     ...subsystemServices,
   ].filter(
     (service): service is ZelavisRuntimeService<any> => Boolean(service),
@@ -4615,6 +5096,8 @@ function mergeZelavisServerOptions(
       override.deploymentBackends ?? base.deploymentBackends,
     agentOperations: override.agentOperations ?? base.agentOperations,
     hostOperations: override.hostOperations ?? base.hostOperations,
+    edge: override.edge ?? base.edge,
+    edgeRoutes: override.edgeRoutes ?? base.edgeRoutes,
     serviceRegistry:
       serviceCatalog.length > 0 ||
       discoveredServices.length > 0 ||
@@ -4705,6 +5188,9 @@ function applyPlatformResourceDefaults(
   const nextSubsystems: ZelavisSubsystemOptions = {
     ...(options.subsystems ?? {}),
   };
+  if (!nextSubsystems.edgeCertificates && resources.edgeCertificates) {
+    nextSubsystems.edgeCertificates = resources.edgeCertificates;
+  }
   const nextServiceRegistry: ZelavisServiceRegistryOptions = {
     ...(options.serviceRegistry ?? {}),
   };
@@ -4755,6 +5241,9 @@ function applyPlatformResourceDefaults(
       options.deploymentBackends ?? resources.deploymentBackends,
     agentOperations: options.agentOperations ?? resources.agentOperations,
     hostOperations: options.hostOperations ?? resources.hostOperations,
+    edge: options.edge ?? resources.edge,
+    edgeRoutes: options.edgeRoutes ?? resources.edgeRoutes,
+    edgeCertificates: options.edgeCertificates ?? resources.edgeCertificates,
   };
 }
 

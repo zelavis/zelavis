@@ -1,0 +1,72 @@
+#!/bin/sh
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C
+
+generation=""
+base_dir="/var/lib/zelavis/edge/traefik"
+source_path=""
+config_json=""
+manifest_json=""
+cert_name=""
+cert_pem=""
+key_pem=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --generation) generation="$2"; shift 2 ;;
+    --base-dir) base_dir="$2"; shift 2 ;;
+    --source-path) source_path="$2"; shift 2 ;;
+    --config-json) config_json="$2"; shift 2 ;;
+    --manifest-json) manifest_json="$2"; shift 2 ;;
+    --cert-name) cert_name="$2"; shift 2 ;;
+    --cert-pem) cert_pem="$2"; shift 2 ;;
+    --key-pem) key_pem="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+if [ -z "$generation" ]; then
+  printf '{"error":"missing required argument: generation"}\n'
+  exit 1
+fi
+
+gen_dir="$base_dir/generations/$generation"
+mkdir -p "$gen_dir" || { printf '{"error":"failed to create generation directory"}\n'; exit 1; }
+
+if [ -n "$source_path" ] && [ -d "$source_path" ]; then
+  if [ -f "$source_path/traefik-dynamic.json" ]; then
+    cp "$source_path/traefik-dynamic.json" "$gen_dir/traefik-dynamic.json"
+    chmod 0644 "$gen_dir/traefik-dynamic.json"
+  fi
+  if [ -f "$source_path/manifest.json" ]; then
+    cp "$source_path/manifest.json" "$gen_dir/manifest.json"
+    chmod 0644 "$gen_dir/manifest.json"
+  fi
+fi
+
+if [ -n "$config_json" ]; then
+  printf '%s\n' "$config_json" > "$gen_dir/traefik-dynamic.json"
+  chmod 0644 "$gen_dir/traefik-dynamic.json"
+fi
+
+if [ -n "$manifest_json" ]; then
+  printf '%s\n' "$manifest_json" > "$gen_dir/manifest.json"
+  chmod 0644 "$gen_dir/manifest.json"
+fi
+
+if [ -n "$cert_name" ]; then
+  certs_dir="$base_dir/certs"
+  mkdir -p "$certs_dir" || { printf '{"error":"failed to create certs directory"}\n'; exit 1; }
+  if [ -n "$cert_pem" ]; then
+    printf '%s\n' "$cert_pem" > "$certs_dir/$cert_name.crt"
+    chmod 0644 "$certs_dir/$cert_name.crt"
+  fi
+  if [ -n "$key_pem" ]; then
+    printf '%s\n' "$key_pem" > "$certs_dir/$cert_name.key"
+    chmod 0600 "$certs_dir/$cert_name.key"
+  fi
+fi
+
+printf '{"status":"staged","generation":"%s","path":"%s"}\n' "$generation" "$gen_dir"
+exit 0

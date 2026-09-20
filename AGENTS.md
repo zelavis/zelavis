@@ -154,6 +154,13 @@ current automatically.
 - **System Store** is Platform OS persistence. Local adapters default to
   `.zelavis/system/zelavis.sqlite`. It must stay separate from `zelavis/db`
   project databases and must never appear in a project's Database UI.
+- Fresh installations have one bootstrap state and one first-owner authority.
+  The interactive `zelavis setup` CLI and the `@zelavis/ui` `/setup` route are
+  presentations over the existing `/auth/bootstrap` capability; do not add a
+  second setup flag, owner-creation path, or frontend-only authority. While
+  bootstrap is required, the dashboard redirects every first visit to the
+  setup wizard. Once the durable owner claim succeeds, setup stays closed and
+  the normal authenticated dashboard/login flow owns subsequent visits.
 - The Platform process does not mount an app-facing `zelavis/db` service by
   default. Each Zelavis App project owns its logical database below
   `.zelavis/projects/<projectId>/.zelavis/data`; the official recipe maps its
@@ -332,6 +339,50 @@ Keep traffic balancing, placement, replication, and infrastructure
 provisioning as separate capabilities. A placement is authoritative; a runtime
 URL is only an Agent-reported route target. Replicas do not imply multiple
 writable owners. Provider adapters supply capacity but never define Zelavis.
+
+**Zelavis Edge** is the proxy-neutral Platform ingress control plane, not a
+serverless runtime and not another scheduler. Domains, canonical HTTP/TCP/UDP
+route intent, endpoint generations, certificate identity/material, rollout
+state, and audit history are Platform authority persisted through the System
+Store; they never belong to a Project database or to a reverse proxy's private
+configuration. Traefik, Caddy, Nginx and external/cloud load balancers are
+replaceable execution adapters. Their configuration is compiled output, never
+the source of truth, and they must not independently reinterpret Fabric
+placement.
+
+Switching an Edge adapter is a durable, reversible migration. Preflight every
+active route against the destination's declared capabilities, refuse required
+semantic loss, render and validate shadow configuration, stage certificates and
+targets, health-check the candidate, shift traffic, drain the former adapter,
+and retain rollback state until the cutover is committed. Apps, domains, route
+identity, and certificates survive the switch. Proxy-specific extensions must
+be explicitly namespaced and marked non-portable; an incompatible extension
+blocks automatic migration rather than being ignored. Certificate private keys
+are protected Platform secrets, never proxy-owned authority or audit/log data.
+Do not describe safe Edge switching or distributed certificate automation as
+operational until those reconciliation and failure-path tests pass.
+
+First-run onboarding includes an optional **Platform hostname** step for the
+dashboard/API address. Use hostname terminology: `s1.host.com`,
+`panel.example.com`, and the apex `example.com` are all valid fully qualified
+hostnames; “full domain” is not a separate mode. Hosting/provider automation may
+preseed a per-instance hostname, while independent operators may enter either
+an apex or subdomain. Never infer authority from reverse DNS. Offer
+Zelavis-managed HTTPS (recommended), externally terminated TLS, or configure
+later. The managed action is “Verify DNS & enable HTTPS,” not “secure the
+server”: it verifies routing/reachability before ACME and secures the public
+Platform ingress, not the whole host.
+
+Hostname/TLS setup is a resumable authenticated Edge operation after the
+durable first-owner claim, not extra authority hidden in `/auth/bootstrap` and
+not one transaction with account creation. A DNS/ACME failure leaves the owner
+claim complete and the installation reachable through its local recovery path;
+the dashboard shows the incomplete production-readiness action until retry.
+CLI, HTTP/SDK and dashboard onboarding use the same Edge operations. Do not add
+a hostname form to either wizard until that authority exists. Child-app domains
+remain separate Edge resources, and provider fleets should prefer distinct
+per-instance certificates rather than distributing one wildcard private key to
+every server.
 
 An object store that carries a lease, a fence, or an authoritative publication
 must pass `probeFileStorageGuarantees` first, and every such write must be
@@ -891,6 +942,22 @@ package and one common staged release tree. OS packages may bundle a pinned,
 private Node runtime, but must not introduce a second Platform implementation or
 install over the host's global Node runtime. Keep generated release trees,
 download caches, and artifacts out of Git.
+
+Complete native installation removal is a host-local lifecycle capability, not
+a Platform HTTP/dashboard operation. Its runtime-neutral contract belongs in
+core runtime, concrete filesystem/process/package behavior belongs in the host
+adapter and distribution, and the packaged CLI is the operator surface. Require
+an inspectable dry run plus the exact destructive acknowledgement before
+removing anything. Remove only state whose installer ownership can be proved:
+Platform/Agent units, package records, command links, release trees, Zelavis
+data/config/trust, repository configuration, and a safely identified dedicated
+account. Retain shared host packages, journal history, external archives and
+backups, and operator-managed proxy/firewall/DNS/TLS state. Never add a remote
+complete-wipe route: the operation destroys the authority and server that would
+authorize it. npm/source copies must use their originating lifecycle. Whenever
+an installer starts owning another resource, update the complete-uninstall
+inventory, staged program, isolated destructive-path tests, and public docs in
+the same change.
 
 Each package should remain independently useful and focused.
 

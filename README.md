@@ -24,6 +24,9 @@ APT, direct `.deb`, and manual `.tar.gz`/`.zip` releases use the same staged
 Platform payload. See the [installation guide](website/src/content/docs/getting-started/installation.md)
 and [distribution documentation](distribution/README.md).
 
+Native installers print a one-time bootstrap token. Open the dashboard to use
+the first-run browser wizard, or finish from the terminal with `zelavis setup`.
+
 ## Product Model
 
 Zelavis starts at a Projects overview. A project is the operational unit the dashboard manages:
@@ -311,6 +314,13 @@ The bootstrap token must contain at least 32 characters. It is needed only to
 claim the first owner and is not a login credential. The dashboard performs
 bootstrap, login, rotation, and logout through the same versioned Auth
 endpoints available to SDKs and scripts.
+
+Open the dashboard for the first-run browser wizard, or run the matching
+terminal wizard:
+
+```bash
+zelavis setup --url http://127.0.0.1:3000/zelavis
+```
 
 Current database architecture includes:
 

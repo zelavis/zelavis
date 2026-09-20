@@ -14,46 +14,27 @@ import { resolveReturnTo } from "#/lib/router-basename"
 import { cn } from "#/lib/utils"
 import {
   authenticatePlatform,
-  bootstrapPlatformOwner,
-  getAuthBootstrapStatus,
-  getRuntimeConfig,
+  type RuntimeConfig,
   type RuntimeAuthBootstrapStatus,
 } from "#/lib/runtime-api"
 
 export function LoginForm({
   className,
+  runtime,
+  status,
   ...props
-}: React.ComponentProps<"div">) {
+}: React.ComponentProps<"div"> & {
+  runtime: RuntimeConfig
+  status: RuntimeAuthBootstrapStatus
+}) {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const [status, setStatus] = React.useState<RuntimeAuthBootstrapStatus>()
   const [identifier, setIdentifier] = React.useState("")
-  const [displayName, setDisplayName] = React.useState("")
-  const [bootstrapToken, setBootstrapToken] = React.useState("")
   const [password, setPassword] = React.useState("")
   const [error, setError] = React.useState<string>()
   const [submitting, setSubmitting] = React.useState(false)
 
-  React.useEffect(() => {
-    let active = true
-    void getRuntimeConfig()
-      .then(getAuthBootstrapStatus)
-      .then((next) => {
-        if (active) setStatus(next)
-      })
-      .catch((cause) => {
-        if (active) {
-          setError(cause instanceof Error ? cause.message : String(cause))
-        }
-      })
-    return () => {
-      active = false
-    }
-  }, [])
-
-  const providers = status?.required
-    ? status.enrollmentProviders
-    : status?.providers
+  const providers = status.providers
   // `password` is built into Zelavis and covers both identifier kinds, so it
   // is preferred when present; an installation that replaced it falls through
   // to whatever it does offer.
@@ -67,28 +48,11 @@ export function LoginForm({
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!status || !provider) return
+    if (!provider) return
     setSubmitting(true)
     setError(undefined)
     try {
-      const config = await getRuntimeConfig()
-      if (status.required) {
-        await bootstrapPlatformOwner(config, {
-          bootstrapToken,
-          provider,
-          account: {
-            // The Platform derives the identity from the identifier, so the
-            // form does not have to guess which field it belongs in.
-            ...(acceptsEither
-              ? {}
-              : { email: identifier }),
-            displayName,
-          },
-          credential: { identifier, password },
-        })
-      } else {
-        await authenticatePlatform(config, provider, { identifier, password })
-      }
+      await authenticatePlatform(runtime, provider, { identifier, password })
       navigate(destination, { replace: true, viewTransition: true })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
@@ -102,46 +66,15 @@ export function LoginForm({
       <Card>
         <CardHeader>
           <CardTitle className="text-xl">
-            {status?.required ? "Create the first owner" : "Login to Zelavis"}
+            Login to Zelavis
           </CardTitle>
           <CardDescription>
-            {status?.required
-              ? "Bootstrap this installation with its first Platform owner."
-              : "Authenticate with an installed Zelavis auth provider."}
+            Authenticate with an installed Zelavis auth provider.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit}>
             <div className="flex flex-col gap-6">
-              {status?.required ? (
-                <>
-                  <div className="grid gap-2">
-                    <label htmlFor="bootstrapToken" className="text-sm font-medium leading-none">
-                      Bootstrap token
-                    </label>
-                    <Input
-                      id="bootstrapToken"
-                      type="password"
-                      value={bootstrapToken}
-                      onChange={(event) => setBootstrapToken(event.target.value)}
-                      autoComplete="off"
-                      minLength={32}
-                      required
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <label htmlFor="displayName" className="text-sm font-medium leading-none">
-                      Display name
-                    </label>
-                    <Input
-                      id="displayName"
-                      value={displayName}
-                      onChange={(event) => setDisplayName(event.target.value)}
-                      autoComplete="name"
-                    />
-                  </div>
-                </>
-              ) : null}
               <div className="grid gap-2">
                 <label
                   htmlFor="identifier"
@@ -173,8 +106,7 @@ export function LoginForm({
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  autoComplete={status?.required ? "new-password" : "current-password"}
-                  minLength={status?.required ? 15 : undefined}
+                  autoComplete="current-password"
                   required
                 />
               </div>
@@ -183,17 +115,9 @@ export function LoginForm({
                   {error}
                 </p>
               ) : null}
-              {status && providers?.length === 0 ? (
+              {providers.length === 0 ? (
                 <p role="alert" className="text-sm text-destructive">
-                  {status.required
-                    ? "No credential-enrollment auth provider is available on this installation."
-                    : "No interactive authentication provider is installed."}
-                </p>
-              ) : null}
-              {status?.required && !status.available ? (
-                <p role="alert" className="text-sm text-destructive">
-                  Bootstrap is disabled. Configure ZELAVIS_BOOTSTRAP_TOKEN or
-                  bootstrap.token and restart the Platform.
+                  No interactive authentication provider is installed.
                 </p>
               ) : null}
               <div className="flex flex-col gap-3">
@@ -201,17 +125,13 @@ export function LoginForm({
                   type="submit"
                   className="w-full"
                   disabled={
-                    !status ||
                     !provider ||
-                    submitting ||
-                    (status.required && (!status.available || bootstrapToken.length < 32))
+                    submitting
                   }
                 >
                   {submitting
                     ? "Please wait…"
-                    : status?.required
-                      ? "Create owner"
-                      : "Login"}
+                    : "Login"}
                 </Button>
               </div>
             </div>

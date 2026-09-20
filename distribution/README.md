@@ -12,8 +12,10 @@ deployment under `distribution/.tmp/stage/platform`, and adds:
 - the exact official Project recipe catalog and dashboard assets shipped by `zelavis`
 - production package dependencies, including native modules for the target CPU
 - a private, checksum-verified Node runtime pinned by `release.json`
+- on Linux, a release-pinned, checksum-verified Traefik binary plus the
+  hardened `zelavis-traefik.service` Edge adapter
 - the `zelavis` launcher and systemd service
-- the archive installer and release manifest
+- the archive installer, complete-uninstall program, and release manifest
 
 The Debian package also declares Nginx, PHP-FPM and the WordPress PHP
 extensions, MariaDB server/client core binaries, and `tar` as dependencies. The
@@ -25,6 +27,21 @@ ports, logs, site files, credentials, and database data.
 The private Node runtime lives under `/opt/zelavis/current/runtime/node` after
 installation. It does not replace `/usr/bin/node` and cannot conflict with Node
 versions used by other applications.
+
+Traefik lives under `/opt/zelavis/current/edge/traefik`; its systemd unit can
+listen on ports 80 and 443 through a narrow capability boundary. The unit is
+installed but disabled, and its watched generated-route directory starts empty,
+so installation alone claims no ports and exposes no hostname. Zelavis Edge
+must stage, probe, and activate a canonical publication before enabling it. The static adapter file is a dpkg conffile at
+`/etc/zelavis/edge/traefik/traefik.yml`; generated output lives under
+`/var/lib/zelavis/edge/traefik`.
+
+Fresh Debian and systemd archive installations generate a 32-byte first-owner
+bootstrap token in root-readable `/etc/zelavis/zelavis.env`. The installer
+prints it once for the browser or `zelavis setup` wizard. Upgrades preserve an
+existing environment file and never rotate the token. The durable bootstrap
+claim closes after the first owner is created; complete uninstall removes this
+installer-owned configuration with the rest of `/etc/zelavis`.
 
 ## Build commands
 
@@ -132,6 +149,34 @@ in this repository.
 - Direct Debian package: `apt install ./zelavis_<version>_<arch>.deb`.
 - Manual upload: extract `.tar.gz` or `.zip`, then run its `install.sh`.
 - npm: users who manage Node 24 themselves can run `npm install -g zelavis`.
+
+## Complete native uninstall
+
+Every staged release carries `share/uninstall.sh`, and the packaged CLI invokes
+it through the Node host adapter. Operators can inspect the owned inventory and
+then remove the complete native installation:
+
+```bash
+sudo zelavis uninstall --all --dry-run
+sudo zelavis uninstall --all --confirm DELETE-ALL-ZELAVIS-DATA
+```
+
+The native installer records customized data and command locations in an
+owner-only installation receipt under the installation prefix, so the later
+uninstall does not depend on recreating the original shell environment.
+
+The removal inventory includes the Platform, Agent, and Zelavis-owned Traefik
+units and files, Debian package
+records when present, command links, the complete release tree, Platform and
+Project data, `/etc/zelavis`, the Zelavis APT source/key, and the dedicated
+system account when its properties prove it is installer-owned. It deliberately
+retains shared host dependencies, journal history, external archives/backups,
+and operator networking/TLS configuration.
+
+Any release change that adds installer-owned state must update the uninstall
+inventory, its isolated destructive-path test, and the public installation
+guide in the same change. Complete removal is not offered to npm/source copies:
+their original package manager or development workflow owns that lifecycle.
 
 Archive and npm installations can provision the native WordPress dependencies
 through APT or Homebrew on first use when Zelavis has package-install authority.

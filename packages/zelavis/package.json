@@ -28,6 +28,18 @@
       "types": "./dist/core/fabric/index.d.ts",
       "import": "./dist/core/fabric/index.js"
     },
+    "./edge": {
+      "types": "./dist/edge/index.d.ts",
+      "import": "./dist/edge/index.js"
+    },
+    "./edge/routes": {
+      "types": "./dist/edge/routes.d.ts",
+      "import": "./dist/edge/routes.js"
+    },
+    "./edge/traefik": {
+      "types": "./dist/edge/traefik-compiler.d.ts",
+      "import": "./dist/edge/traefik-compiler.js"
+    },
     "./workload": {
       "types": "./dist/core/workload/index.d.ts",
       "import": "./dist/core/workload/index.js"
@@ -183,12 +195,14 @@
     "url": "https://github.com/zelavis/zelavis/issues"
   },
   "dependencies": {
+    "@clack/prompts": "^1.8.0",
     "@zelavis/app": "workspace:*",
     "@zelavis/auth": "workspace:*",
     "@zelavis/marketplace": "workspace:*",
     "better-sqlite3": "^13.0.3",
     "effect": "4.0.0-rc.113",
-    "jose": "^6.2.12"
+    "jose": "^6.2.12",
+    "picocolors": "^1.1.1"
   },
   "devDependencies": {
     "@effect/language-service": "^0.87.2",

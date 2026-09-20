@@ -21,6 +21,8 @@ function parseArgs(args) {
   const options = {
     output: defaultOutput,
     build: true,
+    platform: undefined,
+    architecture: undefined,
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -29,6 +31,12 @@ function parseArgs(args) {
       index += 1;
     } else if (arg === "--skip-build") {
       options.build = false;
+    } else if (arg === "--platform") {
+      options.platform = args[index + 1];
+      index += 1;
+    } else if (arg === "--arch" || arg === "--architecture") {
+      options.architecture = args[index + 1];
+      index += 1;
     } else {
       throw new Error(`Unknown option: ${arg}`);
     }
@@ -51,13 +59,15 @@ function run(command, args, options = {}) {
   });
 }
 
-function target() {
+function target(options = {}) {
   const platforms = { linux: "linux", darwin: "darwin" };
-  const architectures = { x64: "x64", arm64: "arm64" };
-  const platform = platforms[process.platform];
-  const architecture = architectures[process.arch];
+  const architectures = { x64: "x64", arm64: "arm64", amd64: "x64" };
+  const platform = platforms[options.platform ?? process.platform];
+  const architecture = architectures[options.architecture ?? process.arch];
   if (!platform || !architecture) {
-    throw new Error(`Unsupported release target: ${process.platform}-${process.arch}`);
+    throw new Error(
+      `Unsupported release target: ${options.platform ?? process.platform}-${options.architecture ?? process.arch}`,
+    );
   }
   return { platform, architecture };
 }
@@ -110,6 +120,37 @@ async function installNodeRuntime(output, nodeVersion, releaseTarget) {
   await rename(join(runtimeDirectory, directoryName), join(runtimeDirectory, "node"));
 }
 
+async function installTraefikRuntime(output, traefikVersion, releaseTarget) {
+  if (releaseTarget.platform !== "linux") return false;
+  const architecture = { x64: "amd64", arm64: "arm64" }[releaseTarget.architecture];
+  if (!architecture) {
+    throw new Error(`Unsupported Traefik architecture: ${releaseTarget.architecture}`);
+  }
+  const archiveName = `traefik_v${traefikVersion}_linux_${architecture}.tar.gz`;
+  const checksumsName = `traefik_v${traefikVersion}_checksums.txt`;
+  const baseUrl = `https://github.com/traefik/traefik/releases/download/v${traefikVersion}`;
+  const cacheDirectory = join(distributionDirectory, ".cache", "traefik", traefikVersion);
+  const archivePath = join(cacheDirectory, archiveName);
+  const checksumsPath = join(cacheDirectory, checksumsName);
+  await mkdir(cacheDirectory, { recursive: true });
+  try { await readFile(archivePath); } catch { await download(`${baseUrl}/${archiveName}`, archivePath); }
+  try { await readFile(checksumsPath); } catch { await download(`${baseUrl}/${checksumsName}`, checksumsPath); }
+
+  const expected = (await readFile(checksumsPath, "utf8"))
+    .split("\n")
+    .map((line) => line.trim().split(/\s+/))
+    .find(([, name]) => name === archiveName)?.[0];
+  if (!expected) throw new Error(`Traefik checksum is missing for ${archiveName}.`);
+  const actual = createHash("sha256").update(await readFile(archivePath)).digest("hex");
+  if (actual !== expected) throw new Error(`Traefik checksum mismatch for ${archiveName}.`);
+
+  const targetDirectory = join(output, "edge", "traefik");
+  await mkdir(targetDirectory, { recursive: true });
+  run("tar", ["-xzf", archivePath, "-C", targetDirectory]);
+  await chmod(join(targetDirectory, "traefik"), 0o755);
+  return true;
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   assertDistributionPath(options.output);
@@ -119,7 +160,7 @@ async function main() {
   const releaseConfig = JSON.parse(
     await readFile(join(distributionDirectory, "release.json"), "utf8"),
   );
-  const releaseTarget = target();
+  const releaseTarget = target(options);
 
   await rm(options.output, { recursive: true, force: true });
   await mkdir(options.output, { recursive: true });
@@ -150,6 +191,16 @@ async function main() {
     join(distributionDirectory, "runtime", "zelavis-agent.service"),
     join(options.output, "share", "zelavis-agent.service"),
   );
+  if (releaseTarget.platform === "linux") {
+    await copyFile(
+      join(distributionDirectory, "runtime", "zelavis-traefik.service"),
+      join(options.output, "share", "zelavis-traefik.service"),
+    );
+    await copyFile(
+      join(distributionDirectory, "runtime", "traefik.yml"),
+      join(options.output, "share", "traefik.yml"),
+    );
+  }
   // The trust store ships beside the release; packages install it root-owned
   // at /etc/zelavis/operation-trust.json. Operations are signed now, before
   // the runtime artifact digest covers them.
@@ -176,8 +227,17 @@ async function main() {
     join(distributionDirectory, "installers", "archive-install.sh"),
     join(options.output, "install.sh"),
   );
+  await copyFile(
+    join(distributionDirectory, "installers", "uninstall.sh"),
+    join(options.output, "share", "uninstall.sh"),
+  );
 
   await installNodeRuntime(options.output, releaseConfig.nodeVersion, releaseTarget);
+  const traefikBundled = await installTraefikRuntime(
+    options.output,
+    releaseConfig.traefikVersion,
+    releaseTarget,
+  );
 
   const manifest = {
     schemaVersion: releaseConfig.schemaVersion,
@@ -185,6 +245,11 @@ async function main() {
     version: packageManifest.version,
     nodeVersion: releaseConfig.nodeVersion,
     minimumNodeMajor: releaseConfig.minimumNodeMajor,
+    edge: {
+      defaultAdapter: "traefik",
+      traefikVersion: releaseConfig.traefikVersion,
+      bundled: traefikBundled,
+    },
     platform: releaseTarget.platform,
     architecture: releaseTarget.architecture,
     builtAt: new Date().toISOString(),
@@ -195,6 +260,7 @@ async function main() {
   );
   await chmod(join(options.output, "bin", "zelavis"), 0o755);
   await chmod(join(options.output, "install.sh"), 0o755);
+  await chmod(join(options.output, "share", "uninstall.sh"), 0o755);
 
   const { createArtifactDigest, createRuntimeArtifactManifestDigest, defineRuntimeArtifact } =
     await import("../../packages/zelavis/dist/core/artifact/index.js");
@@ -212,12 +278,19 @@ async function main() {
     return files.sort();
   }
   const files = await stagedFiles(options.output);
-  const fileDigests = Object.fromEntries(
-    await Promise.all(files.map(async (path) => [
-      path,
-      await createArtifactDigest(await readFile(join(options.output, path))),
-    ])),
-  );
+  const digestEntries = [];
+  const digestConcurrency = 32;
+  for (let index = 0; index < files.length; index += digestConcurrency) {
+    digestEntries.push(
+      ...await Promise.all(
+        files.slice(index, index + digestConcurrency).map(async (path) => [
+          path,
+          await createArtifactDigest(await readFile(join(options.output, path))),
+        ]),
+      ),
+    );
+  }
+  const fileDigests = Object.fromEntries(digestEntries);
   const runtimeArtifactInput = {
     formatVersion: "ZELAVIS_RUNTIME_ARTIFACT_V1",
     name: `zelavis-${releaseTarget.platform}-${releaseTarget.architecture}`,
@@ -231,6 +304,8 @@ async function main() {
       platform: releaseTarget.platform,
       architecture: releaseTarget.architecture,
       nodeVersion: releaseConfig.nodeVersion,
+      edgeDefaultAdapter: "traefik",
+      traefikVersion: releaseConfig.traefikVersion,
     },
   };
   const runtimeArtifact = defineRuntimeArtifact({

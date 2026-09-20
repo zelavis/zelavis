@@ -117,6 +117,11 @@ principal:
 - reseller: projects and customers owned by that reseller
 - customer: only their projects and allowed project actions
 
+Project creation can assign an initial Project-owner grant, but the creator ID
+is not an authorization shortcut. Owners and superadmins can see all Projects
+regardless of who created them; every other inventory item and action is
+filtered by explicit grants and still enforced by its endpoint.
+
 This is the intended foundation for a future official Hosting Provider module.
 The module should not create a separate customer permission system. It should
 create customers, subscriptions, packages, and grants that feed the same core

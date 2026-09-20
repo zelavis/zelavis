@@ -36,6 +36,18 @@ import {
   createHostOperationBroker,
   type ZelavisHostOperationBroker,
 } from "../platform/host-operations.js";
+import {
+  createZelavisEdgeManager,
+  createZelavisEdgeRouteStore,
+  createZelavisCertificateController,
+  createTraefikEdgeAdapter,
+  createTraefikCertificateDistributor,
+  createAgentHostOperationInvoker,
+  toPublicationSummary,
+  type ZelavisEdgeManager,
+  type ZelavisEdgeRouteStore,
+  type ZelavisCertificateController,
+} from "../edge/index.js";
 export {
   resolveLocalPackageManifest,
   createLocalRuntimeServiceManifestResolver,
@@ -44,6 +56,10 @@ export {
   createNodeFileArtifactStore,
   type NodeFileArtifactStoreOptions,
 } from "./_node-artifact-store.js";
+export {
+  createNodeInstallationUninstaller,
+  type NodeInstallationUninstallerOptions,
+} from "./_node-installation-uninstaller.js";
 
 export interface NodeAdapterDatabaseOptions {
   /** Directory holding one SQLite file per shard. */
@@ -111,6 +127,7 @@ export interface NodeAdapterOptions {
   kv?: false | {
     kind?: "memory";
   };
+  edge?: false;
 }
 
 export const createNodeServicePackageInstaller = createLocalRuntimeServicePackageInstaller;
@@ -287,6 +304,56 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         });
       }
 
+      let edgeManager: ZelavisEdgeManager | undefined;
+      let edgeRoutes: ZelavisEdgeRouteStore | undefined;
+      let edgeCertificates: ZelavisCertificateController | undefined;
+      if (options.edge !== false && !isProjectRuntime && systemStore) {
+        edgeRoutes = createZelavisEdgeRouteStore({ store: systemStore });
+        const masterSecretRecord = await systemStore.get("platform", "master-secret");
+        let masterSecret: string;
+        if (masterSecretRecord && typeof masterSecretRecord.value === "string") {
+          masterSecret = masterSecretRecord.value;
+        } else {
+          const { randomBytes } = await import("node:crypto");
+          masterSecret = randomBytes(32).toString("hex");
+          await systemStore.set("platform", "master-secret", masterSecret);
+        }
+        edgeCertificates = createZelavisCertificateController({
+          store: systemStore,
+          masterSecret,
+        });
+
+        if (hostOperations && agentClient) {
+          const invoker = createAgentHostOperationInvoker({
+            broker: hostOperations,
+            agent: agentClient,
+          });
+          const traefikAdapter = createTraefikEdgeAdapter({
+            invoker,
+            routeStore: edgeRoutes,
+          });
+          const traefikCerts = createTraefikCertificateDistributor({
+            invoker,
+            certificateResolver: async (ref) => {
+              const resolved = await edgeCertificates?.resolveCertificate(ref);
+              return resolved ? { certPem: resolved.certPem, keyPem: resolved.keyPem } : undefined;
+            },
+          });
+          const routeStore = edgeRoutes;
+          edgeManager = createZelavisEdgeManager({
+            store: systemStore,
+            defaultAdapterId: "traefik",
+            adapters: [traefikAdapter],
+            certificates: traefikCerts,
+            getPublication: async () => {
+              const current = await routeStore.getCurrentPublication();
+              return current ? toPublicationSummary(current) : undefined;
+            },
+          });
+          await edgeManager.reconcile().catch(() => undefined);
+        }
+      }
+
       const fileStorage =
         options.files === false
           ? undefined
@@ -332,6 +399,9 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
                 nativeProjectRuntime: projectsEnabled ? projectRuntime : undefined,
               }),
           ...(hostOperations ? { hostOperations } : {}),
+          ...(edgeManager ? { edge: edgeManager } : {}),
+          ...(edgeRoutes ? { edgeRoutes } : {}),
+          ...(edgeCertificates ? { edgeCertificates } : {}),
           kv: options.kv === false ? undefined : createMemoryKeyValueStore(),
           files: fileStorage,
           servicePackages:

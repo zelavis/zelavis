@@ -15,6 +15,7 @@ import { DashboardShell } from "#/components/DashboardShell";
 import { DirectionProvider } from "#/components/ui/direction";
 import {
   beginNavigationRuntimeResolve,
+  getAuthBootstrapStatus,
   commitNavigationRuntime,
   getDashboardSettings,
   getDashboardAccess,
@@ -58,18 +59,27 @@ export async function clientLoader({ request }: Route.ClientLoaderArgs) {
   const projectId = inferProjectIdFromRequestUrl(request.url);
   const requestUrl = new URL(request.url);
   const isLoginRoute = /\/login\/?$/u.test(requestUrl.pathname);
+  const isSetupRoute = /\/setup\/?$/u.test(requestUrl.pathname);
 
   // Set up the deferred promise SYNCHRONOUSLY (before any await) so that
   // child loaders running in parallel can find and await it.
   beginNavigationRuntimeResolve(projectId);
 
   const controlRuntime = await getRuntimeConfig();
-  if (isLoginRoute) {
+  const bootstrapStatus = await getAuthBootstrapStatus(controlRuntime);
+  if (bootstrapStatus.required && !isSetupRoute) {
+    throw redirect("/setup");
+  }
+  if (!bootstrapStatus.required && isSetupRoute) {
+    throw redirect("/");
+  }
+  if (isLoginRoute || isSetupRoute) {
     commitNavigationRuntime(controlRuntime);
     const settings = await getDashboardSettings(controlRuntime);
     return {
       controlRuntime,
       runtime: controlRuntime,
+      bootstrapStatus,
       settings,
       databaseCollections: [],
       schemaCollections: [],
@@ -160,6 +170,7 @@ export async function clientLoader({ request }: Route.ClientLoaderArgs) {
     projectRuntime: projectResult.runtime,
     assistantThreads: assistantResult.threads,
     assistantResponder: assistantResult.responder,
+    bootstrapStatus,
   };
 }
 

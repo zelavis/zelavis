@@ -118,6 +118,22 @@ test("--password is refused so the owner secret stays out of argv", async () => 
   assert.match(errors.join("\n"), /--password is not accepted/);
 });
 
+test("setup is the interactive wizard and points automation at bootstrap", async () => {
+  const errors = [];
+  const consoleError = console.error;
+  console.error = (message) => errors.push(String(message));
+  const exitCode = process.exitCode;
+  try {
+    await runCli(["setup"]);
+  } finally {
+    console.error = consoleError;
+    process.exitCode = exitCode;
+  }
+
+  assert.match(errors.join("\n"), /interactive and requires a terminal/u);
+  assert.match(errors.join("\n"), /zelavis bootstrap/u);
+});
+
 test("bootstrap status explains a Platform with no credential provider", () => {
   const summary = formatBootstrapStatus({
     ...READY_STATUS,

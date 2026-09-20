@@ -1,0 +1,26 @@
+# Static adapter configuration. Canonical domains, routes, certificate
+# references, and active-adapter state remain in Zelavis; watched files are
+# disposable compiled output.
+api:
+  dashboard: false
+  insecure: false
+
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+
+providers:
+  file:
+    directory: /var/lib/zelavis/edge/traefik/active
+    watch: true
+
+ping: {}
+
+log:
+  level: INFO
+  format: json
+
+accessLog:
+  format: json
