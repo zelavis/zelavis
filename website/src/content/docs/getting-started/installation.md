@@ -146,19 +146,40 @@ Use an SSH tunnel if port 3000 is blocked by a cloud firewall, or if you prefer 
 transmitting initial setup credentials over unencrypted HTTP over the public internet
 before TLS is active:
 
-1. On your **local machine**, open an SSH tunnel:
+1. On your **local machine**, open an SSH tunnel using your preferred SSH authentication method:
+
+   **Using an explicit SSH private key (recommended for cloud servers like Hetzner/AWS):**
    ```bash
-   ssh -L 3000:localhost:3000 root@<your-server-ip>
+   ssh -i ~/.ssh/id_ed25519 -L 3000:localhost:3000 root@<your-server-ip>
    ```
-   *(Keep this terminal window open while you perform setup).*
+   *(Replace `~/.ssh/id_ed25519` with the path to your private key, such as `~/.ssh/id_rsa`).*
+
+   **Using a non-root user (e.g. `ubuntu` or `debian`):**
+   ```bash
+   ssh -i ~/.ssh/id_ed25519 -L 3000:localhost:3000 ubuntu@<your-server-ip>
+   ```
+
+   **Using a non-standard SSH port (e.g. port 2222):**
+   ```bash
+   ssh -i ~/.ssh/id_ed25519 -p 2222 -L 3000:localhost:3000 root@<your-server-ip>
+   ```
+
+   **Using an SSH config host alias (`~/.ssh/config`):**
+   ```bash
+   # If ~/.ssh/config defines Host my-server:
+   ssh -L 3000:localhost:3000 my-server
+   ```
+
+   *(Keep this terminal session open while you perform setup).*
+
 2. Open your local web browser to:
    ```text
    http://localhost:3000/zelavis/setup
    ```
-3. Enter the **bootstrap token** and configure your Owner credentials.
+3. Enter the **bootstrap token** from `/var/lib/zelavis/system/bootstrap.token` and configure your Owner credentials.
 4. Select **Managed TLS** and provide your domain.
 5. When the wizard confirms your domain is live and certificates are active, close
-   the SSH tunnel (`Ctrl+C`).
+   the SSH tunnel (`Ctrl+C` or exit the SSH session).
 6. Access your platform directly at:
    ```text
    https://yourdomain.com/zelavis
