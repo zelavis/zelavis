@@ -433,8 +433,8 @@ importers:
         specifier: ^6.0.3
         version: 6.0.3(lodash@4.18.1)(marked@4.3.0)(react-dom@19.2.5(react@19.2.5))(react-responsive-carousel@3.2.23)(react@19.2.5)
       '@lexical/history':
-        specifier: ^0.50.0
-        version: 0.50.0(typescript@7.0.2)
+        specifier: ^0.51.0
+        version: 0.51.0(typescript@7.0.2)
       '@lexical/html':
         specifier: ^0.50.0
         version: 0.50.0(typescript@7.0.2)
@@ -1894,6 +1894,14 @@ packages:
       typescript:
         optional: true
 
+  '@lexical/extension@0.51.0':
+    resolution: {integrity: sha512-PR1cKenPgRh8QKeyAlPz5KY60kxnV624UGOVZ2W4GrZjUtvCx4eKgVu/Pw1TuuK/aSLBCY1f6VxMF3hhs+CD+w==}
+    peerDependencies:
+      typescript: '>=5.2'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+
   '@lexical/hashtag@0.50.0':
     resolution: {integrity: sha512-KnkJU+49HV47KrgCoS+zqUQuTZ/e5CtH7ttu0ZgAcZJyNojZ7kHbqtdiH78kZSuqBknD75l+VCNJBpg6ShdtlQ==}
     peerDependencies:
@@ -1910,6 +1918,14 @@ packages:
       typescript:
         optional: true
 
+  '@lexical/history@0.51.0':
+    resolution: {integrity: sha512-dymiLsX003GoXTn06Nt9mZXbJhMRdB9qSvg+PEBtqUDMKCGEJ+qT0w+NsbF+MW1VOV8Qzs9nayk2lwklx0526g==}
+    peerDependencies:
+      typescript: '>=5.2'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+
   '@lexical/html@0.50.0':
     resolution: {integrity: sha512-vMdMWvOyD9EXljNCJk3thms/WEBMUR0rLLaJdzcOk/CwUiAv1KPopGp/8vW0zFmnu42n5i9ufERv0BZ/UGzZMw==}
     peerDependencies:
@@ -1920,6 +1936,14 @@ packages:
 
   '@lexical/internal@0.50.0':
     resolution: {integrity: sha512-FGfEKY1L1aIHEh/O+RcRxeLRQV0g95MuU5b26YuzGGyd0IX90pliK9bVph54OaqDdS1AQ0MEVEFGXfSXaGJzxg==}
+    peerDependencies:
+      typescript: '>=5.2'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+
+  '@lexical/internal@0.51.0':
+    resolution: {integrity: sha512-4f0k20V92koqXFpYPiu9MobSQuhTXtSL6RvQSjGKq4QOUMaNl+P5nNtvf2PN732ch/hEkWM7ZBw0WVlAmg9pxg==}
     peerDependencies:
       typescript: '>=5.2'
     peerDependenciesMeta:
@@ -2003,6 +2027,14 @@ packages:
       typescript:
         optional: true
 
+  '@lexical/selection@0.51.0':
+    resolution: {integrity: sha512-nkZH9MkNX2m2DBSBVeKVpau/OV7bkHKeUsSaim22yPYiKRncXlRZFLH/avI6joOh6mDt3gGVVBP2BUnKw+duNA==}
+    peerDependencies:
+      typescript: '>=5.2'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+
   '@lexical/table@0.50.0':
     resolution: {integrity: sha512-K5GDw8oIsujL8IQY9L5PJXxkODs0c9gqL1CROcfLw7kE4icNXeIVrK/kQ7K3SxQ/stpb5NnBLERTK9ohzPEuLQ==}
     peerDependencies:
@@ -2021,6 +2053,14 @@ packages:
 
   '@lexical/utils@0.50.0':
     resolution: {integrity: sha512-iFEKYQufeCtx9I918SteutyMkEKlR6VNldovnCE2ue9ilfKMnj8ghhenMaLzRfslzttvMLrn8d9DP5TWysZqZw==}
+    peerDependencies:
+      typescript: '>=5.2'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+
+  '@lexical/utils@0.51.0':
+    resolution: {integrity: sha512-x2tGha3n3Slf6tdHXAcbg+vk8zoKK94Y3auVzJ7pE77UEUdxnMd6B4fk953oQgTkJHFwgVFX/bUgThsJEGW4Ew==}
     peerDependencies:
       typescript: '>=5.2'
     peerDependenciesMeta:
@@ -5578,6 +5618,14 @@ packages:
       typescript:
         optional: true
 
+  lexical@0.51.0:
+    resolution: {integrity: sha512-uwThveE7nnR3ewETt9q7KBgbXVwtx7ZntJXWbonI/IrrdF7VtIbAGgqJcYxPchkQVjIppIzNoWaFolDd9Yph0g==}
+    peerDependencies:
+      typescript: '>=5.2'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+
   lib0@0.2.117:
     resolution: {integrity: sha512-DeXj9X5xDCjgKLU/7RR+/HQEVzuuEUiwldwOGsHK/sfAfELGWEyTcf0x+uOvCvK3O2zPmZePXWL85vtia6GyZw==}
     engines: {node: '>=16'}
@@ -8927,6 +8975,15 @@ snapshots:
     optionalDependencies:
       typescript: 7.0.2
 
+  '@lexical/extension@0.51.0(typescript@7.0.2)':
+    dependencies:
+      '@lexical/internal': 0.51.0(typescript@7.0.2)
+      '@lexical/utils': 0.51.0(typescript@7.0.2)
+      '@preact/signals-core': 1.14.4
+      lexical: 0.51.0(typescript@7.0.2)
+    optionalDependencies:
+      typescript: 7.0.2
+
   '@lexical/hashtag@0.50.0(typescript@7.0.2)':
     dependencies:
       '@lexical/text': 0.50.0(typescript@7.0.2)
@@ -8943,6 +9000,14 @@ snapshots:
     optionalDependencies:
       typescript: 7.0.2
 
+  '@lexical/history@0.51.0(typescript@7.0.2)':
+    dependencies:
+      '@lexical/extension': 0.51.0(typescript@7.0.2)
+      '@lexical/utils': 0.51.0(typescript@7.0.2)
+      lexical: 0.51.0(typescript@7.0.2)
+    optionalDependencies:
+      typescript: 7.0.2
+
   '@lexical/html@0.50.0(typescript@7.0.2)':
     dependencies:
       '@lexical/extension': 0.50.0(typescript@7.0.2)
@@ -8954,6 +9019,10 @@ snapshots:
       typescript: 7.0.2
 
   '@lexical/internal@0.50.0(typescript@7.0.2)':
+    optionalDependencies:
+      typescript: 7.0.2
+
+  '@lexical/internal@0.51.0(typescript@7.0.2)':
     optionalDependencies:
       typescript: 7.0.2
 
@@ -9064,6 +9133,13 @@ snapshots:
     optionalDependencies:
       typescript: 7.0.2
 
+  '@lexical/selection@0.51.0(typescript@7.0.2)':
+    dependencies:
+      '@lexical/internal': 0.51.0(typescript@7.0.2)
+      lexical: 0.51.0(typescript@7.0.2)
+    optionalDependencies:
+      typescript: 7.0.2
+
   '@lexical/table@0.50.0(typescript@7.0.2)':
     dependencies:
       '@lexical/clipboard': 0.50.0(typescript@7.0.2)
@@ -9087,6 +9163,14 @@ snapshots:
       '@lexical/internal': 0.50.0(typescript@7.0.2)
       '@lexical/selection': 0.50.0(typescript@7.0.2)
       lexical: 0.50.0(typescript@7.0.2)
+    optionalDependencies:
+      typescript: 7.0.2
+
+  '@lexical/utils@0.51.0(typescript@7.0.2)':
+    dependencies:
+      '@lexical/internal': 0.51.0(typescript@7.0.2)
+      '@lexical/selection': 0.51.0(typescript@7.0.2)
+      lexical: 0.51.0(typescript@7.0.2)
     optionalDependencies:
       typescript: 7.0.2
 
@@ -12844,6 +12928,12 @@ snapshots:
   lexical@0.50.0(typescript@7.0.2):
     dependencies:
       '@lexical/internal': 0.50.0(typescript@7.0.2)
+    optionalDependencies:
+      typescript: 7.0.2
+
+  lexical@0.51.0(typescript@7.0.2):
+    dependencies:
+      '@lexical/internal': 0.51.0(typescript@7.0.2)
     optionalDependencies:
       typescript: 7.0.2
 
