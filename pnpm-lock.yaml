@@ -455,10 +455,10 @@ importers:
         version: 0.51.0(typescript@7.0.2)
       '@react-router/node':
         specifier: 8.3.1
-        version: 8.3.1(react-router@8.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)
+        version: 8.3.1(react-router@8.4.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)
       '@react-router/serve':
         specifier: 8.4.0
-        version: 8.4.0(react-router@8.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)
+        version: 8.4.0(react-router@8.4.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -487,8 +487,8 @@ importers:
         specifier: 19.2.5
         version: 19.2.5(react@19.2.5)
       react-router:
-        specifier: 8.3.1
-        version: 8.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+        specifier: 8.4.0
+        version: 8.4.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
       recharts:
         specifier: ^3.10.1
         version: 3.10.1(@types/react@19.3.0)(react-dom@19.2.5(react@19.2.5))(react-is@16.13.1)(react@19.2.5)(redux@5.0.1)
@@ -516,7 +516,7 @@ importers:
         version: 1.63.0
       '@react-router/dev':
         specifier: 8.4.0
-        version: 8.4.0(@react-router/serve@8.4.0(react-router@8.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2))(react-router@8.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)(vite@8.3.0(@types/node@26.6.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
+        version: 8.4.0(@react-router/serve@8.4.0(react-router@8.4.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2))(react-router@8.4.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)(vite@8.3.0(@types/node@26.6.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
       '@tailwindcss/typography':
         specifier: ^0.5.20
         version: 0.5.20(tailwindcss@4.3.3)
@@ -3197,6 +3197,9 @@ packages:
 
   '@remix-run/node-fetch-server@0.14.1':
     resolution: {integrity: sha512-pKenF5ysIN5lDCnCyvoUxDhKP0tfnGagvGbZh01xxHG6DJXSIXWVC9NpLSDGjxcxd1CKdCOKuZFleXBF3pChIg==}
+
+  '@remix-run/route-pattern@0.22.1':
+    resolution: {integrity: sha512-czdGJWh09Lapvcqt7Vb09KlrU2PhRJ8xQaI+AItTuD9aDJ5MAgxnS38lnys6Ll+6RJEqPiaUqTwIQhVLwFvv+w==}
 
   '@rolldown/binding-android-arm-eabi@1.2.8':
     resolution: {integrity: sha512-tN5aztYkKCte4i5SIrrz5yK/HMjEuCqCSCJa418jOV8tZ1cBY3YF2otxB1ktPxzsLA1BeTqwapK0bfjxNvHJVw==}
@@ -6631,8 +6634,8 @@ packages:
   react-responsive-carousel@3.2.23:
     resolution: {integrity: sha512-pqJLsBaKHWJhw/ItODgbVoziR2z4lpcJg+YwmRlSk4rKH32VE633mAtZZ9kDXjy4wFO+pgUZmDKPsPe1fPmHCg==}
 
-  react-router@8.3.1:
-    resolution: {integrity: sha512-TEOpiO2g0TJHEOJeRVv4amUFun9v1npCKszvcquNvzETUtJ8udV86ah5eFoHT7g26bsBvT6EiIhqulR8eDF++A==}
+  react-router@8.4.0:
+    resolution: {integrity: sha512-JtydAkBvU9UTEe5qNC+POhu+ZBNM7rlKY2IegwXc7Idj7xfRG16x5RZrw3mju+XlqBxfvb2ky9P3jUp9WyWC1g==}
     engines: {node: '>=22.22.0'}
     peerDependencies:
       react: 19.2.5
@@ -10340,14 +10343,14 @@ snapshots:
 
   '@radix-ui/rect@1.1.3': {}
 
-  '@react-router/dev@8.4.0(@react-router/serve@8.4.0(react-router@8.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2))(react-router@8.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)(vite@8.3.0(@types/node@26.6.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))':
+  '@react-router/dev@8.4.0(@react-router/serve@8.4.0(react-router@8.4.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2))(react-router@8.4.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)(vite@8.3.0(@types/node@26.6.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))':
     dependencies:
       '@babel/core': 7.29.7
       '@babel/generator': 7.29.8
       '@babel/parser': 7.29.8
       '@babel/traverse': 7.29.8
       '@babel/types': 7.29.8
-      '@react-router/node': 8.4.0(react-router@8.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)
+      '@react-router/node': 8.4.0(react-router@8.4.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)
       '@remix-run/node-fetch-server': 0.14.1
       babel-dead-code-elimination: 1.0.12
       chokidar: 5.0.0
@@ -10362,49 +10365,49 @@ snapshots:
       picocolors: 1.1.1
       pkg-types: 2.3.1
       react-refresh: 0.18.0
-      react-router: 8.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+      react-router: 8.4.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
       semver: 7.8.5
       tinyglobby: 0.2.17
       valibot: 1.4.2(typescript@7.0.2)
       vite: 8.3.0(@types/node@26.6.1)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
     optionalDependencies:
-      '@react-router/serve': 8.4.0(react-router@8.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)
+      '@react-router/serve': 8.4.0(react-router@8.4.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)
       typescript: 7.0.2
     transitivePeerDependencies:
       - babel-plugin-macros
       - supports-color
 
-  '@react-router/express@8.4.0(express@5.2.1)(react-router@8.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)':
+  '@react-router/express@8.4.0(express@5.2.1)(react-router@8.4.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)':
     dependencies:
-      '@react-router/node': 8.4.0(react-router@8.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)
+      '@react-router/node': 8.4.0(react-router@8.4.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)
       express: 5.2.1
-      react-router: 8.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+      react-router: 8.4.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
     optionalDependencies:
       typescript: 7.0.2
 
-  '@react-router/node@8.3.1(react-router@8.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)':
+  '@react-router/node@8.3.1(react-router@8.4.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)':
     dependencies:
       '@remix-run/node-fetch-server': 0.14.1
-      react-router: 8.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+      react-router: 8.4.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
     optionalDependencies:
       typescript: 7.0.2
 
-  '@react-router/node@8.4.0(react-router@8.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)':
+  '@react-router/node@8.4.0(react-router@8.4.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)':
     dependencies:
       '@remix-run/node-fetch-server': 0.14.1
-      react-router: 8.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+      react-router: 8.4.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
     optionalDependencies:
       typescript: 7.0.2
 
-  '@react-router/serve@8.4.0(react-router@8.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)':
+  '@react-router/serve@8.4.0(react-router@8.4.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)':
     dependencies:
-      '@react-router/express': 8.4.0(express@5.2.1)(react-router@8.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)
-      '@react-router/node': 8.4.0(react-router@8.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)
+      '@react-router/express': 8.4.0(express@5.2.1)(react-router@8.4.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)
+      '@react-router/node': 8.4.0(react-router@8.4.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5))(typescript@7.0.2)
       '@remix-run/node-fetch-server': 0.14.1
       compression: 1.8.1
       express: 5.2.1
       morgan: 1.12.1
-      react-router: 8.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+      react-router: 8.4.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
       source-map-support: 0.5.21
     transitivePeerDependencies:
       - supports-color
@@ -10423,6 +10426,8 @@ snapshots:
       react-redux: 9.3.0(@types/react@19.3.0)(react@19.2.5)(redux@5.0.1)
 
   '@remix-run/node-fetch-server@0.14.1': {}
+
+  '@remix-run/route-pattern@0.22.1': {}
 
   '@rolldown/binding-android-arm-eabi@1.2.8':
     optional: true
@@ -14241,8 +14246,9 @@ snapshots:
       prop-types: 15.8.1
       react-easy-swipe: 0.0.21
 
-  react-router@8.3.1(react-dom@19.2.5(react@19.2.5))(react@19.2.5):
+  react-router@8.4.0(react-dom@19.2.5(react@19.2.5))(react@19.2.5):
     dependencies:
+      '@remix-run/route-pattern': 0.22.1
       cookie-es: 3.1.1
       react: 19.2.5
     optionalDependencies:
