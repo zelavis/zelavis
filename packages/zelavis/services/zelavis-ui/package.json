@@ -69,7 +69,7 @@
   "dependencies": {
     "@assistant-ui/core": "0.3.17",
     "@assistant-ui/react": "0.15.18",
-    "@assistant-ui/react-markdown": "^0.14.14",
+    "@assistant-ui/react-markdown": "^0.14.15",
     "@assistant-ui/store": "0.3.13",
     "@base-ui/react": "^1.8.0",
     "@codemirror/lang-json": "^6.0.2",
