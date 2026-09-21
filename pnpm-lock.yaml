@@ -433,8 +433,8 @@ importers:
         specifier: ^6.0.3
         version: 6.0.3(lodash@4.18.1)(marked@4.3.0)(react-dom@19.2.5(react@19.2.5))(react-responsive-carousel@3.2.23)(react@19.2.5)
       '@lexical/history':
-        specifier: ^0.50.0
-        version: 0.50.0(typescript@7.0.2)
+        specifier: ^0.51.0
+        version: 0.51.0(typescript@7.0.2)
       '@lexical/html':
         specifier: ^0.50.0
         version: 0.50.0(typescript@7.0.2)
@@ -1923,6 +1923,14 @@ packages:
 
   '@lexical/history@0.50.0':
     resolution: {integrity: sha512-UMbvTWOHxfS3SQA0oWN8uvmG64WrFgurojM1KoYjxuUbPFGjumD6al5zsA06d6+TkCDSw6l639tJ43bFr3HE5A==}
+    peerDependencies:
+      typescript: '>=5.2'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+
+  '@lexical/history@0.51.0':
+    resolution: {integrity: sha512-dymiLsX003GoXTn06Nt9mZXbJhMRdB9qSvg+PEBtqUDMKCGEJ+qT0w+NsbF+MW1VOV8Qzs9nayk2lwklx0526g==}
     peerDependencies:
       typescript: '>=5.2'
     peerDependenciesMeta:
@@ -9052,6 +9060,14 @@ snapshots:
       '@lexical/extension': 0.50.0(typescript@7.0.2)
       '@lexical/utils': 0.50.0(typescript@7.0.2)
       lexical: 0.50.0(typescript@7.0.2)
+    optionalDependencies:
+      typescript: 7.0.2
+
+  '@lexical/history@0.51.0(typescript@7.0.2)':
+    dependencies:
+      '@lexical/extension': 0.51.0(typescript@7.0.2)
+      '@lexical/utils': 0.51.0(typescript@7.0.2)
+      lexical: 0.51.0(typescript@7.0.2)
     optionalDependencies:
       typescript: 7.0.2
 
