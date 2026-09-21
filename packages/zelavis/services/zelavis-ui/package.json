@@ -81,7 +81,7 @@
     "@glideapps/glide-data-grid": "^6.0.3",
     "@lexical/history": "^0.50.0",
     "@lexical/html": "^0.50.0",
-    "@lexical/link": "^0.50.0",
+    "@lexical/link": "^0.51.0",
     "@lexical/list": "^0.50.0",
     "@lexical/react": "^0.50.0",
     "@lexical/rich-text": "^0.50.0",
