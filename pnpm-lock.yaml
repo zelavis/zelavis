@@ -314,8 +314,8 @@ importers:
         specifier: ^13.0.3
         version: 13.0.3
       effect:
-        specifier: 4.0.0-rc.113
-        version: 4.0.0-rc.113
+        specifier: 4.0.0-rc.116
+        version: 4.0.0-rc.116
       jose:
         specifier: ^6.2.12
         version: 6.2.12
@@ -570,8 +570,8 @@ importers:
   plugins/ecommerce:
     dependencies:
       effect:
-        specifier: 4.0.0-rc.113
-        version: 4.0.0-rc.113
+        specifier: 4.0.0-rc.116
+        version: 4.0.0-rc.116
     devDependencies:
       typescript:
         specifier: ^7.0.2
@@ -4519,8 +4519,8 @@ packages:
   ee-first@1.1.1:
     resolution: {integrity: sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==}
 
-  effect@4.0.0-rc.113:
-    resolution: {integrity: sha512-uZ4Bh7KSlw2sdVdNDHPLSNjLGH+MWap7cheIHZoB/1T/ZJ3pvI4KiN3kUp50MpFKXhygOMmReJJOwWMQPwpPAg==}
+  effect@4.0.0-rc.116:
+    resolution: {integrity: sha512-nawqJHSjHV8XIBRZNZ+D7cLZpN3kkSjzy6aiT9ofKENsl7xAMFKEoDa0itN5JFl3GUQ1PIN1T1HNlva5+xyO/A==}
 
   electron-to-chromium@1.5.413:
     resolution: {integrity: sha512-F1XPKvt7HVfly5WND90ec16nFsdr4g5x/cVUP3EqjeyXynupabGDqpMa84wwvuYGDnldXLBz6DLXyZXWO9TPvw==}
@@ -11555,7 +11555,7 @@ snapshots:
 
   ee-first@1.1.1: {}
 
-  effect@4.0.0-rc.113: {}
+  effect@4.0.0-rc.116: {}
 
   electron-to-chromium@1.5.413: {}
 

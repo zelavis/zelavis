@@ -200,7 +200,7 @@
     "@zelavis/auth": "workspace:*",
     "@zelavis/marketplace": "workspace:*",
     "better-sqlite3": "^13.0.3",
-    "effect": "4.0.0-rc.113",
+    "effect": "4.0.0-rc.116",
     "jose": "^6.2.12",
     "picocolors": "^1.1.1"
   },
