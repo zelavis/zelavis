@@ -41,6 +41,19 @@ updates:
         patterns:
           - "@paypal/paypal-server-sdk"
           - "stripe"
+      # Each of these families ships in lockstep and shares types across its
+      # packages. Bumped one PR at a time, two copies end up installed and the
+      # dashboard stops building: lexical 0.51 and @assistant-ui/core 0.3.19
+      # each did in September 2026. One PR per family moves them together.
+      lexical:
+        patterns:
+          - "lexical"
+          - "@lexical/*"
+      assistant-ui:
+        patterns:
+          - "@assistant-ui/*"
+          - "assistant-cloud"
+          - "assistant-stream"
 
   - package-ecosystem: "github-actions"
     directory: "/"
