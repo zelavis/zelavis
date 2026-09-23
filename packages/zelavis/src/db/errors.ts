@@ -334,6 +334,19 @@ export class PlacementImmutable extends Schema.TaggedError<PlacementImmutable>()
   { collection: Schema.String, current: Schema.String, requested: Schema.String },
 ) {}
 
+/**
+ * A replicated collection holds something a copy cannot carry.
+ *
+ * Identity survives replication and identifiers do not: a replica reallocates
+ * every `Seq` in its own dense space. Anything that names a record by `Seq` —
+ * an edge, above all — would therefore point somewhere else on every copy, so
+ * it is refused here rather than written wrong on every shard.
+ */
+export class ReplicationUnsupported extends Schema.TaggedError<ReplicationUnsupported>()(
+  "ReplicationUnsupported",
+  { collection: Schema.String, reason: Schema.String },
+) {}
+
 export class UnknownSystemView extends Schema.TaggedError<UnknownSystemView>()(
   "UnknownSystemView",
   { name: Schema.String },
