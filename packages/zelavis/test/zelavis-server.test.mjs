@@ -430,6 +430,10 @@ test("privileged project control routes declare explicit access requirements", a
   assert.deepEqual(routes.get("runtime.deployment-backends.list")?.access, {
     permissions: ["server.backends.view"],
   });
+  assert.deepEqual(routes.get("runtime.projects.update")?.access, {
+    permissions: ["project.settings.manage"],
+    scope: { type: "project", projectIdParam: "projectId" },
+  });
   for (const id of [
     "runtime.agent.read",
     "runtime.agent.operations.list",
@@ -1385,6 +1389,16 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "runtime.host-operations.submit",
       "runtime.host-operations.audit",
       "runtime.host-operations.get",
+      "runtime.environment.identity",
+      "runtime.environment.health",
+      "runtime.environment.sessions.create",
+      "runtime.environment.sessions.update",
+      "runtime.environment.sessions.get",
+      "runtime.environment.sessions.close",
+      "runtime.environment.sessions.events",
+      "runtime.environment.processes.start",
+      "runtime.environment.processes.get",
+      "runtime.environment.processes.operate",
       "runtime.edge.read",
       "runtime.edge.plan",
       "runtime.edge.switch",
@@ -1410,6 +1424,7 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "runtime.projects.list",
       "runtime.projects.create",
       "runtime.projects.get",
+      "runtime.projects.update",
       "runtime.projects.start",
       "runtime.projects.stop",
       "runtime.projects.restart",

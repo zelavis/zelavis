@@ -147,6 +147,13 @@ test("Project create, read and lifecycle are equivalent over HTTP, SDK and CLI",
   assert.deepEqual(stable(viaCli.stdout.project), stable(viaHttp.body.project));
   assert.equal(viaSdk.isolation.shortfalls[0].requirement, "network");
 
+  const renamedHttp = await http(fetcher, "PATCH", "/projects/http-site", { name: "HTTP renamed" });
+  assert.equal(renamedHttp.body.project.name, "HTTP renamed");
+  assert.equal((await client.projects.update("sdk-site", { name: "SDK renamed" })).name, "SDK renamed");
+  const renamedCli = await cli(fetcher, ["rename", "cli-site", "CLI renamed"]);
+  assert.equal(renamedCli.exitCode, 0);
+  assert.equal(renamedCli.stdout.project.name, "CLI renamed");
+
   const recipesHttp = await http(fetcher, "GET", "/project-recipes");
   assert.deepEqual(await client.projects.recipes(), recipesHttp.body.projectRecipes);
   assert.deepEqual((await cli(fetcher, ["recipes"])).stdout, recipesHttp.body);
@@ -226,6 +233,16 @@ test("validation, not-found and authorization failures are equivalent", async (t
   assert.deepEqual((await cli(fetcher, ["get", "nope"])).stderr, {
     error: missingHttp.body.error, status: 404, details: missingHttp.body,
   });
+  await assert.rejects(client.projects.update("nope", { name: "Renamed" }), (error) =>
+    error.response.status === 404);
+
+  await client.projects.create({ name: "rename-validation", recipeName: "acme/advised", start: false });
+  await assert.rejects(client.projects.update("rename-validation", { name: "" }), (error) =>
+    error.response.status === 400);
+  const missingRenameName = await cli(fetcher, ["rename", "rename-validation"]);
+  assert.equal(missingRenameName.exitCode, 1);
+  assert.match(missingRenameName.stderr.error, /requires a new Project name/);
+  await client.projects.remove("rename-validation");
 
   const overrideHttp = await http(fetcher, "POST", "/projects", { name: "x", runtimeKind: "docker" });
   assert.equal(overrideHttp.status, 400);
