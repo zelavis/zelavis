@@ -17,6 +17,7 @@ import { systemViewsFor, type SystemViewsApi } from "./system-views.js";
 import { scatterOver, type ScatterApi } from "./scatter.js";
 import { movementOver, type MovementApi } from "./movement.js";
 import { migrationsFor, type MigrationsApi } from "./migrations.js";
+import { replicationOver, type ReplicationApi } from "./replication.js";
 import type { ObjectStoreApi } from "./store.js";
 import { isValidCollectionName } from "./naming.js";
 import {
@@ -49,7 +50,31 @@ export interface TenantApi {
   readonly migrations: MigrationsApi;
   /** The dashboard read surface, built from the APIs above rather than storage. */
   readonly systemViews: SystemViewsApi;
+
+  /**
+   * App-scoped collections replicated onto this tenant's shard.
+   *
+   * Read-only, and physically local: that is the whole point of paying to
+   * replicate. It is a separate handle rather than part of `documents` because
+   * the two are different data — a query cannot intersect across them, since
+   * they are different tenants and so address different lens keys.
+   *
+   * What it shows is as fresh as the last `db.replication.refresh`, not as
+   * fresh as the last write to the global store.
+   */
+  readonly shared: SharedDocumentsApi;
 }
+
+/**
+ * The read half of `DocumentsApi`.
+ *
+ * A replica has no writer: writing here would make a shard's copy disagree with
+ * the store it is a copy of, and the next refresh would silently discard it.
+ */
+export type SharedDocumentsApi = Pick<
+  DocumentsApi,
+  "listCollections" | "collectionExists" | "findById" | "findMany" | "findPage"
+>;
 
 /**
  * Storage upkeep, addressed per shard.
@@ -167,6 +192,15 @@ export interface DatabaseApi {
 
   /** Compaction and reindexing, per shard. */
   readonly maintenance: MaintenanceApi;
+
+  /**
+   * Materializing App-scoped data onto every shard.
+   *
+   * Explicit rather than automatic, and it runs when a database opens. A write
+   * to a `replicated` collection reaches `tenant.shared` at the next refresh,
+   * not at the moment it commits.
+   */
+  readonly replication: ReplicationApi;
 
   /**
    * Questions that span partitions.
@@ -322,6 +356,10 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     const projections = projectionsFor(store, events, tenant);
     const documents = documentsFor(store, tenant, schemas);
     const timeSeries = timeSeriesFor(store, projections, tenant);
+    // The App's replicated collections as they sit on *this* store, read under
+    // the tenant that owns them. Same shard, so no second store is opened and
+    // no partition is crossed.
+    const shared = documentsFor(store, GLOBAL_TENANT, schemasFor(store, GLOBAL_TENANT));
     return {
       documents,
       events,
@@ -331,6 +369,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
       backups: backupsFor(store, tenant),
       migrations: migrationsFor(documents, schemas, tenant),
       systemViews: systemViewsFor({ documents, events, schemas, projections, timeSeries }),
+      shared,
     };
   };
 
@@ -346,7 +385,12 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
         // names — and the two stores cannot commit together. A name the
         // collection API would reject never reaches the catalog, so the only
         // failures left here are a corrupt one.
+        //
+        // Only an undeclared name is claimed as `global`. Declaring a class
+        // first and creating the collection second is how a `replicated` one is
+        // made, and a create that insisted on `global` would refuse it.
         isValidCollectionName(input.name)
+          && topology.placement.classOf(input.name) === "partitioned"
           ? Effect.flatMap(
               Effect.orDie(topology.placement.declare(input.name, "global")),
               () => globalBase.documents.createCollection(input),
@@ -355,11 +399,23 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     },
   };
 
+  const replication = replicationOver({
+    globalStore,
+    shards,
+    placement: topology.placement,
+  });
+
+  // A shard that joined while the database was closed, or one left behind by an
+  // interrupted pass, holds a stale copy until something levels it. Opening is
+  // the one moment every shard is known to be reachable.
+  yield* replication.refresh;
+
   return {
     get partitionMap() {
       return topology.current();
     },
     maintenance,
+    replication,
     scatter: scatterOver({ shards, tenantsOn, shardOf, documentsFor: documentsFor_ }),
     movement,
     topology,
