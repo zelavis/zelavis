@@ -1,5 +1,6 @@
 import { Effect, type Scope } from "effect";
 import type { DbError } from "./errors.js";
+import { InvalidConstraint } from "./errors.js";
 import { documentsFor, type DocumentsApi, type DocumentWritten } from "./documents.js";
 import type { ObjectIdentity } from "./model.js";
 import { domainEventsFor, type DomainEventsApi } from "./domain-events.js";
@@ -464,13 +465,29 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     // a create that insisted on `global` would refuse it.
     createCollection: (input) =>
       propagating(
-        isValidCollectionName(input.name)
-          && topology.placement.classOf(input.name) === "partitioned"
-          ? Effect.flatMap(
-              Effect.orDie(topology.placement.declare(input.name, "global")),
-              () => globalBase.documents.createCollection(input),
-            )
-          : globalBase.documents.createCollection(input),
+        // An edge names a record by identifier and every replica reallocates
+        // those, so a replicated collection cannot carry one. Refused where the
+        // edge is declared rather than where it is first written: this is the
+        // only way a collection ever gains edges, and the other order — created
+        // with edges, declared replicated after — is already refused, because
+        // creating an undeclared collection here claims it as `global` and a
+        // class does not change. Closing this one makes the state unreachable,
+        // which is what leaves the checks in `replication` as assertions.
+        (input.edges ?? []).length > 0
+          && topology.placement.classOf(input.name) === "replicated"
+          ? new InvalidConstraint({
+              collection: input.name,
+              name: input.edges![0]!.name,
+              reason:
+                "a replicated collection cannot declare edges: an edge names a record by identifier, and every replica reallocates them",
+            })
+          : isValidCollectionName(input.name)
+              && topology.placement.classOf(input.name) === "partitioned"
+            ? Effect.flatMap(
+                Effect.orDie(topology.placement.declare(input.name, "global")),
+                () => globalBase.documents.createCollection(input),
+              )
+            : globalBase.documents.createCollection(input),
         (collection) => [replication.collectionIdentity(collection.name)],
       ),
   };

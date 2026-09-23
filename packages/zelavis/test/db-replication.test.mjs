@@ -191,39 +191,67 @@ test("opening the database levels a replica that fell behind", async (t) => {
   );
 });
 
-test("a replicated collection carrying edges is refused, not copied wrong", async (t) => {
+test("a replicated collection cannot declare edges in the first place", async (t) => {
   const dir = tempDir(t);
   await openAt(dir, partitionMapFor(["s0", "s1"]), (db) =>
     Effect.gen(function* () {
       yield* db.topology.placement.declare("linked", "replicated");
-      yield* db.global.documents.createCollection({
-        name: "linked",
-        edges: [{ name: "parent", path: "parentId", collection: "linked" }],
-      });
-      yield* db.global.documents.insert({ collection: "linked", id: "a", data: { n: 1 } });
 
-      // No edge yet, so nothing is wrong and the copy is ordinary.
+      // Refused where the edge is declared, with the error the collection API
+      // already reports for a constraint it cannot accept — not as a defect
+      // raised later by whichever write first produced one.
+      const refused = yield* db.global.documents
+        .createCollection({
+          name: "linked",
+          edges: [{ name: "parent", path: "parentId", collection: "linked" }],
+        })
+        .pipe(
+          Effect.as("created"),
+          Effect.catchTag("InvalidConstraint", (e) => Effect.succeed(e)),
+        );
+      assert.notEqual(refused, "created", "an edge cannot survive a reallocated identifier");
+      assert.equal(refused.collection, "linked");
+      assert.equal(refused.name, "parent");
+      assert.match(refused.reason, /identifier/, "it says why a copy cannot carry it");
+
+      // Without edges the same collection is ordinary, and replicates.
+      yield* db.global.documents.createCollection({ name: "linked" });
+      yield* db.global.documents.insert({ collection: "linked", id: "a", data: { n: 1 } });
       const found = yield* db.forTenant("acme").shared.findById({
         collection: "linked", id: "a",
       });
       assert.equal(found.data.n, 1);
     }),
   );
+});
 
-  // The write that would produce an edge fails rather than replicating a
-  // pointer that means something else on every shard. `DocumentsApi` has no
-  // channel for a replication failure, so it surfaces as a defect.
-  await assert.rejects(
-    openAt(dir, partitionMapFor(["s0", "s1"]), (db) =>
-      db.global.documents.insert({
+test("a global collection may declare edges, since nothing copies it", async (t) => {
+  const dir = tempDir(t);
+  await openAt(dir, partitionMapFor(["s0", "s1"]), (db) =>
+    Effect.gen(function* () {
+      yield* db.global.documents.createCollection({
+        name: "linked",
+        edges: [{ name: "parent", path: "parentId", collection: "linked" }],
+      });
+      assert.equal(db.topology.placement.classOf("linked"), "global");
+      yield* db.global.documents.insert({ collection: "linked", id: "a", data: { n: 1 } });
+      yield* db.global.documents.insert({
         collection: "linked", id: "b", data: { n: 2, parentId: "a" },
-      })),
-    (error) => {
-      assert.equal(error._tag, "ReplicationUnsupported");
-      assert.equal(error.collection, "linked");
-      assert.match(error.reason, /identifier/, "it says why a copy cannot carry it");
-      return true;
-    },
+      });
+
+      const linked = yield* db.global.documents.findById({ collection: "linked", id: "b" });
+      assert.equal(linked.data.parentId, "a", "the edge is ordinary where it stays put");
+
+      // And declaring it replicated afterwards is refused by the class itself.
+      const reclassified = yield* db.topology.placement
+        .declare("linked", "replicated")
+        .pipe(
+          Effect.as("declared"),
+          Effect.catchTag("PlacementImmutable", (e) => Effect.succeed(e)),
+        );
+      assert.notEqual(reclassified, "declared", "a class does not change under data");
+      assert.equal(reclassified.current, "global");
+    }),
   );
 });
 
