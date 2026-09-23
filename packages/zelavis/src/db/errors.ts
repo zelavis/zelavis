@@ -317,6 +317,23 @@ export class RangeNotEmpty extends Schema.TaggedError<RangeNotEmpty>()("RangeNot
   tenants: Schema.Array(Schema.String),
 }) {}
 
+export class PlacementCatalogInvalid extends Schema.TaggedError<PlacementCatalogInvalid>()(
+  "PlacementCatalogInvalid",
+  { version: Schema.Finite, reason: Schema.String },
+) {}
+
+/**
+ * A collection already has a placement class, and it is not the one asked for.
+ *
+ * Reclassifying is a relocation rather than a catalog edit, for the same reason
+ * `topology.update` refuses an occupied range: the catalog carries routing and
+ * no data, so the records would stay where they were while reads went elsewhere.
+ */
+export class PlacementImmutable extends Schema.TaggedError<PlacementImmutable>()(
+  "PlacementImmutable",
+  { collection: Schema.String, current: Schema.String, requested: Schema.String },
+) {}
+
 export class UnknownSystemView extends Schema.TaggedError<UnknownSystemView>()(
   "UnknownSystemView",
   { name: Schema.String },

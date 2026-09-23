@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { Effect, Exit, Scope } from "effect";
-import { makeDatabase, TOPOLOGY_SHARD, type DatabaseApi } from "./database.js";
+import { makeDatabase, type DatabaseApi } from "./database.js";
 import type { StoreError } from "./errors.js";
 import { makeLibsqlStore } from "./engines/libsql.js";
 import { makeLibsqlRemoteStore } from "./engines/libsql-remote.js";
@@ -13,6 +13,7 @@ import type { ObjectStoreApi } from "./store.js";
 import {
   DEFAULT_LOCAL_SHARDS,
   partitionMapFor,
+  TOPOLOGY_SHARD,
   type PartitionMap,
   type ShardId,
 } from "./topology.js";
