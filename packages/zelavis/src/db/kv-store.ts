@@ -1003,6 +1003,10 @@ export const storeOverKv = (
     return out;
   });
 
+  const manifestOf = (seq: Seq) =>
+    Effect.map(engine.get(manifestKey(seq)), (stored) =>
+      stored === undefined ? emptyManifest() : unjson<IndexManifest>(stored));
+
   const reindexLenses = exclusive(Effect.gen(function* () {
     const pending = new Map<string, KvWrite>();
     const view = pendingView(pending);
@@ -1370,6 +1374,7 @@ export const storeOverKv = (
     compactedTo: readMeta(META_COMPACTED_TO),
 
     liveRecords,
+    manifestOf,
 
     lookup: (namespace, key) =>
       Effect.map(engine.get(identityKey(namespace, key)), (bytes) =>
