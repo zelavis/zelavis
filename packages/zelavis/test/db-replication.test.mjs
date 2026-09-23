@@ -44,7 +44,10 @@ test("a replicated collection reaches every shard, and a tenant reads it locally
 
       const passes = yield* db.replication.refresh;
       assert.deepEqual(passes.map((p) => p.shard), ["s0", "s1"], "every placed shard is levelled");
-      assert.ok(passes.every((p) => p.applied > 0), "each shard took the records");
+      assert.ok(
+        passes.every((p) => p.records > 0 && p.applied === 0),
+        "the write already carried, so a refresh finds them there and writes nothing",
+      );
 
       // Two tenants that hash to different shards both read it locally.
       for (const tenant of ["acme", "globex"]) {
@@ -89,7 +92,10 @@ test("updates propagate and deletes are retracted from every replica", async (t)
       yield* db.global.documents.delete({ collection: "plans", id: "lite" });
 
       const pass = yield* db.replication.refresh;
-      assert.ok(pass.every((p) => p.retracted === 1), "the deleted record is removed everywhere");
+      assert.ok(
+        pass.every((p) => p.applied === 0 && p.retracted === 0),
+        "both changes carried at the write, leaving a refresh nothing to do",
+      );
 
       const shared = db.forTenant("acme").shared;
       const updated = yield* shared.findById({ collection: "plans", id: "pro" });
@@ -152,27 +158,36 @@ test("replication does not make the App look like a tenant on a shard", async (t
   );
 });
 
-test("a replica is refreshed when the database opens", async (t) => {
+test("opening the database levels a replica that fell behind", async (t) => {
   const dir = tempDir(t);
-  await openAt(dir, partitionMapFor(["s0", "s1"]), (db) =>
+  const home = await openAt(dir, partitionMapFor(["s0", "s1"]), (db) =>
     Effect.gen(function* () {
       yield* declareReplicated(db, "plans");
       yield* db.global.documents.insert({ collection: "plans", id: "pro", data: { seats: 25 } });
-      // Deliberately no refresh: the write is in the global store only.
-      const shared = db.forTenant("acme").shared;
-      const before = yield* shared.findById({ collection: "plans", id: "pro" });
-      assert.equal(before, undefined, "a write is not visible to replicas until a refresh");
-      assert.deepEqual(yield* shared.listCollections, [], "nor is the collection");
+      return db.shardOf("acme");
     }),
-  ).then(() =>
-    openAt(dir, partitionMapFor(["s0", "s1"]), (db) =>
+  );
+
+  // Take the copy back off that shard behind the database's back: what an
+  // interrupted pass, or a shard that joined while nothing was watching, leaves.
+  await Effect.runPromise(
+    Effect.scoped(
       Effect.gen(function* () {
-        const found = yield* db.forTenant("acme").shared.findById({
-          collection: "plans", id: "pro",
-        });
-        assert.equal(found.data.seats, 25, "opening levelled the replica");
+        const store = yield* makeNodeSqliteStore(home, dir);
+        const seq = yield* store.lookup("doc/zv.global/plans", "pro");
+        assert.notEqual(seq, undefined, "the replica was there to remove");
+        yield* store.transact((txn) => txn.retract(seq));
       }),
     ),
+  );
+
+  await openAt(dir, partitionMapFor(["s0", "s1"]), (db) =>
+    Effect.gen(function* () {
+      const found = yield* db.forTenant("acme").shared.findById({
+        collection: "plans", id: "pro",
+      });
+      assert.equal(found.data.seats, 25, "opening put the missing copy back");
+    }),
   );
 });
 
@@ -186,17 +201,117 @@ test("a replicated collection carrying edges is refused, not copied wrong", asyn
         edges: [{ name: "parent", path: "parentId", collection: "linked" }],
       });
       yield* db.global.documents.insert({ collection: "linked", id: "a", data: { n: 1 } });
-      yield* db.global.documents.insert({
+
+      // No edge yet, so nothing is wrong and the copy is ordinary.
+      const found = yield* db.forTenant("acme").shared.findById({
+        collection: "linked", id: "a",
+      });
+      assert.equal(found.data.n, 1);
+    }),
+  );
+
+  // The write that would produce an edge fails rather than replicating a
+  // pointer that means something else on every shard. `DocumentsApi` has no
+  // channel for a replication failure, so it surfaces as a defect.
+  await assert.rejects(
+    openAt(dir, partitionMapFor(["s0", "s1"]), (db) =>
+      db.global.documents.insert({
         collection: "linked", id: "b", data: { n: 2, parentId: "a" },
+      })),
+    (error) => {
+      assert.equal(error._tag, "ReplicationUnsupported");
+      assert.equal(error.collection, "linked");
+      assert.match(error.reason, /identifier/, "it says why a copy cannot carry it");
+      return true;
+    },
+  );
+});
+
+test("a write reaches the replicas without an explicit refresh", async (t) => {
+  const dir = tempDir(t);
+  await openAt(dir, partitionMapFor(["s0", "s1"]), (db) =>
+    Effect.gen(function* () {
+      yield* declareReplicated(db, "plans");
+      yield* db.global.documents.insert({ collection: "plans", id: "pro", data: { seats: 25 } });
+
+      // No refresh call anywhere in this test.
+      for (const tenant of ["acme", "globex"]) {
+        const found = yield* db.forTenant(tenant).shared.findById({
+          collection: "plans", id: "pro",
+        });
+        assert.equal(found.data.seats, 25, `${tenant} sees the insert immediately`);
+      }
+
+      yield* db.global.documents.update({
+        collection: "plans", id: "pro", data: { seats: 50 },
+      });
+      const updated = yield* db.forTenant("acme").shared.findById({
+        collection: "plans", id: "pro",
+      });
+      assert.equal(updated.data.seats, 50, "the update carried too");
+
+      yield* db.global.documents.delete({ collection: "plans", id: "pro" });
+      const gone = yield* db.forTenant("acme").shared.findById({
+        collection: "plans", id: "pro",
+      });
+      assert.equal(gone, undefined, "and so did the delete");
+
+      // Nothing was left for a refresh to reconcile.
+      const settled = yield* db.replication.refresh;
+      assert.ok(
+        settled.every((p) => p.applied === 0 && p.retracted === 0),
+        "propagation left the replicas already level",
+      );
+    }),
+  );
+});
+
+test("a batch write carries every document it touched", async (t) => {
+  const dir = tempDir(t);
+  await openAt(dir, partitionMapFor(["s0", "s1"]), (db) =>
+    Effect.gen(function* () {
+      yield* declareReplicated(db, "plans");
+      yield* db.global.documents.write({
+        operations: [
+          { _tag: "Insert", collection: "plans", id: "pro", data: { seats: 25 } },
+          { _tag: "Insert", collection: "plans", id: "lite", data: { seats: 1 } },
+        ],
       });
 
-      const outcome = yield* db.replication.refresh.pipe(
-        Effect.as("copied"),
-        Effect.catchTag("ReplicationUnsupported", (e) => Effect.succeed(e)),
+      const shared = db.forTenant("acme").shared;
+      assert.equal((yield* shared.findById({ collection: "plans", id: "pro" })).data.seats, 25);
+      assert.equal((yield* shared.findById({ collection: "plans", id: "lite" })).data.seats, 1);
+
+      yield* db.global.documents.write({
+        operations: [
+          { _tag: "Update", collection: "plans", id: "pro", data: { seats: 99 } },
+          { _tag: "Delete", collection: "plans", id: "lite" },
+        ],
+      });
+      assert.equal((yield* shared.findById({ collection: "plans", id: "pro" })).data.seats, 99);
+      assert.equal(yield* shared.findById({ collection: "plans", id: "lite" }), undefined);
+
+      const settled = yield* db.replication.refresh;
+      assert.ok(settled.every((p) => p.applied === 0 && p.retracted === 0));
+    }),
+  );
+});
+
+test("writing a global collection carries nothing to the shards", async (t) => {
+  const dir = tempDir(t);
+  await openAt(dir, partitionMapFor(["s0", "s1"]), (db) =>
+    Effect.gen(function* () {
+      yield* db.global.documents.createCollection({ name: "secrets" });
+      yield* db.global.documents.insert({ collection: "secrets", id: "k", data: { v: 1 } });
+
+      const shared = db.forTenant("acme").shared;
+      assert.deepEqual(yield* shared.listCollections, [], "a global collection stays put");
+
+      const settled = yield* db.replication.refresh;
+      assert.ok(
+        settled.every((p) => p.applied === 0 && p.retracted === 0 && p.records === 0),
+        "and a refresh agrees there is nothing to replicate",
       );
-      assert.notEqual(outcome, "copied", "an edge cannot survive a reallocated identifier");
-      assert.equal(outcome.collection, "linked");
-      assert.match(outcome.reason, /identifier/);
     }),
   );
 });

@@ -59,6 +59,28 @@ export interface ReplicationApi {
    * decided by comparing state rather than by replaying a position.
    */
   readonly refresh: Effect.Effect<ReadonlyArray<ReplicaStatus>, DbError | ReplicationUnsupported>;
+
+  /**
+   * Carry one record to every shard, and report how many took it.
+   *
+   * What a write uses. A refresh compares whole states because it has to work
+   * without being told what changed; a write knows exactly, so it pays for one
+   * record per shard instead of the whole collection per shard. Absent at the
+   * source means the copies are removed, which is how a delete travels — the
+   * caller names the identity, so nothing has to reconstruct it from a log.
+   *
+   * A no-op for anything that is not a replicated collection's, which is what
+   * lets a write path call it without first asking whether it should.
+   */
+  readonly propagate: (
+    identity: ObjectIdentity,
+  ) => Effect.Effect<number, DbError | ReplicationUnsupported>;
+
+  /** The identity of a document in an App-scoped collection. */
+  readonly documentIdentity: (collection: string, id: string) => ObjectIdentity;
+
+  /** The identity of an App-scoped collection's own record. */
+  readonly collectionIdentity: (collection: string) => ObjectIdentity;
 }
 
 const COLLECTION_NS = `${COLLECTION_NAMESPACE_PREFIX}${GLOBAL_TENANT}`;
@@ -156,5 +178,66 @@ export const replicationOver = (input: {
     return out;
   });
 
-  return { refresh } satisfies ReplicationApi;
+  const propagate = (identity: ObjectIdentity) =>
+    Effect.gen(function* () {
+      const collection = collectionOf(identity);
+      if (collection === undefined || !replicatedNames().has(collection)) return 0;
+
+      const sourceSeq = yield* input.globalStore.lookup(identity.namespace, identity.key);
+      const record = sourceSeq === undefined
+        ? undefined
+        : yield* input.globalStore.read(sourceSeq);
+      const manifest = sourceSeq === undefined || record === undefined
+        ? undefined
+        : yield* input.globalStore.manifestOf(sourceSeq);
+
+      if (manifest !== undefined && manifest.edges.length > 0) {
+        return yield* new ReplicationUnsupported({
+          collection,
+          reason: "an edge names a record by identifier, which a replica reallocates",
+        });
+      }
+
+      let touched = 0;
+      for (const [, store] of input.shards) {
+        if (record === undefined || manifest === undefined) {
+          // Gone at the source, so the copies go too. Nothing has to remember
+          // what an identifier stood for: the caller named the record.
+          const stale = yield* store.lookup(identity.namespace, identity.key);
+          if (stale === undefined) continue;
+          yield* store.transact((txn) => txn.retract(stale));
+          touched += 1;
+          continue;
+        }
+
+        const seq = (yield* store.lookup(identity.namespace, identity.key))
+          ?? (yield* store.nextSeq);
+        const existing = yield* store.read(seq);
+        if (existing !== undefined && existing.version >= record.version) continue;
+        yield* store.events.apply({
+          _tag: "ObjectPut",
+          partition: store.partition,
+          generation: store.generation,
+          at: Date.now(),
+          seq,
+          version: record.version,
+          bytes: record.bytes,
+          manifest,
+          identity,
+        });
+        touched += 1;
+      }
+
+      return touched;
+    });
+
+  return {
+    refresh,
+    propagate,
+    documentIdentity: (collection, id) => ({
+      namespace: `${DOCUMENT_NS}${collection}`,
+      key: id,
+    }),
+    collectionIdentity: (collection) => ({ namespace: COLLECTION_NS, key: collection }),
+  } satisfies ReplicationApi;
 };

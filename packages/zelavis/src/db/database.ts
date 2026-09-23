@@ -1,6 +1,7 @@
 import { Effect, type Scope } from "effect";
 import type { DbError } from "./errors.js";
-import { documentsFor, type DocumentsApi } from "./documents.js";
+import { documentsFor, type DocumentsApi, type DocumentWritten } from "./documents.js";
+import type { ObjectIdentity } from "./model.js";
 import { domainEventsFor, type DomainEventsApi } from "./domain-events.js";
 import { projectionsFor, type ProjectionsApi } from "./projections.js";
 import { schemasFor, type SchemasApi } from "./schemas.js";
@@ -373,22 +374,96 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     };
   };
 
+  const replication = replicationOver({
+    globalStore,
+    shards,
+    placement: topology.placement,
+  });
+
+  /**
+   * Carry what a write changed to the replicas, by identity.
+   *
+   * A refresh has to compare whole states because nothing tells it what moved.
+   * A write knows, so it pays one record per shard rather than the collection
+   * per shard — which is what makes doing this on every write affordable at
+   * all. Dies rather than reports: `DocumentsApi` has no channel for a
+   * replication failure, and a copy silently left behind would be worse.
+   */
+  const propagating = <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+    changed: (result: A) => ReadonlyArray<ObjectIdentity>,
+  ): Effect.Effect<A, E, R> =>
+    Effect.tap(effect, (result) =>
+      Effect.forEach(
+        changed(result),
+        (identity) => Effect.orDie(replication.propagate(identity)),
+        { discard: true },
+      ));
+
+  /**
+   * Re-level every replica after a change that is not one record's.
+   *
+   * An index, an analyzer or an embedding rewrites the manifest of every
+   * document in the collection, so there is no single identity to carry. These
+   * are rare next to writing a document, which is why the expensive answer is
+   * the right one here and the wrong one there.
+   */
+  const relevelling = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    Effect.tap(effect, () => Effect.orDie(replication.refresh));
+
+  const writtenIdentities = (
+    written: ReadonlyArray<DocumentWritten>,
+  ): ReadonlyArray<ObjectIdentity> =>
+    written.map((entry) =>
+      entry._tag === "Deleted"
+        ? replication.documentIdentity(entry.collection, entry.id)
+        : replication.documentIdentity(entry.document.collection, entry.document.id));
+
   const globalBase = tenantApiOver(globalStore, GLOBAL_TENANT);
-  const globalApi: TenantApi = {
-    ...globalBase,
-    documents: {
-      ...globalBase.documents,
-      createCollection: (input) =>
-        // Catalogued before it is written. A catalog entry naming a collection
-        // that does not exist yet routes nothing, while a collection missing
-        // from the catalog would be App-scoped data the operator index never
-        // names — and the two stores cannot commit together. A name the
-        // collection API would reject never reaches the catalog, so the only
-        // failures left here are a corrupt one.
-        //
-        // Only an undeclared name is claimed as `global`. Declaring a class
-        // first and creating the collection second is how a `replicated` one is
-        // made, and a create that insisted on `global` would refuse it.
+  const globalDocuments: DocumentsApi = {
+    ...globalBase.documents,
+
+    // One document changed: carry that document.
+    insert: (input) =>
+      propagating(globalBase.documents.insert(input), (document) => [
+        replication.documentIdentity(document.collection, document.id),
+      ]),
+    update: (input) =>
+      propagating(globalBase.documents.update(input), (document) => [
+        replication.documentIdentity(document.collection, document.id),
+      ]),
+    delete: (input) =>
+      propagating(globalBase.documents.delete(input), () => [
+        replication.documentIdentity(input.collection, input.id),
+      ]),
+    write: (input) =>
+      propagating(globalBase.documents.write(input), writtenIdentities),
+
+    // The collection itself changed, or every document in it did.
+    rewrite: (input) => relevelling(globalBase.documents.rewrite(input)),
+    createIndex: (input) => relevelling(globalBase.documents.createIndex(input)),
+    dropIndex: (input) => relevelling(globalBase.documents.dropIndex(input)),
+    addCheck: (input) => relevelling(globalBase.documents.addCheck(input)),
+    dropCheck: (input) => relevelling(globalBase.documents.dropCheck(input)),
+    addReference: (input) => relevelling(globalBase.documents.addReference(input)),
+    dropReference: (input) => relevelling(globalBase.documents.dropReference(input)),
+    analyze: (input) => relevelling(globalBase.documents.analyze(input)),
+    embed: (input) => relevelling(globalBase.documents.embed(input)),
+    rebuildVectorIndex: (input) => relevelling(globalBase.documents.rebuildVectorIndex(input)),
+    dropVectorIndex: (input) => relevelling(globalBase.documents.dropVectorIndex(input)),
+
+    // Catalogued before it is written. A catalog entry naming a collection that
+    // does not exist yet routes nothing, while a collection missing from the
+    // catalog would be App-scoped data the operator index never names — and the
+    // two stores cannot commit together. A name the collection API would reject
+    // never reaches the catalog, so the only failures left here are a corrupt
+    // one.
+    //
+    // Only an undeclared name is claimed as `global`. Declaring a class first
+    // and creating the collection second is how a `replicated` one is made, and
+    // a create that insisted on `global` would refuse it.
+    createCollection: (input) =>
+      propagating(
         isValidCollectionName(input.name)
           && topology.placement.classOf(input.name) === "partitioned"
           ? Effect.flatMap(
@@ -396,14 +471,11 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
               () => globalBase.documents.createCollection(input),
             )
           : globalBase.documents.createCollection(input),
-    },
+        (collection) => [replication.collectionIdentity(collection.name)],
+      ),
   };
 
-  const replication = replicationOver({
-    globalStore,
-    shards,
-    placement: topology.placement,
-  });
+  const globalApi: TenantApi = { ...globalBase, documents: globalDocuments };
 
   // A shard that joined while the database was closed, or one left behind by an
   // interrupted pass, holds a stale copy until something levels it. Opening is

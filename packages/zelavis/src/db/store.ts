@@ -200,6 +200,17 @@ export interface ObjectStoreApi {
   readonly read: (seq: Seq) => Effect.Effect<DbObject | undefined, DbError>;
 
   /**
+   * What one record contributed to the lenses.
+   *
+   * `liveRecords` already carries this for every record at once, which is the
+   * wrong shape for anything copying a single record: replicating one document
+   * would have to read the whole partition to find its manifest. Empty for a
+   * record that contributed nothing, and for one that does not exist — `read`
+   * is what distinguishes those.
+   */
+  readonly manifestOf: (seq: Seq) => Effect.Effect<IndexManifest, DbError>;
+
+  /**
    * Resolve a caller's own identifier to the dense one.
    *
    * A `Seq` is an internal, partition-local allocation; applications address
