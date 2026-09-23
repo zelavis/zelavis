@@ -337,9 +337,34 @@ export async function createAgentProcessServer(
           return;
         }
 
+        if (message.type === "write") {
+          const child = processes.get(String(message.processId))?.child;
+          if (typeof message.data !== "string") {
+            send(socket, { id, type: "failed", error: "Process input must be a string." });
+            return;
+          }
+          const accepted = child?.write ? await child.write(message.data) : false;
+          send(socket, { id, type: "written", accepted });
+          return;
+        }
+
+        if (message.type === "signal") {
+          const child = processes.get(String(message.processId))?.child;
+          if (typeof message.signal !== "string" || !/^SIG[A-Z0-9]+$/.test(message.signal)) {
+            send(socket, { id, type: "failed", error: "Process signal is invalid." });
+            return;
+          }
+          const accepted = child?.signal ? await child.signal(message.signal) : false;
+          send(socket, { id, type: "signalled", accepted });
+          return;
+        }
+
         if (message.type === "reclaim") {
           const workloadId =
             typeof message.workloadId === "string" ? message.workloadId : undefined;
+          const preservePrefixes = Array.isArray(message.preservePrefixes)
+            ? message.preservePrefixes.filter((value): value is string => typeof value === "string" && value.length > 0)
+            : [];
 
           // Abandoned first: processes whose Platform disconnected without
           // stopping them. Nothing can drive them any more — this Agent still
@@ -349,6 +374,7 @@ export async function createAgentProcessServer(
           for (const [processId, entry] of [...processes]) {
             if (entry.socket && !entry.socket.destroyed) continue;
             if (workloadId !== undefined && entry.workloadId !== workloadId) continue;
+            if (workloadId === undefined && preservePrefixes.some((prefix) => entry.workloadId.startsWith(prefix))) continue;
             processes.delete(processId);
             await entry.child.stop().catch(() => undefined);
             count += 1;
@@ -604,6 +630,7 @@ export async function createAgentProcessClient(
     });
 
     return {
+      id: processId,
       workloadId,
       get running() {
         return !settled;
@@ -619,6 +646,16 @@ export async function createAgentProcessClient(
             : { graceMs: stopOptions.graceMs }),
         });
         return exit;
+      },
+      async write(data) {
+        if (settled) return false;
+        const result = await request({ type: "write", processId, data });
+        return result.accepted === true;
+      },
+      async signal(signal) {
+        if (settled) return false;
+        const result = await request({ type: "signal", processId, signal });
+        return result.accepted === true;
       },
       listen(onOutput: (output: ZelavisAgentProcessOutput) => void) {
         const existing = listeners.get(processId);
@@ -672,10 +709,13 @@ export async function createAgentProcessClient(
       return (result.operation ?? undefined) as ZelavisAgentOperationSummary | undefined;
     },
 
-    async reclaim(workloadId) {
+    async reclaim(workloadId, reclaimOptions) {
       const result = await request({
         type: "reclaim",
         ...(workloadId === undefined ? {} : { workloadId }),
+        ...(reclaimOptions?.preservePrefixes?.length
+          ? { preservePrefixes: reclaimOptions.preservePrefixes }
+          : {}),
       });
       return Number(result.count ?? 0);
     },

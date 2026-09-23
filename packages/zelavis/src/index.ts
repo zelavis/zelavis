@@ -22,7 +22,10 @@ import {
 import {
   defineDatabaseService,
   type DatabaseRuntimeApi,
+  type JsonObject,
+  CollectionExists,
 } from "./db/index.js";
+import { DocumentConflict } from "./db/errors.js";
 import type { OpenNodeDatabaseOptions } from "./db/node-host.js";
 import {
   createFabricService,
@@ -217,6 +220,15 @@ import {
 export * from "./backends/registry.js";
 export * from "./agent/index.js";
 import type { ZelavisAgentOperationReader } from "./core/agent/index.js";
+import type {
+  ZelavisEnvironmentEventReadOptions,
+  ZelavisRemoteEnvironment,
+  ZelavisEnvironmentOperationInput,
+  ZelavisEnvironmentProcess,
+  ZelavisEnvironmentProcessInput,
+  ZelavisEnvironmentSession,
+} from "./platform/remote-environment.js";
+export * from "./platform/remote-environment.js";
 import {
   createMemorySystemStore,
   type ZelavisSystemStore,
@@ -506,6 +518,8 @@ export interface ZelavisServerOptions {
   agentOperations?: ZelavisAgentOperationReader;
   /** Issues authority for release-signed host operations on a supervised Agent. */
   hostOperations?: ZelavisHostOperationBroker;
+  /** Provider-neutral remote environment boundary for agent execution. */
+  remoteEnvironment?: ZelavisRemoteEnvironment;
   /** Proxy-neutral ingress authority. Concrete proxy execution stays host-provided. */
   edge?: ZelavisEdgeManager;
   /** Canonical route and hostname authority. Defaults to System Store backing. */
@@ -604,6 +618,7 @@ export interface ZelavisPlatformResources {
   agentOperations?: ZelavisAgentOperationReader;
   /** Issues authority for release-signed host operations on a supervised Agent. */
   hostOperations?: ZelavisHostOperationBroker;
+  remoteEnvironment?: ZelavisRemoteEnvironment;
   /** Proxy-neutral ingress authority. */
   edge?: ZelavisEdgeManager;
   /** Canonical route and hostname authority. */
@@ -3124,6 +3139,377 @@ function hostOperationRoutes(
   ];
 }
 
+function remoteEnvironmentRoutes(
+  environment: ZelavisRemoteEnvironment | undefined,
+  database?: DatabaseRuntimeApi,
+): ZelavisServerRoute<any>[] {
+  const unavailable = () => ({
+    status: 503,
+    body: { error: "Remote environment execution is unavailable." },
+  });
+  const principalTenant = (principal: NonNullable<ZelavisServerExecutionContext["principal"]>) => {
+    const claimed = principal.metadata?.tenantId;
+    return typeof claimed === "string" && claimed.trim() ? claimed : principal.id;
+  };
+  const ensureCollection = async (tenantId: string, name: string) => {
+    if (!database) return;
+    const tenant = database.forTenant(tenantId);
+    if (await tenant.documents.collectionExists(name)) return;
+    try {
+      await tenant.documents.createCollection({ name, surface: "database" });
+    } catch (error) {
+      if (!(error instanceof CollectionExists)) throw error;
+    }
+  };
+  const readSession = async (tenantId: string, sessionId: string) => {
+    if (!database) return undefined;
+    return database.forTenant(tenantId).documents.findById({ collection: "zelavis_agent_sessions", id: sessionId });
+  };
+  const readProcess = async (tenantId: string, processId: string) => {
+    if (!database) return undefined;
+    return database.forTenant(tenantId).documents.findById({ collection: "zelavis_agent_processes", id: processId });
+  };
+  const sessionFromRecord = (record: NonNullable<Awaited<ReturnType<typeof readSession>>>): ZelavisEnvironmentSession => {
+    const data = record.data as Record<string, unknown>;
+    return {
+      id: record.id,
+      version: record.version,
+      status: data.status === "closed" ? "closed" as const : "active" as const,
+      createdAt: typeof data.createdAt === "string" ? data.createdAt : "",
+      ...(typeof data.closedAt === "string" ? { closedAt: data.closedAt } : {}),
+      ...(data.scope && typeof data.scope === "object" ? { scope: data.scope } : {}),
+      ...(data.metadata && typeof data.metadata === "object" ? { metadata: data.metadata } : {}),
+    } as ZelavisEnvironmentSession;
+  };
+  const processFromRecord = (record: NonNullable<Awaited<ReturnType<typeof readProcess>>>): ZelavisEnvironmentProcess => {
+    const data = record.data as Record<string, unknown>;
+    const status = data.status === "starting" || data.status === "running" || data.status === "exited" || data.status === "failed"
+      ? data.status
+      : "failed";
+    return {
+      id: record.id,
+      sessionId: String(data.sessionId ?? ""),
+      status,
+      ...(typeof data.startedAt === "string" && data.startedAt ? { startedAt: data.startedAt } : {}),
+      ...(typeof data.exitCode === "number" ? { exitCode: data.exitCode } : {}),
+    };
+  };
+  const resumePersistedSession = async (record: NonNullable<Awaited<ReturnType<typeof readSession>>>) => {
+    const session = sessionFromRecord(record);
+    return environment?.resumeSession ? environment.resumeSession(session) : session;
+  };
+  return [
+    {
+      id: "runtime.environment.identity",
+      method: "GET",
+      path: "/environment",
+      access: { authenticated: true },
+      spec: { operationId: "getEnvironment", summary: "Read remote environment identity", tags: ["environment"] },
+      handler: async () => environment
+        ? { status: 200, body: { environment: typeof environment.identity === "function" ? await environment.identity() : environment.identity } }
+        : unavailable(),
+    },
+    {
+      id: "runtime.environment.health",
+      method: "GET",
+      path: "/environment/health",
+      access: { authenticated: true },
+      spec: { operationId: "getEnvironmentHealth", summary: "Read remote environment health", tags: ["environment"] },
+      handler: async () => environment
+        ? { status: 200, body: await environment.health() }
+        : unavailable(),
+    },
+    {
+      id: "runtime.environment.sessions.create",
+      method: "POST",
+      path: "/environment/sessions",
+      access: { authenticated: true },
+      spec: { operationId: "createEnvironmentSession", summary: "Create an agent session", tags: ["environment"] },
+      handler: async ({ body, principal }) => {
+        if (!environment) return unavailable();
+        if (!principal) return { status: 401, body: { error: "Authentication required" } };
+        const input = body && typeof body === "object" && !Array.isArray(body)
+          ? body as Record<string, unknown>
+          : {};
+        const scope = input.scope && typeof input.scope === "object" && !Array.isArray(input.scope)
+          ? input.scope as Record<string, unknown>
+          : undefined;
+        const tenantId = principalTenant(principal);
+        if (
+          typeof scope?.tenantId !== "string" || !scope.tenantId.trim()
+          || scope.tenantId !== tenantId
+          || typeof scope.projectId !== "string" || !scope.projectId.trim()
+          || typeof scope.laneId !== "string" || !scope.laneId.trim()
+        ) {
+          return { status: 403, body: { error: "Session scope must match the authenticated tenant and include project and lane ids." } };
+        }
+        const session = await environment.createSession({
+          scope: {
+            tenantId,
+            projectId: scope.projectId,
+            laneId: scope.laneId,
+          },
+          metadata: input.metadata as Readonly<Record<string, unknown>> | undefined,
+        });
+        if (database) {
+          await ensureCollection(tenantId, "zelavis_agent_sessions");
+          await database.forTenant(tenantId).documents.insert({
+            collection: "zelavis_agent_sessions",
+            id: session.id,
+            data: {
+              sessionId: session.id,
+              status: session.status,
+              createdAt: session.createdAt,
+              scope: { tenantId, projectId: scope.projectId, laneId: scope.laneId },
+              metadata: (input.metadata ?? {}) as JsonObject,
+            },
+          });
+        }
+        return { status: 201, body: { session } };
+      },
+    },
+    {
+      id: "runtime.environment.sessions.update",
+      method: "PATCH",
+      path: "/environment/sessions/:sessionId",
+      access: { authenticated: true },
+      spec: { operationId: "updateEnvironmentSession", summary: "Update an agent session projection", tags: ["environment"] },
+      handler: async ({ params, body, principal }) => {
+        if (!environment) return unavailable();
+        if (!principal) return { status: 401, body: { error: "Authentication required" } };
+        if (!database) return { status: 503, body: { error: "Environment session persistence is unavailable." } };
+        const tenantId = principalTenant(principal);
+        const sessionId = params.sessionId ?? "";
+        const current = await readSession(tenantId, sessionId);
+        if (!current) return { status: 404, body: { error: "Environment session was not found." } };
+        if (current.data.status === "closed") {
+          return { status: 409, body: { error: "Environment session is closed." } };
+        }
+        const input = body && typeof body === "object" && !Array.isArray(body)
+          ? body as Record<string, unknown>
+          : {};
+        if (!Number.isSafeInteger(input.expectedVersion) || Number(input.expectedVersion) < 0) {
+          return { status: 400, body: { error: "expectedVersion must be a non-negative integer." } };
+        }
+        if (!input.metadata || typeof input.metadata !== "object" || Array.isArray(input.metadata)) {
+          return { status: 400, body: { error: "Session metadata must be an object." } };
+        }
+        try {
+          const updated = await database.forTenant(tenantId).documents.update({
+            collection: "zelavis_agent_sessions",
+            id: sessionId,
+            data: { metadata: input.metadata as JsonObject },
+            mode: "merge",
+            expectedVersion: Number(input.expectedVersion),
+          });
+          return { status: 200, body: { session: sessionFromRecord(updated) } };
+        } catch (error) {
+          if (error instanceof DocumentConflict) {
+            return { status: 409, body: { error: "Environment session changed concurrently." } };
+          }
+          throw error;
+        }
+      },
+    },
+    {
+      id: "runtime.environment.sessions.get",
+      method: "GET",
+      path: "/environment/sessions/:sessionId",
+      access: { authenticated: true },
+      spec: { operationId: "getEnvironmentSession", summary: "Read an agent session", tags: ["environment"] },
+      handler: async ({ params, principal }) => {
+        if (!environment) return unavailable();
+        if (!principal) return { status: 401, body: { error: "Authentication required" } };
+        if (!database) return { status: 503, body: { error: "Environment session persistence is unavailable." } };
+        const session = await readSession(principalTenant(principal), params.sessionId ?? "");
+        if (!session) return { status: 404, body: { error: "Environment session was not found." } };
+        const resumed = await resumePersistedSession(session);
+        return { status: 200, body: { session: resumed } };
+      },
+    },
+    {
+      id: "runtime.environment.sessions.close",
+      method: "DELETE",
+      path: "/environment/sessions/:sessionId",
+      access: { authenticated: true },
+      spec: { operationId: "closeEnvironmentSession", summary: "Close an agent session", tags: ["environment"] },
+      handler: async ({ params, principal }) => {
+        if (!environment) return unavailable();
+        if (!principal) return { status: 401, body: { error: "Authentication required" } };
+        const tenantId = principalTenant(principal);
+        const sessionId = params.sessionId ?? "";
+        const session = await readSession(tenantId, sessionId);
+        if (database && !session) return { status: 404, body: { error: "Environment session was not found." } };
+        if (session) await resumePersistedSession(session);
+        if (environment.closeSession) await environment.closeSession(sessionId);
+        if (database && session) {
+          await database.forTenant(tenantId).documents.update({
+            collection: "zelavis_agent_sessions",
+            id: sessionId,
+            data: { status: "closed", closedAt: new Date().toISOString() },
+            mode: "merge",
+          });
+        }
+        return { status: 200, body: { closed: true } };
+      },
+    },
+    {
+      id: "runtime.environment.sessions.events",
+      method: "GET",
+      path: "/environment/sessions/:sessionId/events",
+      access: { authenticated: true },
+      spec: { operationId: "readEnvironmentSessionEvents", summary: "Replay agent process events", tags: ["environment"] },
+      handler: async ({ params, principal, request }) => {
+        if (!environment) return unavailable();
+        if (!principal) return { status: 401, body: { error: "Authentication required" } };
+        if (!environment.readEvents) return { status: 503, body: { error: "Environment event replay is unavailable." } };
+        if (!database) return { status: 503, body: { error: "Environment session persistence is unavailable." } };
+        const sessionId = params.sessionId ?? "";
+        const session = await readSession(principalTenant(principal), sessionId);
+        if (!session) return { status: 404, body: { error: "Environment session was not found." } };
+        await resumePersistedSession(session);
+        const search = new URL(request.url).searchParams;
+        const after = search.get("after") ?? undefined;
+        const rawLimit = search.get("limit");
+        const limit = rawLimit === null ? undefined : Number(rawLimit);
+        if (after !== undefined && after.length > 512) {
+          return { status: 400, body: { error: "Environment event cursor is too long." } };
+        }
+        if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 1000)) {
+          return { status: 400, body: { error: "Environment event limit must be an integer from 1 to 1000." } };
+        }
+        const options: ZelavisEnvironmentEventReadOptions = {
+          ...(after === undefined ? {} : { after }),
+          ...(limit === undefined ? {} : { limit }),
+        };
+        return { status: 200, body: await environment.readEvents(sessionId, options) };
+      },
+    },
+    {
+      id: "runtime.environment.processes.start",
+      method: "POST",
+      path: "/environment/sessions/:sessionId/processes",
+      access: { authenticated: true },
+      spec: { operationId: "startEnvironmentProcess", summary: "Start a process in an agent session", tags: ["environment"] },
+      handler: async ({ params, body, principal }) => {
+        if (!environment) return unavailable();
+        if (!principal) return { status: 401, body: { error: "Authentication required" } };
+        const session = await readSession(principalTenant(principal), params.sessionId ?? "");
+        if (database && !session) return { status: 404, body: { error: "Environment session was not found." } };
+        if (database && session?.data.status === "closed") {
+          return { status: 409, body: { error: "Environment session is closed." } };
+        }
+        if (session) await resumePersistedSession(session);
+        const input = body && typeof body === "object" && !Array.isArray(body)
+          ? body as Record<string, unknown>
+          : {};
+        if (typeof input.command !== "string" || !input.command.trim()) {
+          return { status: 400, body: { error: "Process command is required." } };
+        }
+        if (typeof input.cwd !== "string" || !input.cwd.trim()) {
+          return { status: 400, body: { error: "Process cwd is required." } };
+        }
+        if (input.args !== undefined && (!Array.isArray(input.args) || input.args.some((value) => typeof value !== "string"))) {
+          return { status: 400, body: { error: "Process args must be an array of strings." } };
+        }
+        if (
+          input.env !== undefined
+          && (
+            !input.env || typeof input.env !== "object" || Array.isArray(input.env)
+            || Object.values(input.env).some((value) => typeof value !== "string")
+          )
+        ) {
+          return { status: 400, body: { error: "Process env must contain only string values." } };
+        }
+        const process = await environment.startProcess(
+          params.sessionId ?? "",
+          input as unknown as ZelavisEnvironmentProcessInput,
+        );
+        if (database) {
+          const tenantId = principalTenant(principal);
+          await ensureCollection(tenantId, "zelavis_agent_processes");
+          await database.forTenant(tenantId).documents.insert({
+            collection: "zelavis_agent_processes",
+            id: process.id,
+            data: {
+              processId: process.id,
+              sessionId: process.sessionId,
+              status: process.status,
+              startedAt: process.startedAt ?? "",
+              exitCode: process.exitCode ?? null,
+            },
+          });
+        }
+        return { status: 201, body: { process } };
+      },
+    },
+    {
+      id: "runtime.environment.processes.get",
+      method: "GET",
+      path: "/environment/processes/:processId",
+      access: { authenticated: true },
+      spec: { operationId: "getEnvironmentProcess", summary: "Read an agent process", tags: ["environment"] },
+      handler: async ({ params, principal }) => {
+        if (!environment) return unavailable();
+        if (!principal) return { status: 401, body: { error: "Authentication required" } };
+        if (!database) return { status: 503, body: { error: "Environment process persistence is unavailable." } };
+        const process = await readProcess(principalTenant(principal), params.processId ?? "");
+        return process
+          ? { status: 200, body: { process: processFromRecord(process) } }
+          : { status: 404, body: { error: "Environment process was not found." } };
+      },
+    },
+    {
+      id: "runtime.environment.processes.operate",
+      method: "POST",
+      path: "/environment/processes/:processId/operations",
+      access: { authenticated: true },
+      spec: { operationId: "operateEnvironmentProcess", summary: "Send an operation to an agent process", tags: ["environment"] },
+      handler: async ({ params, body, principal }) => {
+        if (!environment) return unavailable();
+        if (!principal) return { status: 401, body: { error: "Authentication required" } };
+        const tenantId = principalTenant(principal);
+        const processRecord = await readProcess(tenantId, params.processId ?? "");
+        if (database && !processRecord) return { status: 404, body: { error: "Environment process was not found." } };
+        if (processRecord && database) {
+          const session = await readSession(tenantId, String(processRecord.data.sessionId ?? ""));
+          if (session) await resumePersistedSession(session);
+        }
+        const operation = body && typeof body === "object" && !Array.isArray(body)
+          ? body as Record<string, unknown>
+          : {};
+        const operationType = operation.type;
+        if (operationType !== "stdin" && operationType !== "signal" && operationType !== "terminate") {
+          return { status: 400, body: { error: "Process operation type must be stdin, signal, or terminate." } };
+        }
+        if ((operationType === "stdin" || operationType === "signal") && typeof operation.data !== "string") {
+          return { status: 400, body: { error: `Process ${operationType} requires string data.` } };
+        }
+        const operationInput: ZelavisEnvironmentOperationInput = {
+          type: operationType,
+          ...(typeof operation.data === "string" ? { data: operation.data } : {}),
+        };
+        const result = await environment.operateProcess(
+          params.processId ?? "",
+          operationInput,
+        );
+        if (database && processRecord) {
+          await database.forTenant(tenantId).documents.update({
+            collection: "zelavis_agent_processes",
+            id: params.processId ?? "",
+            data: {
+              status: result.process.status,
+              exitCode: result.process.exitCode ?? null,
+            },
+            mode: "merge",
+          });
+        }
+        return { status: 202, body: { result } };
+      },
+    },
+  ];
+}
+
 async function resolvePlatformCoreService(
   projectRecipes: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
   projects?: ZelavisProjectManager,
@@ -3137,6 +3523,8 @@ async function resolvePlatformCoreService(
   assistantOption?: false | ZelavisAssistantResponder,
   edgeRoutes?: ZelavisEdgeRouteStore,
   edgeCertificates?: ZelavisCertificateController,
+  remoteEnvironment?: ZelavisRemoteEnvironment,
+  database?: DatabaseRuntimeApi,
 ): Promise<ZelavisRuntimeService<any>> {
   const assistant =
     systemStore && assistantOption !== false
@@ -3311,6 +3699,7 @@ async function resolvePlatformCoreService(
           },
         },
         ...hostOperationRoutes(hostOperations),
+        ...remoteEnvironmentRoutes(remoteEnvironment, database),
         {
           id: "runtime.edge.read",
           spec: {
@@ -4061,6 +4450,43 @@ async function resolvePlatformCoreService(
           },
         },
         {
+          id: "runtime.projects.update",
+          spec: {
+            operationId: "updateProject",
+            summary: "Update a Project's metadata",
+            tags: ["projects"],
+            responses: {
+              200: { description: "Project updated" },
+              400: { description: "Invalid Project update" },
+              404: { description: "No such Project" },
+            },
+          },
+          method: "PATCH",
+          path: "/projects/:projectId",
+          access: {
+            permissions: ["project.settings.manage"],
+            scope: { type: "project", projectIdParam: "projectId" },
+          },
+          handler: async ({ params, body }: { params: Record<string, string>; body: unknown }) => {
+            if (!projects) {
+              return unavailableProjectsResponse();
+            }
+            try {
+              const input = readBodyObject(body);
+              return {
+                status: 200,
+                body: {
+                  project: await projects.update(params.projectId ?? "", {
+                    name: typeof input.name === "string" ? input.name : "",
+                  }),
+                },
+              };
+            } catch (error) {
+              return projectErrorResponse(error);
+            }
+          },
+        },
+        {
           id: "runtime.projects.start",
           spec: {
             operationId: "startProject",
@@ -4749,6 +5175,8 @@ export async function zelavis(
     options.assistant,
     edgeRoutes,
     edgeCertificates,
+    options.remoteEnvironment,
+    resolvedDatabaseApi,
   );
   const subsystemServices = [
     platformCoreService,
@@ -5096,6 +5524,7 @@ function mergeZelavisServerOptions(
       override.deploymentBackends ?? base.deploymentBackends,
     agentOperations: override.agentOperations ?? base.agentOperations,
     hostOperations: override.hostOperations ?? base.hostOperations,
+    remoteEnvironment: override.remoteEnvironment ?? base.remoteEnvironment,
     edge: override.edge ?? base.edge,
     edgeRoutes: override.edgeRoutes ?? base.edgeRoutes,
     serviceRegistry:
@@ -5241,6 +5670,7 @@ function applyPlatformResourceDefaults(
       options.deploymentBackends ?? resources.deploymentBackends,
     agentOperations: options.agentOperations ?? resources.agentOperations,
     hostOperations: options.hostOperations ?? resources.hostOperations,
+    remoteEnvironment: options.remoteEnvironment ?? resources.remoteEnvironment,
     edge: options.edge ?? resources.edge,
     edgeRoutes: options.edgeRoutes ?? resources.edgeRoutes,
     edgeCertificates: options.edgeCertificates ?? resources.edgeCertificates,

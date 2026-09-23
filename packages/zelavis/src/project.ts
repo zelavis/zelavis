@@ -212,6 +212,11 @@ export interface ZelavisProjectCreateInput {
   ownerProjectId?: string;
 }
 
+export interface ZelavisProjectUpdateInput {
+  /** Human-readable label. Project identity and runtime placement do not change. */
+  name: string;
+}
+
 export interface ZelavisProjectManager {
   readonly runtime: {
     driver: string;
@@ -230,6 +235,7 @@ export interface ZelavisProjectManager {
   listOwned(ownerProjectId: string): Promise<readonly ZelavisProjectRecord[]>;
   get(id: string): Promise<ZelavisProjectRecord | undefined>;
   create(input: ZelavisProjectCreateInput): Promise<ZelavisProjectRecord>;
+  update(id: string, input: ZelavisProjectUpdateInput): Promise<ZelavisProjectRecord>;
   start(id: string): Promise<ZelavisProjectRecord>;
   stop(id: string): Promise<ZelavisProjectRecord>;
   restart(id: string): Promise<ZelavisProjectRecord>;
@@ -1496,6 +1502,17 @@ export async function createProjectManager(options: {
         });
         throw error;
       }
+    },
+    async update(id, input) {
+      return withProjectLifecycle(normalizeProjectId(id), async () => {
+        const project = await requireProject(id);
+        assertProjectIsOperable(project, "updated");
+        return write({
+          ...project,
+          name: normalizeProjectName(input.name),
+          updatedAt: new Date().toISOString(),
+        });
+      });
     },
     async start(id) {
       return withProjectLifecycle(normalizeProjectId(id), async () => {

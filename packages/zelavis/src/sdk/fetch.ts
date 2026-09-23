@@ -23,6 +23,19 @@ import type {
   ZelavisHostOperationSubmitInput,
 } from "../platform/host-operations.js";
 import type {
+  ZelavisEnvironmentHealth,
+  ZelavisEnvironmentIdentity,
+  ZelavisEnvironmentEventPage,
+  ZelavisEnvironmentEventReadOptions,
+  ZelavisEnvironmentOperationInput,
+  ZelavisEnvironmentOperationResult,
+  ZelavisEnvironmentProcess,
+  ZelavisEnvironmentProcessInput,
+  ZelavisEnvironmentSession,
+  ZelavisEnvironmentSessionInput,
+  ZelavisEnvironmentSessionUpdate,
+} from "../platform/remote-environment.js";
+import type {
   DatabaseRuntimeApi,
   JsonObject as DatabaseJsonObject,
 } from "../db/index.js";
@@ -137,6 +150,18 @@ export interface ZelavisDashboardSettingsUpdate {
   preferences?: Record<string, unknown>;
 }
 
+export interface ZelavisRuntimeAccessResponse {
+  readonly mode: string;
+  readonly label: string;
+  readonly principal: {
+    readonly id: string;
+    readonly type: string;
+    readonly roles?: readonly string[];
+    readonly permissions?: readonly string[];
+    readonly metadata?: Readonly<Record<string, unknown>>;
+  };
+}
+
 export interface ZelavisClient {
   readonly plugins: RegisteredPluginClients;
   readonly baseUrl: URL;
@@ -154,9 +179,11 @@ export interface ZelavisClient {
   readonly projects: ZelavisProjectsClient;
   /** Release-signed host operations, over `/runtime/host-operations`. Same contract as `zelavis host-operations`. */
   readonly hostOperations: ZelavisHostOperationsClient;
+  readonly environment: ZelavisEnvironmentClient;
   /** Proxy-neutral Edge management. Same contract as `zelavis edge`. */
   readonly edge: ZelavisEdgeClient;
   readonly runtime: {
+    access(): Promise<ZelavisRuntimeAccessResponse>;
     serviceSources(): Promise<{ sources: readonly ServiceSourceDiagnostic[] }>;
     config(): Promise<ZelavisRuntimeConfigResponse>;
     settings(): Promise<ZelavisDashboardSettingsResponse>;
@@ -172,6 +199,10 @@ export interface ZelavisProjectCreateInput {
   readonly recipeName?: string;
   /** Defaults to true. */
   readonly start?: boolean;
+}
+
+export interface ZelavisProjectUpdateInput {
+  readonly name: string;
 }
 
 export interface ZelavisProjectRecipeSummary {
@@ -199,6 +230,7 @@ export interface ZelavisProjectsClient {
   list(): Promise<ZelavisProjectListResponse>;
   get(projectId: string): Promise<ZelavisProjectRecord>;
   create(input: ZelavisProjectCreateInput): Promise<ZelavisProjectRecord>;
+  update(projectId: string, input: ZelavisProjectUpdateInput): Promise<ZelavisProjectRecord>;
   start(projectId: string): Promise<ZelavisProjectRecord>;
   stop(projectId: string): Promise<ZelavisProjectRecord>;
   restart(projectId: string): Promise<ZelavisProjectRecord>;
@@ -215,6 +247,19 @@ export interface ZelavisHostOperationsClient {
   get(operationId: string): Promise<ZelavisHostOperationRecord>;
   /** Issuance records, newest first; needs the audit permission for the scope. */
   audit(query?: { readonly projectId?: string; readonly limit?: number }): Promise<readonly ZelavisHostOperationRecord[]>;
+}
+
+export interface ZelavisEnvironmentClient {
+  identity(): Promise<ZelavisEnvironmentIdentity>;
+  health(): Promise<ZelavisEnvironmentHealth>;
+  createSession(input?: ZelavisEnvironmentSessionInput): Promise<ZelavisEnvironmentSession>;
+  updateSession(sessionId: string, update: ZelavisEnvironmentSessionUpdate): Promise<ZelavisEnvironmentSession>;
+  getSession(sessionId: string): Promise<ZelavisEnvironmentSession>;
+  closeSession(sessionId: string): Promise<{ readonly closed: boolean }>;
+  startProcess(sessionId: string, input: ZelavisEnvironmentProcessInput): Promise<ZelavisEnvironmentProcess>;
+  getProcess(processId: string): Promise<ZelavisEnvironmentProcess>;
+  operateProcess(processId: string, input: ZelavisEnvironmentOperationInput): Promise<ZelavisEnvironmentOperationResult>;
+  readEvents(sessionId: string, options?: ZelavisEnvironmentEventReadOptions): Promise<ZelavisEnvironmentEventPage>;
 }
 
 export interface ZelavisEdgeStatusResponse {
@@ -533,11 +578,77 @@ export function createZelavisClient(
         )).operation;
       },
     },
+    environment: {
+      identity: async () =>
+        (await json<{ environment: ZelavisEnvironmentIdentity }>("/runtime/environment")).environment,
+      health: () => json<ZelavisEnvironmentHealth>("/runtime/environment/health"),
+      createSession: async (input = {}) =>
+        (await json<{ session: ZelavisEnvironmentSession }>("/runtime/environment/sessions", {
+          method: "POST",
+          body: input,
+        })).session,
+      updateSession: async (sessionId, update) => {
+        if (!sessionId || sessionId === "." || sessionId === "..") throw new TypeError("Invalid environment session id.");
+        if (!Number.isSafeInteger(update.expectedVersion) || update.expectedVersion < 0) {
+          throw new TypeError("Environment session expectedVersion must be a non-negative integer.");
+        }
+        return (await json<{ session: ZelavisEnvironmentSession }>(
+          `/runtime/environment/sessions/${encodeURIComponent(sessionId)}`,
+          { method: "PATCH", body: update },
+        )).session;
+      },
+      getSession: async (sessionId) => {
+        if (!sessionId || sessionId === "." || sessionId === "..") throw new TypeError("Invalid environment session id.");
+        return (await json<{ session: ZelavisEnvironmentSession }>(
+          `/runtime/environment/sessions/${encodeURIComponent(sessionId)}`,
+        )).session;
+      },
+      closeSession: async (sessionId) => {
+        if (!sessionId || sessionId === "." || sessionId === "..") throw new TypeError("Invalid environment session id.");
+        return json<{ readonly closed: boolean }>(
+          `/runtime/environment/sessions/${encodeURIComponent(sessionId)}`,
+          { method: "DELETE" },
+        );
+      },
+      startProcess: async (sessionId, input) => {
+        if (!sessionId || sessionId === "." || sessionId === "..") throw new TypeError("Invalid environment session id.");
+        return (await json<{ process: ZelavisEnvironmentProcess }>(
+          `/runtime/environment/sessions/${encodeURIComponent(sessionId)}/processes`,
+          { method: "POST", body: input },
+        )).process;
+      },
+      getProcess: async (processId) => {
+        if (!processId || processId === "." || processId === "..") throw new TypeError("Invalid environment process id.");
+        return (await json<{ process: ZelavisEnvironmentProcess }>(
+          `/runtime/environment/processes/${encodeURIComponent(processId)}`,
+        )).process;
+      },
+      operateProcess: async (processId, input) => {
+        if (!processId || processId === "." || processId === "..") throw new TypeError("Invalid environment process id.");
+        return (await json<{ result: ZelavisEnvironmentOperationResult }>(
+          `/runtime/environment/processes/${encodeURIComponent(processId)}/operations`,
+          { method: "POST", body: input },
+        )).result;
+      },
+      readEvents: async (sessionId, options = {}) => {
+        if (!sessionId || sessionId === "." || sessionId === "..") throw new TypeError("Invalid environment session id.");
+        const search = new URLSearchParams();
+        if (options.after !== undefined) search.set("after", options.after);
+        if (options.limit !== undefined) search.set("limit", String(options.limit));
+        const suffix = search.size ? `?${search}` : "";
+        return json<ZelavisEnvironmentEventPage>(
+          `/runtime/environment/sessions/${encodeURIComponent(sessionId)}/events${suffix}`,
+        );
+      },
+    },
     baseUrl,
     rootPath,
     request,
     json,
     runtime: {
+      access() {
+        return json<ZelavisRuntimeAccessResponse>("/runtime/access");
+      },
       serviceSources() {
         return json<{ sources: readonly ServiceSourceDiagnostic[] }>("/runtime/services/sources");
       },
@@ -578,6 +689,8 @@ function createProjectsClient(
     get: async (projectId) => (await json<ProjectBody>(projectPath(projectId))).project,
     create: async (input) =>
       (await json<ProjectBody>("/runtime/projects", { method: "POST", body: input })).project,
+    update: async (projectId, input) =>
+      (await json<ProjectBody>(projectPath(projectId), { method: "PATCH", body: input })).project,
     start: lifecycle("start"),
     stop: lifecycle("stop"),
     restart: lifecycle("restart"),

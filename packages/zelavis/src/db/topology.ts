@@ -3,6 +3,59 @@ import { Schema } from "effect";
 export type TenantId = string;
 export type ShardId = string;
 
+/** Holds the partition map. Reserved, so it never collides with a placed shard. */
+export const TOPOLOGY_SHARD: ShardId = "zv.topology";
+
+/**
+ * Holds every App-scoped collection. Reserved, and no map places it.
+ *
+ * Separate from the topology store because the two fail differently: the map is
+ * small, rewritten rarely, and read on every route, while App data grows and
+ * takes ordinary writes. Sharing one store would put the map behind that
+ * traffic's compaction.
+ */
+export const GLOBAL_SHARD: ShardId = "zv.global";
+
+/**
+ * The tenant App-scoped data is written under.
+ *
+ * Tenancy is structural here — the tenant is part of every namespace and lens
+ * key — so App-scoped data needs a tenant to be data at all. Giving it a
+ * reserved one means it is isolated by the same mechanism that isolates
+ * customers from each other, rather than by a second one written for it.
+ *
+ * It is also why a global collection cannot collide with a tenant's: `posts` in
+ * the global store and `posts` in a tenant's are different collections for
+ * exactly the reason two tenants' `posts` already are.
+ */
+export const GLOBAL_TENANT: TenantId = "zv.global";
+
+/**
+ * How a collection's data is placed.
+ *
+ * Sharding here distributes *tenants*, so within a tenant every collection is
+ * already colocated. What a class declares is therefore scope, not whether
+ * something is worth splitting: does this belong to one tenant, or to the App
+ * above all of them.
+ *
+ * `partitioned` is the default and the only class the partition map routes —
+ * tenant-scoped, one shard, which is what keeps a cross-lens query a local
+ * intersection. `global` is App-scoped and lives in one reserved store that no
+ * map places. `replicated` is App-scoped and copied onto every placed shard, so
+ * a tenant-local query can read it without a fan-out, paid for on every write.
+ *
+ * A class is declared, never inferred from a name or from observed traffic: a
+ * placement that moved on its own would make where a record lives a question
+ * only the running system could answer.
+ */
+export type PlacementClass = "partitioned" | "global" | "replicated";
+
+export const PLACEMENT_CLASSES: ReadonlyArray<PlacementClass> = Object.freeze([
+  "partitioned",
+  "global",
+  "replicated",
+]);
+
 /**
  * The number of virtual ranges a logical database is divided into.
  *

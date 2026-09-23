@@ -8,6 +8,9 @@ import {
 } from "../index.js";
 import { createAgentProcessClient } from "./_agent-ipc.js";
 import { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
+import { createAgentRemoteEnvironment, REMOTE_ENVIRONMENT_WORKLOAD_PREFIX } from "./_agent-remote-environment.js";
+import type { ZelavisAgentProcessRunner } from "../core/agent/process-command.js";
+export { createAgentRemoteEnvironment } from "./_agent-remote-environment.js";
 import { createLocalSqliteSystemStore } from "./_sqlite-system-store.js";
 import {
   createLocalProjectRuntime,
@@ -219,6 +222,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         (!isProjectRuntime || normalizedProjectOptions !== undefined);
       const projectOptions = projectsEnabled ? normalizedProjectOptions : undefined;
       let agentClient: Awaited<ReturnType<typeof createAgentProcessClient>> | undefined;
+      let agentRunner: ZelavisAgentProcessRunner | undefined;
       let platformAuthority: Awaited<ReturnType<typeof readOrCreatePlatformAuthorityKey>> | undefined;
       if (projectsEnabled && !projectRuntime) {
         const runtimeOptions: LocalProjectRuntimeOptions = {
@@ -277,6 +281,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           : createLocalAgentProcessRunner({
               stateDirectory: join(runtimeOptions.directory, ".agent-processes"),
             });
+        agentRunner = runtimeOptions.agent;
 
         projectRuntime = createLocalProjectRuntime(runtimeOptions);
 
@@ -291,7 +296,12 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         // driver claimed. Reconciliation would reclaim the Projects it
         // restarts, but a Project the operator has since stopped is never
         // started again — and so would never be reclaimed at all.
-        await runtimeOptions.agent.reclaim?.().catch(() => undefined);
+        await runtimeOptions.agent.reclaim?.(undefined, {
+          // Detached environment processes still have replayable pipes in the
+          // Agent and are reclaimed by their persisted session, not as orphaned
+          // Project runtimes during Platform boot.
+          preservePrefixes: [REMOTE_ENVIRONMENT_WORKLOAD_PREFIX],
+        }).catch(() => undefined);
       }
       // Signed host operations are requestable only through a supervised Agent,
       // and only the Platform holds the key the Agent trusts.
@@ -362,6 +372,9 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
                 ? resolve(options.files.rootDirectory)
                 : join(dataDirectory, "files"),
             );
+      const remoteEnvironment = !isProjectRuntime && agentRunner
+        ? createAgentRemoteEnvironment({ runner: agentRunner })
+        : undefined;
 
       return {
         subsystems: nextSubsystems,
@@ -399,6 +412,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
                 nativeProjectRuntime: projectsEnabled ? projectRuntime : undefined,
               }),
           ...(hostOperations ? { hostOperations } : {}),
+          ...(remoteEnvironment ? { remoteEnvironment } : {}),
           ...(edgeManager ? { edge: edgeManager } : {}),
           ...(edgeRoutes ? { edgeRoutes } : {}),
           ...(edgeCertificates ? { edgeCertificates } : {}),

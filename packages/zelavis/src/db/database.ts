@@ -6,18 +6,31 @@ import { projectionsFor, type ProjectionsApi } from "./projections.js";
 import { schemasFor, type SchemasApi } from "./schemas.js";
 import { timeSeriesFor, type TimeSeriesApi } from "./time-series.js";
 import { backupsFor, type BackupsApi } from "./backup.js";
-import { initPartitionMap, tenantsOn, topologyFor, type TopologyApi } from "./topology-store.js";
+import {
+  initPartitionMap,
+  initPlacementCatalog,
+  tenantsOn,
+  topologyFor,
+  type TopologyApi,
+} from "./topology-store.js";
 import { systemViewsFor, type SystemViewsApi } from "./system-views.js";
 import { scatterOver, type ScatterApi } from "./scatter.js";
 import { movementOver, type MovementApi } from "./movement.js";
 import { migrationsFor, type MigrationsApi } from "./migrations.js";
 import type { ObjectStoreApi } from "./store.js";
-import { shardFor, shardsOf, type PartitionMap, type ShardId, type TenantId } from "./topology.js";
+import { isValidCollectionName } from "./naming.js";
+import {
+  GLOBAL_SHARD,
+  GLOBAL_TENANT,
+  shardFor,
+  shardsOf,
+  TOPOLOGY_SHARD,
+  type PartitionMap,
+  type ShardId,
+  type TenantId,
+} from "./topology.js";
 
 /** Everything scoped to one tenant, on the shard the map places it. */
-/** Holds the partition map. Reserved, so it never collides with a placed shard. */
-export const TOPOLOGY_SHARD = "zv.topology";
-
 export interface TenantApi {
   readonly documents: DocumentsApi;
   readonly events: DomainEventsApi;
@@ -115,6 +128,20 @@ export interface DatabaseApi {
    */
   readonly forTenant: (tenant: TenantId) => TenantApi;
 
+  /**
+   * Data belonging to the App rather than to any one tenant.
+   *
+   * The same surface a tenant gets, because that is what it structurally is:
+   * one reserved tenant in one reserved store that no partition map places.
+   * Plan definitions, feature flags and shared lookup tables live here instead
+   * of being copied into every tenant or kept outside the database entirely.
+   *
+   * It is not a partition, so `scatter` never reads it, and a write here is not
+   * atomic with a write to any tenant: the two are different stores, and this
+   * database has no cross-store transaction.
+   */
+  readonly global: TenantApi;
+
   /** Which shard currently holds a tenant. Placement detail, exposed for operators. */
   readonly shardOf: (tenant: TenantId) => ShardId;
 
@@ -195,13 +222,17 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
   // other, rather than a file rewritten in place.
   const topologyStore = yield* options.openShard(TOPOLOGY_SHARD);
   const partitionMap = yield* initPartitionMap(topologyStore, options.partitionMap);
+  // Placed beside the map, in the same store, because both answer where
+  // something lives and a reader that had one without the other could route.
+  const placementCatalog = yield* initPlacementCatalog(topologyStore);
+  const globalStore = yield* options.openShard(GLOBAL_SHARD);
 
   const shards = new Map<ShardId, ObjectStoreApi>();
   for (const shard of shardsOf(partitionMap)) {
     shards.set(shard, yield* options.openShard(shard));
   }
 
-  const topology = topologyFor(topologyStore, partitionMap, shards);
+  const topology = topologyFor(topologyStore, partitionMap, shards, placementCatalog);
   const movement = movementOver({ topologyStore, topology, shards });
   // Routing may already have left a source shard whose cleanup is unfinished.
   // Earlier phases also need target shards not yet named by the current map.
@@ -237,6 +268,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
   // operator never thinks about as the one that never gets compacted.
   const everyStore = (): ReadonlyArray<readonly [ShardId, ObjectStoreApi]> => [
     [TOPOLOGY_SHARD, topologyStore],
+    [GLOBAL_SHARD, globalStore],
     ...shards,
   ];
 
@@ -284,6 +316,45 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     return documentsFor(store, tenant, schemasFor(store, tenant));
   };
 
+  const tenantApiOver = (store: ObjectStoreApi, tenant: TenantId): TenantApi => {
+    const events = domainEventsFor(store, tenant, nodeId);
+    const schemas = schemasFor(store, tenant);
+    const projections = projectionsFor(store, events, tenant);
+    const documents = documentsFor(store, tenant, schemas);
+    const timeSeries = timeSeriesFor(store, projections, tenant);
+    return {
+      documents,
+      events,
+      projections,
+      schemas,
+      timeSeries,
+      backups: backupsFor(store, tenant),
+      migrations: migrationsFor(documents, schemas, tenant),
+      systemViews: systemViewsFor({ documents, events, schemas, projections, timeSeries }),
+    };
+  };
+
+  const globalBase = tenantApiOver(globalStore, GLOBAL_TENANT);
+  const globalApi: TenantApi = {
+    ...globalBase,
+    documents: {
+      ...globalBase.documents,
+      createCollection: (input) =>
+        // Catalogued before it is written. A catalog entry naming a collection
+        // that does not exist yet routes nothing, while a collection missing
+        // from the catalog would be App-scoped data the operator index never
+        // names — and the two stores cannot commit together. A name the
+        // collection API would reject never reaches the catalog, so the only
+        // failures left here are a corrupt one.
+        isValidCollectionName(input.name)
+          ? Effect.flatMap(
+              Effect.orDie(topology.placement.declare(input.name, "global")),
+              () => globalBase.documents.createCollection(input),
+            )
+          : globalBase.documents.createCollection(input),
+    },
+  };
+
   return {
     get partitionMap() {
       return topology.current();
@@ -293,23 +364,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     movement,
     topology,
     shardOf,
-    forTenant: (tenant) => {
-      const store = storeFor(tenant);
-      const events = domainEventsFor(store, tenant, nodeId);
-      const schemas = schemasFor(store, tenant);
-      const projections = projectionsFor(store, events, tenant);
-      const documents = documentsFor(store, tenant, schemas);
-      const timeSeries = timeSeriesFor(store, projections, tenant);
-      return {
-        documents,
-        events,
-        projections,
-        schemas,
-        timeSeries,
-        backups: backupsFor(store, tenant),
-        migrations: migrationsFor(documents, schemas, tenant),
-        systemViews: systemViewsFor({ documents, events, schemas, projections, timeSeries }),
-      };
-    },
+    global: globalApi,
+    forTenant: (tenant) => tenantApiOver(storeFor(tenant), tenant),
   } satisfies DatabaseApi;
 });
