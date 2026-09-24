@@ -27,5 +27,5 @@ test("the auth settings page is a complete document that styles itself from the 
   assert.match(page, /^<!doctype html>/i);
   assert.match(page, /<title>Auth<\/title>/i);
   assert.match(page, /service-page\.css/);
-  assert.match(page, /const OWNER = "zelavis\/auth"/);
+  assert.match(page, /const OWNER = "zelavis\/identity"/);
 });

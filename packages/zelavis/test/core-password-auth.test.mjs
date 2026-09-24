@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createMemorySystemStore, zelavis } from "../dist/index.js";
-import { PASSWORD_PROVIDER } from "../dist/app/auth/index.js";
+import { PASSWORD_PROVIDER } from "../dist/app/identity/index.js";
 
 const TOKEN = "core-password-bootstrap-token-32-characters";
 

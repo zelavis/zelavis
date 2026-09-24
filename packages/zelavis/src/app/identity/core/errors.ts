@@ -1,32 +1,32 @@
-export class AuthDomainError extends Error {
+export class IdentityDomainError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "AuthDomainError";
+    this.name = "IdentityDomainError";
   }
 }
 
-export class AuthValidationError extends AuthDomainError {
+export class IdentityValidationError extends IdentityDomainError {
   constructor(message: string) {
     super(message);
-    this.name = "AuthValidationError";
+    this.name = "IdentityValidationError";
   }
 }
 
-export class AuthNotFoundError extends AuthDomainError {
+export class IdentityNotFoundError extends IdentityDomainError {
   constructor(message: string) {
     super(message);
-    this.name = "AuthNotFoundError";
+    this.name = "IdentityNotFoundError";
   }
 }
 
-export class AuthInvalidCredentialsError extends AuthDomainError {
+export class AuthInvalidCredentialsError extends IdentityDomainError {
   constructor() {
     super("Invalid credentials.");
     this.name = "AuthInvalidCredentialsError";
   }
 }
 
-export class AuthRateLimitError extends AuthDomainError {
+export class AuthRateLimitError extends IdentityDomainError {
   readonly retryAfterSeconds: number;
 
   constructor(retryAfterSeconds: number) {

@@ -5,17 +5,18 @@ import {
   type ZelavisRuntimeService,
   type ZelavisServerRoute,
   type ZelavisRequestAuthenticator,
+  type ZelavisPrincipalGrant,
 } from "../../core/index.js";
-import type { AuthApi, AuthMethodPlugin } from "./core/types.js";
-import type { AuthBootstrapCapability } from "./core/types.js";
-import { createAuth, type CreateAuthOptions } from "./core/create-auth.js";
+import type { IdentityApi, IdentityMethodPlugin } from "./core/types.js";
+import type { IdentityBootstrapCapability } from "./core/types.js";
+import { createIdentity, type CreateIdentityOptions } from "./core/create-identity.js";
 import { createSessionCookie } from "./core/session-authenticator.js";
 import {
-  AuthDomainError,
+  IdentityDomainError,
   AuthInvalidCredentialsError,
-  AuthNotFoundError,
+  IdentityNotFoundError,
   AuthRateLimitError,
-  AuthValidationError,
+  IdentityValidationError,
 } from "./core/errors.js";
 
 const authErrorRules: readonly ZelavisServerErrorStatusRule[] = [
@@ -28,16 +29,16 @@ const authErrorRules: readonly ZelavisServerErrorStatusRule[] = [
     status: 429,
   },
   {
-    matches: (error) => error instanceof AuthNotFoundError,
+    matches: (error) => error instanceof IdentityNotFoundError,
     status: 404,
   },
   {
     matches: (error) =>
-      error instanceof AuthValidationError || error instanceof TypeError,
+      error instanceof IdentityValidationError || error instanceof TypeError,
     status: 400,
   },
   {
-    matches: (error) => error instanceof AuthDomainError,
+    matches: (error) => error instanceof IdentityDomainError,
     status: 400,
   },
 ];
@@ -51,14 +52,19 @@ function publicSession<T extends { tokenHash: string }>(session: T) {
   return safe;
 }
 
-export type AuthServiceDefinition = Readonly<
-  ZelavisRuntimeService<AuthApi> & {
+function publicCredential<T extends { secretHash?: string }>(credential: T) {
+  const { secretHash: _secretHash, ...safe } = credential;
+  return safe;
+}
+
+export type IdentityServiceDefinition = Readonly<
+  ZelavisRuntimeService<IdentityApi> & {
     kind?: string;
     capabilities?: readonly string[];
   }
 >;
 
-export interface AuthSessionCookieOptions {
+export interface IdentitySessionCookieOptions {
   name?: string;
   path?: string;
   secure?: boolean;
@@ -67,7 +73,9 @@ export interface AuthSessionCookieOptions {
 
 export interface DefineAuthServiceOptions {
   authority?: "project" | "platform";
-  bootstrap?: AuthBootstrapCapability;
+  /** Allow anonymous account enrollment. Intended for Project auth, never Platform owner creation. */
+  registration?: boolean;
+  bootstrap?: IdentityBootstrapCapability;
   /**
    * Reads and writes the credentials an operator configured for OAuth
    * providers. Supplied by the Platform, which owns the store these live in.
@@ -78,14 +86,14 @@ export interface DefineAuthServiceOptions {
     remove(provider: string): Promise<void>;
   };
   bootstrapToken?: string;
-  sessionCookie?: false | AuthSessionCookieOptions;
+  sessionCookie?: false | IdentitySessionCookieOptions;
 }
 
 function sessionCookieHeader(
   token: string,
   expiresAt: Date,
   request: Request,
-  options: AuthSessionCookieOptions,
+  options: IdentitySessionCookieOptions,
 ): string {
   return createSessionCookie(token, {
     ...options,
@@ -101,7 +109,7 @@ function browserSessionCookieHeader(
   token: string,
   expiresAt: Date,
   request: Request,
-  options: AuthSessionCookieOptions,
+  options: IdentitySessionCookieOptions,
 ): string | undefined {
   const origin = request.headers.get("origin");
   if (!origin) return undefined;
@@ -115,7 +123,7 @@ function browserSessionCookieHeader(
 
 function expiredSessionCookieHeader(
   request: Request,
-  options: AuthSessionCookieOptions,
+  options: IdentitySessionCookieOptions,
 ): string | undefined {
   return browserSessionCookieHeader("", new Date(0), request, options);
 }
@@ -142,10 +150,49 @@ function tokensEqual(left: string, right: unknown): boolean {
   return difference === 0;
 }
 
+function serviceAccountGrants(value: unknown): readonly ZelavisPrincipalGrant[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 100) {
+    throw new IdentityValidationError("Service account grants must be an array of at most 100 entries.");
+  }
+  return value.map((entry) => {
+    if (!entry || typeof entry !== "object") {
+      throw new IdentityValidationError("Each service account grant must be an object.");
+    }
+    const grant = entry as { permission?: unknown; scope?: unknown };
+    if (typeof grant.permission !== "string" || !grant.permission.trim()) {
+      throw new IdentityValidationError("Each service account grant requires a permission.");
+    }
+    const scope = grant.scope;
+    if (!scope || typeof scope !== "object") {
+      throw new IdentityValidationError("Service account grants require an explicit scope.");
+    }
+    const candidate = scope as Record<string, unknown>;
+    if (candidate.type === "project" && typeof candidate.projectId === "string" && candidate.projectId.trim()) {
+      return { permission: grant.permission.trim(), scope: { type: "project", projectId: candidate.projectId.trim() } };
+    }
+    if (candidate.type === "service" && typeof candidate.serviceName === "string" && candidate.serviceName.trim()) {
+      return { permission: grant.permission.trim(), scope: { type: "service", serviceName: candidate.serviceName.trim() } };
+    }
+    if (candidate.type === "system") {
+      return { permission: grant.permission.trim(), scope: { type: "system" } };
+    }
+    throw new IdentityValidationError("Service account grant scopes must name a system, Project, or service.");
+  });
+}
+
+function serviceAccountPermissions(value: unknown): readonly string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 100 || value.some((permission) => typeof permission !== "string" || !permission.trim())) {
+    throw new IdentityValidationError("Service account permissions must be an array of at most 100 names.");
+  }
+  return [...new Set(value.map((permission) => permission.trim()))];
+}
+
 export function defineAuthService(
-  auth: AuthApi,
+  auth: IdentityApi,
   options: DefineAuthServiceOptions = {},
-): AuthServiceDefinition {
+): IdentityServiceDefinition {
   const managePermission = options.authority === "platform"
     ? "system.users.manage"
     : "project.users.manage";
@@ -155,11 +202,19 @@ export function defineAuthService(
       ? { scope: { type: "project" as const, projectId: auth.context.projectId } }
       : {}),
   };
+  const settingsAccess = {
+    permissions: [options.authority === "platform"
+      ? "system.settings.manage"
+      : "project.settings.manage"],
+    ...(options.authority !== "platform" && auth.context.projectId
+      ? { scope: { type: "project" as const, projectId: auth.context.projectId } }
+      : {}),
+  };
   const cookieOptions = options.sessionCookie === false
     ? undefined
     : options.sessionCookie;
   const bootstrapToken = validateBootstrapToken(options.bootstrapToken);
-  const routes: readonly ZelavisServerRoute<AuthApi>[] = [
+  const routes: readonly ZelavisServerRoute<IdentityApi>[] = [
         {
           id: "auth.accounts.list",
           method: "GET",
@@ -201,7 +256,7 @@ export function defineAuthService(
               return {
                 status: 201,
                 body: await service.accounts.create(
-                  body as Parameters<AuthApi["accounts"]["create"]>[0],
+                  body as Parameters<IdentityApi["accounts"]["create"]>[0],
                 ),
               };
             } catch (error) {
@@ -231,9 +286,9 @@ export function defineAuthService(
             try {
               return {
                 status: 201,
-                body: await service.credentials.create(
-                  body as Parameters<AuthApi["credentials"]["create"]>[0],
-                ),
+                body: publicCredential(await service.credentials.create(
+                  body as Parameters<IdentityApi["credentials"]["create"]>[0],
+                )),
               };
             } catch (error) {
               return authErrorResponse(error, 400);
@@ -257,6 +312,75 @@ export function defineAuthService(
             body: service.authentication.listProviders(),
           }),
         },
+        ...(options.authority !== "platform" && options.registration
+          ? [
+              {
+                id: "auth.registration.create",
+                method: "POST" as const,
+                path: "/sign-up/:provider",
+                spec: {
+                  operationId: "signUp",
+                  summary: "Create an app account with a credential provider",
+                  tags: ["auth"],
+                  responses: {
+                    201: { description: "Account created and signed in" },
+                    400: { description: "Registration failed" },
+                  },
+                },
+                handler: async ({ service, params, body, request }: { service: IdentityApi; params: Record<string, string>; body: unknown; request: Request }) => {
+                  let accountId: string | undefined;
+                  try {
+                    const input = (body ?? {}) as Record<string, unknown>;
+                    const prepared = await service.authentication.prepareCredential(
+                      params.provider,
+                      input as Parameters<IdentityApi["authentication"]["prepareCredential"]>[1],
+                    );
+                    accountId = `account_${crypto.randomUUID().replaceAll("-", "")}`;
+                    const account = await service.accounts.create({
+                      id: accountId,
+                      ...prepared.accountIdentity,
+                      ...(typeof input.displayName === "string" && input.displayName.trim()
+                        ? { displayName: input.displayName.trim() }
+                        : {}),
+                    });
+                    const credential = await service.credentials.create({
+                      id: `credential_${crypto.randomUUID().replaceAll("-", "")}`,
+                      accountId: account.id,
+                      provider: params.provider,
+                      identifier: prepared.identifier,
+                      secretHash: prepared.secretHash,
+                      metadata: prepared.metadata,
+                    });
+                    const session = await service.sessions.create({
+                      accountId: account.id,
+                      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60_000),
+                      metadata: { provider: params.provider, authentication: "registration" },
+                    });
+                    const sessionCookie = cookieOptions
+                      ? browserSessionCookieHeader(
+                          session.token,
+                          session.session.expiresAt,
+                          request,
+                          cookieOptions,
+                        )
+                      : undefined;
+                    return {
+                      status: 201,
+                      headers: sessionCookie ? { "set-cookie": sessionCookie } : undefined,
+                      body: {
+                        account,
+                        credential: publicCredential(credential),
+                        session: { token: session.token, session: publicSession(session.session) },
+                      },
+                    };
+                  } catch (error) {
+                    if (accountId) await service.repositories.accounts.delete(accountId).catch(() => false);
+                    return authErrorResponse(error, 400);
+                  }
+                },
+              },
+            ]
+          : []),
         {
           id: "auth.recovery.providers.list",
           spec: {
@@ -363,7 +487,7 @@ export function defineAuthService(
             try {
               const providerError = query.get("error");
               if (providerError) {
-                throw new AuthValidationError(
+                throw new IdentityValidationError(
                   `Authorization provider returned ${providerError}.`,
                 );
               }
@@ -390,6 +514,7 @@ export function defineAuthService(
                   : undefined,
                 body: {
                   ...result,
+                  credential: publicCredential(result.credential),
                   session: result.session
                     ? {
                         token: result.session.token,
@@ -419,7 +544,7 @@ export function defineAuthService(
                 status: 202,
                 body: await service.authentication.beginRecovery(
                   params.provider,
-                  body as Parameters<AuthApi["authentication"]["beginRecovery"]>[1],
+                  body as Parameters<IdentityApi["authentication"]["beginRecovery"]>[1],
                 ),
               };
             } catch (error) {
@@ -444,7 +569,7 @@ export function defineAuthService(
             try {
               await service.authentication.completeRecovery(
                 params.provider,
-                body as Parameters<AuthApi["authentication"]["completeRecovery"]>[1],
+                body as Parameters<IdentityApi["authentication"]["completeRecovery"]>[1],
               );
               return { status: 204 };
             } catch (error) {
@@ -482,7 +607,7 @@ export function defineAuthService(
               const result = await service.authentication.authenticate(
                 params.provider,
                 body as Parameters<
-                  AuthApi["authentication"]["authenticate"]
+                  IdentityApi["authentication"]["authenticate"]
                 >[1],
               );
               await service.security.authenticationSucceeded(
@@ -505,6 +630,7 @@ export function defineAuthService(
                 body: result.session
                   ? {
                       ...result,
+                      credential: publicCredential(result.credential),
                       session: {
                         token: result.session.token,
                         session: publicSession(result.session.session),
@@ -745,13 +871,155 @@ export function defineAuthService(
               : { status: 404, body: { error: "Session not found" } };
           },
         },
+        ...(options.authority === "platform"
+          ? [
+              {
+                id: "auth.serviceAccounts.list",
+                method: "GET" as const,
+                path: "/service-accounts",
+                access: manageAccess,
+                spec: {
+                  operationId: "listServiceAccounts",
+                  summary: "List Platform service accounts",
+                  tags: ["auth", "service-accounts"],
+                  responses: { 200: { description: "Service accounts" } },
+                },
+                handler: async ({ service }: { service: IdentityApi }) => ({
+                  status: 200,
+                  body: {
+                    serviceAccounts: (await service.accounts.list()).filter(
+                      (account) => account.metadata?.principalType === "service",
+                    ),
+                  },
+                }),
+              },
+              {
+                id: "auth.serviceAccounts.create",
+                method: "POST" as const,
+                path: "/service-accounts",
+                access: manageAccess,
+                spec: {
+                  operationId: "createServiceAccount",
+                  summary: "Create a Platform service account and issue its first token",
+                  tags: ["auth", "service-accounts"],
+                  responses: {
+                    201: { description: "Service account and one-time token" },
+                    400: { description: "Invalid service account" },
+                  },
+                },
+                handler: async ({ service, body }: { service: IdentityApi; body: unknown }) => {
+                  try {
+                    const input = (body ?? {}) as Record<string, unknown>;
+                    const name = typeof input.name === "string" ? input.name.trim() : "";
+                    if (!name || name.length > 100) {
+                      throw new IdentityValidationError("A service account name of at most 100 characters is required.");
+                    }
+                    const days = input.expiresInDays === undefined ? 90 : Number(input.expiresInDays);
+                    if (!Number.isSafeInteger(days) || days < 1 || days > 3650) {
+                      throw new IdentityValidationError("Service account token lifetime must be between 1 and 3650 days.");
+                    }
+                    const id = `service_${crypto.randomUUID().replaceAll("-", "")}`;
+                    const account = await service.accounts.create({
+                      id,
+                      username: id,
+                      displayName: name,
+                      verified: true,
+                      roles: ["service"],
+                      permissions: serviceAccountPermissions(input.permissions),
+                      grants: serviceAccountGrants(input.grants),
+                      metadata: { principalType: "service", serviceAccount: true },
+                    });
+                    const issued = await service.sessions.create({
+                      accountId: account.id,
+                      expiresAt: new Date(Date.now() + days * 24 * 60 * 60_000),
+                      metadata: { authentication: "service-token", serviceAccount: true },
+                    });
+                    return {
+                      status: 201,
+                      body: {
+                        serviceAccount: account,
+                        token: issued.token,
+                        session: publicSession(issued.session),
+                      },
+                    };
+                  } catch (error) {
+                    return authErrorResponse(error, 400);
+                  }
+                },
+              },
+              {
+                id: "auth.serviceAccounts.rotateToken",
+                method: "POST" as const,
+                path: "/service-accounts/:accountId/token",
+                access: manageAccess,
+                spec: {
+                  operationId: "rotateServiceAccountToken",
+                  summary: "Revoke existing tokens and issue a new service account token",
+                  tags: ["auth", "service-accounts"],
+                  responses: {
+                    200: { description: "One-time service account token" },
+                    404: { description: "Service account not found" },
+                  },
+                },
+                handler: async ({ service, params, body }: { service: IdentityApi; params: Record<string, string>; body: unknown }) => {
+                  try {
+                    const account = await service.accounts.findById(params.accountId);
+                    if (!account || account.metadata?.principalType !== "service") {
+                      return { status: 404, body: { error: "Service account not found" } };
+                    }
+                    const input = (body ?? {}) as Record<string, unknown>;
+                    const days = input.expiresInDays === undefined ? 90 : Number(input.expiresInDays);
+                    if (!Number.isSafeInteger(days) || days < 1 || days > 3650) {
+                      throw new IdentityValidationError("Service account token lifetime must be between 1 and 3650 days.");
+                    }
+                    await service.sessions.revokeAll(account.id);
+                    const issued = await service.sessions.create({
+                      accountId: account.id,
+                      expiresAt: new Date(Date.now() + days * 24 * 60 * 60_000),
+                      metadata: { authentication: "service-token", serviceAccount: true },
+                    });
+                    return {
+                      status: 200,
+                      body: { token: issued.token, session: publicSession(issued.session) },
+                    };
+                  } catch (error) {
+                    return authErrorResponse(error, 400);
+                  }
+                },
+              },
+              {
+                id: "auth.serviceAccounts.revoke",
+                method: "DELETE" as const,
+                path: "/service-accounts/:accountId",
+                access: manageAccess,
+                spec: {
+                  operationId: "revokeServiceAccount",
+                  summary: "Revoke and remove a Platform service account",
+                  tags: ["auth", "service-accounts"],
+                  responses: {
+                    204: { description: "Service account revoked" },
+                    404: { description: "Service account not found" },
+                  },
+                },
+                handler: async ({ service, params }: { service: IdentityApi; params: Record<string, string> }) => {
+                  const account = await service.accounts.findById(params.accountId);
+                  if (!account || account.metadata?.principalType !== "service") {
+                    return { status: 404, body: { error: "Service account not found" } };
+                  }
+                  await service.sessions.revokeAll(account.id);
+                  await service.repositories.accounts.delete(account.id);
+                  return { status: 204 };
+                },
+              },
+            ]
+          : []),
         ...(options.oauthConnections
           ? [
               {
                 id: "auth.oauth.connections.list",
                 method: "GET" as const,
                 path: "/oauth/connections",
-                access: { permissions: ["system.settings.manage"] },
+                access: settingsAccess,
                 spec: {
                   operationId: "listOAuthConnections",
                   summary: "List OAuth providers and their configuration",
@@ -767,7 +1035,7 @@ export function defineAuthService(
                 id: "auth.oauth.connections.configure",
                 method: "PUT" as const,
                 path: "/oauth/connections/:provider",
-                access: { permissions: ["system.settings.manage"] },
+                access: settingsAccess,
                 spec: {
                   operationId: "configureOAuthConnection",
                   summary: "Configure an OAuth provider for this installation",
@@ -808,7 +1076,7 @@ export function defineAuthService(
                 id: "auth.oauth.connections.remove",
                 method: "DELETE" as const,
                 path: "/oauth/connections/:provider",
-                access: { permissions: ["system.settings.manage"] },
+                access: settingsAccess,
                 spec: {
                   operationId: "removeOAuthConnection",
                   summary: "Remove an OAuth provider's configuration",
@@ -887,7 +1155,7 @@ export function defineAuthService(
                       };
                     }
                     const result = await options.bootstrap!.bootstrap(
-                      body as Parameters<AuthBootstrapCapability["bootstrap"]>[0],
+                      body as Parameters<IdentityBootstrapCapability["bootstrap"]>[0],
                     );
                     const sessionCookie = cookieOptions
                       ? browserSessionCookieHeader(
@@ -920,7 +1188,7 @@ export function defineAuthService(
   ];
 
   return Object.freeze({
-    name: "zelavis/auth",
+    name: "zelavis/identity",
     kind: "plugin",
     capabilities: Object.freeze(["api:routes", "dashboard:menu"]),
     authenticators: [auth.requestAuthenticator],
@@ -943,28 +1211,28 @@ export function defineAuthService(
  * passwords, credentials, and authenticators. This is a native platform
  * subsystem, not a loadable plugin service.
  */
-export interface AuthSubsystem {
-  readonly auth: AuthApi;
+export interface IdentitySubsystem {
+  readonly auth: IdentityApi;
   readonly authenticators: readonly ZelavisRequestAuthenticator[];
-  readonly routes: readonly ZelavisServerRoute<AuthApi>[];
+  readonly routes: readonly ZelavisServerRoute<IdentityApi>[];
   /** Backwards-compatible runtime service definition. */
-  readonly definition: AuthServiceDefinition;
+  readonly definition: IdentityServiceDefinition;
 }
 
 export function defineAuthSubsystem(
-  auth: AuthApi,
+  auth: IdentityApi,
   options: DefineAuthServiceOptions = {},
-): AuthSubsystem {
+): IdentitySubsystem {
   const definition = defineAuthService(auth, options);
   return Object.freeze({
     auth,
     authenticators: definition.authenticators ?? [auth.requestAuthenticator],
-    routes: (definition.api?.v1 ?? []) as readonly ZelavisServerRoute<AuthApi>[],
+    routes: (definition.api?.v1 ?? []) as readonly ZelavisServerRoute<IdentityApi>[],
     definition,
   });
 }
 
-export interface AuthServiceOptions {
+export interface IdentityServiceOptions {
   /** Options for the built-in password provider. */
   password?: PasswordProviderOptions;
   /** Options for the built-in OAuth Authorization Code client. */
@@ -972,18 +1240,20 @@ export interface AuthServiceOptions {
     /** Used for token and profile requests. Defaults to the global fetch. */
     fetch?: typeof globalThis.fetch;
   };
-  auth?: AuthApi;
-  authOptions?: CreateAuthOptions;
-  methods?: readonly AuthMethodPlugin[];
+  auth?: IdentityApi;
+  authOptions?: CreateIdentityOptions;
+  methods?: readonly IdentityMethodPlugin[];
+  /** Allow anonymous Project-user registration. */
+  registration?: boolean;
   definition?: DefineAuthServiceOptions;
 }
 
-export async function createAuthSubsystem(
-  options: AuthServiceOptions = {},
-): Promise<AuthSubsystem> {
+export async function createIdentitySubsystem(
+  options: IdentityServiceOptions = {},
+): Promise<IdentitySubsystem> {
   const auth =
     options.auth ??
-    (await createAuth({
+    (await createIdentity({
       ...(options.authOptions ?? {}),
       methods: [
         ...(options.authOptions?.methods ?? []),
@@ -991,12 +1261,15 @@ export async function createAuthSubsystem(
       ],
     }));
 
-  return defineAuthSubsystem(auth, options.definition);
+  return defineAuthSubsystem(auth, {
+    ...(options.definition ?? {}),
+    ...(options.registration === undefined ? {} : { registration: options.registration }),
+  });
 }
 
-export async function authService(
-  options: AuthServiceOptions = {},
-): Promise<AuthServiceDefinition> {
-  const subsystem = await createAuthSubsystem(options);
+export async function identityService(
+  options: IdentityServiceOptions = {},
+): Promise<IdentityServiceDefinition> {
+  const subsystem = await createIdentitySubsystem(options);
   return subsystem.definition;
 }

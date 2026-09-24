@@ -13,6 +13,11 @@ async function main(): Promise<void> {
     // Password sign-in needs nothing here: it ships with Zelavis.
     adapter: nodeAdapter({
       dataDirectory: process.env.ZELAVIS_DATA_DIR,
+      // The Platform's remote-agent sessions, processes, and usage are
+      // tenant-owned records. Keep them in the partitioned database rather
+      // than the System Store; without this, process execution is advertised
+      // but its durable session/event routes cannot operate.
+      database: {},
     }),
     onError: ({ error }) => ({
       status: 400,

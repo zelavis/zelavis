@@ -46,9 +46,9 @@ Example route requirement:
 }
 ```
 
-## Why This Is Not Only `zelavis/app/auth`
+## Why This Is Not Only `zelavis/app/identity`
 
-`zelavis/app/auth` owns authentication building blocks: accounts, credentials,
+`zelavis/app/identity` owns authentication building blocks: accounts, credentials,
 sessions, and pluggable auth methods such as email/password, username/password,
 passkeys, OAuth, SSO, API keys, or service-token providers.
 
@@ -100,7 +100,7 @@ reveal whether an account exists.
 The OAuth Authorization Code flow is core too — it holds the state, nonce and
 PKCE verifier, which are the parts that are dangerous to get wrong and the same
 for every provider. Any OpenID Connect issuer is added by pasting its issuer
-URL; a plugin declaring `zelavis/auth:oauth` is needed only for a provider that
+URL; a plugin declaring `zelavis/identity:oauth` is needed only for a provider that
 is not OIDC, where the profile endpoint and claim mapping are real code. The
 OIDC plugin under `plugins/` is now only a bearer-token authenticator for
 callers already holding a token from an issuer

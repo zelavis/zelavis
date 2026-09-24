@@ -1,7 +1,7 @@
 /**
  * The contract an OAuth provider plugin satisfies.
  *
- * Core owns the capability `zelavis/auth:oauth`. A plugin declaring it
+ * Core owns the capability `zelavis/identity:oauth`. A plugin declaring it
  * supplies a *definition* — the endpoints and claim mapping for one identity
  * provider — and never its credentials: those belong to the operator, differ
  * per installation, and cannot ship in a package.
@@ -12,7 +12,7 @@
  */
 
 /** Capability an OAuth provider plugin declares to be discovered by this one. */
-export const OAUTH_PROVIDER_CAPABILITY = "zelavis/auth:oauth";
+export const OAUTH_PROVIDER_CAPABILITY = "zelavis/identity:oauth";
 
 export interface OAuthIdentityClaims {
   readonly [claim: string]: unknown;

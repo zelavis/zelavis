@@ -11,7 +11,7 @@ root. Internal symlinks are supported; arbitrary filesystem imports require the
 explicit filesystem source policy. Managed files must remain under host control
 while code is loaded; these checks do not sandbox executable plugins.
 Lower-level packages such as `zelavis/core`, `zelavis/app/db`, and
-`zelavis/app/auth` remain independently useful primitives.
+`zelavis/app/identity` remain independently useful primitives.
 
 `zelavis/core` owns reusable Fabric, workload, Agent, service, routing, and
 access primitives. The bundled `zelavis/platform` service grants those primitives
@@ -388,7 +388,7 @@ Use scoped packages when building lower-level primitives, adapters, services, or
 
 ```ts
 import { zelavis } from "zelavis/sdk";
-import { authService } from "zelavis/app/auth";
+import { authService } from "zelavis/app/identity";
 ```
 
 Plugins are standard npm packages configured via `package.json` manifests (`"type": "module"`, `"exports"`, and `"zelavis": { "kind": "plugin" }`).
@@ -781,7 +781,7 @@ const config = await client.runtime.config();
 ```
 
 The SDK also re-exports the runtime-neutral `zelavis/app/db` and
-`zelavis/app/auth` core APIs. Today that enables in-memory local development.
+`zelavis/app/identity` core APIs. Today that enables in-memory local development.
 Future browser storage adapters such as IndexedDB and SQLite WASM should attach
 to the same database driver boundary instead of creating a separate browser DB
 model.

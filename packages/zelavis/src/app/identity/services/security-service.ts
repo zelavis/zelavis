@@ -3,7 +3,7 @@ import type {
   AuthSecurityEventRepository,
 } from "../contracts/repositories.js";
 import type { AuthSecurityEvent } from "../domain/entities.js";
-import { AuthRateLimitError, AuthValidationError } from "../core/errors.js";
+import { AuthRateLimitError, IdentityValidationError } from "../core/errors.js";
 
 const DEFAULT_MAX_ATTEMPTS = 5;
 const DEFAULT_WINDOW_MS = 15 * 60 * 1_000;
@@ -25,7 +25,7 @@ export interface AuthAttemptContext {
 function positiveInteger(value: number | undefined, fallback: number): number {
   if (value === undefined) return fallback;
   if (!Number.isInteger(value) || value < 1) {
-    throw new AuthValidationError("Auth security limits must be positive integers.");
+    throw new IdentityValidationError("Auth security limits must be positive integers.");
   }
   return value;
 }

@@ -52,8 +52,8 @@ before editing.
 - Do not create parent/child service graphs. Provider plugins are ordinary
   installed services discovered by capability and validated against an explicit
   public registration contract; never use `childServices` or service `extends`.
-- A capability names the service that owns it — `zelavis/auth:credentials`,
-  `zelavis/auth:oauth`, `@acme/shop:payments` — not a bare domain. A domain
+- A capability names the service that owns it — `zelavis/identity:credentials`,
+  `zelavis/identity:oauth`, `@acme/shop:payments` — not a bare domain. A domain
   such as `provider:payments` says what a plugin implements and never whose
   contract it satisfies, so two plugins scanning for it collect each other's
   providers. An owner is recognised by containing a `/`; a bare word stays a
@@ -92,7 +92,7 @@ before editing.
   there installed as a package with a menu and no endpoints while the same
   object composed in code worked — the supported path was the broken one.
 - Keep the built-in Zelavis App stack in `packages/zelavis/src/app`, exported
-  through `zelavis/app`, `zelavis/app/auth`, `zelavis/app/db`, and
+  through `zelavis/app`, `zelavis/app/identity`, `zelavis/app/db`, and
   `zelavis/app/workloads`. It reuses the core implementation; never create an
   App-private dispatcher or server contracts.
 - Use **Project recipe** as the canonical name for a versioned create-project

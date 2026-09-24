@@ -1069,7 +1069,7 @@ async function listProductServicePackages(directory: string): Promise<string[]> 
  * A package dropped into a folder outside `node_modules` cannot resolve its
  * own peer dependency: Node walks parent directories looking for
  * `node_modules/zelavis` and finds none, so any service importing
- * `zelavis/app/auth` fails to load. Nearly every real plugin does.
+ * `zelavis/app/identity` fails to load. Nearly every real plugin does.
  *
  * Linking the running Platform package into `<folder>/node_modules` puts it
  * exactly where that walk looks. The link points at whichever `zelavis` is

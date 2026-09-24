@@ -32,7 +32,7 @@ Security reports are especially useful for:
 - `packages/zelavis/src/core`
 - `packages/zelavis/src/platform`
 - `packages/zelavis/src/app/db`
-- `packages/zelavis/src/app/auth`
+- `packages/zelavis/src/app/identity`
 - `packages/zelavis/product-services/zelavis-ui`
 - official plugins under `plugins/*`
 - CI, release, and dependency-supply-chain concerns in this repository

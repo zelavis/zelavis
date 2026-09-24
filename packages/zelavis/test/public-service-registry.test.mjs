@@ -21,7 +21,7 @@ test("public catalogues share identity without exposing acquisition references",
           specifier: privateSource, status: "installed", source: "community",
           service: {
             name: "@example/extension", namespace: "example", version: "1.2.3",
-            kind: "plugin", service: {}, api: {}, capabilities: ["zelavis/auth:oauth"],
+            kind: "plugin", service: {}, api: {}, capabilities: ["zelavis/identity:oauth"],
           },
         },
         {

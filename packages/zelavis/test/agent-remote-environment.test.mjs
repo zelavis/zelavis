@@ -44,6 +44,7 @@ test("the Agent remote environment carries stdin, signals, output, exit, and rep
     cwd: process.cwd(),
     env: {},
   });
+  assert.deepEqual(await environment.listProcesses(session.id), [remoteProcess]);
 
   let page = await waitFor(
     () => environment.readEvents(session.id),
@@ -68,6 +69,7 @@ test("the Agent remote environment carries stdin, signals, output, exit, and rep
   );
   assert.equal(exitPage.events.at(-1).status, "exited");
   assert.equal(exitPage.events.at(-1).exitCode, 0);
+  assert.equal((await environment.listProcesses(session.id))[0].status, "exited");
 });
 
 test("an active environment session reattaches and replays Agent output", async () => {
@@ -96,6 +98,7 @@ test("an active environment session reattaches and replays Agent output", async 
   };
   const environment = createAgentRemoteEnvironment({ runner });
   await environment.resumeSession({ id: "session-1", status: "active", createdAt: "2026-01-01T00:00:00Z" });
+  assert.equal((await environment.listProcesses("session-1"))[0].id, "session-1:p7");
   const replay = await environment.readEvents("session-1");
   assert.equal(replay.events.some((event) => event.data === "while-away"), true);
   assert.equal((await environment.operateProcess("session-1:p7", { type: "stdin", data: "next\n" })).accepted, true);

@@ -4,6 +4,7 @@ import {
   readBootstrapStatus,
 } from "./bootstrap.js";
 import { runAgentCommand } from "./agent.js";
+import { runAuthCommand } from "./auth.js";
 import { describeInstallation, formatInstallation } from "./installation.js";
 import { runPluginsCommand } from "./plugins.js";
 import { runProjectsCommand } from "./projects.js";
@@ -101,6 +102,7 @@ Usage:
   zelavis uninstall --all --dry-run [--data-dir <path>] [--json]
   sudo zelavis uninstall --all --confirm ${ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION} [--data-dir <path>] [--json]
   zelavis projects <list|recipes|get|create|start|stop|restart|logs|remove> [id|name] [--recipe <name>] [--id <id>] [--no-start] [--url <url>] [--token <token>] [--json]
+  zelavis auth service-accounts <list|create|rotate|revoke> [account-id] [--name <name>] [--permission <permission>] [--project <id>] [--expires-days <days>] [--url <url>] [--token <token>] [--json]
   zelavis host-operations <catalog|submit|get|audit> [operation|id] [--version <v>] [--project <id>] [--arg name=value] [--json]
   zelavis edge <status|plan|switch> [adapter] [--publication <id>@<revision>] [--routes <n>] [--require <capability>] [--certificate-ref <ref>] [--url <url>] [--token <token>] [--json]
   zelavis services list [--url <url>]
@@ -131,6 +133,8 @@ Commands:
                             proxy behind the proxy-neutral Edge controller.
   projects                  List, create, start, stop, restart, remove and read
                             logs of Projects; recipes lists Project recipes.
+  auth service-accounts     Create and revoke machine identities and rotate their
+                            one-time Platform API tokens.
   services list             List runtime service registry entries.
   services sources          Inspect administrative source diagnostics as JSON.
   services install          Mark a registered service as installed.
@@ -515,6 +519,10 @@ export async function runCli(
     }
     if (args[0] === "projects") {
       await runProjectsCommand(args.slice(1));
+      return;
+    }
+    if (args[0] === "auth") {
+      await runAuthCommand(args.slice(1));
       return;
     }
     if (args[0] === "host-operations") {

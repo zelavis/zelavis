@@ -50,7 +50,7 @@ export interface AuthAttemptState {
   updatedAt: Date;
 }
 
-export interface AuthAuthorizationFlow {
+export interface IdentityAuthorizationFlow {
   stateHash: string;
   provider: string;
   mode: "login" | "link";

@@ -10,7 +10,7 @@
  * So a capability may instead be owned by the service that defines it —
  * a core service or an installable package:
  *
- *     "zelavis/auth:credentials"
+ *     "zelavis/identity:credentials"
  *     "@acme/shop:payments"
  *
  * Discovery stays a flat scan over installed services. There is deliberately
@@ -36,7 +36,7 @@ export const ZELAVIS_PLATFORM_CAPABILITY_NAMESPACES: readonly string[] =
 /**
  * A capability owner: a package name, or a core service name.
  *
- * Core services are unscoped and slash-separated (`zelavis/auth`,
+ * Core services are unscoped and slash-separated (`zelavis/identity`,
  * `zelavis/platform`) while installable packages carry an npm scope
  * (`@acme/shop`). Both own capabilities, so both are accepted here.
  */
@@ -70,7 +70,7 @@ export function parseServiceCapability(
 
   if (!CAPABILITY_OWNER.test(owner)) return undefined;
 
-  // A service name always carries a `/` — `zelavis/auth` for a core service,
+  // A service name always carries a `/` — `zelavis/identity` for a core service,
   // `@acme/shop` for a package. A bare word is a domain namespace saying what
   // a plugin implements, not whose contract it satisfies. Reading `app:project`
   // as an extension of something called "app" invented an extension point that

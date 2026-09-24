@@ -66,7 +66,7 @@ Dashboard/product structure:
 
 Core platform work centers on the unified `zelavis` package and its public
 subpaths: `zelavis/core`, `zelavis/runtime`, `zelavis/fabric`, `zelavis/app`,
-`zelavis/db`, `zelavis/app/auth`, and `zelavis/app/workloads`. The dashboard
+`zelavis/db`, `zelavis/app/identity`, and `zelavis/app/workloads`. The dashboard
 remains the focused `@zelavis/ui` package bundled by `zelavis`.
 
 The repo still contains domain packages such as `@zelavis/ecommerce`, but they are optional layers on top of the platform primitives, not the main product definition.
@@ -147,7 +147,7 @@ current automatically.
   `provider`, or `template`. Each described who shipped a service or restated a
   capability, and nothing ever branched on them. A provider is discovered by
   its capability, and that capability names the service it extends
-  (`zelavis/auth:credentials`, `@acme/shop:payments`) rather than a bare domain
+  (`zelavis/identity:credentials`, `@acme/shop:payments`) rather than a bare domain
   two plugins could both scan for.
 - **System Services** are trusted Platform OS capabilities. Do not call every
   bundled project service a core service.
@@ -881,7 +881,7 @@ The base authorization contract belongs in `zelavis/core`, because every
 runtime service route needs to declare and enforce access requirements
 independently of the authentication method that produced the caller.
 
-`zelavis/app/auth` owns authentication primitives: accounts, credentials,
+`zelavis/app/identity` owns authentication primitives: accounts, credentials,
 sessions, roles and permissions. It ships the credential ceremonies whose
 dangerous parts are generic and identical for every provider — password
 verification and its timing, and the state, nonce and PKCE custody an OAuth
@@ -889,8 +889,8 @@ redirect flow depends on — so they are written and audited once. It resolves
 identities into principals; the server contract enforces route access.
 
 What is vendor-specific stays a plugin. A credential provider declares
-`zelavis/auth:credentials` and owns its whole exchange; an OAuth provider
-declares `zelavis/auth:oauth` and supplies only endpoints and claim mapping.
+`zelavis/identity:credentials` and owns its whole exchange; an OAuth provider
+declares `zelavis/identity:oauth` and supplies only endpoints and claim mapping.
 Any OpenID Connect issuer needs neither: pasting its issuer URL is enough,
 because the issuer publishes its own endpoints.
 

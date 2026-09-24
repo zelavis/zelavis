@@ -44,9 +44,12 @@ function toPrincipal(
   projectId?: string,
 ): ZelavisPrincipal {
   const accountPermissions = account.permissions ?? [];
+  const principalType = account.metadata?.principalType === "service"
+    ? "service"
+    : "user";
   return {
     id: account.id,
-    type: "user",
+    type: principalType,
     roles: account.roles,
     permissions: projectId ? undefined : accountPermissions,
     grants: [

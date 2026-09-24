@@ -15,7 +15,7 @@ For core packages, the service definition should live in a named file near the t
 
 Examples:
 
-- `packages/zelavis/src/app/auth/auth-service.ts`
+- `packages/zelavis/src/app/identity/identity-service.ts`
 - `packages/zelavis/src/db/database-service.ts`
 
 For service packages, the service definition should also live in a named file near the top of the package source.
@@ -24,7 +24,7 @@ Examples:
 
 - `plugins/ecommerce/src/ecommerce-service.ts`
 - `plugins/ecommerce/plugins/stripe/src/stripe-service.ts`
-- `packages/zelavis/src/app/auth/providers/password.ts`
+- `packages/zelavis/src/app/identity/providers/password.ts`
 
 Avoid hiding the real definition under paths like:
 
@@ -139,7 +139,7 @@ export function stripeService(): ZelavisRuntimeService {
 }
 ```
 
-Provider plugins declare a capability owned by the service they extend — `zelavis/auth:credentials`, `@zelavis/ecommerce:payments` — and expose that service's public registration contract as their service value. The owner discovers them by capability.
+Provider plugins declare a capability owned by the service they extend — `zelavis/identity:credentials`, `@zelavis/ecommerce:payments` — and expose that service's public registration contract as their service value. The owner discovers them by capability.
 
 The owner is named because a bare domain such as `provider:payments` says what a plugin implements and never whose contract it satisfies, so two commerce plugins scanning for it would each collect the other's gateways. There is still no parent/child graph: discovery is a flat scan, naming an owner asks to be considered by it and grants nothing, and the owner validates every provider against its own contract.
 

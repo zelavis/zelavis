@@ -1,7 +1,7 @@
 import type {
   Account,
   AuthAttemptState,
-  AuthAuthorizationFlow,
+  IdentityAuthorizationFlow,
   AuthSecurityEvent,
   Credential,
   Session,
@@ -49,21 +49,21 @@ export interface AuthSecurityEventRepository {
   list(): Promise<AuthSecurityEvent[]>;
 }
 
-export interface AuthAuthorizationFlowRepository {
-  findByStateHash(stateHash: string): Promise<AuthAuthorizationFlow | null>;
+export interface IdentityAuthorizationFlowRepository {
+  findByStateHash(stateHash: string): Promise<IdentityAuthorizationFlow | null>;
   mutate(
     stateHash: string,
     mutation: (
-      current: AuthAuthorizationFlow | null,
-    ) => AuthAuthorizationFlow | null,
-  ): Promise<AuthAuthorizationFlow | null>;
+      current: IdentityAuthorizationFlow | null,
+    ) => IdentityAuthorizationFlow | null,
+  ): Promise<IdentityAuthorizationFlow | null>;
 }
 
-export interface AuthRepositories {
+export interface IdentityRepositories {
   accounts: AccountRepository;
   sessions: SessionRepository;
   credentials: CredentialRepository;
   attempts: AuthAttemptRepository;
-  authorizationFlows: AuthAuthorizationFlowRepository;
+  authorizationFlows: IdentityAuthorizationFlowRepository;
   securityEvents: AuthSecurityEventRepository;
 }

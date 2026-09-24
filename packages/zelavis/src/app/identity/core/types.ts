@@ -1,4 +1,4 @@
-import type { AuthRepositories } from "../contracts/repositories.js";
+import type { IdentityRepositories } from "../contracts/repositories.js";
 import type { AccountService } from "../services/account-service.js";
 import type { AuthenticationService } from "../services/authentication-service.js";
 import type { CredentialService } from "../services/credential-service.js";
@@ -16,7 +16,7 @@ import type { CredentialEnrollmentInput } from "../contracts/credential-provider
  * see them, and no way to read the configuration an operator saved. Both
  * arrive here instead.
  */
-export interface AuthMethodContext {
+export interface IdentityMethodContext {
   /** The installed services, for a plugin that discovers others by capability. */
   registry: readonly {
     status: string;
@@ -31,21 +31,21 @@ export interface AuthMethodContext {
   };
 }
 
-export interface AuthMethodPlugin {
+export interface IdentityMethodPlugin {
   name: string;
-  register: (api: AuthApi, context?: AuthMethodContext) => void | Promise<void>;
+  register: (api: IdentityApi, context?: IdentityMethodContext) => void | Promise<void>;
 }
 
-export interface AuthContext {
+export interface IdentityContext {
   /** Explicit Project authority for this auth instance, when it is Project-owned. */
   projectId?: string;
   config: Record<string, unknown>;
-  methods: readonly AuthMethodPlugin[];
+  methods: readonly IdentityMethodPlugin[];
 }
 
-export interface AuthApi {
-  context: AuthContext;
-  repositories: AuthRepositories;
+export interface IdentityApi {
+  context: IdentityContext;
+  repositories: IdentityRepositories;
   accounts: AccountService;
   credentials: CredentialService;
   sessions: SessionService;
@@ -54,13 +54,13 @@ export interface AuthApi {
   requestAuthenticator: ZelavisRequestAuthenticator;
 }
 
-export interface AuthBootstrapStatus {
+export interface IdentityBootstrapStatus {
   required: boolean;
   providers: readonly string[];
   enrollmentProviders: readonly string[];
 }
 
-export interface AuthBootstrapInput {
+export interface IdentityBootstrapInput {
   provider: string;
   account: {
     email?: string;
@@ -70,12 +70,12 @@ export interface AuthBootstrapInput {
   credential: CredentialEnrollmentInput;
 }
 
-export interface AuthBootstrapResult {
+export interface IdentityBootstrapResult {
   account: Account;
   session: IssuedSession;
 }
 
-export interface AuthBootstrapCapability {
-  status(): Promise<AuthBootstrapStatus>;
-  bootstrap(input: AuthBootstrapInput): Promise<AuthBootstrapResult>;
+export interface IdentityBootstrapCapability {
+  status(): Promise<IdentityBootstrapStatus>;
+  bootstrap(input: IdentityBootstrapInput): Promise<IdentityBootstrapResult>;
 }

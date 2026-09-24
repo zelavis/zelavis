@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createAuthorizationCodeFlow } from "../dist/app/auth/index.js";
-import { githubProvider } from "../dist/app/auth/index.js";
+import { createAuthorizationCodeFlow } from "../dist/app/identity/index.js";
+import { githubProvider } from "../dist/app/identity/index.js";
 
 const CONNECTION = {
   provider: "github",
@@ -126,7 +126,7 @@ test("a provider that can neither be verified nor profiled is refused", async ()
 });
 
 test("a definition declaring an issuer with no key set is refused at definition time", async () => {
-  const { defineOAuthProviders } = await import("../dist/app/auth/index.js");
+  const { defineOAuthProviders } = await import("../dist/app/identity/index.js");
   // An issuer with no JWKS means an ID token nobody can verify, and an
   // unverified ID token is attacker-supplied JSON.
   assert.throws(

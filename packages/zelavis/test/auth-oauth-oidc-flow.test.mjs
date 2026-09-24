@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
-import { defineOAuthProviders } from "../dist/app/auth/index.js";
-import { oidcProvider } from "../dist/app/auth/index.js";
+import { defineOAuthProviders } from "../dist/app/identity/index.js";
+import { oidcProvider } from "../dist/app/identity/index.js";
 import { createMemorySystemStore, zelavis } from "../dist/index.js";
 
 const ISSUER = "https://identity.example";

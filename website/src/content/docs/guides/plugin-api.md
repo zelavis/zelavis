@@ -50,7 +50,7 @@ include dashboard extensions, authentication methods, payment providers,
 database-related services, routes, commands, and other optional capabilities.
 
 “Provider” is not a kind. A provider is an ordinary plugin discovered by a
-capability such as `zelavis/auth:oauth` or
+capability such as `zelavis/identity:oauth` or
 `@zelavis/ecommerce:payments`.
 
 Minimal manifest:
@@ -221,8 +221,8 @@ Common built-in capability names include:
 - `dashboard:settings`
 - `web:app`
 - `web:site`
-- `zelavis/auth:credentials`
-- `zelavis/auth:oauth`
+- `zelavis/identity:credentials`
+- `zelavis/identity:oauth`
 
 The capability type is extensible, so a plugin may define a namespaced
 capability. Capabilities express what a service supplies or which owning
