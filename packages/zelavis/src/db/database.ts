@@ -11,6 +11,7 @@ import { backupsFor, type BackupsApi } from "./backup.js";
 import {
   initPartitionMap,
   initPlacementCatalog,
+  initSubdivisionCatalog,
   tenantsOn,
   topologyFor,
   type TopologyApi,
@@ -25,6 +26,7 @@ import { isValidCollectionName } from "./naming.js";
 import {
   GLOBAL_SHARD,
   GLOBAL_TENANT,
+  partitionKeyFor,
   shardFor,
   shardsOf,
   TOPOLOGY_SHARD,
@@ -152,8 +154,29 @@ export interface DatabaseApi {
    * A tenant is the locality unit: everything belonging to one lives on one
    * shard, which is what keeps a cross-model query a local intersection. The
    * shard it lives on is a placement decision, not something the caller states.
+   *
+   * Refuses a tenant that has been divided, because there is no one shard to
+   * answer for: see `forPart`. That refusal is the point — handing back one
+   * part would answer a question about a fraction of the tenant as though it
+   * were about all of it.
    */
   readonly forTenant: (tenant: TenantId) => TenantApi;
+
+  /**
+   * One part of a tenant that is divided across shards.
+   *
+   * A tenant too large for one shard is the one case the locality bargain
+   * cannot be kept: everything belonging to one tenant living on one shard is
+   * what makes a cross-model query a local intersection, and a tenant that does
+   * not fit has to give that up. Dividing makes the loss explicit rather than
+   * letting the shard fill — each part is a partition of its own, no write
+   * spans two, and a question about the whole tenant is a `scatter` over
+   * `topology.subdivision.keysOf`.
+   *
+   * Below routing a part is simply a tenant, so it gets the same isolation and
+   * the same local intersection *within itself* that an undivided tenant gets.
+   */
+  readonly forPart: (tenant: TenantId, part: string) => TenantApi;
 
   /**
    * Data belonging to the App rather than to any one tenant.
@@ -261,6 +284,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
   // Placed beside the map, in the same store, because both answer where
   // something lives and a reader that had one without the other could route.
   const placementCatalog = yield* initPlacementCatalog(topologyStore);
+  const subdivisionCatalog = yield* initSubdivisionCatalog(topologyStore);
   const globalStore = yield* options.openShard(GLOBAL_SHARD);
 
   const shards = new Map<ShardId, ObjectStoreApi>();
@@ -268,7 +292,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     shards.set(shard, yield* options.openShard(shard));
   }
 
-  const topology = topologyFor(topologyStore, partitionMap, shards, placementCatalog);
+  const topology = topologyFor(topologyStore, partitionMap, shards, placementCatalog, subdivisionCatalog);
   const movement = movementOver({ topologyStore, topology, shards });
   // Routing may already have left a source shard whose cleanup is unfinished.
   // Earlier phases also need target shards not yet named by the current map.
@@ -510,6 +534,31 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     topology,
     shardOf,
     global: globalApi,
-    forTenant: (tenant) => tenantApiOver(storeFor(tenant), tenant),
+    forTenant: (tenant) => {
+      // Returning one part's handle would answer questions about a fraction of
+      // the tenant as though they were about all of it — the quiet wrong answer
+      // this whole design exists to avoid. Naming a part is the only honest way
+      // in, so it is required rather than defaulted.
+      const parts = topology.subdivision.partsOf(tenant);
+      if (parts !== undefined) {
+        throw new Error(
+          `Tenant "${tenant}" is divided into ${parts.join(", ")}; use forPart, or scatter over topology.subdivision.keysOf("${tenant}").`,
+        );
+      }
+      return tenantApiOver(storeFor(tenant), tenant);
+    },
+    forPart: (tenant, part) => {
+      const parts = topology.subdivision.partsOf(tenant);
+      if (parts === undefined) {
+        throw new Error(`Tenant "${tenant}" is not divided, so it has no part "${part}".`);
+      }
+      if (!parts.includes(part)) {
+        throw new Error(
+          `Tenant "${tenant}" has no part "${part}"; it is divided into ${parts.join(", ")}.`,
+        );
+      }
+      const key = partitionKeyFor(tenant, part);
+      return tenantApiOver(storeFor(key), key);
+    },
   } satisfies DatabaseApi;
 });
