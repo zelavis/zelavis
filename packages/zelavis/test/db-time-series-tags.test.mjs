@@ -8,6 +8,12 @@ import { makeDatabase, partitionMapFor, defineDatabaseService } from "../dist/db
 import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
 import { openTemporaryDatabase } from "./_database.mjs";
 
+/** These cases name the Tenant they address, which is an operator act. */
+const operator = {
+  id: "operator",
+  type: "user",
+  permissions: ["database.inspect", "database.read", "database.write"],
+};
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
 const BASE = Date.UTC(2026, 0, 1);
@@ -271,7 +277,8 @@ test("the HTTP aggregate and range routes honour tag filters", async (t) => {
       params,
       query: new URLSearchParams(query),
       body,
-      headers: {},
+      principal: operator,
+    headers: {},
       request: undefined,
     });
   const routeOf = (id) =>

@@ -4,12 +4,26 @@ import { createServiceRuntime } from "../dist/core/index.js";
 import { defineDatabaseService } from "../dist/db/index.js";
 import { openTemporaryDatabase } from "./_database.mjs";
 
-const call = (route, { service, params = {}, query = "", body } = {}) =>
+/**
+ * The dashboard's own principal: an operator browsing the database.
+ *
+ * `database.inspect` is what lets a caller name the Tenant it addresses, which
+ * every case below does. An App client holds no inspect authority and is
+ * confined to its own Tenant; that boundary is covered separately.
+ */
+const operator = {
+  id: "operator",
+  type: "user",
+  permissions: ["database.inspect", "database.read", "database.write"],
+};
+
+const call = (route, { service, params = {}, query = "", body, principal = operator } = {}) =>
   route.handler({
     service,
     params,
     query: new URLSearchParams(query),
     body,
+    principal,
     headers: {},
     request: undefined,
   });

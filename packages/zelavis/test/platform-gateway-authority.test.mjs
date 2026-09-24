@@ -35,6 +35,7 @@ function claims(overrides = {}) {
     runtimeNodeId: "local",
     subject: "owner",
     subjectType: "user",
+    tenantId: "owner",
     permissions: ["project.view"],
     nonce: createGatewayAuthorityNonce(),
     expiresAt: Date.now() + 30_000,

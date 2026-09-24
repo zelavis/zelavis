@@ -98,6 +98,11 @@ const zv = new Zelavis({
             })),
             metadata: {
               projectId,
+              // The Platform decided which App Tenant this caller acts in and
+              // signed it. Carrying it on the principal is what lets a Project
+              // service scope data to the caller instead of believing a tenant
+              // named in the request body.
+              tenantId: claims.tenantId,
               placementGeneration: String(claims.generation),
               runtimeNodeId: claims.runtimeNodeId,
               platformScopeId: claims.scopeId,

@@ -101,6 +101,15 @@ export interface TenantRuntimeApi {
     }) => Promise<ReadonlyArray<RelatedDocuments>>;
     readonly write: (input: {
       operations: ReadonlyArray<DocumentWrite>;
+      /**
+       * Do this at most once.
+       *
+       * A retry carrying the same key is answered with what the first attempt
+       * returned instead of being applied again. This matters most over a
+       * network, where a caller that never sees a response cannot tell a lost
+       * reply from a lost request.
+       */
+      idempotencyKey?: string;
     }) => Promise<ReadonlyArray<DocumentWritten>>;
     readonly rewrite: (input?: {
       collection?: string;
@@ -111,6 +120,8 @@ export interface TenantRuntimeApi {
     readonly collectionExists: (name: string) => Promise<boolean>;
     readonly insert: (input: {
       collection: string;
+      /** Do this at most once; see `write`. Supply `id` alongside it. */
+      idempotencyKey?: string;
       id?: string;
       data: JsonObject;
     }) => Promise<Document>;
@@ -123,6 +134,8 @@ export interface TenantRuntimeApi {
     readonly traverse: (input: TraverseInput) => Promise<TraverseResult>;
     readonly update: (input: {
       collection: string;
+      /** Do this at most once; see `write`. */
+      idempotencyKey?: string;
       id: string;
       data: JsonObject;
       mode?: "merge" | "replace";
@@ -131,6 +144,8 @@ export interface TenantRuntimeApi {
     }) => Promise<Document>;
     readonly delete: (input: {
       collection: string;
+      /** Do this at most once; see `write`. */
+      idempotencyKey?: string;
       id: string;
       expectedVersion?: number;
       precondition?: ReadonlyArray<DocumentFilter>;
