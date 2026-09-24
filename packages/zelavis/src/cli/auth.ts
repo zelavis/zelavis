@@ -1,7 +1,7 @@
 import { createZelavisClient, type ZelavisAuthAccount } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis auth service-accounts <list|create|rotate|revoke> [account-id] [--name NAME] [--permission PERMISSION] [--project PROJECT_ID] [--expires-days DAYS] [--url URL] [--token TOKEN] [--json]";
+  "zelavis auth service-accounts <list|create|rotate|revoke|set-tenant> [account-id] [--name NAME] [--permission PERMISSION] [--project PROJECT_ID] [--tenant TENANT_ID] [--expires-days DAYS] [--url URL] [--token TOKEN] [--json]";
 
 /**
  * Platform machine identities through the same typed client applications use.
@@ -15,6 +15,7 @@ export async function runAuthCommand(args: readonly string[]): Promise<void> {
   let token: string | undefined;
   let name: string | undefined;
   let projectId: string | undefined;
+  let tenantId: string | undefined;
   let expiresInDays: number | undefined;
   let json = false;
 
@@ -28,7 +29,7 @@ export async function runAuthCommand(args: readonly string[]): Promise<void> {
     if (!arg.startsWith("-")) { positional.push(arg); continue; }
     const separator = arg.indexOf("=");
     const flag = separator === -1 ? arg : arg.slice(0, separator);
-    if (!["--url", "--token", "--name", "--permission", "--project", "--expires-days"].includes(flag)) {
+    if (!["--url", "--token", "--name", "--permission", "--project", "--tenant", "--expires-days"].includes(flag)) {
       throw new Error(`Unknown auth option "${arg}".`);
     }
     const value = separator === -1 ? args[++index] : arg.slice(separator + 1);
@@ -38,6 +39,7 @@ export async function runAuthCommand(args: readonly string[]): Promise<void> {
     if (flag === "--name") name = value;
     if (flag === "--permission") permissions.push(value);
     if (flag === "--project") projectId = value;
+    if (flag === "--tenant") tenantId = value;
     if (flag === "--expires-days") {
       expiresInDays = Number(value);
       if (!Number.isSafeInteger(expiresInDays) || expiresInDays < 1 || expiresInDays > 3650) {
@@ -69,11 +71,20 @@ export async function runAuthCommand(args: readonly string[]): Promise<void> {
       print({ serviceAccounts }, () => serviceAccounts.map(line).join("\n") || "No service accounts.");
       return;
     }
+    case "set-tenant": {
+      if (!accountId) throw new Error("auth service-accounts set-tenant requires an account id.");
+      if (!tenantId?.trim()) throw new Error("auth service-accounts set-tenant requires --tenant.");
+      const serviceAccount = await client.auth.admin.setServiceAccountTenant(accountId, tenantId.trim());
+      print({ serviceAccount }, () =>
+        `${serviceAccount.id} now acts in Tenant ${String(serviceAccount.metadata?.tenantId ?? tenantId)}.`);
+      return;
+    }
     case "create": {
       if (!name?.trim()) throw new Error("auth service-accounts create requires --name.");
       const result = await client.auth.admin.createServiceAccount({
         name: name.trim(),
         permissions,
+        ...(tenantId ? { tenantId } : {}),
         ...(projectId
           ? {
               grants: [
@@ -81,6 +92,11 @@ export async function runAuthCommand(args: readonly string[]): Promise<void> {
                 "project.runtime.manage",
                 "project.settings.manage",
                 "project.users.manage",
+                // A Project operator that cannot read or write the Project's
+                // records is not one: data is its own authority, so holding
+                // the rest does not confer it.
+                "project.data.read",
+                "project.data.write",
               ].map((permission) => ({
                 permission,
                 scope: { type: "project" as const, projectId },

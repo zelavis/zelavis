@@ -64,4 +64,20 @@ export class AccountService {
   async list(): Promise<Account[]> {
     return this.repository.list();
   }
+
+  /**
+   * Replaces an account's metadata.
+   *
+   * Whole-record rather than a merge, so the caller decides what survives: a
+   * merge here would make removing a key impossible without a second
+   * operation, and metadata is where authority-adjacent facts like the
+   * Tenant live.
+   */
+  async setMetadata(id: string, metadata: Record<string, unknown>): Promise<Account> {
+    const account = await this.repository.findById(id);
+    if (!account) {
+      throw new IdentityValidationError("No account with that id exists.");
+    }
+    return this.repository.update({ ...account, metadata, updatedAt: new Date() });
+  }
 }

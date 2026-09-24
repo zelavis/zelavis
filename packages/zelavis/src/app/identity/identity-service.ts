@@ -18,6 +18,7 @@ import {
   AuthRateLimitError,
   IdentityValidationError,
 } from "./core/errors.js";
+import { isValidTenantId } from "../../db/naming.js";
 
 const authErrorRules: readonly ZelavisServerErrorStatusRule[] = [
   {
@@ -179,6 +180,27 @@ function serviceAccountGrants(value: unknown): readonly ZelavisPrincipalGrant[] 
     }
     throw new IdentityValidationError("Service account grant scopes must name a system, Project, or service.");
   });
+}
+
+/**
+ * The Tenant a service account acts in, if the caller named one.
+ *
+ * Validated rather than trusted, because a Tenant id becomes part of the
+ * storage namespace: an id carrying a `/` would be read back as a different
+ * Tenant entirely.
+ */
+function readTenantIdInput(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string" || !value.trim()) {
+    throw new IdentityValidationError("A Tenant id must be a non-empty string.");
+  }
+  const tenantId = value.trim();
+  if (!isValidTenantId(tenantId)) {
+    throw new IdentityValidationError(
+      "A Tenant id may use letters, digits, dot, dash and underscore, must start with a letter or digit, and may not begin with the reserved \"zv.\" prefix.",
+    );
+  }
+  return tenantId;
 }
 
 function serviceAccountPermissions(value: unknown): readonly string[] {
@@ -918,6 +940,7 @@ export function defineAuthService(
                     if (!Number.isSafeInteger(days) || days < 1 || days > 3650) {
                       throw new IdentityValidationError("Service account token lifetime must be between 1 and 3650 days.");
                     }
+                    const tenantId = readTenantIdInput(input.tenantId);
                     const id = `service_${crypto.randomUUID().replaceAll("-", "")}`;
                     const account = await service.accounts.create({
                       id,
@@ -927,7 +950,15 @@ export function defineAuthService(
                       roles: ["service"],
                       permissions: serviceAccountPermissions(input.permissions),
                       grants: serviceAccountGrants(input.grants),
-                      metadata: { principalType: "service", serviceAccount: true },
+                      // Without a Tenant an account is its own, which is a
+                      // generated id no operator would recognise and no second
+                      // client can ever join. Naming it is what lets an App's
+                      // web client and its worker be one customer.
+                      metadata: {
+                        principalType: "service",
+                        serviceAccount: true,
+                        ...(tenantId ? { tenantId } : {}),
+                      },
                     });
                     const issued = await service.sessions.create({
                       accountId: account.id,
@@ -942,6 +973,45 @@ export function defineAuthService(
                         session: publicSession(issued.session),
                       },
                     };
+                  } catch (error) {
+                    return authErrorResponse(error, 400);
+                  }
+                },
+              },
+              {
+                id: "auth.serviceAccounts.setTenant",
+                method: "PATCH" as const,
+                path: "/service-accounts/:accountId",
+                access: manageAccess,
+                spec: {
+                  operationId: "setServiceAccountTenant",
+                  summary: "Name the App Tenant a service account acts in",
+                  tags: ["auth", "service-accounts"],
+                  responses: {
+                    200: { description: "Updated service account" },
+                    400: { description: "Invalid Tenant id" },
+                    404: { description: "Service account not found" },
+                  },
+                },
+                handler: async ({ service, params, body }: { service: IdentityApi; params: Record<string, string>; body: unknown }) => {
+                  try {
+                    const account = await service.accounts.findById(params.accountId);
+                    if (!account || account.metadata?.principalType !== "service") {
+                      return { status: 404, body: { error: "Service account not found" } };
+                    }
+                    const input = (body ?? {}) as Record<string, unknown>;
+                    const tenantId = readTenantIdInput(input.tenantId);
+                    if (!tenantId) {
+                      throw new IdentityValidationError("A Tenant id is required.");
+                    }
+                    // Records already written under the old Tenant stay where
+                    // they are: this names who the account is from now on, and
+                    // moving data is a separate, deliberate act.
+                    const updated = await service.accounts.setMetadata(account.id, {
+                      ...(account.metadata ?? {}),
+                      tenantId,
+                    });
+                    return { status: 200, body: { serviceAccount: updated } };
                   } catch (error) {
                     return authErrorResponse(error, 400);
                   }

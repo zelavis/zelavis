@@ -216,6 +216,14 @@ export interface ZelavisServiceAccountCreateInput {
   readonly permissions?: readonly string[];
   readonly grants?: readonly ZelavisPrincipalGrant[];
   readonly expiresInDays?: number;
+  /**
+   * The App Tenant this account acts in.
+   *
+   * Omitted, the account is its own Tenant — a generated id no operator will
+   * recognise, and one no second client can ever join. Name it when more than
+   * one credential belongs to the same customer.
+   */
+  readonly tenantId?: string;
 }
 
 export interface ZelavisAuthClient {
@@ -251,6 +259,8 @@ export interface ZelavisAuthClient {
       readonly token: string;
       readonly session: ZelavisAuthSession;
     }>;
+    /** Names the App Tenant an existing service account acts in. */
+    setServiceAccountTenant(accountId: string, tenantId: string): Promise<ZelavisAuthAccount>;
     revokeServiceAccount(accountId: string): Promise<void>;
   };
 }
@@ -770,6 +780,11 @@ export function createZelavisClient(
               body: expiresInDays === undefined ? {} : { expiresInDays },
             },
           ),
+        setServiceAccountTenant: async (accountId, tenantId) =>
+          (await json<{ serviceAccount: ZelavisAuthAccount }>(
+            `/auth/service-accounts/${encodeURIComponent(accountId)}`,
+            { method: "PATCH", body: { tenantId } },
+          )).serviceAccount,
         revokeServiceAccount: (accountId) =>
           json<void>(`/auth/service-accounts/${encodeURIComponent(accountId)}`, {
             method: "DELETE",
