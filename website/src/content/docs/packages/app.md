@@ -44,3 +44,9 @@ Every Project stores the exact recipe/runtime version chosen at creation. A
 parent Platform upgrade preserves that lock. The current Node driver does not
 yet materialize older versions independently; immutable Project artifacts are
 the next step for true side-by-side version execution.
+
+The recipe includes Project-owned Auth by default: password registration,
+session lifecycle, OAuth/OpenID Connect provider configuration, and durable
+accounts and credentials in the Project database. These identities are the
+App's users; Platform owners and service accounts remain a separate authority
+boundary. See [Auth](./auth.md).

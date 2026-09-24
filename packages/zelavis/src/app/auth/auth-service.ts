@@ -5,6 +5,7 @@ import {
   type ZelavisRuntimeService,
   type ZelavisServerRoute,
   type ZelavisRequestAuthenticator,
+  type ZelavisPrincipalGrant,
 } from "../../core/index.js";
 import type { AuthApi, AuthMethodPlugin } from "./core/types.js";
 import type { AuthBootstrapCapability } from "./core/types.js";
@@ -51,6 +52,11 @@ function publicSession<T extends { tokenHash: string }>(session: T) {
   return safe;
 }
 
+function publicCredential<T extends { secretHash?: string }>(credential: T) {
+  const { secretHash: _secretHash, ...safe } = credential;
+  return safe;
+}
+
 export type AuthServiceDefinition = Readonly<
   ZelavisRuntimeService<AuthApi> & {
     kind?: string;
@@ -67,6 +73,8 @@ export interface AuthSessionCookieOptions {
 
 export interface DefineAuthServiceOptions {
   authority?: "project" | "platform";
+  /** Allow anonymous account enrollment. Intended for Project auth, never Platform owner creation. */
+  registration?: boolean;
   bootstrap?: AuthBootstrapCapability;
   /**
    * Reads and writes the credentials an operator configured for OAuth
@@ -142,6 +150,45 @@ function tokensEqual(left: string, right: unknown): boolean {
   return difference === 0;
 }
 
+function serviceAccountGrants(value: unknown): readonly ZelavisPrincipalGrant[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 100) {
+    throw new AuthValidationError("Service account grants must be an array of at most 100 entries.");
+  }
+  return value.map((entry) => {
+    if (!entry || typeof entry !== "object") {
+      throw new AuthValidationError("Each service account grant must be an object.");
+    }
+    const grant = entry as { permission?: unknown; scope?: unknown };
+    if (typeof grant.permission !== "string" || !grant.permission.trim()) {
+      throw new AuthValidationError("Each service account grant requires a permission.");
+    }
+    const scope = grant.scope;
+    if (!scope || typeof scope !== "object") {
+      throw new AuthValidationError("Service account grants require an explicit scope.");
+    }
+    const candidate = scope as Record<string, unknown>;
+    if (candidate.type === "project" && typeof candidate.projectId === "string" && candidate.projectId.trim()) {
+      return { permission: grant.permission.trim(), scope: { type: "project", projectId: candidate.projectId.trim() } };
+    }
+    if (candidate.type === "service" && typeof candidate.serviceName === "string" && candidate.serviceName.trim()) {
+      return { permission: grant.permission.trim(), scope: { type: "service", serviceName: candidate.serviceName.trim() } };
+    }
+    if (candidate.type === "system") {
+      return { permission: grant.permission.trim(), scope: { type: "system" } };
+    }
+    throw new AuthValidationError("Service account grant scopes must name a system, Project, or service.");
+  });
+}
+
+function serviceAccountPermissions(value: unknown): readonly string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 100 || value.some((permission) => typeof permission !== "string" || !permission.trim())) {
+    throw new AuthValidationError("Service account permissions must be an array of at most 100 names.");
+  }
+  return [...new Set(value.map((permission) => permission.trim()))];
+}
+
 export function defineAuthService(
   auth: AuthApi,
   options: DefineAuthServiceOptions = {},
@@ -151,6 +198,14 @@ export function defineAuthService(
     : "project.users.manage";
   const manageAccess = {
     permissions: [managePermission],
+    ...(options.authority !== "platform" && auth.context.projectId
+      ? { scope: { type: "project" as const, projectId: auth.context.projectId } }
+      : {}),
+  };
+  const settingsAccess = {
+    permissions: [options.authority === "platform"
+      ? "system.settings.manage"
+      : "project.settings.manage"],
     ...(options.authority !== "platform" && auth.context.projectId
       ? { scope: { type: "project" as const, projectId: auth.context.projectId } }
       : {}),
@@ -231,9 +286,9 @@ export function defineAuthService(
             try {
               return {
                 status: 201,
-                body: await service.credentials.create(
+                body: publicCredential(await service.credentials.create(
                   body as Parameters<AuthApi["credentials"]["create"]>[0],
-                ),
+                )),
               };
             } catch (error) {
               return authErrorResponse(error, 400);
@@ -257,6 +312,75 @@ export function defineAuthService(
             body: service.authentication.listProviders(),
           }),
         },
+        ...(options.authority !== "platform" && options.registration
+          ? [
+              {
+                id: "auth.registration.create",
+                method: "POST" as const,
+                path: "/sign-up/:provider",
+                spec: {
+                  operationId: "signUp",
+                  summary: "Create an app account with a credential provider",
+                  tags: ["auth"],
+                  responses: {
+                    201: { description: "Account created and signed in" },
+                    400: { description: "Registration failed" },
+                  },
+                },
+                handler: async ({ service, params, body, request }: { service: AuthApi; params: Record<string, string>; body: unknown; request: Request }) => {
+                  let accountId: string | undefined;
+                  try {
+                    const input = (body ?? {}) as Record<string, unknown>;
+                    const prepared = await service.authentication.prepareCredential(
+                      params.provider,
+                      input as Parameters<AuthApi["authentication"]["prepareCredential"]>[1],
+                    );
+                    accountId = `account_${crypto.randomUUID().replaceAll("-", "")}`;
+                    const account = await service.accounts.create({
+                      id: accountId,
+                      ...prepared.accountIdentity,
+                      ...(typeof input.displayName === "string" && input.displayName.trim()
+                        ? { displayName: input.displayName.trim() }
+                        : {}),
+                    });
+                    const credential = await service.credentials.create({
+                      id: `credential_${crypto.randomUUID().replaceAll("-", "")}`,
+                      accountId: account.id,
+                      provider: params.provider,
+                      identifier: prepared.identifier,
+                      secretHash: prepared.secretHash,
+                      metadata: prepared.metadata,
+                    });
+                    const session = await service.sessions.create({
+                      accountId: account.id,
+                      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60_000),
+                      metadata: { provider: params.provider, authentication: "registration" },
+                    });
+                    const sessionCookie = cookieOptions
+                      ? browserSessionCookieHeader(
+                          session.token,
+                          session.session.expiresAt,
+                          request,
+                          cookieOptions,
+                        )
+                      : undefined;
+                    return {
+                      status: 201,
+                      headers: sessionCookie ? { "set-cookie": sessionCookie } : undefined,
+                      body: {
+                        account,
+                        credential: publicCredential(credential),
+                        session: { token: session.token, session: publicSession(session.session) },
+                      },
+                    };
+                  } catch (error) {
+                    if (accountId) await service.repositories.accounts.delete(accountId).catch(() => false);
+                    return authErrorResponse(error, 400);
+                  }
+                },
+              },
+            ]
+          : []),
         {
           id: "auth.recovery.providers.list",
           spec: {
@@ -390,6 +514,7 @@ export function defineAuthService(
                   : undefined,
                 body: {
                   ...result,
+                  credential: publicCredential(result.credential),
                   session: result.session
                     ? {
                         token: result.session.token,
@@ -505,6 +630,7 @@ export function defineAuthService(
                 body: result.session
                   ? {
                       ...result,
+                      credential: publicCredential(result.credential),
                       session: {
                         token: result.session.token,
                         session: publicSession(result.session.session),
@@ -745,13 +871,155 @@ export function defineAuthService(
               : { status: 404, body: { error: "Session not found" } };
           },
         },
+        ...(options.authority === "platform"
+          ? [
+              {
+                id: "auth.serviceAccounts.list",
+                method: "GET" as const,
+                path: "/service-accounts",
+                access: manageAccess,
+                spec: {
+                  operationId: "listServiceAccounts",
+                  summary: "List Platform service accounts",
+                  tags: ["auth", "service-accounts"],
+                  responses: { 200: { description: "Service accounts" } },
+                },
+                handler: async ({ service }: { service: AuthApi }) => ({
+                  status: 200,
+                  body: {
+                    serviceAccounts: (await service.accounts.list()).filter(
+                      (account) => account.metadata?.principalType === "service",
+                    ),
+                  },
+                }),
+              },
+              {
+                id: "auth.serviceAccounts.create",
+                method: "POST" as const,
+                path: "/service-accounts",
+                access: manageAccess,
+                spec: {
+                  operationId: "createServiceAccount",
+                  summary: "Create a Platform service account and issue its first token",
+                  tags: ["auth", "service-accounts"],
+                  responses: {
+                    201: { description: "Service account and one-time token" },
+                    400: { description: "Invalid service account" },
+                  },
+                },
+                handler: async ({ service, body }: { service: AuthApi; body: unknown }) => {
+                  try {
+                    const input = (body ?? {}) as Record<string, unknown>;
+                    const name = typeof input.name === "string" ? input.name.trim() : "";
+                    if (!name || name.length > 100) {
+                      throw new AuthValidationError("A service account name of at most 100 characters is required.");
+                    }
+                    const days = input.expiresInDays === undefined ? 90 : Number(input.expiresInDays);
+                    if (!Number.isSafeInteger(days) || days < 1 || days > 3650) {
+                      throw new AuthValidationError("Service account token lifetime must be between 1 and 3650 days.");
+                    }
+                    const id = `service_${crypto.randomUUID().replaceAll("-", "")}`;
+                    const account = await service.accounts.create({
+                      id,
+                      username: id,
+                      displayName: name,
+                      verified: true,
+                      roles: ["service"],
+                      permissions: serviceAccountPermissions(input.permissions),
+                      grants: serviceAccountGrants(input.grants),
+                      metadata: { principalType: "service", serviceAccount: true },
+                    });
+                    const issued = await service.sessions.create({
+                      accountId: account.id,
+                      expiresAt: new Date(Date.now() + days * 24 * 60 * 60_000),
+                      metadata: { authentication: "service-token", serviceAccount: true },
+                    });
+                    return {
+                      status: 201,
+                      body: {
+                        serviceAccount: account,
+                        token: issued.token,
+                        session: publicSession(issued.session),
+                      },
+                    };
+                  } catch (error) {
+                    return authErrorResponse(error, 400);
+                  }
+                },
+              },
+              {
+                id: "auth.serviceAccounts.rotateToken",
+                method: "POST" as const,
+                path: "/service-accounts/:accountId/token",
+                access: manageAccess,
+                spec: {
+                  operationId: "rotateServiceAccountToken",
+                  summary: "Revoke existing tokens and issue a new service account token",
+                  tags: ["auth", "service-accounts"],
+                  responses: {
+                    200: { description: "One-time service account token" },
+                    404: { description: "Service account not found" },
+                  },
+                },
+                handler: async ({ service, params, body }: { service: AuthApi; params: Record<string, string>; body: unknown }) => {
+                  try {
+                    const account = await service.accounts.findById(params.accountId);
+                    if (!account || account.metadata?.principalType !== "service") {
+                      return { status: 404, body: { error: "Service account not found" } };
+                    }
+                    const input = (body ?? {}) as Record<string, unknown>;
+                    const days = input.expiresInDays === undefined ? 90 : Number(input.expiresInDays);
+                    if (!Number.isSafeInteger(days) || days < 1 || days > 3650) {
+                      throw new AuthValidationError("Service account token lifetime must be between 1 and 3650 days.");
+                    }
+                    await service.sessions.revokeAll(account.id);
+                    const issued = await service.sessions.create({
+                      accountId: account.id,
+                      expiresAt: new Date(Date.now() + days * 24 * 60 * 60_000),
+                      metadata: { authentication: "service-token", serviceAccount: true },
+                    });
+                    return {
+                      status: 200,
+                      body: { token: issued.token, session: publicSession(issued.session) },
+                    };
+                  } catch (error) {
+                    return authErrorResponse(error, 400);
+                  }
+                },
+              },
+              {
+                id: "auth.serviceAccounts.revoke",
+                method: "DELETE" as const,
+                path: "/service-accounts/:accountId",
+                access: manageAccess,
+                spec: {
+                  operationId: "revokeServiceAccount",
+                  summary: "Revoke and remove a Platform service account",
+                  tags: ["auth", "service-accounts"],
+                  responses: {
+                    204: { description: "Service account revoked" },
+                    404: { description: "Service account not found" },
+                  },
+                },
+                handler: async ({ service, params }: { service: AuthApi; params: Record<string, string> }) => {
+                  const account = await service.accounts.findById(params.accountId);
+                  if (!account || account.metadata?.principalType !== "service") {
+                    return { status: 404, body: { error: "Service account not found" } };
+                  }
+                  await service.sessions.revokeAll(account.id);
+                  await service.repositories.accounts.delete(account.id);
+                  return { status: 204 };
+                },
+              },
+            ]
+          : []),
         ...(options.oauthConnections
           ? [
               {
                 id: "auth.oauth.connections.list",
                 method: "GET" as const,
                 path: "/oauth/connections",
-                access: { permissions: ["system.settings.manage"] },
+                access: settingsAccess,
                 spec: {
                   operationId: "listOAuthConnections",
                   summary: "List OAuth providers and their configuration",
@@ -767,7 +1035,7 @@ export function defineAuthService(
                 id: "auth.oauth.connections.configure",
                 method: "PUT" as const,
                 path: "/oauth/connections/:provider",
-                access: { permissions: ["system.settings.manage"] },
+                access: settingsAccess,
                 spec: {
                   operationId: "configureOAuthConnection",
                   summary: "Configure an OAuth provider for this installation",
@@ -808,7 +1076,7 @@ export function defineAuthService(
                 id: "auth.oauth.connections.remove",
                 method: "DELETE" as const,
                 path: "/oauth/connections/:provider",
-                access: { permissions: ["system.settings.manage"] },
+                access: settingsAccess,
                 spec: {
                   operationId: "removeOAuthConnection",
                   summary: "Remove an OAuth provider's configuration",
@@ -975,6 +1243,8 @@ export interface AuthServiceOptions {
   auth?: AuthApi;
   authOptions?: CreateAuthOptions;
   methods?: readonly AuthMethodPlugin[];
+  /** Allow anonymous Project-user registration. */
+  registration?: boolean;
   definition?: DefineAuthServiceOptions;
 }
 
@@ -991,7 +1261,10 @@ export async function createAuthSubsystem(
       ],
     }));
 
-  return defineAuthSubsystem(auth, options.definition);
+  return defineAuthSubsystem(auth, {
+    ...(options.definition ?? {}),
+    ...(options.registration === undefined ? {} : { registration: options.registration }),
+  });
 }
 
 export async function authService(

@@ -34,6 +34,8 @@ import type {
   ZelavisEnvironmentSession,
   ZelavisEnvironmentSessionInput,
   ZelavisEnvironmentSessionUpdate,
+  ZelavisEnvironmentUsageInput,
+  ZelavisEnvironmentUsageRecord,
 } from "../platform/remote-environment.js";
 import type {
   DatabaseRuntimeApi,
@@ -50,6 +52,8 @@ import {
 import type {
   ZelavisServerRoute,
   ZelavisAnyRuntimeServiceInput,
+  ZelavisPrincipal,
+  ZelavisPrincipalGrant,
 } from "../core/runtime/contracts.js";
 import { createPluginClients, validateOperationName, type RegisteredPluginClients, type PluginOperation } from "./plugins.js";
 export type { PluginClients, PluginApiRegistry, RegisteredPluginClients, PluginOperation, PluginOperationOptions } from "./plugins.js";
@@ -162,6 +166,95 @@ export interface ZelavisRuntimeAccessResponse {
   };
 }
 
+export interface ZelavisAuthAccount {
+  readonly id: string;
+  readonly email?: string;
+  readonly username?: string;
+  readonly displayName?: string;
+  readonly verified: boolean;
+  readonly roles?: readonly string[];
+  readonly permissions?: readonly string[];
+  readonly grants?: readonly ZelavisPrincipalGrant[];
+  readonly metadata?: Readonly<Record<string, unknown>>;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ZelavisAuthSession {
+  readonly id: string;
+  readonly accountId: string;
+  readonly status: "active" | "revoked" | "expired";
+  readonly expiresAt: string;
+  readonly metadata?: Readonly<Record<string, unknown>>;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ZelavisAuthSessionResult {
+  readonly account: ZelavisAuthAccount;
+  readonly session?: {
+    readonly token: string;
+    readonly session: ZelavisAuthSession;
+  };
+}
+
+export interface ZelavisOAuthConnection {
+  readonly provider: string;
+  readonly title?: string;
+  readonly issuer?: string;
+  readonly clientId: string;
+  readonly redirectUri: string;
+  readonly scopes?: readonly string[];
+  readonly enabled: boolean;
+  readonly configured: boolean;
+  readonly hasClientSecret: boolean;
+  readonly updatedAt: string;
+}
+
+export interface ZelavisServiceAccountCreateInput {
+  readonly name: string;
+  readonly permissions?: readonly string[];
+  readonly grants?: readonly ZelavisPrincipalGrant[];
+  readonly expiresInDays?: number;
+}
+
+export interface ZelavisAuthClient {
+  providers(): Promise<readonly string[]>;
+  oauthProviders(): Promise<readonly string[]>;
+  signUp(provider: string, input: { identifier: string; password?: string; displayName?: string; [key: string]: unknown }): Promise<ZelavisAuthSessionResult>;
+  signUpWithPassword(input: { identifier: string; password: string; displayName?: string }): Promise<ZelavisAuthSessionResult>;
+  signIn(provider: string, input: { identifier: string; password?: string; [key: string]: unknown }): Promise<ZelavisAuthSessionResult>;
+  signInWithPassword(input: { identifier: string; password: string }): Promise<ZelavisAuthSessionResult>;
+  signInWithOAuth(provider: string): Promise<{ readonly authorizationUrl: string; readonly expiresAt: string }>;
+  linkIdentity(provider: string): Promise<{ readonly authorizationUrl: string; readonly expiresAt: string }>;
+  getSession(): Promise<{ readonly principal: ZelavisPrincipal }>;
+  refreshSession(): Promise<{ readonly token: string; readonly session: ZelavisAuthSession }>;
+  signOut(): Promise<void>;
+  readonly admin: {
+    oauthConnections(): Promise<readonly ZelavisOAuthConnection[]>;
+    configureOAuth(provider: string, input: {
+      readonly issuer?: string;
+      readonly clientId: string;
+      readonly clientSecret?: string;
+      readonly redirectUri: string;
+      readonly scopes?: readonly string[];
+      readonly enabled?: boolean;
+    }): Promise<ZelavisOAuthConnection>;
+    removeOAuth(provider: string): Promise<void>;
+    serviceAccounts(): Promise<readonly ZelavisAuthAccount[]>;
+    createServiceAccount(input: ZelavisServiceAccountCreateInput): Promise<{
+      readonly serviceAccount: ZelavisAuthAccount;
+      readonly token: string;
+      readonly session: ZelavisAuthSession;
+    }>;
+    rotateServiceAccountToken(accountId: string, expiresInDays?: number): Promise<{
+      readonly token: string;
+      readonly session: ZelavisAuthSession;
+    }>;
+    revokeServiceAccount(accountId: string): Promise<void>;
+  };
+}
+
 export interface ZelavisClient {
   readonly plugins: RegisteredPluginClients;
   readonly baseUrl: URL;
@@ -182,6 +275,8 @@ export interface ZelavisClient {
   readonly environment: ZelavisEnvironmentClient;
   /** Proxy-neutral Edge management. Same contract as `zelavis edge`. */
   readonly edge: ZelavisEdgeClient;
+  /** Accounts, login ceremonies, sessions, provider settings, and service clients. */
+  readonly auth: ZelavisAuthClient;
   readonly runtime: {
     access(): Promise<ZelavisRuntimeAccessResponse>;
     serviceSources(): Promise<{ sources: readonly ServiceSourceDiagnostic[] }>;
@@ -256,6 +351,7 @@ export interface ZelavisEnvironmentClient {
   updateSession(sessionId: string, update: ZelavisEnvironmentSessionUpdate): Promise<ZelavisEnvironmentSession>;
   getSession(sessionId: string): Promise<ZelavisEnvironmentSession>;
   closeSession(sessionId: string): Promise<{ readonly closed: boolean }>;
+  recordUsage(sessionId: string, input: ZelavisEnvironmentUsageInput): Promise<ZelavisEnvironmentUsageRecord>;
   startProcess(sessionId: string, input: ZelavisEnvironmentProcessInput): Promise<ZelavisEnvironmentProcess>;
   getProcess(processId: string): Promise<ZelavisEnvironmentProcess>;
   operateProcess(processId: string, input: ZelavisEnvironmentOperationInput): Promise<ZelavisEnvironmentOperationResult>;
@@ -486,6 +582,85 @@ export function createZelavisClient(
     ),
     pluginOperations: discoverPluginOperations,
     projects: createProjectsClient(json),
+    auth: {
+      providers: () => json<readonly string[]>("/auth/providers"),
+      oauthProviders: () => json<readonly string[]>("/auth/oauth/providers"),
+      signUp: (provider, input) =>
+        json<ZelavisAuthSessionResult>(
+          `/auth/sign-up/${encodeURIComponent(provider)}`,
+          { method: "POST", body: input },
+        ),
+      signUpWithPassword: (input) =>
+        json<ZelavisAuthSessionResult>("/auth/sign-up/password", {
+          method: "POST",
+          body: input,
+        }),
+      signIn: (provider, input) =>
+        json<ZelavisAuthSessionResult>(
+          `/auth/authenticate/${encodeURIComponent(provider)}`,
+          { method: "POST", body: input },
+        ),
+      signInWithPassword: (input) =>
+        json<ZelavisAuthSessionResult>("/auth/authenticate/password", {
+          method: "POST",
+          body: input,
+        }),
+      signInWithOAuth: (provider) =>
+        json<{ readonly authorizationUrl: string; readonly expiresAt: string }>(
+          `/auth/oauth/${encodeURIComponent(provider)}/start`,
+          { method: "POST" },
+        ),
+      linkIdentity: (provider) =>
+        json<{ readonly authorizationUrl: string; readonly expiresAt: string }>(
+          `/auth/oauth/${encodeURIComponent(provider)}/link/start`,
+          { method: "POST" },
+        ),
+      getSession: () =>
+        json<{ readonly principal: ZelavisPrincipal }>("/auth/session"),
+      refreshSession: () =>
+        json<{ readonly token: string; readonly session: ZelavisAuthSession }>(
+          "/auth/session/rotate",
+          { method: "POST" },
+        ),
+      signOut: () => json<void>("/auth/session", { method: "DELETE" }),
+      admin: {
+        oauthConnections: async () =>
+          (await json<{ readonly providers: readonly ZelavisOAuthConnection[] }>(
+            "/auth/oauth/connections",
+          )).providers,
+        configureOAuth: async (provider, input) =>
+          (await json<{ readonly connection: ZelavisOAuthConnection }>(
+            `/auth/oauth/connections/${encodeURIComponent(provider)}`,
+            { method: "PUT", body: input },
+          )).connection,
+        removeOAuth: (provider) =>
+          json<void>(`/auth/oauth/connections/${encodeURIComponent(provider)}`, {
+            method: "DELETE",
+          }),
+        serviceAccounts: async () =>
+          (await json<{ readonly serviceAccounts: readonly ZelavisAuthAccount[] }>(
+            "/auth/service-accounts",
+          )).serviceAccounts,
+        createServiceAccount: (input) =>
+          json<{
+            readonly serviceAccount: ZelavisAuthAccount;
+            readonly token: string;
+            readonly session: ZelavisAuthSession;
+          }>("/auth/service-accounts", { method: "POST", body: input }),
+        rotateServiceAccountToken: (accountId, expiresInDays) =>
+          json<{ readonly token: string; readonly session: ZelavisAuthSession }>(
+            `/auth/service-accounts/${encodeURIComponent(accountId)}/token`,
+            {
+              method: "POST",
+              body: expiresInDays === undefined ? {} : { expiresInDays },
+            },
+          ),
+        revokeServiceAccount: (accountId) =>
+          json<void>(`/auth/service-accounts/${encodeURIComponent(accountId)}`, {
+            method: "DELETE",
+          }),
+      },
+    },
     edge: {
       status: () => json<ZelavisEdgeStatusResponse>("/runtime/edge"),
       plan: async (input) =>
@@ -609,6 +784,13 @@ export function createZelavisClient(
           `/runtime/environment/sessions/${encodeURIComponent(sessionId)}`,
           { method: "DELETE" },
         );
+      },
+      recordUsage: async (sessionId, input) => {
+        if (!sessionId || sessionId === "." || sessionId === "..") throw new TypeError("Invalid environment session id.");
+        return (await json<{ usage: ZelavisEnvironmentUsageRecord }>(
+          `/runtime/environment/sessions/${encodeURIComponent(sessionId)}/usage`,
+          { method: "POST", body: input },
+        )).usage;
       },
       startProcess: async (sessionId, input) => {
         if (!sessionId || sessionId === "." || sessionId === "..") throw new TypeError("Invalid environment session id.");

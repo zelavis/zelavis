@@ -74,6 +74,10 @@ command tree.
   isolation the server cannot provide fails with
   `code: "project.isolation.unsatisfied"`. The backend is chosen by server
   policy; there is no backend option.
+- `auth service-accounts list|create|rotate|revoke` manages revocable Platform
+  machine identities through `client.auth.admin.*`. Creation and rotation
+  print a token once. Repeated `--permission` options add Platform permissions;
+  `--project <id>` adds the standard scoped Project operator grants.
 - `services list` lists service registry entries.
 - `services register` registers an ESM service specifier.
 - `services install` activates a registered service.

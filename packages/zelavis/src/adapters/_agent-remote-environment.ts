@@ -173,7 +173,7 @@ export function createAgentRemoteEnvironment(
       id: options.id ?? `zelavis-agent-${options.runner.name}`,
       name: options.name ?? "Zelavis Agent environment",
       platform: "node",
-      capabilities: ["sessions", "processes", "stdin", "signals", "termination", "event-replay"],
+      capabilities: ["sessions", "processes", "process-reconciliation", "stdin", "signals", "termination", "event-replay"],
     },
 
     health: () => ({
@@ -253,6 +253,14 @@ export function createAgentRemoteEnvironment(
       exitListener = (exit) => settleProcess(session, state, exit);
       if (pendingExit) settleProcess(session, state, pendingExit);
       return state.record;
+    },
+
+    async listProcesses(sessionId) {
+      const session = requireSession(sessionId);
+      return [...session.processes].flatMap((processId) => {
+        const process = processes.get(processId);
+        return process ? [process.record] : [];
+      });
     },
 
     async operateProcess(processId: string, input: ZelavisEnvironmentOperationInput): Promise<ZelavisEnvironmentOperationResult> {

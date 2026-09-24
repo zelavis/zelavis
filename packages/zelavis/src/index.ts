@@ -3,20 +3,11 @@ import {
   authService as createAuthService,
   createAuth,
   type AuthServiceOptions,
-  createAuthorizationCodeFlow,
-  createConnectionStore,
+  createOAuthProviderRuntime,
   createPasswordProvider,
-  builtInOAuthProviders,
-  environmentConnection,
-  discoverOidcProvider,
-  OAUTH_PROVIDER_CAPABILITY,
   PASSWORD_PROVIDER,
-  publicConnection,
-  type PublicOAuthConnection,
   type AuthMethodContext,
   type AuthMethodPlugin,
-  type OAuthConnection,
-  type OAuthProviderDefinition,
   type AuthApi,
 } from "./app/auth/index.js";
 import {
@@ -227,6 +218,7 @@ import type {
   ZelavisEnvironmentProcess,
   ZelavisEnvironmentProcessInput,
   ZelavisEnvironmentSession,
+  ZelavisEnvironmentUsageRecord,
 } from "./platform/remote-environment.js";
 export * from "./platform/remote-environment.js";
 import {
@@ -1291,240 +1283,6 @@ async function resolveDatabaseCoreService(
   return { api: opened.api, close: opened.close };
 }
 
-/**
- * Registers a credential provider for every installed OAuth definition.
- *
- * Core runs the Authorization Code flow — it holds the state, nonce and PKCE
- * verifier, and it is the only place those are handled — and a plugin
- * declaring `zelavis/auth:oauth` supplies the endpoints and claim mapping for
- * one identity provider. Google, GitHub, and a generic OIDC builder ship in
- * the box; anything else arrives as an ordinary plugin.
- *
- * The credentials an installation was issued are the operator's, so they are
- * read from the store rather than from any package. The Authorization Code
- * contract is synchronous, so the configuration is loaded once here and
- * refreshed whenever it is written.
- */
-async function registerOAuthProviders(
-  api: AuthApi,
-  context: AuthMethodContext | undefined,
-  options: { fetch?: typeof globalThis.fetch },
-): Promise<void> {
-  const definitions = new Map<string, OAuthProviderDefinition>();
-  for (const entry of context?.registry ?? []) {
-    if (entry.status !== "installed") continue;
-    if (!entry.service.capabilities?.includes(OAUTH_PROVIDER_CAPABILITY)) continue;
-    const declared = (
-      entry.service.service as
-        | { oauthProviders?: readonly OAuthProviderDefinition[] }
-        | undefined
-    )?.oauthProviders;
-    if (!Array.isArray(declared)) continue;
-    for (const definition of declared) {
-      // First installed plugin wins, and the built-ins go in last: a later
-      // install must not redirect sign-in for a name accounts already use.
-      if (definition?.name && !definitions.has(definition.name)) {
-        definitions.set(definition.name, definition);
-      }
-    }
-  }
-  for (const definition of builtInOAuthProviders) {
-    if (!definitions.has(definition.name)) definitions.set(definition.name, definition);
-  }
-
-  const connections = context?.store
-    ? createConnectionStore(context.store as never)
-    : undefined;
-  const active = new Map<string, OAuthConnection>();
-  // Awaited rather than floated: a sign-in arriving immediately after boot
-  // would otherwise find an empty map and be told the provider is unavailable.
-  for (const stored of (await connections?.list()) ?? []) {
-    active.set(stored.provider, stored);
-    // A connection carrying its own discovered definition defines a provider
-    // nothing installed knows about — an issuer an operator pasted in.
-    if (!definitions.has(stored.provider) && stored.discovered) {
-      definitions.set(
-        stored.provider,
-        stored.discovered as OAuthProviderDefinition,
-      );
-    }
-  }
-  for (const name of definitions.keys()) {
-    if (active.has(name)) continue;
-    const fromEnvironment = environmentConnection(name);
-    if (fromEnvironment) active.set(name, fromEnvironment);
-  }
-
-  const require = (name: string): OAuthConnection => {
-    const connection = active.get(name);
-    if (!connection?.enabled) {
-      // The same message whether a provider is unconfigured or switched off:
-      // which it is describes the installation's setup to a stranger.
-      throw new TypeError(`${name} sign-in is not available on this installation.`);
-    }
-    return connection;
-  };
-
-  const registerProvider = (definition: OAuthProviderDefinition) => {
-    const name = definition.name;
-    api.authentication.registerProvider({
-      name,
-      authorizationCode: {
-        get redirectUri() {
-          return require(name).redirectUri;
-        },
-        createAuthorizationUrl(input) {
-          return createAuthorizationCodeFlow(definition, require(name), options)
-            .createAuthorizationUrl(input);
-        },
-        exchange(input) {
-          return createAuthorizationCodeFlow(definition, require(name), options)
-            .exchange(input);
-        },
-      },
-    });
-  };
-  for (const definition of definitions.values()) registerProvider(definition);
-
-  oauthRuntime = {
-    definitions,
-    connections,
-    active,
-    fetch: options.fetch,
-    register: registerProvider,
-  };
-}
-
-/**
- * Saves the credentials an installation was issued for one provider.
- *
- * Kept beside registration rather than in a service of its own: the same map
- * the flow reads is the one this writes, and a second copy of it would drift
- * from whatever an operator last saved.
- */
-async function configureOAuthConnection(
-  provider: string,
-  input: unknown,
-): Promise<PublicOAuthConnection | undefined> {
-  const runtime = oauthRuntime;
-  if (!runtime) return undefined;
-
-  const body = (input ?? {}) as Partial<OAuthConnection>;
-  // An issuer turns a provider nobody shipped into one this installation has.
-  // Every OIDC issuer publishes its own endpoints, so adding Okta, Auth0,
-  // Keycloak, Google or a company's SSO is a URL rather than a plugin.
-  let discovered: OAuthProviderDefinition | undefined;
-  if (typeof body.issuer === "string" && body.issuer.trim()) {
-    discovered = await discoverOidcProvider(body.issuer.trim(), {
-      name: provider,
-      ...(runtime.fetch ? { fetch: runtime.fetch } : {}),
-    });
-    runtime.definitions.set(provider, discovered);
-    runtime.register?.(discovered);
-  }
-
-  if (!runtime.definitions.has(provider)) return undefined;
-  if (!runtime.connections) {
-    throw new ZelavisValidationError(
-      "This installation has no durable store, so OAuth configuration cannot be saved.",
-    );
-  }
-
-  if (typeof body.clientId !== "string" || !body.clientId.trim()) {
-    throw new ZelavisValidationError("A clientId is required.");
-  }
-  if (typeof body.redirectUri !== "string" || !body.redirectUri.trim()) {
-    throw new ZelavisValidationError("A redirectUri is required.");
-  }
-  let redirect: URL;
-  try {
-    redirect = new URL(body.redirectUri);
-  } catch {
-    throw new ZelavisValidationError("The redirectUri must be an absolute URL.");
-  }
-  if (redirect.protocol !== "https:" && redirect.hostname !== "localhost") {
-    // The authorization code arrives on this URL. Over plaintext anyone on the
-    // path can take it, and a code is enough to complete a sign-in.
-    throw new ZelavisValidationError(
-      "The redirectUri must use https, except on localhost for development.",
-    );
-  }
-
-  const existing = await runtime.connections.read(provider);
-  const connection: OAuthConnection = {
-    provider,
-    clientId: body.clientId.trim(),
-    // An omitted secret keeps the stored one: the API never returns it, so an
-    // operator editing a redirect URI has nothing to send back.
-    ...(typeof body.clientSecret === "string" && body.clientSecret
-      ? { clientSecret: body.clientSecret }
-      : existing?.clientSecret
-        ? { clientSecret: existing.clientSecret }
-        : {}),
-    redirectUri: redirect.toString(),
-    ...(discovered
-      ? { issuer: discovered.issuer, discovered }
-      : existing?.discovered
-        ? { issuer: existing.issuer, discovered: existing.discovered }
-        : {}),
-    ...(Array.isArray(body.scopes)
-      ? { scopes: body.scopes.filter((scope) => typeof scope === "string") }
-      : {}),
-    enabled: body.enabled !== false,
-    updatedAt: new Date().toISOString(),
-  };
-
-  await runtime.connections.write(connection);
-  runtime.active.set(provider, connection);
-  return publicConnection(connection);
-}
-
-async function listOAuthConnections(): Promise<
-  readonly (PublicOAuthConnection & { title?: string; configured: boolean })[]
-> {
-  const runtime = oauthRuntime;
-  if (!runtime) return [];
-  return [...runtime.definitions].map(([name, definition]) => {
-    const connection = runtime.active.get(name);
-    return {
-      ...(connection
-        ? publicConnection(connection)
-        : {
-            provider: name,
-            clientId: "",
-            redirectUri: "",
-            enabled: false,
-            updatedAt: new Date(0).toISOString(),
-            hasClientSecret: false,
-          }),
-      ...(definition.title ? { title: definition.title } : {}),
-      configured: Boolean(connection),
-    };
-  });
-}
-
-async function removeOAuthConnection(provider: string): Promise<void> {
-  const runtime = oauthRuntime;
-  if (!runtime) return;
-  await runtime.connections?.remove(provider);
-  // The environment may still define it, so the active map is recomputed for
-  // this provider rather than the entry simply dropped.
-  const fallback = environmentConnection(provider);
-  if (fallback) runtime.active.set(provider, fallback);
-  else runtime.active.delete(provider);
-}
-
-/** Set when auth is composed, so the endpoints below can reach the same state. */
-let oauthRuntime:
-  | {
-      definitions: Map<string, OAuthProviderDefinition>;
-      connections: ReturnType<typeof createConnectionStore> | undefined;
-      active: Map<string, OAuthConnection>;
-      fetch?: typeof globalThis.fetch;
-      register?: (definition: OAuthProviderDefinition) => void;
-    }
-  | undefined;
-
 async function resolveAuthCoreService(
   option: ZelavisAuthOptions | undefined,
   methods: readonly AuthMethodPlugin[] = [],
@@ -1543,6 +1301,10 @@ async function resolveAuthCoreService(
   }
 
   const configured = authOption === true ? {} : authOption;
+  const oauth = createOAuthProviderRuntime({
+    ...(configured.oauth ?? {}),
+    environmentConnections: true,
+  });
   // Password sign-in ships with Zelavis. It used to be a plugin the
   // distribution copied into the product-services folder on first boot,
   // because an installation with no credential provider can never create its
@@ -1556,12 +1318,7 @@ async function resolveAuthCoreService(
         );
       },
     },
-    {
-      name: "zelavis/auth:oauth",
-      register(api, context) {
-        return registerOAuthProviders(api, context, configured.oauth ?? {});
-      },
-    },
+    oauth.method,
   ];
   const auth = configured.auth ?? await createAuth({
     ...(configured.authOptions ?? {}),
@@ -1594,11 +1351,7 @@ async function resolveAuthCoreService(
       ...(configured.definition ?? {}),
       authority: "platform",
       bootstrap: createPlatformAuthBootstrap(auth, { store: systemStore }),
-      oauthConnections: {
-        list: listOAuthConnections,
-        configure: configureOAuthConnection,
-        remove: removeOAuthConnection,
-      },
+      oauthConnections: oauth.connections,
       bootstrapToken,
       sessionCookie: configured.definition?.sessionCookie === false
         ? false
@@ -3169,6 +2922,10 @@ function remoteEnvironmentRoutes(
     if (!database) return undefined;
     return database.forTenant(tenantId).documents.findById({ collection: "zelavis_agent_processes", id: processId });
   };
+  const readUsage = async (tenantId: string, usageId: string) => {
+    if (!database) return undefined;
+    return database.forTenant(tenantId).documents.findById({ collection: "zelavis_agent_usage", id: usageId });
+  };
   const sessionFromRecord = (record: NonNullable<Awaited<ReturnType<typeof readSession>>>): ZelavisEnvironmentSession => {
     const data = record.data as Record<string, unknown>;
     return {
@@ -3194,9 +2951,87 @@ function remoteEnvironmentRoutes(
       ...(typeof data.exitCode === "number" ? { exitCode: data.exitCode } : {}),
     };
   };
-  const resumePersistedSession = async (record: NonNullable<Awaited<ReturnType<typeof readSession>>>) => {
+  const processData = (process: ZelavisEnvironmentProcess): JsonObject => ({
+    processId: process.id,
+    sessionId: process.sessionId,
+    status: process.status,
+    startedAt: process.startedAt ?? "",
+    exitCode: process.exitCode ?? null,
+  });
+  const usageFromRecord = (
+    record: NonNullable<Awaited<ReturnType<typeof readUsage>>>,
+  ): ZelavisEnvironmentUsageRecord => ({
+    id: record.id,
+    version: record.version,
+    ...(record.data as unknown as Omit<ZelavisEnvironmentUsageRecord, "id" | "version">),
+  });
+  const reconcilePersistedProcesses = async (tenantId: string, sessionId: string) => {
+    if (!database || !environment?.listProcesses) return;
+    const attached = (await environment.listProcesses(sessionId))
+      .filter((process) => process.sessionId === sessionId);
+    const documents = database.forTenant(tenantId).documents;
+    const collectionExists = await documents.collectionExists("zelavis_agent_processes");
+    const persisted = collectionExists
+      ? await documents.findMany({
+          collection: "zelavis_agent_processes",
+          where: [{ path: "sessionId", value: sessionId }],
+        })
+      : [];
+    if (!collectionExists && attached.length > 0) {
+      await ensureCollection(tenantId, "zelavis_agent_processes");
+    }
+
+    const persistedById = new Map(persisted.map((record) => [record.id, record]));
+    const attachedById = new Map(attached.map((process) => [process.id, process]));
+    for (const process of attached) {
+      const record = persistedById.get(process.id);
+      if (!record) {
+        try {
+          await documents.insert({
+            collection: "zelavis_agent_processes",
+            id: process.id,
+            data: processData(process),
+          });
+        } catch (error) {
+          if (!(error instanceof DocumentConflict)) throw error;
+        }
+        continue;
+      }
+      const current = processFromRecord(record);
+      if (
+        current.status !== process.status
+        || current.startedAt !== process.startedAt
+        || current.exitCode !== process.exitCode
+      ) {
+        await documents.update({
+          collection: "zelavis_agent_processes",
+          id: process.id,
+          data: processData(process),
+          mode: "merge",
+        });
+      }
+    }
+
+    for (const record of persisted) {
+      if (attachedById.has(record.id)) continue;
+      const process = processFromRecord(record);
+      if (process.status !== "starting" && process.status !== "running") continue;
+      await documents.update({
+        collection: "zelavis_agent_processes",
+        id: record.id,
+        data: { status: "failed", exitCode: null },
+        mode: "merge",
+      });
+    }
+  };
+  const resumePersistedSession = async (
+    tenantId: string,
+    record: NonNullable<Awaited<ReturnType<typeof readSession>>>,
+  ) => {
     const session = sessionFromRecord(record);
-    return environment?.resumeSession ? environment.resumeSession(session) : session;
+    const resumed = environment?.resumeSession ? await environment.resumeSession(session) : session;
+    if (session.status === "active") await reconcilePersistedProcesses(tenantId, session.id);
+    return resumed;
   };
   return [
     {
@@ -3252,18 +3087,31 @@ function remoteEnvironmentRoutes(
           metadata: input.metadata as Readonly<Record<string, unknown>> | undefined,
         });
         if (database) {
-          await ensureCollection(tenantId, "zelavis_agent_sessions");
-          await database.forTenant(tenantId).documents.insert({
-            collection: "zelavis_agent_sessions",
-            id: session.id,
-            data: {
-              sessionId: session.id,
-              status: session.status,
-              createdAt: session.createdAt,
-              scope: { tenantId, projectId: scope.projectId, laneId: scope.laneId },
-              metadata: (input.metadata ?? {}) as JsonObject,
-            },
-          });
+          try {
+            await ensureCollection(tenantId, "zelavis_agent_sessions");
+            await database.forTenant(tenantId).documents.insert({
+              collection: "zelavis_agent_sessions",
+              id: session.id,
+              data: {
+                sessionId: session.id,
+                status: session.status,
+                createdAt: session.createdAt,
+                scope: { tenantId, projectId: scope.projectId, laneId: scope.laneId },
+                metadata: (input.metadata ?? {}) as JsonObject,
+              },
+            });
+          } catch (error) {
+            // Provider and tenant storage are deliberately different systems,
+            // so no database transaction can cover both. Compensate a failed
+            // projection write instead of leaving an unowned live session.
+            try {
+              await environment.closeSession?.(session.id);
+            } catch {
+              // Keep the persistence failure as the request's primary error.
+              // A provider that cannot clean up is handled by reconciliation.
+            }
+            throw error;
+          }
         }
         return { status: 201, body: { session } };
       },
@@ -3323,8 +3171,107 @@ function remoteEnvironmentRoutes(
         if (!database) return { status: 503, body: { error: "Environment session persistence is unavailable." } };
         const session = await readSession(principalTenant(principal), params.sessionId ?? "");
         if (!session) return { status: 404, body: { error: "Environment session was not found." } };
-        const resumed = await resumePersistedSession(session);
+        const resumed = await resumePersistedSession(principalTenant(principal), session);
         return { status: 200, body: { session: resumed } };
+      },
+    },
+    {
+      id: "runtime.environment.sessions.usage.record",
+      method: "POST",
+      path: "/environment/sessions/:sessionId/usage",
+      access: { authenticated: true },
+      spec: { operationId: "recordEnvironmentSessionUsage", summary: "Record usage for an agent run", tags: ["environment"] },
+      handler: async ({ params, body, principal }) => {
+        if (!environment) return unavailable();
+        if (!principal) return { status: 401, body: { error: "Authentication required" } };
+        if (!database) return { status: 503, body: { error: "Environment usage persistence is unavailable." } };
+        const tenantId = principalTenant(principal);
+        const sessionId = params.sessionId ?? "";
+        const session = await readSession(tenantId, sessionId);
+        if (!session) return { status: 404, body: { error: "Environment session was not found." } };
+        const input = body && typeof body === "object" && !Array.isArray(body)
+          ? body as Record<string, unknown>
+          : {};
+        if (typeof input.runId !== "string" || !input.runId.trim() || input.runId.length > 256) {
+          return { status: 400, body: { error: "Usage runId must be a non-empty string of at most 256 characters." } };
+        }
+        if (input.source !== "provider" && input.source !== "estimated") {
+          return { status: 400, body: { error: "Usage source must be provider or estimated." } };
+        }
+        const counterNames = [
+          "contextTokens",
+          "contextLimit",
+          "inputTokens",
+          "outputTokens",
+          "cacheReadTokens",
+          "cacheWriteTokens",
+        ] as const;
+        for (const name of counterNames) {
+          const value = input[name];
+          if (value !== undefined && (!Number.isSafeInteger(value) || Number(value) < 0)) {
+            return { status: 400, body: { error: `Usage ${name} must be a non-negative safe integer.` } };
+          }
+        }
+        if (
+          input.premiumRequests !== undefined
+          && (typeof input.premiumRequests !== "number" || !Number.isFinite(input.premiumRequests) || input.premiumRequests < 0)
+        ) {
+          return { status: 400, body: { error: "Usage premiumRequests must be a non-negative finite number." } };
+        }
+        if (input.model !== undefined && (typeof input.model !== "string" || !input.model.trim() || input.model.length > 256)) {
+          return { status: 400, body: { error: "Usage model must be a non-empty string of at most 256 characters." } };
+        }
+        if (![...counterNames, "premiumRequests", "model"].some((name) => input[name] !== undefined)) {
+          return { status: 400, body: { error: "Usage must include at least one metric or model." } };
+        }
+        const sessionScope = session.data.scope;
+        if (!sessionScope || typeof sessionScope !== "object" || Array.isArray(sessionScope)) {
+          return { status: 409, body: { error: "Environment session has no durable scope." } };
+        }
+        const projectId = (sessionScope as Record<string, unknown>).projectId;
+        const laneId = (sessionScope as Record<string, unknown>).laneId;
+        if (typeof projectId !== "string" || typeof laneId !== "string") {
+          return { status: 409, body: { error: "Environment session has no durable project and lane scope." } };
+        }
+        const usageId = JSON.stringify([sessionId, input.runId]);
+        const metrics = Object.fromEntries(
+          [...counterNames, "premiumRequests", "model"]
+            .filter((name) => input[name] !== undefined)
+            .map((name) => [name, input[name]]),
+        ) as JsonObject;
+        const usageData: JsonObject = {
+          sessionId,
+          projectId,
+          laneId,
+          runId: input.runId,
+          source: input.source,
+          recordedAt: new Date().toISOString(),
+          ...metrics,
+        };
+        await ensureCollection(tenantId, "zelavis_agent_usage");
+        const documents = database.forTenant(tenantId).documents;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const current = await readUsage(tenantId, usageId);
+          try {
+            const stored = current
+              ? await documents.update({
+                  collection: "zelavis_agent_usage",
+                  id: usageId,
+                  data: usageData,
+                  mode: "merge",
+                  expectedVersion: current.version,
+                })
+              : await documents.insert({
+                  collection: "zelavis_agent_usage",
+                  id: usageId,
+                  data: usageData,
+                });
+            return { status: current ? 200 : 201, body: { usage: usageFromRecord(stored) } };
+          } catch (error) {
+            if (!(error instanceof DocumentConflict) || attempt === 2) throw error;
+          }
+        }
+        throw new Error("Environment usage persistence retry exhausted.");
       },
     },
     {
@@ -3340,7 +3287,7 @@ function remoteEnvironmentRoutes(
         const sessionId = params.sessionId ?? "";
         const session = await readSession(tenantId, sessionId);
         if (database && !session) return { status: 404, body: { error: "Environment session was not found." } };
-        if (session) await resumePersistedSession(session);
+        if (session) await resumePersistedSession(tenantId, session);
         if (environment.closeSession) await environment.closeSession(sessionId);
         if (database && session) {
           await database.forTenant(tenantId).documents.update({
@@ -3367,7 +3314,7 @@ function remoteEnvironmentRoutes(
         const sessionId = params.sessionId ?? "";
         const session = await readSession(principalTenant(principal), sessionId);
         if (!session) return { status: 404, body: { error: "Environment session was not found." } };
-        await resumePersistedSession(session);
+        await resumePersistedSession(principalTenant(principal), session);
         const search = new URL(request.url).searchParams;
         const after = search.get("after") ?? undefined;
         const rawLimit = search.get("limit");
@@ -3399,7 +3346,7 @@ function remoteEnvironmentRoutes(
         if (database && session?.data.status === "closed") {
           return { status: 409, body: { error: "Environment session is closed." } };
         }
-        if (session) await resumePersistedSession(session);
+        if (session) await resumePersistedSession(principalTenant(principal), session);
         const input = body && typeof body === "object" && !Array.isArray(body)
           ? body as Record<string, unknown>
           : {};
@@ -3427,18 +3374,30 @@ function remoteEnvironmentRoutes(
         );
         if (database) {
           const tenantId = principalTenant(principal);
-          await ensureCollection(tenantId, "zelavis_agent_processes");
-          await database.forTenant(tenantId).documents.insert({
-            collection: "zelavis_agent_processes",
-            id: process.id,
-            data: {
-              processId: process.id,
-              sessionId: process.sessionId,
-              status: process.status,
-              startedAt: process.startedAt ?? "",
-              exitCode: process.exitCode ?? null,
-            },
-          });
+          try {
+            await ensureCollection(tenantId, "zelavis_agent_processes");
+            await database.forTenant(tenantId).documents.insert({
+              collection: "zelavis_agent_processes",
+              id: process.id,
+              data: {
+                processId: process.id,
+                sessionId: process.sessionId,
+                status: process.status,
+                startedAt: process.startedAt ?? "",
+                exitCode: process.exitCode ?? null,
+              },
+            });
+          } catch (error) {
+            // Starting a provider process and writing its tenant projection
+            // cannot be atomic. Terminate on a failed write so the provider
+            // does not keep work the control plane cannot subsequently own.
+            try {
+              await environment.operateProcess(process.id, { type: "terminate" });
+            } catch {
+              // Reconciliation remains responsible if termination also fails.
+            }
+            throw error;
+          }
         }
         return { status: 201, body: { process } };
       },
@@ -3473,7 +3432,7 @@ function remoteEnvironmentRoutes(
         if (database && !processRecord) return { status: 404, body: { error: "Environment process was not found." } };
         if (processRecord && database) {
           const session = await readSession(tenantId, String(processRecord.data.sessionId ?? ""));
-          if (session) await resumePersistedSession(session);
+          if (session) await resumePersistedSession(tenantId, session);
         }
         const operation = body && typeof body === "object" && !Array.isArray(body)
           ? body as Record<string, unknown>

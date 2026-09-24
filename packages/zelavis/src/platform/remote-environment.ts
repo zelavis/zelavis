@@ -43,6 +43,33 @@ export interface ZelavisEnvironmentProcess {
   readonly exitCode?: number;
 }
 
+/** Provider-neutral usage reported for one agent run. */
+export interface ZelavisEnvironmentUsageInput {
+  /** Stable caller-owned run identity; repeated reports merge into it. */
+  readonly runId: string;
+  readonly source: "provider" | "estimated";
+  /** Gauge: how full the context is after this report. */
+  readonly contextTokens?: number;
+  readonly contextLimit?: number;
+  /** Per-run counters. */
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly cacheReadTokens?: number;
+  readonly cacheWriteTokens?: number;
+  readonly premiumRequests?: number;
+  readonly model?: string;
+}
+
+/** Tenant-owned durable usage projection for one session/run pair. */
+export interface ZelavisEnvironmentUsageRecord extends ZelavisEnvironmentUsageInput {
+  readonly id: string;
+  readonly sessionId: string;
+  readonly projectId: string;
+  readonly laneId: string;
+  readonly recordedAt: string;
+  readonly version: number;
+}
+
 /**
  * A replayable process event. The cursor is opaque to callers and stable for
  * the lifetime of the session, so a client can reconnect without guessing
@@ -127,6 +154,15 @@ export interface ZelavisRemoteEnvironment {
     sessionId: string,
     input: ZelavisEnvironmentProcessInput,
   ) => Promise<ZelavisEnvironmentProcess>;
+  /**
+   * Lists the provider processes currently attached to a session.
+   *
+   * When supplied, Zelavis uses this after session reattachment to reconcile
+   * the tenant's durable process projections with provider reality.
+   */
+  readonly listProcesses?: (
+    sessionId: string,
+  ) => Promise<ReadonlyArray<ZelavisEnvironmentProcess>>;
   readonly operateProcess: (
     processId: string,
     input: ZelavisEnvironmentOperationInput,

@@ -14,6 +14,7 @@ import {
   createJwtAuthenticator,
   createServiceRuntime,
 } from "../dist/core/index.js";
+import { mountAppServices } from "../dist/app/index.js";
 import { createMemorySystemStore, zelavis } from "../dist/index.js";
 import { generateKeyPair, SignJWT } from "jose";
 import { zelavisUiFrontend } from "@zelavis/ui/frontend";
@@ -461,6 +462,77 @@ test("App Auth repositories persist accounts and sessions through the Tenant dat
   });
   assert.equal((await second.accounts.findById("persistent")).id, "persistent");
   assert.equal((await second.sessions.resolveToken(issued.token)).accountId, "persistent");
+});
+
+test("the App recipe ships signup and Project-scoped provider administration", async (t) => {
+  const { api: database } = await openTemporaryDatabase(t);
+  const mounted = await mountAppServices({
+    core: { database },
+    platform: { metadata: { projectId: "fluxlist" } },
+    registry: [],
+  }, { workloads: false });
+  const runtime = await createServiceRuntime({ services: mounted.runtimeServices });
+
+  const providers = await runtime.plain({ url: "/auth/providers" });
+  assert.equal(providers.status, 200);
+  assert.ok(providers.body.includes("password"));
+
+  const signup = await runtime.plain({
+    url: "/auth/sign-up/password",
+    method: "POST",
+    body: {
+      identifier: "customer@example.com",
+      password: "correct horse battery staple",
+      displayName: "Customer",
+    },
+  });
+  assert.equal(signup.status, 201);
+  assert.equal(signup.body.account.email, "customer@example.com");
+  assert.match(signup.body.session.token, /^zvs_/);
+  assert.equal("secretHash" in signup.body.credential, false);
+
+  const login = await runtime.plain({
+    url: "/auth/authenticate/password",
+    method: "POST",
+    body: {
+      identifier: "customer@example.com",
+      password: "correct horse battery staple",
+    },
+  });
+  assert.equal(login.status, 200);
+  assert.equal(login.body.account.id, signup.body.account.id);
+  assert.equal("secretHash" in login.body.credential, false);
+
+  const administrator = {
+    id: "devops",
+    type: "user",
+    grants: [{
+      permission: "project.settings.manage",
+      scope: { type: "project", projectId: "fluxlist" },
+    }],
+  };
+  const configured = await runtime.plain({
+    url: "/auth/oauth/connections/github",
+    method: "PUT",
+    principal: administrator,
+    body: {
+      clientId: "project-client",
+      clientSecret: "project-secret",
+      redirectUri: "https://fluxlist.example/auth/oauth/github/callback",
+      enabled: true,
+    },
+  });
+  assert.equal(configured.status, 200);
+  assert.equal(configured.body.connection.clientId, "project-client");
+  assert.equal(configured.body.connection.hasClientSecret, true);
+  assert.equal("clientSecret" in configured.body.connection, false);
+
+  const listed = await runtime.plain({
+    url: "/auth/oauth/connections",
+    principal: administrator,
+  });
+  assert.equal(listed.status, 200);
+  assert.deepEqual(listed.body.providers.map((entry) => entry.provider), ["github"]);
 });
 
 test("App Auth attempt mutations use database optimistic concurrency", async (t) => {

@@ -1394,6 +1394,7 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "runtime.environment.sessions.create",
       "runtime.environment.sessions.update",
       "runtime.environment.sessions.get",
+      "runtime.environment.sessions.usage.record",
       "runtime.environment.sessions.close",
       "runtime.environment.sessions.events",
       "runtime.environment.processes.start",

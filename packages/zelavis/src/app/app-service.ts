@@ -2,6 +2,9 @@ import { declaresServiceCapability } from "../core/index.js";
 import {
   authService,
   createDatabaseAuthRepositories,
+  createOAuthProviderRuntime,
+  createPasswordProvider,
+  PASSWORD_PROVIDER,
   type AuthMethodPlugin,
   type AuthServiceOptions,
 } from "./auth/index.js";
@@ -18,6 +21,64 @@ import {
   type WorkloadsServiceOptions,
 } from "./workloads/index.js";
 import { ZELAVIS_VERSION } from "../version.js";
+
+function createProjectAuthSettingsStore(database: DatabaseRuntimeApi) {
+  const tenant = database.forTenant("service:zelavis-auth-settings");
+  const documents = tenant?.documents;
+  if (!documents) {
+    return Object.freeze({
+      async get(_key: string) { return undefined; },
+      async set(_key: string, _value: any) {
+        throw new Error("Project Auth provider settings require the document database API.");
+      },
+      async delete(_key: string) { return false; },
+      async list() { return []; },
+    });
+  }
+  const collection = "auth_provider_settings";
+  let ready: Promise<void> | undefined;
+  const ensure = () => ready ??= (async () => {
+    if (!(await documents.collectionExists(collection))) {
+      await documents.createCollection({
+        name: collection,
+        surface: "database",
+        metadata: { owner: "zelavis/app/auth", purpose: "provider-settings" },
+      });
+    }
+  })();
+  return Object.freeze({
+    async get(key: string) {
+      await ensure();
+      return (await documents.findById({ collection, id: key }))?.data.value;
+    },
+    async set(key: string, value: any) {
+      await ensure();
+      const current = await documents.findById({ collection, id: key });
+      if (current) {
+        await documents.update({
+          collection,
+          id: key,
+          data: { value },
+          mode: "replace",
+          expectedVersion: current.version,
+        });
+      } else {
+        await documents.insert({ collection, id: key, data: { value } });
+      }
+    },
+    async delete(key: string) {
+      await ensure();
+      return documents.delete({ collection, id: key });
+    },
+    async list() {
+      await ensure();
+      return (await documents.findMany({ collection })).map((document) => ({
+        key: document.id,
+        value: document.data.value,
+      }));
+    },
+  });
+}
 
 export interface ZelavisAppServiceOptions {
   name?: string;
@@ -90,9 +151,21 @@ export async function mountAppServices(
   if (options.auth !== false) {
     const authOptions =
       options.auth === undefined ? {} : options.auth;
+    const settingsStore = createProjectAuthSettingsStore(database);
+    const oauth = createOAuthProviderRuntime(authOptions.oauth ?? {});
+    const password: AuthMethodPlugin = {
+      name: PASSWORD_PROVIDER,
+      register(api) {
+        api.authentication.registerProvider(
+          createPasswordProvider(authOptions.password ?? {}),
+        );
+      },
+    };
+    const inheritedMethodContext = authOptions.authOptions?.methodContext;
     runtimeServices.push(
       await authService({
         ...authOptions,
+        registration: authOptions.registration ?? true,
         authOptions: {
           ...(authOptions.authOptions ?? {}),
           projectId:
@@ -103,11 +176,25 @@ export async function mountAppServices(
             ...createDatabaseAuthRepositories(database),
             ...(authOptions.authOptions?.repositories ?? {}),
           },
+          methodContext(method) {
+            const inherited = inheritedMethodContext?.(method);
+            return {
+              ...(inherited ?? {}),
+              registry: context.registry ?? inherited?.registry ?? [],
+              ...(method === oauth.method ? { store: settingsStore } : {}),
+            };
+          },
         },
         methods: [
+          password,
+          oauth.method,
           ...(authOptions.methods ?? []),
           ...collectAuthMethodPlugins(context),
         ],
+        definition: {
+          ...(authOptions.definition ?? {}),
+          oauthConnections: oauth.connections,
+        },
       }),
     );
   }
