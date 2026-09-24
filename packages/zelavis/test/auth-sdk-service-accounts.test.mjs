@@ -148,3 +148,70 @@ test("the SDK signs in and manages revocable Platform service accounts", async (
 
   await runtime.close();
 });
+
+test("a service account acts in the Tenant it was given, not one derived from its id", async () => {
+  const runtime = await zelavis({
+    systemStore: createMemorySystemStore(),
+    bootstrap: { token: "named-tenant-bootstrap-token-of-sufficient-length" },
+  });
+  const anonymous = createZelavisClient({
+    baseUrl: "http://localhost",
+    fetch: fetchThrough(runtime),
+  });
+  await anonymous.json("/auth/bootstrap", {
+    method: "POST",
+    body: {
+      bootstrapToken: "named-tenant-bootstrap-token-of-sufficient-length",
+      provider: "password",
+      account: { email: "owner@example.com" },
+      credential: { identifier: "owner@example.com", password: "correct horse battery staple" },
+    },
+  });
+  const signedIn = await anonymous.auth.signInWithPassword({
+    identifier: "owner@example.com",
+    password: "correct horse battery staple",
+  });
+  const owner = createZelavisClient({
+    baseUrl: "http://localhost",
+    fetch: fetchThrough(runtime),
+    headers: { authorization: `Bearer ${signedIn.session.token}` },
+  });
+
+  // Named at creation: two credentials for one customer can share records.
+  const web = await owner.auth.admin.createServiceAccount({ name: "web", tenantId: "acme" });
+  const worker = await owner.auth.admin.createServiceAccount({ name: "worker", tenantId: "acme" });
+  assert.equal(web.serviceAccount.metadata.tenantId, "acme");
+  assert.equal(worker.serviceAccount.metadata.tenantId, "acme");
+  assert.notEqual(web.serviceAccount.id, worker.serviceAccount.id);
+
+  // Unnamed still falls back to the account's own id, which is the old shape.
+  const solo = await owner.auth.admin.createServiceAccount({ name: "solo" });
+  assert.equal(solo.serviceAccount.metadata.tenantId, undefined);
+
+  // An existing account can be given a name without reissuing its credential.
+  const renamed = await owner.auth.admin.setServiceAccountTenant(solo.serviceAccount.id, "globex");
+  assert.equal(renamed.metadata.tenantId, "globex");
+  const stillValid = createZelavisClient({
+    baseUrl: "http://localhost",
+    fetch: fetchThrough(runtime),
+    headers: { authorization: `Bearer ${solo.token}` },
+  });
+  assert.equal((await stillValid.runtime.access()).principal.metadata.tenantId, "globex");
+
+  // An id that would be read back as a different Tenant is refused.
+  await assert.rejects(
+    owner.auth.admin.createServiceAccount({ name: "bad", tenantId: "acme/globex" }),
+    (error) => error instanceof ZelavisClientHttpError && error.status === 400,
+  );
+  await assert.rejects(
+    owner.auth.admin.setServiceAccountTenant(web.serviceAccount.id, "zv.global"),
+    (error) => error instanceof ZelavisClientHttpError && error.status === 400,
+  );
+
+  // And the CLI reaches the same operation.
+  const named = await cli(runtime, signedIn.session.token, [
+    "set-tenant", worker.serviceAccount.id, "--tenant", "initech",
+  ]);
+  assert.equal(named.exitCode, 0);
+  assert.equal(named.stdout.serviceAccount.metadata.tenantId, "initech");
+});
