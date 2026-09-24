@@ -1,7 +1,7 @@
 import type { AccountRepository } from "../contracts/repositories.js";
 import type { Account } from "../domain/entities.js";
 import type { ZelavisPrincipalGrant } from "../../../core/index.js";
-import { AuthValidationError } from "../core/errors.js";
+import { IdentityValidationError } from "../core/errors.js";
 
 export interface CreateAccountInput {
   id: string;
@@ -20,22 +20,22 @@ export class AccountService {
 
   async create(input: CreateAccountInput): Promise<Account> {
     if (!input.id) {
-      throw new AuthValidationError("Account creation requires an id.");
+      throw new IdentityValidationError("Account creation requires an id.");
     }
 
     const email = input.email?.trim().toLowerCase();
     const username = input.username?.trim();
     if (!email && !username) {
-      throw new AuthValidationError(
+      throw new IdentityValidationError(
         "Account creation requires at least an email or username.",
       );
     }
 
     if (email && await this.repository.findByEmail(email)) {
-      throw new AuthValidationError("An account already uses that email.");
+      throw new IdentityValidationError("An account already uses that email.");
     }
     if (username && await this.repository.findByUsername(username)) {
-      throw new AuthValidationError("An account already uses that username.");
+      throw new IdentityValidationError("An account already uses that username.");
     }
 
     const now = new Date();

@@ -7,16 +7,16 @@ import {
   type ZelavisRequestAuthenticator,
   type ZelavisPrincipalGrant,
 } from "../../core/index.js";
-import type { AuthApi, AuthMethodPlugin } from "./core/types.js";
-import type { AuthBootstrapCapability } from "./core/types.js";
-import { createAuth, type CreateAuthOptions } from "./core/create-auth.js";
+import type { IdentityApi, IdentityMethodPlugin } from "./core/types.js";
+import type { IdentityBootstrapCapability } from "./core/types.js";
+import { createIdentity, type CreateIdentityOptions } from "./core/create-identity.js";
 import { createSessionCookie } from "./core/session-authenticator.js";
 import {
-  AuthDomainError,
+  IdentityDomainError,
   AuthInvalidCredentialsError,
-  AuthNotFoundError,
+  IdentityNotFoundError,
   AuthRateLimitError,
-  AuthValidationError,
+  IdentityValidationError,
 } from "./core/errors.js";
 
 const authErrorRules: readonly ZelavisServerErrorStatusRule[] = [
@@ -29,16 +29,16 @@ const authErrorRules: readonly ZelavisServerErrorStatusRule[] = [
     status: 429,
   },
   {
-    matches: (error) => error instanceof AuthNotFoundError,
+    matches: (error) => error instanceof IdentityNotFoundError,
     status: 404,
   },
   {
     matches: (error) =>
-      error instanceof AuthValidationError || error instanceof TypeError,
+      error instanceof IdentityValidationError || error instanceof TypeError,
     status: 400,
   },
   {
-    matches: (error) => error instanceof AuthDomainError,
+    matches: (error) => error instanceof IdentityDomainError,
     status: 400,
   },
 ];
@@ -57,14 +57,14 @@ function publicCredential<T extends { secretHash?: string }>(credential: T) {
   return safe;
 }
 
-export type AuthServiceDefinition = Readonly<
-  ZelavisRuntimeService<AuthApi> & {
+export type IdentityServiceDefinition = Readonly<
+  ZelavisRuntimeService<IdentityApi> & {
     kind?: string;
     capabilities?: readonly string[];
   }
 >;
 
-export interface AuthSessionCookieOptions {
+export interface IdentitySessionCookieOptions {
   name?: string;
   path?: string;
   secure?: boolean;
@@ -75,7 +75,7 @@ export interface DefineAuthServiceOptions {
   authority?: "project" | "platform";
   /** Allow anonymous account enrollment. Intended for Project auth, never Platform owner creation. */
   registration?: boolean;
-  bootstrap?: AuthBootstrapCapability;
+  bootstrap?: IdentityBootstrapCapability;
   /**
    * Reads and writes the credentials an operator configured for OAuth
    * providers. Supplied by the Platform, which owns the store these live in.
@@ -86,14 +86,14 @@ export interface DefineAuthServiceOptions {
     remove(provider: string): Promise<void>;
   };
   bootstrapToken?: string;
-  sessionCookie?: false | AuthSessionCookieOptions;
+  sessionCookie?: false | IdentitySessionCookieOptions;
 }
 
 function sessionCookieHeader(
   token: string,
   expiresAt: Date,
   request: Request,
-  options: AuthSessionCookieOptions,
+  options: IdentitySessionCookieOptions,
 ): string {
   return createSessionCookie(token, {
     ...options,
@@ -109,7 +109,7 @@ function browserSessionCookieHeader(
   token: string,
   expiresAt: Date,
   request: Request,
-  options: AuthSessionCookieOptions,
+  options: IdentitySessionCookieOptions,
 ): string | undefined {
   const origin = request.headers.get("origin");
   if (!origin) return undefined;
@@ -123,7 +123,7 @@ function browserSessionCookieHeader(
 
 function expiredSessionCookieHeader(
   request: Request,
-  options: AuthSessionCookieOptions,
+  options: IdentitySessionCookieOptions,
 ): string | undefined {
   return browserSessionCookieHeader("", new Date(0), request, options);
 }
@@ -153,19 +153,19 @@ function tokensEqual(left: string, right: unknown): boolean {
 function serviceAccountGrants(value: unknown): readonly ZelavisPrincipalGrant[] {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > 100) {
-    throw new AuthValidationError("Service account grants must be an array of at most 100 entries.");
+    throw new IdentityValidationError("Service account grants must be an array of at most 100 entries.");
   }
   return value.map((entry) => {
     if (!entry || typeof entry !== "object") {
-      throw new AuthValidationError("Each service account grant must be an object.");
+      throw new IdentityValidationError("Each service account grant must be an object.");
     }
     const grant = entry as { permission?: unknown; scope?: unknown };
     if (typeof grant.permission !== "string" || !grant.permission.trim()) {
-      throw new AuthValidationError("Each service account grant requires a permission.");
+      throw new IdentityValidationError("Each service account grant requires a permission.");
     }
     const scope = grant.scope;
     if (!scope || typeof scope !== "object") {
-      throw new AuthValidationError("Service account grants require an explicit scope.");
+      throw new IdentityValidationError("Service account grants require an explicit scope.");
     }
     const candidate = scope as Record<string, unknown>;
     if (candidate.type === "project" && typeof candidate.projectId === "string" && candidate.projectId.trim()) {
@@ -177,22 +177,22 @@ function serviceAccountGrants(value: unknown): readonly ZelavisPrincipalGrant[] 
     if (candidate.type === "system") {
       return { permission: grant.permission.trim(), scope: { type: "system" } };
     }
-    throw new AuthValidationError("Service account grant scopes must name a system, Project, or service.");
+    throw new IdentityValidationError("Service account grant scopes must name a system, Project, or service.");
   });
 }
 
 function serviceAccountPermissions(value: unknown): readonly string[] {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > 100 || value.some((permission) => typeof permission !== "string" || !permission.trim())) {
-    throw new AuthValidationError("Service account permissions must be an array of at most 100 names.");
+    throw new IdentityValidationError("Service account permissions must be an array of at most 100 names.");
   }
   return [...new Set(value.map((permission) => permission.trim()))];
 }
 
 export function defineAuthService(
-  auth: AuthApi,
+  auth: IdentityApi,
   options: DefineAuthServiceOptions = {},
-): AuthServiceDefinition {
+): IdentityServiceDefinition {
   const managePermission = options.authority === "platform"
     ? "system.users.manage"
     : "project.users.manage";
@@ -214,7 +214,7 @@ export function defineAuthService(
     ? undefined
     : options.sessionCookie;
   const bootstrapToken = validateBootstrapToken(options.bootstrapToken);
-  const routes: readonly ZelavisServerRoute<AuthApi>[] = [
+  const routes: readonly ZelavisServerRoute<IdentityApi>[] = [
         {
           id: "auth.accounts.list",
           method: "GET",
@@ -256,7 +256,7 @@ export function defineAuthService(
               return {
                 status: 201,
                 body: await service.accounts.create(
-                  body as Parameters<AuthApi["accounts"]["create"]>[0],
+                  body as Parameters<IdentityApi["accounts"]["create"]>[0],
                 ),
               };
             } catch (error) {
@@ -287,7 +287,7 @@ export function defineAuthService(
               return {
                 status: 201,
                 body: publicCredential(await service.credentials.create(
-                  body as Parameters<AuthApi["credentials"]["create"]>[0],
+                  body as Parameters<IdentityApi["credentials"]["create"]>[0],
                 )),
               };
             } catch (error) {
@@ -327,13 +327,13 @@ export function defineAuthService(
                     400: { description: "Registration failed" },
                   },
                 },
-                handler: async ({ service, params, body, request }: { service: AuthApi; params: Record<string, string>; body: unknown; request: Request }) => {
+                handler: async ({ service, params, body, request }: { service: IdentityApi; params: Record<string, string>; body: unknown; request: Request }) => {
                   let accountId: string | undefined;
                   try {
                     const input = (body ?? {}) as Record<string, unknown>;
                     const prepared = await service.authentication.prepareCredential(
                       params.provider,
-                      input as Parameters<AuthApi["authentication"]["prepareCredential"]>[1],
+                      input as Parameters<IdentityApi["authentication"]["prepareCredential"]>[1],
                     );
                     accountId = `account_${crypto.randomUUID().replaceAll("-", "")}`;
                     const account = await service.accounts.create({
@@ -487,7 +487,7 @@ export function defineAuthService(
             try {
               const providerError = query.get("error");
               if (providerError) {
-                throw new AuthValidationError(
+                throw new IdentityValidationError(
                   `Authorization provider returned ${providerError}.`,
                 );
               }
@@ -544,7 +544,7 @@ export function defineAuthService(
                 status: 202,
                 body: await service.authentication.beginRecovery(
                   params.provider,
-                  body as Parameters<AuthApi["authentication"]["beginRecovery"]>[1],
+                  body as Parameters<IdentityApi["authentication"]["beginRecovery"]>[1],
                 ),
               };
             } catch (error) {
@@ -569,7 +569,7 @@ export function defineAuthService(
             try {
               await service.authentication.completeRecovery(
                 params.provider,
-                body as Parameters<AuthApi["authentication"]["completeRecovery"]>[1],
+                body as Parameters<IdentityApi["authentication"]["completeRecovery"]>[1],
               );
               return { status: 204 };
             } catch (error) {
@@ -607,7 +607,7 @@ export function defineAuthService(
               const result = await service.authentication.authenticate(
                 params.provider,
                 body as Parameters<
-                  AuthApi["authentication"]["authenticate"]
+                  IdentityApi["authentication"]["authenticate"]
                 >[1],
               );
               await service.security.authenticationSucceeded(
@@ -884,7 +884,7 @@ export function defineAuthService(
                   tags: ["auth", "service-accounts"],
                   responses: { 200: { description: "Service accounts" } },
                 },
-                handler: async ({ service }: { service: AuthApi }) => ({
+                handler: async ({ service }: { service: IdentityApi }) => ({
                   status: 200,
                   body: {
                     serviceAccounts: (await service.accounts.list()).filter(
@@ -907,16 +907,16 @@ export function defineAuthService(
                     400: { description: "Invalid service account" },
                   },
                 },
-                handler: async ({ service, body }: { service: AuthApi; body: unknown }) => {
+                handler: async ({ service, body }: { service: IdentityApi; body: unknown }) => {
                   try {
                     const input = (body ?? {}) as Record<string, unknown>;
                     const name = typeof input.name === "string" ? input.name.trim() : "";
                     if (!name || name.length > 100) {
-                      throw new AuthValidationError("A service account name of at most 100 characters is required.");
+                      throw new IdentityValidationError("A service account name of at most 100 characters is required.");
                     }
                     const days = input.expiresInDays === undefined ? 90 : Number(input.expiresInDays);
                     if (!Number.isSafeInteger(days) || days < 1 || days > 3650) {
-                      throw new AuthValidationError("Service account token lifetime must be between 1 and 3650 days.");
+                      throw new IdentityValidationError("Service account token lifetime must be between 1 and 3650 days.");
                     }
                     const id = `service_${crypto.randomUUID().replaceAll("-", "")}`;
                     const account = await service.accounts.create({
@@ -961,7 +961,7 @@ export function defineAuthService(
                     404: { description: "Service account not found" },
                   },
                 },
-                handler: async ({ service, params, body }: { service: AuthApi; params: Record<string, string>; body: unknown }) => {
+                handler: async ({ service, params, body }: { service: IdentityApi; params: Record<string, string>; body: unknown }) => {
                   try {
                     const account = await service.accounts.findById(params.accountId);
                     if (!account || account.metadata?.principalType !== "service") {
@@ -970,7 +970,7 @@ export function defineAuthService(
                     const input = (body ?? {}) as Record<string, unknown>;
                     const days = input.expiresInDays === undefined ? 90 : Number(input.expiresInDays);
                     if (!Number.isSafeInteger(days) || days < 1 || days > 3650) {
-                      throw new AuthValidationError("Service account token lifetime must be between 1 and 3650 days.");
+                      throw new IdentityValidationError("Service account token lifetime must be between 1 and 3650 days.");
                     }
                     await service.sessions.revokeAll(account.id);
                     const issued = await service.sessions.create({
@@ -1001,7 +1001,7 @@ export function defineAuthService(
                     404: { description: "Service account not found" },
                   },
                 },
-                handler: async ({ service, params }: { service: AuthApi; params: Record<string, string> }) => {
+                handler: async ({ service, params }: { service: IdentityApi; params: Record<string, string> }) => {
                   const account = await service.accounts.findById(params.accountId);
                   if (!account || account.metadata?.principalType !== "service") {
                     return { status: 404, body: { error: "Service account not found" } };
@@ -1155,7 +1155,7 @@ export function defineAuthService(
                       };
                     }
                     const result = await options.bootstrap!.bootstrap(
-                      body as Parameters<AuthBootstrapCapability["bootstrap"]>[0],
+                      body as Parameters<IdentityBootstrapCapability["bootstrap"]>[0],
                     );
                     const sessionCookie = cookieOptions
                       ? browserSessionCookieHeader(
@@ -1188,7 +1188,7 @@ export function defineAuthService(
   ];
 
   return Object.freeze({
-    name: "zelavis/auth",
+    name: "zelavis/identity",
     kind: "plugin",
     capabilities: Object.freeze(["api:routes", "dashboard:menu"]),
     authenticators: [auth.requestAuthenticator],
@@ -1211,28 +1211,28 @@ export function defineAuthService(
  * passwords, credentials, and authenticators. This is a native platform
  * subsystem, not a loadable plugin service.
  */
-export interface AuthSubsystem {
-  readonly auth: AuthApi;
+export interface IdentitySubsystem {
+  readonly auth: IdentityApi;
   readonly authenticators: readonly ZelavisRequestAuthenticator[];
-  readonly routes: readonly ZelavisServerRoute<AuthApi>[];
+  readonly routes: readonly ZelavisServerRoute<IdentityApi>[];
   /** Backwards-compatible runtime service definition. */
-  readonly definition: AuthServiceDefinition;
+  readonly definition: IdentityServiceDefinition;
 }
 
 export function defineAuthSubsystem(
-  auth: AuthApi,
+  auth: IdentityApi,
   options: DefineAuthServiceOptions = {},
-): AuthSubsystem {
+): IdentitySubsystem {
   const definition = defineAuthService(auth, options);
   return Object.freeze({
     auth,
     authenticators: definition.authenticators ?? [auth.requestAuthenticator],
-    routes: (definition.api?.v1 ?? []) as readonly ZelavisServerRoute<AuthApi>[],
+    routes: (definition.api?.v1 ?? []) as readonly ZelavisServerRoute<IdentityApi>[],
     definition,
   });
 }
 
-export interface AuthServiceOptions {
+export interface IdentityServiceOptions {
   /** Options for the built-in password provider. */
   password?: PasswordProviderOptions;
   /** Options for the built-in OAuth Authorization Code client. */
@@ -1240,20 +1240,20 @@ export interface AuthServiceOptions {
     /** Used for token and profile requests. Defaults to the global fetch. */
     fetch?: typeof globalThis.fetch;
   };
-  auth?: AuthApi;
-  authOptions?: CreateAuthOptions;
-  methods?: readonly AuthMethodPlugin[];
+  auth?: IdentityApi;
+  authOptions?: CreateIdentityOptions;
+  methods?: readonly IdentityMethodPlugin[];
   /** Allow anonymous Project-user registration. */
   registration?: boolean;
   definition?: DefineAuthServiceOptions;
 }
 
-export async function createAuthSubsystem(
-  options: AuthServiceOptions = {},
-): Promise<AuthSubsystem> {
+export async function createIdentitySubsystem(
+  options: IdentityServiceOptions = {},
+): Promise<IdentitySubsystem> {
   const auth =
     options.auth ??
-    (await createAuth({
+    (await createIdentity({
       ...(options.authOptions ?? {}),
       methods: [
         ...(options.authOptions?.methods ?? []),
@@ -1267,9 +1267,9 @@ export async function createAuthSubsystem(
   });
 }
 
-export async function authService(
-  options: AuthServiceOptions = {},
-): Promise<AuthServiceDefinition> {
-  const subsystem = await createAuthSubsystem(options);
+export async function identityService(
+  options: IdentityServiceOptions = {},
+): Promise<IdentityServiceDefinition> {
+  const subsystem = await createIdentitySubsystem(options);
   return subsystem.definition;
 }

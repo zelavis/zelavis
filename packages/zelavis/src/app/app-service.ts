@@ -1,13 +1,13 @@
 import { declaresServiceCapability } from "../core/index.js";
 import {
-  authService,
+  identityService,
   createDatabaseAuthRepositories,
   createOAuthProviderRuntime,
   createPasswordProvider,
   PASSWORD_PROVIDER,
-  type AuthMethodPlugin,
-  type AuthServiceOptions,
-} from "./auth/index.js";
+  type IdentityMethodPlugin,
+  type IdentityServiceOptions,
+} from "./identity/index.js";
 import {
   defineDatabaseService,
   type DatabaseRuntimeApi,
@@ -42,7 +42,7 @@ function createProjectAuthSettingsStore(database: DatabaseRuntimeApi) {
       await documents.createCollection({
         name: collection,
         surface: "database",
-        metadata: { owner: "zelavis/app/auth", purpose: "provider-settings" },
+        metadata: { owner: "zelavis/app/identity", purpose: "provider-settings" },
       });
     }
   })();
@@ -84,7 +84,7 @@ export interface ZelavisAppServiceOptions {
   name?: string;
   version?: string;
   database?: DatabaseRuntimeApi;
-  auth?: false | AuthServiceOptions;
+  auth?: false | IdentityServiceOptions;
   workloads?: false | WorkloadsServiceOptions;
 }
 
@@ -99,19 +99,19 @@ export function isDatabaseRuntimeApi(value: unknown): value is DatabaseRuntimeAp
 
 function collectAuthMethodPlugins(
   context: ZelavisServiceSetupContext,
-): readonly AuthMethodPlugin[] {
+): readonly IdentityMethodPlugin[] {
   return Object.freeze(
     (context.registry ?? [])
       .filter((entry) =>
         entry.status === "installed" &&
         declaresServiceCapability(
           entry.service.capabilities,
-          "zelavis/auth",
+          "zelavis/identity",
           "credentials",
         ) &&
-        typeof (entry.service.service as AuthMethodPlugin | undefined)?.register === "function",
+        typeof (entry.service.service as IdentityMethodPlugin | undefined)?.register === "function",
       )
-      .map((entry) => entry.service.service as AuthMethodPlugin),
+      .map((entry) => entry.service.service as IdentityMethodPlugin),
   );
 }
 
@@ -153,7 +153,7 @@ export async function mountAppServices(
       options.auth === undefined ? {} : options.auth;
     const settingsStore = createProjectAuthSettingsStore(database);
     const oauth = createOAuthProviderRuntime(authOptions.oauth ?? {});
-    const password: AuthMethodPlugin = {
+    const password: IdentityMethodPlugin = {
       name: PASSWORD_PROVIDER,
       register(api) {
         api.authentication.registerProvider(
@@ -163,7 +163,7 @@ export async function mountAppServices(
     };
     const inheritedMethodContext = authOptions.authOptions?.methodContext;
     runtimeServices.push(
-      await authService({
+      await identityService({
         ...authOptions,
         registration: authOptions.registration ?? true,
         authOptions: {

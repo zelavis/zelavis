@@ -3,7 +3,7 @@ import { parseServiceCapability } from "./capability.js";
 /**
  * Which services extend which.
  *
- * A capability owned by a service — `zelavis/auth:oauth`, not the domain
+ * A capability owned by a service — `zelavis/identity:oauth`, not the domain
  * namespace `provider:auth` — says the plugin declaring it exists to extend
  * that one. Nothing else marks it: a child plugin is an ordinary plugin,
  * installed the same way, and the only difference is who it points at.

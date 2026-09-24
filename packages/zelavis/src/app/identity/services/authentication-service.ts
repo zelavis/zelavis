@@ -10,18 +10,18 @@ import type {
   PreparedCredential,
   AuthorizationCodeIdentity,
 } from "../contracts/credential-provider.js";
-import type { AuthAuthorizationFlowRepository } from "../contracts/repositories.js";
-import type { AuthAuthorizationFlow } from "../domain/entities.js";
+import type { IdentityAuthorizationFlowRepository } from "../contracts/repositories.js";
+import type { IdentityAuthorizationFlow } from "../domain/entities.js";
 import type { AccountService } from "./account-service.js";
 import type { CredentialService } from "./credential-service.js";
 import type { SessionService } from "./session-service.js";
-import { AuthNotFoundError, AuthValidationError } from "../core/errors.js";
+import { IdentityNotFoundError, IdentityValidationError } from "../core/errors.js";
 
 export interface AuthenticationServiceOptions {
   accounts: AccountService;
   credentials: CredentialService;
   sessions: SessionService;
-  authorizationFlows: AuthAuthorizationFlowRepository;
+  authorizationFlows: IdentityAuthorizationFlowRepository;
 }
 
 export interface BeginAuthorizationCodeInput {
@@ -62,7 +62,7 @@ export class AuthenticationService {
 
   registerProvider(provider: CredentialProvider): CredentialProvider {
     if (!provider.name) {
-      throw new AuthValidationError(
+      throw new IdentityValidationError(
         "Credential provider registration requires a name.",
       );
     }
@@ -128,16 +128,16 @@ export class AuthenticationService {
   ): Promise<BeginAuthorizationCodeResult> {
     const provider = this.providers.get(providerName);
     if (!provider?.authorizationCode) {
-      throw new AuthNotFoundError(
+      throw new IdentityNotFoundError(
         `Authentication provider ${providerName} does not support Authorization Code login.`,
       );
     }
     const mode = input.mode ?? "login";
     if (mode === "link" && !input.accountId) {
-      throw new AuthValidationError("Account linking requires an authenticated account.");
+      throw new IdentityValidationError("Account linking requires an authenticated account.");
     }
     if (input.accountId && !(await this.options.accounts.findById(input.accountId))) {
-      throw new AuthNotFoundError("The account selected for linking does not exist.");
+      throw new IdentityNotFoundError("The account selected for linking does not exist.");
     }
 
     const state = secureValue();
@@ -145,7 +145,7 @@ export class AuthenticationService {
     const nonce = secureValue();
     const stateHash = await sha256(state);
     const expiresAt = new Date(Date.now() + 10 * 60_000);
-    const flow: AuthAuthorizationFlow = {
+    const flow: IdentityAuthorizationFlow = {
       stateHash,
       provider: providerName,
       mode,
@@ -157,7 +157,7 @@ export class AuthenticationService {
       expiresAt,
     };
     await this.options.authorizationFlows.mutate(stateHash, (current) => {
-      if (current) throw new AuthValidationError("Authorization state collision.");
+      if (current) throw new IdentityValidationError("Authorization state collision.");
       return flow;
     });
     const authorizationUrl = provider.authorizationCode.createAuthorizationUrl({
@@ -174,23 +174,23 @@ export class AuthenticationService {
     input: { state: string; code: string },
   ): Promise<AuthenticationResult> {
     if (!input.state || !input.code) {
-      throw new AuthValidationError("Authorization callback requires state and code.");
+      throw new IdentityValidationError("Authorization callback requires state and code.");
     }
     const provider = this.providers.get(providerName);
     if (!provider?.authorizationCode) {
-      throw new AuthNotFoundError(
+      throw new IdentityNotFoundError(
         `Authentication provider ${providerName} does not support Authorization Code login.`,
       );
     }
     const stateHash = await sha256(input.state);
-    let consumed: AuthAuthorizationFlow | null = null;
+    let consumed: IdentityAuthorizationFlow | null = null;
     await this.options.authorizationFlows.mutate(stateHash, (current) => {
       consumed = current;
       return null;
     });
-    const flow = consumed as AuthAuthorizationFlow | null;
+    const flow = consumed as IdentityAuthorizationFlow | null;
     if (!flow || flow.provider !== providerName || flow.expiresAt <= new Date()) {
-      throw new AuthValidationError("Authorization state is invalid or expired.");
+      throw new IdentityValidationError("Authorization state is invalid or expired.");
     }
 
     const identity: AuthorizationCodeIdentity = await provider.authorizationCode.exchange({
@@ -200,7 +200,7 @@ export class AuthenticationService {
       redirectUri: flow.redirectUri,
     });
     if (!identity.identifier?.trim()) {
-      throw new AuthValidationError("Authorization provider returned no stable subject.");
+      throw new IdentityValidationError("Authorization provider returned no stable subject.");
     }
 
     const registered = await this.options.credentials.findByProviderIdentifier(
@@ -211,9 +211,9 @@ export class AuthenticationService {
     let credential = registered;
     if (flow.mode === "link") {
       account = await this.options.accounts.findById(flow.accountId!);
-      if (!account) throw new AuthNotFoundError("The linked account no longer exists.");
+      if (!account) throw new IdentityNotFoundError("The linked account no longer exists.");
       if (credential && credential.accountId !== account.id) {
-        throw new AuthValidationError("That external identity is linked to another account.");
+        throw new IdentityValidationError("That external identity is linked to another account.");
       }
       credential ??= await this.options.credentials.create({
         id: generatedId("credential"),
@@ -224,7 +224,7 @@ export class AuthenticationService {
       });
     } else if (credential) {
       account = await this.options.accounts.findById(credential.accountId);
-      if (!account) throw new AuthNotFoundError("The linked account no longer exists.");
+      if (!account) throw new IdentityNotFoundError("The linked account no longer exists.");
     } else {
       account = await this.options.accounts.create({
         id: generatedId("account"),
@@ -257,7 +257,7 @@ export class AuthenticationService {
   ): Promise<CredentialRecoveryStartResult> {
     const provider = this.providers.get(providerName);
     if (!provider?.beginRecovery || !provider.completeRecovery) {
-      throw new AuthNotFoundError(
+      throw new IdentityNotFoundError(
         `Authentication provider ${providerName} does not support recovery.`,
       );
     }
@@ -270,7 +270,7 @@ export class AuthenticationService {
   ): Promise<void> {
     const provider = this.providers.get(providerName);
     if (!provider?.beginRecovery || !provider.completeRecovery) {
-      throw new AuthNotFoundError(
+      throw new IdentityNotFoundError(
         `Authentication provider ${providerName} does not support recovery.`,
       );
     }
@@ -283,12 +283,12 @@ export class AuthenticationService {
   ): Promise<PreparedCredential> {
     const provider = this.providers.get(providerName);
     if (!provider) {
-      throw new AuthNotFoundError(
+      throw new IdentityNotFoundError(
         `Unknown authentication provider: ${providerName}`,
       );
     }
     if (!provider.prepareCredential) {
-      throw new AuthValidationError(
+      throw new IdentityValidationError(
         `Authentication provider ${providerName} does not support credential enrollment.`,
       );
     }
@@ -299,13 +299,13 @@ export class AuthenticationService {
     const provider = this.providers.get(providerName);
 
     if (!provider) {
-      throw new AuthNotFoundError(
+      throw new IdentityNotFoundError(
         `Unknown authentication provider: ${providerName}`,
       );
     }
 
     if (!provider.authenticate) {
-      throw new AuthValidationError(
+      throw new IdentityValidationError(
         `Authentication provider ${providerName} requires its Authorization Code workflow.`,
       );
     }

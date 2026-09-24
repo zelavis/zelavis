@@ -88,10 +88,10 @@ import {
   type ZelavisServerErrorStatusRule,
 } from "../core/index.js";
 import {
-  AuthDomainError,
-  AuthNotFoundError,
-  AuthValidationError,
-} from "../app/auth/index.js";
+  IdentityDomainError,
+  IdentityNotFoundError,
+  IdentityValidationError,
+} from "../app/identity/index.js";
 import type { ZelavisSystemStoreValue } from "../system-store.js";
 
 export type ZelavisRuntimeEngine = "node" | "bun" | "deno";
@@ -132,13 +132,13 @@ export const zelavisErrorRules: readonly ZelavisServerErrorStatusRule[] = [
   {
     matches: (error) =>
       error instanceof TypeError ||
-      error instanceof AuthValidationError ||
+      error instanceof IdentityValidationError ||
       error instanceof ZelavisValidationError,
     status: 400,
   },
   {
     matches: (error) =>
-      error instanceof AuthNotFoundError ||
+      error instanceof IdentityNotFoundError ||
       databaseFailureTag(error) === "DocumentNotFound" ||
       databaseFailureTag(error) === "CollectionNotFound",
     status: 404,
@@ -151,7 +151,7 @@ export const zelavisErrorRules: readonly ZelavisServerErrorStatusRule[] = [
   },
   {
     matches: (error) =>
-      error instanceof AuthDomainError || error instanceof ZelavisDomainError,
+      error instanceof IdentityDomainError || error instanceof ZelavisDomainError,
     status: 400,
   },
 ];

@@ -6,7 +6,7 @@
  * password verification and its timing, and the state, nonce and PKCE custody
  * a redirect flow depends on — so they are written and audited once. What is
  * vendor-specific stays a plugin: an identity provider's endpoints and claim
- * shapes are declared through `zelavis/auth:oauth`.
+ * shapes are declared through `zelavis/identity:oauth`.
  */
 export * from "./password.js";
 export * from "./oauth-contract.js";

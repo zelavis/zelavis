@@ -1,15 +1,15 @@
 import { publicServiceRegistryIdentity } from "./platform/service-registry-view.js";
 import {
-  authService as createAuthService,
-  createAuth,
-  type AuthServiceOptions,
+  identityService as createIdentityService,
+  createIdentity,
+  type IdentityServiceOptions,
   createOAuthProviderRuntime,
   createPasswordProvider,
   PASSWORD_PROVIDER,
-  type AuthMethodContext,
-  type AuthMethodPlugin,
-  type AuthApi,
-} from "./app/auth/index.js";
+  type IdentityMethodContext,
+  type IdentityMethodPlugin,
+  type IdentityApi,
+} from "./app/identity/index.js";
 import {
   defineDatabaseService,
   type DatabaseRuntimeApi,
@@ -307,7 +307,7 @@ import type {
 } from "./platform/storage-types.js";
 
 
-export type ZelavisAuthOptions = boolean | AuthServiceOptions;
+export type ZelavisAuthOptions = boolean | IdentityServiceOptions;
 
 /**
  * The face of an installation.
@@ -745,7 +745,7 @@ export function defineAdapter(
 
 const RESERVED_CORE_SERVICE_NAMES = new Set([
   "zelavis/app",
-  "zelavis/auth",
+  "zelavis/identity",
   "zelavis/platform",
   "@zelavis/marketplace",
   "@zelavis/auth",
@@ -1285,12 +1285,12 @@ async function resolveDatabaseCoreService(
 
 async function resolveAuthCoreService(
   option: ZelavisAuthOptions | undefined,
-  methods: readonly AuthMethodPlugin[] = [],
+  methods: readonly IdentityMethodPlugin[] = [],
   systemStore?: ZelavisSystemStore,
   registryEntries: readonly Readonly<
     ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>
   >[] = [],
-  methodServiceNames: ReadonlyMap<AuthMethodPlugin, string> = new Map(),
+  methodServiceNames: ReadonlyMap<IdentityMethodPlugin, string> = new Map(),
   rootPath = "/zelavis",
   bootstrapToken?: string,
 ): Promise<ZelavisRuntimeService<any> | undefined> {
@@ -1309,7 +1309,7 @@ async function resolveAuthCoreService(
   // distribution copied into the product-services folder on first boot,
   // because an installation with no credential provider can never create its
   // first owner — mandatory in everything but name.
-  const builtInMethods: AuthMethodPlugin[] = [
+  const builtInMethods: IdentityMethodPlugin[] = [
     {
       name: PASSWORD_PROVIDER,
       register(api) {
@@ -1320,7 +1320,7 @@ async function resolveAuthCoreService(
     },
     oauth.method,
   ];
-  const auth = configured.auth ?? await createAuth({
+  const auth = configured.auth ?? await createIdentity({
     ...(configured.authOptions ?? {}),
     repositories: {
       ...(systemStore ? createPlatformAuthRepositories(systemStore) : {}),
@@ -1336,14 +1336,14 @@ async function resolveAuthCoreService(
     // can find them and read what an operator configured. Registration runs
     // before service setup, so this is the only point where it can.
     methodContext: (method) => ({
-      registry: registryEntries as AuthMethodContext["registry"],
+      registry: registryEntries as IdentityMethodContext["registry"],
       ...(systemStore
         ? { store: createServiceStore(systemStore, methodServiceNames.get(method) ?? method.name) }
         : {}),
     }),
   });
 
-  return createAuthService({
+  return createIdentityService({
     ...configured,
     auth,
     methods: [],
@@ -1365,7 +1365,7 @@ async function resolveAuthCoreService(
 
 /** The capability a credential provider declares to extend Platform auth. */
 export const ZELAVIS_AUTH_CREDENTIALS_CAPABILITY = serviceCapabilityFor(
-  "zelavis/auth",
+  "zelavis/identity",
   "credentials",
 );
 
@@ -1385,10 +1385,10 @@ export const ZELAVIS_AUTH_CREDENTIALS_CAPABILITY = serviceCapabilityFor(
 /** Maps each collected method back to the service that supplied it. */
 function collectAuthMethodServiceNames(
   registry: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
-): ReadonlyMap<AuthMethodPlugin, string> {
-  const names = new Map<AuthMethodPlugin, string>();
+): ReadonlyMap<IdentityMethodPlugin, string> {
+  const names = new Map<IdentityMethodPlugin, string>();
   for (const entry of registry) {
-    const method = entry.service.service as AuthMethodPlugin | undefined;
+    const method = entry.service.service as IdentityMethodPlugin | undefined;
     if (typeof method?.register === "function") {
       names.set(method, entry.service.name);
     }
@@ -1398,7 +1398,7 @@ function collectAuthMethodServiceNames(
 
 function collectAuthMethodPlugins(
   registry: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
-): readonly AuthMethodPlugin[] {
+): readonly IdentityMethodPlugin[] {
   return Object.freeze(
     registry
       .filter(
@@ -1406,12 +1406,12 @@ function collectAuthMethodPlugins(
           entry.status === "installed" &&
           declaresServiceCapability(
             entry.service.capabilities,
-            "zelavis/auth",
+            "zelavis/identity",
             "credentials",
           ) &&
-          typeof (entry.service.service as AuthMethodPlugin | undefined)?.register === "function",
+          typeof (entry.service.service as IdentityMethodPlugin | undefined)?.register === "function",
       )
-      .map((entry) => entry.service.service as AuthMethodPlugin),
+      .map((entry) => entry.service.service as IdentityMethodPlugin),
   );
 }
 
@@ -1795,7 +1795,7 @@ async function resolveRuntimeManagementCore(
           service.name === "zelavis/platform" ||
           service.name === "@zelavis/marketplace" ||
           service.name === "zelavis/fabric" ||
-          service.name === "zelavis/auth" ||
+          service.name === "zelavis/identity" ||
           service.name === "@zelavis/db" ||
           service.name === "@zelavis/storage" ||
           service.name === "@zelavis/frontend" ||
@@ -2084,7 +2084,7 @@ async function resolveRuntimeManagementCore(
               owner: {
                 type: "string",
                 description:
-                  "Limit the result to extensions of this service, such as zelavis/auth.",
+                  "Limit the result to extensions of this service, such as zelavis/identity.",
               },
             },
             responses: {
@@ -2096,7 +2096,7 @@ async function resolveRuntimeManagementCore(
               const wanted = new URL(request.url).searchParams.get("owner") ?? undefined;
               const services = await serializeServiceRegistryForDashboard();
               // Composed services count as present. A core service such as
-              // `zelavis/auth` never appears in the registry, so a listing
+              // `zelavis/identity` never appears in the registry, so a listing
               // built from that alone would report the one thing every auth
               // extension points at as missing.
               const installed = new Set<string>([
@@ -2372,7 +2372,7 @@ async function resolveRuntimeManagementCore(
                 // on its own would look like it worked and quietly do nothing.
                 if (update.status === "installed" && updatedRegistryEntry) {
                   // Composed services as well as installed registry entries. A
-                  // core service like `zelavis/auth` never appears in the
+                  // core service like `zelavis/identity` never appears in the
                   // registry, so checking only that would refuse every extension
                   // of one — which is most of them.
                   const installedNames = new Set([
@@ -4832,7 +4832,7 @@ export async function zelavis(
     ? defineDatabaseService(databaseSubsystem.api)
     : undefined;
   const resolvedDatabaseApi = databaseSubsystem?.api;
-  const authService = hasAppService
+  const identityService = hasAppService
       ? undefined
       : await resolveAuthCoreService(
         options.subsystems?.auth,
@@ -5142,10 +5142,10 @@ export async function zelavis(
     await createZelavisMarketplaceService(),
     // Composed only where auth is: a settings page for a service that is not
     // running would configure nothing.
-    ...(authService ? [await createZelavisAuthSettingsService()] : []),
+    ...(identityService ? [await createZelavisAuthSettingsService()] : []),
     fabricCoreService,
     databaseService,
-    authService,
+    identityService,
     websiteService,
     storageService,
     workloadsCoreService,
@@ -5245,14 +5245,14 @@ export async function zelavis(
   return Object.assign(runtime, {
     fetch: guardedFetch,
     close,
-    auth: authService?.service as AuthApi | undefined,
+    auth: identityService?.service as IdentityApi | undefined,
     database: databaseSubsystem?.api as DatabaseRuntimeApi | undefined,
   });
 }
 
 export interface ZelavisRuntime extends ZelavisServerRuntime<unknown> {
   close(): Promise<void>;
-  auth?: AuthApi;
+  auth?: IdentityApi;
   database?: DatabaseRuntimeApi;
 }
 
@@ -5643,14 +5643,14 @@ export class Zelavis {
   private readonly activeRuntimes = new Set<ZelavisRuntime>();
   private closed = false;
   private closePromise?: Promise<void>;
-  private resolvedAuthApi?: AuthApi;
+  private resolvedAuthApi?: IdentityApi;
   private resolvedDatabaseApi?: DatabaseRuntimeApi;
   private resolvedPlatformContext: ZelavisPlatformContext = {
     presets: [],
     resources: {},
     metadata: {},
   };
-  readonly auth: AuthApi;
+  readonly auth: IdentityApi;
   readonly db: DatabaseRuntimeApi;
 
   constructor(options: ZelavisOptions = {}) {
@@ -5764,14 +5764,14 @@ export class Zelavis {
     return this.runtimePromise;
   }
 
-  async resolveAuthApi(): Promise<AuthApi> {
+  async resolveAuthApi(): Promise<IdentityApi> {
     if (this.resolvedAuthApi) {
       return this.resolvedAuthApi;
     }
 
     const runtime = await this.runtime();
-    const service = runtime.auth ?? runtime.services["zelavis/auth"]?.service;
-    assertResolvedServiceApi<AuthApi>(service, "zelavis/auth");
+    const service = runtime.auth ?? runtime.services["zelavis/identity"]?.service;
+    assertResolvedServiceApi<IdentityApi>(service, "zelavis/identity");
     this.resolvedAuthApi = service;
     return service;
   }

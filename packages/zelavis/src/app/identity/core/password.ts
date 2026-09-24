@@ -1,10 +1,10 @@
-import { AuthValidationError } from "./errors.js";
+import { IdentityValidationError } from "./errors.js";
 
 const DEFAULT_ITERATIONS = 600_000;
 
 function cryptoApi(): Crypto {
   if (!globalThis.crypto?.subtle || !globalThis.crypto?.getRandomValues) {
-    throw new AuthValidationError("Secure Web Crypto is required for password hashing.");
+    throw new IdentityValidationError("Secure Web Crypto is required for password hashing.");
   }
   return globalThis.crypto;
 }
@@ -41,14 +41,14 @@ export async function hashPassword(
   options: { iterations?: number } = {},
 ): Promise<string> {
   if (typeof password !== "string" || password.length < 15) {
-    throw new AuthValidationError("Passwords must contain at least 15 characters.");
+    throw new IdentityValidationError("Passwords must contain at least 15 characters.");
   }
   if (password.length > 1024) {
-    throw new AuthValidationError("Passwords must not exceed 1024 characters.");
+    throw new IdentityValidationError("Passwords must not exceed 1024 characters.");
   }
   const iterations = options.iterations ?? DEFAULT_ITERATIONS;
   if (!Number.isSafeInteger(iterations) || iterations < 100_000 || iterations > 10_000_000) {
-    throw new AuthValidationError("PBKDF2 iterations must be between 100000 and 10000000.");
+    throw new IdentityValidationError("PBKDF2 iterations must be between 100000 and 10000000.");
   }
   const salt = new Uint8Array(16);
   cryptoApi().getRandomValues(salt);

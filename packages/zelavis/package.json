@@ -60,9 +60,9 @@
       "types": "./dist/app/index.d.ts",
       "import": "./dist/app/index.js"
     },
-    "./app/auth": {
-      "types": "./dist/app/auth/index.d.ts",
-      "import": "./dist/app/auth/index.js"
+    "./app/identity": {
+      "types": "./dist/app/identity/index.d.ts",
+      "import": "./dist/app/identity/index.js"
     },
     "./db": {
       "types": "./dist/db/index.d.ts",

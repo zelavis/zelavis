@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { defineOAuthProviders } from "../dist/app/auth/index.js";
+import { defineOAuthProviders } from "../dist/app/identity/index.js";
 import { createMemorySystemStore, zelavis } from "../dist/index.js";
 
 const OWNER = { id: "owner", type: "user", roles: ["owner"], permissions: ["*"] };
@@ -38,7 +38,7 @@ async function platform({ withThirdParty = false } = {}) {
 const BASE = "/zelavis/api/v1/auth/oauth/connections";
 
 test("a provider plugin declares the capability core owns", () => {
-  assert.deepEqual(thirdPartyProviders.capabilities, ["zelavis/auth:oauth"]);
+  assert.deepEqual(thirdPartyProviders.capabilities, ["zelavis/identity:oauth"]);
   assert.equal(thirdPartyProviders.service.oauthProviders.length, 1);
 });
 
@@ -76,7 +76,7 @@ test("an operator configures a provider and the secret never comes back", async 
     body: {
       clientId: "client-id-123",
       clientSecret: "super-secret-value",
-      redirectUri: "https://example.com/zelavis/auth/callback",
+      redirectUri: "https://example.com/zelavis/identity/callback",
     },
   });
 

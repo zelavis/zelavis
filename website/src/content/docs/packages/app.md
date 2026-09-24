@@ -15,7 +15,7 @@ Use subpath imports when lower-level code needs direct access:
 
 ```ts
 import { createDatabase, defineDatabaseService } from "zelavis/app/db";
-import { createAuth, authService } from "zelavis/app/auth";
+import { createAuth, authService } from "zelavis/app/identity";
 import { workloadsService } from "zelavis/app/workloads";
 import { createServiceRuntime } from "zelavis/core";
 ```

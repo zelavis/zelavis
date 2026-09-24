@@ -1,8 +1,8 @@
 import type {
   AccountRepository,
   AuthAttemptRepository,
-  AuthAuthorizationFlowRepository,
-  AuthRepositories,
+  IdentityAuthorizationFlowRepository,
+  IdentityRepositories,
   AuthSecurityEventRepository,
   CredentialRepository,
   SessionRepository,
@@ -10,7 +10,7 @@ import type {
 import type {
   Account,
   AuthAttemptState,
-  AuthAuthorizationFlow,
+  IdentityAuthorizationFlow,
   AuthSecurityEvent,
   Credential,
   Session,
@@ -147,19 +147,19 @@ class InMemoryAuthSecurityEventRepository
 }
 
 class InMemoryAuthAuthorizationFlowRepository
-  implements AuthAuthorizationFlowRepository {
-  private readonly items = new Map<string, AuthAuthorizationFlow>();
+  implements IdentityAuthorizationFlowRepository {
+  private readonly items = new Map<string, IdentityAuthorizationFlow>();
 
-  async findByStateHash(stateHash: string): Promise<AuthAuthorizationFlow | null> {
+  async findByStateHash(stateHash: string): Promise<IdentityAuthorizationFlow | null> {
     return this.items.get(stateHash) ?? null;
   }
 
   async mutate(
     stateHash: string,
     mutation: (
-      current: AuthAuthorizationFlow | null,
-    ) => AuthAuthorizationFlow | null,
-  ): Promise<AuthAuthorizationFlow | null> {
+      current: IdentityAuthorizationFlow | null,
+    ) => IdentityAuthorizationFlow | null,
+  ): Promise<IdentityAuthorizationFlow | null> {
     const next = mutation(this.items.get(stateHash) ?? null);
     if (next) this.items.set(stateHash, next);
     else this.items.delete(stateHash);
@@ -168,8 +168,8 @@ class InMemoryAuthAuthorizationFlowRepository
 }
 
 export function createInMemoryAuthRepositories(
-  overrides: Partial<AuthRepositories> = {},
-): AuthRepositories {
+  overrides: Partial<IdentityRepositories> = {},
+): IdentityRepositories {
   return {
     accounts: overrides.accounts ?? new InMemoryAccountRepository(),
     sessions: overrides.sessions ?? new InMemorySessionRepository(),

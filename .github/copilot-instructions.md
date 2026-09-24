@@ -13,7 +13,11 @@ Zelavis is an early-stage backend platform built as a pnpm workspace of composab
 - `zelavis` is the high-level runtime package.
 - `@zelavis/server` owns the shared service and route mounting contracts.
 - `@zelavis/db` owns the database core.
-- `@zelavis/auth` owns the auth core.
+- `zelavis/identity` owns the identity core — accounts, sessions, credentials,
+  password verification and the OAuth flow — and lives in the `zelavis` package
+  at `zelavis/app/identity`. `@zelavis/auth` is a separate, removable package
+  that only contributes the Auth settings page and a catalogue of installable
+  auth plugins.
 - `@zelavis/ui` owns the dashboard UI.
 
 ## Important repo conventions

@@ -91,7 +91,7 @@ test("zelavis exposes fetch handlers without requiring a mount adapter", async (
       "@zelavis/auth",
       "zelavis/fabric",
       "@zelavis/db",
-      "zelavis/auth",
+      "zelavis/identity",
       "@zelavis/frontend",
       "@zelavis/workloads",
     ],
@@ -117,7 +117,7 @@ test("zelavis includes core services by default", async (t) => {
     runtime.services["zelavis/fabric"].name,
     "zelavis/fabric",
   );
-  assert.equal(runtime.services["zelavis/auth"].name, "zelavis/auth");
+  assert.equal(runtime.services["zelavis/identity"].name, "zelavis/identity");
   assert.equal(runtime.services["@zelavis/db"].name, "@zelavis/db");
   assert.equal(runtime.services["@zelavis/frontend"].name, "@zelavis/frontend");
   assert.ok(routes.some((route) => route.fullPath === "/*path"));
@@ -246,7 +246,7 @@ test("zelavis includes core services by default", async (t) => {
       "@zelavis/auth",
       "zelavis/fabric",
       "@zelavis/db",
-      "zelavis/auth",
+      "zelavis/identity",
       "@zelavis/frontend",
       "@zelavis/workloads",
     ],
@@ -495,7 +495,7 @@ test("auth method plugins register through the public auth capability", async ()
           service: {
             name: "@example/test-auth-provider",
             kind: "plugin",
-            capabilities: ["zelavis/auth:credentials"],
+            capabilities: ["zelavis/identity:credentials"],
             service: {
               name: "test-auth",
               register(api) {
@@ -1119,7 +1119,7 @@ test("zelavis can disable the database core service", async () => {
     },
   });
 
-  assert.equal(runtime.services["zelavis/auth"].name, "zelavis/auth");
+  assert.equal(runtime.services["zelavis/identity"].name, "zelavis/identity");
   assert.equal(runtime.services["@zelavis/frontend"].name, "@zelavis/frontend");
   assert.equal(runtime.services["@zelavis/db"], undefined);
   assert.ok(
@@ -1137,7 +1137,7 @@ test("zelavis can disable the auth core service", async (t) => {
   });
   t.after(() => runtime.close());
 
-  assert.equal(runtime.services["zelavis/auth"], undefined);
+  assert.equal(runtime.services["zelavis/identity"], undefined);
   assert.equal(runtime.services["@zelavis/db"].name, "@zelavis/db");
   assert.equal(runtime.services["@zelavis/frontend"].name, "@zelavis/frontend");
   assert.ok(
@@ -1160,7 +1160,7 @@ test("the frontend cannot be switched off in code", async () => {
       new Request("http://localhost/zelavis/api/v1/runtime/config"),
     );
     assert.equal(config.status, 200);
-    assert.equal(runtime.services["zelavis/auth"].name, "zelavis/auth");
+    assert.equal(runtime.services["zelavis/identity"].name, "zelavis/identity");
   }
 
   assert.match(await (await withFrontend.fetch(

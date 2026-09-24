@@ -1,10 +1,10 @@
 import type { SessionRepository } from "../contracts/repositories.js";
 import type { IssuedSession, Session } from "../domain/entities.js";
-import { AuthValidationError } from "../core/errors.js";
+import { IdentityValidationError } from "../core/errors.js";
 
 function requireCrypto(): Crypto {
   if (!globalThis.crypto?.getRandomValues || !globalThis.crypto?.subtle) {
-    throw new AuthValidationError("Secure Web Crypto is required for sessions.");
+    throw new IdentityValidationError("Secure Web Crypto is required for sessions.");
   }
   return globalThis.crypto;
 }
@@ -34,15 +34,15 @@ export class SessionService {
 
   async create(input: CreateSessionInput): Promise<IssuedSession> {
     if (!input.accountId) {
-      throw new AuthValidationError("Session creation requires an accountId.");
+      throw new IdentityValidationError("Session creation requires an accountId.");
     }
 
     if (!(input.expiresAt instanceof Date) || !Number.isFinite(input.expiresAt.getTime())) {
-      throw new AuthValidationError("Session creation requires a valid expiry.");
+      throw new IdentityValidationError("Session creation requires a valid expiry.");
     }
     const now = new Date();
     if (input.expiresAt <= now) {
-      throw new AuthValidationError("Session expiry must be in the future.");
+      throw new IdentityValidationError("Session expiry must be in the future.");
     }
     const tokenBytes = new Uint8Array(32);
     requireCrypto().getRandomValues(tokenBytes);

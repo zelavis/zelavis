@@ -3,16 +3,16 @@ import type {
   AccountRepository,
   AuthAttemptState,
   AuthAttemptRepository,
-  AuthAuthorizationFlow,
-  AuthAuthorizationFlowRepository,
-  AuthRepositories,
+  IdentityAuthorizationFlow,
+  IdentityAuthorizationFlowRepository,
+  IdentityRepositories,
   AuthSecurityEvent,
   AuthSecurityEventRepository,
   Credential,
   CredentialRepository,
   Session,
   SessionRepository,
-} from "../app/auth/index.js";
+} from "../app/identity/index.js";
 import type { ZelavisSystemStore, ZelavisSystemStoreValue } from "../system-store.js";
 
 const NAMESPACE = "zelavis.platform.auth";
@@ -54,9 +54,9 @@ function reviveSecurityEvent(value: ZelavisSystemStoreValue): AuthSecurityEvent 
   return { ...event, occurredAt: new Date(event.occurredAt) };
 }
 
-function reviveAuthorizationFlow(value: ZelavisSystemStoreValue): AuthAuthorizationFlow {
+function reviveAuthorizationFlow(value: ZelavisSystemStoreValue): IdentityAuthorizationFlow {
   const flow = value as unknown as Omit<
-    AuthAuthorizationFlow,
+    IdentityAuthorizationFlow,
     "createdAt" | "expiresAt"
   > & { createdAt: string; expiresAt: string };
   return {
@@ -66,7 +66,7 @@ function reviveAuthorizationFlow(value: ZelavisSystemStoreValue): AuthAuthorizat
   };
 }
 
-export function createPlatformAuthRepositories(store: ZelavisSystemStore): AuthRepositories {
+export function createPlatformAuthRepositories(store: ZelavisSystemStore): IdentityRepositories {
   const get = async <T extends Account | Credential | Session>(kind: string, id: string) => {
     const record = await store.get(NAMESPACE, `${kind}:${id}`);
     return record ? revive<T>(record.value) : null;
@@ -152,7 +152,7 @@ export function createPlatformAuthRepositories(store: ZelavisSystemStore): AuthR
       throw new Error("Auth attempt update did not converge after 100 retries.");
     },
   };
-  const authorizationFlows: AuthAuthorizationFlowRepository = {
+  const authorizationFlows: IdentityAuthorizationFlowRepository = {
     async findByStateHash(stateHash) {
       const record = await store.get(NAMESPACE, `authorization-flow:${stateHash}`);
       return record ? reviveAuthorizationFlow(record.value) : null;

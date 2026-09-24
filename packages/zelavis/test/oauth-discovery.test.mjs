@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { discoverOidcProvider } from "../dist/app/auth/index.js";
+import { discoverOidcProvider } from "../dist/app/identity/index.js";
 
 const ISSUER = "https://id.example.com";
 

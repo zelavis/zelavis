@@ -6,8 +6,8 @@ import type {
 import type {
   AccountRepository,
   AuthAttemptRepository,
-  AuthAuthorizationFlowRepository,
-  AuthRepositories,
+  IdentityAuthorizationFlowRepository,
+  IdentityRepositories,
   AuthSecurityEventRepository,
   CredentialRepository,
   SessionRepository,
@@ -15,21 +15,21 @@ import type {
 import type {
   Account,
   AuthAttemptState,
-  AuthAuthorizationFlow,
+  IdentityAuthorizationFlow,
   AuthSecurityEvent,
   Credential,
   Session,
 } from "../domain/entities.js";
 
-type AuthEntity =
+type IdentityEntity =
   | Account
   | Credential
   | Session
   | AuthSecurityEvent
-  | (AuthAuthorizationFlow & { id: string })
+  | (IdentityAuthorizationFlow & { id: string })
   | (AuthAttemptState & { id: string });
 
-function serialize(entity: AuthEntity): JsonObject {
+function serialize(entity: IdentityEntity): JsonObject {
   const updatedAt = "updatedAt" in entity
     ? entity.updatedAt
     : "occurredAt" in entity
@@ -41,7 +41,7 @@ function serialize(entity: AuthEntity): JsonObject {
   };
 }
 
-function deserialize<T extends AuthEntity>(data: JsonObject): T {
+function deserialize<T extends IdentityEntity>(data: JsonObject): T {
   if (typeof data.entity !== "string") throw new TypeError("Stored Auth entity is invalid.");
   const entity = JSON.parse(data.entity) as Record<string, unknown>;
   for (const field of ["createdAt", "updatedAt", "expiresAt", "blockedUntil", "occurredAt"]) {
@@ -60,7 +60,7 @@ function isDocumentConflict(error: unknown): boolean {
   return isDocumentConflict(candidate.cause);
 }
 
-class AuthDocumentStore {
+class IdentityDocumentStore {
   private readonly ensured = new Set<string>();
   private readonly ensuring = new Map<string, Promise<void>>();
   constructor(private readonly database: TenantRuntimeApi) {}
@@ -74,7 +74,7 @@ class AuthDocumentStore {
         await this.database.documents.createCollection({
           name: collection,
           surface: "database",
-          metadata: { owner: "zelavis/app/auth" },
+          metadata: { owner: "zelavis/app/identity" },
         });
       }
       this.ensured.add(collection);
@@ -87,7 +87,7 @@ class AuthDocumentStore {
     }
   }
 
-  async set<T extends AuthEntity>(collection: string, entity: T): Promise<T> {
+  async set<T extends IdentityEntity>(collection: string, entity: T): Promise<T> {
     await this.ensure(collection);
     const existing = await this.database.documents.findById({ collection, id: entity.id });
     if (existing) {
@@ -98,13 +98,13 @@ class AuthDocumentStore {
     return entity;
   }
 
-  async get<T extends AuthEntity>(collection: string, id: string): Promise<T | null> {
+  async get<T extends IdentityEntity>(collection: string, id: string): Promise<T | null> {
     await this.ensure(collection);
     const document = await this.database.documents.findById({ collection, id });
     return document ? deserialize<T>(document.data) : null;
   }
 
-  async list<T extends AuthEntity>(collection: string): Promise<T[]> {
+  async list<T extends IdentityEntity>(collection: string): Promise<T[]> {
     await this.ensure(collection);
     return (await this.database.documents.findMany({ collection })).map((document) => deserialize<T>(document.data));
   }
@@ -114,7 +114,7 @@ class AuthDocumentStore {
     return this.database.documents.delete({ collection, id });
   }
 
-  async mutate<T extends AuthEntity>(
+  async mutate<T extends IdentityEntity>(
     collection: string,
     id: string,
     mutation: (current: T | null) => T | null,
@@ -165,8 +165,8 @@ class AuthDocumentStore {
 export function createDatabaseAuthRepositories(
   database: DatabaseRuntimeApi,
   options: { tenantId?: string } = {},
-): AuthRepositories {
-  const store = new AuthDocumentStore(database.forTenant(options.tenantId ?? "service:zelavis-auth"));
+): IdentityRepositories {
+  const store = new IdentityDocumentStore(database.forTenant(options.tenantId ?? "service:zelavis-auth"));
   const accounts: AccountRepository = {
     create: (entity) => store.set("auth_accounts", entity),
     delete: (id) => store.delete("auth_accounts", id),
@@ -209,14 +209,14 @@ export function createDatabaseAuthRepositories(
         },
       ),
   };
-  const authorizationFlows: AuthAuthorizationFlowRepository = {
+  const authorizationFlows: IdentityAuthorizationFlowRepository = {
     findByStateHash: (stateHash) =>
-      store.get<AuthAuthorizationFlow & { id: string }>(
+      store.get<IdentityAuthorizationFlow & { id: string }>(
         "auth_authorization_flows",
         stateHash,
       ),
     mutate: (stateHash, mutation) =>
-      store.mutate<AuthAuthorizationFlow & { id: string }>(
+      store.mutate<IdentityAuthorizationFlow & { id: string }>(
         "auth_authorization_flows",
         stateHash,
         (current) => {

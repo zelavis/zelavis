@@ -211,7 +211,7 @@ is genuine.
 
 A plugin is only needed for a provider that is not OIDC at all, where the
 profile endpoint and claim mapping are real code. Ship one declaring
-`"capabilities": ["zelavis/auth:oauth"]` whose service exports
+`"capabilities": ["zelavis/identity:oauth"]` whose service exports
 `oauthProviders`. A definition with an `issuer` must also give a `jwksUrl`: an
 ID token nobody can verify is attacker-supplied JSON, so one is refused at
 definition time.
@@ -219,7 +219,7 @@ definition time.
 ## Extensions
 
 A plugin that extends another declares a capability owned by it —
-`zelavis/auth:oauth`, not the domain namespace `provider:auth`. It is an
+`zelavis/identity:oauth`, not the domain namespace `provider:auth`. It is an
 ordinary plugin in every other way; the only difference is who it points at.
 
 That relationship is what lets an extension be listed beside the plugin it
@@ -227,13 +227,13 @@ extends rather than in a general catalogue:
 
 ```bash
 zelavis extensions
-zelavis extensions --for zelavis/auth
+zelavis extensions --for zelavis/identity
 ```
 
 The same over the API, which is what a plugin's own settings page asks for:
 
 ```
-GET /zelavis/api/v1/runtime/extensions?owner=zelavis/auth
+GET /zelavis/api/v1/runtime/extensions?owner=zelavis/identity
 ```
 
 Each entry in `runtime/services` carries `extends`, so a general listing can
@@ -293,7 +293,7 @@ the package that defines it:
   "zelavis": {
     "kind": "plugin",
     "capabilities": [
-      "zelavis/auth:credentials"
+      "zelavis/identity:credentials"
     ],
     "namespace": "example"
   }

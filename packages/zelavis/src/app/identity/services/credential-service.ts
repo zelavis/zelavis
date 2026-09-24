@@ -1,6 +1,6 @@
 import type { CredentialRepository } from "../contracts/repositories.js";
 import type { Credential } from "../domain/entities.js";
-import { AuthValidationError } from "../core/errors.js";
+import { IdentityValidationError } from "../core/errors.js";
 
 export interface CreateCredentialInput {
   id: string;
@@ -16,17 +16,17 @@ export class CredentialService {
 
   async create(input: CreateCredentialInput): Promise<Credential> {
     if (!input.id) {
-      throw new AuthValidationError("Credential creation requires an id.");
+      throw new IdentityValidationError("Credential creation requires an id.");
     }
 
     if (!input.accountId) {
-      throw new AuthValidationError(
+      throw new IdentityValidationError(
         "Credential creation requires an accountId.",
       );
     }
 
     if (!input.provider) {
-      throw new AuthValidationError(
+      throw new IdentityValidationError(
         "Credential creation requires a provider.",
       );
     }
@@ -35,13 +35,13 @@ export class CredentialService {
       ? input.identifier?.trim().toLowerCase()
       : input.identifier?.trim();
     if (!identifier) {
-      throw new AuthValidationError(
+      throw new IdentityValidationError(
         "Credential creation requires an identifier.",
       );
     }
 
     if (await this.repository.findByProviderIdentifier(input.provider, identifier)) {
-      throw new AuthValidationError("That provider identifier is already registered.");
+      throw new IdentityValidationError("That provider identifier is already registered.");
     }
 
     const now = new Date();
@@ -63,7 +63,7 @@ export class CredentialService {
 
   async update(credential: Credential): Promise<Credential> {
     if (!credential.id || !credential.accountId || !credential.provider || !credential.identifier) {
-      throw new AuthValidationError("Credential updates require a complete credential.");
+      throw new IdentityValidationError("Credential updates require a complete credential.");
     }
     return this.repository.update({
       ...credential,

@@ -1,26 +1,26 @@
-import type { AuthRepositories } from "../contracts/repositories.js";
+import type { IdentityRepositories } from "../contracts/repositories.js";
 import { AccountService } from "../services/account-service.js";
 import { AuthenticationService } from "../services/authentication-service.js";
 import { CredentialService } from "../services/credential-service.js";
 import { SessionService } from "../services/session-service.js";
 import { AuthSecurityService } from "../services/security-service.js";
 import { createInMemoryAuthRepositories } from "../storage/in-memory.js";
-import type { AuthApi, AuthMethodContext, AuthMethodPlugin } from "./types.js";
+import type { IdentityApi, IdentityMethodContext, IdentityMethodPlugin } from "./types.js";
 import { createSessionAuthenticator } from "./session-authenticator.js";
 
-export interface CreateAuthOptions {
+export interface CreateIdentityOptions {
   config?: Record<string, unknown>;
-  methods?: readonly AuthMethodPlugin[];
+  methods?: readonly IdentityMethodPlugin[];
   /**
    * Builds the context a method receives when it registers.
    *
    * Supplied by whoever composed auth, because a method's registry view and
    * its storage namespace are the host's to decide, not the plugin's.
    */
-  methodContext?: (method: AuthMethodPlugin) => AuthMethodContext | undefined;
+  methodContext?: (method: IdentityMethodPlugin) => IdentityMethodContext | undefined;
   projectId?: string;
   sessionCookieName?: string | false;
-  repositories?: Partial<AuthRepositories>;
+  repositories?: Partial<IdentityRepositories>;
   security?: {
     maxAttempts?: number;
     windowMs?: number;
@@ -28,7 +28,7 @@ export interface CreateAuthOptions {
   };
 }
 
-export async function createAuth(options: CreateAuthOptions = {}): Promise<AuthApi> {
+export async function createIdentity(options: CreateIdentityOptions = {}): Promise<IdentityApi> {
   const repositories = createInMemoryAuthRepositories(options.repositories);
   const accounts = new AccountService(repositories.accounts);
   const credentials = new CredentialService(repositories.credentials);
@@ -45,7 +45,7 @@ export async function createAuth(options: CreateAuthOptions = {}): Promise<AuthA
     ...options.security,
   });
 
-  const api: AuthApi = {
+  const api: IdentityApi = {
     context: {
       projectId: options.projectId,
       config: options.config ?? {},

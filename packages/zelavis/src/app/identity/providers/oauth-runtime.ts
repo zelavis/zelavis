@@ -1,5 +1,5 @@
-import type { AuthApi, AuthMethodContext, AuthMethodPlugin } from "../core/types.js";
-import { AuthValidationError } from "../core/errors.js";
+import type { IdentityApi, IdentityMethodContext, IdentityMethodPlugin } from "../core/types.js";
+import { IdentityValidationError } from "../core/errors.js";
 import {
   createConnectionStore,
   environmentConnection,
@@ -36,10 +36,10 @@ export interface OAuthConnectionAdmin {
  */
 export function createOAuthProviderRuntime(
   options: OAuthProviderRuntimeOptions = {},
-): { method: AuthMethodPlugin; connections: OAuthConnectionAdmin } {
+): { method: IdentityMethodPlugin; connections: OAuthConnectionAdmin } {
   let state:
     | {
-        api: AuthApi;
+        api: IdentityApi;
         definitions: Map<string, OAuthProviderDefinition>;
         connections: ReturnType<typeof createConnectionStore> | undefined;
         active: Map<string, OAuthConnection>;
@@ -48,8 +48,8 @@ export function createOAuthProviderRuntime(
     | undefined;
 
   const register = async (
-    api: AuthApi,
-    context: AuthMethodContext | undefined,
+    api: IdentityApi,
+    context: IdentityMethodContext | undefined,
   ): Promise<void> => {
     const definitions = new Map<string, OAuthProviderDefinition>();
     for (const entry of context?.registry ?? []) {
@@ -152,24 +152,24 @@ export function createOAuthProviderRuntime(
 
       if (!state.definitions.has(provider)) return undefined;
       if (!state.connections) {
-        throw new AuthValidationError(
+        throw new IdentityValidationError(
           "This auth runtime has no durable provider settings store.",
         );
       }
       if (typeof body.clientId !== "string" || !body.clientId.trim()) {
-        throw new AuthValidationError("A clientId is required.");
+        throw new IdentityValidationError("A clientId is required.");
       }
       if (typeof body.redirectUri !== "string" || !body.redirectUri.trim()) {
-        throw new AuthValidationError("A redirectUri is required.");
+        throw new IdentityValidationError("A redirectUri is required.");
       }
       let redirect: URL;
       try {
         redirect = new URL(body.redirectUri);
       } catch {
-        throw new AuthValidationError("The redirectUri must be an absolute URL.");
+        throw new IdentityValidationError("The redirectUri must be an absolute URL.");
       }
       if (redirect.protocol !== "https:" && redirect.hostname !== "localhost") {
-        throw new AuthValidationError(
+        throw new IdentityValidationError(
           "The redirectUri must use https, except on localhost for development.",
         );
       }
@@ -236,7 +236,7 @@ export function createOAuthProviderRuntime(
 
   return {
     method: {
-      name: "zelavis/auth:oauth",
+      name: "zelavis/identity:oauth",
       register,
     },
     connections,

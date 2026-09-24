@@ -21,10 +21,10 @@ test("the settings page is a product service, not part of auth", async () => {
   const runtime = await platform();
   const names = Object.keys(runtime.services);
 
-  // Two services, deliberately. `zelavis/auth` is the authority an
+  // Two services, deliberately. `zelavis/identity` is the authority an
   // installation cannot run without; `@zelavis/auth` is a page that configures
   // it and can be removed without anyone losing the ability to sign in.
-  assert.ok(names.includes("zelavis/auth"));
+  assert.ok(names.includes("zelavis/identity"));
   assert.ok(names.includes("@zelavis/auth"));
 });
 
@@ -64,10 +64,10 @@ test("the catalogue points at the core service, not this package", async () => {
   const [entry] = await authMenuEntries(runtime);
   const html = String((await runtime.plain({ url: entry.menu.page.src })).body);
 
-  // Extensions declare `zelavis/auth:oauth`, so a catalogue asking for
+  // Extensions declare `zelavis/identity:oauth`, so a catalogue asking for
   // `@zelavis/auth` would list nothing while looking like it worked. The two
   // names are close enough that this is worth pinning.
-  assert.match(html, /const OWNER = "zelavis\/auth"/u);
+  assert.match(html, /const OWNER = "zelavis\/identity"/u);
 });
 
 test("removing the settings page leaves sign-in working", async () => {

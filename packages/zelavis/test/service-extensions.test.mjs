@@ -5,7 +5,7 @@ import {
   serviceExtensionOwners,
   serviceExtensionPoints,
 } from "../dist/core/index.js";
-import { defineOAuthProviders } from "../dist/app/auth/index.js";
+import { defineOAuthProviders } from "../dist/app/identity/index.js";
 import { createMemorySystemStore, zelavis } from "../dist/index.js";
 
 const OWNER = { id: "owner", type: "user", roles: ["owner"], permissions: ["*"] };
@@ -24,9 +24,9 @@ const gitlab = defineOAuthProviders("@acme/auth-gitlab", [
 
 test("a service-owned capability is what makes a plugin an extension", () => {
   assert.equal(isServiceExtension(gitlab), true);
-  assert.deepEqual(serviceExtensionOwners(gitlab), ["zelavis/auth"]);
+  assert.deepEqual(serviceExtensionOwners(gitlab), ["zelavis/identity"]);
   assert.deepEqual(serviceExtensionPoints(gitlab), [
-    { owner: "zelavis/auth", capabilities: ["oauth"] },
+    { owner: "zelavis/identity", capabilities: ["oauth"] },
   ]);
 });
 
@@ -40,11 +40,11 @@ test("a domain namespace names no owner, so it extends nothing", () => {
 
 test("one plugin can extend more than one service", () => {
   const both = {
-    capabilities: ["zelavis/auth:oauth", "@acme/shop:payments", "api:routes"],
+    capabilities: ["zelavis/identity:oauth", "@acme/shop:payments", "api:routes"],
   };
   assert.deepEqual(serviceExtensionOwners(both).sort(), [
     "@acme/shop",
-    "zelavis/auth",
+    "zelavis/identity",
   ]);
 });
 
@@ -64,9 +64,9 @@ test("extensions are listed by what they extend", async () => {
 
   assert.equal(response.status, 200);
   const point = response.body.extensionPoints.find(
-    (entry) => entry.owner === "zelavis/auth",
+    (entry) => entry.owner === "zelavis/identity",
   );
-  assert.ok(point, "zelavis/auth should have an extension point");
+  assert.ok(point, "zelavis/identity should have an extension point");
   assert.deepEqual(point.capabilities, ["oauth"]);
   assert.equal(point.extensions[0].name, "@acme/auth-gitlab");
   assert.equal(point.extensions[0].status, "installed");
@@ -77,7 +77,7 @@ test("the listing can be narrowed to one service", async () => {
     { service: gitlab, status: "available", source: "community" },
   ]);
 
-  const matched = await runtime.plain({ url: `${EXTENSIONS}?owner=zelavis/auth` });
+  const matched = await runtime.plain({ url: `${EXTENSIONS}?owner=zelavis/identity` });
   assert.equal(matched.body.extensionPoints.length, 1);
 
   // This is what a plugin's own settings page asks for: everything installable
@@ -134,7 +134,7 @@ test("an extension of an installed service can be installed", async () => {
     { service: gitlab, status: "available", source: "community" },
   ]);
 
-  // `zelavis/auth` is part of Zelavis, so anything extending it is always
+  // `zelavis/identity` is part of Zelavis, so anything extending it is always
   // installable — the check only bites for a service that can be absent.
   const installed = await runtime.plain({
     url: "/zelavis/api/v1/runtime/services/%40acme%2Fauth-gitlab",
@@ -148,9 +148,9 @@ test("a core service counts as installed for the things extending it", async () 
   const runtime = await platform([
     { service: gitlab, status: "available", source: "community" },
   ]);
-  const response = await runtime.plain({ url: `${EXTENSIONS}?owner=zelavis/auth` });
+  const response = await runtime.plain({ url: `${EXTENSIONS}?owner=zelavis/identity` });
 
-  // `zelavis/auth` is composed rather than installed, so it never appears in
+  // `zelavis/identity` is composed rather than installed, so it never appears in
   // the service registry. A listing built from the registry alone would report
   // the one thing every auth extension points at as missing.
   assert.equal(response.body.extensionPoints[0].ownerInstalled, true);

@@ -86,7 +86,7 @@ test("service.setup mounts database, auth, and workloads runtime services", asyn
   assert.equal(result.runtimeServices.length, 3);
   const serviceNames = result.runtimeServices.map((s) => s.name);
   assert.ok(serviceNames.includes("@zelavis/db"));
-  assert.ok(serviceNames.includes("zelavis/auth"));
+  assert.ok(serviceNames.includes("zelavis/identity"));
   assert.ok(serviceNames.includes("@zelavis/workloads"));
 });
 

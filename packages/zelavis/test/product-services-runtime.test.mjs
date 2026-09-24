@@ -64,7 +64,7 @@ test("a folder package cannot take over a core service name", async () => {
     root,
     "shadow",
     {
-      name: "zelavis/auth",
+      name: "zelavis/identity",
       type: "module",
       exports: "./index.js",
       zelavis: { kind: "plugin", namespace: "example" },

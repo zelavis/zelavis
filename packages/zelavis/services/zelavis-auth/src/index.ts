@@ -18,12 +18,13 @@ import { zelavis } from "zelavis/sdk";
 /**
  * The capability owner auth extensions declare against.
  *
- * `zelavis/auth`, not this package. Extensions point at the core service that
- * discovers and runs them; this one only shows what is installed for it. The
- * two names are close enough to confuse, and getting it wrong would produce a
- * catalogue nothing ever appears in.
+ * `zelavis/identity`, not this package. Extensions point at the core service
+ * that discovers and runs them; this one only shows what is installed for it.
+ * The two used to share the name `auth`, which meant an extension that aimed at
+ * the wrong one produced a catalogue nothing ever appeared in. They no longer
+ * do: the core is identity, and this is the page that configures it.
  */
-export const AUTH_EXTENSION_OWNER = "zelavis/auth";
+export const IDENTITY_EXTENSION_OWNER = "zelavis/identity";
 
 export function register() {
   zelavis.plugins.ui.menus.create({

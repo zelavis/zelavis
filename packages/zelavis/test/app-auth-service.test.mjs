@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  createAuth,
+  createIdentity,
   createDatabaseAuthRepositories,
   defineAuthService,
   AuthInvalidCredentialsError,
   hashPassword,
   verifyPassword,
-} from "../dist/app/auth/index.js";
+} from "../dist/app/identity/index.js";
 import { openTemporaryDatabase } from "./_database.mjs";
 import {
   createBasicAuthenticator,
@@ -59,13 +59,13 @@ function passwordMethodService() {
   return {
     name: "@example/auth-email-password",
     kind: "plugin",
-    capabilities: ["zelavis/auth:credentials"],
+    capabilities: ["zelavis/identity:credentials"],
     service: method,
   };
 }
 
-test("authService returns 400 for invalid account creation input", async () => {
-  const auth = await createAuth();
+test("identityService returns 400 for invalid account creation input", async () => {
+  const auth = await createIdentity();
   const service = defineAuthService(auth);
   const createAccount = service.api.v1.find(
     (route) => route.id === "auth.accounts.create",
@@ -86,8 +86,8 @@ test("authService returns 400 for invalid account creation input", async () => {
   assert.match(response.body.error, /email or username/);
 });
 
-test("authService returns 404 for unknown authentication providers", async () => {
-  const auth = await createAuth();
+test("identityService returns 404 for unknown authentication providers", async () => {
+  const auth = await createIdentity();
   const service = defineAuthService(auth);
   const authenticate = service.api.v1.find(
     (route) => route.id === "auth.authenticate",
@@ -112,7 +112,7 @@ test("authService returns 404 for unknown authentication providers", async () =>
 });
 
 test("authentication attempts are bounded and produce privacy-safe audit events", async () => {
-  const auth = await createAuth({
+  const auth = await createIdentity({
     methods: [passwordMethodService().service],
     security: { maxAttempts: 2, windowMs: 60_000, blockMs: 60_000 },
   });
@@ -190,7 +190,7 @@ test("credential recovery is provider-owned, endpoint-backed, and revokes sessio
       });
     },
   };
-  const auth = await createAuth({ methods: [recoveryMethod] });
+  const auth = await createIdentity({ methods: [recoveryMethod] });
   await auth.accounts.create({ id: "account_1", email: "ivan@example.com" });
   await auth.credentials.create({
     id: "credential_1",
@@ -254,7 +254,7 @@ test("Authorization Code login binds PKCE, state, nonce, and explicit account li
       });
     },
   };
-  const auth = await createAuth({ methods: [method] });
+  const auth = await createIdentity({ methods: [method] });
   const runtime = await createServiceRuntime({ services: [defineAuthService(auth)] });
 
   const started = await runtime.plain({
@@ -307,7 +307,7 @@ test("Authorization Code login binds PKCE, state, nonce, and explicit account li
 });
 
 test("auth administration requires the Project users permission", async () => {
-  const auth = await createAuth();
+  const auth = await createIdentity();
   const runtime = await createServiceRuntime({ services: [defineAuthService(auth)] });
   const anonymous = await runtime.plain({ url: "/auth/accounts" });
   const unprivileged = await runtime.plain({
@@ -329,7 +329,7 @@ test("auth administration requires the Project users permission", async () => {
 });
 
 test("Project auth administration requires its explicit Project scope", async () => {
-  const auth = await createAuth({ projectId: "alpha" });
+  const auth = await createIdentity({ projectId: "alpha" });
   await auth.accounts.create({ id: "admin", username: "admin", permissions: ["project.users.manage"] });
   const issued = await auth.sessions.create({ accountId: "admin", expiresAt: new Date(Date.now() + 60_000) });
   const runtime = await createServiceRuntime({ services: [defineAuthService(auth)] });
@@ -344,7 +344,7 @@ test("Project auth administration requires its explicit Project scope", async ()
 });
 
 test("opaque sessions authenticate Bearer and cookie requests without storing raw tokens", async () => {
-  const auth = await createAuth({ projectId: "petshop" });
+  const auth = await createIdentity({ projectId: "petshop" });
   await auth.accounts.create({
     id: "account_1",
     username: "ivan",
@@ -389,7 +389,7 @@ test("opaque sessions authenticate Bearer and cookie requests without storing ra
 });
 
 test("accounts and administrators can inspect and revoke device sessions", async () => {
-  const auth = await createAuth();
+  const auth = await createIdentity();
   await auth.accounts.create({ id: "account_1", username: "ivan" });
   await auth.accounts.create({ id: "account_2", username: "other" });
   const current = await auth.sessions.create({
@@ -449,14 +449,14 @@ test("accounts and administrators can inspect and revoke device sessions", async
 test("App Auth repositories persist accounts and sessions through the Tenant database boundary", async (t) => {
   const { api: database } = await openTemporaryDatabase(t);
   const repositories = createDatabaseAuthRepositories(database, { tenantId: "tenant_auth" });
-  const first = await createAuth({ repositories, projectId: "petshop" });
+  const first = await createIdentity({ repositories, projectId: "petshop" });
   await first.accounts.create({ id: "persistent", username: "persistent" });
   const issued = await first.sessions.create({
     accountId: "persistent",
     expiresAt: new Date(Date.now() + 60_000),
   });
 
-  const second = await createAuth({
+  const second = await createIdentity({
     repositories: createDatabaseAuthRepositories(database, { tenantId: "tenant_auth" }),
     projectId: "petshop",
   });
