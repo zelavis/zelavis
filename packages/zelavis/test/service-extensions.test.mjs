@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   isServiceExtension,
+  misscopedExtensionOwners,
   serviceExtensionOwners,
   serviceExtensionPoints,
 } from "../dist/core/index.js";
@@ -167,5 +168,50 @@ test("a bare domain namespace is not read as a service to extend", async () => {
   assert.ok(
     response.body.extensionPoints.every((point) => point.owner.includes("/")),
     "every extension point must name a real service",
+  );
+});
+
+test("an owner written with the wrong scope marker is named, not left silent", () => {
+  const known = new Set(["zelavis/identity", "@zelavis/marketplace"]);
+
+  // The exact trap: `@zelavis/identity` is a valid owner that nobody is, and
+  // it differs from the real service by one character.
+  const misscoped = misscopedExtensionOwners(
+    { capabilities: ["@zelavis/identity:credentials", "api:routes"] },
+    known,
+  );
+  assert.equal(misscoped.length, 1);
+  assert.equal(misscoped[0].declared, "@zelavis/identity");
+  assert.equal(misscoped[0].intended, "zelavis/identity");
+  assert.deepEqual(misscoped[0].capabilities, ["credentials"]);
+
+  // It catches the mistake in the other direction too, since a package-owned
+  // capability is just as easy to write without its scope.
+  const dropped = misscopedExtensionOwners(
+    { capabilities: ["zelavis/marketplace:listing"] },
+    known,
+  );
+  assert.equal(dropped.length, 1);
+  assert.equal(dropped[0].intended, "@zelavis/marketplace");
+});
+
+test("an owner that is simply not installed here is not reported as a mistake", () => {
+  const known = new Set(["zelavis/identity"]);
+
+  // Extending a service nobody has installed is ordinary, and the common way
+  // an unknown owner looks. Reporting it would bury the one that matters.
+  assert.deepEqual(
+    misscopedExtensionOwners({ capabilities: ["@acme/shop:payments"] }, known),
+    [],
+  );
+  // A correct owner is never a mistake.
+  assert.deepEqual(
+    misscopedExtensionOwners({ capabilities: ["zelavis/identity:oauth"] }, known),
+    [],
+  );
+  // Nor is a domain namespace, which names no owner at all.
+  assert.deepEqual(
+    misscopedExtensionOwners({ capabilities: ["provider:auth"] }, known),
+    [],
   );
 });
