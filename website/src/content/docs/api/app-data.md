@@ -35,12 +35,14 @@ about it is special:
 ```bash
 zelavis auth service-accounts create \
   --name "my-app" \
+  --permission project.data.read \
   --permission project.data.write \
   --project app_myproduct
 ```
 
-`project.data.write` implies read. Grant `project.data.read` alone for a client
-that only reports.
+Reads and writes are separate permissions, as `project.view` and
+`project.runtime.manage` are: holding one does not confer the other. A client
+that only reports is granted `project.data.read` alone.
 
 ## JavaScript
 
@@ -61,7 +63,7 @@ const board = await data.documents.insert('boards', {
 });
 
 const open = await data.documents.query('boards', {
-  where: [{ field: 'archived', is: false }],
+  where: [{ path: 'archived', value: false }],
   limit: 20,
 });
 ```
@@ -127,7 +129,7 @@ honoured.
 ```bash
 zelavis data collections --project app_myproduct
 zelavis data insert boards --project app_myproduct --data '{"title":"Engineering"}'
-zelavis data query boards --project app_myproduct --where '[{"field":"archived","is":false}]'
+zelavis data query boards --project app_myproduct --where '[{"path":"archived","value":false}]'
 zelavis data get boards brd_01h... --project app_myproduct --json
 ```
 
