@@ -56,6 +56,26 @@ export const PLACEMENT_CLASSES: ReadonlyArray<PlacementClass> = Object.freeze([
   "replicated",
 ]);
 
+/** Joins a tenant to one of its parts. Refused inside either, so it never nests. */
+export const PART_SEPARATOR = "#";
+
+/**
+ * The key a tenant's records are actually stored and routed under.
+ *
+ * A part is a tenant as far as everything below routing is concerned: tenancy
+ * is structural — part of every namespace and lens key — so a part with a
+ * compound key gets the same isolation, the same dense identifier space and the
+ * same local intersection that an undivided tenant does, from the machinery
+ * that was already there.
+ *
+ * What that buys is the point: a tenant too large for one shard is several
+ * routing identities, which the partition map spreads like any others. What it
+ * costs is that the parts are separate partitions — no write spans them, and a
+ * question about the whole tenant is a `scatter` over its parts.
+ */
+export const partitionKeyFor = (tenant: TenantId, part?: string): TenantId =>
+  part === undefined ? tenant : `${tenant}${PART_SEPARATOR}${part}`;
+
 /**
  * The number of virtual ranges a logical database is divided into.
  *

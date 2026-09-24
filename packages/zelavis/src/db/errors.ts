@@ -323,6 +323,18 @@ export class PlacementCatalogInvalid extends Schema.TaggedError<PlacementCatalog
 ) {}
 
 /**
+ * A tenant cannot be divided the way it was asked to be.
+ *
+ * Dividing is a routing decision and carries no data, so it is refused for a
+ * tenant that already holds some: the records would stay under the undivided
+ * key while every read went to a part that does not hold them.
+ */
+export class SubdivisionInvalid extends Schema.TaggedError<SubdivisionInvalid>()(
+  "SubdivisionInvalid",
+  { tenant: Schema.String, reason: Schema.String },
+) {}
+
+/**
  * A collection already has a placement class, and it is not the one asked for.
  *
  * Reclassifying is a relocation rather than a catalog edit, for the same reason

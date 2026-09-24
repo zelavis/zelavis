@@ -4,6 +4,7 @@ import {
   PlacementCatalogInvalid,
   PlacementImmutable,
   RangeNotEmpty,
+  SubdivisionInvalid,
 } from "./errors.js";
 import { isReservedCollectionName, isValidCollectionName } from "./naming.js";
 import { equals } from "./query.js";
@@ -11,6 +12,8 @@ import type { ObjectStoreApi } from "./store.js";
 import { TENANT_COLUMN, TENANT_MARKER } from "./tenancy.js";
 import {
   GLOBAL_SHARD,
+  PART_SEPARATOR,
+  partitionKeyFor,
   PLACEMENT_CLASSES,
   shardFor,
   shardsOf,
@@ -25,6 +28,7 @@ import {
 const TOPOLOGY_NS = TOPOLOGY_SHARD;
 const TOPOLOGY_KEY = "partition-map";
 const PLACEMENT_KEY = "placement-catalog";
+const SUBDIVISION_KEY = "subdivision-catalog";
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -281,6 +285,101 @@ export const placementFor = (
   } satisfies PlacementApi;
 };
 
+/**
+ * Which tenants are divided across shards, and into what.
+ *
+ * Only divided tenants appear. A tenant absent from this is one whole tenant on
+ * one shard, which is nearly all of them and the case everything else is built
+ * around.
+ */
+export interface SubdivisionCatalog {
+  readonly version: number;
+  readonly tenants: Readonly<Record<TenantId, ReadonlyArray<string>>>;
+}
+
+export const validateSubdivisionCatalog = (
+  catalog: SubdivisionCatalog,
+): SubdivisionInvalid | undefined => {
+  for (const [tenant, parts] of Object.entries(catalog.tenants)) {
+    if (parts.length < 2) {
+      return new SubdivisionInvalid({
+        tenant,
+        reason: "a divided tenant needs at least two parts",
+      });
+    }
+    if (new Set(parts).size !== parts.length) {
+      return new SubdivisionInvalid({ tenant, reason: "parts must be distinct" });
+    }
+  }
+  return undefined;
+};
+
+export const loadSubdivisionCatalog = (
+  store: ObjectStoreApi,
+): Effect.Effect<SubdivisionCatalog | undefined> =>
+  Effect.gen(function* () {
+    const seq = yield* store.lookup(TOPOLOGY_NS, SUBDIVISION_KEY);
+    if (seq === undefined) return undefined;
+    const object = yield* store.read(seq);
+    return object === undefined
+      ? undefined
+      : (JSON.parse(dec.decode(object.bytes)) as SubdivisionCatalog);
+  }).pipe(Effect.orDie);
+
+const writeSubdivisionCatalog = (store: ObjectStoreApi, catalog: SubdivisionCatalog) =>
+  Effect.gen(function* () {
+    const existing = yield* store.lookup(TOPOLOGY_NS, SUBDIVISION_KEY);
+    const seq = existing ?? (yield* store.nextSeq);
+    yield* store.transact((txn) =>
+      txn.put(
+        seq,
+        enc.encode(JSON.stringify(catalog)),
+        { terms: [], columns: [], measures: [], edges: [] },
+        { namespace: TOPOLOGY_NS, key: SUBDIVISION_KEY },
+      ),
+    );
+  }).pipe(Effect.orDie);
+
+export const initSubdivisionCatalog = Effect.fn("initSubdivisionCatalog")(function* (
+  store: ObjectStoreApi,
+) {
+  const stored = yield* loadSubdivisionCatalog(store);
+  if (stored === undefined) return { version: 1, tenants: {} } satisfies SubdivisionCatalog;
+  const invalid = validateSubdivisionCatalog(stored);
+  if (invalid !== undefined) return yield* invalid;
+  return stored;
+});
+
+export interface SubdivisionApi {
+  readonly current: () => SubdivisionCatalog;
+
+  /** The parts a tenant is divided into, or undefined for an undivided one. */
+  readonly partsOf: (tenant: TenantId) => ReadonlyArray<string> | undefined;
+
+  /**
+   * Every routing key a tenant's data lives under.
+   *
+   * One key for an undivided tenant, one per part otherwise. This is what a
+   * question about a whole tenant hands to `scatter`, and the reason such a
+   * question has to go through `scatter` at all.
+   */
+  readonly keysOf: (tenant: TenantId) => ReadonlyArray<TenantId>;
+
+  /**
+   * Divide a tenant.
+   *
+   * Refused for a tenant that already holds records: dividing is a routing
+   * change carrying no data, so the records would stay under the undivided key
+   * while reads went to parts that do not hold them. Moving an occupied tenant
+   * into parts re-keys every record rather than relocating it, which is a
+   * different operation from this one.
+   */
+  readonly subdivide: (
+    tenant: TenantId,
+    parts: ReadonlyArray<string>,
+  ) => Effect.Effect<SubdivisionCatalog, SubdivisionInvalid>;
+}
+
 export interface RangeMove {
   readonly range: number;
   readonly from: ShardId;
@@ -288,8 +387,93 @@ export interface RangeMove {
   readonly tenants: ReadonlyArray<TenantId>;
 }
 
+export const subdivisionFor = (input: {
+  readonly topologyStore: ObjectStoreApi;
+  readonly initial: SubdivisionCatalog;
+  readonly shards: ReadonlyMap<ShardId, ObjectStoreApi>;
+  readonly mapNow: () => PartitionMap;
+}): SubdivisionApi => {
+  let catalog = input.initial;
+
+  const partsOf = (tenant: TenantId) => catalog.tenants[tenant];
+
+  const keysOf = (tenant: TenantId): ReadonlyArray<TenantId> => {
+    const parts = partsOf(tenant);
+    return parts === undefined ? [tenant] : parts.map((part) => partitionKeyFor(tenant, part));
+  };
+
+  const refuse = (tenant: TenantId, reason: string) =>
+    new SubdivisionInvalid({ tenant, reason });
+
+  return {
+    current: () => catalog,
+    partsOf,
+    keysOf,
+    subdivide: (tenant, parts) =>
+      Effect.gen(function* () {
+        const existing = partsOf(tenant);
+        if (existing !== undefined) {
+          const same = existing.length === parts.length
+            && existing.every((part, index) => part === parts[index]);
+          return same
+            ? catalog
+            : yield* refuse(tenant, `it is already divided into ${existing.join(", ")}`);
+        }
+        if (parts.length < 2) {
+          return yield* refuse(tenant, "a divided tenant needs at least two parts");
+        }
+        if (new Set(parts).size !== parts.length) {
+          return yield* refuse(tenant, "parts must be distinct");
+        }
+        // Otherwise a part's key could not be told from an undivided tenant of
+        // the same spelling, and two different tenants would route as one.
+        if (tenant.includes(PART_SEPARATOR)) {
+          return yield* refuse(
+            tenant,
+            `a tenant whose name contains "${PART_SEPARATOR}" cannot be divided`,
+          );
+        }
+        for (const part of parts) {
+          if (part.length === 0 || part.includes(PART_SEPARATOR)) {
+            return yield* refuse(
+              tenant,
+              `part "${part}" is empty or contains "${PART_SEPARATOR}"`,
+            );
+          }
+        }
+
+        // Dividing is routing and carries no data, for the same reason
+        // `topology.update` refuses an occupied range: the records would stay
+        // under the undivided key while reads went to parts without them.
+        const store = input.shards.get(shardFor(input.mapNow(), tenant));
+        if (store !== undefined && (yield* tenantsOn(store)).includes(tenant)) {
+          return yield* refuse(
+            tenant,
+            "it already holds records, and dividing carries none of them with it",
+          );
+        }
+
+        const next: SubdivisionCatalog = {
+          version: catalog.version + 1,
+          tenants: { ...catalog.tenants, [tenant]: [...parts] },
+        };
+        yield* writeSubdivisionCatalog(input.topologyStore, next);
+        catalog = next;
+        return next;
+      }),
+  } satisfies SubdivisionApi;
+};
+
 export interface TopologyApi {
   readonly current: () => PartitionMap;
+
+  /**
+   * Which tenants are divided across shards.
+   *
+   * On the topology beside the map and the placement catalog, because all three
+   * answer the same question — where something lives — for a different unit.
+   */
+  readonly subdivision: SubdivisionApi;
 
   /**
    * Which collections are placed other than by the map.
@@ -333,9 +517,16 @@ export const topologyFor = (
   initial: PartitionMap,
   shards: ReadonlyMap<ShardId, ObjectStoreApi>,
   catalog: PlacementCatalog,
+  subdivisions: SubdivisionCatalog,
 ): TopologyApi => {
   let map = initial;
   const placement = placementFor(topologyStore, catalog);
+  const subdivision = subdivisionFor({
+    topologyStore,
+    initial: subdivisions,
+    shards,
+    mapNow: () => map,
+  });
 
   const plan = (next: PartitionMap) =>
     Effect.gen(function* () {
@@ -377,6 +568,7 @@ export const topologyFor = (
   return {
     current: () => map,
     placement,
+    subdivision,
     plan,
     applyAfterMove: store,
     update: (next) =>

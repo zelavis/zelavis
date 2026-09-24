@@ -259,7 +259,10 @@ bindings, bundle assets, project-private databases, logs, locks, or runtime
 metadata behind.
 
 The canonical hierarchy is: Platform scales Projects, Projects scale Tenants,
-and exceptional Tenants may eventually scale Shards. Project is the universal
+and exceptional Tenants scale Shards by being divided into parts, each of which
+routes and stores as a Tenant of its own. Dividing is declared and carries no
+data, so it is refused for a Tenant that already holds records; re-keying an
+occupied Tenant into parts is a separate migration. Project is the universal
 first-level workload and hard isolation boundary for Zelavis Apps, WordPress,
 static sites, generic applications, and future managed kinds. Tenant is an
 App-owned logical data/workload boundary. Principal/User is an authenticated
@@ -586,8 +589,13 @@ Key rules:
   reads every document, id and unique value through it. A transaction sees
   committed state, so a second write built on a fresh read undoes the first,
   and two writes each pass a check the other already answered. Atomicity stops
-  at one tenant, which is one shard: there is no cross-shard write, and a
-  scatter reads.
+  at one partition, which is one shard: there is no cross-shard write, and a
+  scatter reads. For nearly every Tenant the partition is the Tenant. A Tenant
+  too large for one Shard may be divided into parts, and then the partition is
+  the part: `db.forTenant` refuses a divided Tenant rather than answering for a
+  fraction of it, `db.forPart` reaches one, and a question about the whole is a
+  scatter over `topology.subdivision.keysOf`. Below routing a part is a Tenant,
+  so it keeps the same isolation and local intersection within itself.
 - A scan that stops early passes `limit` to `engine.scan` rather than cutting
   the stream with `Stream.take`. A stream pulls an iterable thousands of
   entries at a time, so a take of a few rows still reads thousands; the limit
