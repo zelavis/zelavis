@@ -1,7 +1,7 @@
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis data <collections|create-collection|get|insert|update|delete|query|page|write> --project ID [collection] [id] [--data JSON] [--where JSON] [--order JSON] [--operations JSON] [--limit N] [--after CURSOR] [--mode merge|replace] [--expected-version N] [--idempotency-key KEY] [--url URL] [--token TOKEN] [--json]";
+  "zelavis data <collections|create-collection|drop-collection|get|insert|update|delete|query|page|write> --project ID [collection] [id] [--data JSON] [--where JSON] [--order JSON] [--operations JSON] [--limit N] [--after CURSOR] [--mode merge|replace] [--expected-version N] [--idempotency-key KEY] [--url URL] [--token TOKEN] [--json]";
 
 /**
  * `zelavis data` — App data in one App Project, through the JS SDK client, so

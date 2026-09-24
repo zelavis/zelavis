@@ -989,6 +989,42 @@ export function defineDatabaseDocumentsService(
           },
         },
         {
+          id: "database.collections.drop",
+          method: "DELETE",
+          access: { permissions: ["database.write"] },
+          path: "/collections/:collection",
+          spec: {
+            operationId: "dropCollection",
+            summary: "Remove a collection and every document in it",
+            description:
+              "Refused while another collection references this one. Creating a collection without this made a database that only accumulates.",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "The collection to remove." },
+            },
+            responses: {
+              200: { description: "Whether a collection was removed" },
+              404: { description: "No such collection" },
+              409: { description: "Another collection still references it" },
+            },
+          },
+          handler: async ({ service, params, body, principal }) => {
+            const input = readBodyObject(body);
+            try {
+              const tenantId = readTenantId(input.tenantId, principal);
+              return {
+                body: {
+                  dropped: await service.forTenant(tenantId).documents.dropCollection({
+                    name: params.collection,
+                  }),
+                },
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 404);
+            }
+          },
+        },
+        {
           id: "database.documents.write",
           method: "POST",
           access: { permissions: ["database.write"] },

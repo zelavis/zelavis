@@ -321,6 +321,13 @@ export interface ZelavisDataClient {
     list(): Promise<readonly ZelavisDataCollection[]>;
     create(input: ZelavisDataCollectionCreateInput): Promise<ZelavisDataCollection>;
     exists(collection: string): Promise<boolean>;
+    /**
+     * Removes a collection and everything in it.
+     *
+     * Refused while another collection references this one. There is no undo:
+     * the documents are gone, not archived.
+     */
+    drop(collection: string): Promise<boolean>;
   };
   readonly documents: {
     insert(collection: string, input: ZelavisDataInsertInput): Promise<ZelavisDataDocument>;
@@ -1024,6 +1031,11 @@ function createDataClient(
         (await json<{ exists: boolean }>(
           dataPath(projectId, `documents/collections/${dataName(collection, "collection name")}/exists`),
         )).exists,
+      drop: async (collection) =>
+        (await json<{ dropped: boolean }>(
+          dataPath(projectId, `documents/collections/${dataName(collection, "collection name")}`),
+          { method: "DELETE", body: {} },
+        )).dropped,
     },
     documents: {
       insert: (collection, input) =>

@@ -1637,6 +1637,38 @@ interface PageShape {
 }
 
 export interface DocumentsApi {
+  /**
+   * Remove a collection, its documents, and everything derived from them.
+   *
+   * Creating a collection without being able to remove one makes a database
+   * that only accumulates: a mistyped name is permanent, and a tenant that
+   * ever held data can never stop being listed.
+   *
+   * Refused while another collection references this one. That reference is a
+   * promise the other collection's documents still rely on, and dropping the
+   * target would leave them pointing at nothing — the caller drops the
+   * reference first, deliberately, or drops the other collection too.
+   *
+   * Documents go through the ordinary delete path rather than having their key
+   * ranges cleared, so every lens, posting, index and back-reference is
+   * maintained by the code that already knows how. That makes the cost linear
+   * in the collection's size, which is the price of not having a second,
+   * quieter way to remove a document.
+   */
+  readonly dropCollection: (input: {
+    readonly name: string;
+  }) => Effect.Effect<
+    boolean,
+    // Everything emptying it can hit: what finding the documents can fail
+    // with, and what deleting one can.
+    | CollectionNotFound | TenantMoving
+    | UnknownReference | UnanalyzedCollection | UnindexedGeometry | UnembeddedCollection
+    | InvalidVectorQuery | UnknownEdge
+    | DocumentConflict | IdempotencyKeyReused
+    | ReferenceViolation | SchemaViolation | CheckViolation | UniqueViolation
+    | VectorShapeMismatch
+  >;
+
   readonly createCollection: (input: {
     readonly name: string;
     readonly surface?: CollectionSurface;
@@ -4301,6 +4333,52 @@ const generateHighlights = (
           // that finds the document present should delete it rather than
           // replay a "no" from when it was already gone.
           (deleted) => deleted);
+      }),
+
+    dropCollection: (input) =>
+      Effect.gen(function* () {
+        yield* assertNotMoving;
+        const collection = yield* loadCollection(input.name);
+        if (collection === undefined) return yield* new CollectionNotFound({ name: input.name });
+
+        // A reference from elsewhere is a promise this collection's absence
+        // would break. Its own references to itself go with it.
+        const foreign = (collection.referencedBy ?? [])
+          .filter((back) => back.collection !== input.name);
+        if (foreign.length > 0) {
+          const naming = [...new Set(foreign.map((back) => back.collection))].join(", ");
+          return yield* new ReferenceViolation({
+            collection: input.name,
+            id: "",
+            reference: foreign[0]!.reference,
+            reason: `${naming} still references it`,
+          });
+        }
+
+        // Emptied a page at a time: one transaction holding every document of
+        // a large collection is a transaction that may not fit.
+        for (;;) {
+          const page = yield* findDocuments({ collection: input.name, limit: 500 });
+          if (page.length === 0) break;
+          yield* transactChecked((txn) =>
+            Effect.gen(function* () {
+              const pending = nothingPending();
+              for (const document of page) {
+                yield* applyDelete(txn, pending, { collection: input.name, id: document.id });
+              }
+            }));
+        }
+
+        yield* transactChecked((txn) =>
+          Effect.gen(function* () {
+            for (const reference of collection.references ?? []) {
+              if (reference.collection === input.name) continue;
+              yield* unlinkReference(txn, input.name, reference.name);
+            }
+            const seq = yield* lookup(collectionNs(tenant), input.name);
+            if (seq !== undefined) yield* txn.retract(seq);
+          }));
+        return true;
       }),
 
     createIndex: (input) =>
