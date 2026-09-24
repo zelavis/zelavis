@@ -64,12 +64,35 @@ test("dropping a collection that is not there says so rather than pretending", a
 test("a tenant with nothing left stops being listed", async (t) => {
   const { api } = await openTemporaryDatabase(t);
   await api.forTenant("ghost").documents.createCollection({ name: "temp" });
-  assert.ok((await api.tenants()).includes("ghost"));
+  await api.forTenant("stays").documents.createCollection({ name: "kept" });
+  assert.deepEqual(await api.tenants(), ["ghost", "stays"]);
 
   await api.forTenant("ghost").documents.dropCollection({ name: "temp" });
+  assert.deepEqual(await api.forTenant("ghost").documents.listCollections(), []);
   assert.deepEqual(
-    await api.forTenant("ghost").documents.listCollections(),
-    [],
-    "the collection is gone",
+    await api.tenants(),
+    ["stays"],
+    "a tenant holding no collection is not an occupant of the shard",
   );
+});
+
+test("a tenant keeps its place while it still holds a collection", async (t) => {
+  const { api } = await openTemporaryDatabase(t);
+  const tenant = api.forTenant("acme");
+  await tenant.documents.createCollection({ name: "first" });
+  await tenant.documents.createCollection({ name: "second" });
+
+  await tenant.documents.dropCollection({ name: "first" });
+  assert.deepEqual(
+    await api.tenants(),
+    ["acme"],
+    "dropping one of several collections must not evict the tenant",
+  );
+
+  await tenant.documents.dropCollection({ name: "second" });
+  assert.deepEqual(await api.tenants(), []);
+
+  // And it comes back as an occupant if it stores something again.
+  await tenant.documents.createCollection({ name: "third" });
+  assert.deepEqual(await api.tenants(), ["acme"]);
 });
