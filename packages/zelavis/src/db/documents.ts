@@ -4378,6 +4378,20 @@ const generateHighlights = (
             const seq = yield* lookup(collectionNs(tenant), input.name);
             if (seq !== undefined) yield* txn.retract(seq);
           }));
+
+        // The marker says this tenant occupies the shard, and only
+        // `createCollection` ever writes it. Leaving it behind would keep a
+        // tenant listed forever after its last collection went -- the same
+        // one-way accumulation that not having a drop caused. Read after the
+        // retract commits, because a read inside that transaction still sees
+        // the collection it is removing.
+        const remaining = yield* Stream.runCollect(
+          resolveQuery(equals(collectionColumn(tenant), COLLECTION_MARKER)),
+        );
+        if (remaining.length === 0) {
+          const markerSeq = yield* lookup(TENANT_NAMESPACE, tenant);
+          if (markerSeq !== undefined) yield* write((txn) => txn.retract(markerSeq));
+        }
         return true;
       }),
 
