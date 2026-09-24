@@ -34,6 +34,7 @@ import {
   type ZelavisServerFetchHandler,
   declaresServiceCapability,
   serviceCapabilityFor,
+  misscopedExtensionOwners,
   serviceExtensionOwners,
   serviceExtensionPoints,
   type ZelavisResolvedRoute,
@@ -2116,6 +2117,16 @@ async function resolveRuntimeManagementCore(
                     // there, so a client can say so rather than offering an
                     // install that would do nothing.
                     ownerInstalled: installed.has(point.owner),
+                    // And whether anything answers to that name at all. Without
+                    // this the two are the same story — an owner nobody is
+                    // reads exactly like one that is merely not installed yet,
+                    // which is what lets a misspelled owner pass unnoticed.
+                    ownerKnown:
+                      installed.has(point.owner)
+                      || RESERVED_CORE_SERVICE_NAMES.has(point.owner)
+                      || (services as any[]).some(
+                        (candidate: any) => candidate.name === point.owner,
+                      ),
                     capabilities: new Set<string>(),
                     extensions: [] as unknown[],
                   };
@@ -4776,6 +4787,22 @@ export async function zelavis(
         `Zelavis skipped product service "${declaredName}": that name is reserved for a core Platform service.`,
       );
       continue;
+    }
+    // A capability owner may be a bare service name or a package, so the wrong
+    // one of the two is valid, owns nothing, and produces no error — the
+    // extension simply never appears where it was meant to. Loaded anyway,
+    // because the rest of the package is fine and refusing it would turn a
+    // typo into a service that will not start.
+    for (const mistake of misscopedExtensionOwners(
+      { capabilities: entry.manifest?.zelavis?.capabilities },
+      RESERVED_CORE_SERVICE_NAMES,
+    )) {
+      console.warn(
+        `Zelavis service "${declaredName ?? "(unnamed)"}" declares ${mistake.capabilities
+          .map((capability) => `"${mistake.declared}:${capability}"`)
+          .join(", ")}, but no service is called "${mistake.declared}". `
+          + `The service it extends is "${mistake.intended}", so nothing will list it until the capability names that instead.`,
+      );
     }
     try {
       discoveredServiceRegistry.push(

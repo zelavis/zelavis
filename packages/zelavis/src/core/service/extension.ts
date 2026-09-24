@@ -67,3 +67,53 @@ export function serviceExtensionOwners(service: {
 }): readonly string[] {
   return serviceExtensionPoints(service).map((point) => point.owner);
 }
+
+/**
+ * The same owner written with the other scope marker.
+ *
+ * A capability owner may be a bare service name (`zelavis/identity`) or a
+ * package (`@acme/shop`), and both are legal — which means `@zelavis/identity`
+ * is a perfectly valid owner that simply nobody is. The two differ by one
+ * character and never match, so declaring the wrong one puts an extension in a
+ * catalogue nothing reads rather than producing an error.
+ */
+const scopeToggled = (owner: string): string =>
+  owner.startsWith("@") ? owner.slice(1) : `@${owner}`;
+
+export interface MisscopedExtensionOwner {
+  /** The owner as declared. */
+  readonly declared: string;
+  /** The known service it differs from by its scope marker alone. */
+  readonly intended: string;
+  readonly capabilities: readonly string[];
+}
+
+/**
+ * Extension points that name nobody, but would name someone with the `@` moved.
+ *
+ * Deliberately narrower than "this owner is unknown". A plugin may legitimately
+ * extend a service that is not installed here, and an unknown owner is the
+ * ordinary way that looks — reporting those would be noise that buries this.
+ * An owner that becomes a real service by adding or removing its scope marker
+ * is not waiting for anything: it is a mistake, and the only reason it is worth
+ * a message is that its symptom otherwise is silence.
+ */
+export function misscopedExtensionOwners(
+  service: { capabilities?: readonly string[] },
+  knownServiceNames: ReadonlySet<string>,
+): readonly MisscopedExtensionOwner[] {
+  const out: MisscopedExtensionOwner[] = [];
+  for (const point of serviceExtensionPoints(service)) {
+    if (knownServiceNames.has(point.owner)) continue;
+    const intended = scopeToggled(point.owner);
+    if (!knownServiceNames.has(intended)) continue;
+    out.push(
+      Object.freeze({
+        declared: point.owner,
+        intended,
+        capabilities: point.capabilities,
+      }),
+    );
+  }
+  return Object.freeze(out);
+}
