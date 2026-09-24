@@ -117,6 +117,14 @@ export interface TenantRuntimeApi {
     readonly createIndex: (input: IndexDefinition & { collection: string }) => Promise<CollectionIndex>;
     readonly dropIndex: (input: { collection: string; name: string }) => Promise<boolean>;
     readonly listCollections: () => Promise<ReadonlyArray<Collection>>;
+    /**
+     * Remove a collection and everything in it.
+     *
+     * Refused while another collection references this one, and linear in the
+     * collection's size: documents go through the ordinary delete path so the
+     * lenses stay the business of the code that maintains them.
+     */
+    readonly dropCollection: (input: { name: string }) => Promise<boolean>;
     readonly collectionExists: (name: string) => Promise<boolean>;
     readonly insert: (input: {
       collection: string;
@@ -255,6 +263,7 @@ const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
     write: (input) => run(tenant.documents.write(input)),
     rewrite: (input) => run(tenant.documents.rewrite(input)),
     listCollections: () => run(tenant.documents.listCollections),
+    dropCollection: (input) => run(tenant.documents.dropCollection(input)),
     collectionExists: (name) => run(tenant.documents.collectionExists(name)),
     insert: (input) => run(tenant.documents.insert(input)),
     findById: (input) => run(tenant.documents.findById(input)),
