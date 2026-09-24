@@ -188,11 +188,14 @@ test("ecommercePlugin registers and exposes recurring subscription endpoints", a
   // Asked of the runtime rather than of a second database handle: opening the
   // same shards again would claim the next writer generation and fence the
   // runtime that is still running.
+  // Naming a Tenant is an operator act, so this read arrives as one rather
+  // than anonymously: the database routes state the authority they require.
   const collectionsResponse = await zelavis.fetch(
     new Request(
       "http://localhost/zelavis/api/v1/database/documents/collections" +
         `?tenantId=${encodeURIComponent("service:@zelavis/ecommerce")}`,
     ),
+    { principal: { id: "owner", type: "user", permissions: ["*"] } },
   );
   assert.equal(collectionsResponse.status, 200);
   const { collections } = await collectionsResponse.json();

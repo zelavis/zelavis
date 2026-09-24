@@ -8,6 +8,7 @@ import { runAuthCommand } from "./auth.js";
 import { describeInstallation, formatInstallation } from "./installation.js";
 import { runPluginsCommand } from "./plugins.js";
 import { runProjectsCommand } from "./projects.js";
+import { runDataCommand } from "./data.js";
 import { runHostOperationsCommand } from "./host-operations.js";
 import { runEdgeCommand } from "./edge.js";
 import { ZelavisClientHttpError } from "../sdk/fetch.js";
@@ -103,6 +104,7 @@ Usage:
   sudo zelavis uninstall --all --confirm ${ZELAVIS_COMPLETE_UNINSTALL_CONFIRMATION} [--data-dir <path>] [--json]
   zelavis projects <list|recipes|get|create|start|stop|restart|logs|remove> [id|name] [--recipe <name>] [--id <id>] [--no-start] [--url <url>] [--token <token>] [--json]
   zelavis auth service-accounts <list|create|rotate|revoke> [account-id] [--name <name>] [--permission <permission>] [--project <id>] [--expires-days <days>] [--url <url>] [--token <token>] [--json]
+  zelavis data <collections|create-collection|get|insert|update|delete|query|page|write> --project <id> [collection] [id] [--data <json>] [--where <json>] [--limit <n>] [--url <url>] [--token <token>] [--json]
   zelavis host-operations <catalog|submit|get|audit> [operation|id] [--version <v>] [--project <id>] [--arg name=value] [--json]
   zelavis edge <status|plan|switch> [adapter] [--publication <id>@<revision>] [--routes <n>] [--require <capability>] [--certificate-ref <ref>] [--url <url>] [--token <token>] [--json]
   zelavis services list [--url <url>]
@@ -523,6 +525,10 @@ export async function runCli(
     }
     if (args[0] === "auth") {
       await runAuthCommand(args.slice(1));
+      return;
+    }
+    if (args[0] === "data") {
+      await runDataCommand(args.slice(1));
       return;
     }
     if (args[0] === "host-operations") {

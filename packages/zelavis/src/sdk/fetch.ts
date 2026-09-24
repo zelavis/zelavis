@@ -270,6 +270,14 @@ export interface ZelavisClient {
   ): Promise<T>;
   /** Platform Projects, over `/runtime/projects`. Same contract as `zelavis projects`. */
   readonly projects: ZelavisProjectsClient;
+  /**
+   * App data in one App Project, as the caller's own Tenant.
+   *
+   * A function rather than an object because the Project is part of the
+   * address: there is no ambient "current Project", and inventing one is how a
+   * client ends up writing another App's records.
+   */
+  data(projectId: string): ZelavisDataClient;
   /** Release-signed host operations, over `/runtime/host-operations`. Same contract as `zelavis host-operations`. */
   readonly hostOperations: ZelavisHostOperationsClient;
   readonly environment: ZelavisEnvironmentClient;
@@ -287,6 +295,112 @@ export interface ZelavisClient {
     ): Promise<ZelavisDashboardSettingsResponse>;
   };
 }
+
+
+/**
+ * App data for one Zelavis App Project, as the caller's own Tenant.
+ *
+ * The Tenant is never a parameter here. It is resolved from the authenticated
+ * principal and signed into the Gateway envelope, so a client can address only
+ * its own records however it composes a request. Reaching this surface needs
+ * `project.data.read`/`project.data.write` on the Project and no Platform
+ * authority over it — the same contract as `zelavis data`.
+ */
+export interface ZelavisDataClient {
+  readonly collections: {
+    list(): Promise<readonly ZelavisDataCollection[]>;
+    create(input: ZelavisDataCollectionCreateInput): Promise<ZelavisDataCollection>;
+    exists(collection: string): Promise<boolean>;
+  };
+  readonly documents: {
+    insert(collection: string, input: ZelavisDataInsertInput): Promise<ZelavisDataDocument>;
+    get(collection: string, id: string): Promise<ZelavisDataDocument | undefined>;
+    /** Documents matching a query, up to `limit`. */
+    query(collection: string, input?: ZelavisDataQueryInput): Promise<readonly ZelavisDataDocument[]>;
+    /** One page plus the cursor that continues it. */
+    page(collection: string, input?: ZelavisDataPageInput): Promise<ZelavisDataPage>;
+    update(collection: string, id: string, input: ZelavisDataUpdateInput): Promise<ZelavisDataDocument>;
+    delete(collection: string, id: string, input?: ZelavisDataDeleteInput): Promise<boolean>;
+    /** Several changes applied atomically, in the order given. */
+    write(input: ZelavisDataWriteInput): Promise<readonly ZelavisDataWritten[]>;
+  };
+}
+
+export interface ZelavisDataCollection {
+  readonly name: string;
+  readonly surface?: string;
+  readonly metadata?: Readonly<Record<string, unknown>>;
+}
+
+export interface ZelavisDataCollectionCreateInput {
+  readonly name: string;
+  readonly surface?: "database" | "content";
+  readonly metadata?: Readonly<Record<string, unknown>>;
+}
+
+export interface ZelavisDataDocument {
+  readonly id: string;
+  readonly collection: string;
+  readonly version: number;
+  readonly data: Readonly<Record<string, unknown>>;
+}
+
+/** A write that may be retried without being applied twice. */
+export interface ZelavisDataIdempotent {
+  readonly idempotencyKey?: string;
+}
+
+export interface ZelavisDataInsertInput extends ZelavisDataIdempotent {
+  readonly id?: string;
+  readonly data: Readonly<Record<string, unknown>>;
+}
+
+export interface ZelavisDataQueryInput {
+  readonly where?: readonly unknown[];
+  readonly orderBy?: readonly unknown[];
+  readonly search?: string;
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
+export interface ZelavisDataPageInput extends Omit<ZelavisDataQueryInput, "offset"> {
+  /** The `next` cursor from the previous page. */
+  readonly after?: string;
+}
+
+export interface ZelavisDataPage {
+  readonly documents: readonly ZelavisDataDocument[];
+  /** Present only when another matching document follows. */
+  readonly next?: string;
+}
+
+export interface ZelavisDataUpdateInput extends ZelavisDataIdempotent {
+  readonly data: Readonly<Record<string, unknown>>;
+  /** `merge` unless given. */
+  readonly mode?: "merge" | "replace";
+  /** Compare-and-set against the version last read. */
+  readonly expectedVersion?: number;
+  readonly precondition?: readonly unknown[];
+}
+
+export interface ZelavisDataDeleteInput extends ZelavisDataIdempotent {
+  readonly expectedVersion?: number;
+  readonly precondition?: readonly unknown[];
+}
+
+export interface ZelavisDataWriteInput extends ZelavisDataIdempotent {
+  readonly operations: readonly ZelavisDataWriteOperation[];
+}
+
+export type ZelavisDataWriteOperation =
+  | { readonly _tag: "Insert"; readonly collection: string; readonly id?: string; readonly data: Readonly<Record<string, unknown>> }
+  | { readonly _tag: "Update"; readonly collection: string; readonly id: string; readonly data: Readonly<Record<string, unknown>>; readonly mode?: "merge" | "replace"; readonly expectedVersion?: number }
+  | { readonly _tag: "Delete"; readonly collection: string; readonly id: string; readonly expectedVersion?: number };
+
+export type ZelavisDataWritten =
+  | { readonly _tag: "Inserted"; readonly document: ZelavisDataDocument }
+  | { readonly _tag: "Updated"; readonly document: ZelavisDataDocument }
+  | { readonly _tag: "Deleted"; readonly collection: string; readonly id: string };
 
 export interface ZelavisProjectCreateInput {
   readonly name: string;
@@ -582,6 +696,7 @@ export function createZelavisClient(
     ),
     pluginOperations: discoverPluginOperations,
     projects: createProjectsClient(json),
+    data: (projectId) => createDataClient(json, projectId),
     auth: {
       providers: () => json<readonly string[]>("/auth/providers"),
       oauthProviders: () => json<readonly string[]>("/auth/oauth/providers"),
@@ -846,6 +961,99 @@ export function createZelavisClient(
           body: update,
         });
       },
+    },
+  };
+}
+
+function dataPath(projectId: string, path: string): string {
+  if (typeof projectId !== "string" || !projectId.trim()) {
+    throw new TypeError("A Project id is required.");
+  }
+  const encoded = encodeURIComponent(projectId);
+  if (encoded === "." || encoded === "..") throw new TypeError("Invalid Project id.");
+  return `/runtime/projects/${encoded}/data/${path}`;
+}
+
+function dataName(value: string, what: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new TypeError(`A ${what} is required.`);
+  }
+  const encoded = encodeURIComponent(value);
+  if (encoded === "." || encoded === "..") throw new TypeError(`Invalid ${what}.`);
+  return encoded;
+}
+
+/**
+ * The App data client for one Project.
+ *
+ * Every call is a path under that Project's data route, so the Platform
+ * resolves the Tenant and the caller never sends one. Bodies are passed
+ * through rather than reshaped: the query and write vocabulary is the
+ * database's own, and a translation layer here would be a second dialect to
+ * keep in step with it.
+ */
+function createDataClient(
+  json: <T>(path: string, options?: ZelavisClientRequestOptions) => Promise<T>,
+  projectId: string,
+): ZelavisDataClient {
+  const post = <T>(path: string, body: object) =>
+    json<T>(dataPath(projectId, path), { method: "POST", body });
+  return {
+    collections: {
+      list: async () =>
+        (await json<{ collections: readonly ZelavisDataCollection[] }>(
+          dataPath(projectId, "documents/collections"),
+        )).collections,
+      create: (input) => post<ZelavisDataCollection>("documents/collections", input),
+      exists: async (collection) =>
+        (await json<{ exists: boolean }>(
+          dataPath(projectId, `documents/collections/${dataName(collection, "collection name")}/exists`),
+        )).exists,
+    },
+    documents: {
+      insert: (collection, input) =>
+        post<ZelavisDataDocument>(`documents/${dataName(collection, "collection name")}`, input),
+      get: async (collection, id) => {
+        const path = dataPath(
+          projectId,
+          `documents/${dataName(collection, "collection name")}/${dataName(id, "document id")}`,
+        );
+        try {
+          return await json<ZelavisDataDocument>(path);
+        } catch (error) {
+          // A document that is not there is an answer, not a failure: callers
+          // read before writing and would otherwise wrap every read in a try.
+          if (error instanceof ZelavisClientHttpError && error.status === 404) {
+            return undefined;
+          }
+          throw error;
+        }
+      },
+      query: async (collection, input = {}) =>
+        (await post<{ documents: readonly ZelavisDataDocument[] }>(
+          `documents/${dataName(collection, "collection name")}/query`,
+          input,
+        )).documents,
+      page: (collection, input = {}) =>
+        post<ZelavisDataPage>(`documents/${dataName(collection, "collection name")}/page`, input),
+      update: (collection, id, input) =>
+        json<ZelavisDataDocument>(
+          dataPath(
+            projectId,
+            `documents/${dataName(collection, "collection name")}/${dataName(id, "document id")}`,
+          ),
+          { method: "PATCH", body: input },
+        ),
+      delete: async (collection, id, input = {}) =>
+        (await json<{ deleted: boolean }>(
+          dataPath(
+            projectId,
+            `documents/${dataName(collection, "collection name")}/${dataName(id, "document id")}`,
+          ),
+          { method: "DELETE", body: input },
+        )).deleted,
+      write: async (input) =>
+        (await post<{ written: readonly ZelavisDataWritten[] }>("documents/write", input)).written,
     },
   };
 }

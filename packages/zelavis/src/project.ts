@@ -195,6 +195,8 @@ export interface ZelavisProjectGatewayAuthorityInput {
   readonly runtimeNodeId: string;
   readonly subject: string;
   readonly subjectType: string;
+  /** The App Tenant the Platform resolved for this caller. */
+  readonly tenantId: string;
   readonly permissions: readonly string[];
 }
 
