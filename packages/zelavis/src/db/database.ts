@@ -196,6 +196,17 @@ export interface DatabaseApi {
   readonly shardOf: (tenant: TenantId) => ShardId;
 
   /**
+   * Every tenant holding data, across every shard.
+   *
+   * The database is the only honest answer to this. A list built from whoever
+   * has an account would name tenants that hold nothing and miss tenants whose
+   * account is gone, because holding data and having a credential are
+   * different facts. Each shard already records its own occupants; this is
+   * that reading, deduplicated, for an operator looking at the whole database.
+   */
+  readonly tenants: Effect.Effect<ReadonlyArray<TenantId>, DbError>;
+
+  /**
    * The map in force now, not the one this database opened with.
    *
    * A relocation changes where tenants live, so a snapshot taken at open would
@@ -533,6 +544,13 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     movement,
     topology,
     shardOf,
+    tenants: Effect.gen(function* () {
+      const found = new Set<TenantId>();
+      for (const store of shards.values()) {
+        for (const tenant of yield* tenantsOn(store)) found.add(tenant);
+      }
+      return [...found].sort();
+    }),
     global: globalApi,
     forTenant: (tenant) => {
       // Returning one part's handle would answer questions about a fraction of

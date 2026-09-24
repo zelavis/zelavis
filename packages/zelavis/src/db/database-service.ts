@@ -583,6 +583,23 @@ export function defineDatabaseService(
     api: {
       v1: [
         {
+          id: "database.tenants.list",
+          spec: {
+            operationId: "listDatabaseTenants",
+            summary: "List every Tenant holding data",
+            description:
+              "What an operator surface offers as a choice. Tenants are discovered from the shards that hold them, not from who has a credential.",
+            tags: ["database"],
+            responses: { 200: { description: "Tenants" } },
+          },
+          method: "GET",
+          access: { permissions: ["database.inspect"] },
+          path: "/tenants",
+          handler: async ({ service }) => ({
+            body: { tenants: await service.tenants() },
+          }),
+        },
+        {
           id: "database.menu.tables",
           spec: {
             operationId: "listDatabaseTablesMenu",
@@ -596,31 +613,41 @@ export function defineDatabaseService(
           access: { permissions: ["database.inspect"] },
           path: "/menu/tables",
           handler: async ({ service, query, principal }) => {
-            const tenantId = readTenantId(query.get("tenantId"), principal);
-            const collections = await service
-              .forTenant(tenantId)
-              .documents.listCollections();
+            // Named, this is one Tenant's tables. Unnamed, it is every Tenant
+            // holding data: a menu that silently showed one Tenant's tables is
+            // how an App's own records became invisible in the dashboard.
+            const requested = query.get("tenantId");
+            const tenantIds = requested
+              ? [readTenantId(requested, principal)]
+              : await service.tenants();
+            const several = tenantIds.length > 1;
 
-            return {
-              body: {
-                items: [
-                  ...[...collections]
-                  .sort((left, right) => left.name.localeCompare(right.name))
-                  .map((collection) => ({
-                    title: collection.name,
-                    path: "/database",
-                    pageLabel: "Database",
-                    search: { databaseTable: collection.name },
-                  })),
-                  ...service.forTenant(tenantId).systemViews.list().map((view) => ({
-                    title: `System · ${view.title}`,
-                    path: "/database",
-                    pageLabel: "Database",
-                    search: { databaseSystemView: view.name },
-                  })),
-                ],
-              },
-            };
+            const items = [];
+            for (const tenantId of tenantIds) {
+              const collections = await service.forTenant(tenantId).documents.listCollections();
+              for (const collection of [...collections].sort((left, right) =>
+                left.name.localeCompare(right.name))) {
+                items.push({
+                  // The Tenant travels in the route state, so opening a table
+                  // opens the one that was listed rather than a same-named
+                  // table belonging to somebody else.
+                  title: several ? `${tenantId} · ${collection.name}` : collection.name,
+                  path: "/database",
+                  pageLabel: "Database",
+                  search: { databaseTenant: tenantId, databaseTable: collection.name },
+                });
+              }
+            }
+            const viewTenant = tenantIds[0] ?? readTenantId(requested, principal);
+            for (const view of service.forTenant(viewTenant).systemViews.list()) {
+              items.push({
+                title: `System · ${view.title}`,
+                path: "/database",
+                pageLabel: "Database",
+                search: { databaseTenant: viewTenant, databaseSystemView: view.name },
+              });
+            }
+            return { body: { items } };
           },
         },
         {
