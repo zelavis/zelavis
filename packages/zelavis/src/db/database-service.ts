@@ -566,7 +566,10 @@ export function defineDatabaseService(
       surface: "core",
       panelLabel: "Database",
       dynamicItems: {
-        path: "/database/menu/tables?tenantId=zelavis-app",
+        // No Tenant named, so the menu lists every Tenant holding data. This
+        // is the definition a Project-scoped dashboard reads, so pinning one
+        // here made an App's own tables invisible in its own Project.
+        path: "/database/menu/tables",
         emptyTitle: "No tables yet",
       },
       items: [
