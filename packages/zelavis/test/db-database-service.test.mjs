@@ -53,6 +53,7 @@ test("the database service mounts the same routes on the db runtime API", async 
   assert.deepEqual(
     runtime.routes.map((route) => route.fullPath),
     [
+      "/api/database/tenants",
       "/api/database/menu/tables",
       "/api/database/health",
       "/api/database/documents/collections",

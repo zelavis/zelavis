@@ -217,6 +217,8 @@ export interface TenantRuntimeApi {
 export interface DatabaseRuntimeApi {
   readonly forTenant: (tenant: TenantId) => TenantRuntimeApi;
   readonly shardOf: (tenant: TenantId) => string;
+  /** Every tenant holding data. What an operator surface needs to offer a choice. */
+  readonly tenants: () => Promise<ReadonlyArray<TenantId>>;
   readonly context: { readonly nodeId: string };
   /**
    * What a health or operator surface may report about placement.
@@ -305,6 +307,7 @@ export const runtimeApiFor = (
 ): DatabaseRuntimeApi => ({
   forTenant: (tenant) => tenantRuntime(database.forTenant(tenant)),
   shardOf: (tenant) => database.shardOf(tenant),
+  tenants: () => run(database.tenants),
   context: { nodeId: options?.nodeId ?? "local" },
   topology: {
     shards: shardsOf(database.partitionMap),

@@ -929,7 +929,9 @@ const fallbackConfig: RuntimeConfig = {
         surface: "core",
         panelLabel: "Database",
         dynamicItems: {
-          path: "/database/menu/tables?tenantId=zelavis-app",
+          // No Tenant named: the menu lists every Tenant holding data. Pinning
+          // one here is what made an App's own tables invisible.
+          path: "/database/menu/tables",
           emptyTitle: "No tables yet",
         },
         items: [
