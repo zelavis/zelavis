@@ -34,6 +34,8 @@ import {
   requireFileStorageGuarantees, invalidateFileStorageGuarantees,
   ZelavisStorageConditionError, ZelavisStorageGuaranteeError,
 } from "../storage/conditions.js";
+import { Effect, Schedule } from "effect";
+import { RegistryContended, RegistryUnavailable } from "./service-lifecycle-errors.js";
 const DEFAULT_PLATFORM_DASHBOARD_SETTINGS_KEY =
   "zelavis/dashboard-settings.json";
 
@@ -394,17 +396,73 @@ export function createMemoryDashboardSettingsStore(): ZelavisDashboardSettingsSt
 }
 
 /** Apply an intent again only after a clean conflict and a fresh read. */
+/** How many times a contended registry write is retried before giving up. */
+const REGISTRY_MUTATION_ATTEMPTS = 8;
+
+/**
+ * Applies a change to the service registry, against whatever it holds now.
+ *
+ * Compare-and-set, so a write that raced somebody else's is retried against
+ * the state they left rather than overwriting it. The retry is a `Schedule`
+ * with jitter rather than a bare loop: concurrent installs used to retry in
+ * lockstep, each attempt colliding with the same competitor it just lost to.
+ *
+ * A contended registry is `RegistryContended`, which is a retry answer and
+ * not a refusal; a store that cannot be read or written is
+ * `RegistryUnavailable`, which is ours to fix.
+ */
+export const mutateServiceRegistryEffect = (
+  store: ZelavisServiceRegistryStore,
+  mutation: (entries: readonly ZelavisServiceRegistryStateEntry[]) =>
+    readonly ZelavisServiceRegistryStateEntry[] | Promise<readonly ZelavisServiceRegistryStateEntry[]>,
+): Effect.Effect<
+  readonly ZelavisServiceRegistryStateEntry[],
+  RegistryContended | RegistryUnavailable
+> => {
+  const attempt = Effect.gen(function* () {
+    const snapshot = yield* Effect.tryPromise({
+      try: async () => store.readSnapshot(),
+      catch: (cause) => new RegistryUnavailable({ cause }),
+    });
+    const entries = yield* Effect.tryPromise({
+      try: async () => mutation(snapshot.entries),
+      catch: (cause) => new RegistryUnavailable({ cause }),
+    });
+    const won = yield* Effect.tryPromise({
+      try: async () => store.compareAndSet(snapshot.revision, entries),
+      catch: (cause) => new RegistryUnavailable({ cause }),
+    });
+    // Losing the race is the retryable failure; everything else is not.
+    if (!won) return yield* new RegistryContended({ attempts: REGISTRY_MUTATION_ATTEMPTS });
+    return entries;
+  });
+
+  return attempt.pipe(
+    Effect.retry({
+      times: REGISTRY_MUTATION_ATTEMPTS - 1,
+      schedule: Schedule.exponential("5 millis").pipe(Schedule.jittered),
+      while: (error) => error._tag === "RegistryContended",
+    }),
+  );
+};
+
+/** Promise-facing wrapper, for callers that are not themselves Effects. */
 export async function mutateServiceRegistry(
   store: ZelavisServiceRegistryStore,
   mutation: (entries: readonly ZelavisServiceRegistryStateEntry[]) =>
     readonly ZelavisServiceRegistryStateEntry[] | Promise<readonly ZelavisServiceRegistryStateEntry[]>,
 ): Promise<readonly ZelavisServiceRegistryStateEntry[]> {
-  for (let attempt = 0; attempt < 8; attempt++) {
-    const snapshot = await store.readSnapshot();
-    const entries = await mutation(snapshot.entries);
-    if (await store.compareAndSet(snapshot.revision, entries)) return entries;
-  }
-  throw new ZelavisConflictError("Service registry changed during all 8 mutation attempts; retry the request.");
+  return Effect.runPromise(
+    mutateServiceRegistryEffect(store, mutation).pipe(
+      Effect.catchTag("RegistryContended", (error) =>
+        Effect.die(
+          new ZelavisConflictError(
+            `Service registry changed during all ${error.attempts} mutation attempts; retry the request.`,
+          ),
+        )),
+      Effect.catchTag("RegistryUnavailable", (error) => Effect.die(error.cause)),
+    ),
+  );
 }
 
 export function createMemoryServiceRegistryStore(
