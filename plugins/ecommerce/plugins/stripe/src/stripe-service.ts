@@ -455,7 +455,9 @@ export function stripeService(options: StripeServiceOptions = {}) {
     service: {
       name: "stripe",
       register(api: EcommerceApi) {
-        api.payments.registerProvider("stripe", createStripePaymentProvider(options));
+        return api.runPromise(
+          api.payments.registerProvider("stripe", createStripePaymentProvider(options)),
+        );
       },
     },
   });

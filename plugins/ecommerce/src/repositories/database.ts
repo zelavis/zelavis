@@ -21,6 +21,8 @@ import type {
   PaymentAttempt,
   Product,
 } from "../domain/entities.js";
+import { Effect } from "effect";
+import { StorageFailure } from "../errors.js";
 
 export interface EcommerceDatabaseCollections {
   customers: string;
@@ -104,84 +106,86 @@ class DatabaseRepositorySupport {
 
   constructor(private readonly database: TenantRuntimeApi) {}
 
-  async ensureCollection(name: string): Promise<void> {
-    if (this.ensuredCollections.has(name)) {
-      return;
-    }
-
-    if (!(await this.database.documents.collectionExists(name))) {
-      await this.database.documents.createCollection({
-        name,
-        surface: "database",
-        metadata: {
-          plugin: "@zelavis/ecommerce",
-        },
-      });
-    }
-
-    this.ensuredCollections.add(name);
+  /** Wraps one database call, naming it so a failure says what was being done. */
+  private call<A>(operation: string, run: () => Promise<A>): Effect.Effect<A, StorageFailure> {
+    return Effect.tryPromise({
+      try: run,
+      catch: (cause) => new StorageFailure({ operation, cause }),
+    });
   }
 
-  async insert<T>(
+  ensureCollection(name: string): Effect.Effect<void, StorageFailure> {
+    if (this.ensuredCollections.has(name)) return Effect.void;
+    return this.call(`ensureCollection(${name})`, async () => {
+      if (!(await this.database.documents.collectionExists(name))) {
+        await this.database.documents.createCollection({
+          name,
+          surface: "database",
+          metadata: { plugin: "@zelavis/ecommerce" },
+        });
+      }
+      this.ensuredCollections.add(name);
+    });
+  }
+
+  insert<T>(
     collection: string,
     id: string,
     entity: T,
     serialize: (entity: T) => StoredCommerceEntity,
-  ): Promise<T> {
-    await this.ensureCollection(collection);
-    await this.database.documents.insert({
-      collection,
-      id,
-      data: serialize(entity),
-    });
-    return entity;
+  ): Effect.Effect<T, StorageFailure> {
+    return this.ensureCollection(collection).pipe(
+      Effect.andThen(() =>
+        this.call(`insert(${collection}/${id})`, () =>
+          this.database.documents.insert({ collection, id, data: serialize(entity) }))),
+      Effect.as(entity),
+    );
   }
 
-  async update<T>(
+  update<T>(
     collection: string,
     id: string,
     entity: T,
     serialize: (entity: T) => StoredCommerceEntity,
-  ): Promise<T> {
-    await this.ensureCollection(collection);
-    await this.database.documents.update({
-      collection,
-      id,
-      data: serialize(entity),
-      mode: "replace",
-    });
-    return entity;
+  ): Effect.Effect<T, StorageFailure> {
+    return this.ensureCollection(collection).pipe(
+      Effect.andThen(() =>
+        this.call(`update(${collection}/${id})`, () =>
+          this.database.documents.update({
+            collection,
+            id,
+            data: serialize(entity),
+            mode: "replace",
+          }))),
+      Effect.as(entity),
+    );
   }
 
-  async findById<T>(
+  findById<T>(
     collection: string,
     id: string,
     deserialize: (data: StoredCommerceEntity) => T,
-  ): Promise<T | null> {
-    await this.ensureCollection(collection);
-    const document = await this.database.documents.findById({
-      collection,
-      id,
-    });
-    return document ? deserialize(document.data) : null;
+  ): Effect.Effect<T | undefined, StorageFailure> {
+    return this.ensureCollection(collection).pipe(
+      Effect.andThen(() =>
+        this.call(`findById(${collection}/${id})`, () =>
+          this.database.documents.findById({ collection, id }))),
+      Effect.map((document) => (document ? deserialize(document.data) : undefined)),
+    );
   }
 
-  async list<T>(
+  list<T>(
     collection: string,
     deserialize: (data: StoredCommerceEntity) => T,
-  ): Promise<T[]> {
-    await this.ensureCollection(collection);
-    const documents = await this.database.documents.findMany({
-      collection,
-      orderBy: [
-        {
-          path: "updatedAt",
-          direction: "desc",
-        },
-      ],
-    });
-    return documents.map((document: { data: StoredCommerceEntity }) =>
-      deserialize(document.data),
+  ): Effect.Effect<ReadonlyArray<T>, StorageFailure> {
+    return this.ensureCollection(collection).pipe(
+      Effect.andThen(() =>
+        this.call(`list(${collection})`, () =>
+          this.database.documents.findMany({
+            collection,
+            orderBy: [{ path: "updatedAt", direction: "desc" }],
+          }))),
+      Effect.map((documents) => documents.map((document) => deserialize(document.data))),
     );
   }
 }
@@ -305,7 +309,8 @@ function serializeOrder(order: Order): StoredCommerceEntity {
       quantity: item.quantity,
       unitPrice: item.unitPrice,
     })),
-    couponCodes: order.couponCodes,
+    // Schema arrays are readonly; storage wants one it may own.
+    couponCodes: [...order.couponCodes],
     status: order.status,
     totals: toDatabaseJsonObjectValue({
       subtotal: order.totals.subtotal,

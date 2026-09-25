@@ -1,3 +1,15 @@
+/**
+ * Storage boundaries, in the error channel.
+ *
+ * These returned bare Promises, so a storage failure arrived as a rejection
+ * indistinguishable from a bug and a missing row arrived as `null` that
+ * nothing forced a caller to consider. Each operation now says it can fail
+ * with `StorageFailure`, and a lookup that finds nothing says so in its type.
+ *
+ * `| undefined` rather than `Option`, to match `zelavis/db`'s own repository
+ * surface: two conventions for absence in one codebase is worse than either.
+ */
+import type { Effect } from "effect";
 import type {
   BillingSubscription,
   Coupon,
@@ -6,54 +18,37 @@ import type {
   PaymentAttempt,
   Product,
 } from "../domain/entities.js";
+import type { StorageFailure } from "../errors.js";
 
-export interface CustomerRepository {
-  create(customer: Customer): Promise<Customer>;
-  findById(id: string): Promise<Customer | null>;
-  list(): Promise<Customer[]>;
-  update(customer: Customer): Promise<Customer>;
+/**
+ * The shape every repository here shares.
+ *
+ * Written once because all six were identical but for their entity, and six
+ * copies of the same four signatures drift one method at a time.
+ */
+export interface Repository<A, Key extends string = string> {
+  readonly create: (value: A) => Effect.Effect<A, StorageFailure>;
+  readonly findById: (id: Key) => Effect.Effect<A | undefined, StorageFailure>;
+  readonly list: () => Effect.Effect<ReadonlyArray<A>, StorageFailure>;
+  readonly update: (value: A) => Effect.Effect<A, StorageFailure>;
 }
 
-export interface CouponRepository {
-  create(coupon: Coupon): Promise<Coupon>;
-  findByCode(code: string): Promise<Coupon | null>;
-  list(): Promise<Coupon[]>;
-  update(coupon: Coupon): Promise<Coupon>;
-}
+export type CustomerRepository = Repository<Customer>;
+export type ProductRepository = Repository<Product>;
+export type OrderRepository = Repository<Order>;
+export type PaymentAttemptRepository = Repository<PaymentAttempt>;
+export type SubscriptionRepository = Repository<BillingSubscription>;
 
-export interface ProductRepository {
-  create(product: Product): Promise<Product>;
-  findById(id: string): Promise<Product | null>;
-  list(): Promise<Product[]>;
-  update(product: Product): Promise<Product>;
-}
-
-export interface OrderRepository {
-  create(order: Order): Promise<Order>;
-  findById(id: string): Promise<Order | null>;
-  list(): Promise<Order[]>;
-  update(order: Order): Promise<Order>;
-}
-
-export interface PaymentAttemptRepository {
-  create(paymentAttempt: PaymentAttempt): Promise<PaymentAttempt>;
-  findById(id: string): Promise<PaymentAttempt | null>;
-  list(): Promise<PaymentAttempt[]>;
-  update(paymentAttempt: PaymentAttempt): Promise<PaymentAttempt>;
-}
-
-export interface SubscriptionRepository {
-  create(subscription: BillingSubscription): Promise<BillingSubscription>;
-  findById(id: string): Promise<BillingSubscription | null>;
-  list(): Promise<BillingSubscription[]>;
-  update(subscription: BillingSubscription): Promise<BillingSubscription>;
+/** A coupon is addressed by its code, which is its identity rather than an id. */
+export interface CouponRepository extends Omit<Repository<Coupon>, "findById"> {
+  readonly findByCode: (code: string) => Effect.Effect<Coupon | undefined, StorageFailure>;
 }
 
 export interface EcommerceRepositories {
-  customers: CustomerRepository;
-  coupons: CouponRepository;
-  products: ProductRepository;
-  orders: OrderRepository;
-  paymentAttempts: PaymentAttemptRepository;
-  subscriptions: SubscriptionRepository;
+  readonly customers: CustomerRepository;
+  readonly coupons: CouponRepository;
+  readonly products: ProductRepository;
+  readonly orders: OrderRepository;
+  readonly paymentAttempts: PaymentAttemptRepository;
+  readonly subscriptions: SubscriptionRepository;
 }

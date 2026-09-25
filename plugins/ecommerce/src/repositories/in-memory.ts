@@ -1,12 +1,13 @@
-import type {
-  CouponRepository,
-  CustomerRepository,
-  EcommerceRepositories,
-  OrderRepository,
-  PaymentAttemptRepository,
-  ProductRepository,
-  SubscriptionRepository,
-} from "../contracts/repositories.js";
+/**
+ * Repositories backed by a Map, for tests and for running without a database.
+ *
+ * This was six classes of identical CRUD differing only in their entity and
+ * which field was the key. With the contract generic, it is one factory told
+ * how to find a value's key — the repetition was the only reason the six could
+ * drift apart.
+ */
+import { Effect } from "effect";
+import type { EcommerceRepositories, Repository } from "../contracts/repositories.js";
 import type {
   BillingSubscription,
   Coupon,
@@ -16,147 +17,50 @@ import type {
   Product,
 } from "../domain/entities.js";
 
-class InMemoryCustomerRepository implements CustomerRepository {
-  private readonly items = new Map<string, Customer>();
-
-  async create(customer: Customer): Promise<Customer> {
-    this.items.set(customer.id, customer);
-    return customer;
-  }
-
-  async findById(id: string): Promise<Customer | null> {
-    return this.items.get(id) ?? null;
-  }
-
-  async list(): Promise<Customer[]> {
-    return Array.from(this.items.values());
-  }
-
-  async update(customer: Customer): Promise<Customer> {
-    this.items.set(customer.id, customer);
-    return customer;
-  }
-}
-
-class InMemoryCouponRepository implements CouponRepository {
-  private readonly items = new Map<string, Coupon>();
-
-  async create(coupon: Coupon): Promise<Coupon> {
-    this.items.set(coupon.code, coupon);
-    return coupon;
-  }
-
-  async findByCode(code: string): Promise<Coupon | null> {
-    return this.items.get(code) ?? null;
-  }
-
-  async list(): Promise<Coupon[]> {
-    return Array.from(this.items.values());
-  }
-
-  async update(coupon: Coupon): Promise<Coupon> {
-    this.items.set(coupon.code, coupon);
-    return coupon;
-  }
-}
-
-class InMemoryProductRepository implements ProductRepository {
-  private readonly items = new Map<string, Product>();
-
-  async create(product: Product): Promise<Product> {
-    this.items.set(product.id, product);
-    return product;
-  }
-
-  async findById(id: string): Promise<Product | null> {
-    return this.items.get(id) ?? null;
-  }
-
-  async list(): Promise<Product[]> {
-    return Array.from(this.items.values());
-  }
-
-  async update(product: Product): Promise<Product> {
-    this.items.set(product.id, product);
-    return product;
-  }
-}
-
-class InMemoryOrderRepository implements OrderRepository {
-  private readonly items = new Map<string, Order>();
-
-  async create(order: Order): Promise<Order> {
-    this.items.set(order.id, order);
-    return order;
-  }
-
-  async findById(id: string): Promise<Order | null> {
-    return this.items.get(id) ?? null;
-  }
-
-  async list(): Promise<Order[]> {
-    return Array.from(this.items.values());
-  }
-
-  async update(order: Order): Promise<Order> {
-    this.items.set(order.id, order);
-    return order;
-  }
-}
-
-class InMemoryPaymentAttemptRepository implements PaymentAttemptRepository {
-  private readonly items = new Map<string, PaymentAttempt>();
-
-  async create(paymentAttempt: PaymentAttempt): Promise<PaymentAttempt> {
-    this.items.set(paymentAttempt.id, paymentAttempt);
-    return paymentAttempt;
-  }
-
-  async findById(id: string): Promise<PaymentAttempt | null> {
-    return this.items.get(id) ?? null;
-  }
-
-  async list(): Promise<PaymentAttempt[]> {
-    return Array.from(this.items.values());
-  }
-
-  async update(paymentAttempt: PaymentAttempt): Promise<PaymentAttempt> {
-    this.items.set(paymentAttempt.id, paymentAttempt);
-    return paymentAttempt;
-  }
-}
-
-class InMemorySubscriptionRepository implements SubscriptionRepository {
-  private readonly items = new Map<string, BillingSubscription>();
-
-  async create(subscription: BillingSubscription): Promise<BillingSubscription> {
-    this.items.set(subscription.id, subscription);
-    return subscription;
-  }
-
-  async findById(id: string): Promise<BillingSubscription | null> {
-    return this.items.get(id) ?? null;
-  }
-
-  async list(): Promise<BillingSubscription[]> {
-    return Array.from(this.items.values());
-  }
-
-  async update(subscription: BillingSubscription): Promise<BillingSubscription> {
-    this.items.set(subscription.id, subscription);
-    return subscription;
-  }
+/**
+ * A repository over a Map.
+ *
+ * Nothing here can fail, so every operation is `Effect.succeed`: the error
+ * channel still says `StorageFailure` because that is what the contract
+ * promises callers, and an in-memory implementation simply never uses it.
+ */
+function inMemoryRepository<A>(keyOf: (value: A) => string): Repository<A> & {
+  readonly findByKey: (key: string) => Effect.Effect<A | undefined, never>;
+} {
+  const items = new Map<string, A>();
+  const put = (value: A) =>
+    Effect.sync(() => {
+      items.set(keyOf(value), value);
+      return value;
+    });
+  const get = (key: string) => Effect.sync(() => items.get(key));
+  return {
+    create: put,
+    update: put,
+    findById: get,
+    findByKey: get,
+    list: () => Effect.sync(() => [...items.values()]),
+  };
 }
 
 export function createInMemoryEcommerceRepositories(
+  /** Repositories a caller supplies instead; the rest are in memory. */
   overrides: Partial<EcommerceRepositories> = {},
 ): EcommerceRepositories {
+  const coupons = inMemoryRepository<Coupon>((coupon) => coupon.code);
   return {
-    customers: overrides.customers ?? new InMemoryCustomerRepository(),
-    coupons: overrides.coupons ?? new InMemoryCouponRepository(),
-    products: overrides.products ?? new InMemoryProductRepository(),
-    orders: overrides.orders ?? new InMemoryOrderRepository(),
-    paymentAttempts: overrides.paymentAttempts ?? new InMemoryPaymentAttemptRepository(),
-    subscriptions: overrides.subscriptions ?? new InMemorySubscriptionRepository(),
+    customers: inMemoryRepository<Customer>((customer) => customer.id),
+    products: inMemoryRepository<Product>((product) => product.id),
+    orders: inMemoryRepository<Order>((order) => order.id),
+    paymentAttempts: inMemoryRepository<PaymentAttempt>((attempt) => attempt.id),
+    subscriptions: inMemoryRepository<BillingSubscription>((subscription) => subscription.id),
+    // A coupon is addressed by its code, so it exposes that name instead.
+    coupons: {
+      create: coupons.create,
+      update: coupons.update,
+      list: coupons.list,
+      findByCode: coupons.findByKey,
+    },
+    ...overrides,
   };
 }
