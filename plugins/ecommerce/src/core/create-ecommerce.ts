@@ -1,10 +1,20 @@
+/**
+ * Builds the ecommerce API.
+ *
+ * The services are Effect services now, so this composes their layers and
+ * builds one runtime rather than calling five constructors. A caller outside
+ * Effect uses `runPromise`; a caller inside Effect can yield the services'
+ * effects directly.
+ */
+import { Effect, Layer, ManagedRuntime } from "effect";
 import type { EcommerceRepositories } from "../contracts/repositories.js";
-import { CouponService } from "../services/coupon-service.js";
-import { CustomerService } from "../services/customer-service.js";
-import { OrderService } from "../services/order-service.js";
-import { PaymentService } from "../services/payment-service.js";
-import { ProductService } from "../services/product-service.js";
 import { createInMemoryEcommerceRepositories } from "../repositories/in-memory.js";
+import { Coupons } from "../services/coupons.js";
+import { Customers } from "../services/customers.js";
+import { Orders } from "../services/orders.js";
+import { Payments } from "../services/payments.js";
+import { Products } from "../services/products.js";
+import { Repositories } from "../services/repositories.js";
 import type { EcommerceService } from "../ecommerce-service.js";
 import type { EcommerceApi } from "./types.js";
 
@@ -16,13 +26,20 @@ export interface CreateEcommerceOptions {
 
 export async function createEcommerce(options: CreateEcommerceOptions = {}): Promise<EcommerceApi> {
   const repositories = createInMemoryEcommerceRepositories(options.repositories);
-  const customers = new CustomerService(repositories.customers);
-  const coupons = new CouponService(repositories.coupons);
-  const products = new ProductService(repositories.products);
-  const orders = new OrderService(repositories.orders);
-  const payments = new PaymentService(
-    repositories.paymentAttempts,
-    repositories.subscriptions,
+
+  // Every domain service needs storage and nothing else, so one layer provides
+  // it to all five rather than each building its own.
+  const layer = Layer.mergeAll(
+    Customers.layer,
+    Coupons.layer,
+    Products.layer,
+    Orders.layer,
+    Payments.layer,
+  ).pipe(Layer.provide(Repositories.layerOf(repositories)));
+
+  const runtime = ManagedRuntime.make(layer);
+  const [customers, coupons, products, orders, payments] = await runtime.runPromise(
+    Effect.all([Customers, Coupons, Products, Orders, Payments]),
   );
 
   const api: EcommerceApi = {
@@ -36,6 +53,7 @@ export async function createEcommerce(options: CreateEcommerceOptions = {}): Pro
     products,
     orders,
     payments,
+    runPromise: (effect) => runtime.runPromise(effect),
   };
 
   for (const service of options.services ?? []) {

@@ -715,7 +715,9 @@ export function paypalService(options: PayPalServiceOptions = {}) {
     service: {
       name: "paypal",
       register(api: EcommerceApi) {
-        api.payments.registerProvider("paypal", createPayPalPaymentProvider(options));
+        return api.runPromise(
+          api.payments.registerProvider("paypal", createPayPalPaymentProvider(options)),
+        );
       },
     },
   });

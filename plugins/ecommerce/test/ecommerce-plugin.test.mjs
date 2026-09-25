@@ -29,7 +29,7 @@ test("ecommercePlugin registers and exposes recurring subscription endpoints", a
     service: {
       name: "stripe-test",
       register(api) {
-        api.payments.registerProvider("stripe-test", {
+        return api.runPromise(api.payments.registerProvider("stripe-test", {
           async createPayment(input) {
             return {
               id: "pay_test_1",
@@ -67,7 +67,7 @@ test("ecommercePlugin registers and exposes recurring subscription endpoints", a
               updatedAt: new Date(),
             };
           },
-        });
+        }));
       },
     },
   };

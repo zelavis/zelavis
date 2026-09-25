@@ -5,10 +5,10 @@ import type {
   Product,
   BillingSubscription,
 } from "./domain/entities.js";
-import type { CreateProductInput } from "./services/product-service.js";
-import type { CreateOrderInput } from "./services/order-service.js";
-import type { CreateCustomerInput } from "./services/customer-service.js";
-import type { CreateCouponInput } from "./services/coupon-service.js";
+import type { CreateProductInput } from "./services/products.js";
+import type { CreateOrderInput } from "./services/orders.js";
+import type { CreateCustomerInput } from "./services/customers.js";
+import type { CreateCouponInput } from "./services/coupons.js";
 import type { CreateSubscriptionInput } from "./contracts/payment-provider.js";
 import type { PluginOperationOptions } from "zelavis/sdk";
 

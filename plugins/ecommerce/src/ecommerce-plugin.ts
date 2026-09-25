@@ -16,10 +16,10 @@ import type {
 } from "./domain/entities.js";
 import type { DatabaseRuntimeApi } from "zelavis/db";
 import type { CreateSubscriptionInput } from "./contracts/payment-provider.js";
-import type { CreateCouponInput } from "./services/coupon-service.js";
-import type { CreateCustomerInput } from "./services/customer-service.js";
-import type { CreateOrderInput } from "./services/order-service.js";
-import type { CreateProductInput } from "./services/product-service.js";
+import type { CreateCouponInput } from "./services/coupons.js";
+import type { CreateCustomerInput } from "./services/customers.js";
+import type { CreateOrderInput } from "./services/orders.js";
+import type { CreateProductInput } from "./services/products.js";
 import type { EcommerceService } from "./ecommerce-service.js";
 import type { EcommerceApi } from "./core/types.js";
 
@@ -590,7 +590,7 @@ export const ecommercePlugin = Object.freeze({
             },
             handler: async ({ service }) => ({
               status: 200,
-              body: await service.products.list(),
+              body: await service.runPromise(service.products.list()),
             }),
           },
           {
@@ -633,7 +633,7 @@ export const ecommercePlugin = Object.freeze({
               try {
                 return {
                   status: 201,
-                  body: await service.products.create(parseProductInput(body)),
+                  body: await service.runPromise(service.products.create(parseProductInput(body))),
                 };
               } catch (error) {
                 return createCommerceErrorResponse(error, 400);
@@ -655,7 +655,7 @@ export const ecommercePlugin = Object.freeze({
               },
             },
             handler: async ({ service, params }) => {
-              const product = await service.products.getById(params.id);
+              const product = await service.runPromise(service.products.getById(params.id));
 
               if (!product) {
                 return createNotFoundResponse("Product", params.id);
@@ -682,7 +682,7 @@ export const ecommercePlugin = Object.freeze({
             },
             handler: async ({ service }) => ({
               status: 200,
-              body: await service.customers.list(),
+              body: await service.runPromise(service.customers.list()),
             }),
           },
           {
@@ -718,7 +718,7 @@ export const ecommercePlugin = Object.freeze({
               try {
                 return {
                   status: 201,
-                  body: await service.customers.create(parseCustomerInput(body)),
+                  body: await service.runPromise(service.customers.create(parseCustomerInput(body))),
                 };
               } catch (error) {
                 return createCommerceErrorResponse(error, 400);
@@ -740,7 +740,7 @@ export const ecommercePlugin = Object.freeze({
               },
             },
             handler: async ({ service, params }) => {
-              const customer = await service.customers.getById(params.id);
+              const customer = await service.runPromise(service.customers.getById(params.id));
 
               if (!customer) {
                 return createNotFoundResponse("Customer", params.id);
@@ -767,7 +767,7 @@ export const ecommercePlugin = Object.freeze({
             },
             handler: async ({ service }) => ({
               status: 200,
-              body: await service.coupons.list(),
+              body: await service.runPromise(service.coupons.list()),
             }),
           },
           {
@@ -803,7 +803,7 @@ export const ecommercePlugin = Object.freeze({
               try {
                 return {
                   status: 201,
-                  body: await service.coupons.create(parseCouponInput(body)),
+                  body: await service.runPromise(service.coupons.create(parseCouponInput(body))),
                 };
               } catch (error) {
                 return createCommerceErrorResponse(error, 400);
@@ -825,7 +825,7 @@ export const ecommercePlugin = Object.freeze({
               },
             },
             handler: async ({ service, params }) => {
-              const coupon = await service.coupons.getByCode(params.code);
+              const coupon = await service.runPromise(service.coupons.getByCode(params.code));
 
               if (!coupon) {
                 return createNotFoundResponse("Coupon", params.code);
@@ -852,7 +852,7 @@ export const ecommercePlugin = Object.freeze({
             },
             handler: async ({ service }) => ({
               status: 200,
-              body: await service.orders.list(),
+              body: await service.runPromise(service.orders.list()),
             }),
           },
           {
@@ -909,7 +909,7 @@ export const ecommercePlugin = Object.freeze({
               try {
                 return {
                   status: 201,
-                  body: await service.orders.create(parseOrderInput(body)),
+                  body: await service.runPromise(service.orders.create(parseOrderInput(body))),
                 };
               } catch (error) {
                 return createCommerceErrorResponse(error, 400);
@@ -931,7 +931,7 @@ export const ecommercePlugin = Object.freeze({
               },
             },
             handler: async ({ service, params }) => {
-              const order = await service.orders.getById(params.id);
+              const order = await service.runPromise(service.orders.getById(params.id));
 
               if (!order) {
                 return createNotFoundResponse("Order", params.id);
@@ -956,10 +956,10 @@ export const ecommercePlugin = Object.freeze({
                 200: { description: "List of payment providers" },
               },
             },
-            handler: ({ service }) => ({
+            handler: async ({ service }) => ({
               status: 200,
               body: {
-                providers: service.payments.listProviders().map((name: string) => {
+                providers: (await service.runPromise(service.payments.listProviders())).map((name: string) => {
                   return {
                     name,
                     plugin: service.context.providers.find(
@@ -985,7 +985,7 @@ export const ecommercePlugin = Object.freeze({
             },
             handler: async ({ service }) => ({
               status: 200,
-              body: await service.payments.listPaymentAttempts(),
+              body: await service.runPromise(service.payments.listPaymentAttempts()),
             }),
           },
           {
@@ -1014,7 +1014,7 @@ export const ecommercePlugin = Object.freeze({
               },
             },
             handler: async ({ service, params, body }) => {
-              const order = await service.orders.getById(params.id);
+              const order = await service.runPromise(service.orders.getById(params.id));
 
               if (!order) {
                 return createNotFoundResponse("Order", params.id);
@@ -1026,7 +1026,7 @@ export const ecommercePlugin = Object.freeze({
 
                 return {
                   status: 201,
-                  body: await service.payments.createPayment(order, provider),
+                  body: await service.runPromise(service.payments.createPayment(order, provider)),
                 };
               } catch (error) {
                 return createCommerceErrorResponse(error, 400);
@@ -1048,7 +1048,7 @@ export const ecommercePlugin = Object.freeze({
             },
             handler: async ({ service }) => ({
               status: 200,
-              body: await service.payments.listSubscriptions(),
+              body: await service.runPromise(service.payments.listSubscriptions()),
             }),
           },
           {
@@ -1089,7 +1089,7 @@ export const ecommercePlugin = Object.freeze({
             handler: async ({ service, body }) => {
               try {
                 const { input, provider } = parseSubscriptionCreation(body);
-                const subscription = await service.payments.createSubscription(input, provider);
+                const subscription = await service.runPromise(service.payments.createSubscription(input, provider));
                 return {
                   status: 201,
                   body: subscription,
@@ -1114,7 +1114,7 @@ export const ecommercePlugin = Object.freeze({
               },
             },
             handler: async ({ service, params }) => {
-              const subscription = await service.payments.getSubscriptionById(params.id);
+              const subscription = await service.runPromise(service.payments.getSubscriptionById(params.id));
 
               if (!subscription) {
                 return createNotFoundResponse("Subscription", params.id);
@@ -1157,10 +1157,10 @@ export const ecommercePlugin = Object.freeze({
                 const providerName = readOptionalString(options, "providerName");
                 const metadata = readOptionalObject(options, "metadata");
 
-                const cancelled = await service.payments.cancelSubscription(params.id, {
+                const cancelled = await service.runPromise(service.payments.cancelSubscription(params.id, {
                   providerName,
                   metadata,
-                });
+                }));
 
                 return {
                   status: 200,
