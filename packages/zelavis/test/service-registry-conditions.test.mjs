@@ -317,3 +317,55 @@ test("Bun SQLite adapter enforces atomic value guards and independent registry C
   `], { encoding: "utf8", timeout: 15000 });
   assert.equal(result.status, 0, result.stderr);
 });
+
+test("a service that fails to activate leaves the registry as it was", async (t) => {
+  const store = createMemoryServiceRegistryStore([
+    { name: "installed-already", status: "installed", specifier: "file:///kept.js" },
+    { name: "target", status: "available", specifier: "file:///target.js", order: 2 },
+  ]);
+  const before = store.read();
+
+  let activations = 0;
+  const runtime = await zelavis({
+    systemStore: createMemorySystemStore(),
+    subsystems: { auth: false, database: false },
+    serviceRegistry: { store },
+    serviceActivation: {
+      activate() {
+        activations++;
+        // The runtime refuses to mount it: a broken entry point, a manifest
+        // the loader rejects, a namespace collision.
+        throw new Error("service graph refused the change");
+      },
+    },
+  });
+  t.after(() => runtime.close());
+
+  const principal = { id: "admin", type: "user", permissions: ["system.services.manage"] };
+  const response = await runtime.fetch(
+    new Request("http://localhost/zelavis/api/v1/runtime/services/target", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "installed" }),
+    }),
+    { principal },
+  );
+
+  assert.equal(activations, 1, "activation was attempted");
+
+  // Not a 400: the request was well formed and the caller could not have sent
+  // it differently. The failure is the runtime's.
+  assert.equal(response.status, 500);
+
+  // And the registry is exactly what it was. Without the restore it would say
+  // "installed" over a runtime that never mounted it.
+  assert.deepEqual(
+    store.read(),
+    before,
+    "the registry must not keep a change whose activation failed",
+  );
+  assert.equal(
+    store.read().find((entry) => entry.name === "target").status,
+    "available",
+  );
+});

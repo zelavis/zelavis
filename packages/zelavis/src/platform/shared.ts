@@ -151,6 +151,15 @@ export const zelavisErrorRules: readonly ZelavisServerErrorStatusRule[] = [
     status: 409,
   },
   {
+    // The request was fine, the registry change was rolled back, and the
+    // runtime refused to mount the result. Answering 400 blamed the caller
+    // for something they could not have sent differently.
+    matches: (error) =>
+      typeof error === "object" && error !== null && "_tag" in error
+      && (error as { _tag?: unknown })._tag === "ActivationFailed",
+    status: 500,
+  },
+  {
     matches: (error) =>
       error instanceof IdentityDomainError || error instanceof ZelavisDomainError,
     status: 400,
