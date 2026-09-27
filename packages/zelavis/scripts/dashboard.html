@@ -1,0 +1,1382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zelavis Database Benchmarks Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            bg: '#090a0f',
+            card: '#12141c',
+            border: '#1f2433',
+            sqlite: '#06b6d4',
+            rocksdb: '#a855f7',
+            lmdb: '#10b981',
+            libsql: '#f59e0b',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+    body {
+      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+      background-color: #090a0f;
+      color: #e2e8f0;
+    }
+    code, pre, .font-mono {
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .custom-scroll::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .custom-scroll::-webkit-scrollbar-track {
+      background: #0d0f17;
+    }
+    .custom-scroll::-webkit-scrollbar-thumb {
+      background: #23293d;
+      border-radius: 3px;
+    }
+    .glass-panel {
+      background: rgba(18, 20, 28, 0.7);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+    }
+    .metric-glow {
+      box-shadow: 0 0 30px -10px rgba(6, 182, 212, 0.15);
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col custom-scroll">
+
+  <!-- Top Navigation Bar -->
+  <header class="border-b border-border/80 sticky top-0 z-50 glass-panel">
+    <div class="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-indigo-600 flex items-center justify-center font-bold text-white shadow-lg shadow-cyan-500/20">
+          Z
+        </div>
+        <div>
+          <span class="font-bold tracking-tight text-white text-lg">Zelavis</span>
+          <span class="text-xs text-slate-400 font-mono ml-2 px-2 py-0.5 rounded-full bg-slate-800/80 border border-slate-700/60">Storage Benchmarks</span>
+        </div>
+      </div>
+
+      <!-- Tab Buttons -->
+      <nav class="flex items-center gap-1 bg-slate-900/90 p-1 rounded-xl border border-border overflow-x-auto">
+        <button onclick="switchTab('shootout')" id="tab-btn-shootout" class="tab-btn px-3.5 py-1.5 rounded-lg text-xs font-semibold transition text-white bg-slate-800 shadow-sm">Engine Shootout</button>
+        <button onclick="switchTab('api')" id="tab-btn-api" class="tab-btn px-3.5 py-1.5 rounded-lg text-xs font-semibold transition text-slate-400 hover:text-white">Public Database API</button>
+        <button onclick="switchTab('comparison')" id="tab-btn-comparison" class="tab-btn px-3.5 py-1.5 rounded-lg text-xs font-semibold transition text-slate-400 hover:text-white whitespace-nowrap">Database Comparison</button>
+        <button onclick="switchTab('deepdive')" id="tab-btn-deepdive" class="tab-btn px-3.5 py-1.5 rounded-lg text-xs font-semibold transition text-slate-400 hover:text-white">Feature Deep Dives</button>
+        <button onclick="switchTab('architecture')" id="tab-btn-architecture" class="tab-btn px-3.5 py-1.5 rounded-lg text-xs font-semibold transition text-slate-400 hover:text-white">Architectural Guide</button>
+        <button onclick="switchTab('custom')" id="tab-btn-custom" class="tab-btn px-3.5 py-1.5 rounded-lg text-xs font-semibold transition text-slate-400 hover:text-white">Custom JSON</button>
+      </nav>
+
+      <div class="flex items-center gap-3">
+        <span class="text-xs font-mono text-slate-400 hidden sm:inline-block">25,000 Objects • Host Cached</span>
+        <button onclick="resetToDefaults()" class="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-slate-800 transition text-slate-300">
+          Reset Data
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="flex-1 max-w-7xl mx-auto px-6 py-8 w-full">
+
+    <!-- Hero / Headline Section -->
+    <div class="mb-8">
+      <div class="flex flex-col md:flex-row md:items-end justify-between gap-4">
+        <div>
+          <h1 class="text-2xl md:text-3xl font-extrabold text-white tracking-tight">Storage Engine Evaluation</h1>
+          <p class="text-slate-400 text-sm mt-1 max-w-2xl">
+            Comparing <code class="text-cyan-400">node-sqlite</code>, <code class="text-emerald-400">lmdb</code>, <code class="text-purple-400">rocksdb-js</code>, and <code class="text-amber-400">libsql</code> on identical multi-model workloads through the unified <code class="text-indigo-400">KvEngine</code> ordered key-value interface.
+          </p>
+        </div>
+
+        <!-- Legend -->
+        <div class="flex items-center gap-4 text-xs font-mono bg-card px-4 py-2.5 rounded-xl border border-border">
+          <div class="flex items-center gap-1.5">
+            <span class="w-3 h-3 rounded-full bg-cyan-400 inline-block"></span>
+            <span>node-sqlite</span>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <span class="w-3 h-3 rounded-full bg-emerald-400 inline-block"></span>
+            <span>lmdb</span>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <span class="w-3 h-3 rounded-full bg-purple-400 inline-block"></span>
+            <span>rocksdb-js</span>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <span class="w-3 h-3 rounded-full bg-amber-400 inline-block"></span>
+            <span>libsql</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Executive Summary Cards -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
+        <!-- Card 1 -->
+        <div class="glass-panel p-4 rounded-2xl relative overflow-hidden group">
+          <div class="absolute -right-4 -top-4 w-24 h-24 bg-cyan-500/10 rounded-full blur-xl group-hover:bg-cyan-500/20 transition"></div>
+          <div class="text-xs font-mono uppercase text-slate-400 mb-1 flex items-center justify-between">
+            <span>Production Default</span>
+            <span class="text-cyan-400 font-bold">★ Best Fit</span>
+          </div>
+          <div class="text-lg font-bold text-white flex items-center gap-2">
+            <span>node-sqlite</span>
+          </div>
+          <div class="text-xs text-slate-400 mt-2">
+            Zero install dependencies, 5,600 single tx/s, perfectly bounded RAM, native physical sharding.
+          </div>
+        </div>
+
+        <!-- Card 2 -->
+        <div class="glass-panel p-4 rounded-2xl relative overflow-hidden group">
+          <div class="absolute -right-4 -top-4 w-24 h-24 bg-emerald-500/10 rounded-full blur-xl group-hover:bg-emerald-500/20 transition"></div>
+          <div class="text-xs font-mono uppercase text-slate-400 mb-1 flex items-center justify-between">
+            <span>In-Memory Reads</span>
+            <span class="text-emerald-400 font-bold">2.6ms scans</span>
+          </div>
+          <div class="text-lg font-bold text-white flex items-center gap-2">
+            <span>LMDB</span>
+          </div>
+          <div class="text-xs text-slate-400 mt-2">
+            Fastest read latency via zero-copy mmap. Best for single-node in-RAM read-heavy caches.
+          </div>
+        </div>
+
+        <!-- Card 3 -->
+        <div class="glass-panel p-4 rounded-2xl relative overflow-hidden group">
+          <div class="absolute -right-4 -top-4 w-24 h-24 bg-purple-500/10 rounded-full blur-xl group-hover:bg-purple-500/20 transition"></div>
+          <div class="text-xs font-mono uppercase text-slate-400 mb-1 flex items-center justify-between">
+            <span>Storage Density</span>
+            <span class="text-purple-400 font-bold">7.7× Smaller</span>
+          </div>
+          <div class="text-lg font-bold text-white flex items-center gap-2">
+            <span>rocksdb-js</span>
+          </div>
+          <div class="text-xs text-slate-400 mt-2">
+            Only 6.7 MB for 25k records. LSM-tree maintains predictable speed when dataset exceeds host RAM.
+          </div>
+        </div>
+
+        <!-- Card 4 -->
+        <div class="glass-panel p-4 rounded-2xl relative overflow-hidden group">
+          <div class="absolute -right-4 -top-4 w-24 h-24 bg-amber-500/10 rounded-full blur-xl group-hover:bg-amber-500/20 transition"></div>
+          <div class="text-xs font-mono uppercase text-slate-400 mb-1 flex items-center justify-between">
+            <span>Replication Bridge</span>
+            <span class="text-amber-400 font-bold">Cloud Sync</span>
+          </div>
+          <div class="text-lg font-bold text-white flex items-center gap-2">
+            <span>libSQL</span>
+          </div>
+          <div class="text-xs text-slate-400 mt-2">
+            Architecturally optimized for remote primary replication and cloud-native Turso synchronization.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 1: SHOOTOUT -->
+    <div id="tab-shootout" class="space-y-8">
+      
+      <!-- Primary Charts Grid -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        
+        <!-- Chart: Ingestion Throughput -->
+        <div class="glass-panel p-5 rounded-2xl">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h3 class="font-bold text-white text-base">Batch Ingestion Throughput</h3>
+              <p class="text-xs text-slate-400">Objects ingested per second with all index lenses written (Higher is better)</p>
+            </div>
+            <span class="text-xs font-mono text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded-md border border-emerald-500/20">LMDB: 22,604 /s</span>
+          </div>
+          <div class="h-64">
+            <canvas id="chart-ingest"></canvas>
+          </div>
+        </div>
+
+        <!-- Chart: Query Latencies -->
+        <div class="glass-panel p-5 rounded-2xl">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h3 class="font-bold text-white text-base">Query Execution Latency</h3>
+              <p class="text-xs text-slate-400">Milliseconds per query (Lower is better)</p>
+            </div>
+            <span class="text-xs font-mono text-cyan-400 bg-cyan-500/10 px-2 py-1 rounded-md border border-cyan-500/20">Warm Cache</span>
+          </div>
+          <div class="h-64">
+            <canvas id="chart-queries"></canvas>
+          </div>
+        </div>
+
+        <!-- Chart: Point Reads & Identity Lookups -->
+        <div class="glass-panel p-5 rounded-2xl">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h3 class="font-bold text-white text-base">Point Reads & Lookups (1,000 Ops)</h3>
+              <p class="text-xs text-slate-400">Total milliseconds for 1,000 sequential lookups (Lower is better)</p>
+            </div>
+            <span class="text-xs font-mono text-purple-400 bg-purple-500/10 px-2 py-1 rounded-md border border-purple-500/20">Sub-microsecond per read</span>
+          </div>
+          <div class="h-64">
+            <canvas id="chart-lookups"></canvas>
+          </div>
+        </div>
+
+        <!-- Chart: Storage Footprint -->
+        <div class="glass-panel p-5 rounded-2xl">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h3 class="font-bold text-white text-base">Storage Footprint on Disk</h3>
+              <p class="text-xs text-slate-400">Total size in Kilobytes for 25,000 objects (Lower is better)</p>
+            </div>
+            <span class="text-xs font-mono text-purple-400 bg-purple-500/10 px-2 py-1 rounded-md border border-purple-500/20">RocksDB: 6.7 MB</span>
+          </div>
+          <div class="h-64">
+            <canvas id="chart-storage"></canvas>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Raw Comparison Table -->
+      <div class="glass-panel rounded-2xl p-6">
+        <h3 class="font-bold text-white text-lg mb-4">Detailed Benchmark Measurements (25,000 Objects)</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs font-mono border-collapse" id="shootout-table">
+            <thead>
+              <tr class="border-b border-border text-slate-400">
+                <th class="py-3 px-4 font-semibold uppercase">Engine</th>
+                <th class="py-3 px-4 font-semibold uppercase">Ingest Rate</th>
+                <th class="py-3 px-4 font-semibold uppercase">Posting Scan</th>
+                <th class="py-3 px-4 font-semibold uppercase">Cross-Model</th>
+                <th class="py-3 px-4 font-semibold uppercase">1k Point Reads</th>
+                <th class="py-3 px-4 font-semibold uppercase">1k Key Lookups</th>
+                <th class="py-3 px-4 font-semibold uppercase">Measures</th>
+                <th class="py-3 px-4 font-semibold uppercase">Disk Footprint</th>
+              </tr>
+            </thead>
+            <tbody id="shootout-table-body" class="divide-y divide-border/60">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- TAB: PUBLIC API (bench-api.mjs) -->
+    <div id="tab-api" class="hidden space-y-8">
+      
+      <!-- Headline & Summary -->
+      <div class="glass-panel p-6 rounded-2xl">
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+          <div>
+            <h3 class="font-bold text-white text-lg">Public Database API & HTTP Service Benchmark (<code class="text-cyan-400">bench-api.mjs</code>)</h3>
+            <p class="text-xs text-slate-400">
+              Exercises the full application lifecycle: <code class="text-cyan-400">tenant.documents.insert</code>, <code class="text-emerald-400">findById</code>, <code class="text-purple-400">findPage</code> cursor ordering, event log serialization, lens projection, and HTTP route handler dispatch.
+            </p>
+          </div>
+          <span class="text-xs font-mono px-3 py-1 bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 rounded-lg">5,000 Documents • Full CRUD</span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
+          <div class="bg-slate-900/60 p-4 rounded-xl border border-border">
+            <span class="text-xs text-slate-400 font-mono">Single Document Writes</span>
+            <div class="text-2xl font-bold text-purple-400 mt-1">3,598 docs/s</div>
+            <div class="text-xs text-slate-500 mt-1">rocksdb-js: 0.278ms avg transaction latency</div>
+          </div>
+          <div class="bg-slate-900/60 p-4 rounded-xl border border-border">
+            <span class="text-xs text-slate-400 font-mono">Atomic Batch Writes</span>
+            <div class="text-2xl font-bold text-cyan-400 mt-1">113,420 docs/s</div>
+            <div class="text-xs text-slate-500 mt-1">500 docs per atomic transaction</div>
+          </div>
+          <div class="bg-slate-900/60 p-4 rounded-xl border border-border">
+            <span class="text-xs text-slate-400 font-mono">Point Read by ID</span>
+            <div class="text-2xl font-bold text-emerald-400 mt-1">8.10 μs</div>
+            <div class="text-xs text-slate-500 mt-1">findById with full JSON payload decode</div>
+          </div>
+          <div class="bg-slate-900/60 p-4 rounded-xl border border-border">
+            <span class="text-xs text-slate-400 font-mono">HTTP Route Overhead</span>
+            <div class="text-2xl font-bold text-amber-400 mt-1">12.85 μs</div>
+            <div class="text-xs text-slate-500 mt-1">Full auth + params + handler dispatch</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Charts Grid -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        
+        <!-- Chart: Single Document Inserts -->
+        <div class="glass-panel p-5 rounded-2xl">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h3 class="font-bold text-white text-base">Single Document Insert Throughput</h3>
+              <p class="text-xs text-slate-400">Individual write transactions: event log + lens indexing (Higher is better)</p>
+            </div>
+            <span class="text-xs font-mono text-purple-400 bg-purple-500/10 px-2 py-1 rounded-md border border-purple-500/20">rocksdb-js: 3,598/s</span>
+          </div>
+          <div class="h-64">
+            <canvas id="chart-api-single-insert"></canvas>
+          </div>
+        </div>
+
+        <!-- Chart: Batch Insert Throughput -->
+        <div class="glass-panel p-5 rounded-2xl">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h3 class="font-bold text-white text-base">Batch Document Ingestion</h3>
+              <p class="text-xs text-slate-400">Documents written in 500-doc atomic batches (Higher is better)</p>
+            </div>
+            <span class="text-xs font-mono text-cyan-400 bg-cyan-500/10 px-2 py-1 rounded-md border border-cyan-500/20">113,420 docs/s</span>
+          </div>
+          <div class="h-64">
+            <canvas id="chart-api-batch-insert"></canvas>
+          </div>
+        </div>
+
+        <!-- Chart: Read & Paging Latency -->
+        <div class="glass-panel p-5 rounded-2xl">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h3 class="font-bold text-white text-base">Read & Cursor Paging Latency</h3>
+              <p class="text-xs text-slate-400">Point Read (μs) & 20 Pages of 50 Ordered by Price (ms) (Lower is better)</p>
+            </div>
+            <span class="text-xs font-mono text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded-md border border-emerald-500/20">Sub-20ms 20-page walk</span>
+          </div>
+          <div class="h-64">
+            <canvas id="chart-api-reads"></canvas>
+          </div>
+        </div>
+
+        <!-- Chart: Mutations -->
+        <div class="glass-panel p-5 rounded-2xl">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h3 class="font-bold text-white text-base">Updates & Deletions Throughput</h3>
+              <p class="text-xs text-slate-400">In-place document updates & deletions per second (Higher is better)</p>
+            </div>
+            <span class="text-xs font-mono text-cyan-400 bg-cyan-500/10 px-2 py-1 rounded-md border border-cyan-500/20">Up to 4,695 del/s</span>
+          </div>
+          <div class="h-64">
+            <canvas id="chart-api-mutations"></canvas>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Public API Table -->
+      <div class="glass-panel rounded-2xl p-6">
+        <h3 class="font-bold text-white text-lg mb-4">Zelavis Public API Full CRUD Breakdown</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs font-mono border-collapse">
+            <thead>
+              <tr class="border-b border-border text-slate-400">
+                <th class="py-3 px-4 font-semibold uppercase">Engine</th>
+                <th class="py-3 px-4 font-semibold uppercase">Single Insert</th>
+                <th class="py-3 px-4 font-semibold uppercase">Batch Write</th>
+                <th class="py-3 px-4 font-semibold uppercase">Point Read</th>
+                <th class="py-3 px-4 font-semibold uppercase">Cursor Paging</th>
+                <th class="py-3 px-4 font-semibold uppercase">Filtered Query</th>
+                <th class="py-3 px-4 font-semibold uppercase">Updates/sec</th>
+                <th class="py-3 px-4 font-semibold uppercase">Deletes/sec</th>
+                <th class="py-3 px-4 font-semibold uppercase">HTTP Dispatch</th>
+              </tr>
+            </thead>
+            <tbody id="api-table-body" class="divide-y divide-border/60">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- TAB: CROSS-DATABASE COMPARISON -->
+    <div id="tab-comparison" class="hidden space-y-8">
+      <div class="glass-panel p-6 rounded-2xl">
+        <div class="flex flex-col lg:flex-row lg:items-start justify-between gap-5">
+          <div class="max-w-3xl">
+            <div class="flex flex-wrap items-center gap-2 mb-2">
+              <span class="text-xs font-mono px-2 py-1 rounded-md border border-cyan-500/20 bg-cyan-500/10 text-cyan-300">ZELAVIS: LOCALLY MEASURED</span>
+              <span class="text-xs font-mono px-2 py-1 rounded-md border border-violet-500/20 bg-violet-500/10 text-violet-300">OTHERS: PUBLISHED REFERENCE</span>
+            </div>
+            <h3 class="font-bold text-white text-xl">Zelavis vs established databases</h3>
+            <p class="text-sm text-slate-400 mt-2 leading-relaxed">
+              Zelavis values below come from the real <code class="text-cyan-400">bench-api.mjs</code> run bundled with this dashboard. MongoDB, SurrealDB, MySQL, and Postgres values are public <code class="text-violet-300">crud-bench</code> results, run with the same harness and hardware as each other.
+            </p>
+          </div>
+          <label class="text-xs font-mono text-slate-400 shrink-0">
+            Zelavis storage engine
+            <select id="comparison-engine" onchange="renderComparisonDashboard()" class="block mt-1 w-full bg-slate-950 border border-border rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
+              <option value="node-sqlite">node-sqlite</option>
+              <option value="rocksdb-js">rocksdb-js</option>
+              <option value="rocksdb">rocksdb</option>
+              <option value="libsql">libsql</option>
+              <option value="lmdb">lmdb</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="mt-5 rounded-xl border border-amber-500/25 bg-amber-500/10 p-4 flex gap-3">
+          <span class="text-amber-300 font-bold" aria-hidden="true">!</span>
+          <p class="text-xs text-amber-100/80 leading-relaxed">
+            <strong class="text-amber-200">Not an apples-to-apples ranking.</strong> Zelavis is included directly in the chart and table, but its run uses 5,000 documents, an in-process API, and this machine; the published runs use 5 million records, 128 clients, 48 concurrent queries, durable networked databases, and a 32-core Threadripper host. Treat the ratios as directional only.
+          </p>
+        </div>
+      </div>
+
+      <section>
+        <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-3 mb-4">
+          <div>
+            <h3 class="font-bold text-white text-lg">Live Zelavis benchmark snapshot</h3>
+            <p id="comparison-zelavis-caption" class="text-xs text-slate-400 mt-1"></p>
+          </div>
+          <span class="text-xs font-mono text-emerald-300">Source: bench-api.mjs • full event log + lens projection</span>
+        </div>
+        <div id="comparison-zelavis-cards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"></div>
+      </section>
+
+      <section class="grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(340px,0.8fr)] gap-6">
+        <div class="glass-panel p-5 rounded-2xl">
+          <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-4">
+            <div>
+              <h3 class="font-bold text-white text-base">CRUD throughput comparison</h3>
+              <p class="text-xs text-slate-400">Selected Zelavis engine alongside public crud-bench references (higher is better)</p>
+            </div>
+            <span class="text-xs font-mono text-violet-300 whitespace-nowrap">Last published run: 28 May 2026</span>
+          </div>
+          <div class="h-80">
+            <canvas id="chart-public-comparison"></canvas>
+          </div>
+        </div>
+
+        <div class="glass-panel p-5 rounded-2xl">
+          <h3 class="font-bold text-white text-base">How to read this</h3>
+          <div class="mt-4 space-y-4 text-xs text-slate-400 leading-relaxed">
+            <div class="border-l-2 border-cyan-400 pl-3">
+              <strong class="text-white block mb-1">Zelavis panel</strong>
+              Measures the public Tenant Database API, including event serialization and indexes, using the selectable local storage engine.
+            </div>
+            <div class="border-l-2 border-violet-400 pl-3">
+              <strong class="text-white block mb-1">Published panel</strong>
+              Uses one public harness. MySQL and Postgres are from its relational category; MongoDB from its document category; SurrealDB is the common baseline.
+            </div>
+            <div class="border-l-2 border-amber-400 pl-3">
+              <strong class="text-white block mb-1">Direct comparison gate</strong>
+              A defensible winner/ratio requires adding Zelavis to crud-bench and running every database on the same host, dataset, concurrency, durability, and client path.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="glass-panel rounded-2xl p-6">
+        <div class="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-4">
+          <div>
+            <h3 class="font-bold text-white text-lg">Comparison measurements</h3>
+            <p class="text-xs text-slate-400 mt-1">Zelavis's live local result plus published single-record CRUD reference results.</p>
+          </div>
+          <div class="flex flex-wrap gap-2 text-xs font-mono">
+            <a href="https://surrealdb.com/surrealdb/benchmarks" target="_blank" rel="noreferrer" class="px-3 py-1.5 rounded-lg border border-violet-500/30 text-violet-300 hover:bg-violet-500/10 transition">Published results ↗</a>
+            <a href="https://github.com/surrealdb/crud-bench" target="_blank" rel="noreferrer" class="px-3 py-1.5 rounded-lg border border-border text-slate-300 hover:bg-slate-800 transition">Open-source harness ↗</a>
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs font-mono border-collapse">
+            <thead>
+              <tr class="border-b border-border text-slate-400">
+                <th class="py-3 px-4 font-semibold uppercase">Database</th>
+                <th class="py-3 px-4 font-semibold uppercase">Category</th>
+                <th class="py-3 px-4 font-semibold uppercase">Create</th>
+                <th class="py-3 px-4 font-semibold uppercase">Read</th>
+                <th class="py-3 px-4 font-semibold uppercase">Update</th>
+                <th class="py-3 px-4 font-semibold uppercase">Delete</th>
+              </tr>
+            </thead>
+            <tbody id="public-comparison-table-body" class="divide-y divide-border/60"></tbody>
+          </table>
+        </div>
+        <p class="text-[11px] text-slate-500 mt-4 leading-relaxed">
+          * Zelavis point-read throughput is derived from the measured average latency (<code>1,000,000 ÷ μs/read</code>). Published results are reproduced for transparency. The publisher reports bare-metal Ubuntu 24.04, AMD Ryzen Threadripper 9970X (32 cores / 64 threads), 128 GiB RAM, NVMe storage, 128 clients, 48 concurrent queries, cold caches between runs, and fully durable writes. Vendor-published benchmarks can contain implementation and configuration bias; reproduce them before making a production choice.
+        </p>
+      </div>
+    </div>
+
+    <!-- TAB 2: DEEP DIVES -->
+    <div id="tab-deepdive" class="hidden space-y-8">
+      
+      <!-- Section 1: Sealing Speedups -->
+      <div class="glass-panel p-6 rounded-2xl">
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+          <div>
+            <h3 class="font-bold text-white text-lg">Bitmap Postings Sealing Speedup (<code class="text-cyan-400">bench-seal.mjs</code>)</h3>
+            <p class="text-xs text-slate-400">Compacting raw postings keys into 65,536-identifier bitsets dramatically accelerates set intersections.</p>
+          </div>
+          <span class="text-xs font-mono px-3 py-1 bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 rounded-lg">200,000 Objects Tested</span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div class="bg-slate-900/60 p-4 rounded-xl border border-border">
+            <span class="text-xs text-slate-400 font-mono">Wide Term Scan</span>
+            <div class="text-2xl font-bold text-white mt-1">12.6×</div>
+            <div class="text-xs text-slate-500 mt-1">325ms live → 25ms sealed</div>
+          </div>
+          <div class="bg-slate-900/60 p-4 rounded-xl border border-border">
+            <span class="text-xs text-slate-400 font-mono">Wide Column Scan</span>
+            <div class="text-2xl font-bold text-white mt-1">14.2×</div>
+            <div class="text-xs text-slate-500 mt-1">84ms live → 5.9ms sealed</div>
+          </div>
+          <div class="bg-slate-900/60 p-4 rounded-xl border border-border">
+            <span class="text-xs text-slate-400 font-mono">Narrow ∩ Wide Join</span>
+            <div class="text-2xl font-bold text-cyan-400 mt-1">197.8×</div>
+            <div class="text-xs text-slate-500 mt-1">294ms live → 1.4ms sealed</div>
+          </div>
+          <div class="bg-slate-900/60 p-4 rounded-xl border border-border">
+            <span class="text-xs text-slate-400 font-mono">Incremental Re-seal</span>
+            <div class="text-2xl font-bold text-emerald-400 mt-1">0.20s</div>
+            <div class="text-xs text-slate-500 mt-1">Touches only 6 dirty segments</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 2: Joins & References -->
+      <div class="glass-panel p-6 rounded-2xl">
+        <h3 class="font-bold text-white text-lg mb-2">Relational Joins vs In-Memory (<code class="text-cyan-400">bench-related.mjs</code>)</h3>
+        <p class="text-xs text-slate-400 mb-6">Comparing native engine-level index intersection with manual in-memory filtering across 20,000 posts and 2,000 authors.</p>
+        
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div class="bg-slate-900/60 p-5 rounded-xl border border-border">
+            <div class="text-xs text-slate-400 uppercase font-mono">node-sqlite</div>
+            <div class="text-xl font-bold text-white mt-2">33.2 ms</div>
+            <div class="text-xs text-slate-400 mt-1">Related query (2,000 matched)</div>
+            <div class="mt-4 pt-3 border-t border-border/60 text-xs text-slate-500 flex justify-between">
+              <span>By-hand in-memory:</span>
+              <span class="text-red-400 font-bold">174.7 ms (5.2× slower)</span>
+            </div>
+          </div>
+
+          <div class="bg-slate-900/60 p-5 rounded-xl border border-border">
+            <div class="text-xs text-slate-400 uppercase font-mono">rocksdb-js</div>
+            <div class="text-xl font-bold text-white mt-2">27.8 ms</div>
+            <div class="text-xs text-slate-400 mt-1">Related query (2,000 matched)</div>
+            <div class="mt-4 pt-3 border-t border-border/60 text-xs text-slate-500 flex justify-between">
+              <span>By-hand in-memory:</span>
+              <span class="text-red-400 font-bold">143.1 ms (5.1× slower)</span>
+            </div>
+          </div>
+
+          <div class="bg-slate-900/60 p-5 rounded-xl border border-border">
+            <div class="text-xs text-slate-400 uppercase font-mono">libsql</div>
+            <div class="text-xl font-bold text-white mt-2">40.4 ms</div>
+            <div class="text-xs text-slate-400 mt-1">Related query (2,000 matched)</div>
+            <div class="mt-4 pt-3 border-t border-border/60 text-xs text-slate-500 flex justify-between">
+              <span>By-hand in-memory:</span>
+              <span class="text-red-400 font-bold">252.9 ms (6.2× slower)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 3: Time Series -->
+      <div class="glass-panel p-6 rounded-2xl">
+        <h3 class="font-bold text-white text-lg mb-2">Time-Series Windows & Ingest (<code class="text-cyan-400">bench-timeseries.mjs</code>)</h3>
+        <p class="text-xs text-slate-400 mb-6">Ingesting 20,000 continuous hourly metrics and querying arbitrary time ranges across tag dimensions.</p>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div class="bg-slate-900/60 p-4 rounded-xl border border-border">
+            <span class="text-xs font-mono text-slate-400">Ingestion Throughput (Points / sec)</span>
+            <div class="space-y-3 mt-3">
+              <div>
+                <div class="flex justify-between text-xs font-mono mb-1">
+                  <span>rocksdb-js</span>
+                  <span class="text-purple-400">3,038 pts/s</span>
+                </div>
+                <div class="w-full bg-slate-800 rounded-full h-2">
+                  <div class="bg-purple-500 h-2 rounded-full" style="width: 100%"></div>
+                </div>
+              </div>
+              <div>
+                <div class="flex justify-between text-xs font-mono mb-1">
+                  <span>node-sqlite</span>
+                  <span class="text-cyan-400">2,626 pts/s</span>
+                </div>
+                <div class="w-full bg-slate-800 rounded-full h-2">
+                  <div class="bg-cyan-500 h-2 rounded-full" style="width: 86%"></div>
+                </div>
+              </div>
+              <div>
+                <div class="flex justify-between text-xs font-mono mb-1">
+                  <span>libsql</span>
+                  <span class="text-amber-400">2,284 pts/s</span>
+                </div>
+                <div class="w-full bg-slate-800 rounded-full h-2">
+                  <div class="bg-amber-500 h-2 rounded-full" style="width: 75%"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-slate-900/60 p-4 rounded-xl border border-border">
+            <span class="text-xs font-mono text-slate-400">Range Query Latencies (Whole 20,000 pt series)</span>
+            <div class="space-y-3 mt-3">
+              <div>
+                <div class="flex justify-between text-xs font-mono mb-1">
+                  <span>rocksdb-js</span>
+                  <span class="text-purple-400">96.6 ms</span>
+                </div>
+                <div class="w-full bg-slate-800 rounded-full h-2">
+                  <div class="bg-purple-500 h-2 rounded-full" style="width: 55%"></div>
+                </div>
+              </div>
+              <div>
+                <div class="flex justify-between text-xs font-mono mb-1">
+                  <span>node-sqlite</span>
+                  <span class="text-cyan-400">124.4 ms</span>
+                </div>
+                <div class="w-full bg-slate-800 rounded-full h-2">
+                  <div class="bg-cyan-500 h-2 rounded-full" style="width: 70%"></div>
+                </div>
+              </div>
+              <div>
+                <div class="flex justify-between text-xs font-mono mb-1">
+                  <span>libsql</span>
+                  <span class="text-amber-400">175.7 ms</span>
+                </div>
+                <div class="w-full bg-slate-800 rounded-full h-2">
+                  <div class="bg-amber-500 h-2 rounded-full" style="width: 100%"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- TAB 3: ARCHITECTURAL GUIDE -->
+    <div id="tab-architecture" class="hidden space-y-6">
+      <div class="glass-panel p-6 rounded-2xl">
+        <h3 class="font-bold text-white text-xl mb-3">Architectural Decision Matrix</h3>
+        <p class="text-slate-300 text-sm leading-relaxed mb-6">
+          Zelavis intentionally does not force a single database engine onto every deployment. Storage is an ordered key-value abstraction (<code class="text-cyan-400">KvEngine</code>) that routes tenant data through a partition map into virtual shard ranges. Here is when and why to select each engine:
+        </p>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          
+          <!-- SQLite -->
+          <div class="p-5 rounded-xl border border-cyan-500/30 bg-cyan-950/10">
+            <div class="flex items-center justify-between mb-2">
+              <span class="font-bold text-cyan-400 text-base">node-sqlite (Default Engine)</span>
+              <span class="text-xs font-mono bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded">Built into Node</span>
+            </div>
+            <p class="text-xs text-slate-300 leading-relaxed mb-4">
+              Requires no external compiler, C++ toolchains, or native downloads. Highly optimized WAL mode delivers ~5,600 unbatched writes/second. Ideal for standard web applications, edge nodes, and local development.
+            </p>
+            <ul class="text-xs font-mono space-y-1.5 text-slate-400">
+              <li>✔ Zero dependencies & bulletproof portability</li>
+              <li>✔ Physically sharded out of the box with Fabric</li>
+              <li>✔ Completely bounded in-process buffer pool</li>
+              <li>✖ Slower than RocksDB when data vastly exceeds RAM</li>
+            </ul>
+          </div>
+
+          <!-- RocksDB -->
+          <div class="p-5 rounded-xl border border-purple-500/30 bg-purple-950/10">
+            <div class="flex items-center justify-between mb-2">
+              <span class="font-bold text-purple-400 text-base">rocksdb-js (High-Scale Production)</span>
+              <span class="text-xs font-mono bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded">Massive Datasets</span>
+            </div>
+            <p class="text-xs text-slate-300 leading-relaxed mb-4">
+              LSM-tree engine designed by Meta for datasets 10× larger than RAM. Block compression shrinks disk footprint by up to 7.7×, making network replication and shard transfers significantly faster.
+            </p>
+            <ul class="text-xs font-mono space-y-1.5 text-slate-400">
+              <li>✔ 4.5× to 7.7× smaller disk footprint</li>
+              <li>✔ Immune to cold-cache SSD page-fault cliffs</li>
+              <li>✔ Sequential append-friendly storage wear</li>
+              <li>✖ Needs prebuilt binary module (@harperfast/rocksdb-js)</li>
+            </ul>
+          </div>
+
+          <!-- LMDB -->
+          <div class="p-5 rounded-xl border border-emerald-500/30 bg-emerald-950/10">
+            <div class="flex items-center justify-between mb-2">
+              <span class="font-bold text-emerald-400 text-base">LMDB (In-Memory Microsecond Cache)</span>
+              <span class="text-xs font-mono bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded">Zero-Copy Reads</span>
+            </div>
+            <p class="text-xs text-slate-300 leading-relaxed mb-4">
+              Memory-mapped B+tree delivering sub-microsecond point reads and scans. Shared across multiple Node.js worker processes on a host without IPC overhead.
+            </p>
+            <ul class="text-xs font-mono space-y-1.5 text-slate-400">
+              <li>✔ Blazing-fast in-memory read throughput (22k+ obj/s)</li>
+              <li>✔ Instant cache warmth across host restarts</li>
+              <li>✖ High disk footprint & slow unbatched writes (200 tx/s)</li>
+              <li>✖ Can trigger container cgroup OOM when cold</li>
+            </ul>
+          </div>
+
+          <!-- libSQL -->
+          <div class="p-5 rounded-xl border border-amber-500/30 bg-amber-950/10">
+            <div class="flex items-center justify-between mb-2">
+              <span class="font-bold text-amber-400 text-base">libSQL (Turso Cloud Bridge)</span>
+              <span class="text-xs font-mono bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded">Cloud Primary Sync</span>
+            </div>
+            <p class="text-xs text-slate-300 leading-relaxed mb-4">
+              SQLite fork built for edge-to-cloud synchronization. Used in Zelavis for connecting to remote Turso database clusters and replicating primary data to edge nodes.
+            </p>
+            <ul class="text-xs font-mono space-y-1.5 text-slate-400">
+              <li>✔ Native compatibility with Turso cloud infrastructure</li>
+              <li>✔ Remote primary sync protocol support</li>
+              <li>✖ Highest disk file size among all local engines</li>
+              <li>✖ Slower than local node-sqlite for pure standalone storage</li>
+            </ul>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 4: CUSTOM JSON UPLOADER -->
+    <div id="tab-custom" class="hidden space-y-6">
+      <div class="glass-panel p-6 rounded-2xl">
+        <h3 class="font-bold text-white text-lg mb-2">Import Custom Benchmark JSON</h3>
+        <p class="text-xs text-slate-400 mb-4">
+          Drop output from <code class="text-cyan-400">node scripts/bench-engines.mjs</code> here or paste raw JSON to visualize your own machine's performance.
+        </p>
+
+        <!-- Drag & Drop Zone -->
+        <div id="drop-zone" class="border-2 border-dashed border-border rounded-xl p-8 text-center hover:border-cyan-500/50 transition cursor-pointer bg-slate-900/40">
+          <svg class="w-10 h-10 mx-auto text-slate-500 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+          </svg>
+          <div class="text-sm font-semibold text-white">Click or drag & drop benchmark JSON file</div>
+          <div class="text-xs text-slate-500 mt-1">Accepts standard bench-engines JSON format</div>
+          <input type="file" id="file-input" class="hidden" accept=".json" />
+        </div>
+
+        <!-- Raw Textarea Paste -->
+        <div class="mt-4">
+          <label class="block text-xs font-mono text-slate-400 mb-1">Or paste JSON directly:</label>
+          <textarea id="json-paste" rows="6" class="w-full bg-slate-950 border border-border rounded-xl p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500" placeholder='{"objects": 25000, "results": [...]}'></textarea>
+          <div class="mt-3 flex justify-end">
+            <button onclick="loadPastedJson()" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded-lg transition shadow-md shadow-cyan-600/20">
+              Apply & Render Benchmark
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-border/80 py-6 text-center text-xs text-slate-500 font-mono">
+    Zelavis Core Platform • Benchmark Visualization Dashboard
+  </footer>
+
+  <!-- Dashboard JavaScript Logic -->
+  <script>
+    // Canonical real benchmark data measured from packages/zelavis/scripts/bench-engines.mjs
+    const DEFAULT_BENCHMARK = {
+      objects: 25000,
+      results: [
+        {
+          engine: "node-sqlite",
+          ingestMs: 1399,
+          ingestPerSec: 17870,
+          postingScanMs: 8.62,
+          postingRows: 4214,
+          crossModelMs: 29.33,
+          crossRows: 252,
+          orderedPageMs: 0.10,
+          orderedRows: 0,
+          pointReadMs: 3.98,
+          identityLookupMs: 5.11,
+          measureMs: 44.59,
+          diskKb: 30432
+        },
+        {
+          engine: "libsql",
+          ingestMs: 2233,
+          ingestPerSec: 11196,
+          postingScanMs: 7.26,
+          postingRows: 4214,
+          crossModelMs: 24.76,
+          crossRows: 252,
+          orderedPageMs: 0.11,
+          orderedRows: 0,
+          pointReadMs: 7.15,
+          identityLookupMs: 7.81,
+          measureMs: 37.21,
+          diskKb: 73644
+        },
+        {
+          engine: "rocksdb-js",
+          ingestMs: 1769,
+          ingestPerSec: 14132,
+          postingScanMs: 7.02,
+          postingRows: 4214,
+          crossModelMs: 23.06,
+          crossRows: 252,
+          orderedPageMs: 0.11,
+          orderedRows: 0,
+          pointReadMs: 2.97,
+          identityLookupMs: 4.14,
+          measureMs: 39.05,
+          diskKb: 6672
+        },
+        {
+          engine: "lmdb",
+          ingestMs: 1106,
+          ingestPerSec: 22604,
+          postingScanMs: 2.67,
+          postingRows: 4214,
+          crossModelMs: 7.88,
+          crossRows: 252,
+          orderedPageMs: 0.07,
+          orderedRows: 0,
+          pointReadMs: 1.33,
+          identityLookupMs: 2.35,
+          measureMs: 15.96,
+          diskKb: 51676
+        }
+      ]
+    };
+
+    // Canonical real benchmark data measured from packages/zelavis/scripts/bench-api.mjs
+    const API_BENCHMARK = {
+      documents: 5000,
+      measuredAt: '2026-09-26',
+      results: [
+        {
+          engine: "node-sqlite",
+          singleInsertPerSec: 2631,
+          singleInsertAvgMs: 0.380,
+          batchInsertPerSec: 85729,
+          findByIdAvgUs: 11.07,
+          findPage20PagesMs: 11.42,
+          findManyCategoryMs: 6.63,
+          updatePerSec: 2672,
+          deletePerSec: 3607,
+          createIndexMs: 569.77,
+          httpRouteAvgUs: 12.85
+        },
+        {
+          engine: "libsql",
+          singleInsertPerSec: 2023,
+          singleInsertAvgMs: 0.494,
+          batchInsertPerSec: 70235,
+          findByIdAvgUs: 17.40,
+          findPage20PagesMs: 15.09,
+          findManyCategoryMs: 9.49,
+          updatePerSec: 2168,
+          deletePerSec: 2670,
+          createIndexMs: 794.11,
+          httpRouteAvgUs: 14.56
+        },
+        {
+          engine: "rocksdb-js",
+          singleInsertPerSec: 3598,
+          singleInsertAvgMs: 0.278,
+          batchInsertPerSec: 113420,
+          findByIdAvgUs: 10.57,
+          findPage20PagesMs: 9.95,
+          findManyCategoryMs: 5.19,
+          updatePerSec: 4186,
+          deletePerSec: 4695,
+          createIndexMs: 608.82,
+          httpRouteAvgUs: 20.03
+        },
+        {
+          engine: "rocksdb",
+          singleInsertPerSec: 2059,
+          singleInsertAvgMs: 0.486,
+          batchInsertPerSec: 48219,
+          findByIdAvgUs: 28.98,
+          findPage20PagesMs: 40.74,
+          findManyCategoryMs: 14.73,
+          updatePerSec: 2204,
+          deletePerSec: 2834,
+          createIndexMs: 807.73,
+          httpRouteAvgUs: 36.65
+        },
+        {
+          engine: "lmdb",
+          singleInsertPerSec: 104,
+          singleInsertAvgMs: 9.572,
+          batchInsertPerSec: 36320,
+          findByIdAvgUs: 8.10,
+          findPage20PagesMs: 6.73,
+          findManyCategoryMs: 4.48,
+          updatePerSec: 181,
+          deletePerSec: 190,
+          createIndexMs: 580.69,
+          httpRouteAvgUs: 15.72
+        }
+      ]
+    };
+
+    // Public reference data published by the SurrealDB crud-bench project.
+    // These databases share a harness and host with each other, but not with
+    // the local Zelavis API benchmark above, so the UI intentionally separates them.
+    const PUBLIC_DATABASE_BENCHMARK = {
+      source: 'https://surrealdb.com/surrealdb/benchmarks',
+      sourceRunDate: '2026-05-28',
+      results: [
+        { database: 'MongoDB', category: 'Document', create: 183395, read: 200643, update: 160987, delete: 200055 },
+        { database: 'SurrealDB', category: 'Multi-model', create: 122912, read: 254598, update: 106606, delete: 156598 },
+        { database: 'MySQL', category: 'Relational', create: 22537, read: 195638, update: 22613, delete: 22019 },
+        { database: 'Postgres', category: 'Relational', create: 83132, read: 327646, update: 81034, delete: 86479 }
+      ]
+    };
+
+    let currentBenchmark = JSON.parse(JSON.stringify(DEFAULT_BENCHMARK));
+    let charts = {};
+
+    const ENGINE_COLORS = {
+      'node-sqlite': '#06b6d4',
+      'lmdb': '#10b981',
+      'rocksdb-js': '#a855f7',
+      'rocksdb': '#9333ea',
+      'libsql': '#f59e0b',
+    };
+
+    const DATABASE_COLORS = {
+      MongoDB: '#22c55e',
+      SurrealDB: '#ff00a8',
+      MySQL: '#3b82f6',
+      Postgres: '#6366f1'
+    };
+
+    function switchTab(tabId) {
+      document.querySelectorAll('[id^="tab-"]').forEach(el => {
+        if (el.id.startsWith('tab-btn-')) {
+          el.className = el.className.replace('text-white bg-slate-800 shadow-sm', 'text-slate-400 hover:text-white');
+        } else {
+          el.classList.add('hidden');
+        }
+      });
+      document.getElementById(`tab-${tabId}`).classList.remove('hidden');
+      document.getElementById(`tab-btn-${tabId}`).className = "tab-btn px-3.5 py-1.5 rounded-lg text-xs font-semibold transition text-white bg-slate-800 shadow-sm";
+      if (tabId === 'api') {
+        setTimeout(renderApiDashboard, 50);
+      }
+      if (tabId === 'comparison') {
+        setTimeout(renderComparisonDashboard, 50);
+      }
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('shootout-table-body');
+      tbody.innerHTML = '';
+      currentBenchmark.results.forEach(res => {
+        const tr = document.createElement('tr');
+        tr.className = 'hover:bg-slate-800/40 transition';
+        const color = ENGINE_COLORS[res.engine] || '#94a3b8';
+        tr.innerHTML = `
+          <td class="py-3 px-4 font-bold flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full" style="background-color: ${color}"></span>
+            <span class="text-white">${res.engine}</span>
+          </td>
+          <td class="py-3 px-4 text-emerald-400 font-semibold">${res.ingestPerSec.toLocaleString()} obj/s</td>
+          <td class="py-3 px-4">${res.postingScanMs.toFixed(2)} ms</td>
+          <td class="py-3 px-4">${res.crossModelMs.toFixed(2)} ms</td>
+          <td class="py-3 px-4">${res.pointReadMs.toFixed(2)} ms</td>
+          <td class="py-3 px-4">${res.identityLookupMs.toFixed(2)} ms</td>
+          <td class="py-3 px-4">${res.measureMs.toFixed(2)} ms</td>
+          <td class="py-3 px-4 text-purple-300 font-semibold">${(res.diskKb / 1024).toFixed(1)} MB</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderCharts() {
+      const labels = currentBenchmark.results.map(r => r.engine);
+      const bgColors = labels.map(e => ENGINE_COLORS[e] || '#94a3b8');
+
+      // 1. Ingest Chart
+      if (charts.ingest) charts.ingest.destroy();
+      charts.ingest = new Chart(document.getElementById('chart-ingest'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Ingest (obj/s)',
+            data: currentBenchmark.results.map(r => r.ingestPerSec),
+            backgroundColor: bgColors,
+            borderRadius: 6
+          }]
+        },
+        options: chartOptions('Objects / sec', false)
+      });
+
+      // 2. Query Latency Chart
+      if (charts.queries) charts.queries.destroy();
+      charts.queries = new Chart(document.getElementById('chart-queries'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: 'Posting Scan (ms)',
+              data: currentBenchmark.results.map(r => r.postingScanMs),
+              backgroundColor: '#38bdf8',
+              borderRadius: 6
+            },
+            {
+              label: 'Cross-Model (ms)',
+              data: currentBenchmark.results.map(r => r.crossModelMs),
+              backgroundColor: '#818cf8',
+              borderRadius: 6
+            }
+          ]
+        },
+        options: chartOptions('Latency (ms)', false)
+      });
+
+      // 3. Point Reads Chart
+      if (charts.lookups) charts.lookups.destroy();
+      charts.lookups = new Chart(document.getElementById('chart-lookups'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: '1k Point Reads (ms)',
+              data: currentBenchmark.results.map(r => r.pointReadMs),
+              backgroundColor: '#34d399',
+              borderRadius: 6
+            },
+            {
+              label: '1k Key Lookups (ms)',
+              data: currentBenchmark.results.map(r => r.identityLookupMs),
+              backgroundColor: '#c084fc',
+              borderRadius: 6
+            }
+          ]
+        },
+        options: chartOptions('Total Time (ms)', false)
+      });
+
+      // 4. Storage Footprint Chart
+      if (charts.storage) charts.storage.destroy();
+      charts.storage = new Chart(document.getElementById('chart-storage'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Disk Usage (MB)',
+            data: currentBenchmark.results.map(r => +(r.diskKb / 1024).toFixed(1)),
+            backgroundColor: bgColors,
+            borderRadius: 6
+          }]
+        },
+        options: chartOptions('Megabytes (MB)', false)
+      });
+    }
+
+    function renderApiDashboard() {
+      const tbody = document.getElementById('api-table-body');
+      if (!tbody) return;
+      tbody.innerHTML = '';
+      API_BENCHMARK.results.forEach(res => {
+        const tr = document.createElement('tr');
+        tr.className = 'hover:bg-slate-800/40 transition';
+        const color = ENGINE_COLORS[res.engine] || '#94a3b8';
+        tr.innerHTML = `
+          <td class="py-3 px-4 font-bold flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full" style="background-color: ${color}"></span>
+            <span class="text-white">${res.engine}</span>
+          </td>
+          <td class="py-3 px-4 text-purple-400 font-semibold">${res.singleInsertPerSec.toLocaleString()} docs/s <span class="text-slate-500 font-normal">(${res.singleInsertAvgMs}ms)</span></td>
+          <td class="py-3 px-4 text-emerald-400 font-semibold">${res.batchInsertPerSec.toLocaleString()} docs/s</td>
+          <td class="py-3 px-4 text-cyan-300 font-semibold">${res.findByIdAvgUs.toFixed(2)} μs</td>
+          <td class="py-3 px-4">${res.findPage20PagesMs.toFixed(2)} ms</td>
+          <td class="py-3 px-4">${res.findManyCategoryMs.toFixed(2)} ms</td>
+          <td class="py-3 px-4">${res.updatePerSec.toLocaleString()} /s</td>
+          <td class="py-3 px-4">${res.deletePerSec.toLocaleString()} /s</td>
+          <td class="py-3 px-4 text-amber-300">${res.httpRouteAvgUs.toFixed(2)} μs</td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      const labels = API_BENCHMARK.results.map(r => r.engine);
+      const bgColors = labels.map(e => ENGINE_COLORS[e] || '#94a3b8');
+
+      // 1. Single Insert Throughput
+      if (charts.apiSingle) charts.apiSingle.destroy();
+      charts.apiSingle = new Chart(document.getElementById('chart-api-single-insert'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Single Inserts (docs/s)',
+            data: API_BENCHMARK.results.map(r => r.singleInsertPerSec),
+            backgroundColor: bgColors,
+            borderRadius: 6
+          }]
+        },
+        options: chartOptions('Documents / sec', false)
+      });
+
+      // 2. Batch Insert Throughput
+      if (charts.apiBatch) charts.apiBatch.destroy();
+      charts.apiBatch = new Chart(document.getElementById('chart-api-batch-insert'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Batch Ingestion (docs/s)',
+            data: API_BENCHMARK.results.map(r => r.batchInsertPerSec),
+            backgroundColor: bgColors,
+            borderRadius: 6
+          }]
+        },
+        options: chartOptions('Documents / sec', false)
+      });
+
+      // 3. Reads & Paging
+      if (charts.apiReads) charts.apiReads.destroy();
+      charts.apiReads = new Chart(document.getElementById('chart-api-reads'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: 'Point Read (μs)',
+              data: API_BENCHMARK.results.map(r => r.findByIdAvgUs),
+              backgroundColor: '#34d399',
+              borderRadius: 6
+            },
+            {
+              label: 'Cursor 20 Pages (ms)',
+              data: API_BENCHMARK.results.map(r => r.findPage20PagesMs),
+              backgroundColor: '#38bdf8',
+              borderRadius: 6
+            }
+          ]
+        },
+        options: chartOptions('Time (μs / ms)', false)
+      });
+
+      // 4. Mutations (Updates vs Deletes)
+      if (charts.apiMutations) charts.apiMutations.destroy();
+      charts.apiMutations = new Chart(document.getElementById('chart-api-mutations'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: 'Updates (docs/s)',
+              data: API_BENCHMARK.results.map(r => r.updatePerSec),
+              backgroundColor: '#a855f7',
+              borderRadius: 6
+            },
+            {
+              label: 'Deletions (docs/s)',
+              data: API_BENCHMARK.results.map(r => r.deletePerSec),
+              backgroundColor: '#f43f5e',
+              borderRadius: 6
+            }
+          ]
+        },
+        options: chartOptions('Operations / sec', false)
+      });
+    }
+
+    function renderComparisonDashboard() {
+      const engineSelect = document.getElementById('comparison-engine');
+      const engine = engineSelect ? engineSelect.value : 'node-sqlite';
+      const local = API_BENCHMARK.results.find(result => result.engine === engine) || API_BENCHMARK.results[0];
+      const cards = document.getElementById('comparison-zelavis-cards');
+      const caption = document.getElementById('comparison-zelavis-caption');
+      const tableBody = document.getElementById('public-comparison-table-body');
+      if (!cards || !caption || !tableBody) return;
+
+      caption.textContent = `${API_BENCHMARK.documents.toLocaleString()} documents through the public API using ${local.engine}, measured on ${API_BENCHMARK.measuredAt}. These values change when the bundled benchmark snapshot is updated.`;
+      const localMetrics = [
+        { label: 'Single create', value: `${local.singleInsertPerSec.toLocaleString()} docs/s`, detail: `${local.singleInsertAvgMs.toFixed(3)} ms average`, color: 'text-purple-400' },
+        { label: 'Point read', value: `${local.findByIdAvgUs.toFixed(2)} μs`, detail: 'findById + JSON decode', color: 'text-emerald-400' },
+        { label: 'Update', value: `${local.updatePerSec.toLocaleString()} docs/s`, detail: 'event + projections updated', color: 'text-cyan-400' },
+        { label: 'Delete', value: `${local.deletePerSec.toLocaleString()} docs/s`, detail: 'indexed document removal', color: 'text-rose-400' }
+      ];
+      cards.innerHTML = localMetrics.map(metric => `
+        <div class="glass-panel p-4 rounded-2xl metric-glow">
+          <span class="text-xs text-slate-400 font-mono">${metric.label}</span>
+          <div class="text-2xl font-bold ${metric.color} mt-1">${metric.value}</div>
+          <div class="text-xs text-slate-500 mt-1">${metric.detail}</div>
+        </div>
+      `).join('');
+
+      const comparisonResults = [
+        {
+          database: `Zelavis (${local.engine})`,
+          category: 'Local API run *',
+          create: local.singleInsertPerSec,
+          read: Math.round(1000000 / local.findByIdAvgUs),
+          update: local.updatePerSec,
+          delete: local.deletePerSec,
+          isZelavis: true
+        },
+        ...PUBLIC_DATABASE_BENCHMARK.results
+      ];
+
+      tableBody.innerHTML = comparisonResults.map(result => `
+        <tr class="hover:bg-slate-800/40 transition ${result.isZelavis ? 'bg-cyan-500/5' : ''}">
+          <td class="py-3 px-4 font-bold">
+            <span class="inline-block w-2.5 h-2.5 rounded-full mr-2" style="background-color: ${result.isZelavis ? '#06b6d4' : DATABASE_COLORS[result.database]}"></span>
+            <span class="text-white">${result.database}</span>
+            ${result.isZelavis ? '<span class="ml-2 text-[10px] text-cyan-300 border border-cyan-500/30 rounded px-1.5 py-0.5">LIVE LOCAL</span>' : ''}
+          </td>
+          <td class="py-3 px-4 text-slate-400">${result.category}</td>
+          <td class="py-3 px-4">${result.create.toLocaleString()} ops/s</td>
+          <td class="py-3 px-4 text-emerald-300">${result.read.toLocaleString()} ops/s</td>
+          <td class="py-3 px-4">${result.update.toLocaleString()} ops/s</td>
+          <td class="py-3 px-4">${result.delete.toLocaleString()} ops/s</td>
+        </tr>
+      `).join('');
+
+      const canvas = document.getElementById('chart-public-comparison');
+      if (!canvas) return;
+      if (charts.publicComparison) charts.publicComparison.destroy();
+      charts.publicComparison = new Chart(canvas, {
+        type: 'bar',
+        data: {
+          labels: comparisonResults.map(result => result.database),
+          datasets: [
+            { label: 'Create', data: comparisonResults.map(result => result.create), backgroundColor: '#a855f7', borderColor: comparisonResults.map(result => result.isZelavis ? '#f8fafc' : 'transparent'), borderWidth: comparisonResults.map(result => result.isZelavis ? 2 : 0), borderRadius: 4 },
+            { label: 'Read', data: comparisonResults.map(result => result.read), backgroundColor: '#10b981', borderColor: comparisonResults.map(result => result.isZelavis ? '#f8fafc' : 'transparent'), borderWidth: comparisonResults.map(result => result.isZelavis ? 2 : 0), borderRadius: 4 },
+            { label: 'Update', data: comparisonResults.map(result => result.update), backgroundColor: '#06b6d4', borderColor: comparisonResults.map(result => result.isZelavis ? '#f8fafc' : 'transparent'), borderWidth: comparisonResults.map(result => result.isZelavis ? 2 : 0), borderRadius: 4 },
+            { label: 'Delete', data: comparisonResults.map(result => result.delete), backgroundColor: '#f43f5e', borderColor: comparisonResults.map(result => result.isZelavis ? '#f8fafc' : 'transparent'), borderWidth: comparisonResults.map(result => result.isZelavis ? 2 : 0), borderRadius: 4 }
+          ]
+        },
+        options: {
+          ...chartOptions('Operations / sec', false),
+          plugins: {
+            ...chartOptions('Operations / sec', false).plugins,
+            legend: {
+              display: true,
+              labels: { color: '#94a3b8', usePointStyle: true, pointStyle: 'circle', font: { family: 'JetBrains Mono', size: 10 } }
+            }
+          }
+        }
+      });
+    }
+
+    function chartOptions(yTitle, isLog = false) {
+      return {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: false,
+            labels: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 11 } }
+          },
+          tooltip: {
+            backgroundColor: '#0f172a',
+            titleColor: '#f8fafc',
+            bodyColor: '#94a3b8',
+            borderColor: '#334155',
+            borderWidth: 1,
+            padding: 10,
+            displayColors: false,
+            bodyFont: { family: 'JetBrains Mono' }
+          }
+        },
+        scales: {
+          x: {
+            grid: { display: false },
+            ticks: { color: '#94a3b8', font: { family: 'JetBrains Mono', size: 11 } }
+          },
+          y: {
+            type: isLog ? 'logarithmic' : 'linear',
+            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+            ticks: { color: '#64748b', font: { family: 'JetBrains Mono', size: 10 } },
+            title: { display: true, text: yTitle, color: '#64748b', font: { size: 10 } }
+          }
+        }
+      };
+    }
+
+    function loadPastedJson() {
+      const text = document.getElementById('json-paste').value.trim();
+      if (!text) return;
+      try {
+        const parsed = JSON.parse(text);
+        if (!parsed.results || !Array.isArray(parsed.results)) {
+          alert('Invalid format: JSON must contain a "results" array.');
+          return;
+        }
+        currentBenchmark = parsed;
+        renderTable();
+        renderCharts();
+        switchTab('shootout');
+      } catch (err) {
+        alert('JSON Syntax Error: ' + err.message);
+      }
+    }
+
+    function resetToDefaults() {
+      currentBenchmark = JSON.parse(JSON.stringify(DEFAULT_BENCHMARK));
+      renderTable();
+      renderCharts();
+      switchTab('shootout');
+    }
+
+    // Drag and drop setup
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('file-input');
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('border-cyan-500'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('border-cyan-500'));
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('border-cyan-500');
+      if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files.length) handleFile(e.target.files[0]);
+    });
+
+    function handleFile(file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const parsed = JSON.parse(e.target.result);
+          if (parsed.results) {
+            currentBenchmark = parsed;
+            renderTable();
+            renderCharts();
+            switchTab('shootout');
+          } else {
+            alert('JSON must include a "results" array.');
+          }
+        } catch (err) {
+          alert('Failed to parse file: ' + err.message);
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    // Initial render
+    window.addEventListener('DOMContentLoaded', () => {
+      renderTable();
+      renderCharts();
+      renderApiDashboard();
+      renderComparisonDashboard();
+    });
+  </script>
+</body>
+</html>

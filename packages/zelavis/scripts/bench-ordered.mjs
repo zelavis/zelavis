@@ -6,13 +6,12 @@
 // posting. Reads are measured twice: with every posting live, and after
 // `sealPostings` has folded them into segment blobs, which is the state a
 // maintained store is in — and the one a merged lens had to keep fast.
-import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { Effect } from "effect";
 import { asSeq, documentsFor } from "../dist/db/index.js";
-import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
+import { runEngines } from "./bench-engine.mjs";
 
 const N = Number(process.env.N ?? 20000);
 const FIELDS = 5;
@@ -31,19 +30,13 @@ const median = async (runs, fn) => {
   return times.sort((a, b) => a - b)[Math.floor(runs / 2)];
 };
 
-const withStore = async (body) => {
-  const dir = mkdtempSync(join(tmpdir(), "zv-bench-ordered-"));
-  try {
-    return await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      return yield* body(yield* makeNodeSqliteStore("bench", dir), dir);
-    })));
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-};
+const withStore = (open, dir, body) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+  return yield* body(yield* open(), dir);
+})));
 
 // ---------------------------------------------------------------- write cost
-const written = await withStore((store, dir) => Effect.gen(function* () {
+await runEngines("zv-bench-ordered", async ({ name, dir, open }) => {
+const written = await withStore(open, dir, (store, dir) => Effect.gen(function* () {
   const started = performance.now();
   for (let seq = 1; seq <= N; seq++) {
     const values = Array.from({ length: FIELDS }, (_, f) => (seq * (f + 7919)) % 100000);
@@ -57,11 +50,11 @@ const written = await withStore((store, dir) => Effect.gen(function* () {
   const ms = performance.now() - started;
   return { perSec: Math.round(N / (ms / 1000)), bytesPerObject: Math.round(sizeOf(dir) / N) };
 }));
-console.log(`\nWrite cost, ${N} objects x ${FIELDS} scalar fields, one transaction each (node:sqlite)`);
+console.log(`\n[${name}] Write cost, ${N} objects x ${FIELDS} scalar fields, one transaction each`);
 console.log(`  one scalar lens          ${String(written.perSec).padStart(7)} objects/s  ${String(written.bytesPerObject).padStart(5)} B/object`);
 
 // ------------------------------------------------------------------- reads
-await withStore((store) => Effect.gen(function* () {
+await withStore(open, dir, (store) => Effect.gen(function* () {
   const docs = documentsFor(store, "t1");
   yield* docs.createCollection({ name: "items" });
   for (let i = 0; i < N; i++) {
@@ -116,7 +109,7 @@ await withStore((store) => Effect.gen(function* () {
   yield* store.sealPostings;
   const sealed = [];
   for (const [, fn] of rows) sealed.push(yield* Effect.promise(() => median(5, fn)));
-  console.log(`\nReads over ${N} documents (node:sqlite, median of 5, warm)`);
+  console.log(`\n[${name}] Reads over ${N} documents (median of 5, warm)`);
   console.log(`  ${"".padEnd(52)} ${"live".padStart(9)} ${"sealed".padStart(9)}`);
   rows.forEach(([label], i) => {
     console.log(`  ${label.padEnd(52)} ${live[i].toFixed(1).padStart(7)}ms ${sealed[i].toFixed(1).padStart(7)}ms`);
@@ -124,3 +117,4 @@ await withStore((store) => Effect.gen(function* () {
   console.log(`\n  category = 3, first 50 by price desc, before its index: ${seekByLens.toFixed(1)}ms (price's lens, filtered)`);
   console.log(`  building both indexes over ${N} documents: ${(buildMs / 1000).toFixed(1)}s`);
 }));
+});
