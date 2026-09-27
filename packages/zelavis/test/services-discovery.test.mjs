@@ -5,12 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   discoverProductServices,
-  PRODUCT_SERVICES_DIRECTORY,
+  SERVICES_DIRECTORY,
 } from "../dist/adapters/_local-runtime.js";
 
 async function folder() {
-  const root = await mkdtemp(join(tmpdir(), "zelavis-product-services-"));
-  const directory = join(root, PRODUCT_SERVICES_DIRECTORY);
+  const root = await mkdtemp(join(tmpdir(), "zelavis-services-"));
+  const directory = join(root, SERVICES_DIRECTORY);
   await mkdir(directory, { recursive: true });
   test.after(() => rm(root, { recursive: true, force: true }));
   return directory;
@@ -45,7 +45,7 @@ const VALID = {
 
 test("a missing folder is the normal empty case, not a failure", async () => {
   const { discovered, skipped } = await discover(
-    join(tmpdir(), "zelavis-product-services-does-not-exist"),
+    join(tmpdir(), "zelavis-services-does-not-exist"),
   );
   assert.deepEqual(discovered, []);
   assert.deepEqual(skipped, []);

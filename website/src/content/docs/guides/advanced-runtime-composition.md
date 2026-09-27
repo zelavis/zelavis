@@ -94,7 +94,7 @@ code-level switch expressed the same state and could contradict the first.
 What that flag actually carried was the kind of runtime, which `role`
 (`"platform"` or `"project"`) now states directly.
 
-Services come from the product-services folder and the registry endpoints, and
+Services come from the services folder and the registry endpoints, and
 only from there. Platform state belongs in the System Store; app-facing
 capabilities belong to Project runtimes created from recipes.
 

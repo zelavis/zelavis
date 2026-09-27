@@ -42,7 +42,7 @@ test("the root path explains that no frontend is installed", async () => {
   assert.equal(root.status, 200);
   assert.match(root.body, /No frontend installed/);
   assert.match(root.body, /marketplace/i);
-  assert.match(root.body, /product-services/);
+  assert.match(root.body, /services/);
 });
 
 test("the missing-frontend page never answers for the API", async () => {

@@ -14,7 +14,7 @@ import type {
  *
  * This used to be two nearly identical plugins — one keyed on an email
  * address, one on a username — that the distribution copied into the
- * product-services folder on first boot. That seeding existed because a
+ * services folder on first boot. That seeding existed because a
  * Platform with no credential provider can never create its first owner, which
  * made the plugin mandatory in everything but name. Something an installation
  * cannot function without is not an extension.

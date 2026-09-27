@@ -2,12 +2,12 @@
 "zelavis": minor
 ---
 
-Discover services from a `product-services` folder on the server, and let a
+Discover services from a `services` folder on the server, and let a
 plugin declare whose contract it satisfies.
 
 The folder was only ever a convention — the shipped placeholder told operators
-to drop a frontend package into `product-services`, and nothing scanned it. The
-Node adapter now reads `<dataDirectory>/product-services/*/package.json` at
+to drop a frontend package into `services`, and nothing scanned it. The
+Node adapter now reads `<dataDirectory>/services/*/package.json` at
 boot, validates each manifest, and registers what it finds through the same
 importer and validation as any installed service. Scoped packages nest one
 level deeper, as in `node_modules`. Pass `productServices: false` to scan

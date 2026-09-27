@@ -7,7 +7,7 @@ Remove `coreServices`.
 The name claimed the Platform had a second, privileged way to install services.
 It did not: what the option held was the Platform's own subsystems, and every
 member was either infrastructure or a policy switch. Services come from the
-product-services folder and the registry endpoints, and only from there.
+services folder and the registry endpoints, and only from there.
 
 - `subsystems` on `zelavis(...)` carries `auth`, `database`, `fabric`,
   `storage`, `workloads`, and `site`. `site` replaces `website`, which was

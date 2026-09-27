@@ -261,10 +261,10 @@ zelavis services list --url http://localhost:8787/zelavis
 ## Product Services
 
 Services can be dropped into a folder on the server instead of composed in
-code. The Platform scans `<data directory>/product-services` at boot:
+code. The Platform scans `<data directory>/services` at boot:
 
 ```
-/var/lib/zelavis/product-services/
+/var/lib/zelavis/services/
   acme-analytics/package.json
   @acme/theme/package.json
 ```
@@ -310,13 +310,13 @@ plugin still validates every provider against its own registration contract.
 
 ### Bundled services
 
-The distribution seeds the services it ships into the product-services folder
+The distribution seeds the services it ships into the services folder
 the first time it starts, the way a CMS lays down its bundled plugins. They are
 ordinary packages from that point on: list them, replace them, or delete them.
 A deleted one stays deleted rather than reappearing on the next restart.
 
 Packages in the folder can import `zelavis` — the running Platform is linked
-into `<data directory>/product-services/node_modules` so Node's resolution
+into `<data directory>/services/node_modules` so Node's resolution
 finds it, and the link always points at the Platform that loaded the package
 rather than another copy on the machine.
 

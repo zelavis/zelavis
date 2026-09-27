@@ -24,7 +24,7 @@ Maintainers are responsible for:
 - `packages/zelavis/src/app/db` — app database core, storage contracts, and adapters
 - `packages/zelavis/src/app/identity` — app auth core, methods, and auth-facing service surfaces
 - `packages/zelavis` — unified framework, App recipe, composed runtime, and embedded dashboard delivery
-- `packages/zelavis/product-services/zelavis-ui` — dashboard UX and frontend architecture
+- `packages/zelavis/services/zelavis-ui` — dashboard UX and frontend architecture
 - `plugins/*` — official installable Zelavis plugins
 - `.github/*` and release/config files — repo process, CI, dependency policy
 

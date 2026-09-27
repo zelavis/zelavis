@@ -29,7 +29,7 @@ The main platform building blocks are:
 Today, the most important packages are:
 
 - [packages/zelavis](packages/zelavis)
-- [packages/zelavis/product-services/zelavis-ui](packages/zelavis/product-services/zelavis-ui)
+- [packages/zelavis/services/zelavis-ui](packages/zelavis/services/zelavis-ui)
 
 The reusable runtime/Fabric, built-in App stack, and trusted Platform services
 all live in focused folders and public subpaths of `packages/zelavis`.
@@ -88,8 +88,8 @@ pnpm typecheck
 pnpm audit:security
 pnpm ci:runtime
 pnpm ci:ui
-pnpm --filter ./packages/zelavis/product-services/zelavis-ui build
-pnpm --filter ./packages/zelavis/product-services/zelavis-ui test
+pnpm --filter ./packages/zelavis/services/zelavis-ui build
+pnpm --filter ./packages/zelavis/services/zelavis-ui test
 pnpm --filter zelavis test
 ```
 
@@ -154,7 +154,7 @@ If a test setup does not exist yet, keep the change easy to validate and documen
 
 Be careful with these:
 
-- `packages/zelavis/product-services/zelavis-ui/src/routeTree.gen.ts` is generated
+- `packages/zelavis/services/zelavis-ui/src/routeTree.gen.ts` is generated
 - `packages/*/dist/*` is build output
 - `website/.astro/*` and `website/dist/*` are generated site output
 
