@@ -7,16 +7,12 @@
 // the disk. Cold against warm on the same data is the comparison; the absolute
 // milliseconds are specific to this machine's SSD.
 import { execSync } from "node:child_process";
-import { createReadStream, createWriteStream, existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { createReadStream, createWriteStream, existsSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Stream } from "effect";
 import { and, asSeq, equals, term } from "../dist/db/index.js";
-import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
-import { makeLibsqlStore } from "../dist/db/engines/libsql.js";
-import { makeRocksdbStore } from "../dist/db/engines/rocksdb.js";
-import { makeRocksdbJsStore } from "../dist/db/engines/rocksdb-js.js";
-import { makeLmdbStore } from "../dist/db/engines/lmdb.js";
+import { runEngines } from "./bench-engine.mjs";
 
 const N = Number(process.env.N ?? 500000);
 const BATCH = 2000;
@@ -56,24 +52,14 @@ const evictCache = async () => {
   });
 };
 
-const engines = [
-  ["node-sqlite", (dir) => makeNodeSqliteStore("bench", dir)],
-  ["libsql", (dir) => makeLibsqlStore("bench", { directory: dir })],
-  ["rocksdb-js", (dir) => makeRocksdbJsStore("bench", dir)],
-  ["rocksdb", (dir) => makeRocksdbStore("bench", dir)],
-  ["lmdb", (dir) => makeLmdbStore("bench", dir)],
-].filter(([n]) => !process.env.ENGINES || process.env.ENGINES.split(",").includes(n));
-
 await makeScratch();
-const results = [];
 
-for (const [name, open] of engines) {
-  const dir = mkdtempSync(join(tmpdir(), `zv-cold-${name}-`));
+const outputs = await runEngines("zv-cold", async ({ name, dir, open }) => {
   const row = { engine: name };
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const store = yield* open(dir);
+        const store = yield* open();
         yield* Effect.promise(async () => {
           const rand = rnd(42);
           const pick = (a) => a[Math.floor(rand() * a.length)];
@@ -127,10 +113,18 @@ for (const [name, open] of engines) {
     ),
   );
   try { row.diskMb = Math.round(execSync(`du -sk ${dir}`).toString().split(/\s+/)[0] / 1024); } catch {}
-  rmSync(dir, { recursive: true, force: true });
-  results.push(row);
   console.error(`${name} done`);
-}
+  console.log(JSON.stringify({ objects: N, results: [row] }, null, 2));
+}, { collectJson: true });
 
-rmSync(SCRATCH, { force: true });
-console.log(JSON.stringify({ objects: N, evictGb: EVICT_GB, results }, null, 2));
+if (!process.env.ZELAVIS_BENCH_ENGINE_CHILD) {
+  rmSync(SCRATCH, { force: true });
+  const results = outputs.flatMap((output) => {
+    try {
+      return JSON.parse(output).results ?? [];
+    } catch {
+      return [];
+    }
+  });
+  console.log(JSON.stringify({ objects: N, evictGb: EVICT_GB, results }, null, 2));
+}

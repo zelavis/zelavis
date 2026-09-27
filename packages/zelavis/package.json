@@ -176,7 +176,16 @@
     "diagnostics:effect": "effect-tsgo diagnostics --project tsconfig.json --strict --severity error,warning,message",
     "test": "pnpm --filter @zelavis/ui build:plugin && pnpm run build && node --test test/*.test.mjs",
     "update:wordpress": "node scripts/update-wordpress-release.mjs",
-    "build:bootstrap": "tsc -p tsconfig.bootstrap.json"
+    "build:bootstrap": "tsc -p tsconfig.bootstrap.json",
+    "bench": "node scripts/bench-engines.mjs",
+    "bench:api": "node scripts/bench-api.mjs",
+    "bench:cold": "node scripts/bench-cold.mjs",
+    "bench:engines": "node scripts/bench-engines.mjs",
+    "bench:ordered": "node scripts/bench-ordered.mjs",
+    "bench:related": "node scripts/bench-related.mjs",
+    "bench:scatter": "node scripts/bench-scatter.mjs",
+    "bench:seal": "node scripts/bench-seal.mjs",
+    "bench:timeseries": "node scripts/bench-timeseries.mjs"
   },
   "files": [
     "dist",
