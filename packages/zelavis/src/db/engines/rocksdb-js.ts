@@ -134,6 +134,17 @@ const SCAN_BATCH = 1024;
 const buf = (bytes: Uint8Array) =>
   Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
 
+const closedDatabases = new WeakSet<object>();
+
+const closeDatabase = (db: object & { close: () => void }) =>
+  Effect.orDie(
+    Effect.sync(() => {
+      if (closedDatabases.has(db)) return;
+      closedDatabases.add(db);
+      db.close();
+    }),
+  );
+
 export const makeRocksdbJsEngine = (
   partition: PartitionKey,
   directory: string,
@@ -158,7 +169,7 @@ export const makeRocksdbJsEngine = (
         catch: (cause) => new StoreError({ op: "rocksdb-js.open", cause }),
       }),
     ),
-    (db) => Effect.orDie(Effect.sync(() => db.close())),
+    closeDatabase,
   ).pipe(
     Effect.flatMap((db) => {
       const fail = (op: string) => (cause: unknown) => new StoreError({ op, cause });
@@ -262,7 +273,7 @@ export const makeRocksdbJsEngine = (
             catch: fail("rocksdb-js.write"),
           }).pipe(Effect.asVoid),
 
-        close: Effect.orDie(Effect.sync(() => db.close())),
+        close: closeDatabase(db),
       }, realpathSync(join(directory, partition)));
     }),
   );
