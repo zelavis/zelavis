@@ -10,7 +10,7 @@ to drop a frontend package into `services`, and nothing scanned it. The
 Node adapter now reads `<dataDirectory>/services/*/package.json` at
 boot, validates each manifest, and registers what it finds through the same
 importer and validation as any installed service. Scoped packages nest one
-level deeper, as in `node_modules`. Pass `productServices: false` to scan
+level deeper, as in `node_modules`. Pass `services: false` to scan
 nothing.
 
 Discovery refuses rather than trusts: an `exports` entry resolving outside its
