@@ -50,6 +50,12 @@ import {
   type ZelavisPlatformFrontend,
   type ZelavisPlatformFrontendFactory,
 } from "./platform/frontend-host.js";
+import { Effect } from "effect";
+import {
+  ActivationFailed,
+  RegistryContended,
+  RegistryUnavailable,
+} from "./platform/service-lifecycle-errors.js";
 import { ZELAVIS_BASELINE_SERVICE_ELEMENTS } from "./platform/service-elements.js";
 import { createZelavisAuthSettingsService } from "./platform/auth-settings.js";
 import { createZelavisMarketplaceService } from "./platform/marketplace.js";
@@ -112,7 +118,7 @@ import {
   parseStoredServiceRegistryStateEntry,
   readDashboardSettingsUpdate,
   readInitialServiceRegistryState,
-  mutateServiceRegistry,
+  mutateServiceRegistryEffect,
   resolveRuntimeSettingsStore,
   resolveServiceRegistryStore,
 } from "./platform/settings.js";
@@ -133,6 +139,7 @@ import {
   readBodyObject,
   zelavisErrorResponse,
   ZelavisValidationError,
+  ZelavisConflictError,
 } from "./platform/shared.js";
 import {
   workloadsService,
@@ -1890,6 +1897,76 @@ async function resolveRuntimeManagementCore(
           })),
       ];
     };
+  /**
+   * Changes the registry and activates the result, or leaves neither changed.
+   *
+   * The registry was written first and activation run after, so an activation
+   * that threw left the registry claiming a service was installed over a
+   * runtime that had never mounted it -- and the caller got a 400 suggesting
+   * their request was at fault. Putting the previous entries back is what
+   * makes the pair one outcome rather than two.
+   *
+   * A restore that itself fails is reported rather than swallowed: the state
+   * really is split at that point, and saying so is the only honest answer.
+   */
+  /**
+   * Runs a registry change at the route boundary.
+   *
+   * Typed failures become the errors the platform's status rules already
+   * know, so a contended registry is still the 409 the route documents and a
+   * failed activation is a 500 rather than a 400 blaming the caller.
+   */
+  const runServiceRegistryChange = <A>(
+    change: Effect.Effect<A, RegistryContended | RegistryUnavailable | ActivationFailed>,
+  ): Promise<A> =>
+    Effect.runPromise(
+      change.pipe(
+        Effect.catchTag("RegistryContended", (error) =>
+          Effect.die(
+            new ZelavisConflictError(
+              `Service registry changed during all ${error.attempts} mutation attempts; retry the request.`,
+            ),
+          )),
+        Effect.catchTag("RegistryUnavailable", (error) => Effect.die(error.cause)),
+        Effect.catchTag("ActivationFailed", (error) => Effect.die(error)),
+      ),
+    );
+
+  const applyServiceRegistryChange = (
+    mutation: (entries: readonly ZelavisServiceRegistryStateEntry[]) =>
+      readonly ZelavisServiceRegistryStateEntry[] | Promise<readonly ZelavisServiceRegistryStateEntry[]>,
+    describe: (
+      entries: readonly ZelavisServiceRegistryStateEntry[],
+    ) => Omit<ZelavisServiceActivationRequest, "registry">,
+  ) =>
+    Effect.gen(function* () {
+      const before = yield* Effect.tryPromise({
+        try: async () => context.serviceRegistryStore.read(),
+        catch: (cause) => new RegistryUnavailable({ cause }),
+      });
+      const entries = yield* mutateServiceRegistryEffect(context.serviceRegistryStore, mutation);
+      const request = describe(entries);
+
+      const activation = yield* Effect.tryPromise({
+        try: async () => activateServiceRegistryChange(request, entries),
+        catch: (cause) =>
+          new ActivationFailed({
+            serviceName: request.serviceName,
+            message: cause instanceof Error ? cause.message : String(cause),
+          }),
+      }).pipe(
+        Effect.tapError(() =>
+          mutateServiceRegistryEffect(context.serviceRegistryStore, () => before).pipe(
+            Effect.catch((restoreError) =>
+              Effect.logError(
+                `Service registry could not be restored after "${request.serviceName}" failed to activate; `
+                  + `the registry and the runtime now disagree: ${String(restoreError)}`,
+              )),
+          )),
+      );
+      return { entries, activation };
+    });
+
   const activateServiceRegistryChange = async (
     request: Omit<ZelavisServiceActivationRequest, "registry">,
     registry: readonly ZelavisServiceRegistryStateEntry[],
@@ -2187,18 +2264,18 @@ async function resolveRuntimeManagementCore(
                 manifestResolver: context.serviceManifestResolver,
                 packageInstaller: context.servicePackageInstaller,
               });
-              const nextEntries = await mutateServiceRegistry(context.serviceRegistryStore, (entries) => [
-                ...entries.filter((entry) => entry.name !== created.name),
-                { ...entries.find((entry) => entry.name === created.name), ...created },
-              ]);
-              const activation = await activateServiceRegistryChange(
-                {
-                  serviceName: created.name,
-                  action:
-                    created.status === "installed" ? "install" : "register",
-                  specifier: created.specifier,
-                },
-                nextEntries,
+              const { activation } = await runServiceRegistryChange(
+                applyServiceRegistryChange(
+                  (entries) => [
+                    ...entries.filter((entry) => entry.name !== created.name),
+                    { ...entries.find((entry) => entry.name === created.name), ...created },
+                  ],
+                  () => ({
+                    serviceName: created.name,
+                    action: created.status === "installed" ? "install" : "register",
+                    specifier: created.specifier,
+                  }),
+                ),
               );
 
               return {
@@ -2347,7 +2424,7 @@ async function resolveRuntimeManagementCore(
               }
 
               const update = readDashboardServiceRegistryUpdate(body);
-              const serializedNextEntries = await mutateServiceRegistry(context.serviceRegistryStore, async (currentEntries) => {
+              const { activation } = await runServiceRegistryChange(applyServiceRegistryChange(async (currentEntries) => {
                 const currentRegistry = await readResolvedServiceRegistry(currentEntries);
                 const nextRegistry = createServiceRegistry(
                   currentRegistry.map((entry) =>
@@ -2411,20 +2488,16 @@ async function resolveRuntimeManagementCore(
                 return updatedStoredEntry
                   ? currentEntries.map((entry) => entry.name === serviceName ? changed : entry)
                   : [...currentEntries, changed];
-              });
-              const activation = await activateServiceRegistryChange(
-                {
-                  serviceName,
-                  action:
-                    update.status === "installed"
-                      ? "install"
-                      : update.status === "available"
-                        ? "uninstall"
-                        : "update",
-                  specifier: serializedNextEntries.find((entry) => entry.name === serviceName)?.specifier,
-                },
-                serializedNextEntries,
-              );
+              }, (entries) => ({
+                serviceName,
+                action:
+                  update.status === "installed"
+                    ? "install"
+                    : update.status === "available"
+                      ? "uninstall"
+                      : "update",
+                specifier: entries.find((entry) => entry.name === serviceName)?.specifier,
+              })));
 
               return {
                 status: 200,
