@@ -51,10 +51,15 @@ import {
   type ZelavisPlatformFrontendFactory,
 } from "./platform/frontend-host.js";
 import { Effect } from "effect";
+import { Scope } from "effect";
 import {
+  AcquisitionFailed,
   ActivationFailed,
+  MaterializationFailed,
   RegistryContended,
   RegistryUnavailable,
+  SourceRefused,
+  UnusablePackage,
 } from "./platform/service-lifecycle-errors.js";
 import { ZELAVIS_BASELINE_SERVICE_ELEMENTS } from "./platform/service-elements.js";
 import { createZelavisAuthSettingsService } from "./platform/auth-settings.js";
@@ -578,12 +583,27 @@ export interface ZelavisServicePackageScaffoldInput {
   args?: readonly string[];
 }
 
+/**
+ * How a host takes delivery of a service package.
+ *
+ * Effect-returning, so the ways this fails are part of the type: a source the
+ * policy refuses, bytes that did not match their digest, a fetch that failed,
+ * an archive that is not a service, and a disk that would not take it. They
+ * used to be one thrown Error and therefore one 400, which told a caller
+ * nothing about whether to fix their request or try again.
+ *
+ * Every method needs a `Scope`: packages are written to a temporary directory
+ * and renamed into place, and the scope is what removes that directory however
+ * the operation ends.
+ */
 export interface ZelavisServicePackageInstaller {
   install(
     input: ZelavisServicePackageInstallInput,
-  ):
-    | Promise<ZelavisServicePackageInstallResult>
-    | ZelavisServicePackageInstallResult;
+  ): Effect.Effect<
+    ZelavisServicePackageInstallResult,
+    UnusablePackage | MaterializationFailed,
+    Scope.Scope
+  >;
   /**
    * Acquires a package from a remote source.
    *
@@ -593,9 +613,11 @@ export interface ZelavisServicePackageInstaller {
    */
   acquire?(
     input: ZelavisServicePackageAcquireInput,
-  ):
-    | Promise<ZelavisServicePackageAcquireResult>
-    | ZelavisServicePackageAcquireResult;
+  ): Effect.Effect<
+    ZelavisServicePackageAcquireResult,
+    SourceRefused | AcquisitionFailed | UnusablePackage | MaterializationFailed,
+    Scope.Scope
+  >;
   /**
    * Scaffolds a frontend package by running a `create-*` package.
    *
@@ -606,9 +628,11 @@ export interface ZelavisServicePackageInstaller {
    */
   scaffold?(
     input: ZelavisServicePackageScaffoldInput,
-  ):
-    | Promise<ZelavisServicePackageAcquireResult>
-    | ZelavisServicePackageAcquireResult;
+  ): Effect.Effect<
+    ZelavisServicePackageAcquireResult,
+    SourceRefused | AcquisitionFailed | UnusablePackage | MaterializationFailed,
+    Scope.Scope
+  >;
 }
 
 export interface ZelavisPlatformResources {
@@ -980,6 +1004,17 @@ function readDashboardServiceRegistryUpdate(
   return update;
 }
 
+/**
+ * Runs one installer step from a Promise-shaped caller.
+ *
+ * Scoped, because every installer method writes through a temporary directory
+ * that the scope is responsible for removing. The typed failure is re-raised
+ * as itself so the platform's status rules can tell a refused source from a
+ * failed fetch.
+ */
+const runInstallerStep = <A, E>(step: Effect.Effect<A, E, Scope.Scope>): Promise<A> =>
+  Effect.runPromise(Effect.scoped(step).pipe(Effect.catch((failure) => Effect.die(failure))));
+
 async function readDashboardServiceRegistryCreate(
   body: unknown,
   options: {
@@ -1006,9 +1041,9 @@ async function readDashboardServiceRegistryCreate(
       );
     }
 
-    const acquired = await options.packageInstaller.acquire({
-      reference: sourceReference,
-    });
+    const acquired = await runInstallerStep(
+      options.packageInstaller.acquire({ reference: sourceReference }),
+    );
     specifier = acquired.specifier;
   }
 
@@ -1022,7 +1057,8 @@ async function readDashboardServiceRegistryCreate(
       );
     }
 
-    const scaffolded = await options.packageInstaller.scaffold({
+    const scaffolded = await runInstallerStep(
+      options.packageInstaller.scaffold({
       reference: scaffoldReference,
       ...(typeof input.scaffoldCommand === "string" && input.scaffoldCommand.trim()
         ? { command: input.scaffoldCommand.trim() }
@@ -1034,7 +1070,8 @@ async function readDashboardServiceRegistryCreate(
             ),
           }
         : {}),
-    });
+      }),
+    );
     specifier = scaffolded.specifier;
   }
 
@@ -1042,7 +1079,8 @@ async function readDashboardServiceRegistryCreate(
     const bytes = new Uint8Array(await uploadedFile.arrayBuffer());
 
     if (options.packageInstaller) {
-      const installed = await options.packageInstaller.install({
+      const installed = await runInstallerStep(
+        options.packageInstaller.install({
         fileName:
           typeof uploadedFile.name === "string" && uploadedFile.name.trim()
             ? uploadedFile.name
@@ -1051,8 +1089,9 @@ async function readDashboardServiceRegistryCreate(
           typeof uploadedFile.type === "string" && uploadedFile.type.trim()
             ? uploadedFile.type
             : undefined,
-        body: bytes,
-      });
+          body: bytes,
+        }),
+      );
       specifier = installed.specifier;
     } else {
       specifier = `data:text/javascript;base64,${toBase64(bytes)}`;

@@ -36,6 +36,14 @@ import type {
   ZelavisServicePackageScaffoldInput,
   ZelavisServiceRegistryModuleEntry,
 } from "../index.js";
+import { Effect } from "effect";
+import { ZelavisValidationError } from "../platform/shared.js";
+import {
+  AcquisitionFailed,
+  MaterializationFailed,
+  SourceRefused,
+  UnusablePackage,
+} from "../platform/service-lifecycle-errors.js";
 import type {
   ZelavisGitSourcePolicy,
   ZelavisHttpsSourcePolicy,
@@ -544,52 +552,57 @@ function resolveAcquisitionPolicy(
  * or by how many names it arrives, and staged-then-renamed so a crashed install
  * cannot leave a half-written package that looks complete.
  */
-async function materializePackage(
+/**
+ * Writes a package into its content-addressed home, or writes nothing.
+ *
+ * The temp directory is a scoped resource, so it is removed when the scope
+ * closes however that happens — the previous code cleaned up in a `catch`,
+ * which covered a throw but not an interruption.
+ *
+ * Losing the rename to `EEXIST` is success, not failure: another install
+ * materialized the same digest first, and the same bytes are already there.
+ */
+const materializePackage = Effect.fn("materializePackage")(function* (
   serviceDirectory: string,
   packageHash: string,
   entries: readonly PackageEntry[],
-): Promise<string> {
+  reference: string,
+) {
   const packageDirectory = join(serviceDirectory, "packages", packageHash);
+  if (existsSync(packageDirectory)) return packageDirectory;
 
-  if (existsSync(packageDirectory)) {
-    return packageDirectory;
-  }
-
-  const temporaryDirectory = join(
-    serviceDirectory,
-    ".tmp",
-    `${packageHash}-${randomUUID()}`,
+  const temporaryDirectory = yield* Effect.acquireRelease(
+    Effect.sync(() => join(serviceDirectory, ".tmp", `${packageHash}-${randomUUID()}`)),
+    (directory) => Effect.promise(() => rm(directory, { recursive: true, force: true })),
   );
 
-  await rm(temporaryDirectory, { recursive: true, force: true });
-  await mkdir(temporaryDirectory, { recursive: true });
-
-  try {
-    for (const entry of entries) {
-      const filePath = resolvePackageFilePath(temporaryDirectory, entry.path);
-      await mkdir(dirname(filePath), { recursive: true });
-      await writeFile(filePath, entry.body);
-    }
-
-    await mkdir(dirname(packageDirectory), { recursive: true });
-    renameSync(temporaryDirectory, packageDirectory);
-  } catch (error) {
-    await rm(temporaryDirectory, { recursive: true, force: true });
-
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "EEXIST"
-    ) {
-      // Another install completed the same package first.
-    } else {
-      throw error;
-    }
-  }
+  yield* Effect.tryPromise({
+    try: async () => {
+      await rm(temporaryDirectory, { recursive: true, force: true });
+      await mkdir(temporaryDirectory, { recursive: true });
+      for (const entry of entries) {
+        const filePath = resolvePackageFilePath(temporaryDirectory, entry.path);
+        await mkdir(dirname(filePath), { recursive: true });
+        await writeFile(filePath, entry.body);
+      }
+      await mkdir(dirname(packageDirectory), { recursive: true });
+      renameSync(temporaryDirectory, packageDirectory);
+    },
+    catch: (cause) => {
+      const raced =
+        typeof cause === "object" && cause !== null && "code" in cause
+        && (cause as { code?: unknown }).code === "EEXIST";
+      return raced
+        ? undefined
+        : new MaterializationFailed({ reference, cause });
+    },
+  }).pipe(
+    // `undefined` is the raced case: another install won, which is a success.
+    Effect.catch((failure) => (failure ? Effect.fail(failure) : Effect.void)),
+  );
 
   return packageDirectory;
-}
+});
 
 export function createLocalRuntimeServicePackageInstaller(
   options: LocalRuntimeServiceOptions = {},
@@ -597,27 +610,213 @@ export function createLocalRuntimeServicePackageInstaller(
   const serviceDirectory = resolve(options.directory ?? ".zelavis/services");
   const acquisitionPolicy = resolveAcquisitionPolicy(options);
 
-  return {
-    async install(input) {
-      const fileName = input.fileName.toLowerCase();
 
-      if (!fileName.endsWith(".zip")) {
-        throw new Error("Service package uploads must be ZIP archives.");
+  /**
+   * Fetches a package under the source policy and writes it down.
+   *
+   * The policy's refusals and the network's failures are different answers:
+   * a refused source is this installation's configuration and will refuse
+   * again, while a failed fetch may well work on a retry. They arrived as one
+   * thrown Error and became one 400.
+   */
+  const acquire = Effect.fn("ServicePackageInstaller.acquire")(function* (
+    input: ZelavisServicePackageAcquireInput,
+  ) {
+    const acquired = yield* Effect.tryPromise({
+      try: () =>
+        acquirePackage(input.reference, {
+          policy: acquisitionPolicy,
+          defaultRegistry: options.defaultRegistry,
+        }),
+      // Validation is the policy talking: an unallowed registry, a range
+      // where an exact version is required, a name that is not a name.
+      catch: (cause) =>
+        cause instanceof ZelavisValidationError
+          ? new SourceRefused({ reference: input.reference, reason: (cause as Error).message })
+          : new AcquisitionFailed({ reference: input.reference, cause }),
+    });
+
+    const entry = yield* Effect.try({
+      try: () => resolveServicePackageEntry(acquired.entries),
+      catch: (cause) =>
+        new UnusablePackage({
+          reference: input.reference,
+          reason: cause instanceof Error ? cause.message : String(cause),
+        }),
+    });
+
+    // Addressed by the verified digest rather than a hash of the bytes we
+    // happened to receive: the digest is what the source committed to, and it
+    // is what makes two installs of the same reference the same install.
+    const packageDirectory = yield* materializePackage(
+      serviceDirectory,
+      createHash("sha256").update(acquired.integrity).digest("hex"),
+      acquired.entries,
+      input.reference,
+    );
+
+    return {
+      specifier: join(packageDirectory, entry),
+      resolved: acquired.resolved,
+      integrity: acquired.integrity,
+      message: `Installed ${acquired.resolved}.`,
+    };
+  });
+
+  /**
+   * Scaffolds a frontend package by running a create package's bin.
+   *
+   * The create package is acquired through the same verified path as any other
+   * install, so the source policy governs what can be run here. What the run
+   * produces is then treated exactly like an uploaded package: validated as a
+   * Zelavis frontend, materialized content-addressed, and returned as a
+   * specifier the registry installs. A scaffold that did not produce a
+   * frontend is refused rather than registered as something else.
+   */
+  /**
+   * Scaffolds a frontend by running a create package's bin.
+   *
+   * The create package is acquired through the same verified path as any
+   * other install, so the source policy governs what can be run here. What
+   * the run produces is then treated exactly like an uploaded package:
+   * validated as a Zelavis frontend, materialized content-addressed, and
+   * returned as a specifier the registry installs. A scaffold that did not
+   * produce a frontend is refused rather than registered as something else.
+   */
+  const scaffold = Effect.fn("ServicePackageInstaller.scaffold")(function* (
+    input: ZelavisServicePackageScaffoldInput,
+  ) {
+    const acquired = yield* Effect.tryPromise({
+      try: () =>
+        acquirePackage(input.reference, {
+          policy: acquisitionPolicy,
+          defaultRegistry: options.defaultRegistry,
+        }),
+      catch: (cause) =>
+        cause instanceof ZelavisValidationError
+          ? new SourceRefused({ reference: input.reference, reason: (cause as Error).message })
+          : new AcquisitionFailed({ reference: input.reference, cause }),
+    });
+
+    const unusable = (reason: string) =>
+      new UnusablePackage({ reference: input.reference, reason });
+
+    const manifestEntry = acquired.entries.find((entry) => entry.path === "package.json");
+    if (!manifestEntry) {
+      return yield* unusable("A create package must include package.json.");
+    }
+
+    const binPath = yield* Effect.try({
+      try: () => {
+        const createManifest = JSON.parse(
+          new TextDecoder().decode(manifestEntry.body),
+        ) as ZelavisPackageManifest & { bin?: unknown };
+        return resolveCreatePackageBin(createManifest, input.command);
+      },
+      catch: (cause) =>
+        unusable(cause instanceof Error ? cause.message : String(cause)),
+    });
+
+    const createDirectory = yield* materializePackage(
+      serviceDirectory,
+      createHash("sha256").update(acquired.integrity).digest("hex"),
+      acquired.entries,
+      input.reference,
+    );
+
+    // Run-local, and removed whatever happens -- including an interruption,
+    // which the previous `finally` did not cover. A half-finished scaffold is
+    // not something a later run should find and reuse.
+    const runDirectory = yield* Effect.acquireRelease(
+      Effect.sync(() => join(serviceDirectory, ".scaffold", randomUUID())),
+      (directory) => Effect.promise(() => rm(directory, { recursive: true, force: true })),
+    );
+    const outputDirectory = join(runDirectory, "out");
+
+    const entries = yield* Effect.tryPromise({
+      try: async () => {
+        await mkdir(outputDirectory, { recursive: true });
+        await runCreatePackage({
+          packageDirectory: createDirectory,
+          binPath,
+          outputDirectory,
+          runDirectory,
+          args: input.args,
+          ...(options.scaffoldTimeoutMs === undefined
+            ? {}
+            : { timeoutMs: options.scaffoldTimeoutMs }),
+        });
+        return readScaffoldOutput(outputDirectory);
+      },
+      catch: (cause) =>
+        unusable(cause instanceof Error ? cause.message : String(cause)),
+    });
+
+    const entry = yield* Effect.try({
+      try: () => resolveScaffoldedFrontendEntry(entries),
+      catch: (cause) =>
+        unusable(cause instanceof Error ? cause.message : String(cause)),
+    });
+
+    const packageDirectory = yield* materializePackage(
+      serviceDirectory,
+      createHash("sha256")
+        .update(
+          entries
+            .map(
+              (item) =>
+                `${item.path}:${createHash("sha256").update(item.body).digest("hex")}`,
+            )
+            .join("\n"),
+        )
+        .digest("hex"),
+      entries,
+      input.reference,
+    );
+
+    return {
+      specifier: join(packageDirectory, entry),
+      resolved: acquired.resolved,
+      integrity: acquired.integrity,
+      message: `Scaffolded a frontend with ${acquired.resolved}.`,
+    };
+  });
+
+  return {
+    install: Effect.fn("ServicePackageInstaller.install")(function* (input) {
+      if (!input.fileName.toLowerCase().endsWith(".zip")) {
+        return yield* new UnusablePackage({
+          reference: input.fileName,
+          reason: "Service package uploads must be ZIP archives.",
+        });
       }
 
-      const entries = readZipEntries(input.body);
-      const entry = resolveServicePackageEntry(entries);
-      const packageDirectory = await materializePackage(
+      // Reading the archive and finding its entry point are the caller's
+      // problem with the file they sent, not ours with the disk.
+      const { entries, entry } = yield* Effect.try({
+        try: () => {
+          const read = readZipEntries(input.body);
+          return { entries: read, entry: resolveServicePackageEntry(read) };
+        },
+        catch: (cause) =>
+          new UnusablePackage({
+            reference: input.fileName,
+            reason: cause instanceof Error ? cause.message : String(cause),
+          }),
+      });
+
+      const packageDirectory = yield* materializePackage(
         serviceDirectory,
         createHash("sha256").update(input.body).digest("hex"),
         entries,
+        input.fileName,
       );
 
       return {
         specifier: join(packageDirectory, entry),
         message: `Installed service package ${input.fileName}.`,
       };
-    },
+    }),
 
     // Present only when sources are actually configured.
     //
@@ -631,117 +830,6 @@ export function createLocalRuntimeServicePackageInstaller(
     // no create package to run.
     ...(acquisitionPolicy ? { acquire, scaffold } : {}),
   };
-
-  async function acquire(input: ZelavisServicePackageAcquireInput) {
-      const acquired = await acquirePackage(input.reference, {
-        policy: acquisitionPolicy,
-        defaultRegistry: options.defaultRegistry,
-      });
-
-      const entry = resolveServicePackageEntry(acquired.entries);
-      // Addressed by the verified digest rather than a hash of the bytes we
-      // happened to receive: the digest is what the source committed to, and
-      // it is what makes two installs of the same reference the same install.
-      const packageDirectory = await materializePackage(
-        serviceDirectory,
-        createHash("sha256").update(acquired.integrity).digest("hex"),
-        acquired.entries,
-      );
-
-      return {
-        specifier: join(packageDirectory, entry),
-        resolved: acquired.resolved,
-        integrity: acquired.integrity,
-        message: `Installed ${acquired.resolved}.`,
-      };
-  }
-
-  /**
-   * Scaffolds a frontend package by running a create package's bin.
-   *
-   * The create package is acquired through the same verified path as any other
-   * install, so the source policy governs what can be run here. What the run
-   * produces is then treated exactly like an uploaded package: validated as a
-   * Zelavis frontend, materialized content-addressed, and returned as a
-   * specifier the registry installs. A scaffold that did not produce a
-   * frontend is refused rather than registered as something else.
-   */
-  async function scaffold(input: ZelavisServicePackageScaffoldInput) {
-    const acquired = await acquirePackage(input.reference, {
-      policy: acquisitionPolicy,
-      defaultRegistry: options.defaultRegistry,
-    });
-
-    const manifestEntry = acquired.entries.find(
-      (entry) => entry.path === "package.json",
-    );
-    if (!manifestEntry) {
-      throw new Error("A create package must include package.json.");
-    }
-
-    let createManifest: ZelavisPackageManifest & { bin?: unknown };
-    try {
-      createManifest = JSON.parse(
-        new TextDecoder().decode(manifestEntry.body),
-      ) as ZelavisPackageManifest & { bin?: unknown };
-    } catch {
-      throw new Error("The create package's package.json is not valid JSON.");
-    }
-
-    const binPath = resolveCreatePackageBin(createManifest, input.command);
-
-    const createDirectory = await materializePackage(
-      serviceDirectory,
-      createHash("sha256").update(acquired.integrity).digest("hex"),
-      acquired.entries,
-    );
-
-    // Run-local, and removed whatever happens: a half-finished scaffold is not
-    // something a later run should find and reuse.
-    const runDirectory = join(serviceDirectory, ".scaffold", randomUUID());
-    const outputDirectory = join(runDirectory, "out");
-    await mkdir(outputDirectory, { recursive: true });
-
-    let entries: readonly PackageEntry[];
-    try {
-      await runCreatePackage({
-        packageDirectory: createDirectory,
-        binPath,
-        outputDirectory,
-        runDirectory,
-        args: input.args,
-        ...(options.scaffoldTimeoutMs === undefined
-          ? {}
-          : { timeoutMs: options.scaffoldTimeoutMs }),
-      });
-      entries = await readScaffoldOutput(outputDirectory);
-    } finally {
-      await rm(runDirectory, { recursive: true, force: true });
-    }
-
-    const entry = resolveScaffoldedFrontendEntry(entries);
-    const packageDirectory = await materializePackage(
-      serviceDirectory,
-      createHash("sha256")
-        .update(
-          entries
-            .map(
-              (item) =>
-                `${item.path}:${createHash("sha256").update(item.body).digest("hex")}`,
-            )
-            .join("\n"),
-        )
-        .digest("hex"),
-      entries,
-    );
-
-    return {
-      specifier: join(packageDirectory, entry),
-      resolved: acquired.resolved,
-      integrity: acquired.integrity,
-      message: `Scaffolded a frontend with ${acquired.resolved}.`,
-    };
-  }
 }
 
 /**

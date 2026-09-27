@@ -12,6 +12,7 @@ import {
 import { createProjectManager } from "../dist/project.js";
 import { loadService } from "../dist/service.js";
 import { createMemorySystemStore } from "../dist/system-store.js";
+import { Effect } from "effect";
 
 const FRONTEND_MANIFEST = {
   name: "@acme/theme",
@@ -80,14 +81,18 @@ async function withDirectory(run) {
 test("an installed frontend package becomes a runnable Project", async () => {
   await withDirectory(async (directory) => {
     const installer = createLocalRuntimeServicePackageInstaller({ directory });
-    const installed = await installer.install({
-      fileName: "theme.zip",
-      body: await buildZip({
-        "package.json": JSON.stringify(FRONTEND_MANIFEST),
-        "dist/index.js": "export default {}",
-        "server.js": "// started by the frontend runtime",
-      }),
-    });
+    const installed = await Effect.runPromise(
+      Effect.scoped(
+        installer.install({
+          fileName: "theme.zip",
+          body: await buildZip({
+            "package.json": JSON.stringify(FRONTEND_MANIFEST),
+            "dist/index.js": "export default {}",
+            "server.js": "// started by the frontend runtime",
+          }),
+        }),
+      ),
+    );
 
     // A frontend package loads from its manifest without executing JavaScript.
     const service = await loadService(installed.specifier, {

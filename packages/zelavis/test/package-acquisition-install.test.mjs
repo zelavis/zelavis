@@ -5,6 +5,10 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createLocalRuntimeServicePackageInstaller } from "../dist/adapters/_local-runtime.js";
+import { Effect } from "effect";
+
+/** The installer returns Effects; each writes through a scoped temp directory. */
+const runStep = (step) => Effect.runPromise(Effect.scoped(step));
 
 const NPM = "https://registry.npmjs.org";
 
@@ -47,14 +51,17 @@ test("a configured installer refuses a source outside its policy", async () => {
       sources: { npm: { registries: [NPM], scopes: ["@zelavis"] } },
     });
 
-    await assert.rejects(
-      installer.acquire({ reference: "npm:@someone-else/thing@1.0.0" }),
-      /outside the scopes/,
+    const refusedScope = await Effect.runPromise(
+      Effect.flip(Effect.scoped(installer.acquire({ reference: "npm:@someone-else/thing@1.0.0" }))),
     );
-    await assert.rejects(
-      installer.acquire({ reference: "https://example.test/pkg.tgz" }),
-      /does not allow installing packages from arbitrary URLs/,
+    assert.equal(refusedScope._tag, "SourceRefused");
+    assert.match(refusedScope.reason, /outside the scopes/);
+
+    const refusedUrl = await Effect.runPromise(
+      Effect.flip(Effect.scoped(installer.acquire({ reference: "https://example.test/pkg.tgz" }))),
     );
+    assert.equal(refusedUrl._tag, "SourceRefused");
+    assert.match(refusedUrl.reason, /does not allow installing packages from arbitrary URLs/);
   });
 });
 
@@ -72,8 +79,8 @@ test("an uploaded package still installs, and installs once", async () => {
       "index.js": "export default { name: '@example/uploaded' }",
     });
 
-    const first = await installer.install({ fileName: "p.zip", body: zip });
-    const second = await installer.install({ fileName: "p.zip", body: zip });
+    const first = await runStep(installer.install({ fileName: "p.zip", body: zip }));
+    const second = await runStep(installer.install({ fileName: "p.zip", body: zip }));
 
     // Content-addressed: the same bytes land in the same place.
     assert.equal(first.specifier, second.specifier);
