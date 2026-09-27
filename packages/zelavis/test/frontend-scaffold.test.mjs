@@ -10,6 +10,7 @@ import {
   runCreatePackage,
 } from "../dist/adapters/_package-scaffold.js";
 import { createMemorySystemStore, zelavis } from "../dist/index.js";
+import { Effect } from "effect";
 
 const PLATFORM_OWNER_CONTEXT = {
   principal: {
@@ -233,16 +234,15 @@ test("scaffolding registers the produced package like any other install", async 
     systemStore: createMemorySystemStore(),
     subsystems: { auth: false, database: false },
     servicePackageInstaller: {
-      install: () => {
-        throw new Error("not used");
-      },
+      // The installer contract returns Effects, so a double has to as well.
+      install: () => Effect.die(new Error("not used")),
       scaffold: (input) => {
         received = input;
-        return {
+        return Effect.succeed({
           specifier: "data:text/javascript,export default { name: '@acme/site' }",
           resolved: "npm:create-zelavis-frontend@1.0.0",
           integrity: "sha512-test",
-        };
+        });
       },
     },
   });
