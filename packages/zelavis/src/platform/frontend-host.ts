@@ -213,7 +213,7 @@ export function createMissingPlatformFrontendService(options: {
       <p>Install one:</p>
       <ul>
         <li>from the marketplace, over the API or the <code>zelavis</code> CLI</li>
-        <li>by placing a frontend package in <code>product-services</code> on this server</li>
+        <li>by placing a frontend package in <code>services</code> on this server</li>
       </ul>
       <p>
         A frontend is an ordinary service that declares

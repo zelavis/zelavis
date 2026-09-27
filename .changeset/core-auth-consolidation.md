@@ -6,7 +6,7 @@ Move password sign-in and the OAuth client into Zelavis itself, and remove the
 auth plugins.
 
 Password auth was two nearly identical plugins — one keyed on an email address,
-one on a username — that the distribution copied into the product-services
+one on a username — that the distribution copied into the services
 folder on first boot. That seeding existed because a Platform with no
 credential provider can never create its first owner, which made the plugin
 mandatory in everything but name. It is now one built-in provider that decides

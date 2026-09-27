@@ -482,7 +482,7 @@ export interface LocalRuntimeServiceOptions {
   /**
    * Further directories whose contents count as host-managed code.
    *
-   * The product-services folder is one: an operator putting a package there is
+   * The services folder is one: an operator putting a package there is
    * the same deliberate act as installing one, so it is not gated behind the
    * filesystem source policy meant for arbitrary developer paths. It is still
    * an explicit list — nothing outside these roots is trusted.
@@ -1002,13 +1002,13 @@ export function createLocalRuntimeServiceManifestResolver(): ZelavisServiceManif
 }
 
 // ---------------------------------------------------------------------------
-// product-services discovery
+// services discovery
 // ---------------------------------------------------------------------------
 
 /** Folder name operators drop service packages into, under the data directory. */
-export const PRODUCT_SERVICES_DIRECTORY = "product-services";
+export const SERVICES_DIRECTORY = "services";
 
-export interface ProductServiceDiscoveryOptions {
+export interface ServiceDiscoveryOptions {
   /** Absolute path of the folder to scan. */
   directory: string;
   /**
@@ -1035,7 +1035,7 @@ async function readDirectoryEntries(directory: string): Promise<string[]> {
 }
 
 /**
- * Lists the package directories in a product-services folder.
+ * Lists the package directories in a services folder.
  *
  * Scoped packages live one level deeper, exactly as they do in node_modules,
  * so `@acme/theme` is the directory `@acme/theme` rather than a flattened name.
@@ -1064,7 +1064,7 @@ async function listProductServicePackages(directory: string): Promise<string[]> 
  * own package directory rather than trusting the manifest's own paths.
  */
 /**
- * Makes `zelavis` resolvable from packages in the product-services folder.
+ * Makes `zelavis` resolvable from packages in the services folder.
  *
  * A package dropped into a folder outside `node_modules` cannot resolve its
  * own peer dependency: Node walks parent directories looking for
@@ -1101,7 +1101,7 @@ async function linkPlatformPackage(folder: string): Promise<void> {
 }
 
 export async function discoverProductServices(
-  options: ProductServiceDiscoveryOptions,
+  options: ServiceDiscoveryOptions,
 ): Promise<ZelavisServiceRegistryModuleEntry[]> {
   const root = resolve(options.directory);
   const skip = (name: string, reason: string) => options.onSkipped?.(name, reason);

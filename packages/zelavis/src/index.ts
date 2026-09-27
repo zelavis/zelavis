@@ -384,7 +384,7 @@ export type ZelavisFabricOptions = boolean | FabricServiceOptions;
  * had a second, privileged way to install services. It did not: these are the
  * Platform's own subsystems, and every one of them is either infrastructure
  * (a database, object storage) or a policy switch. Services come from the
- * product-services folder and the registry, and only from there.
+ * services folder and the registry, and only from there.
  *
  * They stay internal to `zelavis(...)`; the public constructor refuses them.
  */
@@ -1307,7 +1307,7 @@ async function resolveAuthCoreService(
     environmentConnections: true,
   });
   // Password sign-in ships with Zelavis. It used to be a plugin the
-  // distribution copied into the product-services folder on first boot,
+  // distribution copied into the services folder on first boot,
   // because an installation with no credential provider can never create its
   // first owner — mandatory in everything but name.
   const builtInMethods: IdentityMethodPlugin[] = [
@@ -1376,7 +1376,7 @@ export const ZELAVIS_AUTH_CREDENTIALS_CAPABILITY = serviceCapabilityFor(
  * Providers are ordinary installed services found by capability, and this is
  * now the only way one reaches auth: there is no option for handing providers
  * to the constructor. A provider arrives by being installed, which means the
- * same path whether it came from the product-services folder, the registry
+ * same path whether it came from the services folder, the registry
  * endpoints, or the marketplace.
  *
  * The capability names the plugin being extended rather than a bare domain, so
@@ -4733,7 +4733,7 @@ export async function zelavis(
 
   if (obsoleteKeys.length > 0) {
     throw new TypeError(
-      `zelavis(...) no longer accepts direct service options (${obsoleteKeys.join(", ")}). Put services in the product-services folder or install them through the service registry endpoints.`,
+      `zelavis(...) no longer accepts direct service options (${obsoleteKeys.join(", ")}). Put services in the services folder or install them through the service registry endpoints.`,
     );
   }
 

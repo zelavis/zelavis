@@ -13,7 +13,7 @@ async function dataDirectory() {
 }
 
 async function dropPackage(root, directoryName, manifest, entry) {
-  const packageDirectory = join(root, "product-services", directoryName);
+  const packageDirectory = join(root, "services", directoryName);
   await mkdir(packageDirectory, { recursive: true });
   await writeFile(join(packageDirectory, "package.json"), JSON.stringify(manifest));
   await writeFile(join(packageDirectory, "index.js"), entry);
@@ -123,7 +123,7 @@ test("nothing is discovered when the folder scan is turned off", async () => {
   );
 
   const zv = new Zelavis({
-    adapter: nodeAdapter({ dataDirectory: root, productServices: false }),
+    adapter: nodeAdapter({ dataDirectory: root, services: false }),
   });
   test.after(() => zv.close());
   assert.equal((await get(zv, "/zelavis/api/v1/plugins/example/hello")).status, 404);

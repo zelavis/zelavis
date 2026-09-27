@@ -26,7 +26,7 @@ import {
   createLocalRuntimeServicePackageInstaller,
   createLocalRuntimeServiceImporter,
   discoverProductServices,
-  PRODUCT_SERVICES_DIRECTORY,
+  SERVICES_DIRECTORY,
   createLocalRuntimeServiceManifestResolver,
   type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
@@ -80,6 +80,14 @@ export interface NodeAdapterDatabaseOptions {
 
 export type NodeAdapterServiceOptions = LocalRuntimeServiceOptions & {
   catalog?: readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[];
+  /**
+   * Folder on this server that services are dropped into.
+   *
+   * Defaults to `<dataDirectory>/services`. It lives here rather than in an
+   * option of its own because two options both named for services is how the
+   * folder and the registry drifted apart in the first place.
+   */
+  directory?: string;
 };
 
 export interface NodeAdapterSystemStoreOptions {
@@ -112,17 +120,15 @@ export interface NodeAdapterProjectOptions {
 export interface NodeAdapterOptions {
   role?: "platform" | "project";
   dataDirectory?: string;
-  /**
-   * Services dropped into a folder on this server.
-   *
-   * Defaults to `<dataDirectory>/product-services`. Set to `false` to scan
-   * nothing, which is what an installation composing every service itself
-   * wants.
-   */
-  productServices?: false | { directory?: string };
   database?: false | NodeAdapterDatabaseOptions;
   systemStore?: false | NodeAdapterSystemStoreOptions;
   projects?: false | NodeAdapterProjectOptions;
+  /**
+   * Services: the registry, and the folder they are dropped into.
+   *
+   * Set to `false` to scan nothing, which is what an installation composing
+   * every service itself wants.
+   */
   services?: false | NodeAdapterServiceOptions;
   files?: false | {
     rootDirectory?: string;
@@ -193,16 +199,15 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
       const serviceOptions = options.services === false ? undefined : options.services;
       const serviceDirectory = join(dataDirectory, "services");
       const productServiceOptions =
-        options.productServices === false ? undefined : options.productServices;
+        options.services === false ? undefined : options.services;
       const productServiceDirectory = productServiceOptions?.directory
         ? resolve(productServiceOptions.directory)
-        : join(dataDirectory, PRODUCT_SERVICES_DIRECTORY);
+        : join(dataDirectory, SERVICES_DIRECTORY);
       // Scanned before composition so the Platform sees dropped-in services the
       // same way it sees installed ones. A Project runtime deliberately skips
       // it: the folder belongs to the installation, not to each Project.
       const discoveredProductServices =
         options.services === false ||
-        options.productServices === false ||
         isProjectRuntime
           ? []
           : await discoverProductServices({
