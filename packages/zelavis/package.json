@@ -1,6 +1,6 @@
 {
   "name": "zelavis",
-  "version": "1.0.1-alpha.2",
+  "version": "2.0.0-alpha.3",
   "private": false,
   "description": "Open, self-hostable App Platform and embeddable backend framework.",
   "license": "MIT",

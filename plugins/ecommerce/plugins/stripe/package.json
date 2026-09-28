@@ -1,6 +1,6 @@
 {
   "name": "@zelavis/ecommerce-stripe",
-  "version": "0.1.0-alpha.1",
+  "version": "1.0.0-alpha.2",
   "private": false,
   "description": "Stripe payment provider service for @zelavis/ecommerce.",
   "author": "Ivan Jeremic",
@@ -45,7 +45,7 @@
     "stripe": "^22.6.2"
   },
   "peerDependencies": {
-    "zelavis": ">=1.0.1-alpha.2"
+    "zelavis": ">=2.0.0-alpha.3"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
