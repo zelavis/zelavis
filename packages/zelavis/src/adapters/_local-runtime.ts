@@ -7,6 +7,7 @@
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -990,9 +991,163 @@ export function createLocalRuntimeServiceImporter(
     }
 
     // A bare package specifier resolves through the host's own installed
-    // dependencies, which is the same trust as the host's own code.
-    return import(specifier);
+    // dependencies, which is the same trust as the host's own code. When
+    // nothing is installed under that name, a core service bundled in this
+    // distribution answers instead — the same trust again, since it shipped
+    // as part of the host.
+    try {
+      return await import(specifier);
+    } catch (error) {
+      // Only a resolution failure falls through. A package that is installed
+      // but throws while loading must surface its own error, not be quietly
+      // replaced by the bundled copy of the same name.
+      const code = (error as { code?: string } | undefined)?.code;
+
+      if (code !== "ERR_MODULE_NOT_FOUND" && code !== "MODULE_NOT_FOUND") {
+        throw error;
+      }
+
+      const bundled = resolveBundledServiceDirectory(specifier);
+      const entry = bundled ? bundledServiceEntry(bundled) : undefined;
+
+      if (!entry) {
+        throw error;
+      }
+
+      return import(pathToFileURL(entry).href);
+    }
   };
+}
+
+// ---------------------------------------------------------------------------
+// Core services bundled in the distribution
+// ---------------------------------------------------------------------------
+
+/**
+ * The distribution carries its core services — `@zelavis/app`, `@zelavis/auth`,
+ * `@zelavis/marketplace`, `@zelavis/ui` — inside its own `services/` folder.
+ *
+ * Resolving them by bare name through `import.meta.resolve` looks in
+ * `node_modules` and finds nothing there, so they had to be declared as
+ * registry dependencies and published as separate packages purely to satisfy
+ * resolution. Reading the folder that already ships beside the code removes
+ * that requirement: the package installs and runs standalone.
+ *
+ * An installed copy of the same name still wins, because the lookup runs only
+ * after the ordinary resolution fails.
+ */
+let bundledServiceIndex: Map<string, string> | undefined;
+
+/** Locates the `services/` folder of the `zelavis` package this module is part of. */
+function distributionServicesDirectory(): string | undefined {
+  let current = dirname(fileURLToPath(import.meta.url));
+
+  while (current && current !== dirname(current)) {
+    const manifestPath = join(current, "package.json");
+
+    if (existsSync(manifestPath)) {
+      try {
+        const raw = JSON.parse(readFileSync(manifestPath, "utf-8")) as {
+          name?: string;
+        };
+
+        if (raw?.name === "zelavis") {
+          return join(current, SERVICES_DIRECTORY);
+        }
+      } catch {
+        // A package.json that will not parse tells us nothing about where we
+        // are; keep walking up rather than giving up on the distribution.
+      }
+    }
+
+    current = dirname(current);
+  }
+
+  return undefined;
+}
+
+function indexBundledServices(): Map<string, string> {
+  if (bundledServiceIndex) {
+    return bundledServiceIndex;
+  }
+
+  const index = new Map<string, string>();
+  const directory = distributionServicesDirectory();
+
+  if (directory && existsSync(directory)) {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) {
+        continue;
+      }
+
+      const packageDir = join(directory, entry.name);
+      const manifestPath = join(packageDir, "package.json");
+
+      if (!existsSync(manifestPath)) {
+        continue;
+      }
+
+      try {
+        const raw = JSON.parse(readFileSync(manifestPath, "utf-8")) as {
+          name?: string;
+        };
+
+        if (typeof raw?.name === "string" && raw.name.length > 0) {
+          index.set(raw.name, packageDir);
+        }
+      } catch {
+        // One unreadable folder must not hide the rest of the distribution.
+      }
+    }
+  }
+
+  bundledServiceIndex = index;
+  return index;
+}
+
+/** Absolute directory of a core service shipped inside this distribution. */
+export function resolveBundledServiceDirectory(
+  packageName: string,
+): string | undefined {
+  return indexBundledServices().get(packageName);
+}
+
+/** Entry module of a bundled service, from its own `exports` or `main`. */
+function bundledServiceEntry(packageDir: string): string | undefined {
+  let raw: {
+    exports?: unknown;
+    module?: string;
+    main?: string;
+  };
+
+  try {
+    raw = JSON.parse(
+      readFileSync(join(packageDir, "package.json"), "utf-8"),
+    ) as typeof raw;
+  } catch {
+    return undefined;
+  }
+
+  const root = (raw.exports as Record<string, unknown> | undefined)?.["."];
+  const candidate =
+    typeof root === "string"
+      ? root
+      : typeof root === "object" && root !== null
+        ? ((root as Record<string, unknown>).import ??
+            (root as Record<string, unknown>).default)
+        : undefined;
+
+  const entry =
+    (typeof candidate === "string" ? candidate : undefined) ??
+    raw.module ??
+    raw.main;
+
+  if (!entry) {
+    return undefined;
+  }
+
+  const resolved = join(packageDir, entry);
+  return existsSync(resolved) ? resolved : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -1035,11 +1190,16 @@ export function resolveLocalPackageManifest(
   } else if (!isBareSpecifier) {
     startPath = resolve(specifierOrPath);
   } else {
+    const bundled = resolveBundledServiceDirectory(specifierOrPath);
+
     try {
       const resolvedUrl = import.meta.resolve(specifierOrPath);
       startPath = fileURLToPath(resolvedUrl);
     } catch {
-      startPath = resolve(specifierOrPath);
+      // Nothing is installed under that name. A core service bundled in this
+      // distribution lives in its own folder rather than in node_modules, so
+      // it never resolves this way and has to be looked up directly.
+      startPath = bundled ?? resolve(specifierOrPath);
     }
   }
 

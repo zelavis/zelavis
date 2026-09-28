@@ -301,15 +301,6 @@ importers:
       '@clack/prompts':
         specifier: ^1.8.1
         version: 1.8.1
-      '@zelavis/app':
-        specifier: workspace:*
-        version: link:services/zelavis-app
-      '@zelavis/auth':
-        specifier: workspace:*
-        version: link:services/zelavis-auth
-      '@zelavis/marketplace':
-        specifier: workspace:*
-        version: link:services/zelavis-marketplace
       better-sqlite3:
         specifier: ^13.0.3
         version: 13.0.3
@@ -341,6 +332,18 @@ importers:
       '@types/node':
         specifier: ^26.6.2
         version: 26.6.2
+      '@zelavis/app':
+        specifier: workspace:*
+        version: link:services/zelavis-app
+      '@zelavis/auth':
+        specifier: workspace:*
+        version: link:services/zelavis-auth
+      '@zelavis/marketplace':
+        specifier: workspace:*
+        version: link:services/zelavis-marketplace
+      '@zelavis/ui':
+        specifier: workspace:*
+        version: link:services/zelavis-ui
       h3-js:
         specifier: ^4.5.0
         version: 4.5.0
@@ -359,10 +362,6 @@ importers:
       usearch:
         specifier: ^2.26.2
         version: 2.26.2
-    optionalDependencies:
-      '@zelavis/ui':
-        specifier: workspace:*
-        version: link:services/zelavis-ui
 
   packages/zelavis/services/zelavis-app:
     dependencies:
