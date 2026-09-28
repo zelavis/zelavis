@@ -45,7 +45,7 @@
     "@zelavis/ecommerce": "workspace:*"
   },
   "peerDependencies": {
-    "zelavis": ">=2.0.0-alpha.4"
+    "zelavis": ">=2.0.0-alpha.5"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
