@@ -205,9 +205,6 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.8.1",
-    "@zelavis/app": "workspace:*",
-    "@zelavis/auth": "workspace:*",
-    "@zelavis/marketplace": "workspace:*",
     "better-sqlite3": "^13.0.3",
     "effect": "4.0.0-rc.117",
     "jose": "^6.2.12",
@@ -220,6 +217,10 @@
     "@libsql/client": "^0.18.0",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^26.6.2",
+    "@zelavis/app": "workspace:*",
+    "@zelavis/auth": "workspace:*",
+    "@zelavis/marketplace": "workspace:*",
+    "@zelavis/ui": "workspace:*",
     "h3-js": "^4.5.0",
     "libsql": "^0.5.29",
     "lmdb": "^3.4.3",
@@ -235,9 +236,6 @@
   ],
   "engines": {
     "node": ">=24"
-  },
-  "optionalDependencies": {
-    "@zelavis/ui": "workspace:*"
   },
   "peerDependencies": {
     "@libsql/client": "^0.15.0",
