@@ -40,6 +40,8 @@ export interface ZelavisAgentProcessCommand {
   readonly executable: string;
   readonly args?: readonly string[];
   readonly cwd: string;
+  /** Opens stdin only for interactive workloads; ordinary Project children see EOF. */
+  readonly stdin?: "pipe";
   /**
    * The complete environment. Not merged with the host's.
    *
@@ -100,6 +102,8 @@ export interface ZelavisAgentAttachedProcess {
 }
 
 export interface ZelavisAgentProcess {
+  /** Stable inside a supervised Agent; used to reconnect higher-level records. */
+  readonly id?: string;
   readonly workloadId: string;
   /** False once the process has exited. */
   readonly running: boolean;
@@ -111,6 +115,10 @@ export interface ZelavisAgentProcess {
    * reports "stopped" is not describing a process that is still running.
    */
   stop(options?: { readonly graceMs?: number }): Promise<ZelavisAgentProcessExit>;
+  /** Writes to the process stdin. Present when the runner opened stdin. */
+  write?(data: string): Promise<boolean>;
+  /** Sends a named operating-system signal without implying final shutdown. */
+  signal?(signal: string): Promise<boolean>;
   /**
    * Directs this process's output to a listener chosen after the fact.
    *
@@ -153,7 +161,10 @@ export interface ZelavisAgentProcessRunner {
    * Optional: a runner that keeps no durable record has nothing to reclaim and
    * may omit it.
    */
-  reclaim?(workloadId?: string): Promise<number>;
+  reclaim?(
+    workloadId?: string,
+    options?: { readonly preservePrefixes?: readonly string[] },
+  ): Promise<number>;
   /**
    * Takes back processes this runner is still running for a workload.
    *

@@ -101,6 +101,15 @@ export interface TenantRuntimeApi {
     }) => Promise<ReadonlyArray<RelatedDocuments>>;
     readonly write: (input: {
       operations: ReadonlyArray<DocumentWrite>;
+      /**
+       * Do this at most once.
+       *
+       * A retry carrying the same key is answered with what the first attempt
+       * returned instead of being applied again. This matters most over a
+       * network, where a caller that never sees a response cannot tell a lost
+       * reply from a lost request.
+       */
+      idempotencyKey?: string;
     }) => Promise<ReadonlyArray<DocumentWritten>>;
     readonly rewrite: (input?: {
       collection?: string;
@@ -108,9 +117,19 @@ export interface TenantRuntimeApi {
     readonly createIndex: (input: IndexDefinition & { collection: string }) => Promise<CollectionIndex>;
     readonly dropIndex: (input: { collection: string; name: string }) => Promise<boolean>;
     readonly listCollections: () => Promise<ReadonlyArray<Collection>>;
+    /**
+     * Remove a collection and everything in it.
+     *
+     * Refused while another collection references this one, and linear in the
+     * collection's size: documents go through the ordinary delete path so the
+     * lenses stay the business of the code that maintains them.
+     */
+    readonly dropCollection: (input: { name: string }) => Promise<boolean>;
     readonly collectionExists: (name: string) => Promise<boolean>;
     readonly insert: (input: {
       collection: string;
+      /** Do this at most once; see `write`. Supply `id` alongside it. */
+      idempotencyKey?: string;
       id?: string;
       data: JsonObject;
     }) => Promise<Document>;
@@ -123,6 +142,8 @@ export interface TenantRuntimeApi {
     readonly traverse: (input: TraverseInput) => Promise<TraverseResult>;
     readonly update: (input: {
       collection: string;
+      /** Do this at most once; see `write`. */
+      idempotencyKey?: string;
       id: string;
       data: JsonObject;
       mode?: "merge" | "replace";
@@ -131,6 +152,8 @@ export interface TenantRuntimeApi {
     }) => Promise<Document>;
     readonly delete: (input: {
       collection: string;
+      /** Do this at most once; see `write`. */
+      idempotencyKey?: string;
       id: string;
       expectedVersion?: number;
       precondition?: ReadonlyArray<DocumentFilter>;
@@ -202,6 +225,8 @@ export interface TenantRuntimeApi {
 export interface DatabaseRuntimeApi {
   readonly forTenant: (tenant: TenantId) => TenantRuntimeApi;
   readonly shardOf: (tenant: TenantId) => string;
+  /** Every tenant holding data. What an operator surface needs to offer a choice. */
+  readonly tenants: () => Promise<ReadonlyArray<TenantId>>;
   readonly context: { readonly nodeId: string };
   /**
    * What a health or operator surface may report about placement.
@@ -238,6 +263,7 @@ const tenantRuntime = (tenant: TenantApi): TenantRuntimeApi => ({
     write: (input) => run(tenant.documents.write(input)),
     rewrite: (input) => run(tenant.documents.rewrite(input)),
     listCollections: () => run(tenant.documents.listCollections),
+    dropCollection: (input) => run(tenant.documents.dropCollection(input)),
     collectionExists: (name) => run(tenant.documents.collectionExists(name)),
     insert: (input) => run(tenant.documents.insert(input)),
     findById: (input) => run(tenant.documents.findById(input)),
@@ -290,6 +316,7 @@ export const runtimeApiFor = (
 ): DatabaseRuntimeApi => ({
   forTenant: (tenant) => tenantRuntime(database.forTenant(tenant)),
   shardOf: (tenant) => database.shardOf(tenant),
+  tenants: () => run(database.tenants),
   context: { nodeId: options?.nodeId ?? "local" },
   topology: {
     shards: shardsOf(database.partitionMap),

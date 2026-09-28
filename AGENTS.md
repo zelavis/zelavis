@@ -66,7 +66,7 @@ Dashboard/product structure:
 
 Core platform work centers on the unified `zelavis` package and its public
 subpaths: `zelavis/core`, `zelavis/runtime`, `zelavis/fabric`, `zelavis/app`,
-`zelavis/db`, `zelavis/app/auth`, and `zelavis/app/workloads`. The dashboard
+`zelavis/db`, `zelavis/app/identity`, and `zelavis/app/workloads`. The dashboard
 remains the focused `@zelavis/ui` package bundled by `zelavis`.
 
 The repo still contains domain packages such as `@zelavis/ecommerce`, but they are optional layers on top of the platform primitives, not the main product definition.
@@ -147,7 +147,7 @@ current automatically.
   `provider`, or `template`. Each described who shipped a service or restated a
   capability, and nothing ever branched on them. A provider is discovered by
   its capability, and that capability names the service it extends
-  (`zelavis/auth:credentials`, `@acme/shop:payments`) rather than a bare domain
+  (`zelavis/identity:credentials`, `@acme/shop:payments`) rather than a bare domain
   two plugins could both scan for.
 - **System Services** are trusted Platform OS capabilities. Do not call every
   bundled project service a core service.
@@ -259,7 +259,10 @@ bindings, bundle assets, project-private databases, logs, locks, or runtime
 metadata behind.
 
 The canonical hierarchy is: Platform scales Projects, Projects scale Tenants,
-and exceptional Tenants may eventually scale Shards. Project is the universal
+and exceptional Tenants scale Shards by being divided into parts, each of which
+routes and stores as a Tenant of its own. Dividing is declared and carries no
+data, so it is refused for a Tenant that already holds records; re-keying an
+occupied Tenant into parts is a separate migration. Project is the universal
 first-level workload and hard isolation boundary for Zelavis Apps, WordPress,
 static sites, generic applications, and future managed kinds. Tenant is an
 App-owned logical data/workload boundary. Principal/User is an authenticated
@@ -586,8 +589,13 @@ Key rules:
   reads every document, id and unique value through it. A transaction sees
   committed state, so a second write built on a fresh read undoes the first,
   and two writes each pass a check the other already answered. Atomicity stops
-  at one tenant, which is one shard: there is no cross-shard write, and a
-  scatter reads.
+  at one partition, which is one shard: there is no cross-shard write, and a
+  scatter reads. For nearly every Tenant the partition is the Tenant. A Tenant
+  too large for one Shard may be divided into parts, and then the partition is
+  the part: `db.forTenant` refuses a divided Tenant rather than answering for a
+  fraction of it, `db.forPart` reaches one, and a question about the whole is a
+  scatter over `topology.subdivision.keysOf`. Below routing a part is a Tenant,
+  so it keeps the same isolation and local intersection within itself.
 - A scan that stops early passes `limit` to `engine.scan` rather than cutting
   the stream with `Stream.take`. A stream pulls an iterable thousands of
   entries at a time, so a take of a few rows still reads thousands; the limit
@@ -873,7 +881,7 @@ The base authorization contract belongs in `zelavis/core`, because every
 runtime service route needs to declare and enforce access requirements
 independently of the authentication method that produced the caller.
 
-`zelavis/app/auth` owns authentication primitives: accounts, credentials,
+`zelavis/app/identity` owns authentication primitives: accounts, credentials,
 sessions, roles and permissions. It ships the credential ceremonies whose
 dangerous parts are generic and identical for every provider — password
 verification and its timing, and the state, nonce and PKCE custody an OAuth
@@ -881,8 +889,8 @@ redirect flow depends on — so they are written and audited once. It resolves
 identities into principals; the server contract enforces route access.
 
 What is vendor-specific stays a plugin. A credential provider declares
-`zelavis/auth:credentials` and owns its whole exchange; an OAuth provider
-declares `zelavis/auth:oauth` and supplies only endpoints and claim mapping.
+`zelavis/identity:credentials` and owns its whole exchange; an OAuth provider
+declares `zelavis/identity:oauth` and supplies only endpoints and claim mapping.
 Any OpenID Connect issuer needs neither: pasting its issuer URL is enough,
 because the issuer publishes its own endpoints.
 

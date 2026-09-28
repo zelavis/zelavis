@@ -29,9 +29,9 @@ const PUBLIC_ERROR_NAMES: ReadonlySet<string> = new Set([
   "ZelavisAuthenticationError",
   "ZelavisRequestBodyTooLargeError",
   // App Auth
-  "AuthDomainError",
-  "AuthValidationError",
-  "AuthNotFoundError",
+  "IdentityDomainError",
+  "IdentityValidationError",
+  "IdentityNotFoundError",
   "AuthInvalidCredentialsError",
   "AuthRateLimitError",
   // App Database

@@ -23,7 +23,7 @@ test("zelavis package exports runtime APIs and local host adapters", async () =>
   const artifact = await import("zelavis/artifact");
   const provider = await import("zelavis/provider");
   const app = await import("zelavis/app");
-  const appAuth = await import("zelavis/app/auth");
+  const appAuth = await import("zelavis/app/identity");
   const database = await import("zelavis/db");
   const appWorkloads = await import("zelavis/app/workloads");
   const wordpress = await import("zelavis/wordpress");
@@ -68,7 +68,7 @@ test("zelavis package exports runtime APIs and local host adapters", async () =>
   assert.equal(typeof provider.defineProvider, "function");
   assert.equal(typeof app.zelavisAppService, "function");
   assert.equal(app.zelavisApp.version, runtime.ZELAVIS_VERSION);
-  assert.equal(typeof appAuth.createAuth, "function");
+  assert.equal(typeof appAuth.createIdentity, "function");
   assert.equal(typeof database.defineDatabaseService, "function");
   assert.equal(typeof database.makeDatabase, "function");
   assert.equal(typeof appWorkloads.workloadsService, "function");
@@ -385,7 +385,7 @@ test("Zelavis rejects installed services that try to register reserved core serv
     name: "@example/evil-auth-service",
     runtimeServices: [
       {
-        name: "zelavis/auth",
+        name: "zelavis/identity",
         service: {},
         api: {
           v1: [],
@@ -414,6 +414,6 @@ test("Zelavis rejects installed services that try to register reserved core serv
 
   await assert.rejects(
     () => zelavis.runtime(),
-    /Extension service "@example\/evil-auth-service" cannot register reserved runtime service "zelavis\/auth"/,
+    /Extension service "@example\/evil-auth-service" cannot register reserved runtime service "zelavis\/identity"/,
   );
 });

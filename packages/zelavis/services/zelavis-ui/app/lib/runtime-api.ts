@@ -570,8 +570,22 @@ export interface AuthAccount {
   verified: boolean;
   roles?: readonly string[];
   permissions?: readonly string[];
+  grants?: readonly RuntimePrincipalGrant[];
   metadata?: Record<string, unknown>;
   createdAt: string;
+  updatedAt: string;
+}
+
+export interface AuthOAuthConnection {
+  provider: string;
+  title?: string;
+  issuer?: string;
+  clientId: string;
+  redirectUri: string;
+  scopes?: readonly string[];
+  enabled: boolean;
+  configured: boolean;
+  hasClientSecret: boolean;
   updatedAt: string;
 }
 
@@ -915,7 +929,9 @@ const fallbackConfig: RuntimeConfig = {
         surface: "core",
         panelLabel: "Database",
         dynamicItems: {
-          path: "/database/menu/tables?tenantId=zelavis-app",
+          // No Tenant named: the menu lists every Tenant holding data. Pinning
+          // one here is what made an App's own tables invisible.
+          path: "/database/menu/tables",
           emptyTitle: "No tables yet",
         },
         items: [
@@ -1256,6 +1272,7 @@ async function readJson<T>(path: string, init?: RequestInit): Promise<T> {
     throw new RuntimeApiError(`${message} (${path})`, response.status, path);
   }
 
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
@@ -2203,8 +2220,76 @@ export async function listAuthProviders(config: RuntimeConfig) {
   return readJson<string[]>(`${config.api.basePath}/auth/providers`);
 }
 
+export async function listAuthOAuthConnections(config: RuntimeConfig) {
+  return (await readJson<{ providers: AuthOAuthConnection[] }>(
+    `${config.api.basePath}/auth/oauth/connections`,
+  )).providers;
+}
+
+export async function configureAuthOAuthConnection(
+  config: RuntimeConfig,
+  provider: string,
+  input: {
+    issuer?: string;
+    clientId: string;
+    clientSecret?: string;
+    redirectUri: string;
+    enabled?: boolean;
+  },
+) {
+  return (await readJson<{ connection: AuthOAuthConnection }>(
+    `${config.api.basePath}/auth/oauth/connections/${encodeURIComponent(provider)}`,
+    { method: "PUT", body: JSON.stringify(input) },
+  )).connection;
+}
+
+export async function removeAuthOAuthConnection(
+  config: RuntimeConfig,
+  provider: string,
+) {
+  await readJson<void>(
+    `${config.api.basePath}/auth/oauth/connections/${encodeURIComponent(provider)}`,
+    { method: "DELETE" },
+  );
+}
+
 export async function listAuthAccounts(config: RuntimeConfig) {
   return readJson<AuthAccount[]>(`${config.api.basePath}/auth/accounts`);
+}
+
+export async function listServiceAccounts(config: RuntimeConfig) {
+  return (await readJson<{ serviceAccounts: AuthAccount[] }>(
+    `${config.api.basePath}/auth/service-accounts`,
+  )).serviceAccounts;
+}
+
+export async function createServiceAccount(
+  config: RuntimeConfig,
+  input: {
+    name: string;
+    permissions?: readonly string[];
+    grants?: readonly RuntimePrincipalGrant[];
+    expiresInDays?: number;
+  },
+) {
+  return readJson<{
+    serviceAccount: AuthAccount;
+    token: string;
+    session: { id: string; expiresAt: string };
+  }>(`${config.api.basePath}/auth/service-accounts`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function revokeServiceAccount(
+  config: RuntimeConfig,
+  accountId: string,
+) {
+  await readJson<void>(
+    `${config.api.basePath}/auth/service-accounts/${encodeURIComponent(accountId)}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function listDatabaseCollections(

@@ -375,7 +375,7 @@ export function createLocalAgentProcessRunner(
         // No inherited stdin: a Project process must never read the terminal
         // the Platform was started from.
         shell: false,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: [command.stdin === "pipe" ? "pipe" : "ignore", "pipe", "pipe"],
       });
       registerChild(child);
 
@@ -439,6 +439,28 @@ export function createLocalAgentProcessRunner(
           } finally {
             clearTimeout(escalation);
           }
+        },
+        async write(data) {
+          const stdin = child.stdin;
+          if (settled || !stdin || stdin.destroyed || !stdin.writable) return false;
+          if (stdin.write(data)) return true;
+          return new Promise<boolean>((resolveWrite) => {
+            const onDrain = () => finish(true);
+            const onClose = () => finish(false);
+            const finish = (accepted: boolean) => {
+              stdin.removeListener("drain", onDrain);
+              stdin.removeListener("close", onClose);
+              stdin.removeListener("error", onClose);
+              resolveWrite(accepted);
+            };
+            stdin.once("drain", onDrain);
+            stdin.once("close", onClose);
+            stdin.once("error", onClose);
+          });
+        },
+        async signal(signal) {
+          if (settled || hasExited(child)) return false;
+          return child.kill(signal as NodeJS.Signals);
         },
       };
 

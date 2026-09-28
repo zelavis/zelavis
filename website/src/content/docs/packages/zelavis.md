@@ -120,7 +120,7 @@ Use scoped packages directly when you need lower-level control over primitives, 
 
 - `zelavis/core`
 - `zelavis/app/db`
-- `zelavis/app/auth`
+- `zelavis/app/identity`
 
 The lower-level `zelavis()` function still exists for internal runtime composition, but the main public application-facing entry point is the `Zelavis` class plus a runtime adapter.
 
@@ -168,7 +168,7 @@ const settings = await client.runtime.settings();
 ```
 
 The SDK surface also exposes runtime-neutral `zelavis/app/db` and
-`zelavis/app/auth` APIs. Browser database adapters such as IndexedDB or SQLite
+`zelavis/app/identity` APIs. Browser database adapters such as IndexedDB or SQLite
 WASM should plug into the same database driver boundary later, so local-first
 browser apps and server runtimes share the same document/event model.
 

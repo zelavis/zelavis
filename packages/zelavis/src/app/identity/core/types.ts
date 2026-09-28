@@ -1,0 +1,81 @@
+import type { IdentityRepositories } from "../contracts/repositories.js";
+import type { AccountService } from "../services/account-service.js";
+import type { AuthenticationService } from "../services/authentication-service.js";
+import type { CredentialService } from "../services/credential-service.js";
+import type { SessionService } from "../services/session-service.js";
+import type { AuthSecurityService } from "../services/security-service.js";
+import type { ZelavisRequestAuthenticator } from "../../../core/index.js";
+import type { Account, IssuedSession } from "../domain/entities.js";
+import type { CredentialEnrollmentInput } from "../contracts/credential-provider.js";
+
+/**
+ * What a credential provider plugin is given when it registers.
+ *
+ * Registration happens while auth is being created, which is before services
+ * are set up — so a plugin that hosts other plugins' providers had no way to
+ * see them, and no way to read the configuration an operator saved. Both
+ * arrive here instead.
+ */
+export interface IdentityMethodContext {
+  /** The installed services, for a plugin that discovers others by capability. */
+  registry: readonly {
+    status: string;
+    service: { name: string; capabilities?: readonly string[]; service?: unknown };
+  }[];
+  /** Durable storage scoped to the registering service, when the host has one. */
+  store?: {
+    get(key: string): Promise<unknown>;
+    set(key: string, value: any): Promise<void>;
+    delete(key: string): Promise<boolean>;
+    list(): Promise<readonly { key: string; value: unknown }[]>;
+  };
+}
+
+export interface IdentityMethodPlugin {
+  name: string;
+  register: (api: IdentityApi, context?: IdentityMethodContext) => void | Promise<void>;
+}
+
+export interface IdentityContext {
+  /** Explicit Project authority for this auth instance, when it is Project-owned. */
+  projectId?: string;
+  config: Record<string, unknown>;
+  methods: readonly IdentityMethodPlugin[];
+}
+
+export interface IdentityApi {
+  context: IdentityContext;
+  repositories: IdentityRepositories;
+  accounts: AccountService;
+  credentials: CredentialService;
+  sessions: SessionService;
+  authentication: AuthenticationService;
+  security: AuthSecurityService;
+  requestAuthenticator: ZelavisRequestAuthenticator;
+}
+
+export interface IdentityBootstrapStatus {
+  required: boolean;
+  providers: readonly string[];
+  enrollmentProviders: readonly string[];
+}
+
+export interface IdentityBootstrapInput {
+  provider: string;
+  account: {
+    email?: string;
+    username?: string;
+    displayName?: string;
+  };
+  credential: CredentialEnrollmentInput;
+}
+
+export interface IdentityBootstrapResult {
+  account: Account;
+  session: IssuedSession;
+}
+
+export interface IdentityBootstrapCapability {
+  status(): Promise<IdentityBootstrapStatus>;
+  bootstrap(input: IdentityBootstrapInput): Promise<IdentityBootstrapResult>;
+}

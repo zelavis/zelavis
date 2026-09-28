@@ -74,6 +74,10 @@ command tree.
   isolation the server cannot provide fails with
   `code: "project.isolation.unsatisfied"`. The backend is chosen by server
   policy; there is no backend option.
+- `auth service-accounts list|create|rotate|revoke` manages revocable Platform
+  machine identities through `client.auth.admin.*`. Creation and rotation
+  print a token once. Repeated `--permission` options add Platform permissions;
+  `--project <id>` adds the standard scoped Project operator grants.
 - `services list` lists service registry entries.
 - `services register` registers an ESM service specifier.
 - `services install` activates a registered service.
@@ -207,7 +211,7 @@ is genuine.
 
 A plugin is only needed for a provider that is not OIDC at all, where the
 profile endpoint and claim mapping are real code. Ship one declaring
-`"capabilities": ["zelavis/auth:oauth"]` whose service exports
+`"capabilities": ["zelavis/identity:oauth"]` whose service exports
 `oauthProviders`. A definition with an `issuer` must also give a `jwksUrl`: an
 ID token nobody can verify is attacker-supplied JSON, so one is refused at
 definition time.
@@ -215,7 +219,7 @@ definition time.
 ## Extensions
 
 A plugin that extends another declares a capability owned by it —
-`zelavis/auth:oauth`, not the domain namespace `provider:auth`. It is an
+`zelavis/identity:oauth`, not the domain namespace `provider:auth`. It is an
 ordinary plugin in every other way; the only difference is who it points at.
 
 That relationship is what lets an extension be listed beside the plugin it
@@ -223,13 +227,13 @@ extends rather than in a general catalogue:
 
 ```bash
 zelavis extensions
-zelavis extensions --for zelavis/auth
+zelavis extensions --for zelavis/identity
 ```
 
 The same over the API, which is what a plugin's own settings page asks for:
 
 ```
-GET /zelavis/api/v1/runtime/extensions?owner=zelavis/auth
+GET /zelavis/api/v1/runtime/extensions?owner=zelavis/identity
 ```
 
 Each entry in `runtime/services` carries `extends`, so a general listing can
@@ -257,10 +261,10 @@ zelavis services list --url http://localhost:8787/zelavis
 ## Product Services
 
 Services can be dropped into a folder on the server instead of composed in
-code. The Platform scans `<data directory>/product-services` at boot:
+code. The Platform scans `<data directory>/services` at boot:
 
 ```
-/var/lib/zelavis/product-services/
+/var/lib/zelavis/services/
   acme-analytics/package.json
   @acme/theme/package.json
 ```
@@ -289,7 +293,7 @@ the package that defines it:
   "zelavis": {
     "kind": "plugin",
     "capabilities": [
-      "zelavis/auth:credentials"
+      "zelavis/identity:credentials"
     ],
     "namespace": "example"
   }
@@ -306,13 +310,13 @@ plugin still validates every provider against its own registration contract.
 
 ### Bundled services
 
-The distribution seeds the services it ships into the product-services folder
+The distribution seeds the services it ships into the services folder
 the first time it starts, the way a CMS lays down its bundled plugins. They are
 ordinary packages from that point on: list them, replace them, or delete them.
 A deleted one stays deleted rather than reappearing on the next restart.
 
 Packages in the folder can import `zelavis` — the running Platform is linked
-into `<data directory>/product-services/node_modules` so Node's resolution
+into `<data directory>/services/node_modules` so Node's resolution
 finds it, and the link always points at the Platform that loaded the package
 rather than another copy on the machine.
 

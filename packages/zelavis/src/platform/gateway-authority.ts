@@ -32,6 +32,15 @@ export interface ZelavisGatewayAuthorityClaims {
   /** The caller's identity, for attribution inside the Project runtime. */
   readonly subject: string;
   readonly subjectType: string;
+  /**
+   * The App Tenant the caller acts in, decided by the Platform.
+   *
+   * App data is tenant-owned, and a request that names its own tenant is not
+   * isolation: the caller would choose what it may read. The Platform resolves
+   * the tenant from the authenticated principal and signs it here, so the
+   * Project runtime receives it with the same authority as the permissions.
+   */
+  readonly tenantId: string;
   /** Permissions the caller actually holds for this Project. Never a wildcard. */
   readonly permissions: readonly string[];
   /** Milliseconds since the epoch after which this envelope is refused. */
@@ -68,6 +77,7 @@ function canonicalClaims(claims: ZelavisGatewayAuthorityClaims): string {
     claims.runtimeNodeId,
     claims.subject,
     claims.subjectType,
+    claims.tenantId,
     [...claims.permissions],
     claims.expiresAt,
     claims.nonce,
@@ -148,7 +158,7 @@ export async function verifyGatewayAuthority(
   } catch {
     return undefined;
   }
-  if (!Array.isArray(decoded) || decoded.length !== 9) return undefined;
+  if (!Array.isArray(decoded) || decoded.length !== 10) return undefined;
 
   const [
     projectId,
@@ -157,6 +167,7 @@ export async function verifyGatewayAuthority(
     runtimeNodeId,
     subject,
     subjectType,
+    tenantId,
     permissions,
     expiresAt,
     nonce,
@@ -169,6 +180,8 @@ export async function verifyGatewayAuthority(
     typeof runtimeNodeId !== "string" ||
     typeof subject !== "string" ||
     typeof subjectType !== "string" ||
+    typeof tenantId !== "string" ||
+    !tenantId ||
     !Array.isArray(permissions) ||
     permissions.some((entry) => typeof entry !== "string") ||
     typeof expiresAt !== "number" ||
@@ -200,6 +213,7 @@ export async function verifyGatewayAuthority(
     runtimeNodeId,
     subject,
     subjectType,
+    tenantId,
     permissions: permissions as readonly string[],
     expiresAt,
     nonce,

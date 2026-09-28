@@ -1,28 +1,22 @@
 import { publicServiceRegistryIdentity } from "./platform/service-registry-view.js";
 import {
-  authService as createAuthService,
-  createAuth,
-  type AuthServiceOptions,
-  createAuthorizationCodeFlow,
-  createConnectionStore,
+  identityService as createIdentityService,
+  createIdentity,
+  type IdentityServiceOptions,
+  createOAuthProviderRuntime,
   createPasswordProvider,
-  builtInOAuthProviders,
-  environmentConnection,
-  discoverOidcProvider,
-  OAUTH_PROVIDER_CAPABILITY,
   PASSWORD_PROVIDER,
-  publicConnection,
-  type PublicOAuthConnection,
-  type AuthMethodContext,
-  type AuthMethodPlugin,
-  type OAuthConnection,
-  type OAuthProviderDefinition,
-  type AuthApi,
-} from "./app/auth/index.js";
+  type IdentityMethodContext,
+  type IdentityMethodPlugin,
+  type IdentityApi,
+} from "./app/identity/index.js";
 import {
   defineDatabaseService,
   type DatabaseRuntimeApi,
+  type JsonObject,
+  CollectionExists,
 } from "./db/index.js";
+import { DocumentConflict } from "./db/errors.js";
 import type { OpenNodeDatabaseOptions } from "./db/node-host.js";
 import {
   createFabricService,
@@ -40,6 +34,7 @@ import {
   type ZelavisServerFetchHandler,
   declaresServiceCapability,
   serviceCapabilityFor,
+  misscopedExtensionOwners,
   serviceExtensionOwners,
   serviceExtensionPoints,
   type ZelavisResolvedRoute,
@@ -55,6 +50,17 @@ import {
   type ZelavisPlatformFrontend,
   type ZelavisPlatformFrontendFactory,
 } from "./platform/frontend-host.js";
+import { Effect } from "effect";
+import { Scope } from "effect";
+import {
+  AcquisitionFailed,
+  ActivationFailed,
+  MaterializationFailed,
+  RegistryContended,
+  RegistryUnavailable,
+  SourceRefused,
+  UnusablePackage,
+} from "./platform/service-lifecycle-errors.js";
 import { ZELAVIS_BASELINE_SERVICE_ELEMENTS } from "./platform/service-elements.js";
 import { createZelavisAuthSettingsService } from "./platform/auth-settings.js";
 import { createZelavisMarketplaceService } from "./platform/marketplace.js";
@@ -117,7 +123,7 @@ import {
   parseStoredServiceRegistryStateEntry,
   readDashboardSettingsUpdate,
   readInitialServiceRegistryState,
-  mutateServiceRegistry,
+  mutateServiceRegistryEffect,
   resolveRuntimeSettingsStore,
   resolveServiceRegistryStore,
 } from "./platform/settings.js";
@@ -138,6 +144,7 @@ import {
   readBodyObject,
   zelavisErrorResponse,
   ZelavisValidationError,
+  ZelavisConflictError,
 } from "./platform/shared.js";
 import {
   workloadsService,
@@ -217,6 +224,16 @@ import {
 export * from "./backends/registry.js";
 export * from "./agent/index.js";
 import type { ZelavisAgentOperationReader } from "./core/agent/index.js";
+import type {
+  ZelavisEnvironmentEventReadOptions,
+  ZelavisRemoteEnvironment,
+  ZelavisEnvironmentOperationInput,
+  ZelavisEnvironmentProcess,
+  ZelavisEnvironmentProcessInput,
+  ZelavisEnvironmentSession,
+  ZelavisEnvironmentUsageRecord,
+} from "./platform/remote-environment.js";
+export * from "./platform/remote-environment.js";
 import {
   createMemorySystemStore,
   type ZelavisSystemStore,
@@ -303,7 +320,7 @@ import type {
 } from "./platform/storage-types.js";
 
 
-export type ZelavisAuthOptions = boolean | AuthServiceOptions;
+export type ZelavisAuthOptions = boolean | IdentityServiceOptions;
 
 /**
  * The face of an installation.
@@ -379,7 +396,7 @@ export type ZelavisFabricOptions = boolean | FabricServiceOptions;
  * had a second, privileged way to install services. It did not: these are the
  * Platform's own subsystems, and every one of them is either infrastructure
  * (a database, object storage) or a policy switch. Services come from the
- * product-services folder and the registry, and only from there.
+ * services folder and the registry, and only from there.
  *
  * They stay internal to `zelavis(...)`; the public constructor refuses them.
  */
@@ -506,6 +523,8 @@ export interface ZelavisServerOptions {
   agentOperations?: ZelavisAgentOperationReader;
   /** Issues authority for release-signed host operations on a supervised Agent. */
   hostOperations?: ZelavisHostOperationBroker;
+  /** Provider-neutral remote environment boundary for agent execution. */
+  remoteEnvironment?: ZelavisRemoteEnvironment;
   /** Proxy-neutral ingress authority. Concrete proxy execution stays host-provided. */
   edge?: ZelavisEdgeManager;
   /** Canonical route and hostname authority. Defaults to System Store backing. */
@@ -564,12 +583,27 @@ export interface ZelavisServicePackageScaffoldInput {
   args?: readonly string[];
 }
 
+/**
+ * How a host takes delivery of a service package.
+ *
+ * Effect-returning, so the ways this fails are part of the type: a source the
+ * policy refuses, bytes that did not match their digest, a fetch that failed,
+ * an archive that is not a service, and a disk that would not take it. They
+ * used to be one thrown Error and therefore one 400, which told a caller
+ * nothing about whether to fix their request or try again.
+ *
+ * Every method needs a `Scope`: packages are written to a temporary directory
+ * and renamed into place, and the scope is what removes that directory however
+ * the operation ends.
+ */
 export interface ZelavisServicePackageInstaller {
   install(
     input: ZelavisServicePackageInstallInput,
-  ):
-    | Promise<ZelavisServicePackageInstallResult>
-    | ZelavisServicePackageInstallResult;
+  ): Effect.Effect<
+    ZelavisServicePackageInstallResult,
+    UnusablePackage | MaterializationFailed,
+    Scope.Scope
+  >;
   /**
    * Acquires a package from a remote source.
    *
@@ -579,9 +613,11 @@ export interface ZelavisServicePackageInstaller {
    */
   acquire?(
     input: ZelavisServicePackageAcquireInput,
-  ):
-    | Promise<ZelavisServicePackageAcquireResult>
-    | ZelavisServicePackageAcquireResult;
+  ): Effect.Effect<
+    ZelavisServicePackageAcquireResult,
+    SourceRefused | AcquisitionFailed | UnusablePackage | MaterializationFailed,
+    Scope.Scope
+  >;
   /**
    * Scaffolds a frontend package by running a `create-*` package.
    *
@@ -592,9 +628,11 @@ export interface ZelavisServicePackageInstaller {
    */
   scaffold?(
     input: ZelavisServicePackageScaffoldInput,
-  ):
-    | Promise<ZelavisServicePackageAcquireResult>
-    | ZelavisServicePackageAcquireResult;
+  ): Effect.Effect<
+    ZelavisServicePackageAcquireResult,
+    SourceRefused | AcquisitionFailed | UnusablePackage | MaterializationFailed,
+    Scope.Scope
+  >;
 }
 
 export interface ZelavisPlatformResources {
@@ -604,6 +642,7 @@ export interface ZelavisPlatformResources {
   agentOperations?: ZelavisAgentOperationReader;
   /** Issues authority for release-signed host operations on a supervised Agent. */
   hostOperations?: ZelavisHostOperationBroker;
+  remoteEnvironment?: ZelavisRemoteEnvironment;
   /** Proxy-neutral ingress authority. */
   edge?: ZelavisEdgeManager;
   /** Canonical route and hostname authority. */
@@ -738,7 +777,7 @@ export function defineAdapter(
 
 const RESERVED_CORE_SERVICE_NAMES = new Set([
   "zelavis/app",
-  "zelavis/auth",
+  "zelavis/identity",
   "zelavis/platform",
   "@zelavis/marketplace",
   "@zelavis/auth",
@@ -965,6 +1004,17 @@ function readDashboardServiceRegistryUpdate(
   return update;
 }
 
+/**
+ * Runs one installer step from a Promise-shaped caller.
+ *
+ * Scoped, because every installer method writes through a temporary directory
+ * that the scope is responsible for removing. The typed failure is re-raised
+ * as itself so the platform's status rules can tell a refused source from a
+ * failed fetch.
+ */
+const runInstallerStep = <A, E>(step: Effect.Effect<A, E, Scope.Scope>): Promise<A> =>
+  Effect.runPromise(Effect.scoped(step).pipe(Effect.catch((failure) => Effect.die(failure))));
+
 async function readDashboardServiceRegistryCreate(
   body: unknown,
   options: {
@@ -991,9 +1041,9 @@ async function readDashboardServiceRegistryCreate(
       );
     }
 
-    const acquired = await options.packageInstaller.acquire({
-      reference: sourceReference,
-    });
+    const acquired = await runInstallerStep(
+      options.packageInstaller.acquire({ reference: sourceReference }),
+    );
     specifier = acquired.specifier;
   }
 
@@ -1007,7 +1057,8 @@ async function readDashboardServiceRegistryCreate(
       );
     }
 
-    const scaffolded = await options.packageInstaller.scaffold({
+    const scaffolded = await runInstallerStep(
+      options.packageInstaller.scaffold({
       reference: scaffoldReference,
       ...(typeof input.scaffoldCommand === "string" && input.scaffoldCommand.trim()
         ? { command: input.scaffoldCommand.trim() }
@@ -1019,7 +1070,8 @@ async function readDashboardServiceRegistryCreate(
             ),
           }
         : {}),
-    });
+      }),
+    );
     specifier = scaffolded.specifier;
   }
 
@@ -1027,7 +1079,8 @@ async function readDashboardServiceRegistryCreate(
     const bytes = new Uint8Array(await uploadedFile.arrayBuffer());
 
     if (options.packageInstaller) {
-      const installed = await options.packageInstaller.install({
+      const installed = await runInstallerStep(
+        options.packageInstaller.install({
         fileName:
           typeof uploadedFile.name === "string" && uploadedFile.name.trim()
             ? uploadedFile.name
@@ -1036,8 +1089,9 @@ async function readDashboardServiceRegistryCreate(
           typeof uploadedFile.type === "string" && uploadedFile.type.trim()
             ? uploadedFile.type
             : undefined,
-        body: bytes,
-      });
+          body: bytes,
+        }),
+      );
       specifier = installed.specifier;
     } else {
       specifier = `data:text/javascript;base64,${toBase64(bytes)}`;
@@ -1276,248 +1330,14 @@ async function resolveDatabaseCoreService(
   return { api: opened.api, close: opened.close };
 }
 
-/**
- * Registers a credential provider for every installed OAuth definition.
- *
- * Core runs the Authorization Code flow — it holds the state, nonce and PKCE
- * verifier, and it is the only place those are handled — and a plugin
- * declaring `zelavis/auth:oauth` supplies the endpoints and claim mapping for
- * one identity provider. Google, GitHub, and a generic OIDC builder ship in
- * the box; anything else arrives as an ordinary plugin.
- *
- * The credentials an installation was issued are the operator's, so they are
- * read from the store rather than from any package. The Authorization Code
- * contract is synchronous, so the configuration is loaded once here and
- * refreshed whenever it is written.
- */
-async function registerOAuthProviders(
-  api: AuthApi,
-  context: AuthMethodContext | undefined,
-  options: { fetch?: typeof globalThis.fetch },
-): Promise<void> {
-  const definitions = new Map<string, OAuthProviderDefinition>();
-  for (const entry of context?.registry ?? []) {
-    if (entry.status !== "installed") continue;
-    if (!entry.service.capabilities?.includes(OAUTH_PROVIDER_CAPABILITY)) continue;
-    const declared = (
-      entry.service.service as
-        | { oauthProviders?: readonly OAuthProviderDefinition[] }
-        | undefined
-    )?.oauthProviders;
-    if (!Array.isArray(declared)) continue;
-    for (const definition of declared) {
-      // First installed plugin wins, and the built-ins go in last: a later
-      // install must not redirect sign-in for a name accounts already use.
-      if (definition?.name && !definitions.has(definition.name)) {
-        definitions.set(definition.name, definition);
-      }
-    }
-  }
-  for (const definition of builtInOAuthProviders) {
-    if (!definitions.has(definition.name)) definitions.set(definition.name, definition);
-  }
-
-  const connections = context?.store
-    ? createConnectionStore(context.store as never)
-    : undefined;
-  const active = new Map<string, OAuthConnection>();
-  // Awaited rather than floated: a sign-in arriving immediately after boot
-  // would otherwise find an empty map and be told the provider is unavailable.
-  for (const stored of (await connections?.list()) ?? []) {
-    active.set(stored.provider, stored);
-    // A connection carrying its own discovered definition defines a provider
-    // nothing installed knows about — an issuer an operator pasted in.
-    if (!definitions.has(stored.provider) && stored.discovered) {
-      definitions.set(
-        stored.provider,
-        stored.discovered as OAuthProviderDefinition,
-      );
-    }
-  }
-  for (const name of definitions.keys()) {
-    if (active.has(name)) continue;
-    const fromEnvironment = environmentConnection(name);
-    if (fromEnvironment) active.set(name, fromEnvironment);
-  }
-
-  const require = (name: string): OAuthConnection => {
-    const connection = active.get(name);
-    if (!connection?.enabled) {
-      // The same message whether a provider is unconfigured or switched off:
-      // which it is describes the installation's setup to a stranger.
-      throw new TypeError(`${name} sign-in is not available on this installation.`);
-    }
-    return connection;
-  };
-
-  const registerProvider = (definition: OAuthProviderDefinition) => {
-    const name = definition.name;
-    api.authentication.registerProvider({
-      name,
-      authorizationCode: {
-        get redirectUri() {
-          return require(name).redirectUri;
-        },
-        createAuthorizationUrl(input) {
-          return createAuthorizationCodeFlow(definition, require(name), options)
-            .createAuthorizationUrl(input);
-        },
-        exchange(input) {
-          return createAuthorizationCodeFlow(definition, require(name), options)
-            .exchange(input);
-        },
-      },
-    });
-  };
-  for (const definition of definitions.values()) registerProvider(definition);
-
-  oauthRuntime = {
-    definitions,
-    connections,
-    active,
-    fetch: options.fetch,
-    register: registerProvider,
-  };
-}
-
-/**
- * Saves the credentials an installation was issued for one provider.
- *
- * Kept beside registration rather than in a service of its own: the same map
- * the flow reads is the one this writes, and a second copy of it would drift
- * from whatever an operator last saved.
- */
-async function configureOAuthConnection(
-  provider: string,
-  input: unknown,
-): Promise<PublicOAuthConnection | undefined> {
-  const runtime = oauthRuntime;
-  if (!runtime) return undefined;
-
-  const body = (input ?? {}) as Partial<OAuthConnection>;
-  // An issuer turns a provider nobody shipped into one this installation has.
-  // Every OIDC issuer publishes its own endpoints, so adding Okta, Auth0,
-  // Keycloak, Google or a company's SSO is a URL rather than a plugin.
-  let discovered: OAuthProviderDefinition | undefined;
-  if (typeof body.issuer === "string" && body.issuer.trim()) {
-    discovered = await discoverOidcProvider(body.issuer.trim(), {
-      name: provider,
-      ...(runtime.fetch ? { fetch: runtime.fetch } : {}),
-    });
-    runtime.definitions.set(provider, discovered);
-    runtime.register?.(discovered);
-  }
-
-  if (!runtime.definitions.has(provider)) return undefined;
-  if (!runtime.connections) {
-    throw new ZelavisValidationError(
-      "This installation has no durable store, so OAuth configuration cannot be saved.",
-    );
-  }
-
-  if (typeof body.clientId !== "string" || !body.clientId.trim()) {
-    throw new ZelavisValidationError("A clientId is required.");
-  }
-  if (typeof body.redirectUri !== "string" || !body.redirectUri.trim()) {
-    throw new ZelavisValidationError("A redirectUri is required.");
-  }
-  let redirect: URL;
-  try {
-    redirect = new URL(body.redirectUri);
-  } catch {
-    throw new ZelavisValidationError("The redirectUri must be an absolute URL.");
-  }
-  if (redirect.protocol !== "https:" && redirect.hostname !== "localhost") {
-    // The authorization code arrives on this URL. Over plaintext anyone on the
-    // path can take it, and a code is enough to complete a sign-in.
-    throw new ZelavisValidationError(
-      "The redirectUri must use https, except on localhost for development.",
-    );
-  }
-
-  const existing = await runtime.connections.read(provider);
-  const connection: OAuthConnection = {
-    provider,
-    clientId: body.clientId.trim(),
-    // An omitted secret keeps the stored one: the API never returns it, so an
-    // operator editing a redirect URI has nothing to send back.
-    ...(typeof body.clientSecret === "string" && body.clientSecret
-      ? { clientSecret: body.clientSecret }
-      : existing?.clientSecret
-        ? { clientSecret: existing.clientSecret }
-        : {}),
-    redirectUri: redirect.toString(),
-    ...(discovered
-      ? { issuer: discovered.issuer, discovered }
-      : existing?.discovered
-        ? { issuer: existing.issuer, discovered: existing.discovered }
-        : {}),
-    ...(Array.isArray(body.scopes)
-      ? { scopes: body.scopes.filter((scope) => typeof scope === "string") }
-      : {}),
-    enabled: body.enabled !== false,
-    updatedAt: new Date().toISOString(),
-  };
-
-  await runtime.connections.write(connection);
-  runtime.active.set(provider, connection);
-  return publicConnection(connection);
-}
-
-async function listOAuthConnections(): Promise<
-  readonly (PublicOAuthConnection & { title?: string; configured: boolean })[]
-> {
-  const runtime = oauthRuntime;
-  if (!runtime) return [];
-  return [...runtime.definitions].map(([name, definition]) => {
-    const connection = runtime.active.get(name);
-    return {
-      ...(connection
-        ? publicConnection(connection)
-        : {
-            provider: name,
-            clientId: "",
-            redirectUri: "",
-            enabled: false,
-            updatedAt: new Date(0).toISOString(),
-            hasClientSecret: false,
-          }),
-      ...(definition.title ? { title: definition.title } : {}),
-      configured: Boolean(connection),
-    };
-  });
-}
-
-async function removeOAuthConnection(provider: string): Promise<void> {
-  const runtime = oauthRuntime;
-  if (!runtime) return;
-  await runtime.connections?.remove(provider);
-  // The environment may still define it, so the active map is recomputed for
-  // this provider rather than the entry simply dropped.
-  const fallback = environmentConnection(provider);
-  if (fallback) runtime.active.set(provider, fallback);
-  else runtime.active.delete(provider);
-}
-
-/** Set when auth is composed, so the endpoints below can reach the same state. */
-let oauthRuntime:
-  | {
-      definitions: Map<string, OAuthProviderDefinition>;
-      connections: ReturnType<typeof createConnectionStore> | undefined;
-      active: Map<string, OAuthConnection>;
-      fetch?: typeof globalThis.fetch;
-      register?: (definition: OAuthProviderDefinition) => void;
-    }
-  | undefined;
-
 async function resolveAuthCoreService(
   option: ZelavisAuthOptions | undefined,
-  methods: readonly AuthMethodPlugin[] = [],
+  methods: readonly IdentityMethodPlugin[] = [],
   systemStore?: ZelavisSystemStore,
   registryEntries: readonly Readonly<
     ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>
   >[] = [],
-  methodServiceNames: ReadonlyMap<AuthMethodPlugin, string> = new Map(),
+  methodServiceNames: ReadonlyMap<IdentityMethodPlugin, string> = new Map(),
   rootPath = "/zelavis",
   bootstrapToken?: string,
 ): Promise<ZelavisRuntimeService<any> | undefined> {
@@ -1528,11 +1348,15 @@ async function resolveAuthCoreService(
   }
 
   const configured = authOption === true ? {} : authOption;
+  const oauth = createOAuthProviderRuntime({
+    ...(configured.oauth ?? {}),
+    environmentConnections: true,
+  });
   // Password sign-in ships with Zelavis. It used to be a plugin the
-  // distribution copied into the product-services folder on first boot,
+  // distribution copied into the services folder on first boot,
   // because an installation with no credential provider can never create its
   // first owner — mandatory in everything but name.
-  const builtInMethods: AuthMethodPlugin[] = [
+  const builtInMethods: IdentityMethodPlugin[] = [
     {
       name: PASSWORD_PROVIDER,
       register(api) {
@@ -1541,14 +1365,9 @@ async function resolveAuthCoreService(
         );
       },
     },
-    {
-      name: "zelavis/auth:oauth",
-      register(api, context) {
-        return registerOAuthProviders(api, context, configured.oauth ?? {});
-      },
-    },
+    oauth.method,
   ];
-  const auth = configured.auth ?? await createAuth({
+  const auth = configured.auth ?? await createIdentity({
     ...(configured.authOptions ?? {}),
     repositories: {
       ...(systemStore ? createPlatformAuthRepositories(systemStore) : {}),
@@ -1564,14 +1383,14 @@ async function resolveAuthCoreService(
     // can find them and read what an operator configured. Registration runs
     // before service setup, so this is the only point where it can.
     methodContext: (method) => ({
-      registry: registryEntries as AuthMethodContext["registry"],
+      registry: registryEntries as IdentityMethodContext["registry"],
       ...(systemStore
         ? { store: createServiceStore(systemStore, methodServiceNames.get(method) ?? method.name) }
         : {}),
     }),
   });
 
-  return createAuthService({
+  return createIdentityService({
     ...configured,
     auth,
     methods: [],
@@ -1579,11 +1398,7 @@ async function resolveAuthCoreService(
       ...(configured.definition ?? {}),
       authority: "platform",
       bootstrap: createPlatformAuthBootstrap(auth, { store: systemStore }),
-      oauthConnections: {
-        list: listOAuthConnections,
-        configure: configureOAuthConnection,
-        remove: removeOAuthConnection,
-      },
+      oauthConnections: oauth.connections,
       bootstrapToken,
       sessionCookie: configured.definition?.sessionCookie === false
         ? false
@@ -1597,7 +1412,7 @@ async function resolveAuthCoreService(
 
 /** The capability a credential provider declares to extend Platform auth. */
 export const ZELAVIS_AUTH_CREDENTIALS_CAPABILITY = serviceCapabilityFor(
-  "zelavis/auth",
+  "zelavis/identity",
   "credentials",
 );
 
@@ -1607,7 +1422,7 @@ export const ZELAVIS_AUTH_CREDENTIALS_CAPABILITY = serviceCapabilityFor(
  * Providers are ordinary installed services found by capability, and this is
  * now the only way one reaches auth: there is no option for handing providers
  * to the constructor. A provider arrives by being installed, which means the
- * same path whether it came from the product-services folder, the registry
+ * same path whether it came from the services folder, the registry
  * endpoints, or the marketplace.
  *
  * The capability names the plugin being extended rather than a bare domain, so
@@ -1617,10 +1432,10 @@ export const ZELAVIS_AUTH_CREDENTIALS_CAPABILITY = serviceCapabilityFor(
 /** Maps each collected method back to the service that supplied it. */
 function collectAuthMethodServiceNames(
   registry: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
-): ReadonlyMap<AuthMethodPlugin, string> {
-  const names = new Map<AuthMethodPlugin, string>();
+): ReadonlyMap<IdentityMethodPlugin, string> {
+  const names = new Map<IdentityMethodPlugin, string>();
   for (const entry of registry) {
-    const method = entry.service.service as AuthMethodPlugin | undefined;
+    const method = entry.service.service as IdentityMethodPlugin | undefined;
     if (typeof method?.register === "function") {
       names.set(method, entry.service.name);
     }
@@ -1630,7 +1445,7 @@ function collectAuthMethodServiceNames(
 
 function collectAuthMethodPlugins(
   registry: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
-): readonly AuthMethodPlugin[] {
+): readonly IdentityMethodPlugin[] {
   return Object.freeze(
     registry
       .filter(
@@ -1638,12 +1453,12 @@ function collectAuthMethodPlugins(
           entry.status === "installed" &&
           declaresServiceCapability(
             entry.service.capabilities,
-            "zelavis/auth",
+            "zelavis/identity",
             "credentials",
           ) &&
-          typeof (entry.service.service as AuthMethodPlugin | undefined)?.register === "function",
+          typeof (entry.service.service as IdentityMethodPlugin | undefined)?.register === "function",
       )
-      .map((entry) => entry.service.service as AuthMethodPlugin),
+      .map((entry) => entry.service.service as IdentityMethodPlugin),
   );
 }
 
@@ -2027,7 +1842,7 @@ async function resolveRuntimeManagementCore(
           service.name === "zelavis/platform" ||
           service.name === "@zelavis/marketplace" ||
           service.name === "zelavis/fabric" ||
-          service.name === "zelavis/auth" ||
+          service.name === "zelavis/identity" ||
           service.name === "@zelavis/db" ||
           service.name === "@zelavis/storage" ||
           service.name === "@zelavis/frontend" ||
@@ -2121,6 +1936,76 @@ async function resolveRuntimeManagementCore(
           })),
       ];
     };
+  /**
+   * Changes the registry and activates the result, or leaves neither changed.
+   *
+   * The registry was written first and activation run after, so an activation
+   * that threw left the registry claiming a service was installed over a
+   * runtime that had never mounted it -- and the caller got a 400 suggesting
+   * their request was at fault. Putting the previous entries back is what
+   * makes the pair one outcome rather than two.
+   *
+   * A restore that itself fails is reported rather than swallowed: the state
+   * really is split at that point, and saying so is the only honest answer.
+   */
+  /**
+   * Runs a registry change at the route boundary.
+   *
+   * Typed failures become the errors the platform's status rules already
+   * know, so a contended registry is still the 409 the route documents and a
+   * failed activation is a 500 rather than a 400 blaming the caller.
+   */
+  const runServiceRegistryChange = <A>(
+    change: Effect.Effect<A, RegistryContended | RegistryUnavailable | ActivationFailed>,
+  ): Promise<A> =>
+    Effect.runPromise(
+      change.pipe(
+        Effect.catchTag("RegistryContended", (error) =>
+          Effect.die(
+            new ZelavisConflictError(
+              `Service registry changed during all ${error.attempts} mutation attempts; retry the request.`,
+            ),
+          )),
+        Effect.catchTag("RegistryUnavailable", (error) => Effect.die(error.cause)),
+        Effect.catchTag("ActivationFailed", (error) => Effect.die(error)),
+      ),
+    );
+
+  const applyServiceRegistryChange = (
+    mutation: (entries: readonly ZelavisServiceRegistryStateEntry[]) =>
+      readonly ZelavisServiceRegistryStateEntry[] | Promise<readonly ZelavisServiceRegistryStateEntry[]>,
+    describe: (
+      entries: readonly ZelavisServiceRegistryStateEntry[],
+    ) => Omit<ZelavisServiceActivationRequest, "registry">,
+  ) =>
+    Effect.gen(function* () {
+      const before = yield* Effect.tryPromise({
+        try: async () => context.serviceRegistryStore.read(),
+        catch: (cause) => new RegistryUnavailable({ cause }),
+      });
+      const entries = yield* mutateServiceRegistryEffect(context.serviceRegistryStore, mutation);
+      const request = describe(entries);
+
+      const activation = yield* Effect.tryPromise({
+        try: async () => activateServiceRegistryChange(request, entries),
+        catch: (cause) =>
+          new ActivationFailed({
+            serviceName: request.serviceName,
+            message: cause instanceof Error ? cause.message : String(cause),
+          }),
+      }).pipe(
+        Effect.tapError(() =>
+          mutateServiceRegistryEffect(context.serviceRegistryStore, () => before).pipe(
+            Effect.catch((restoreError) =>
+              Effect.logError(
+                `Service registry could not be restored after "${request.serviceName}" failed to activate; `
+                  + `the registry and the runtime now disagree: ${String(restoreError)}`,
+              )),
+          )),
+      );
+      return { entries, activation };
+    });
+
   const activateServiceRegistryChange = async (
     request: Omit<ZelavisServiceActivationRequest, "registry">,
     registry: readonly ZelavisServiceRegistryStateEntry[],
@@ -2316,7 +2201,7 @@ async function resolveRuntimeManagementCore(
               owner: {
                 type: "string",
                 description:
-                  "Limit the result to extensions of this service, such as zelavis/auth.",
+                  "Limit the result to extensions of this service, such as zelavis/identity.",
               },
             },
             responses: {
@@ -2328,7 +2213,7 @@ async function resolveRuntimeManagementCore(
               const wanted = new URL(request.url).searchParams.get("owner") ?? undefined;
               const services = await serializeServiceRegistryForDashboard();
               // Composed services count as present. A core service such as
-              // `zelavis/auth` never appears in the registry, so a listing
+              // `zelavis/identity` never appears in the registry, so a listing
               // built from that alone would report the one thing every auth
               // extension points at as missing.
               const installed = new Set<string>([
@@ -2348,6 +2233,16 @@ async function resolveRuntimeManagementCore(
                     // there, so a client can say so rather than offering an
                     // install that would do nothing.
                     ownerInstalled: installed.has(point.owner),
+                    // And whether anything answers to that name at all. Without
+                    // this the two are the same story — an owner nobody is
+                    // reads exactly like one that is merely not installed yet,
+                    // which is what lets a misspelled owner pass unnoticed.
+                    ownerKnown:
+                      installed.has(point.owner)
+                      || RESERVED_CORE_SERVICE_NAMES.has(point.owner)
+                      || (services as any[]).some(
+                        (candidate: any) => candidate.name === point.owner,
+                      ),
                     capabilities: new Set<string>(),
                     extensions: [] as unknown[],
                   };
@@ -2408,18 +2303,18 @@ async function resolveRuntimeManagementCore(
                 manifestResolver: context.serviceManifestResolver,
                 packageInstaller: context.servicePackageInstaller,
               });
-              const nextEntries = await mutateServiceRegistry(context.serviceRegistryStore, (entries) => [
-                ...entries.filter((entry) => entry.name !== created.name),
-                { ...entries.find((entry) => entry.name === created.name), ...created },
-              ]);
-              const activation = await activateServiceRegistryChange(
-                {
-                  serviceName: created.name,
-                  action:
-                    created.status === "installed" ? "install" : "register",
-                  specifier: created.specifier,
-                },
-                nextEntries,
+              const { activation } = await runServiceRegistryChange(
+                applyServiceRegistryChange(
+                  (entries) => [
+                    ...entries.filter((entry) => entry.name !== created.name),
+                    { ...entries.find((entry) => entry.name === created.name), ...created },
+                  ],
+                  () => ({
+                    serviceName: created.name,
+                    action: created.status === "installed" ? "install" : "register",
+                    specifier: created.specifier,
+                  }),
+                ),
               );
 
               return {
@@ -2568,7 +2463,7 @@ async function resolveRuntimeManagementCore(
               }
 
               const update = readDashboardServiceRegistryUpdate(body);
-              const serializedNextEntries = await mutateServiceRegistry(context.serviceRegistryStore, async (currentEntries) => {
+              const { activation } = await runServiceRegistryChange(applyServiceRegistryChange(async (currentEntries) => {
                 const currentRegistry = await readResolvedServiceRegistry(currentEntries);
                 const nextRegistry = createServiceRegistry(
                   currentRegistry.map((entry) =>
@@ -2604,7 +2499,7 @@ async function resolveRuntimeManagementCore(
                 // on its own would look like it worked and quietly do nothing.
                 if (update.status === "installed" && updatedRegistryEntry) {
                   // Composed services as well as installed registry entries. A
-                  // core service like `zelavis/auth` never appears in the
+                  // core service like `zelavis/identity` never appears in the
                   // registry, so checking only that would refuse every extension
                   // of one — which is most of them.
                   const installedNames = new Set([
@@ -2632,20 +2527,16 @@ async function resolveRuntimeManagementCore(
                 return updatedStoredEntry
                   ? currentEntries.map((entry) => entry.name === serviceName ? changed : entry)
                   : [...currentEntries, changed];
-              });
-              const activation = await activateServiceRegistryChange(
-                {
-                  serviceName,
-                  action:
-                    update.status === "installed"
-                      ? "install"
-                      : update.status === "available"
-                        ? "uninstall"
-                        : "update",
-                  specifier: serializedNextEntries.find((entry) => entry.name === serviceName)?.specifier,
-                },
-                serializedNextEntries,
-              );
+              }, (entries) => ({
+                serviceName,
+                action:
+                  update.status === "installed"
+                    ? "install"
+                    : update.status === "available"
+                      ? "uninstall"
+                      : "update",
+                specifier: entries.find((entry) => entry.name === serviceName)?.specifier,
+              })));
 
               return {
                 status: 200,
@@ -3124,6 +3015,583 @@ function hostOperationRoutes(
   ];
 }
 
+function remoteEnvironmentRoutes(
+  environment: ZelavisRemoteEnvironment | undefined,
+  database?: DatabaseRuntimeApi,
+): ZelavisServerRoute<any>[] {
+  const unavailable = () => ({
+    status: 503,
+    body: { error: "Remote environment execution is unavailable." },
+  });
+  const principalTenant = (principal: NonNullable<ZelavisServerExecutionContext["principal"]>) => {
+    const claimed = principal.metadata?.tenantId;
+    return typeof claimed === "string" && claimed.trim() ? claimed : principal.id;
+  };
+  const ensureCollection = async (tenantId: string, name: string) => {
+    if (!database) return;
+    const tenant = database.forTenant(tenantId);
+    if (await tenant.documents.collectionExists(name)) return;
+    try {
+      await tenant.documents.createCollection({ name, surface: "database" });
+    } catch (error) {
+      if (!(error instanceof CollectionExists)) throw error;
+    }
+  };
+  const readSession = async (tenantId: string, sessionId: string) => {
+    if (!database) return undefined;
+    return database.forTenant(tenantId).documents.findById({ collection: "zelavis_agent_sessions", id: sessionId });
+  };
+  const readProcess = async (tenantId: string, processId: string) => {
+    if (!database) return undefined;
+    return database.forTenant(tenantId).documents.findById({ collection: "zelavis_agent_processes", id: processId });
+  };
+  const readUsage = async (tenantId: string, usageId: string) => {
+    if (!database) return undefined;
+    return database.forTenant(tenantId).documents.findById({ collection: "zelavis_agent_usage", id: usageId });
+  };
+  const sessionFromRecord = (record: NonNullable<Awaited<ReturnType<typeof readSession>>>): ZelavisEnvironmentSession => {
+    const data = record.data as Record<string, unknown>;
+    return {
+      id: record.id,
+      version: record.version,
+      status: data.status === "closed" ? "closed" as const : "active" as const,
+      createdAt: typeof data.createdAt === "string" ? data.createdAt : "",
+      ...(typeof data.closedAt === "string" ? { closedAt: data.closedAt } : {}),
+      ...(data.scope && typeof data.scope === "object" ? { scope: data.scope } : {}),
+      ...(data.metadata && typeof data.metadata === "object" ? { metadata: data.metadata } : {}),
+    } as ZelavisEnvironmentSession;
+  };
+  const processFromRecord = (record: NonNullable<Awaited<ReturnType<typeof readProcess>>>): ZelavisEnvironmentProcess => {
+    const data = record.data as Record<string, unknown>;
+    const status = data.status === "starting" || data.status === "running" || data.status === "exited" || data.status === "failed"
+      ? data.status
+      : "failed";
+    return {
+      id: record.id,
+      sessionId: String(data.sessionId ?? ""),
+      status,
+      ...(typeof data.startedAt === "string" && data.startedAt ? { startedAt: data.startedAt } : {}),
+      ...(typeof data.exitCode === "number" ? { exitCode: data.exitCode } : {}),
+    };
+  };
+  const processData = (process: ZelavisEnvironmentProcess): JsonObject => ({
+    processId: process.id,
+    sessionId: process.sessionId,
+    status: process.status,
+    startedAt: process.startedAt ?? "",
+    exitCode: process.exitCode ?? null,
+  });
+  const usageFromRecord = (
+    record: NonNullable<Awaited<ReturnType<typeof readUsage>>>,
+  ): ZelavisEnvironmentUsageRecord => ({
+    id: record.id,
+    version: record.version,
+    ...(record.data as unknown as Omit<ZelavisEnvironmentUsageRecord, "id" | "version">),
+  });
+  const reconcilePersistedProcesses = async (tenantId: string, sessionId: string) => {
+    if (!database || !environment?.listProcesses) return;
+    const attached = (await environment.listProcesses(sessionId))
+      .filter((process) => process.sessionId === sessionId);
+    const documents = database.forTenant(tenantId).documents;
+    const collectionExists = await documents.collectionExists("zelavis_agent_processes");
+    const persisted = collectionExists
+      ? await documents.findMany({
+          collection: "zelavis_agent_processes",
+          where: [{ path: "sessionId", value: sessionId }],
+        })
+      : [];
+    if (!collectionExists && attached.length > 0) {
+      await ensureCollection(tenantId, "zelavis_agent_processes");
+    }
+
+    const persistedById = new Map(persisted.map((record) => [record.id, record]));
+    const attachedById = new Map(attached.map((process) => [process.id, process]));
+    for (const process of attached) {
+      const record = persistedById.get(process.id);
+      if (!record) {
+        try {
+          await documents.insert({
+            collection: "zelavis_agent_processes",
+            id: process.id,
+            data: processData(process),
+          });
+        } catch (error) {
+          if (!(error instanceof DocumentConflict)) throw error;
+        }
+        continue;
+      }
+      const current = processFromRecord(record);
+      if (
+        current.status !== process.status
+        || current.startedAt !== process.startedAt
+        || current.exitCode !== process.exitCode
+      ) {
+        await documents.update({
+          collection: "zelavis_agent_processes",
+          id: process.id,
+          data: processData(process),
+          mode: "merge",
+        });
+      }
+    }
+
+    for (const record of persisted) {
+      if (attachedById.has(record.id)) continue;
+      const process = processFromRecord(record);
+      if (process.status !== "starting" && process.status !== "running") continue;
+      await documents.update({
+        collection: "zelavis_agent_processes",
+        id: record.id,
+        data: { status: "failed", exitCode: null },
+        mode: "merge",
+      });
+    }
+  };
+  const resumePersistedSession = async (
+    tenantId: string,
+    record: NonNullable<Awaited<ReturnType<typeof readSession>>>,
+  ) => {
+    const session = sessionFromRecord(record);
+    const resumed = environment?.resumeSession ? await environment.resumeSession(session) : session;
+    if (session.status === "active") await reconcilePersistedProcesses(tenantId, session.id);
+    return resumed;
+  };
+  return [
+    {
+      id: "runtime.environment.identity",
+      method: "GET",
+      path: "/environment",
+      access: { authenticated: true },
+      spec: { operationId: "getEnvironment", summary: "Read remote environment identity", tags: ["environment"] },
+      handler: async () => environment
+        ? { status: 200, body: { environment: typeof environment.identity === "function" ? await environment.identity() : environment.identity } }
+        : unavailable(),
+    },
+    {
+      id: "runtime.environment.health",
+      method: "GET",
+      path: "/environment/health",
+      access: { authenticated: true },
+      spec: { operationId: "getEnvironmentHealth", summary: "Read remote environment health", tags: ["environment"] },
+      handler: async () => environment
+        ? { status: 200, body: await environment.health() }
+        : unavailable(),
+    },
+    {
+      id: "runtime.environment.sessions.create",
+      method: "POST",
+      path: "/environment/sessions",
+      access: { authenticated: true },
+      spec: { operationId: "createEnvironmentSession", summary: "Create an agent session", tags: ["environment"] },
+      handler: async ({ body, principal }) => {
+        if (!environment) return unavailable();
+        if (!principal) return { status: 401, body: { error: "Authentication required" } };
+        const input = body && typeof body === "object" && !Array.isArray(body)
+          ? body as Record<string, unknown>
+          : {};
+        const scope = input.scope && typeof input.scope === "object" && !Array.isArray(input.scope)
+          ? input.scope as Record<string, unknown>
+          : undefined;
+        const tenantId = principalTenant(principal);
+        if (
+          typeof scope?.tenantId !== "string" || !scope.tenantId.trim()
+          || scope.tenantId !== tenantId
+          || typeof scope.projectId !== "string" || !scope.projectId.trim()
+          || typeof scope.laneId !== "string" || !scope.laneId.trim()
+        ) {
+          return { status: 403, body: { error: "Session scope must match the authenticated tenant and include project and lane ids." } };
+        }
+        const session = await environment.createSession({
+          scope: {
+            tenantId,
+            projectId: scope.projectId,
+            laneId: scope.laneId,
+          },
+          metadata: input.metadata as Readonly<Record<string, unknown>> | undefined,
+        });
+        if (database) {
+          try {
+            await ensureCollection(tenantId, "zelavis_agent_sessions");
+            await database.forTenant(tenantId).documents.insert({
+              collection: "zelavis_agent_sessions",
+              id: session.id,
+              data: {
+                sessionId: session.id,
+                status: session.status,
+                createdAt: session.createdAt,
+                scope: { tenantId, projectId: scope.projectId, laneId: scope.laneId },
+                metadata: (input.metadata ?? {}) as JsonObject,
+              },
+            });
+          } catch (error) {
+            // Provider and tenant storage are deliberately different systems,
+            // so no database transaction can cover both. Compensate a failed
+            // projection write instead of leaving an unowned live session.
+            try {
+              await environment.closeSession?.(session.id);
+            } catch {
+              // Keep the persistence failure as the request's primary error.
+              // A provider that cannot clean up is handled by reconciliation.
+            }
+            throw error;
+          }
+        }
+        return { status: 201, body: { session } };
+      },
+    },
+    {
+      id: "runtime.environment.sessions.update",
+      method: "PATCH",
+      path: "/environment/sessions/:sessionId",
+      access: { authenticated: true },
+      spec: { operationId: "updateEnvironmentSession", summary: "Update an agent session projection", tags: ["environment"] },
+      handler: async ({ params, body, principal }) => {
+        if (!environment) return unavailable();
+        if (!principal) return { status: 401, body: { error: "Authentication required" } };
+        if (!database) return { status: 503, body: { error: "Environment session persistence is unavailable." } };
+        const tenantId = principalTenant(principal);
+        const sessionId = params.sessionId ?? "";
+        const current = await readSession(tenantId, sessionId);
+        if (!current) return { status: 404, body: { error: "Environment session was not found." } };
+        if (current.data.status === "closed") {
+          return { status: 409, body: { error: "Environment session is closed." } };
+        }
+        const input = body && typeof body === "object" && !Array.isArray(body)
+          ? body as Record<string, unknown>
+          : {};
+        if (!Number.isSafeInteger(input.expectedVersion) || Number(input.expectedVersion) < 0) {
+          return { status: 400, body: { error: "expectedVersion must be a non-negative integer." } };
+        }
+        if (!input.metadata || typeof input.metadata !== "object" || Array.isArray(input.metadata)) {
+          return { status: 400, body: { error: "Session metadata must be an object." } };
+        }
+        try {
+          const updated = await database.forTenant(tenantId).documents.update({
+            collection: "zelavis_agent_sessions",
+            id: sessionId,
+            data: { metadata: input.metadata as JsonObject },
+            mode: "merge",
+            expectedVersion: Number(input.expectedVersion),
+          });
+          return { status: 200, body: { session: sessionFromRecord(updated) } };
+        } catch (error) {
+          if (error instanceof DocumentConflict) {
+            return { status: 409, body: { error: "Environment session changed concurrently." } };
+          }
+          throw error;
+        }
+      },
+    },
+    {
+      id: "runtime.environment.sessions.get",
+      method: "GET",
+      path: "/environment/sessions/:sessionId",
+      access: { authenticated: true },
+      spec: { operationId: "getEnvironmentSession", summary: "Read an agent session", tags: ["environment"] },
+      handler: async ({ params, principal }) => {
+        if (!environment) return unavailable();
+        if (!principal) return { status: 401, body: { error: "Authentication required" } };
+        if (!database) return { status: 503, body: { error: "Environment session persistence is unavailable." } };
+        const session = await readSession(principalTenant(principal), params.sessionId ?? "");
+        if (!session) return { status: 404, body: { error: "Environment session was not found." } };
+        const resumed = await resumePersistedSession(principalTenant(principal), session);
+        return { status: 200, body: { session: resumed } };
+      },
+    },
+    {
+      id: "runtime.environment.sessions.usage.record",
+      method: "POST",
+      path: "/environment/sessions/:sessionId/usage",
+      access: { authenticated: true },
+      spec: { operationId: "recordEnvironmentSessionUsage", summary: "Record usage for an agent run", tags: ["environment"] },
+      handler: async ({ params, body, principal }) => {
+        if (!environment) return unavailable();
+        if (!principal) return { status: 401, body: { error: "Authentication required" } };
+        if (!database) return { status: 503, body: { error: "Environment usage persistence is unavailable." } };
+        const tenantId = principalTenant(principal);
+        const sessionId = params.sessionId ?? "";
+        const session = await readSession(tenantId, sessionId);
+        if (!session) return { status: 404, body: { error: "Environment session was not found." } };
+        const input = body && typeof body === "object" && !Array.isArray(body)
+          ? body as Record<string, unknown>
+          : {};
+        if (typeof input.runId !== "string" || !input.runId.trim() || input.runId.length > 256) {
+          return { status: 400, body: { error: "Usage runId must be a non-empty string of at most 256 characters." } };
+        }
+        if (input.source !== "provider" && input.source !== "estimated") {
+          return { status: 400, body: { error: "Usage source must be provider or estimated." } };
+        }
+        const counterNames = [
+          "contextTokens",
+          "contextLimit",
+          "inputTokens",
+          "outputTokens",
+          "cacheReadTokens",
+          "cacheWriteTokens",
+        ] as const;
+        for (const name of counterNames) {
+          const value = input[name];
+          if (value !== undefined && (!Number.isSafeInteger(value) || Number(value) < 0)) {
+            return { status: 400, body: { error: `Usage ${name} must be a non-negative safe integer.` } };
+          }
+        }
+        if (
+          input.premiumRequests !== undefined
+          && (typeof input.premiumRequests !== "number" || !Number.isFinite(input.premiumRequests) || input.premiumRequests < 0)
+        ) {
+          return { status: 400, body: { error: "Usage premiumRequests must be a non-negative finite number." } };
+        }
+        if (input.model !== undefined && (typeof input.model !== "string" || !input.model.trim() || input.model.length > 256)) {
+          return { status: 400, body: { error: "Usage model must be a non-empty string of at most 256 characters." } };
+        }
+        if (![...counterNames, "premiumRequests", "model"].some((name) => input[name] !== undefined)) {
+          return { status: 400, body: { error: "Usage must include at least one metric or model." } };
+        }
+        const sessionScope = session.data.scope;
+        if (!sessionScope || typeof sessionScope !== "object" || Array.isArray(sessionScope)) {
+          return { status: 409, body: { error: "Environment session has no durable scope." } };
+        }
+        const projectId = (sessionScope as Record<string, unknown>).projectId;
+        const laneId = (sessionScope as Record<string, unknown>).laneId;
+        if (typeof projectId !== "string" || typeof laneId !== "string") {
+          return { status: 409, body: { error: "Environment session has no durable project and lane scope." } };
+        }
+        const usageId = JSON.stringify([sessionId, input.runId]);
+        const metrics = Object.fromEntries(
+          [...counterNames, "premiumRequests", "model"]
+            .filter((name) => input[name] !== undefined)
+            .map((name) => [name, input[name]]),
+        ) as JsonObject;
+        const usageData: JsonObject = {
+          sessionId,
+          projectId,
+          laneId,
+          runId: input.runId,
+          source: input.source,
+          recordedAt: new Date().toISOString(),
+          ...metrics,
+        };
+        await ensureCollection(tenantId, "zelavis_agent_usage");
+        const documents = database.forTenant(tenantId).documents;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const current = await readUsage(tenantId, usageId);
+          try {
+            const stored = current
+              ? await documents.update({
+                  collection: "zelavis_agent_usage",
+                  id: usageId,
+                  data: usageData,
+                  mode: "merge",
+                  expectedVersion: current.version,
+                })
+              : await documents.insert({
+                  collection: "zelavis_agent_usage",
+                  id: usageId,
+                  data: usageData,
+                });
+            return { status: current ? 200 : 201, body: { usage: usageFromRecord(stored) } };
+          } catch (error) {
+            if (!(error instanceof DocumentConflict) || attempt === 2) throw error;
+          }
+        }
+        throw new Error("Environment usage persistence retry exhausted.");
+      },
+    },
+    {
+      id: "runtime.environment.sessions.close",
+      method: "DELETE",
+      path: "/environment/sessions/:sessionId",
+      access: { authenticated: true },
+      spec: { operationId: "closeEnvironmentSession", summary: "Close an agent session", tags: ["environment"] },
+      handler: async ({ params, principal }) => {
+        if (!environment) return unavailable();
+        if (!principal) return { status: 401, body: { error: "Authentication required" } };
+        const tenantId = principalTenant(principal);
+        const sessionId = params.sessionId ?? "";
+        const session = await readSession(tenantId, sessionId);
+        if (database && !session) return { status: 404, body: { error: "Environment session was not found." } };
+        if (session) await resumePersistedSession(tenantId, session);
+        if (environment.closeSession) await environment.closeSession(sessionId);
+        if (database && session) {
+          await database.forTenant(tenantId).documents.update({
+            collection: "zelavis_agent_sessions",
+            id: sessionId,
+            data: { status: "closed", closedAt: new Date().toISOString() },
+            mode: "merge",
+          });
+        }
+        return { status: 200, body: { closed: true } };
+      },
+    },
+    {
+      id: "runtime.environment.sessions.events",
+      method: "GET",
+      path: "/environment/sessions/:sessionId/events",
+      access: { authenticated: true },
+      spec: { operationId: "readEnvironmentSessionEvents", summary: "Replay agent process events", tags: ["environment"] },
+      handler: async ({ params, principal, request }) => {
+        if (!environment) return unavailable();
+        if (!principal) return { status: 401, body: { error: "Authentication required" } };
+        if (!environment.readEvents) return { status: 503, body: { error: "Environment event replay is unavailable." } };
+        if (!database) return { status: 503, body: { error: "Environment session persistence is unavailable." } };
+        const sessionId = params.sessionId ?? "";
+        const session = await readSession(principalTenant(principal), sessionId);
+        if (!session) return { status: 404, body: { error: "Environment session was not found." } };
+        await resumePersistedSession(principalTenant(principal), session);
+        const search = new URL(request.url).searchParams;
+        const after = search.get("after") ?? undefined;
+        const rawLimit = search.get("limit");
+        const limit = rawLimit === null ? undefined : Number(rawLimit);
+        if (after !== undefined && after.length > 512) {
+          return { status: 400, body: { error: "Environment event cursor is too long." } };
+        }
+        if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 1000)) {
+          return { status: 400, body: { error: "Environment event limit must be an integer from 1 to 1000." } };
+        }
+        const options: ZelavisEnvironmentEventReadOptions = {
+          ...(after === undefined ? {} : { after }),
+          ...(limit === undefined ? {} : { limit }),
+        };
+        return { status: 200, body: await environment.readEvents(sessionId, options) };
+      },
+    },
+    {
+      id: "runtime.environment.processes.start",
+      method: "POST",
+      path: "/environment/sessions/:sessionId/processes",
+      access: { authenticated: true },
+      spec: { operationId: "startEnvironmentProcess", summary: "Start a process in an agent session", tags: ["environment"] },
+      handler: async ({ params, body, principal }) => {
+        if (!environment) return unavailable();
+        if (!principal) return { status: 401, body: { error: "Authentication required" } };
+        const session = await readSession(principalTenant(principal), params.sessionId ?? "");
+        if (database && !session) return { status: 404, body: { error: "Environment session was not found." } };
+        if (database && session?.data.status === "closed") {
+          return { status: 409, body: { error: "Environment session is closed." } };
+        }
+        if (session) await resumePersistedSession(principalTenant(principal), session);
+        const input = body && typeof body === "object" && !Array.isArray(body)
+          ? body as Record<string, unknown>
+          : {};
+        if (typeof input.command !== "string" || !input.command.trim()) {
+          return { status: 400, body: { error: "Process command is required." } };
+        }
+        if (typeof input.cwd !== "string" || !input.cwd.trim()) {
+          return { status: 400, body: { error: "Process cwd is required." } };
+        }
+        if (input.args !== undefined && (!Array.isArray(input.args) || input.args.some((value) => typeof value !== "string"))) {
+          return { status: 400, body: { error: "Process args must be an array of strings." } };
+        }
+        if (
+          input.env !== undefined
+          && (
+            !input.env || typeof input.env !== "object" || Array.isArray(input.env)
+            || Object.values(input.env).some((value) => typeof value !== "string")
+          )
+        ) {
+          return { status: 400, body: { error: "Process env must contain only string values." } };
+        }
+        const process = await environment.startProcess(
+          params.sessionId ?? "",
+          input as unknown as ZelavisEnvironmentProcessInput,
+        );
+        if (database) {
+          const tenantId = principalTenant(principal);
+          try {
+            await ensureCollection(tenantId, "zelavis_agent_processes");
+            await database.forTenant(tenantId).documents.insert({
+              collection: "zelavis_agent_processes",
+              id: process.id,
+              data: {
+                processId: process.id,
+                sessionId: process.sessionId,
+                status: process.status,
+                startedAt: process.startedAt ?? "",
+                exitCode: process.exitCode ?? null,
+              },
+            });
+          } catch (error) {
+            // Starting a provider process and writing its tenant projection
+            // cannot be atomic. Terminate on a failed write so the provider
+            // does not keep work the control plane cannot subsequently own.
+            try {
+              await environment.operateProcess(process.id, { type: "terminate" });
+            } catch {
+              // Reconciliation remains responsible if termination also fails.
+            }
+            throw error;
+          }
+        }
+        return { status: 201, body: { process } };
+      },
+    },
+    {
+      id: "runtime.environment.processes.get",
+      method: "GET",
+      path: "/environment/processes/:processId",
+      access: { authenticated: true },
+      spec: { operationId: "getEnvironmentProcess", summary: "Read an agent process", tags: ["environment"] },
+      handler: async ({ params, principal }) => {
+        if (!environment) return unavailable();
+        if (!principal) return { status: 401, body: { error: "Authentication required" } };
+        if (!database) return { status: 503, body: { error: "Environment process persistence is unavailable." } };
+        const process = await readProcess(principalTenant(principal), params.processId ?? "");
+        return process
+          ? { status: 200, body: { process: processFromRecord(process) } }
+          : { status: 404, body: { error: "Environment process was not found." } };
+      },
+    },
+    {
+      id: "runtime.environment.processes.operate",
+      method: "POST",
+      path: "/environment/processes/:processId/operations",
+      access: { authenticated: true },
+      spec: { operationId: "operateEnvironmentProcess", summary: "Send an operation to an agent process", tags: ["environment"] },
+      handler: async ({ params, body, principal }) => {
+        if (!environment) return unavailable();
+        if (!principal) return { status: 401, body: { error: "Authentication required" } };
+        const tenantId = principalTenant(principal);
+        const processRecord = await readProcess(tenantId, params.processId ?? "");
+        if (database && !processRecord) return { status: 404, body: { error: "Environment process was not found." } };
+        if (processRecord && database) {
+          const session = await readSession(tenantId, String(processRecord.data.sessionId ?? ""));
+          if (session) await resumePersistedSession(tenantId, session);
+        }
+        const operation = body && typeof body === "object" && !Array.isArray(body)
+          ? body as Record<string, unknown>
+          : {};
+        const operationType = operation.type;
+        if (operationType !== "stdin" && operationType !== "signal" && operationType !== "terminate") {
+          return { status: 400, body: { error: "Process operation type must be stdin, signal, or terminate." } };
+        }
+        if ((operationType === "stdin" || operationType === "signal") && typeof operation.data !== "string") {
+          return { status: 400, body: { error: `Process ${operationType} requires string data.` } };
+        }
+        const operationInput: ZelavisEnvironmentOperationInput = {
+          type: operationType,
+          ...(typeof operation.data === "string" ? { data: operation.data } : {}),
+        };
+        const result = await environment.operateProcess(
+          params.processId ?? "",
+          operationInput,
+        );
+        if (database && processRecord) {
+          await database.forTenant(tenantId).documents.update({
+            collection: "zelavis_agent_processes",
+            id: params.processId ?? "",
+            data: {
+              status: result.process.status,
+              exitCode: result.process.exitCode ?? null,
+            },
+            mode: "merge",
+          });
+        }
+        return { status: 202, body: { result } };
+      },
+    },
+  ];
+}
+
 async function resolvePlatformCoreService(
   projectRecipes: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
   projects?: ZelavisProjectManager,
@@ -3137,6 +3605,8 @@ async function resolvePlatformCoreService(
   assistantOption?: false | ZelavisAssistantResponder,
   edgeRoutes?: ZelavisEdgeRouteStore,
   edgeCertificates?: ZelavisCertificateController,
+  remoteEnvironment?: ZelavisRemoteEnvironment,
+  database?: DatabaseRuntimeApi,
 ): Promise<ZelavisRuntimeService<any>> {
   const assistant =
     systemStore && assistantOption !== false
@@ -3311,6 +3781,7 @@ async function resolvePlatformCoreService(
           },
         },
         ...hostOperationRoutes(hostOperations),
+        ...remoteEnvironmentRoutes(remoteEnvironment, database),
         {
           id: "runtime.edge.read",
           spec: {
@@ -4061,6 +4532,43 @@ async function resolvePlatformCoreService(
           },
         },
         {
+          id: "runtime.projects.update",
+          spec: {
+            operationId: "updateProject",
+            summary: "Update a Project's metadata",
+            tags: ["projects"],
+            responses: {
+              200: { description: "Project updated" },
+              400: { description: "Invalid Project update" },
+              404: { description: "No such Project" },
+            },
+          },
+          method: "PATCH",
+          path: "/projects/:projectId",
+          access: {
+            permissions: ["project.settings.manage"],
+            scope: { type: "project", projectIdParam: "projectId" },
+          },
+          handler: async ({ params, body }: { params: Record<string, string>; body: unknown }) => {
+            if (!projects) {
+              return unavailableProjectsResponse();
+            }
+            try {
+              const input = readBodyObject(body);
+              return {
+                status: 200,
+                body: {
+                  project: await projects.update(params.projectId ?? "", {
+                    name: typeof input.name === "string" ? input.name : "",
+                  }),
+                },
+              };
+            } catch (error) {
+              return projectErrorResponse(error);
+            }
+          },
+        },
+        {
           id: "runtime.projects.start",
           spec: {
             operationId: "startProject",
@@ -4337,7 +4845,7 @@ export async function zelavis(
 
   if (obsoleteKeys.length > 0) {
     throw new TypeError(
-      `zelavis(...) no longer accepts direct service options (${obsoleteKeys.join(", ")}). Put services in the product-services folder or install them through the service registry endpoints.`,
+      `zelavis(...) no longer accepts direct service options (${obsoleteKeys.join(", ")}). Put services in the services folder or install them through the service registry endpoints.`,
     );
   }
 
@@ -4391,6 +4899,22 @@ export async function zelavis(
         `Zelavis skipped product service "${declaredName}": that name is reserved for a core Platform service.`,
       );
       continue;
+    }
+    // A capability owner may be a bare service name or a package, so the wrong
+    // one of the two is valid, owns nothing, and produces no error — the
+    // extension simply never appears where it was meant to. Loaded anyway,
+    // because the rest of the package is fine and refusing it would turn a
+    // typo into a service that will not start.
+    for (const mistake of misscopedExtensionOwners(
+      { capabilities: entry.manifest?.zelavis?.capabilities },
+      RESERVED_CORE_SERVICE_NAMES,
+    )) {
+      console.warn(
+        `Zelavis service "${declaredName ?? "(unnamed)"}" declares ${mistake.capabilities
+          .map((capability) => `"${mistake.declared}:${capability}"`)
+          .join(", ")}, but no service is called "${mistake.declared}". `
+          + `The service it extends is "${mistake.intended}", so nothing will list it until the capability names that instead.`,
+      );
     }
     try {
       discoveredServiceRegistry.push(
@@ -4447,7 +4971,7 @@ export async function zelavis(
     ? defineDatabaseService(databaseSubsystem.api)
     : undefined;
   const resolvedDatabaseApi = databaseSubsystem?.api;
-  const authService = hasAppService
+  const identityService = hasAppService
       ? undefined
       : await resolveAuthCoreService(
         options.subsystems?.auth,
@@ -4749,16 +5273,18 @@ export async function zelavis(
     options.assistant,
     edgeRoutes,
     edgeCertificates,
+    options.remoteEnvironment,
+    resolvedDatabaseApi,
   );
   const subsystemServices = [
     platformCoreService,
     await createZelavisMarketplaceService(),
     // Composed only where auth is: a settings page for a service that is not
     // running would configure nothing.
-    ...(authService ? [await createZelavisAuthSettingsService()] : []),
+    ...(identityService ? [await createZelavisAuthSettingsService()] : []),
     fabricCoreService,
     databaseService,
-    authService,
+    identityService,
     websiteService,
     storageService,
     workloadsCoreService,
@@ -4858,14 +5384,14 @@ export async function zelavis(
   return Object.assign(runtime, {
     fetch: guardedFetch,
     close,
-    auth: authService?.service as AuthApi | undefined,
+    auth: identityService?.service as IdentityApi | undefined,
     database: databaseSubsystem?.api as DatabaseRuntimeApi | undefined,
   });
 }
 
 export interface ZelavisRuntime extends ZelavisServerRuntime<unknown> {
   close(): Promise<void>;
-  auth?: AuthApi;
+  auth?: IdentityApi;
   database?: DatabaseRuntimeApi;
 }
 
@@ -5096,6 +5622,7 @@ function mergeZelavisServerOptions(
       override.deploymentBackends ?? base.deploymentBackends,
     agentOperations: override.agentOperations ?? base.agentOperations,
     hostOperations: override.hostOperations ?? base.hostOperations,
+    remoteEnvironment: override.remoteEnvironment ?? base.remoteEnvironment,
     edge: override.edge ?? base.edge,
     edgeRoutes: override.edgeRoutes ?? base.edgeRoutes,
     serviceRegistry:
@@ -5241,6 +5768,7 @@ function applyPlatformResourceDefaults(
       options.deploymentBackends ?? resources.deploymentBackends,
     agentOperations: options.agentOperations ?? resources.agentOperations,
     hostOperations: options.hostOperations ?? resources.hostOperations,
+    remoteEnvironment: options.remoteEnvironment ?? resources.remoteEnvironment,
     edge: options.edge ?? resources.edge,
     edgeRoutes: options.edgeRoutes ?? resources.edgeRoutes,
     edgeCertificates: options.edgeCertificates ?? resources.edgeCertificates,
@@ -5254,14 +5782,14 @@ export class Zelavis {
   private readonly activeRuntimes = new Set<ZelavisRuntime>();
   private closed = false;
   private closePromise?: Promise<void>;
-  private resolvedAuthApi?: AuthApi;
+  private resolvedAuthApi?: IdentityApi;
   private resolvedDatabaseApi?: DatabaseRuntimeApi;
   private resolvedPlatformContext: ZelavisPlatformContext = {
     presets: [],
     resources: {},
     metadata: {},
   };
-  readonly auth: AuthApi;
+  readonly auth: IdentityApi;
   readonly db: DatabaseRuntimeApi;
 
   constructor(options: ZelavisOptions = {}) {
@@ -5375,14 +5903,14 @@ export class Zelavis {
     return this.runtimePromise;
   }
 
-  async resolveAuthApi(): Promise<AuthApi> {
+  async resolveAuthApi(): Promise<IdentityApi> {
     if (this.resolvedAuthApi) {
       return this.resolvedAuthApi;
     }
 
     const runtime = await this.runtime();
-    const service = runtime.auth ?? runtime.services["zelavis/auth"]?.service;
-    assertResolvedServiceApi<AuthApi>(service, "zelavis/auth");
+    const service = runtime.auth ?? runtime.services["zelavis/identity"]?.service;
+    assertResolvedServiceApi<IdentityApi>(service, "zelavis/identity");
     this.resolvedAuthApi = service;
     return service;
   }

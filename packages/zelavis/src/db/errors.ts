@@ -317,6 +317,48 @@ export class RangeNotEmpty extends Schema.TaggedError<RangeNotEmpty>()("RangeNot
   tenants: Schema.Array(Schema.String),
 }) {}
 
+export class PlacementCatalogInvalid extends Schema.TaggedError<PlacementCatalogInvalid>()(
+  "PlacementCatalogInvalid",
+  { version: Schema.Finite, reason: Schema.String },
+) {}
+
+/**
+ * A tenant cannot be divided the way it was asked to be.
+ *
+ * Dividing is a routing decision and carries no data, so it is refused for a
+ * tenant that already holds some: the records would stay under the undivided
+ * key while every read went to a part that does not hold them.
+ */
+export class SubdivisionInvalid extends Schema.TaggedError<SubdivisionInvalid>()(
+  "SubdivisionInvalid",
+  { tenant: Schema.String, reason: Schema.String },
+) {}
+
+/**
+ * A collection already has a placement class, and it is not the one asked for.
+ *
+ * Reclassifying is a relocation rather than a catalog edit, for the same reason
+ * `topology.update` refuses an occupied range: the catalog carries routing and
+ * no data, so the records would stay where they were while reads went elsewhere.
+ */
+export class PlacementImmutable extends Schema.TaggedError<PlacementImmutable>()(
+  "PlacementImmutable",
+  { collection: Schema.String, current: Schema.String, requested: Schema.String },
+) {}
+
+/**
+ * A replicated collection holds something a copy cannot carry.
+ *
+ * Identity survives replication and identifiers do not: a replica reallocates
+ * every `Seq` in its own dense space. Anything that names a record by `Seq` —
+ * an edge, above all — would therefore point somewhere else on every copy, so
+ * it is refused here rather than written wrong on every shard.
+ */
+export class ReplicationUnsupported extends Schema.TaggedError<ReplicationUnsupported>()(
+  "ReplicationUnsupported",
+  { collection: Schema.String, reason: Schema.String },
+) {}
+
 export class UnknownSystemView extends Schema.TaggedError<UnknownSystemView>()(
   "UnknownSystemView",
   { name: Schema.String },

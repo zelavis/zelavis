@@ -1,11 +1,11 @@
 import {
-  AuthValidationError,
+  IdentityValidationError,
   type Account,
-  type AuthApi,
-  type AuthBootstrapCapability,
-  type AuthBootstrapInput,
-  type AuthBootstrapResult,
-} from "../app/auth/index.js";
+  type IdentityApi,
+  type IdentityBootstrapCapability,
+  type IdentityBootstrapInput,
+  type IdentityBootstrapResult,
+} from "../app/identity/index.js";
 import type {
   ZelavisSystemStore,
   ZelavisSystemStoreRecord,
@@ -30,7 +30,7 @@ function isPendingBootstrapAccount(account: Account): boolean {
 
 function requireCrypto(): Crypto {
   if (!globalThis.crypto?.randomUUID) {
-    throw new AuthValidationError(
+    throw new IdentityValidationError(
       "Secure Web Crypto is required for Platform owner bootstrap.",
     );
   }
@@ -40,16 +40,16 @@ function requireCrypto(): Crypto {
 function normalizeOptional(value: unknown): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string") {
-    throw new AuthValidationError("Bootstrap account fields must be strings.");
+    throw new IdentityValidationError("Bootstrap account fields must be strings.");
   }
   const normalized = value.trim();
   return normalized || undefined;
 }
 
 export function createPlatformAuthBootstrap(
-  auth: AuthApi,
+  auth: IdentityApi,
   options: { store?: ZelavisSystemStore } = {},
-): AuthBootstrapCapability {
+): IdentityBootstrapCapability {
   let operationTail: Promise<void> = Promise.resolve();
 
   async function completedAccounts(): Promise<Account[]> {
@@ -114,11 +114,11 @@ export function createPlatformAuthBootstrap(
 
     const existing = readClaim(created.record);
     if (!existing || existing.status === "complete") {
-      throw new AuthValidationError("Platform owner bootstrap is already complete.");
+      throw new IdentityValidationError("Platform owner bootstrap is already complete.");
     }
     const leaseAge = now.getTime() - new Date(existing.updatedAt).getTime();
     if (existing.status === "pending" && leaseAge < BOOTSTRAP_CLAIM_LEASE_MS) {
-      throw new AuthValidationError("Platform owner bootstrap is already in progress.");
+      throw new IdentityValidationError("Platform owner bootstrap is already in progress.");
     }
     const replaced = await options.store.compareAndSet(
       BOOTSTRAP_CLAIM_NAMESPACE,
@@ -127,7 +127,7 @@ export function createPlatformAuthBootstrap(
       claimValue(claim),
     );
     if (!replaced) {
-      throw new AuthValidationError("Platform owner bootstrap is already in progress.");
+      throw new IdentityValidationError("Platform owner bootstrap is already in progress.");
     }
     return replaced;
   }
@@ -160,29 +160,29 @@ export function createPlatformAuthBootstrap(
       };
     },
 
-    bootstrap(input: AuthBootstrapInput): Promise<AuthBootstrapResult> {
+    bootstrap(input: IdentityBootstrapInput): Promise<IdentityBootstrapResult> {
       return serialize(async () => {
         if ((await completedAccounts()).length > 0) {
-          throw new AuthValidationError(
+          throw new IdentityValidationError(
             "Platform owner bootstrap is already complete.",
           );
         }
 
         if (!input || typeof input !== "object") {
-          throw new AuthValidationError("Platform owner bootstrap input is required.");
+          throw new IdentityValidationError("Platform owner bootstrap input is required.");
         }
         if (!input.provider || typeof input.provider !== "string") {
-          throw new AuthValidationError(
+          throw new IdentityValidationError(
             "Platform owner bootstrap requires an authentication provider.",
           );
         }
         if (!input.account || typeof input.account !== "object") {
-          throw new AuthValidationError(
+          throw new IdentityValidationError(
             "Platform owner bootstrap requires account details.",
           );
         }
         if (!input.credential || typeof input.credential !== "object") {
-          throw new AuthValidationError(
+          throw new IdentityValidationError(
             "Platform owner bootstrap requires credential details.",
           );
         }
@@ -196,17 +196,17 @@ export function createPlatformAuthBootstrap(
         const requestedEmail = normalizeOptional(input.account.email)?.toLowerCase();
         const requestedUsername = normalizeOptional(input.account.username);
         if (prepared.accountIdentity?.email && requestedEmail && prepared.accountIdentity.email !== requestedEmail) {
-          throw new AuthValidationError(
+          throw new IdentityValidationError(
             "The bootstrap email must match the enrolled credential identifier.",
           );
         }
         if (prepared.accountIdentity?.username && requestedUsername && prepared.accountIdentity.username !== requestedUsername) {
-          throw new AuthValidationError(
+          throw new IdentityValidationError(
             "The bootstrap username must match the enrolled credential identifier.",
           );
         }
         if (!email && !username) {
-          throw new AuthValidationError(
+          throw new IdentityValidationError(
             "Platform owner bootstrap requires an email or username identity.",
           );
         }

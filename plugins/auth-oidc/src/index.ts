@@ -34,7 +34,7 @@ export function oidcBearerService(options: OidcBearerPluginOptions) {
   return Object.freeze({
     name: "@zelavis/auth-oidc",
     kind: "plugin" as const,
-    capabilities: Object.freeze(["zelavis/auth:credentials"]),
+    capabilities: Object.freeze(["zelavis/identity:credentials"]),
     authenticators: [
       createJwksAuthenticator({
         name: options.providerName ?? "oidc",

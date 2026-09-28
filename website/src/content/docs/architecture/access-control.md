@@ -46,9 +46,9 @@ Example route requirement:
 }
 ```
 
-## Why This Is Not Only `zelavis/app/auth`
+## Why This Is Not Only `zelavis/app/identity`
 
-`zelavis/app/auth` owns authentication building blocks: accounts, credentials,
+`zelavis/app/identity` owns authentication building blocks: accounts, credentials,
 sessions, and pluggable auth methods such as email/password, username/password,
 passkeys, OAuth, SSO, API keys, or service-token providers.
 
@@ -100,7 +100,7 @@ reveal whether an account exists.
 The OAuth Authorization Code flow is core too — it holds the state, nonce and
 PKCE verifier, which are the parts that are dangerous to get wrong and the same
 for every provider. Any OpenID Connect issuer is added by pasting its issuer
-URL; a plugin declaring `zelavis/auth:oauth` is needed only for a provider that
+URL; a plugin declaring `zelavis/identity:oauth` is needed only for a provider that
 is not OIDC, where the profile endpoint and claim mapping are real code. The
 OIDC plugin under `plugins/` is now only a bearer-token authenticator for
 callers already holding a token from an issuer
@@ -147,6 +147,29 @@ The dashboard login screen calls the same versioned Auth endpoints as other
 clients. `/zelavis/api/v1/runtime/access` requires authentication and returns
 the real session principal. There is no demo-owner fallback or query-string
 identity switch.
+
+## App Data Is Its Own Authority
+
+A Project's records are not part of its control plane, and the permissions say
+so:
+
+- `project.view` carries `database.inspect` and `database.read` — an operator
+  browsing an installation's tables, including other Tenants'.
+- `project.runtime.manage` carries `database.write`, alongside the workload and
+  storage authority that managing a runtime implies.
+- `project.data.read` and `project.data.write` carry `database.read` and
+  `database.write` and nothing else.
+
+The last pair exists so an App can hold its own data without holding authority
+over the Project it lives in. A Gateway request for App data forwards only those
+two implications, even when the caller happens to hold Project authority as
+well, so an App data path cannot spend a permission it did not come to use.
+
+The Tenant travels the same way. The Platform resolves it from the
+authenticated principal and signs it into the Gateway envelope; a Project
+service reads it from the principal rather than from the request. A caller may
+still name a Tenant, but naming one that is not its own requires
+`database.inspect` and is otherwise refused. See [App Data](/api/app-data).
 
 ## Rule For Services
 

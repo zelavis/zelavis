@@ -6,13 +6,10 @@
 // equality union over the referencing field's postings. The alternative a
 // caller has without it is to read the referencing collection and filter in
 // memory, which costs the collection rather than the answer.
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { Effect } from "effect";
 import { documentsFor } from "../dist/db/index.js";
-import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
+import { runEngines } from "./bench-engine.mjs";
 
 const POSTS = Number(process.env.POSTS ?? 20000);
 const AUTHORS = Number(process.env.AUTHORS ?? 2000);
@@ -28,10 +25,9 @@ const median = async (runs, fn) => {
   return times.sort((a, b) => a - b)[Math.floor(runs / 2)];
 };
 
-const dir = mkdtempSync(join(tmpdir(), "zv-bench-related-"));
-try {
+await runEngines("zv-bench-related", async ({ name, dir, open }) => {
   await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-    const docs = documentsFor(yield* makeNodeSqliteStore("bench", dir), "t1");
+    const docs = documentsFor(yield* open(), "t1");
     yield* docs.createCollection({ name: "authors" });
     yield* docs.createCollection({
       name: "posts", references: [{ name: "author", path: "authorId", collection: "authors" }],
@@ -58,7 +54,7 @@ try {
       ["related: one author by id", run(docs.findMany({ collection: "posts", related: [{ reference: "author", id: "a7" }] }))],
       ["a page of 50 of that join", run(docs.findPage({ collection: "posts", related, limit: 50 }))],
     ];
-    console.log(`\nOver ${POSTS} posts across ${AUTHORS} authors (node:sqlite, median of 5, warm)`);
+    console.log(`\n[${name}] Over ${POSTS} posts across ${AUTHORS} authors (median of 5, warm)`);
     for (const [label, fn] of rows) {
       console.log(`  ${label.padEnd(54)} ${(yield* Effect.promise(() => median(5, fn))).toFixed(1).padStart(8)}ms`);
     }
@@ -67,6 +63,4 @@ try {
       docs.withRelated({ collection: "posts", documents: page.documents }))));
     console.log(`  ${"withRelated over a page of 50".padEnd(54)} ${resolving.toFixed(1).padStart(8)}ms`);
   })));
-} finally {
-  rmSync(dir, { recursive: true, force: true });
-}
+});

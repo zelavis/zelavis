@@ -8,6 +8,9 @@ import {
 } from "../index.js";
 import { createAgentProcessClient } from "./_agent-ipc.js";
 import { createLocalAgentProcessRunner } from "./_agent-process-runner.js";
+import { createAgentRemoteEnvironment, REMOTE_ENVIRONMENT_WORKLOAD_PREFIX } from "./_agent-remote-environment.js";
+import type { ZelavisAgentProcessRunner } from "../core/agent/process-command.js";
+export { createAgentRemoteEnvironment } from "./_agent-remote-environment.js";
 import { createLocalSqliteSystemStore } from "./_sqlite-system-store.js";
 import {
   createLocalProjectRuntime,
@@ -23,7 +26,7 @@ import {
   createLocalRuntimeServicePackageInstaller,
   createLocalRuntimeServiceImporter,
   discoverProductServices,
-  PRODUCT_SERVICES_DIRECTORY,
+  SERVICES_DIRECTORY,
   createLocalRuntimeServiceManifestResolver,
   type LocalRuntimeServiceOptions,
 } from "./_local-runtime.js";
@@ -77,6 +80,14 @@ export interface NodeAdapterDatabaseOptions {
 
 export type NodeAdapterServiceOptions = LocalRuntimeServiceOptions & {
   catalog?: readonly ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>[];
+  /**
+   * Folder on this server that services are dropped into.
+   *
+   * Defaults to `<dataDirectory>/services`. It lives here rather than in an
+   * option of its own because two options both named for services is how the
+   * folder and the registry drifted apart in the first place.
+   */
+  directory?: string;
 };
 
 export interface NodeAdapterSystemStoreOptions {
@@ -109,17 +120,15 @@ export interface NodeAdapterProjectOptions {
 export interface NodeAdapterOptions {
   role?: "platform" | "project";
   dataDirectory?: string;
-  /**
-   * Services dropped into a folder on this server.
-   *
-   * Defaults to `<dataDirectory>/product-services`. Set to `false` to scan
-   * nothing, which is what an installation composing every service itself
-   * wants.
-   */
-  productServices?: false | { directory?: string };
   database?: false | NodeAdapterDatabaseOptions;
   systemStore?: false | NodeAdapterSystemStoreOptions;
   projects?: false | NodeAdapterProjectOptions;
+  /**
+   * Services: the registry, and the folder they are dropped into.
+   *
+   * Set to `false` to scan nothing, which is what an installation composing
+   * every service itself wants.
+   */
   services?: false | NodeAdapterServiceOptions;
   files?: false | {
     rootDirectory?: string;
@@ -190,16 +199,15 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
       const serviceOptions = options.services === false ? undefined : options.services;
       const serviceDirectory = join(dataDirectory, "services");
       const productServiceOptions =
-        options.productServices === false ? undefined : options.productServices;
+        options.services === false ? undefined : options.services;
       const productServiceDirectory = productServiceOptions?.directory
         ? resolve(productServiceOptions.directory)
-        : join(dataDirectory, PRODUCT_SERVICES_DIRECTORY);
+        : join(dataDirectory, SERVICES_DIRECTORY);
       // Scanned before composition so the Platform sees dropped-in services the
       // same way it sees installed ones. A Project runtime deliberately skips
       // it: the folder belongs to the installation, not to each Project.
       const discoveredProductServices =
         options.services === false ||
-        options.productServices === false ||
         isProjectRuntime
           ? []
           : await discoverProductServices({
@@ -219,6 +227,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         (!isProjectRuntime || normalizedProjectOptions !== undefined);
       const projectOptions = projectsEnabled ? normalizedProjectOptions : undefined;
       let agentClient: Awaited<ReturnType<typeof createAgentProcessClient>> | undefined;
+      let agentRunner: ZelavisAgentProcessRunner | undefined;
       let platformAuthority: Awaited<ReturnType<typeof readOrCreatePlatformAuthorityKey>> | undefined;
       if (projectsEnabled && !projectRuntime) {
         const runtimeOptions: LocalProjectRuntimeOptions = {
@@ -277,6 +286,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
           : createLocalAgentProcessRunner({
               stateDirectory: join(runtimeOptions.directory, ".agent-processes"),
             });
+        agentRunner = runtimeOptions.agent;
 
         projectRuntime = createLocalProjectRuntime(runtimeOptions);
 
@@ -291,7 +301,12 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
         // driver claimed. Reconciliation would reclaim the Projects it
         // restarts, but a Project the operator has since stopped is never
         // started again — and so would never be reclaimed at all.
-        await runtimeOptions.agent.reclaim?.().catch(() => undefined);
+        await runtimeOptions.agent.reclaim?.(undefined, {
+          // Detached environment processes still have replayable pipes in the
+          // Agent and are reclaimed by their persisted session, not as orphaned
+          // Project runtimes during Platform boot.
+          preservePrefixes: [REMOTE_ENVIRONMENT_WORKLOAD_PREFIX],
+        }).catch(() => undefined);
       }
       // Signed host operations are requestable only through a supervised Agent,
       // and only the Platform holds the key the Agent trusts.
@@ -362,6 +377,9 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
                 ? resolve(options.files.rootDirectory)
                 : join(dataDirectory, "files"),
             );
+      const remoteEnvironment = !isProjectRuntime && agentRunner
+        ? createAgentRemoteEnvironment({ runner: agentRunner })
+        : undefined;
 
       return {
         subsystems: nextSubsystems,
@@ -399,6 +417,7 @@ export function nodeAdapter(options: NodeAdapterOptions = {}) {
                 nativeProjectRuntime: projectsEnabled ? projectRuntime : undefined,
               }),
           ...(hostOperations ? { hostOperations } : {}),
+          ...(remoteEnvironment ? { remoteEnvironment } : {}),
           ...(edgeManager ? { edge: edgeManager } : {}),
           ...(edgeRoutes ? { edgeRoutes } : {}),
           ...(edgeCertificates ? { edgeCertificates } : {}),

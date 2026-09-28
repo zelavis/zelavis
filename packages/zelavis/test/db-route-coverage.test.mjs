@@ -16,6 +16,17 @@ import test from "node:test";
 import { defineDatabaseService } from "../dist/db/index.js";
 import { openTemporaryDatabase } from "./_database.mjs";
 
+/**
+ * The dashboard's principal. Naming a Tenant is an operator act, so a route
+ * invoked with one needs inspect authority to get as far as the call being
+ * recorded here.
+ */
+const operator = {
+  id: "operator",
+  type: "user",
+  permissions: ["database.inspect", "database.read", "database.write"],
+};
+
 /** Every route the service mounts, its nested services included. */
 const routesOf = (service) => [
   ...service.api.v1,
@@ -58,6 +69,8 @@ test("every documents operation is reachable through a route", async (t) => {
         service: recording(api, touched),
         params: { collection: "items", id: "x", name: "n", series: "s", view: "v" },
         query: new URLSearchParams({ tenantId: "acme" }),
+        // An operator, because these cases name the Tenant they address.
+        principal: operator,
         // Enough of a body that a handler reaches its call rather than
         // stopping at a missing tenant; the call itself is expected to fail.
         body: {
@@ -129,6 +142,8 @@ test("every timeSeries operation is reachable through a route", async (t) => {
         service: recordingTs(api),
         params: { collection: "items", id: "x", name: "n", series: "s", view: "v" },
         query: new URLSearchParams({ tenantId: "acme" }),
+        // An operator, because these cases name the Tenant they address.
+        principal: operator,
         body: {
           tenantId: "acme",
           interval: 1000,

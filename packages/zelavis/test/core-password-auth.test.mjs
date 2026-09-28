@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createMemorySystemStore, zelavis } from "../dist/index.js";
-import { PASSWORD_PROVIDER } from "../dist/app/auth/index.js";
+import { PASSWORD_PROVIDER } from "../dist/app/identity/index.js";
 
 const TOKEN = "core-password-bootstrap-token-32-characters";
 
@@ -30,7 +30,7 @@ test("password sign-in needs nothing installed", async () => {
   const runtime = await platform();
   const status = await runtime.plain({ url: "/zelavis/api/v1/auth/bootstrap" });
 
-  // This used to be a plugin the distribution copied into the product-services
+  // This used to be a plugin the distribution copied into the services
   // folder on first boot, because a Platform with no credential provider can
   // never create its first owner. Something an installation cannot function
   // without is not an extension.

@@ -7,6 +7,7 @@
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -36,6 +37,14 @@ import type {
   ZelavisServicePackageScaffoldInput,
   ZelavisServiceRegistryModuleEntry,
 } from "../index.js";
+import { Effect } from "effect";
+import { ZelavisValidationError } from "../platform/shared.js";
+import {
+  AcquisitionFailed,
+  MaterializationFailed,
+  SourceRefused,
+  UnusablePackage,
+} from "../platform/service-lifecycle-errors.js";
 import type {
   ZelavisGitSourcePolicy,
   ZelavisHttpsSourcePolicy,
@@ -482,7 +491,7 @@ export interface LocalRuntimeServiceOptions {
   /**
    * Further directories whose contents count as host-managed code.
    *
-   * The product-services folder is one: an operator putting a package there is
+   * The services folder is one: an operator putting a package there is
    * the same deliberate act as installing one, so it is not gated behind the
    * filesystem source policy meant for arbitrary developer paths. It is still
    * an explicit list — nothing outside these roots is trusted.
@@ -544,52 +553,57 @@ function resolveAcquisitionPolicy(
  * or by how many names it arrives, and staged-then-renamed so a crashed install
  * cannot leave a half-written package that looks complete.
  */
-async function materializePackage(
+/**
+ * Writes a package into its content-addressed home, or writes nothing.
+ *
+ * The temp directory is a scoped resource, so it is removed when the scope
+ * closes however that happens — the previous code cleaned up in a `catch`,
+ * which covered a throw but not an interruption.
+ *
+ * Losing the rename to `EEXIST` is success, not failure: another install
+ * materialized the same digest first, and the same bytes are already there.
+ */
+const materializePackage = Effect.fn("materializePackage")(function* (
   serviceDirectory: string,
   packageHash: string,
   entries: readonly PackageEntry[],
-): Promise<string> {
+  reference: string,
+) {
   const packageDirectory = join(serviceDirectory, "packages", packageHash);
+  if (existsSync(packageDirectory)) return packageDirectory;
 
-  if (existsSync(packageDirectory)) {
-    return packageDirectory;
-  }
-
-  const temporaryDirectory = join(
-    serviceDirectory,
-    ".tmp",
-    `${packageHash}-${randomUUID()}`,
+  const temporaryDirectory = yield* Effect.acquireRelease(
+    Effect.sync(() => join(serviceDirectory, ".tmp", `${packageHash}-${randomUUID()}`)),
+    (directory) => Effect.promise(() => rm(directory, { recursive: true, force: true })),
   );
 
-  await rm(temporaryDirectory, { recursive: true, force: true });
-  await mkdir(temporaryDirectory, { recursive: true });
-
-  try {
-    for (const entry of entries) {
-      const filePath = resolvePackageFilePath(temporaryDirectory, entry.path);
-      await mkdir(dirname(filePath), { recursive: true });
-      await writeFile(filePath, entry.body);
-    }
-
-    await mkdir(dirname(packageDirectory), { recursive: true });
-    renameSync(temporaryDirectory, packageDirectory);
-  } catch (error) {
-    await rm(temporaryDirectory, { recursive: true, force: true });
-
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "EEXIST"
-    ) {
-      // Another install completed the same package first.
-    } else {
-      throw error;
-    }
-  }
+  yield* Effect.tryPromise({
+    try: async () => {
+      await rm(temporaryDirectory, { recursive: true, force: true });
+      await mkdir(temporaryDirectory, { recursive: true });
+      for (const entry of entries) {
+        const filePath = resolvePackageFilePath(temporaryDirectory, entry.path);
+        await mkdir(dirname(filePath), { recursive: true });
+        await writeFile(filePath, entry.body);
+      }
+      await mkdir(dirname(packageDirectory), { recursive: true });
+      renameSync(temporaryDirectory, packageDirectory);
+    },
+    catch: (cause) => {
+      const raced =
+        typeof cause === "object" && cause !== null && "code" in cause
+        && (cause as { code?: unknown }).code === "EEXIST";
+      return raced
+        ? undefined
+        : new MaterializationFailed({ reference, cause });
+    },
+  }).pipe(
+    // `undefined` is the raced case: another install won, which is a success.
+    Effect.catch((failure) => (failure ? Effect.fail(failure) : Effect.void)),
+  );
 
   return packageDirectory;
-}
+});
 
 export function createLocalRuntimeServicePackageInstaller(
   options: LocalRuntimeServiceOptions = {},
@@ -597,27 +611,213 @@ export function createLocalRuntimeServicePackageInstaller(
   const serviceDirectory = resolve(options.directory ?? ".zelavis/services");
   const acquisitionPolicy = resolveAcquisitionPolicy(options);
 
-  return {
-    async install(input) {
-      const fileName = input.fileName.toLowerCase();
 
-      if (!fileName.endsWith(".zip")) {
-        throw new Error("Service package uploads must be ZIP archives.");
+  /**
+   * Fetches a package under the source policy and writes it down.
+   *
+   * The policy's refusals and the network's failures are different answers:
+   * a refused source is this installation's configuration and will refuse
+   * again, while a failed fetch may well work on a retry. They arrived as one
+   * thrown Error and became one 400.
+   */
+  const acquire = Effect.fn("ServicePackageInstaller.acquire")(function* (
+    input: ZelavisServicePackageAcquireInput,
+  ) {
+    const acquired = yield* Effect.tryPromise({
+      try: () =>
+        acquirePackage(input.reference, {
+          policy: acquisitionPolicy,
+          defaultRegistry: options.defaultRegistry,
+        }),
+      // Validation is the policy talking: an unallowed registry, a range
+      // where an exact version is required, a name that is not a name.
+      catch: (cause) =>
+        cause instanceof ZelavisValidationError
+          ? new SourceRefused({ reference: input.reference, reason: (cause as Error).message })
+          : new AcquisitionFailed({ reference: input.reference, cause }),
+    });
+
+    const entry = yield* Effect.try({
+      try: () => resolveServicePackageEntry(acquired.entries),
+      catch: (cause) =>
+        new UnusablePackage({
+          reference: input.reference,
+          reason: cause instanceof Error ? cause.message : String(cause),
+        }),
+    });
+
+    // Addressed by the verified digest rather than a hash of the bytes we
+    // happened to receive: the digest is what the source committed to, and it
+    // is what makes two installs of the same reference the same install.
+    const packageDirectory = yield* materializePackage(
+      serviceDirectory,
+      createHash("sha256").update(acquired.integrity).digest("hex"),
+      acquired.entries,
+      input.reference,
+    );
+
+    return {
+      specifier: join(packageDirectory, entry),
+      resolved: acquired.resolved,
+      integrity: acquired.integrity,
+      message: `Installed ${acquired.resolved}.`,
+    };
+  });
+
+  /**
+   * Scaffolds a frontend package by running a create package's bin.
+   *
+   * The create package is acquired through the same verified path as any other
+   * install, so the source policy governs what can be run here. What the run
+   * produces is then treated exactly like an uploaded package: validated as a
+   * Zelavis frontend, materialized content-addressed, and returned as a
+   * specifier the registry installs. A scaffold that did not produce a
+   * frontend is refused rather than registered as something else.
+   */
+  /**
+   * Scaffolds a frontend by running a create package's bin.
+   *
+   * The create package is acquired through the same verified path as any
+   * other install, so the source policy governs what can be run here. What
+   * the run produces is then treated exactly like an uploaded package:
+   * validated as a Zelavis frontend, materialized content-addressed, and
+   * returned as a specifier the registry installs. A scaffold that did not
+   * produce a frontend is refused rather than registered as something else.
+   */
+  const scaffold = Effect.fn("ServicePackageInstaller.scaffold")(function* (
+    input: ZelavisServicePackageScaffoldInput,
+  ) {
+    const acquired = yield* Effect.tryPromise({
+      try: () =>
+        acquirePackage(input.reference, {
+          policy: acquisitionPolicy,
+          defaultRegistry: options.defaultRegistry,
+        }),
+      catch: (cause) =>
+        cause instanceof ZelavisValidationError
+          ? new SourceRefused({ reference: input.reference, reason: (cause as Error).message })
+          : new AcquisitionFailed({ reference: input.reference, cause }),
+    });
+
+    const unusable = (reason: string) =>
+      new UnusablePackage({ reference: input.reference, reason });
+
+    const manifestEntry = acquired.entries.find((entry) => entry.path === "package.json");
+    if (!manifestEntry) {
+      return yield* unusable("A create package must include package.json.");
+    }
+
+    const binPath = yield* Effect.try({
+      try: () => {
+        const createManifest = JSON.parse(
+          new TextDecoder().decode(manifestEntry.body),
+        ) as ZelavisPackageManifest & { bin?: unknown };
+        return resolveCreatePackageBin(createManifest, input.command);
+      },
+      catch: (cause) =>
+        unusable(cause instanceof Error ? cause.message : String(cause)),
+    });
+
+    const createDirectory = yield* materializePackage(
+      serviceDirectory,
+      createHash("sha256").update(acquired.integrity).digest("hex"),
+      acquired.entries,
+      input.reference,
+    );
+
+    // Run-local, and removed whatever happens -- including an interruption,
+    // which the previous `finally` did not cover. A half-finished scaffold is
+    // not something a later run should find and reuse.
+    const runDirectory = yield* Effect.acquireRelease(
+      Effect.sync(() => join(serviceDirectory, ".scaffold", randomUUID())),
+      (directory) => Effect.promise(() => rm(directory, { recursive: true, force: true })),
+    );
+    const outputDirectory = join(runDirectory, "out");
+
+    const entries = yield* Effect.tryPromise({
+      try: async () => {
+        await mkdir(outputDirectory, { recursive: true });
+        await runCreatePackage({
+          packageDirectory: createDirectory,
+          binPath,
+          outputDirectory,
+          runDirectory,
+          args: input.args,
+          ...(options.scaffoldTimeoutMs === undefined
+            ? {}
+            : { timeoutMs: options.scaffoldTimeoutMs }),
+        });
+        return readScaffoldOutput(outputDirectory);
+      },
+      catch: (cause) =>
+        unusable(cause instanceof Error ? cause.message : String(cause)),
+    });
+
+    const entry = yield* Effect.try({
+      try: () => resolveScaffoldedFrontendEntry(entries),
+      catch: (cause) =>
+        unusable(cause instanceof Error ? cause.message : String(cause)),
+    });
+
+    const packageDirectory = yield* materializePackage(
+      serviceDirectory,
+      createHash("sha256")
+        .update(
+          entries
+            .map(
+              (item) =>
+                `${item.path}:${createHash("sha256").update(item.body).digest("hex")}`,
+            )
+            .join("\n"),
+        )
+        .digest("hex"),
+      entries,
+      input.reference,
+    );
+
+    return {
+      specifier: join(packageDirectory, entry),
+      resolved: acquired.resolved,
+      integrity: acquired.integrity,
+      message: `Scaffolded a frontend with ${acquired.resolved}.`,
+    };
+  });
+
+  return {
+    install: Effect.fn("ServicePackageInstaller.install")(function* (input) {
+      if (!input.fileName.toLowerCase().endsWith(".zip")) {
+        return yield* new UnusablePackage({
+          reference: input.fileName,
+          reason: "Service package uploads must be ZIP archives.",
+        });
       }
 
-      const entries = readZipEntries(input.body);
-      const entry = resolveServicePackageEntry(entries);
-      const packageDirectory = await materializePackage(
+      // Reading the archive and finding its entry point are the caller's
+      // problem with the file they sent, not ours with the disk.
+      const { entries, entry } = yield* Effect.try({
+        try: () => {
+          const read = readZipEntries(input.body);
+          return { entries: read, entry: resolveServicePackageEntry(read) };
+        },
+        catch: (cause) =>
+          new UnusablePackage({
+            reference: input.fileName,
+            reason: cause instanceof Error ? cause.message : String(cause),
+          }),
+      });
+
+      const packageDirectory = yield* materializePackage(
         serviceDirectory,
         createHash("sha256").update(input.body).digest("hex"),
         entries,
+        input.fileName,
       );
 
       return {
         specifier: join(packageDirectory, entry),
         message: `Installed service package ${input.fileName}.`,
       };
-    },
+    }),
 
     // Present only when sources are actually configured.
     //
@@ -631,117 +831,6 @@ export function createLocalRuntimeServicePackageInstaller(
     // no create package to run.
     ...(acquisitionPolicy ? { acquire, scaffold } : {}),
   };
-
-  async function acquire(input: ZelavisServicePackageAcquireInput) {
-      const acquired = await acquirePackage(input.reference, {
-        policy: acquisitionPolicy,
-        defaultRegistry: options.defaultRegistry,
-      });
-
-      const entry = resolveServicePackageEntry(acquired.entries);
-      // Addressed by the verified digest rather than a hash of the bytes we
-      // happened to receive: the digest is what the source committed to, and
-      // it is what makes two installs of the same reference the same install.
-      const packageDirectory = await materializePackage(
-        serviceDirectory,
-        createHash("sha256").update(acquired.integrity).digest("hex"),
-        acquired.entries,
-      );
-
-      return {
-        specifier: join(packageDirectory, entry),
-        resolved: acquired.resolved,
-        integrity: acquired.integrity,
-        message: `Installed ${acquired.resolved}.`,
-      };
-  }
-
-  /**
-   * Scaffolds a frontend package by running a create package's bin.
-   *
-   * The create package is acquired through the same verified path as any other
-   * install, so the source policy governs what can be run here. What the run
-   * produces is then treated exactly like an uploaded package: validated as a
-   * Zelavis frontend, materialized content-addressed, and returned as a
-   * specifier the registry installs. A scaffold that did not produce a
-   * frontend is refused rather than registered as something else.
-   */
-  async function scaffold(input: ZelavisServicePackageScaffoldInput) {
-    const acquired = await acquirePackage(input.reference, {
-      policy: acquisitionPolicy,
-      defaultRegistry: options.defaultRegistry,
-    });
-
-    const manifestEntry = acquired.entries.find(
-      (entry) => entry.path === "package.json",
-    );
-    if (!manifestEntry) {
-      throw new Error("A create package must include package.json.");
-    }
-
-    let createManifest: ZelavisPackageManifest & { bin?: unknown };
-    try {
-      createManifest = JSON.parse(
-        new TextDecoder().decode(manifestEntry.body),
-      ) as ZelavisPackageManifest & { bin?: unknown };
-    } catch {
-      throw new Error("The create package's package.json is not valid JSON.");
-    }
-
-    const binPath = resolveCreatePackageBin(createManifest, input.command);
-
-    const createDirectory = await materializePackage(
-      serviceDirectory,
-      createHash("sha256").update(acquired.integrity).digest("hex"),
-      acquired.entries,
-    );
-
-    // Run-local, and removed whatever happens: a half-finished scaffold is not
-    // something a later run should find and reuse.
-    const runDirectory = join(serviceDirectory, ".scaffold", randomUUID());
-    const outputDirectory = join(runDirectory, "out");
-    await mkdir(outputDirectory, { recursive: true });
-
-    let entries: readonly PackageEntry[];
-    try {
-      await runCreatePackage({
-        packageDirectory: createDirectory,
-        binPath,
-        outputDirectory,
-        runDirectory,
-        args: input.args,
-        ...(options.scaffoldTimeoutMs === undefined
-          ? {}
-          : { timeoutMs: options.scaffoldTimeoutMs }),
-      });
-      entries = await readScaffoldOutput(outputDirectory);
-    } finally {
-      await rm(runDirectory, { recursive: true, force: true });
-    }
-
-    const entry = resolveScaffoldedFrontendEntry(entries);
-    const packageDirectory = await materializePackage(
-      serviceDirectory,
-      createHash("sha256")
-        .update(
-          entries
-            .map(
-              (item) =>
-                `${item.path}:${createHash("sha256").update(item.body).digest("hex")}`,
-            )
-            .join("\n"),
-        )
-        .digest("hex"),
-      entries,
-    );
-
-    return {
-      specifier: join(packageDirectory, entry),
-      resolved: acquired.resolved,
-      integrity: acquired.integrity,
-      message: `Scaffolded a frontend with ${acquired.resolved}.`,
-    };
-  }
 }
 
 /**
@@ -902,9 +991,163 @@ export function createLocalRuntimeServiceImporter(
     }
 
     // A bare package specifier resolves through the host's own installed
-    // dependencies, which is the same trust as the host's own code.
-    return import(specifier);
+    // dependencies, which is the same trust as the host's own code. When
+    // nothing is installed under that name, a core service bundled in this
+    // distribution answers instead — the same trust again, since it shipped
+    // as part of the host.
+    try {
+      return await import(specifier);
+    } catch (error) {
+      // Only a resolution failure falls through. A package that is installed
+      // but throws while loading must surface its own error, not be quietly
+      // replaced by the bundled copy of the same name.
+      const code = (error as { code?: string } | undefined)?.code;
+
+      if (code !== "ERR_MODULE_NOT_FOUND" && code !== "MODULE_NOT_FOUND") {
+        throw error;
+      }
+
+      const bundled = resolveBundledServiceDirectory(specifier);
+      const entry = bundled ? bundledServiceEntry(bundled) : undefined;
+
+      if (!entry) {
+        throw error;
+      }
+
+      return import(pathToFileURL(entry).href);
+    }
   };
+}
+
+// ---------------------------------------------------------------------------
+// Core services bundled in the distribution
+// ---------------------------------------------------------------------------
+
+/**
+ * The distribution carries its core services — `@zelavis/app`, `@zelavis/auth`,
+ * `@zelavis/marketplace`, `@zelavis/ui` — inside its own `services/` folder.
+ *
+ * Resolving them by bare name through `import.meta.resolve` looks in
+ * `node_modules` and finds nothing there, so they had to be declared as
+ * registry dependencies and published as separate packages purely to satisfy
+ * resolution. Reading the folder that already ships beside the code removes
+ * that requirement: the package installs and runs standalone.
+ *
+ * An installed copy of the same name still wins, because the lookup runs only
+ * after the ordinary resolution fails.
+ */
+let bundledServiceIndex: Map<string, string> | undefined;
+
+/** Locates the `services/` folder of the `zelavis` package this module is part of. */
+function distributionServicesDirectory(): string | undefined {
+  let current = dirname(fileURLToPath(import.meta.url));
+
+  while (current && current !== dirname(current)) {
+    const manifestPath = join(current, "package.json");
+
+    if (existsSync(manifestPath)) {
+      try {
+        const raw = JSON.parse(readFileSync(manifestPath, "utf-8")) as {
+          name?: string;
+        };
+
+        if (raw?.name === "zelavis") {
+          return join(current, SERVICES_DIRECTORY);
+        }
+      } catch {
+        // A package.json that will not parse tells us nothing about where we
+        // are; keep walking up rather than giving up on the distribution.
+      }
+    }
+
+    current = dirname(current);
+  }
+
+  return undefined;
+}
+
+function indexBundledServices(): Map<string, string> {
+  if (bundledServiceIndex) {
+    return bundledServiceIndex;
+  }
+
+  const index = new Map<string, string>();
+  const directory = distributionServicesDirectory();
+
+  if (directory && existsSync(directory)) {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) {
+        continue;
+      }
+
+      const packageDir = join(directory, entry.name);
+      const manifestPath = join(packageDir, "package.json");
+
+      if (!existsSync(manifestPath)) {
+        continue;
+      }
+
+      try {
+        const raw = JSON.parse(readFileSync(manifestPath, "utf-8")) as {
+          name?: string;
+        };
+
+        if (typeof raw?.name === "string" && raw.name.length > 0) {
+          index.set(raw.name, packageDir);
+        }
+      } catch {
+        // One unreadable folder must not hide the rest of the distribution.
+      }
+    }
+  }
+
+  bundledServiceIndex = index;
+  return index;
+}
+
+/** Absolute directory of a core service shipped inside this distribution. */
+export function resolveBundledServiceDirectory(
+  packageName: string,
+): string | undefined {
+  return indexBundledServices().get(packageName);
+}
+
+/** Entry module of a bundled service, from its own `exports` or `main`. */
+function bundledServiceEntry(packageDir: string): string | undefined {
+  let raw: {
+    exports?: unknown;
+    module?: string;
+    main?: string;
+  };
+
+  try {
+    raw = JSON.parse(
+      readFileSync(join(packageDir, "package.json"), "utf-8"),
+    ) as typeof raw;
+  } catch {
+    return undefined;
+  }
+
+  const root = (raw.exports as Record<string, unknown> | undefined)?.["."];
+  const candidate =
+    typeof root === "string"
+      ? root
+      : typeof root === "object" && root !== null
+        ? ((root as Record<string, unknown>).import ??
+            (root as Record<string, unknown>).default)
+        : undefined;
+
+  const entry =
+    (typeof candidate === "string" ? candidate : undefined) ??
+    raw.module ??
+    raw.main;
+
+  if (!entry) {
+    return undefined;
+  }
+
+  const resolved = join(packageDir, entry);
+  return existsSync(resolved) ? resolved : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -947,11 +1190,16 @@ export function resolveLocalPackageManifest(
   } else if (!isBareSpecifier) {
     startPath = resolve(specifierOrPath);
   } else {
+    const bundled = resolveBundledServiceDirectory(specifierOrPath);
+
     try {
       const resolvedUrl = import.meta.resolve(specifierOrPath);
       startPath = fileURLToPath(resolvedUrl);
     } catch {
-      startPath = resolve(specifierOrPath);
+      // Nothing is installed under that name. A core service bundled in this
+      // distribution lives in its own folder rather than in node_modules, so
+      // it never resolves this way and has to be looked up directly.
+      startPath = bundled ?? resolve(specifierOrPath);
     }
   }
 
@@ -1002,13 +1250,13 @@ export function createLocalRuntimeServiceManifestResolver(): ZelavisServiceManif
 }
 
 // ---------------------------------------------------------------------------
-// product-services discovery
+// services discovery
 // ---------------------------------------------------------------------------
 
 /** Folder name operators drop service packages into, under the data directory. */
-export const PRODUCT_SERVICES_DIRECTORY = "product-services";
+export const SERVICES_DIRECTORY = "services";
 
-export interface ProductServiceDiscoveryOptions {
+export interface ServiceDiscoveryOptions {
   /** Absolute path of the folder to scan. */
   directory: string;
   /**
@@ -1035,7 +1283,7 @@ async function readDirectoryEntries(directory: string): Promise<string[]> {
 }
 
 /**
- * Lists the package directories in a product-services folder.
+ * Lists the package directories in a services folder.
  *
  * Scoped packages live one level deeper, exactly as they do in node_modules,
  * so `@acme/theme` is the directory `@acme/theme` rather than a flattened name.
@@ -1064,12 +1312,12 @@ async function listProductServicePackages(directory: string): Promise<string[]> 
  * own package directory rather than trusting the manifest's own paths.
  */
 /**
- * Makes `zelavis` resolvable from packages in the product-services folder.
+ * Makes `zelavis` resolvable from packages in the services folder.
  *
  * A package dropped into a folder outside `node_modules` cannot resolve its
  * own peer dependency: Node walks parent directories looking for
  * `node_modules/zelavis` and finds none, so any service importing
- * `zelavis/app/auth` fails to load. Nearly every real plugin does.
+ * `zelavis/app/identity` fails to load. Nearly every real plugin does.
  *
  * Linking the running Platform package into `<folder>/node_modules` puts it
  * exactly where that walk looks. The link points at whichever `zelavis` is
@@ -1101,7 +1349,7 @@ async function linkPlatformPackage(folder: string): Promise<void> {
 }
 
 export async function discoverProductServices(
-  options: ProductServiceDiscoveryOptions,
+  options: ServiceDiscoveryOptions,
 ): Promise<ZelavisServiceRegistryModuleEntry[]> {
   const root = resolve(options.directory);
   const skip = (name: string, reason: string) => options.onSkipped?.(name, reason);

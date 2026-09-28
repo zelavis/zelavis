@@ -11,18 +11,13 @@
 //
 // Measures the workload the store actually runs:
 // ingest with every lens written, posting scans, the cross-model intersection,
-// point lookups, and size on disk. Same data, same order, fresh directory each.
+// ordered pages, point lookups, and size on disk. Same data, same order, fresh
+// directory each.
 import { execSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rmSync } from "node:fs";
 import { Effect, Stream } from "effect";
 import { and, asSeq, equals, term } from "../dist/db/index.js";
-import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
-import { makeLibsqlStore } from "../dist/db/engines/libsql.js";
-import { makeRocksdbStore } from "../dist/db/engines/rocksdb.js";
-import { makeRocksdbJsStore } from "../dist/db/engines/rocksdb-js.js";
-import { makeLmdbStore } from "../dist/db/engines/lmdb.js";
+import { runEngines } from "./bench-engine.mjs";
 
 const N = Number(process.env.N ?? 25000);
 const BATCH = 1000;
@@ -63,14 +58,6 @@ const build = () => {
 const rows = build();
 const ms = (a, b) => Number(b - a) / 1e6;
 const now = () => process.hrtime.bigint();
-
-const engines = [
-  ["node-sqlite", (dir) => makeNodeSqliteStore("bench", dir)],
-  ["libsql", (dir) => makeLibsqlStore("bench", { directory: dir })],
-  ["rocksdb-js", (dir) => makeRocksdbJsStore("bench", dir)],
-  ["rocksdb", (dir) => makeRocksdbStore("bench", dir)],
-  ["lmdb", (dir) => makeLmdbStore("bench", dir)],
-].filter(([n]) => !process.env.ENGINES || process.env.ENGINES.split(",").includes(n));
 
 const sizeOf = (dir) => {
   try { return execSync(`du -sk ${dir}`).toString().split(/\s+/)[0] * 1; } catch { return 0; }
@@ -113,40 +100,50 @@ const measureAll = async (store, row) => {
   row.crossModelMs = cross.ms;
   row.crossRows = cross.out;
 
+  const ordered = await timed(() =>
+    run(store.ordered({ column: "visits", direction: "desc", limit: 100 })));
+  row.orderedPageMs = ordered.ms;
+  row.orderedRows = ordered.out.rows.length;
+
   const point = await timed(async () => {
     for (let i = 1; i <= 1000; i++) await run(store.read(asSeq(i)));
     return 1000;
   }, 2);
-  row.pointReadUs = +(point.ms).toFixed(2);
+  row.pointReadMs = +(point.ms).toFixed(2);
 
   const lookup = await timed(async () => {
     for (let i = 1; i <= 1000; i++) await run(store.lookup("doc/bench/items", `k${i}`));
     return 1000;
   }, 2);
-  row.identityLookupUs = +(lookup.ms).toFixed(2);
+  row.identityLookupMs = +(lookup.ms).toFixed(2);
 
   const vector = await timed(() => run(store.measure("visits")), 3);
   row.measureMs = vector.ms;
 };
 
-const results = [];
-
-for (const [name, open] of engines) {
-  const dir = mkdtempSync(join(tmpdir(), `zv-bench-${name}-`));
+const outputs = await runEngines("zv-bench", async ({ name, dir, open }) => {
   const row = { engine: name };
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const store = yield* open(dir);
+        const store = yield* open();
 
         yield* Effect.promise(() => measureAll(store, row));
       }),
     ),
   );
   row.diskKb = sizeOf(dir);
-  rmSync(dir, { recursive: true, force: true });
-  results.push(row);
   console.error(`${name} done`);
-}
+  console.log(JSON.stringify({ objects: N, results: [row] }, null, 2));
+}, { collectJson: true });
 
-console.log(JSON.stringify({ objects: N, results }, null, 2));
+if (!process.env.ZELAVIS_BENCH_ENGINE_CHILD) {
+  const results = outputs.flatMap((output) => {
+    try {
+      return JSON.parse(output).results ?? [];
+    } catch {
+      return [];
+    }
+  });
+  console.log(JSON.stringify({ objects: N, results }, null, 2));
+}

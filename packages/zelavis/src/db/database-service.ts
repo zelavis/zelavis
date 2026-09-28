@@ -1,5 +1,6 @@
 import {
   createMappedJsonErrorResponse,
+  type ZelavisPrincipal,
   type ZelavisServerErrorStatusRule,
   type ZelavisRuntimeService,
 } from "../core/index.js";
@@ -45,17 +46,82 @@ function readBodyObject(body: unknown): Record<string, unknown> {
   return body as Record<string, unknown>;
 }
 
+/**
+ * The at-most-once key a write may carry.
+ *
+ * Retrying is normal over a network, and a caller that never saw the response
+ * cannot tell whether its insert happened. The key lets the store answer the
+ * retry with the first attempt's result rather than applying it twice.
+ */
+function readIdempotencyKey(
+  input: Record<string, unknown>,
+): { idempotencyKey?: string } {
+  const key = readString(input.idempotencyKey);
+  return key ? { idempotencyKey: key } : {};
+}
+
 function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-/** Reads the Tenant a write-shaped schema request addresses. */
-function tenantOf(service: DatabaseRuntimeApi, input: Record<string, unknown>) {
-  return service.forTenant(readTenantId(input.tenantId));
+/**
+ * Refused because the caller asked for a Tenant that is not its own.
+ *
+ * Distinct from a malformed request: the request is well formed and the answer
+ * is that this caller may not have it, which is a 403 rather than a 400.
+ */
+export class TenantNotPermitted extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TenantNotPermitted";
+  }
 }
 
-function readTenantId(value: unknown): string {
-  const tenantId = readString(value);
+/**
+ * Whether this caller may name the Tenant it addresses.
+ *
+ * `database.inspect` is the operator's view of the database — the dashboard
+ * browsing tables across an installation — so it carries the right to say
+ * which Tenant. An App client holds `database.read`/`database.write` and no
+ * inspect authority, and is confined to the Tenant the Platform signed for it.
+ */
+function mayChooseTenant(principal: ZelavisPrincipal | undefined): boolean {
+  if (!principal) return false;
+  // A wildcard holds every permission, exactly as the dispatcher reads one.
+  const holds = (permission: string) =>
+    permission === "database.inspect" || permission === "*";
+  if (principal.permissions?.some(holds)) return true;
+  return Boolean(principal.grants?.some((grant) => holds(grant.permission)));
+}
+
+/** Reads the Tenant a write-shaped schema request addresses. */
+function tenantOf(
+  service: DatabaseRuntimeApi,
+  input: Record<string, unknown>,
+  principal?: ZelavisPrincipal,
+) {
+  return service.forTenant(readTenantId(input.tenantId, principal));
+}
+
+/**
+ * The Tenant a request addresses.
+ *
+ * The caller's own Tenant is the default and, for an App client, the only
+ * answer: it arrives on the principal because the Platform resolved it from
+ * the authenticated identity and signed it into the Gateway envelope. A
+ * request may still name a Tenant, but naming a different one is an operator
+ * act and is refused to anyone without inspect authority — otherwise every
+ * App client could read every other Tenant by editing one field.
+ */
+function readTenantId(value: unknown, principal?: ZelavisPrincipal): string {
+  const own = readString(principal?.metadata?.tenantId);
+  const requested = readString(value);
+  if (requested && requested !== own && !mayChooseTenant(principal)) {
+    throw new TenantNotPermitted(
+      "This caller may only address its own Tenant.",
+    );
+  }
+  const tenantId = requested ?? own;
   if (!tenantId) throw new TypeError("A Tenant ID is required.");
   return tenantId;
 }
@@ -455,6 +521,10 @@ function describeTaggedFailure(failure: TaggedFailure): string {
 
 const databaseErrorRules: readonly ZelavisServerErrorStatusRule[] = [
   {
+    matches: (error) => error instanceof TenantNotPermitted,
+    status: 403,
+  },
+  {
     matches: (error) => error instanceof TypeError,
     status: 400,
   },
@@ -496,7 +566,10 @@ export function defineDatabaseService(
       surface: "core",
       panelLabel: "Database",
       dynamicItems: {
-        path: "/database/menu/tables?tenantId=zelavis-app",
+        // No Tenant named, so the menu lists every Tenant holding data. This
+        // is the definition a Project-scoped dashboard reads, so pinning one
+        // here made an App's own tables invisible in its own Project.
+        path: "/database/menu/tables",
         emptyTitle: "No tables yet",
       },
       items: [
@@ -513,6 +586,23 @@ export function defineDatabaseService(
     api: {
       v1: [
         {
+          id: "database.tenants.list",
+          spec: {
+            operationId: "listDatabaseTenants",
+            summary: "List every Tenant holding data",
+            description:
+              "What an operator surface offers as a choice. Tenants are discovered from the shards that hold them, not from who has a credential.",
+            tags: ["database"],
+            responses: { 200: { description: "Tenants" } },
+          },
+          method: "GET",
+          access: { permissions: ["database.inspect"] },
+          path: "/tenants",
+          handler: async ({ service }) => ({
+            body: { tenants: await service.tenants() },
+          }),
+        },
+        {
           id: "database.menu.tables",
           spec: {
             operationId: "listDatabaseTablesMenu",
@@ -523,38 +613,50 @@ export function defineDatabaseService(
             },
           },
           method: "GET",
+          access: { permissions: ["database.inspect"] },
           path: "/menu/tables",
-          handler: async ({ service, query }) => {
-            const tenantId = readTenantId(query.get("tenantId"));
-            const collections = await service
-              .forTenant(tenantId)
-              .documents.listCollections();
+          handler: async ({ service, query, principal }) => {
+            // Named, this is one Tenant's tables. Unnamed, it is every Tenant
+            // holding data: a menu that silently showed one Tenant's tables is
+            // how an App's own records became invisible in the dashboard.
+            const requested = query.get("tenantId");
+            const tenantIds = requested
+              ? [readTenantId(requested, principal)]
+              : await service.tenants();
+            const several = tenantIds.length > 1;
 
-            return {
-              body: {
-                items: [
-                  ...[...collections]
-                  .sort((left, right) => left.name.localeCompare(right.name))
-                  .map((collection) => ({
-                    title: collection.name,
-                    path: "/database",
-                    pageLabel: "Database",
-                    search: { databaseTable: collection.name },
-                  })),
-                  ...service.forTenant(tenantId).systemViews.list().map((view) => ({
-                    title: `System · ${view.title}`,
-                    path: "/database",
-                    pageLabel: "Database",
-                    search: { databaseSystemView: view.name },
-                  })),
-                ],
-              },
-            };
+            const items = [];
+            for (const tenantId of tenantIds) {
+              const collections = await service.forTenant(tenantId).documents.listCollections();
+              for (const collection of [...collections].sort((left, right) =>
+                left.name.localeCompare(right.name))) {
+                items.push({
+                  // The Tenant travels in the route state, so opening a table
+                  // opens the one that was listed rather than a same-named
+                  // table belonging to somebody else.
+                  title: several ? `${tenantId} · ${collection.name}` : collection.name,
+                  path: "/database",
+                  pageLabel: "Database",
+                  search: { databaseTenant: tenantId, databaseTable: collection.name },
+                });
+              }
+            }
+            const viewTenant = tenantIds[0] ?? readTenantId(requested, principal);
+            for (const view of service.forTenant(viewTenant).systemViews.list()) {
+              items.push({
+                title: `System · ${view.title}`,
+                path: "/database",
+                pageLabel: "Database",
+                search: { databaseTenant: viewTenant, databaseSystemView: view.name },
+              });
+            }
+            return { body: { items } };
           },
         },
         {
           id: "database.health",
           method: "GET",
+          access: { permissions: ["database.read"] },
           path: "/health",
           spec: {
             operationId: "healthCheck",
@@ -610,10 +712,10 @@ export function defineDatabaseMaintenanceService(
           method: "GET",
           path: "/system/views",
           access: { permissions: ["database.inspect"] },
-          handler: ({ service, query }) => ({
+          handler: ({ service, query, principal }) => ({
             body: {
               views: service
-                .forTenant(readTenantId(query.get("tenantId")))
+                .forTenant(readTenantId(query.get("tenantId"), principal))
                 .systemViews.list(),
             },
           }),
@@ -632,11 +734,11 @@ export function defineDatabaseMaintenanceService(
           method: "GET",
           path: "/system/views/:view",
           access: { permissions: ["database.inspect"] },
-          handler: async ({ service, params, query }) => {
+          handler: async ({ service, params, query, principal }) => {
             try {
               return {
                 body: await service
-                  .forTenant(readTenantId(query.get("tenantId")))
+                  .forTenant(readTenantId(query.get("tenantId"), principal))
                   .systemViews.query({
                   name: params.view,
                   limit: readQueryNumber(query.get("limit")),
@@ -651,6 +753,7 @@ export function defineDatabaseMaintenanceService(
         {
           id: "database.documents.rewrite",
           method: "POST",
+          access: { permissions: ["database.write"] },
           path: "/documents/rewrite",
           spec: {
             operationId: "rewriteDocuments",
@@ -673,10 +776,10 @@ export function defineDatabaseMaintenanceService(
               404: { description: "No such collection" },
             },
           },
-          handler: async ({ service, body }) => {
+          handler: async ({ service, body, principal }) => {
             const input = readBodyObject(body);
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               return {
                 body: await service.forTenant(tenantId).documents.rewrite(
                   typeof input.collection === "string" ? { collection: input.collection } : undefined,
@@ -701,11 +804,11 @@ export function defineDatabaseMaintenanceService(
           method: "POST",
           path: "/backups/export",
           access: { permissions: ["database.backup"] },
-          handler: async ({ service, body }) => {
+          handler: async ({ service, body, principal }) => {
             try {
               const input = readBodyObject(body);
               return {
-                body: await tenantOf(service, input).backups.exportTenant(),
+                body: await tenantOf(service, input, principal).backups.exportTenant(),
               };
             } catch (error) {
               return databaseErrorResponse(error, 400);
@@ -726,7 +829,7 @@ export function defineDatabaseMaintenanceService(
           method: "POST",
           path: "/backups/restore",
           access: { permissions: ["database.restore"] },
-          handler: async ({ service, body }) => {
+          handler: async ({ service, body, principal }) => {
             try {
               const input = readBodyObject(body);
               if (!input.backup || typeof input.backup !== "object" || Array.isArray(input.backup)) {
@@ -739,7 +842,7 @@ export function defineDatabaseMaintenanceService(
               // taken from, which is what the replaced route did.
               return {
                 body: await service
-                  .forTenant(readTenantId(input.tenantId ?? backup.tenantId))
+                  .forTenant(readTenantId(input.tenantId ?? backup.tenantId, principal))
                   .backups.restoreTenant(backup as never),
               };
             } catch (error) {
@@ -764,6 +867,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.collections.list",
           method: "GET",
+          access: { permissions: ["database.read"] },
           path: "/collections",
           spec: {
             operationId: "listCollections",
@@ -777,9 +881,9 @@ export function defineDatabaseDocumentsService(
               400: { description: "Bad request" },
             },
           },
-          handler: async ({ service, query }) => {
+          handler: async ({ service, query, principal }) => {
             try {
-              const tenantId = readTenantId(query.get("tenantId"));
+              const tenantId = readTenantId(query.get("tenantId"), principal);
               return {
                 body: {
                   collections: await service
@@ -795,6 +899,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.collections.create",
           method: "POST",
+          access: { permissions: ["database.write"] },
           path: "/collections",
           spec: {
             operationId: "createCollection",
@@ -827,7 +932,7 @@ export function defineDatabaseDocumentsService(
               409: { description: "Conflict" },
             },
           },
-          handler: async ({ service, body }) => {
+          handler: async ({ service, body, principal }) => {
             const input = readBodyObject(body);
             const name = readString(input.name);
             if (!name) {
@@ -840,7 +945,7 @@ export function defineDatabaseDocumentsService(
             }
 
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               return {
                 status: 201,
                 body: await service.forTenant(tenantId).documents.createCollection({
@@ -884,8 +989,45 @@ export function defineDatabaseDocumentsService(
           },
         },
         {
+          id: "database.collections.drop",
+          method: "DELETE",
+          access: { permissions: ["database.write"] },
+          path: "/collections/:collection",
+          spec: {
+            operationId: "dropCollection",
+            summary: "Remove a collection and every document in it",
+            description:
+              "Refused while another collection references this one. Creating a collection without this made a database that only accumulates.",
+            tags: ["documents"],
+            pathParams: {
+              collection: { type: "string", required: true, description: "The collection to remove." },
+            },
+            responses: {
+              200: { description: "Whether a collection was removed" },
+              404: { description: "No such collection" },
+              409: { description: "Another collection still references it" },
+            },
+          },
+          handler: async ({ service, params, body, principal }) => {
+            const input = readBodyObject(body);
+            try {
+              const tenantId = readTenantId(input.tenantId, principal);
+              return {
+                body: {
+                  dropped: await service.forTenant(tenantId).documents.dropCollection({
+                    name: params.collection,
+                  }),
+                },
+              };
+            } catch (error) {
+              return databaseErrorResponse(error, 404);
+            }
+          },
+        },
+        {
           id: "database.documents.write",
           method: "POST",
+          access: { permissions: ["database.write"] },
           path: "/write",
           spec: {
             operationId: "writeDocuments",
@@ -912,16 +1054,17 @@ export function defineDatabaseDocumentsService(
               409: { description: "A conflict, which refuses the whole batch" },
             },
           },
-          handler: async ({ service, body }) => {
+          handler: async ({ service, body, principal }) => {
             const input = readBodyObject(body);
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               if (!Array.isArray(input.operations)) {
                 throw new TypeError("operations must be a list of changes.");
               }
               return {
                 body: {
                   written: await service.forTenant(tenantId).documents.write({
+                    ...readIdempotencyKey(input),
                     operations: input.operations as ReadonlyArray<DocumentWrite>,
                   }),
                 },
@@ -934,6 +1077,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.documents.insert",
           method: "POST",
+          access: { permissions: ["database.write"] },
           path: "/:collection",
           spec: {
             operationId: "insertDocument",
@@ -960,14 +1104,15 @@ export function defineDatabaseDocumentsService(
               409: { description: "Conflict or revision mismatch" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               return {
                 status: 201,
                 body: await service.forTenant(tenantId).documents.insert({
                   collection: params.collection,
+                  ...readIdempotencyKey(input),
                   id: readString(input.id),
                   data: readJsonObject(input.data),
                 }),
@@ -980,6 +1125,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.documents.get",
           method: "GET",
+          access: { permissions: ["database.read"] },
           path: "/:collection/:id",
           spec: {
             operationId: "getDocument",
@@ -998,10 +1144,10 @@ export function defineDatabaseDocumentsService(
               404: { description: "Document not found" },
             },
           },
-          handler: async ({ service, params, query }) => {
+          handler: async ({ service, params, query, principal }) => {
             let document;
             try {
-              const tenantId = readTenantId(query.get("tenantId"));
+              const tenantId = readTenantId(query.get("tenantId"), principal);
               document = await service.forTenant(tenantId).documents.findById({
                 collection: params.collection,
                 id: params.id,
@@ -1025,6 +1171,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.documents.query",
           method: "POST",
+          access: { permissions: ["database.read"] },
           path: "/:collection/query",
           spec: {
             operationId: "queryDocuments",
@@ -1060,10 +1207,10 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               return {
                 body: {
                   documents: await service.forTenant(tenantId).documents.findMany({
@@ -1086,6 +1233,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.documents.page",
           method: "POST",
+          access: { permissions: ["database.read"] },
           path: "/:collection/page",
           spec: {
             operationId: "pageDocuments",
@@ -1121,10 +1269,10 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               const limit = readNumber(input.limit, 50);
               if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
                 throw new TypeError("limit must be an integer from 1 to 1000.");
@@ -1149,6 +1297,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.documents.traverse",
           method: "POST",
+          access: { permissions: ["database.read"] },
           path: "/:collection/traverse",
           spec: {
             operationId: "traverseDocuments",
@@ -1179,10 +1328,10 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found or unknown edge" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               return {
                 body: await service.forTenant(tenantId).documents.traverse({
                   collection: params.collection,
@@ -1205,6 +1354,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.documents.summarize",
           method: "POST",
+          access: { permissions: ["database.read"] },
           path: "/:collection/summarize",
           spec: {
             operationId: "summarizeDocuments",
@@ -1236,10 +1386,10 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               return {
                 body: await service.forTenant(tenantId).documents.summarize({
                   collection: params.collection,
@@ -1256,6 +1406,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.documents.summarizeBy",
           method: "POST",
+          access: { permissions: ["database.read"] },
           path: "/:collection/summarize-by",
           spec: {
             operationId: "summarizeDocumentsBy",
@@ -1289,10 +1440,10 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               const groupBy = readString(input.groupBy);
               if (!groupBy) throw new TypeError("A field to group by is required.");
               return {
@@ -1317,6 +1468,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.collections.exists",
           method: "GET",
+          access: { permissions: ["database.read"] },
           path: "/collections/:collection/exists",
           spec: {
             operationId: "collectionExists",
@@ -1333,9 +1485,9 @@ export function defineDatabaseDocumentsService(
               400: { description: "Bad request" },
             },
           },
-          handler: async ({ service, params, query }) => {
+          handler: async ({ service, params, query, principal }) => {
             try {
-              const tenantId = readTenantId(query.get("tenantId"));
+              const tenantId = readTenantId(query.get("tenantId"), principal);
               return {
                 body: {
                   exists: await service.forTenant(tenantId).documents.collectionExists(params.collection),
@@ -1349,6 +1501,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.documents.related",
           method: "POST",
+          access: { permissions: ["database.read"] },
           path: "/:collection/related",
           spec: {
             operationId: "withRelated",
@@ -1374,10 +1527,10 @@ export function defineDatabaseDocumentsService(
               404: { description: "A reference the collection does not declare" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               return {
                 body: {
                   documents: await service.forTenant(tenantId).documents.withRelated({
@@ -1399,6 +1552,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.documents.analyzer",
           method: "POST",
+          access: { permissions: ["database.write"] },
           path: "/:collection/analyzer",
           spec: {
             operationId: "analyzeCollection",
@@ -1424,10 +1578,10 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               if (!input.analyzer || typeof input.analyzer !== "object") {
                 throw new TypeError("An analyzer is required.");
               }
@@ -1445,6 +1599,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.documents.geometry",
           method: "POST",
+          access: { permissions: ["database.write"] },
           path: "/:collection/geometry",
           spec: {
             operationId: "locateCollection",
@@ -1470,10 +1625,10 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               if (!input.spatial || typeof input.spatial !== "object") {
                 throw new TypeError("A spatial index is required.");
               }
@@ -1491,6 +1646,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.documents.embedding",
           method: "POST",
+          access: { permissions: ["database.write"] },
           path: "/:collection/embedding",
           spec: {
             operationId: "embedCollection",
@@ -1516,10 +1672,10 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               if (!input.embedding || typeof input.embedding !== "object") {
                 throw new TypeError("An embedding is required.");
               }
@@ -1537,6 +1693,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.indexes.create",
           method: "POST",
+          access: { permissions: ["database.write"] },
           path: "/:collection/indexes",
           spec: {
             operationId: "createIndex",
@@ -1564,10 +1721,10 @@ export function defineDatabaseDocumentsService(
               409: { description: "The name is taken by an index over other fields" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               return {
                 status: 201,
                 body: await service.forTenant(tenantId).documents.createIndex({
@@ -1584,6 +1741,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.indexes.drop",
           method: "DELETE",
+          access: { permissions: ["database.write"] },
           path: "/:collection/indexes/:name",
           spec: {
             operationId: "dropIndex",
@@ -1602,9 +1760,9 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, query }) => {
+          handler: async ({ service, params, query, principal }) => {
             try {
-              const tenantId = readTenantId(query.get("tenantId"));
+              const tenantId = readTenantId(query.get("tenantId"), principal);
               return {
                 body: {
                   dropped: await service.forTenant(tenantId).documents.dropIndex({
@@ -1621,6 +1779,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.checks.add",
           method: "POST",
+          access: { permissions: ["database.write"] },
           path: "/:collection/checks",
           spec: {
             operationId: "addCheck",
@@ -1648,10 +1807,10 @@ export function defineDatabaseDocumentsService(
               409: { description: "The name is taken" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               return {
                 status: 201,
                 body: await service.forTenant(tenantId).documents.addCheck({
@@ -1668,6 +1827,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.checks.drop",
           method: "DELETE",
+          access: { permissions: ["database.write"] },
           path: "/:collection/checks/:name",
           spec: {
             operationId: "dropCheck",
@@ -1686,9 +1846,9 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, query }) => {
+          handler: async ({ service, params, query, principal }) => {
             try {
-              const tenantId = readTenantId(query.get("tenantId"));
+              const tenantId = readTenantId(query.get("tenantId"), principal);
               return {
                 body: {
                   dropped: await service.forTenant(tenantId).documents.dropCheck({
@@ -1705,6 +1865,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.references.add",
           method: "POST",
+          access: { permissions: ["database.write"] },
           path: "/:collection/references",
           spec: {
             operationId: "addReference",
@@ -1734,10 +1895,10 @@ export function defineDatabaseDocumentsService(
               409: { description: "The name is taken, or a document names nothing" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               return {
                 status: 201,
                 body: await service.forTenant(tenantId).documents.addReference({
@@ -1758,6 +1919,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.references.drop",
           method: "DELETE",
+          access: { permissions: ["database.write"] },
           path: "/:collection/references/:name",
           spec: {
             operationId: "dropReference",
@@ -1776,9 +1938,9 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, query }) => {
+          handler: async ({ service, params, query, principal }) => {
             try {
-              const tenantId = readTenantId(query.get("tenantId"));
+              const tenantId = readTenantId(query.get("tenantId"), principal);
               return {
                 body: {
                   dropped: await service.forTenant(tenantId).documents.dropReference({
@@ -1795,6 +1957,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.documents.update",
           method: "PATCH",
+          access: { permissions: ["database.write"] },
           path: "/:collection/:id",
           spec: {
             operationId: "updateDocument",
@@ -1823,13 +1986,14 @@ export function defineDatabaseDocumentsService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               return {
                 body: await service.forTenant(tenantId).documents.update({
                   collection: params.collection,
+                  ...readIdempotencyKey(input),
                   id: params.id,
                   data: readJsonObject(input.data),
                   mode: input.mode === "replace" ? "replace" : "merge",
@@ -1845,6 +2009,7 @@ export function defineDatabaseDocumentsService(
         {
           id: "database.documents.delete",
           method: "DELETE",
+          access: { permissions: ["database.write"] },
           path: "/:collection/:id",
           spec: {
             operationId: "deleteDocument",
@@ -1868,9 +2033,9 @@ export function defineDatabaseDocumentsService(
               409: { description: "The document is not as the caller expected" },
             },
           },
-          handler: async ({ service, params, query }) => {
+          handler: async ({ service, params, query, principal }) => {
             try {
-              const tenantId = readTenantId(query.get("tenantId"));
+              const tenantId = readTenantId(query.get("tenantId"), principal);
               const expectedVersion = readQueryNumber(query.get("expectedVersion"));
               const precondition = readFilterQuery(query.get("precondition"));
               return {
@@ -1905,6 +2070,7 @@ export function defineDatabaseSchemasService(
         {
           id: "database.schemas.list",
           method: "GET",
+          access: { permissions: ["database.read"] },
           path: "/collections",
           spec: {
             operationId: "listSchemas",
@@ -1914,10 +2080,10 @@ export function defineDatabaseSchemasService(
               200: { description: "List of schemas" },
             },
           },
-          handler: async ({ service, query }) => ({
+          handler: async ({ service, query, principal }) => ({
             body: {
               collections: await service
-                .forTenant(readTenantId(query.get("tenantId")))
+                .forTenant(readTenantId(query.get("tenantId"), principal))
                 .schemas.listCollections(),
             },
           }),
@@ -1925,6 +2091,7 @@ export function defineDatabaseSchemasService(
         {
           id: "database.schemas.versions.list",
           method: "GET",
+          access: { permissions: ["database.read"] },
           path: "/:collection",
           spec: {
             operationId: "listSchemaVersions",
@@ -1937,11 +2104,11 @@ export function defineDatabaseSchemasService(
               200: { description: "List of schema versions" },
             },
           },
-          handler: async ({ service, params, query }) => ({
+          handler: async ({ service, params, query, principal }) => ({
             body: {
               collection: params.collection,
               schemas: await service
-                .forTenant(readTenantId(query.get("tenantId")))
+                .forTenant(readTenantId(query.get("tenantId"), principal))
                 .schemas.listVersions(params.collection),
             },
           }),
@@ -1949,6 +2116,7 @@ export function defineDatabaseSchemasService(
         {
           id: "database.schemas.save",
           method: "POST",
+          access: { permissions: ["database.write"] },
           path: "/:collection",
           spec: {
             operationId: "saveSchema",
@@ -1974,7 +2142,7 @@ export function defineDatabaseSchemasService(
               400: { description: "Bad request" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
             try {
               const fields = input.fields;
@@ -1986,7 +2154,7 @@ export function defineDatabaseSchemasService(
               }
               return {
                 status: 201,
-                body: await tenantOf(service, input).schemas.save({
+                body: await tenantOf(service, input, principal).schemas.save({
                   collection: params.collection,
                   version: readRequiredNumber(input.version, "Schema version"),
                   activate: input.activate === true,
@@ -2001,6 +2169,7 @@ export function defineDatabaseSchemasService(
         {
           id: "database.schemas.activate",
           method: "POST",
+          access: { permissions: ["database.write"] },
           path: "/:collection/activate",
           spec: {
             operationId: "activateSchema",
@@ -2024,11 +2193,11 @@ export function defineDatabaseSchemasService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
             try {
               return {
-                body: await tenantOf(service, input).schemas.activate(
+                body: await tenantOf(service, input, principal).schemas.activate(
                   params.collection,
                   readRequiredNumber(input.version, "Schema version"),
                 ),
@@ -2041,6 +2210,7 @@ export function defineDatabaseSchemasService(
         {
           id: "database.schemas.validate",
           method: "POST",
+          access: { permissions: ["database.read"] },
           path: "/:collection/validate",
           spec: {
             operationId: "validateData",
@@ -2064,11 +2234,11 @@ export function defineDatabaseSchemasService(
               400: { description: "Validation failed" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
             try {
               return {
-                body: await tenantOf(service, input).schemas.validate(
+                body: await tenantOf(service, input, principal).schemas.validate(
                   params.collection,
                   readJsonObject(input.data),
                 ),
@@ -2095,6 +2265,7 @@ export function defineDatabaseTimeSeriesService(
         {
           id: "database.timeseries.list",
           method: "GET",
+          access: { permissions: ["database.read"] },
           path: "/series",
           spec: {
             operationId: "listTimeSeries",
@@ -2111,12 +2282,12 @@ export function defineDatabaseTimeSeriesService(
           // A series belongs to a Tenant here, where the replaced database kept
           // definitions outside the Tenant boundary. Listing therefore has to
           // say whose series it wants.
-          handler: async ({ service, query }) => {
+          handler: async ({ service, query, principal }) => {
             try {
               return {
                 body: {
                   series: await service
-                    .forTenant(readTenantId(query.get("tenantId")))
+                    .forTenant(readTenantId(query.get("tenantId"), principal))
                     .timeSeries.list(),
                 },
               };
@@ -2128,6 +2299,7 @@ export function defineDatabaseTimeSeriesService(
         {
           id: "database.timeseries.range",
           method: "POST",
+          access: { permissions: ["database.read"] },
           path: "/:series/range",
           spec: {
             operationId: "queryTimeSeriesRange",
@@ -2156,11 +2328,11 @@ export function defineDatabaseTimeSeriesService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
 
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               return {
                 body: {
                   points: await service
@@ -2182,6 +2354,7 @@ export function defineDatabaseTimeSeriesService(
         {
           id: "database.timeseries.aggregate",
           method: "POST",
+          access: { permissions: ["database.read"] },
           path: "/:series/aggregate",
           spec: {
             operationId: "aggregateTimeSeries",
@@ -2210,11 +2383,11 @@ export function defineDatabaseTimeSeriesService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
 
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               return {
                 body: {
                   value: await service
@@ -2236,6 +2409,7 @@ export function defineDatabaseTimeSeriesService(
         {
           id: "database.timeseries.windows",
           method: "POST",
+          access: { permissions: ["database.read"] },
           path: "/:series/windows",
           spec: {
             operationId: "queryTimeSeriesWindows",
@@ -2267,11 +2441,11 @@ export function defineDatabaseTimeSeriesService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
 
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               return {
                 body: {
                   buckets: await service
@@ -2296,6 +2470,7 @@ export function defineDatabaseTimeSeriesService(
         {
           id: "database.timeseries.moving",
           method: "POST",
+          access: { permissions: ["database.read"] },
           path: "/:series/moving",
           spec: {
             operationId: "queryTimeSeriesMoving",
@@ -2328,11 +2503,11 @@ export function defineDatabaseTimeSeriesService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
 
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               return {
                 body: {
                   points: await service
@@ -2355,6 +2530,7 @@ export function defineDatabaseTimeSeriesService(
         {
           id: "database.timeseries.histogram",
           method: "POST",
+          access: { permissions: ["database.read"] },
           path: "/:series/histogram",
           spec: {
             operationId: "queryTimeSeriesHistogram",
@@ -2386,11 +2562,11 @@ export function defineDatabaseTimeSeriesService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
 
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               return {
                 body: await service
                   .forTenant(tenantId)
@@ -2413,6 +2589,7 @@ export function defineDatabaseTimeSeriesService(
         {
           id: "database.timeseries.interpolate",
           method: "POST",
+          access: { permissions: ["database.read"] },
           path: "/:series/interpolate",
           spec: {
             operationId: "queryTimeSeriesInterpolate",
@@ -2441,11 +2618,11 @@ export function defineDatabaseTimeSeriesService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
 
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               return {
                 body: {
                   points: await service
@@ -2467,6 +2644,7 @@ export function defineDatabaseTimeSeriesService(
         {
           id: "database.timeseries.ingest",
           method: "POST",
+          access: { permissions: ["database.write"] },
           path: "/:series/ingest",
           spec: {
             operationId: "ingestTimeSeries",
@@ -2490,11 +2668,11 @@ export function defineDatabaseTimeSeriesService(
               404: { description: "Not found" },
             },
           },
-          handler: async ({ service, params, body }) => {
+          handler: async ({ service, params, body, principal }) => {
             const input = readBodyObject(body);
 
             try {
-              const tenantId = readTenantId(input.tenantId);
+              const tenantId = readTenantId(input.tenantId, principal);
               return {
                 body: await service
                   .forTenant(tenantId)

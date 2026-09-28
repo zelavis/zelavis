@@ -91,7 +91,7 @@ test("zelavis exposes fetch handlers without requiring a mount adapter", async (
       "@zelavis/auth",
       "zelavis/fabric",
       "@zelavis/db",
-      "zelavis/auth",
+      "zelavis/identity",
       "@zelavis/frontend",
       "@zelavis/workloads",
     ],
@@ -117,7 +117,7 @@ test("zelavis includes core services by default", async (t) => {
     runtime.services["zelavis/fabric"].name,
     "zelavis/fabric",
   );
-  assert.equal(runtime.services["zelavis/auth"].name, "zelavis/auth");
+  assert.equal(runtime.services["zelavis/identity"].name, "zelavis/identity");
   assert.equal(runtime.services["@zelavis/db"].name, "@zelavis/db");
   assert.equal(runtime.services["@zelavis/frontend"].name, "@zelavis/frontend");
   assert.ok(routes.some((route) => route.fullPath === "/*path"));
@@ -246,7 +246,7 @@ test("zelavis includes core services by default", async (t) => {
       "@zelavis/auth",
       "zelavis/fabric",
       "@zelavis/db",
-      "zelavis/auth",
+      "zelavis/identity",
       "@zelavis/frontend",
       "@zelavis/workloads",
     ],
@@ -430,6 +430,10 @@ test("privileged project control routes declare explicit access requirements", a
   assert.deepEqual(routes.get("runtime.deployment-backends.list")?.access, {
     permissions: ["server.backends.view"],
   });
+  assert.deepEqual(routes.get("runtime.projects.update")?.access, {
+    permissions: ["project.settings.manage"],
+    scope: { type: "project", projectIdParam: "projectId" },
+  });
   for (const id of [
     "runtime.agent.read",
     "runtime.agent.operations.list",
@@ -491,7 +495,7 @@ test("auth method plugins register through the public auth capability", async ()
           service: {
             name: "@example/test-auth-provider",
             kind: "plugin",
-            capabilities: ["zelavis/auth:credentials"],
+            capabilities: ["zelavis/identity:credentials"],
             service: {
               name: "test-auth",
               register(api) {
@@ -1115,7 +1119,7 @@ test("zelavis can disable the database core service", async () => {
     },
   });
 
-  assert.equal(runtime.services["zelavis/auth"].name, "zelavis/auth");
+  assert.equal(runtime.services["zelavis/identity"].name, "zelavis/identity");
   assert.equal(runtime.services["@zelavis/frontend"].name, "@zelavis/frontend");
   assert.equal(runtime.services["@zelavis/db"], undefined);
   assert.ok(
@@ -1133,7 +1137,7 @@ test("zelavis can disable the auth core service", async (t) => {
   });
   t.after(() => runtime.close());
 
-  assert.equal(runtime.services["zelavis/auth"], undefined);
+  assert.equal(runtime.services["zelavis/identity"], undefined);
   assert.equal(runtime.services["@zelavis/db"].name, "@zelavis/db");
   assert.equal(runtime.services["@zelavis/frontend"].name, "@zelavis/frontend");
   assert.ok(
@@ -1156,7 +1160,7 @@ test("the frontend cannot be switched off in code", async () => {
       new Request("http://localhost/zelavis/api/v1/runtime/config"),
     );
     assert.equal(config.status, 200);
-    assert.equal(runtime.services["zelavis/auth"].name, "zelavis/auth");
+    assert.equal(runtime.services["zelavis/identity"].name, "zelavis/identity");
   }
 
   assert.match(await (await withFrontend.fetch(
@@ -1385,6 +1389,17 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "runtime.host-operations.submit",
       "runtime.host-operations.audit",
       "runtime.host-operations.get",
+      "runtime.environment.identity",
+      "runtime.environment.health",
+      "runtime.environment.sessions.create",
+      "runtime.environment.sessions.update",
+      "runtime.environment.sessions.get",
+      "runtime.environment.sessions.usage.record",
+      "runtime.environment.sessions.close",
+      "runtime.environment.sessions.events",
+      "runtime.environment.processes.start",
+      "runtime.environment.processes.get",
+      "runtime.environment.processes.operate",
       "runtime.edge.read",
       "runtime.edge.plan",
       "runtime.edge.switch",
@@ -1410,6 +1425,7 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "runtime.projects.list",
       "runtime.projects.create",
       "runtime.projects.get",
+      "runtime.projects.update",
       "runtime.projects.start",
       "runtime.projects.stop",
       "runtime.projects.restart",
@@ -1419,6 +1435,11 @@ test("zelavis keeps the Platform server control plane when optional mounted serv
       "runtime.projects.proxy.put",
       "runtime.projects.proxy.patch",
       "runtime.projects.proxy.delete",
+      "runtime.projects.data.get",
+      "runtime.projects.data.post",
+      "runtime.projects.data.put",
+      "runtime.projects.data.patch",
+      "runtime.projects.data.delete",
       "runtime.projects.remove",
       "fabric.snapshot",
       "fabric.health",

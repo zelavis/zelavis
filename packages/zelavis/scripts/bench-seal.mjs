@@ -1,18 +1,25 @@
 // Does sealing actually buy anything? Measures the same queries against the
 // same data, live tier versus sealed tier, plus what the two cost on disk.
-import { mkdtempSync, rmSync, statSync, readdirSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { statSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { Effect, Stream } from "effect";
 import { and, asSeq, equals, term } from "../dist/db/index.js";
-import { makeNodeSqliteStore } from "../dist/db/engines/node-sqlite.js";
+import { runEngines } from "./bench-engine.mjs";
 
 const N = Number(process.env.N ?? 200000);
 const enc = new TextEncoder();
-const dir = mkdtempSync(join(tmpdir(), "zv-seal-bench-"));
+await runEngines("zv-seal-bench", async ({ name, dir, open }) => {
 
-const bytesOnDisk = () =>
-  readdirSync(dir).reduce((total, f) => total + statSync(join(dir, f)).size, 0);
+const bytesOnDisk = () => {
+  try {
+    return readdirSync(dir, { recursive: true })
+      .map((name) => statSync(join(dir, name)))
+      .filter((s) => s.isFile())
+      .reduce((total, s) => total + s.size, 0);
+  } catch {
+    return 0;
+  }
+};
 
 const ms = async (label, run) => {
   const started = process.hrtime.bigint();
@@ -25,7 +32,7 @@ const ms = async (label, run) => {
 // is measuring the write-ahead log rather than what the data costs at rest.
 const phase = (body) =>
   Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-    const store = yield* makeNodeSqliteStore("bench", dir);
+    const store = yield* open();
     return yield* body(store);
   })));
 
@@ -92,7 +99,6 @@ const report = (live, blobs, sealed, sealMs, liveBytes, sealedBytes) => {
   console.log(` ${(sealed.segments * 21 / 1e6).toFixed(1)}-${(sealed.segments * 8193 / 1e6).toFixed(1)} MB depending on their density.)`);
 };
 
-try {
   await phase(load);
   const live = await phase(measure);
   const liveBytes = bytesOnDisk();
@@ -103,6 +109,7 @@ try {
   const sealedBytes = bytesOnDisk();
 
   const blobs = await phase(measure);
+  console.log(`\n[${name}]`);
   report(live, blobs, sealed, sealMs, liveBytes, sealedBytes);
 
   // The point of an incremental seal: a periodic one should cost what changed,
@@ -134,6 +141,4 @@ try {
     `over ${reSealed.segments} segments, against ${(sealMs / 1000).toFixed(2)}s ` +
     `over ${sealed.segments} for the first seal`,
   );
-} finally {
-  rmSync(dir, { recursive: true, force: true });
-}
+});

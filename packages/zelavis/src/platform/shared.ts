@@ -88,10 +88,11 @@ import {
   type ZelavisServerErrorStatusRule,
 } from "../core/index.js";
 import {
-  AuthDomainError,
-  AuthNotFoundError,
-  AuthValidationError,
-} from "../app/auth/index.js";
+  IdentityDomainError,
+  IdentityNotFoundError,
+  IdentityValidationError,
+} from "../app/identity/index.js";
+import type { ZelavisPrincipal } from "../core/index.js";
 import type { ZelavisSystemStoreValue } from "../system-store.js";
 
 export type ZelavisRuntimeEngine = "node" | "bun" | "deno";
@@ -132,13 +133,13 @@ export const zelavisErrorRules: readonly ZelavisServerErrorStatusRule[] = [
   {
     matches: (error) =>
       error instanceof TypeError ||
-      error instanceof AuthValidationError ||
+      error instanceof IdentityValidationError ||
       error instanceof ZelavisValidationError,
     status: 400,
   },
   {
     matches: (error) =>
-      error instanceof AuthNotFoundError ||
+      error instanceof IdentityNotFoundError ||
       databaseFailureTag(error) === "DocumentNotFound" ||
       databaseFailureTag(error) === "CollectionNotFound",
     status: 404,
@@ -150,8 +151,17 @@ export const zelavisErrorRules: readonly ZelavisServerErrorStatusRule[] = [
     status: 409,
   },
   {
+    // The request was fine, the registry change was rolled back, and the
+    // runtime refused to mount the result. Answering 400 blamed the caller
+    // for something they could not have sent differently.
     matches: (error) =>
-      error instanceof AuthDomainError || error instanceof ZelavisDomainError,
+      typeof error === "object" && error !== null && "_tag" in error
+      && (error as { _tag?: unknown })._tag === "ActivationFailed",
+    status: 500,
+  },
+  {
+    matches: (error) =>
+      error instanceof IdentityDomainError || error instanceof ZelavisDomainError,
     status: 400,
   },
 ];
@@ -187,4 +197,19 @@ export function normalizeEditableRootPath(
 
 export function toSystemStoreValue(value: unknown): ZelavisSystemStoreValue {
   return JSON.parse(JSON.stringify(value)) as ZelavisSystemStoreValue;
+}
+
+/**
+ * The App Tenant a principal acts in.
+ *
+ * Tenancy is a property of who is calling, never of what the call asks for: a
+ * request that names its own tenant has chosen what it may read. `metadata`
+ * carries the claim because that is where an identity provider records it, and
+ * a principal with no claim is its own tenant — which is what a single-account
+ * installation and a per-App service account both want, and keeps a missing
+ * claim from silently widening into someone else's data.
+ */
+export function tenantOfPrincipal(principal: ZelavisPrincipal): string {
+  const claimed = principal.metadata?.tenantId;
+  return typeof claimed === "string" && claimed.trim() ? claimed : principal.id;
 }

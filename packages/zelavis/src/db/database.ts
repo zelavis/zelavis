@@ -1,23 +1,41 @@
 import { Effect, type Scope } from "effect";
 import type { DbError } from "./errors.js";
-import { documentsFor, type DocumentsApi } from "./documents.js";
+import { InvalidConstraint } from "./errors.js";
+import { documentsFor, type DocumentsApi, type DocumentWritten } from "./documents.js";
+import type { ObjectIdentity } from "./model.js";
 import { domainEventsFor, type DomainEventsApi } from "./domain-events.js";
 import { projectionsFor, type ProjectionsApi } from "./projections.js";
 import { schemasFor, type SchemasApi } from "./schemas.js";
 import { timeSeriesFor, type TimeSeriesApi } from "./time-series.js";
 import { backupsFor, type BackupsApi } from "./backup.js";
-import { initPartitionMap, tenantsOn, topologyFor, type TopologyApi } from "./topology-store.js";
+import {
+  initPartitionMap,
+  initPlacementCatalog,
+  initSubdivisionCatalog,
+  tenantsOn,
+  topologyFor,
+  type TopologyApi,
+} from "./topology-store.js";
 import { systemViewsFor, type SystemViewsApi } from "./system-views.js";
 import { scatterOver, type ScatterApi } from "./scatter.js";
 import { movementOver, type MovementApi } from "./movement.js";
 import { migrationsFor, type MigrationsApi } from "./migrations.js";
+import { replicationOver, type ReplicationApi } from "./replication.js";
 import type { ObjectStoreApi } from "./store.js";
-import { shardFor, shardsOf, type PartitionMap, type ShardId, type TenantId } from "./topology.js";
+import { isValidCollectionName } from "./naming.js";
+import {
+  GLOBAL_SHARD,
+  GLOBAL_TENANT,
+  partitionKeyFor,
+  shardFor,
+  shardsOf,
+  TOPOLOGY_SHARD,
+  type PartitionMap,
+  type ShardId,
+  type TenantId,
+} from "./topology.js";
 
 /** Everything scoped to one tenant, on the shard the map places it. */
-/** Holds the partition map. Reserved, so it never collides with a placed shard. */
-export const TOPOLOGY_SHARD = "zv.topology";
-
 export interface TenantApi {
   readonly documents: DocumentsApi;
   readonly events: DomainEventsApi;
@@ -36,7 +54,31 @@ export interface TenantApi {
   readonly migrations: MigrationsApi;
   /** The dashboard read surface, built from the APIs above rather than storage. */
   readonly systemViews: SystemViewsApi;
+
+  /**
+   * App-scoped collections replicated onto this tenant's shard.
+   *
+   * Read-only, and physically local: that is the whole point of paying to
+   * replicate. It is a separate handle rather than part of `documents` because
+   * the two are different data — a query cannot intersect across them, since
+   * they are different tenants and so address different lens keys.
+   *
+   * What it shows is as fresh as the last `db.replication.refresh`, not as
+   * fresh as the last write to the global store.
+   */
+  readonly shared: SharedDocumentsApi;
 }
+
+/**
+ * The read half of `DocumentsApi`.
+ *
+ * A replica has no writer: writing here would make a shard's copy disagree with
+ * the store it is a copy of, and the next refresh would silently discard it.
+ */
+export type SharedDocumentsApi = Pick<
+  DocumentsApi,
+  "listCollections" | "collectionExists" | "findById" | "findMany" | "findPage"
+>;
 
 /**
  * Storage upkeep, addressed per shard.
@@ -112,11 +154,57 @@ export interface DatabaseApi {
    * A tenant is the locality unit: everything belonging to one lives on one
    * shard, which is what keeps a cross-model query a local intersection. The
    * shard it lives on is a placement decision, not something the caller states.
+   *
+   * Refuses a tenant that has been divided, because there is no one shard to
+   * answer for: see `forPart`. That refusal is the point — handing back one
+   * part would answer a question about a fraction of the tenant as though it
+   * were about all of it.
    */
   readonly forTenant: (tenant: TenantId) => TenantApi;
 
+  /**
+   * One part of a tenant that is divided across shards.
+   *
+   * A tenant too large for one shard is the one case the locality bargain
+   * cannot be kept: everything belonging to one tenant living on one shard is
+   * what makes a cross-model query a local intersection, and a tenant that does
+   * not fit has to give that up. Dividing makes the loss explicit rather than
+   * letting the shard fill — each part is a partition of its own, no write
+   * spans two, and a question about the whole tenant is a `scatter` over
+   * `topology.subdivision.keysOf`.
+   *
+   * Below routing a part is simply a tenant, so it gets the same isolation and
+   * the same local intersection *within itself* that an undivided tenant gets.
+   */
+  readonly forPart: (tenant: TenantId, part: string) => TenantApi;
+
+  /**
+   * Data belonging to the App rather than to any one tenant.
+   *
+   * The same surface a tenant gets, because that is what it structurally is:
+   * one reserved tenant in one reserved store that no partition map places.
+   * Plan definitions, feature flags and shared lookup tables live here instead
+   * of being copied into every tenant or kept outside the database entirely.
+   *
+   * It is not a partition, so `scatter` never reads it, and a write here is not
+   * atomic with a write to any tenant: the two are different stores, and this
+   * database has no cross-store transaction.
+   */
+  readonly global: TenantApi;
+
   /** Which shard currently holds a tenant. Placement detail, exposed for operators. */
   readonly shardOf: (tenant: TenantId) => ShardId;
+
+  /**
+   * Every tenant holding data, across every shard.
+   *
+   * The database is the only honest answer to this. A list built from whoever
+   * has an account would name tenants that hold nothing and miss tenants whose
+   * account is gone, because holding data and having a credential are
+   * different facts. Each shard already records its own occupants; this is
+   * that reading, deduplicated, for an operator looking at the whole database.
+   */
+  readonly tenants: Effect.Effect<ReadonlyArray<TenantId>, DbError>;
 
   /**
    * The map in force now, not the one this database opened with.
@@ -140,6 +228,15 @@ export interface DatabaseApi {
 
   /** Compaction and reindexing, per shard. */
   readonly maintenance: MaintenanceApi;
+
+  /**
+   * Materializing App-scoped data onto every shard.
+   *
+   * Explicit rather than automatic, and it runs when a database opens. A write
+   * to a `replicated` collection reaches `tenant.shared` at the next refresh,
+   * not at the moment it commits.
+   */
+  readonly replication: ReplicationApi;
 
   /**
    * Questions that span partitions.
@@ -195,13 +292,18 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
   // other, rather than a file rewritten in place.
   const topologyStore = yield* options.openShard(TOPOLOGY_SHARD);
   const partitionMap = yield* initPartitionMap(topologyStore, options.partitionMap);
+  // Placed beside the map, in the same store, because both answer where
+  // something lives and a reader that had one without the other could route.
+  const placementCatalog = yield* initPlacementCatalog(topologyStore);
+  const subdivisionCatalog = yield* initSubdivisionCatalog(topologyStore);
+  const globalStore = yield* options.openShard(GLOBAL_SHARD);
 
   const shards = new Map<ShardId, ObjectStoreApi>();
   for (const shard of shardsOf(partitionMap)) {
     shards.set(shard, yield* options.openShard(shard));
   }
 
-  const topology = topologyFor(topologyStore, partitionMap, shards);
+  const topology = topologyFor(topologyStore, partitionMap, shards, placementCatalog, subdivisionCatalog);
   const movement = movementOver({ topologyStore, topology, shards });
   // Routing may already have left a source shard whose cleanup is unfinished.
   // Earlier phases also need target shards not yet named by the current map.
@@ -237,6 +339,7 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
   // operator never thinks about as the one that never gets compacted.
   const everyStore = (): ReadonlyArray<readonly [ShardId, ObjectStoreApi]> => [
     [TOPOLOGY_SHARD, topologyStore],
+    [GLOBAL_SHARD, globalStore],
     ...shards,
   ];
 
@@ -284,32 +387,196 @@ export const makeDatabase = Effect.fn("makeDatabase")(function* (
     return documentsFor(store, tenant, schemasFor(store, tenant));
   };
 
+  const tenantApiOver = (store: ObjectStoreApi, tenant: TenantId): TenantApi => {
+    const events = domainEventsFor(store, tenant, nodeId);
+    const schemas = schemasFor(store, tenant);
+    const projections = projectionsFor(store, events, tenant);
+    const documents = documentsFor(store, tenant, schemas);
+    const timeSeries = timeSeriesFor(store, projections, tenant);
+    // The App's replicated collections as they sit on *this* store, read under
+    // the tenant that owns them. Same shard, so no second store is opened and
+    // no partition is crossed.
+    const shared = documentsFor(store, GLOBAL_TENANT, schemasFor(store, GLOBAL_TENANT));
+    return {
+      documents,
+      events,
+      projections,
+      schemas,
+      timeSeries,
+      backups: backupsFor(store, tenant),
+      migrations: migrationsFor(documents, schemas, tenant),
+      systemViews: systemViewsFor({ documents, events, schemas, projections, timeSeries }),
+      shared,
+    };
+  };
+
+  const replication = replicationOver({
+    globalStore,
+    shards,
+    placement: topology.placement,
+  });
+
+  /**
+   * Carry what a write changed to the replicas, by identity.
+   *
+   * A refresh has to compare whole states because nothing tells it what moved.
+   * A write knows, so it pays one record per shard rather than the collection
+   * per shard — which is what makes doing this on every write affordable at
+   * all. Dies rather than reports: `DocumentsApi` has no channel for a
+   * replication failure, and a copy silently left behind would be worse.
+   */
+  const propagating = <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+    changed: (result: A) => ReadonlyArray<ObjectIdentity>,
+  ): Effect.Effect<A, E, R> =>
+    Effect.tap(effect, (result) =>
+      Effect.forEach(
+        changed(result),
+        (identity) => Effect.orDie(replication.propagate(identity)),
+        { discard: true },
+      ));
+
+  /**
+   * Re-level every replica after a change that is not one record's.
+   *
+   * An index, an analyzer or an embedding rewrites the manifest of every
+   * document in the collection, so there is no single identity to carry. These
+   * are rare next to writing a document, which is why the expensive answer is
+   * the right one here and the wrong one there.
+   */
+  const relevelling = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    Effect.tap(effect, () => Effect.orDie(replication.refresh));
+
+  const writtenIdentities = (
+    written: ReadonlyArray<DocumentWritten>,
+  ): ReadonlyArray<ObjectIdentity> =>
+    written.map((entry) =>
+      entry._tag === "Deleted"
+        ? replication.documentIdentity(entry.collection, entry.id)
+        : replication.documentIdentity(entry.document.collection, entry.document.id));
+
+  const globalBase = tenantApiOver(globalStore, GLOBAL_TENANT);
+  const globalDocuments: DocumentsApi = {
+    ...globalBase.documents,
+
+    // One document changed: carry that document.
+    insert: (input) =>
+      propagating(globalBase.documents.insert(input), (document) => [
+        replication.documentIdentity(document.collection, document.id),
+      ]),
+    update: (input) =>
+      propagating(globalBase.documents.update(input), (document) => [
+        replication.documentIdentity(document.collection, document.id),
+      ]),
+    delete: (input) =>
+      propagating(globalBase.documents.delete(input), () => [
+        replication.documentIdentity(input.collection, input.id),
+      ]),
+    write: (input) =>
+      propagating(globalBase.documents.write(input), writtenIdentities),
+
+    // The collection itself changed, or every document in it did.
+    rewrite: (input) => relevelling(globalBase.documents.rewrite(input)),
+    createIndex: (input) => relevelling(globalBase.documents.createIndex(input)),
+    dropIndex: (input) => relevelling(globalBase.documents.dropIndex(input)),
+    addCheck: (input) => relevelling(globalBase.documents.addCheck(input)),
+    dropCheck: (input) => relevelling(globalBase.documents.dropCheck(input)),
+    addReference: (input) => relevelling(globalBase.documents.addReference(input)),
+    dropReference: (input) => relevelling(globalBase.documents.dropReference(input)),
+    analyze: (input) => relevelling(globalBase.documents.analyze(input)),
+    embed: (input) => relevelling(globalBase.documents.embed(input)),
+    rebuildVectorIndex: (input) => relevelling(globalBase.documents.rebuildVectorIndex(input)),
+    dropVectorIndex: (input) => relevelling(globalBase.documents.dropVectorIndex(input)),
+
+    // Catalogued before it is written. A catalog entry naming a collection that
+    // does not exist yet routes nothing, while a collection missing from the
+    // catalog would be App-scoped data the operator index never names — and the
+    // two stores cannot commit together. A name the collection API would reject
+    // never reaches the catalog, so the only failures left here are a corrupt
+    // one.
+    //
+    // Only an undeclared name is claimed as `global`. Declaring a class first
+    // and creating the collection second is how a `replicated` one is made, and
+    // a create that insisted on `global` would refuse it.
+    createCollection: (input) =>
+      propagating(
+        // An edge names a record by identifier and every replica reallocates
+        // those, so a replicated collection cannot carry one. Refused where the
+        // edge is declared rather than where it is first written: this is the
+        // only way a collection ever gains edges, and the other order — created
+        // with edges, declared replicated after — is already refused, because
+        // creating an undeclared collection here claims it as `global` and a
+        // class does not change. Closing this one makes the state unreachable,
+        // which is what leaves the checks in `replication` as assertions.
+        (input.edges ?? []).length > 0
+          && topology.placement.classOf(input.name) === "replicated"
+          ? new InvalidConstraint({
+              collection: input.name,
+              name: input.edges![0]!.name,
+              reason:
+                "a replicated collection cannot declare edges: an edge names a record by identifier, and every replica reallocates them",
+            })
+          : isValidCollectionName(input.name)
+              && topology.placement.classOf(input.name) === "partitioned"
+            ? Effect.flatMap(
+                Effect.orDie(topology.placement.declare(input.name, "global")),
+                () => globalBase.documents.createCollection(input),
+              )
+            : globalBase.documents.createCollection(input),
+        (collection) => [replication.collectionIdentity(collection.name)],
+      ),
+  };
+
+  const globalApi: TenantApi = { ...globalBase, documents: globalDocuments };
+
+  // A shard that joined while the database was closed, or one left behind by an
+  // interrupted pass, holds a stale copy until something levels it. Opening is
+  // the one moment every shard is known to be reachable.
+  yield* replication.refresh;
+
   return {
     get partitionMap() {
       return topology.current();
     },
     maintenance,
+    replication,
     scatter: scatterOver({ shards, tenantsOn, shardOf, documentsFor: documentsFor_ }),
     movement,
     topology,
     shardOf,
+    tenants: Effect.gen(function* () {
+      const found = new Set<TenantId>();
+      for (const store of shards.values()) {
+        for (const tenant of yield* tenantsOn(store)) found.add(tenant);
+      }
+      return [...found].sort();
+    }),
+    global: globalApi,
     forTenant: (tenant) => {
-      const store = storeFor(tenant);
-      const events = domainEventsFor(store, tenant, nodeId);
-      const schemas = schemasFor(store, tenant);
-      const projections = projectionsFor(store, events, tenant);
-      const documents = documentsFor(store, tenant, schemas);
-      const timeSeries = timeSeriesFor(store, projections, tenant);
-      return {
-        documents,
-        events,
-        projections,
-        schemas,
-        timeSeries,
-        backups: backupsFor(store, tenant),
-        migrations: migrationsFor(documents, schemas, tenant),
-        systemViews: systemViewsFor({ documents, events, schemas, projections, timeSeries }),
-      };
+      // Returning one part's handle would answer questions about a fraction of
+      // the tenant as though they were about all of it — the quiet wrong answer
+      // this whole design exists to avoid. Naming a part is the only honest way
+      // in, so it is required rather than defaulted.
+      const parts = topology.subdivision.partsOf(tenant);
+      if (parts !== undefined) {
+        throw new Error(
+          `Tenant "${tenant}" is divided into ${parts.join(", ")}; use forPart, or scatter over topology.subdivision.keysOf("${tenant}").`,
+        );
+      }
+      return tenantApiOver(storeFor(tenant), tenant);
+    },
+    forPart: (tenant, part) => {
+      const parts = topology.subdivision.partsOf(tenant);
+      if (parts === undefined) {
+        throw new Error(`Tenant "${tenant}" is not divided, so it has no part "${part}".`);
+      }
+      if (!parts.includes(part)) {
+        throw new Error(
+          `Tenant "${tenant}" has no part "${part}"; it is divided into ${parts.join(", ")}.`,
+        );
+      }
+      const key = partitionKeyFor(tenant, part);
+      return tenantApiOver(storeFor(key), key);
     },
   } satisfies DatabaseApi;
 });

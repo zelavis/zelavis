@@ -1,6 +1,6 @@
 {
   "name": "zelavis",
-  "version": "1.0.1-alpha.2",
+  "version": "2.0.0-alpha.4",
   "private": false,
   "description": "Open, self-hostable App Platform and embeddable backend framework.",
   "license": "MIT",
@@ -60,9 +60,9 @@
       "types": "./dist/app/index.d.ts",
       "import": "./dist/app/index.js"
     },
-    "./app/auth": {
-      "types": "./dist/app/auth/index.d.ts",
-      "import": "./dist/app/auth/index.js"
+    "./app/identity": {
+      "types": "./dist/app/identity/index.d.ts",
+      "import": "./dist/app/identity/index.js"
     },
     "./db": {
       "types": "./dist/db/index.d.ts",
@@ -176,7 +176,16 @@
     "diagnostics:effect": "effect-tsgo diagnostics --project tsconfig.json --strict --severity error,warning,message",
     "test": "pnpm --filter @zelavis/ui build:plugin && pnpm run build && node --test test/*.test.mjs",
     "update:wordpress": "node scripts/update-wordpress-release.mjs",
-    "build:bootstrap": "tsc -p tsconfig.bootstrap.json"
+    "build:bootstrap": "tsc -p tsconfig.bootstrap.json",
+    "bench": "node scripts/bench-engines.mjs",
+    "bench:api": "node scripts/bench-api.mjs",
+    "bench:cold": "node scripts/bench-cold.mjs",
+    "bench:engines": "node scripts/bench-engines.mjs",
+    "bench:ordered": "node scripts/bench-ordered.mjs",
+    "bench:related": "node scripts/bench-related.mjs",
+    "bench:scatter": "node scripts/bench-scatter.mjs",
+    "bench:seal": "node scripts/bench-seal.mjs",
+    "bench:timeseries": "node scripts/bench-timeseries.mjs"
   },
   "files": [
     "dist",
@@ -196,11 +205,8 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.8.1",
-    "@zelavis/app": "workspace:*",
-    "@zelavis/auth": "workspace:*",
-    "@zelavis/marketplace": "workspace:*",
     "better-sqlite3": "^13.0.3",
-    "effect": "4.0.0-rc.113",
+    "effect": "4.0.0-rc.117",
     "jose": "^6.2.12",
     "picocolors": "^1.1.1"
   },
@@ -208,9 +214,13 @@
     "@effect/language-service": "^0.87.2",
     "@effect/tsgo": "^0.45.0",
     "@harperfast/rocksdb-js": "2.9.1",
-    "@libsql/client": "^0.15.15",
+    "@libsql/client": "^0.18.0",
     "@types/better-sqlite3": "^9.6.0",
-    "@types/node": "^26.6.1",
+    "@types/node": "^26.6.2",
+    "@zelavis/app": "workspace:*",
+    "@zelavis/auth": "workspace:*",
+    "@zelavis/marketplace": "workspace:*",
+    "@zelavis/ui": "workspace:*",
     "h3-js": "^4.5.0",
     "libsql": "^0.5.29",
     "lmdb": "^3.4.3",
@@ -226,9 +236,6 @@
   ],
   "engines": {
     "node": ">=24"
-  },
-  "optionalDependencies": {
-    "@zelavis/ui": "workspace:*"
   },
   "peerDependencies": {
     "@libsql/client": "^0.15.0",

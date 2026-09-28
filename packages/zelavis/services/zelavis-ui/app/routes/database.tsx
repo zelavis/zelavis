@@ -36,6 +36,10 @@ export async function clientLoader({ request }: import("./+types/database").Rout
   const runtime = await getActiveRuntimeConfig(request);
   const url = new URL(request.url);
   const databaseTable = url.searchParams.get('databaseTable') || undefined;
+  // The Tenant the sidebar item named. Reading rows from anywhere else answers
+  // a question about somebody else's records, or about nobody's.
+  const databaseTenantId =
+    url.searchParams.get('databaseTenant')?.trim() || ZELAVIS_APP_ADMIN_TENANT_ID;
   const databaseSystemView = url.searchParams.get('databaseSystemView') as
     | DatabaseSystemViewName
     | null;
@@ -44,7 +48,7 @@ export async function clientLoader({ request }: import("./+types/database").Rout
         await queryDatabaseSystemView(
           runtime,
           databaseSystemView,
-          ZELAVIS_APP_ADMIN_TENANT_ID,
+          databaseTenantId,
         ).catch(() => [])
       ).map((row) => ({ id: row.id, data: row.data }))
     : databaseTable
@@ -52,7 +56,7 @@ export async function clientLoader({ request }: import("./+types/database").Rout
         await queryDatabaseDocuments(
           runtime,
           databaseTable,
-          ZELAVIS_APP_ADMIN_TENANT_ID,
+          databaseTenantId,
         ).catch(() => [])
       ).map((document) => ({
         id: document.id,
@@ -62,7 +66,7 @@ export async function clientLoader({ request }: import("./+types/database").Rout
       }))
     : [];
 
-  return { tableRows };
+  return { tableRows, databaseTenantId };
 }
 
 type DatabaseGridRow = {
@@ -850,7 +854,7 @@ const databaseSchema = {
 function DatabaseRoute() {
   const [search, setParams] = useTypedSearchParams(databaseSchema);
   const revalidator = useRevalidator();
-  const { tableRows: tableRowsData } = useLoaderData<typeof clientLoader>();
+  const { tableRows: tableRowsData, databaseTenantId } = useLoaderData<typeof clientLoader>();
   const { runtime: config } = useRouteLoaderData<typeof rootClientLoader>('root')!;
   const [createError, setCreateError] = useState<string>();
   const [createPending, setCreatePending] = useState(false);
@@ -903,7 +907,9 @@ function DatabaseRoute() {
     setCreateError(undefined);
     try {
       const createdRow = await insertDatabaseDocument(config, {
-        tenantId: ZELAVIS_APP_ADMIN_TENANT_ID,
+        // The Tenant the rows were read from: inserting into a different one
+        // would put a row somewhere the table that asked for it cannot see.
+        tenantId: databaseTenantId,
         collection: selectedDatabaseTable,
         id: input.id,
         data: input.data,

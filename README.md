@@ -129,7 +129,7 @@ and AI agents should all pass through that same model.
 
 The base authorization contract lives in `zelavis/core`, because route
 access requirements must be enforceable for every service no matter which auth
-method produced the principal. `zelavis/app/auth` owns accounts, credentials,
+method produced the principal. `zelavis/app/identity` owns accounts, credentials,
 sessions, and pluggable authentication methods.
 
 That split is important for the future official Hosting Provider module:
@@ -153,7 +153,7 @@ Core package and public surfaces:
   Public `zelavis/core`, `zelavis/runtime`, `zelavis/fabric`,
   `zelavis/workload`, `zelavis/artifact`, and `zelavis/provider` surfaces.
 - [packages/zelavis/src/app](packages/zelavis/src/app)
-  Public `zelavis/app`, `zelavis/app/auth`, and `zelavis/app/workloads`
+  Public `zelavis/app`, `zelavis/app/identity`, and `zelavis/app/workloads`
   surfaces.
 - [packages/zelavis/src/db](packages/zelavis/src/db)
   Public `zelavis/db` multi-model object store and its Node opener.
@@ -273,7 +273,7 @@ That moves the dashboard and APIs together:
 /admin/api/v1/workloads
 ```
 
-Use scoped packages such as `zelavis/core`, `zelavis/db`, and `zelavis/app/auth` when building lower-level primitives, adapters, plugins, or tests that need direct package APIs.
+Use scoped packages such as `zelavis/core`, `zelavis/db`, and `zelavis/app/identity` when building lower-level primitives, adapters, plugins, or tests that need direct package APIs.
 
 ## Core Services
 

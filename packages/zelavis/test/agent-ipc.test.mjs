@@ -128,8 +128,9 @@ test("a Platform that vanished has its processes reclaimed by the next one", asy
   const pid = await pidOf(directory, cwd);
 
   // The Platform goes away without stopping anything. Its processes are still
-  // running here, but no client has a handle to them: nothing can drive them,
-  // and re-attachment does not exist yet.
+  // running here, but no client has a handle to them. Ordinary Project
+  // workloads are reclaimed; environment-session workloads opt into the
+  // preservation path tested below.
   await first.close();
   await new Promise((wait) => setTimeout(wait, 100));
   assert.equal(alive(pid), true);
@@ -142,6 +143,23 @@ test("a Platform that vanished has its processes reclaimed by the next one", asy
   // them is what makes them reclaimable.
   await new Promise((wait) => setTimeout(wait, 200));
   assert.equal(alive(pid), false);
+});
+
+test("the boot sweep preserves detached environment processes for session reattachment", async () => {
+  const { directory } = await endpoint();
+  const first = await client(directory);
+  const { directory: cwd, file } = await script(`console.log("ready"); setInterval(() => {}, 1000);`);
+
+  await first.start(command(cwd, file, "environment:session-1"));
+  await first.close();
+  await new Promise((wait) => setTimeout(wait, 100));
+
+  const second = await client(directory);
+  assert.equal(await second.reclaim(undefined, { preservePrefixes: ["environment:"] }), 0);
+  const attached = await second.attach("environment:session-1");
+  assert.equal(attached.length, 1);
+  assert.equal(attached[0].replay.some((entry) => entry.line === "ready"), true);
+  await attached[0].process.stop();
 });
 
 test("a live Platform's processes are not reclaimed out from under it", async () => {

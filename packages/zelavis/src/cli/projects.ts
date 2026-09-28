@@ -2,7 +2,7 @@ import type { ZelavisProjectRecord } from "../project.js";
 import { createZelavisClient } from "../sdk/fetch.js";
 
 const usage =
-  "zelavis projects <list|recipes|get|create|start|stop|restart|logs|remove> [id|name] [--id ID] [--recipe NAME] [--no-start] [--url URL] [--token TOKEN] [--json]";
+  "zelavis projects <list|recipes|get|create|rename|start|stop|restart|logs|remove> [id|name] [new-name] [--id ID] [--recipe NAME] [--no-start] [--url URL] [--token TOKEN] [--json]";
 
 /**
  * `zelavis projects` — the Project routes through the JS SDK client.
@@ -47,7 +47,7 @@ export async function runProjectsCommand(args: readonly string[]): Promise<void>
     console.log(usage);
     return;
   }
-  if (rest.length > 0) throw new Error(`Unexpected argument "${rest[0]}". ${usage}`);
+  if (rest.length > (action === "rename" ? 1 : 0)) throw new Error(`Unexpected argument "${rest[action === "rename" ? 1 : 0]}". ${usage}`);
   const base = new URL(url);
   const client = createZelavisClient({
     baseUrl: base.origin,
@@ -95,6 +95,15 @@ export async function runProjectsCommand(args: readonly string[]): Promise<void>
         start,
       });
       print({ project }, () => `Created ${line(project)}`);
+      return;
+    }
+    case "rename": {
+      const name = rest[0];
+      if (!name) throw new Error("projects rename requires a new Project name.");
+      const project = await client.projects.update(requireTarget("id"), {
+        name,
+      });
+      print({ project }, () => `Renamed ${line(project)}`);
       return;
     }
     case "logs": {

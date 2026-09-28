@@ -6,6 +6,11 @@ Zelavis App includes a project database service with documents, events,
 schemas, projections, and time-series. It is separate from the Platform OS
 System Store.
 
+This page is the in-process API, for code running inside a Project. An App
+reaching its own records from outside — a desktop client, a worker, another
+host — uses [App Data](/api/app-data), which is the same database behind a
+boundary that resolves the Tenant from the caller.
+
 ## Bind a Tenant first
 
 Ordinary App data access always begins with a real Tenant ID. There is no
