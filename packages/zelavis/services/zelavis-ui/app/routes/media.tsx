@@ -129,7 +129,7 @@ function MediaRoute() {
   const { files: filesResult, metadata } = useLoaderData<typeof clientLoader>();
   const { runtime: config, settings } = useRouteLoaderData<typeof rootClientLoader>('root')!;
   const revalidator = useRevalidator();
-  const storageEnabled = config.services.some((service) => service.name === "@zelavis/storage");
+  const storageEnabled = config.capabilities?.storage?.available ?? false;
   const [{ prefix, type: typeFilter, label: labelFilter, purpose: purposeFilter, path: selectedPath }, setParams] = useTypedSearchParams(mediaSchema);
   const setPrefix = (value: string) => setParams({ prefix: value || null });
   const setTypeFilter = (value: string) => setParams({ type: value || null });

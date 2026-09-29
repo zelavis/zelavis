@@ -145,12 +145,12 @@ function Settings() {
             }
           />
           <DataRow
-            label="Core services"
+            label="Native capabilities"
             detail={
-              runtime.services
-                .filter((service) => service.core)
-                .map((service) => service.name)
-                .join(', ') || 'dashboard, auth, database'
+              Object.entries(runtime.capabilities ?? {})
+                .filter(([, capability]) => capability.available)
+                .map(([name]) => name)
+                .join(', ') || 'none'
             }
           />
         </CardContent>

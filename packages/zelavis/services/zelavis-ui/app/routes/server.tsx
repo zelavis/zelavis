@@ -1,10 +1,12 @@
 import {
+  Activity,
   Archive,
   Boxes,
   Fingerprint,
   Globe2,
   ReceiptText,
   Server,
+  ShieldCheck,
   Waypoints,
 } from "lucide-react";
 import { Link, Outlet, useLocation } from "react-router";
@@ -30,6 +32,18 @@ const serverSections = [
     path: "/server/runtimes",
     icon: Boxes,
     detail: "Native, Docker, and future isolation backend detection and default policy.",
+  },
+  {
+    title: "Resources",
+    path: "/server/resources",
+    icon: Activity,
+    detail: "Processes, host CPU and memory usage, storage, and limits.",
+  },
+  {
+    title: "Security",
+    path: "/server/security",
+    icon: ShieldCheck,
+    detail: "Host security posture, checklist, and platform hardening.",
   },
   {
     title: "Fabric",
@@ -78,6 +92,18 @@ function ServerRoute() {
           value="native default"
           detail="Backend policy is explicit and existing Projects keep their assignment."
           icon={Boxes}
+        />
+        <StatCard
+          label="Resources"
+          value="monitoring"
+          detail="Host CPU, memory, storage, and processes."
+          icon={Activity}
+        />
+        <StatCard
+          label="Security"
+          value="checklist"
+          detail="Host security posture and guidance."
+          icon={ShieldCheck}
         />
         <StatCard
           label="Fabric"

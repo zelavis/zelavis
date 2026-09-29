@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { zelavis } from "zelavis";
+import { Zelavis } from "zelavis";
+import { nodeAdapter } from "zelavis/adapters/node";
 
 import {
   buildPlatformNavItems,
@@ -13,13 +17,29 @@ import {
  * still reaches the nav, using the real runtime config rather than a fixture —
  * a fixture would only prove the fixture was written correctly.
  */
+let platform: Zelavis | undefined;
+let dataDirectory: string | undefined;
+let configPromise: Promise<any> | undefined;
+
 async function runtimeConfig() {
-  const runtime = await zelavis({});
+  configPromise ??= (async () => {
+  dataDirectory = await mkdtemp(join(tmpdir(), "zelavis-ui-marketplace-"));
+  platform = new Zelavis({
+    adapter: nodeAdapter({ dataDirectory }),
+  });
+  const runtime = await platform.runtime();
   const response = await runtime.fetch(
     new Request("http://localhost/zelavis/api/v1/runtime/config"),
   );
   return response.json();
+  })();
+  return configPromise;
 }
+
+afterAll(async () => {
+  await platform?.close();
+  if (dataDirectory) await rm(dataDirectory, { recursive: true, force: true });
+});
 
 describe("the marketplace reaches the dashboard through the service registry", () => {
   it("appears on the platform slide", async () => {

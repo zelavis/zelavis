@@ -43,6 +43,128 @@ export interface ZelavisDashboardServiceOptions {
   createRuntimeConfig?: () => unknown | Promise<unknown>;
 }
 
+/** Native Server Control Plane navigation owned by the dashboard frontend. */
+export const zelavisServerMenu = {
+  title: "Server",
+  path: "/server",
+  pageLabel: "Server",
+  sectionLabel: "Manage",
+  order: 60,
+  surface: "platform",
+  access: {
+    permissions: ["server.manage"],
+    scope: { type: "system" },
+  },
+  items: [
+    { title: "Overview", path: "/server", pageLabel: "Server" },
+    {
+      title: "Deployment backends",
+      path: "/server/runtimes",
+      pageLabel: "Deployment backends",
+      access: {
+        permissions: ["server.backends.view"],
+        scope: { type: "system" },
+      },
+    },
+    {
+      title: "Resources",
+      path: "/server/resources",
+      pageLabel: "Resources",
+      panelLabel: "Resources",
+      access: {
+        permissions: ["server.resources.view"],
+        scope: { type: "system" },
+      },
+      items: [
+        { title: "Overview", path: "/server/resources", pageLabel: "Resources" },
+        {
+          title: "Processes",
+          path: "/server/resources",
+          search: { resourceView: "processes" },
+          pageLabel: "Processes",
+        },
+        {
+          title: "Storage",
+          path: "/server/resources",
+          search: { resourceView: "storage" },
+          pageLabel: "Storage",
+        },
+        {
+          title: "Limits",
+          path: "/server/resources",
+          search: { resourceView: "limits" },
+          pageLabel: "Limits",
+        },
+      ],
+    },
+    {
+      title: "Security",
+      path: "/server/security",
+      pageLabel: "Security",
+      panelLabel: "Security",
+      access: {
+        permissions: ["server.security.view"],
+        scope: { type: "system" },
+      },
+      items: [
+        { title: "Checklist", path: "/server/security", pageLabel: "Security" },
+      ],
+    },
+    {
+      title: "Domains",
+      path: "/server/domains",
+      pageLabel: "Domains",
+      panelLabel: "Domains",
+      access: {
+        permissions: ["server.domains.view"],
+        scope: { type: "system" },
+      },
+      items: [
+        { title: "Overview", path: "/server/domains", pageLabel: "Domains" },
+        {
+          title: "Add Domain",
+          path: "/server/domains",
+          search: { domainAction: "add" },
+          pageLabel: "Add Domain",
+        },
+        {
+          title: "Buy",
+          path: "/server/domains",
+          search: { domainAction: "buy" },
+          pageLabel: "Buy Domain",
+        },
+        {
+          title: "Transfer",
+          path: "/server/domains",
+          search: { domainAction: "transfer" },
+          pageLabel: "Transfer Domain",
+        },
+      ],
+    },
+    {
+      title: "Access",
+      path: "/server/access",
+      pageLabel: "Access",
+      panelLabel: "Access",
+      access: {
+        permissions: ["access.manage"],
+        scope: { type: "system" },
+      },
+      items: [
+        { title: "Overview", path: "/server/access", pageLabel: "Access" },
+        { title: "Users", path: "/server/access/users", pageLabel: "Users" },
+        {
+          title: "Permissions",
+          path: "/server/access/permissions",
+          pageLabel: "Permissions",
+        },
+      ],
+    },
+    { title: "Backups", path: "/server/backups", pageLabel: "Backups" },
+    { title: "Logs", path: "/server/logs", pageLabel: "Logs" },
+  ],
+} as const;
+
 export const defaultZelavisDashboardClientRoutes = Object.freeze([
   "/access",
   "/access/permissions",
@@ -53,6 +175,8 @@ export const defaultZelavisDashboardClientRoutes = Object.freeze([
   "/security",
   "/services",
   "/server",
+  "/server/resources",
+  "/server/security",
   "/server/backups",
   "/server/domains",
   "/server/runtimes",
@@ -350,6 +474,7 @@ export function register(
 
   const api = zelavis.createAPI({ shell: { render } }, { routes: false });
   zelavis.plugins.ui.menus.create({ title: "Dashboard", path: "/", surface: "root" });
+  zelavis.plugins.ui.menus.create(zelavisServerMenu);
   zelavis.frontend.configure({
     shell: api.shell,
     devUrl: options.devServerUrl,

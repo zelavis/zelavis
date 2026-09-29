@@ -29,7 +29,6 @@ export interface RuntimeServiceDynamicMenuResponse {
 export interface RuntimeService {
   name: string;
   kind?: string;
-  core: boolean;
   /**
    * Whether the operator composed this service or it was installed at runtime.
    * The dashboard sandboxes an extension service's page.
@@ -412,6 +411,10 @@ export interface RuntimeServiceRegistryMutationResult {
   activation?: RuntimeServiceActivationResult;
 }
 
+export type RuntimeCapabilities = Readonly<
+  Record<string, { available: boolean }>
+>;
+
 export interface RuntimeConfig {
   name: string;
   rootPath: string;
@@ -430,6 +433,7 @@ export interface RuntimeConfig {
     engine: RuntimeEngine;
     availableEngines: readonly RuntimeEngine[];
   };
+  capabilities?: RuntimeCapabilities;
   services: RuntimeService[];
   serviceRegistry: RuntimeServiceRegistryEntry[];
   serviceActivation?: RuntimeServiceActivation;
@@ -793,253 +797,16 @@ const fallbackConfig: RuntimeConfig = {
     ],
     assetRoot: "/assets",
   },
-  services: [
-    {
-      name: "zelavis/platform",
-      core: true,
-      apiPath: "/api/v1/runtime",
-      menu: {
-        title: "Server",
-        path: "/server",
-        pageLabel: "Server",
-        sectionLabel: "Manage",
-        order: 60,
-        surface: "platform",
-        access: {
-          permissions: ["server.manage"],
-          scope: { type: "system" },
-        },
-        items: [
-          {
-            title: "Overview",
-            path: "/server",
-            pageLabel: "Server",
-          },
-          {
-            title: "Deployment backends",
-            path: "/server/runtimes",
-            pageLabel: "Deployment backends",
-            access: {
-              permissions: ["server.backends.view"],
-              scope: { type: "system" },
-            },
-          },
-          {
-            title: "Domains",
-            path: "/server/domains",
-            pageLabel: "Domains",
-            panelLabel: "Domains",
-            access: {
-              permissions: ["server.domains.view"],
-              scope: { type: "system" },
-            },
-            items: [
-              {
-                title: "Overview",
-                path: "/server/domains",
-                pageLabel: "Domains",
-              },
-              {
-                title: "Add Domain",
-                path: "/server/domains",
-                search: { domainAction: "add" },
-                pageLabel: "Add Domain",
-              },
-              {
-                title: "Buy",
-                path: "/server/domains",
-                search: { domainAction: "buy" },
-                pageLabel: "Buy Domain",
-              },
-              {
-                title: "Transfer",
-                path: "/server/domains",
-                search: { domainAction: "transfer" },
-                pageLabel: "Transfer Domain",
-              },
-            ],
-          },
-          {
-            title: "Access",
-            path: "/server/access",
-            pageLabel: "Access",
-            panelLabel: "Access",
-            access: {
-              permissions: ["access.manage"],
-              scope: { type: "system" },
-            },
-            items: [
-              {
-                title: "Overview",
-                path: "/server/access",
-                pageLabel: "Access",
-              },
-              {
-                title: "Users",
-                path: "/server/access/users",
-                pageLabel: "Users",
-              },
-              {
-                title: "Permissions",
-                path: "/server/access/permissions",
-                pageLabel: "Permissions",
-              },
-            ],
-          },
-          {
-            title: "Backups",
-            path: "/server/backups",
-            pageLabel: "Backups",
-          },
-          {
-            title: "Logs",
-            path: "/server/logs",
-            pageLabel: "Logs",
-          },
-        ],
-      },
-    },
-    {
-      name: "@zelavis/ui",
-      core: true,
-      apiPath: "/",
-      menu: {
-        title: "Dashboard",
-        path: "/",
-        surface: "root",
-      },
-    },
-    {
-      name: "@zelavis/auth",
-      core: true,
-      apiPath: "/api/v1/auth",
-      menu: {
-        title: "Auth",
-        path: "/auth",
-        surface: "core",
-      },
-    },
-    {
-      name: "@zelavis/db",
-      core: true,
-      apiPath: "/api/v1/database",
-      menu: {
-        title: "Database",
-        path: "/database",
-        surface: "core",
-        panelLabel: "Database",
-        dynamicItems: {
-          // No Tenant named: the menu lists every Tenant holding data. Pinning
-          // one here is what made an App's own tables invisible.
-          path: "/database/menu/tables",
-          emptyTitle: "No tables yet",
-        },
-        items: [
-          {
-            title: "Create Table",
-            path: "/database/new",
-            pageLabel: "Database",
-            fixed: true,
-            fixedOrder: 1,
-          },
-        ],
-      },
-    },
-    {
-      name: "@zelavis/storage",
-      core: true,
-      apiPath: "/api/v1/storage",
-      menu: {
-        title: "Storage",
-        path: "/storage",
-        surface: "core",
-      },
-    },
-    {
-      name: "@zelavis/website",
-      core: true,
-      apiPath: "/",
-      menu: {
-        title: "Website",
-        path: "/website",
-        pageLabel: "Website",
-        sectionLabel: "Build",
-        surface: "root",
-        access: {
-          permissions: ["project.website.manage"],
-          scope: { type: "project", projectIdParam: "projectId" },
-        },
-      },
-    },
-    {
-      name: "@zelavis/workloads",
-      core: true,
-      apiPath: "/api/v1/workloads",
-      menu: {
-        title: "Workloads",
-        path: "/workloads",
-        surface: "core",
-        panelLabel: "Workloads",
-        items: [
-          {
-            title: "Functions",
-            path: "/workloads/functions",
-            panelLabel: "Functions",
-            items: [
-              {
-                title: "Add Function",
-                path: "/workloads/new",
-                pageLabel: "Workloads",
-                fixed: true,
-                fixedOrder: 1,
-              },
-            ],
-            dynamicItems: {
-              path: "/workloads/menu/functions",
-              emptyTitle: "No functions yet",
-              emptyPath: "/workloads/functions",
-            },
-          },
-          {
-            title: "Jobs",
-            path: "/workloads/jobs",
-            panelLabel: "Jobs",
-            dynamicItems: {
-              path: "/workloads/menu/jobs",
-              emptyTitle: "No jobs yet",
-              emptyPath: "/workloads/jobs",
-            },
-          },
-          {
-            title: "Schedules",
-            path: "/workloads/schedules",
-            panelLabel: "Schedules",
-            dynamicItems: {
-              path: "/workloads/menu/schedules",
-              emptyTitle: "No schedules yet",
-              emptyPath: "/workloads/schedules",
-            },
-          },
-          {
-            title: "Webhooks",
-            path: "/workloads/webhooks",
-            panelLabel: "Webhooks",
-            dynamicItems: {
-              path: "/workloads/menu/webhooks",
-              emptyTitle: "No webhooks yet",
-              emptyPath: "/workloads/webhooks",
-            },
-          },
-          { title: "Logs", path: "/workloads/logs", pageLabel: "Workloads" },
-          {
-            title: "Settings",
-            path: "/workloads/settings",
-            pageLabel: "Workloads",
-          },
-        ],
-      },
-    },
-  ],
+  capabilities: {
+    server: { available: true },
+    fabric: { available: true },
+    database: { available: true },
+    identity: { available: true },
+    storage: { available: true },
+    workloads: { available: true },
+    site: { available: true },
+  },
+  services: [],
   serviceRegistry: [],
   serviceActivation: {
     mode: "runtime",
@@ -1740,6 +1507,38 @@ export async function sendAssistantMessage(
   );
 }
 
+/**
+ * The Platform packages that contribute to a Project's navigation.
+ *
+ * Project runtimes are headless and do not carry the Platform's own packages,
+ * yet a Project's navigation still offers what the operator composed for it
+ * (Marketplace, Auth settings). The contract is the menu's declared `surface`:
+ * `platform` belongs to the global shell and never crosses into a Project,
+ * while `root`, `core`, `extensions` and `settings` are Project surfaces. Only
+ * `system`-scope packages qualify; the Platform strips the surface from
+ * anything an operator did not compose, so an extension cannot claim one. A
+ * contributing package keeps its Platform API path rather than being proxied
+ * into the Project, and a Project's own package of the same name wins.
+ */
+export function selectPlatformProjectServices(
+  platformServices: readonly RuntimeService[],
+  projectServiceNames: ReadonlySet<string>,
+): RuntimeService[] {
+  return platformServices
+    .filter(
+      (service) =>
+        service.scope === "system" &&
+        service.name !== "@zelavis/ui" &&
+        !projectServiceNames.has(service.name),
+    )
+    .flatMap((service) => {
+      const menus = [...(service.menus ?? (service.menu ? [service.menu] : []))].filter(
+        (menu) => menu.surface !== undefined && menu.surface !== "platform",
+      );
+      return menus.length === 0 ? [] : [{ ...service, menu: menus[0], menus }];
+    });
+}
+
 export async function getProjectRuntimeConfig(
   controlConfig: RuntimeConfig,
   projectId: string,
@@ -1750,6 +1549,25 @@ export async function getProjectRuntimeConfig(
   );
   const projectApiBasePath = `${proxyRoot}${projectConfig.api.basePath}`;
 
+  const projectServices = normalizeRuntimeServices(
+    (projectConfig.services ?? [])
+      .filter(
+        (service) =>
+          service.name !== "@zelavis/ui" &&
+          service.name !== "@zelavis/ui:app",
+      )
+      .map((service) => ({
+        ...service,
+        apiPath: service.apiPath.startsWith(projectConfig.rootPath)
+          ? `${proxyRoot}${service.apiPath}`
+          : service.apiPath,
+      })),
+  );
+  const platformProjectServices = selectPlatformProjectServices(
+    controlConfig.services,
+    new Set(projectServices.map((service) => service.name)),
+  );
+
   return {
     ...projectConfig,
     rootPath: controlConfig.rootPath,
@@ -1759,20 +1577,7 @@ export async function getProjectRuntimeConfig(
       basePath: projectApiBasePath,
     },
     dashboard: controlConfig.dashboard,
-    services: normalizeRuntimeServices(
-      (projectConfig.services ?? [])
-        .filter(
-          (service) =>
-            service.name !== "@zelavis/ui" &&
-            service.name !== "@zelavis/ui:app",
-        )
-        .map((service) => ({
-          ...service,
-          apiPath: service.apiPath.startsWith(projectConfig.rootPath)
-            ? `${proxyRoot}${service.apiPath}`
-            : service.apiPath,
-        })),
-    ),
+    services: [...projectServices, ...platformProjectServices],
     serviceRegistry: normalizeRuntimeServiceRegistry(
       projectConfig.serviceRegistry ?? [],
     ),

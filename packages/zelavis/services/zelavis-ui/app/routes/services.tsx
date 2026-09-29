@@ -31,7 +31,7 @@ function Services() {
             <DataRow
               key={service.name}
               label={service.name}
-              detail={`${service.core ? 'core service' : 'service/custom runtime'} · ${service.apiPath}`}
+              detail={`${service.scope ?? 'extension'} ${service.kind ?? 'plugin'} package · ${service.apiPath}`}
               meta={<StatusBadge state="ready" />}
             />
           ))}

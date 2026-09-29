@@ -20,7 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 
 export const handle = {
   pageLabel: "Security",
-  sidebarTrail: ["Security"],
+  sidebarTrail: ["Server", "Security"],
   slots: [
     {
       id: "overview",
