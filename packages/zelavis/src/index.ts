@@ -4992,26 +4992,6 @@ function createEndpointGroupPrefixes(
 export async function zelavis(
   options: ZelavisServerOptions = {},
 ): Promise<ZelavisRuntime> {
-  const rawOptions = options as Record<string, unknown>;
-  const obsoleteKeys = ["services", "runtimeServices"].filter(
-    (key) => rawOptions[key] !== undefined,
-  );
-
-  if (obsoleteKeys.length > 0) {
-    throw new TypeError(
-      `zelavis(...) no longer accepts direct service options (${obsoleteKeys.join(", ")}). Put services in the services folder or install them through the service registry endpoints.`,
-    );
-  }
-
-  // Refused rather than ignored. Silently dropping a removed option leaves a
-  // caller believing they turned a subsystem off when it is still running,
-  // which for `auth: false` or `site: false` is a security-relevant surprise.
-  if (rawOptions.coreServices !== undefined) {
-    throw new TypeError(
-      'zelavis(...) no longer accepts "coreServices". Platform subsystems moved to "subsystems" (auth, database, fabric, storage, workloads, site), the dashboard options moved to "frontend", and its settings store is now "runtimeSettingsStore".',
-    );
-  }
-
   const compositionOptions = options as ZelavisRuntimeCompositionOptions;
   const rootPath = normalizePath(options.rootPath, "/zelavis");
   const apiPrefix = normalizePath(options.api?.prefix, "/api");
@@ -5171,8 +5151,8 @@ export async function zelavis(
         .filter(
           (entry) => entry.status === "installed" && isSiteFrontendService(entry.service),
         )
-        // Deterministic when a legacy state holds several: declared order,
-        // then name. Selecting through the registry keeps it to one.
+        // Deterministic when discovery finds several: declared order, then
+        // name. Selecting through the registry keeps it to one.
         .sort(
           (left, right) =>
             (left.order ?? Number.MAX_SAFE_INTEGER) - (right.order ?? Number.MAX_SAFE_INTEGER) ||
@@ -5640,12 +5620,6 @@ function assertNoInternalConstructorOptions(
   options: ZelavisOptions,
 ): void {
   const raw = options as Record<string, unknown>;
-  if ((raw as { coreServices?: unknown }).coreServices !== undefined) {
-    throw new TypeError(
-      'new Zelavis(...) no longer accepts "coreServices". Platform subsystems moved to "subsystems" on zelavis(...), and the dashboard options moved to the public "frontend" option.',
-    );
-  }
-
   const forbiddenKeys = [
     "services",
     "serviceRegistry",

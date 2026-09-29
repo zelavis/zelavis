@@ -244,7 +244,16 @@ test("a descendant that escapes the group cannot hold the operation open", { ski
   const started = Date.now();
   const result = await executor.execute(request({ arguments: { pidfile } }));
   const elapsed = Date.now() - started;
-  const escaped = Number((await readFile(pidfile, "utf8")).trim());
+  // The escaped child writes its pid after the leader has exited, so the file
+  // may not exist yet when the operation returns. Wait for it rather than race.
+  let escaped = Number.NaN;
+  for (let attempt = 0; attempt < 100 && !Number.isInteger(escaped); attempt += 1) {
+    escaped = Number((await readFile(pidfile, "utf8").catch(() => "")).trim());
+    if (!Number.isInteger(escaped) || escaped <= 0) {
+      escaped = Number.NaN;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
   t.after(() => { try { process.kill(escaped, "SIGKILL"); } catch {} });
   assert.equal(result.status, "succeeded");
   assert.ok(elapsed < 3_000, `operation took ${elapsed} ms while an escaped descendant held its pipes`);

@@ -327,8 +327,7 @@ function readZipEntries(bytes: Uint8Array): ZipEntry[] {
  * Resolves a service package's ESM entry from its `package.json`.
  *
  * Service and plugin configuration lives in the `package.json` `zelavis`
- * namespace and standard ESM fields, the same as any other npm package. The
- * retired `zelavis.service.json` sidecar is not read.
+ * namespace and standard ESM fields, the same as any other npm package.
  *
  * The entry comes from `exports` — the `.` condition, or a bare string — so a
  * package that already works with Node resolution works here unchanged.

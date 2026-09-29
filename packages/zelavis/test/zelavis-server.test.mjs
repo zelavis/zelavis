@@ -1517,26 +1517,6 @@ test("zelavis uses a configured Fabric placement list for point lookups", async 
   }
 });
 
-test("zelavis rejects obsolete direct runtime service options", async () => {
-  await assert.rejects(
-    () =>
-      zelavis({
-    frontend: zelavisUiFrontend,
-        runtimeServices: [
-          {
-            name: "@example/obsolete",
-            service: {},
-            api: { v1: [] },
-          },
-        ],
-      }),
-    /no longer accepts direct service options/,
-  );
-});
-
-
-
-
 test("zelavis rejects invalid persisted dashboard settings on read", async () => {
   const runtime = await zelavis({
     frontend: zelavisUiFrontend,
