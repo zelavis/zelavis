@@ -10,9 +10,15 @@ import type {
   AuthSecurityEventRepository,
   Credential,
   CredentialRepository,
+  Mutation,
   Session,
   SessionRepository,
 } from "../app/identity/index.js";
+import {
+  withUniqueAccounts,
+  withUniqueCredentials,
+  type ClaimBackend,
+} from "../app/identity/storage/unique-claims.js";
 import type { ZelavisSystemStore, ZelavisSystemStoreValue } from "../system-store.js";
 
 const NAMESPACE = "zelavis.platform.auth";
@@ -66,7 +72,65 @@ function reviveAuthorizationFlow(value: ZelavisSystemStoreValue): IdentityAuthor
   };
 }
 
+/** Uniqueness claims as System Store records, created if-absent. */
+function createStoreClaims(store: ZelavisSystemStore): ClaimBackend {
+  const recordKey = (key: string) => `unique:${key}`;
+  const read = (value: ZelavisSystemStoreValue) =>
+    value as unknown as { owner: string; at: number };
+  return {
+    async claim(key, owner) {
+      const created = await store.setIfAbsent(NAMESPACE, recordKey(key), { owner, at: Date.now() });
+      if (created.created) return { claimed: true as const };
+      const existing = await store.get(NAMESPACE, recordKey(key));
+      if (!existing) return this.claim(key, owner);
+      const { owner: current, at } = read(existing.value);
+      return { claimed: false as const, owner: current, at };
+    },
+    async takeover(key, staleOwner, owner) {
+      const existing = await store.get(NAMESPACE, recordKey(key));
+      if (!existing || read(existing.value).owner !== staleOwner) return false;
+      return Boolean(
+        await store.compareAndSet(NAMESPACE, recordKey(key), existing.updatedAt, {
+          owner,
+          at: Date.now(),
+        }),
+      );
+    },
+    async release(key, owner) {
+      const existing = await store.get(NAMESPACE, recordKey(key));
+      if (existing && read(existing.value).owner === owner) {
+        await store.compareAndDelete(NAMESPACE, recordKey(key), existing.updatedAt);
+      }
+    },
+  };
+}
+
 export function createPlatformAuthRepositories(store: ZelavisSystemStore): IdentityRepositories {
+  const mutateEntity = async <T extends Account | Session>(
+    kind: string,
+    id: string,
+    mutation: Mutation<T>,
+  ): Promise<T | null> => {
+    const key = `${kind}:${id}`;
+    for (let retry = 0; retry < 100; retry += 1) {
+      const record = await store.get(NAMESPACE, key);
+      const next = mutation(record ? revive<T>(record.value) : null);
+      if (!record) {
+        if (!next) return null;
+        if ((await store.setIfAbsent(NAMESPACE, key, storeValue(next))).created) return next;
+        continue;
+      }
+      if (!next) {
+        if (await store.compareAndDelete(NAMESPACE, key, record.updatedAt)) return null;
+        continue;
+      }
+      if (await store.compareAndSet(NAMESPACE, key, record.updatedAt, storeValue(next))) {
+        return next;
+      }
+    }
+    throw new Error(`${kind} update did not converge after 100 retries.`);
+  };
+
   const get = async <T extends Account | Credential | Session>(kind: string, id: string) => {
     const record = await store.get(NAMESPACE, `${kind}:${id}`);
     return record ? revive<T>(record.value) : null;
@@ -80,8 +144,9 @@ export function createPlatformAuthRepositories(store: ZelavisSystemStore): Ident
     return entity;
   };
 
-  const accounts: AccountRepository = {
+  const baseAccounts: AccountRepository = {
     create: (account) => set("account", account),
+    mutate: (id, mutation) => mutateEntity<Account>("account", id, mutation),
     async delete(id) { return store.delete(NAMESPACE, `account:${id}`); },
     findById: (id) => get("account", id),
     async findByEmail(email) { return (await list<Account>("account")).find((item) => item.email === email) ?? null; },
@@ -89,7 +154,7 @@ export function createPlatformAuthRepositories(store: ZelavisSystemStore): Ident
     list: () => list("account"),
     update: (account) => set("account", account),
   };
-  const credentials: CredentialRepository = {
+  const baseCredentials: CredentialRepository = {
     create: (credential) => set("credential", credential),
     async delete(id) { return store.delete(NAMESPACE, `credential:${id}`); },
     findById: (id) => get("credential", id),
@@ -105,6 +170,7 @@ export function createPlatformAuthRepositories(store: ZelavisSystemStore): Ident
   };
   const sessions: SessionRepository = {
     create: (session) => set("session", session),
+    mutate: (id, mutation) => mutateEntity<Session>("session", id, mutation),
     async delete(id) { return store.delete(NAMESPACE, `session:${id}`); },
     findById: (id) => get("session", id),
     async findByTokenHash(tokenHash) {
@@ -115,6 +181,9 @@ export function createPlatformAuthRepositories(store: ZelavisSystemStore): Ident
     },
     update: (session) => set("session", session),
   };
+  const claims = createStoreClaims(store);
+  const accounts = withUniqueAccounts(baseAccounts, claims);
+  const credentials = withUniqueCredentials(baseCredentials, claims);
   const attempts: AuthAttemptRepository = {
     async findByKeyHash(keyHash) {
       const record = await store.get(NAMESPACE, `attempt:${keyHash}`);

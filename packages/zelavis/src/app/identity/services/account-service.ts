@@ -31,13 +31,8 @@ export class AccountService {
       );
     }
 
-    if (email && await this.repository.findByEmail(email)) {
-      throw new IdentityValidationError("An account already uses that email.");
-    }
-    if (username && await this.repository.findByUsername(username)) {
-      throw new IdentityValidationError("An account already uses that username.");
-    }
-
+    // No look-before-write: two callers can both find nothing. The repository
+    // enforces uniqueness atomically and throws `IdentityConflictError`.
     const now = new Date();
     return this.repository.create({
       ...input,
@@ -51,6 +46,10 @@ export class AccountService {
 
   async findById(id: string): Promise<Account | null> {
     return this.repository.findById(id);
+  }
+
+  async delete(id: string): Promise<boolean> {
+    return this.repository.delete(id);
   }
 
   async findByEmail(email: string): Promise<Account | null> {

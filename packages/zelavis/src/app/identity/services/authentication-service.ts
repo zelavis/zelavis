@@ -11,11 +11,15 @@ import type {
   AuthorizationCodeIdentity,
 } from "../contracts/credential-provider.js";
 import type { IdentityAuthorizationFlowRepository } from "../contracts/repositories.js";
-import type { IdentityAuthorizationFlow } from "../domain/entities.js";
+import type { Account, IdentityAuthorizationFlow } from "../domain/entities.js";
 import type { AccountService } from "./account-service.js";
 import type { CredentialService } from "./credential-service.js";
 import type { SessionService } from "./session-service.js";
-import { IdentityNotFoundError, IdentityValidationError } from "../core/errors.js";
+import {
+  IdentityConflictError,
+  IdentityNotFoundError,
+  IdentityValidationError,
+} from "../core/errors.js";
 
 export interface AuthenticationServiceOptions {
   accounts: AccountService;
@@ -215,32 +219,68 @@ export class AuthenticationService {
       if (credential && credential.accountId !== account.id) {
         throw new IdentityValidationError("That external identity is linked to another account.");
       }
-      credential ??= await this.options.credentials.create({
-        id: generatedId("credential"),
-        accountId: account.id,
-        provider: providerName,
-        identifier: identity.identifier,
-        metadata: identity.metadata,
-      });
+      if (!credential) {
+        try {
+          credential = await this.options.credentials.create({
+            id: generatedId("credential"),
+            accountId: account.id,
+            provider: providerName,
+            identifier: identity.identifier,
+            metadata: identity.metadata,
+          });
+        } catch (error) {
+          if (!(error instanceof IdentityConflictError)) throw error;
+          // Another link for the same identity landed first: fine if it was to
+          // this account, refused if it was to someone else's.
+          const winner = await this.options.credentials.findByProviderIdentifier(
+            providerName,
+            identity.identifier,
+          );
+          if (!winner || winner.accountId !== account.id) {
+            throw new IdentityValidationError("That external identity is linked to another account.");
+          }
+          credential = winner;
+        }
+      }
     } else if (credential) {
       account = await this.options.accounts.findById(credential.accountId);
       if (!account) throw new IdentityNotFoundError("The linked account no longer exists.");
     } else {
-      account = await this.options.accounts.create({
-        id: generatedId("account"),
-        email: identity.email,
-        username: identity.username ?? (!identity.email ? `oidc_${secureValue(9)}` : undefined),
-        displayName: identity.displayName,
-        verified: identity.verified ?? false,
-        metadata: identity.metadata,
-      });
-      credential = await this.options.credentials.create({
-        id: generatedId("credential"),
-        accountId: account.id,
-        provider: providerName,
-        identifier: identity.identifier,
-        metadata: identity.metadata,
-      });
+      // Two first logins for one external identity can arrive together. Both
+      // see no credential; one wins the atomic create and the other must adopt
+      // the winner's account rather than leave a second one behind.
+      let created: Account | undefined;
+      try {
+        created = await this.options.accounts.create({
+          id: generatedId("account"),
+          email: identity.email,
+          username: identity.username ?? (!identity.email ? `oidc_${secureValue(9)}` : undefined),
+          displayName: identity.displayName,
+          verified: identity.verified ?? false,
+          metadata: identity.metadata,
+        });
+        credential = await this.options.credentials.create({
+          id: generatedId("credential"),
+          accountId: created.id,
+          provider: providerName,
+          identifier: identity.identifier,
+          metadata: identity.metadata,
+        });
+        account = created;
+      } catch (error) {
+        if (created) await this.options.accounts.delete(created.id);
+        if (!(error instanceof IdentityConflictError)) throw error;
+        const winner = await this.options.credentials.findByProviderIdentifier(
+          providerName,
+          identity.identifier,
+        );
+        const winnerAccount = winner
+          ? await this.options.accounts.findById(winner.accountId)
+          : null;
+        if (!winner || !winnerAccount) throw error;
+        credential = winner;
+        account = winnerAccount;
+      }
     }
 
     const session = await this.options.sessions.create({

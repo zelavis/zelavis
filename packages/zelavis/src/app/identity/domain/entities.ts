@@ -10,6 +10,13 @@ export interface Account {
   permissions?: readonly string[];
   grants?: readonly ZelavisPrincipalGrant[];
   metadata?: Record<string, unknown>;
+  /**
+   * Bumped atomically to invalidate every session issued before it. A session
+   * is only valid while its `epoch` equals this (absent counts as 0), which is
+   * what makes "revoke all" hold against a session being created or rotated at
+   * the same moment.
+   */
+  sessionEpoch?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -20,6 +27,8 @@ export interface Session {
   /** SHA-256 digest of the high-entropy client token. The token is never stored. */
   tokenHash: string;
   status: "active" | "revoked" | "expired";
+  /** The account's `sessionEpoch` when this session was issued (absent counts as 0). */
+  epoch?: number;
   expiresAt: Date;
   metadata?: Record<string, unknown>;
   createdAt: Date;

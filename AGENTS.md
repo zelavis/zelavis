@@ -923,6 +923,18 @@ verification and its timing, and the state, nonce and PKCE custody an OAuth
 redirect flow depends on — so they are written and audited once. It resolves
 identities into principals; the server contract enforces route access.
 
+Identity guarantees hold under concurrency, so they live in the repository, not
+in a check made first. Email, username and `(provider, identifier)` are unique
+because a repository claims each value with an atomic create-if-absent before it
+writes the entity, and a loser gets `IdentityConflictError` (a claim with no
+entity behind it is recovered only after a grace period, never while its creator
+may be between its two writes). A session token is usable for rotation exactly
+once: rotation consumes the old session with an atomic transition before issuing
+the next. Revoke-all bumps the account's `sessionEpoch` atomically and a session
+is valid only while its epoch matches, so nothing issued or rotated at the same
+moment survives it. Any new identity repository must implement `mutate` and the
+claim primitives and pass `test/identity-atomicity.test.mjs`.
+
 What is vendor-specific stays a plugin. A credential provider declares
 `zelavis/identity:credentials` and owns its whole exchange; an OAuth provider
 declares `zelavis/identity:oauth` and supplies only endpoints and claim mapping.

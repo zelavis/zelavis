@@ -12,6 +12,23 @@ export class IdentityValidationError extends IdentityDomainError {
   }
 }
 
+/**
+ * A write lost a uniqueness race, or would break one.
+ *
+ * Raised by repositories, not the services: only the store can say "another
+ * writer got there first" atomically, so callers translate this into their own
+ * message instead of checking first and hoping nothing changed in between.
+ */
+export class IdentityConflictError extends IdentityValidationError {
+  readonly field: string;
+
+  constructor(field: string, message: string) {
+    super(message);
+    this.name = "IdentityConflictError";
+    this.field = field;
+  }
+}
+
 export class IdentityNotFoundError extends IdentityDomainError {
   constructor(message: string) {
     super(message);
