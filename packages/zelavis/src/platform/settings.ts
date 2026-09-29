@@ -404,8 +404,8 @@ const REGISTRY_MUTATION_ATTEMPTS = 8;
  *
  * Compare-and-set, so a write that raced somebody else's is retried against
  * the state they left rather than overwriting it. The retry is a `Schedule`
- * with jitter rather than a bare loop: concurrent installs used to retry in
- * lockstep, each attempt colliding with the same competitor it just lost to.
+ * with jitter rather than a bare loop, so concurrent installs do not retry in
+ * lockstep, each colliding with the competitor it just lost to.
  *
  * A contended registry is `RegistryContended`, which is a retry answer and
  * not a refusal; a store that cannot be read or written is
@@ -643,9 +643,8 @@ export function createFileStorageServiceRegistryStore(
 /**
  * Resolves where Platform runtime settings persist.
  *
- * The store used to be reached through the dashboard option, which tied the
- * Platform's own settings persistence to whether it had a face. It is a
- * resource; an installation serving no frontend still has settings.
+ * It is a resource, not a frontend option: an installation serving no frontend
+ * still has settings.
  */
 export function resolveRuntimeSettingsStore(
   configured: ZelavisDashboardSettingsStore | undefined,

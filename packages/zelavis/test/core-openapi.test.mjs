@@ -203,7 +203,7 @@ test("Zelavis runtime exposes /zelavis/api/v1/runtime/openapi.json", async (t) =
     assert.equal(spec.info.title, "Zelavis API");
     assert.ok(spec.paths);
 
-    // Should include database and auth paths from mounted core services
+    // Should include database and auth paths from mounted native subsystems
     const pathKeys = Object.keys(spec.paths);
     assert.ok(pathKeys.length > 0, "OpenAPI spec should contain registered paths");
     const hasDatabasePath = pathKeys.some((p) => p.includes("database"));

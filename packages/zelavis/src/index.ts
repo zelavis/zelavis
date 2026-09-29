@@ -324,13 +324,9 @@ import type {
 export type ZelavisAuthOptions = boolean | IdentityServiceOptions;
 
 /**
- * The face of an installation.
- *
- * This absorbed what `coreServices.dashboard` used to carry. That option
- * predated frontends being a first-class Zelavis concept, and by the end every
- * field it held was about the frontend: the title and subtitle were passed
- * straight into the frontend factory, and `clientRoutes` already fell back to
- * the routes the frontend declared for itself.
+ * The face of an installation: the title and subtitle go straight into the
+ * frontend factory, and `clientRoutes` falls back to the routes the frontend
+ * declares for itself.
  *
  * There is no way to switch the frontend off. Having no frontend is expressed
  * by installing none, and the root path then says so — a state the API is
@@ -393,11 +389,10 @@ export type ZelavisFabricOptions = boolean | FabricServiceOptions;
 /**
  * Platform subsystems, composed by the host rather than installed.
  *
- * These used to live in a `coreServices` bag, which read as though the Platform
- * had a second, privileged way to install services. It did not: these are the
- * Platform's own subsystems, and every one of them is either infrastructure
- * (a database, object storage) or a policy switch. Services come from the
- * services folder and the registry, and only from there.
+ * These are the Platform's own subsystems, not a second, privileged way to
+ * install services: each is either infrastructure (a database, object storage)
+ * or a policy switch. Services come from the services folder and the registry,
+ * and only from there.
  *
  * They stay internal to `zelavis(...)`; the public constructor refuses them.
  */
@@ -477,9 +472,6 @@ export interface ZelavisServerOptions {
    * Project exists to host something not yet chosen, so `/` serves its own
    * "no frontend yet" placeholder — a 503 that is deliberately not indexed —
    * rather than bouncing to a Platform page.
-   *
-   * This used to be carried by `frontend: false`, which read as a preference
-   * and was really a statement about the kind of runtime.
    */
   role?: "platform" | "project";
   /** Where Platform runtime settings persist. Supplied from host resources. */
@@ -589,9 +581,8 @@ export interface ZelavisServicePackageScaffoldInput {
  *
  * Effect-returning, so the ways this fails are part of the type: a source the
  * policy refuses, bytes that did not match their digest, a fetch that failed,
- * an archive that is not a service, and a disk that would not take it. They
- * used to be one thrown Error and therefore one 400, which told a caller
- * nothing about whether to fix their request or try again.
+ * an archive that is not a service, and a disk that would not take it. Each is
+ * distinct so a caller can tell whether to fix the request or try again.
  *
  * Every method needs a `Scope`: packages are written to a temporary directory
  * and renamed into place, and the scope is what removes that directory however
@@ -776,12 +767,23 @@ export function defineAdapter(
   return definition;
 }
 
-const PROTECTED_OFFICIAL_PACKAGE_NAMES = new Set([
-  "@zelavis/app",
-  "@zelavis/marketplace",
-  "@zelavis/auth",
-  "@zelavis/ui",
-]);
+/**
+ * Package identities an operator-supplied source must never take.
+ *
+ * Derived, not listed: the host marks what it selected from its distribution as
+ * `official`, and the frontend it was given is protected too.
+ */
+function protectedOfficialPackageNames(
+  registry: readonly Readonly<ZelavisServiceRegistryEntry<ZelavisServiceSetupContext>>[],
+  frontendName?: string,
+): ReadonlySet<string> {
+  return new Set([
+    ...registry
+      .filter((entry) => entry.source === "official")
+      .map((entry) => entry.service.name),
+    ...(frontendName ? [frontendName] : []),
+  ]);
+}
 
 // Defined with NATIVE_EXTENSION_OWNERS below; declared here so extension
 // listings can name a native owner whether or not it is currently present.
@@ -1375,10 +1377,8 @@ async function resolveAuthCoreService(
     ...(configured.oauth ?? {}),
     environmentConnections: true,
   });
-  // Password sign-in ships with Zelavis. It used to be a plugin the
-  // distribution copied into the services folder on first boot,
-  // because an installation with no credential provider can never create its
-  // first owner — mandatory in everything but name.
+  // Password sign-in ships with Zelavis: an installation with no credential
+  // provider can never create its first owner.
   const builtInMethods: IdentityMethodPlugin[] = [
     {
       name: PASSWORD_PROVIDER,
@@ -1574,10 +1574,9 @@ async function resolveRuntimeManagementCore(
      * The routes this runtime actually mounted.
      *
      * Late-bound, because mounting happens after this core is composed. The
-     * spec used to re-resolve endpoints from the service list with a different
-     * prefix and no service prefixes, so it published paths that did not
-     * exist: `/api/auth/accounts` for an endpoint served at
-     * `/zelavis/api/v1/auth/accounts`.
+     * spec reads these rather than re-resolving endpoints, so it never publishes
+     * a path that is not served (`/api/auth/accounts` for an endpoint at
+     * `/zelavis/api/v1/auth/accounts`).
      */
     getMountedRoutes?: () => readonly ZelavisResolvedRoute[];
     /** Paths the installed frontend resolves client-side, if any. */
@@ -2375,7 +2374,12 @@ async function resolveRuntimeManagementCore(
               // An official identity is selected by the host from the
               // distribution and changes state through PATCH; registering a
               // package under its name would silently replace it.
-              if (PROTECTED_OFFICIAL_PACKAGE_NAMES.has(created.name)) {
+              if (
+                protectedOfficialPackageNames(
+                  await readResolvedServiceRegistry(),
+                  context.frontendServiceName,
+                ).has(created.name)
+              ) {
                 throw new ZelavisValidationError(
                   `"${created.name}" is an official package identity and cannot be registered from another source.`,
                 );
@@ -4996,6 +5000,26 @@ export async function zelavis(
   const rootPath = normalizePath(options.rootPath, "/zelavis");
   const apiPrefix = normalizePath(options.api?.prefix, "/api");
   const apiVersion = normalizePathPart(options.api?.version ?? "v1");
+  // Resolved before the management core, which needs the paths this frontend
+  // claims and the design tokens it supplies. The frontend needs the runtime
+  // configuration in return, so it receives a thunk rather than the document —
+  // a frontend reads it when serving a request, long after composition.
+  let runtimeManagement: ZelavisRuntimeManagementCore | undefined;
+  const platformFrontend = await resolvePlatformFrontend(
+    options.frontend,
+    {
+      rootPath,
+      createRuntimeConfig: async () => {
+        if (!runtimeManagement) {
+          throw new Error(
+            "The runtime configuration was requested before composition finished.",
+          );
+        }
+        return runtimeManagement.createRuntimeConfig();
+      },
+    },
+  );
+
   const baseServiceRegistry =
     compositionOptions.serviceRegistry?.catalog !== undefined
       ? await loadConfiguredServiceRegistryModules(
@@ -5004,6 +5028,13 @@ export async function zelavis(
           compositionOptions.serviceRegistry.manifestResolver,
         )
       : defaultDashboardServiceRegistry;
+  // The official identities are whatever the host selected from its immutable
+  // distribution (catalog entries it marked official) plus the frontend it was
+  // given. Nothing lists them by name here.
+  const protectedPackageNames = protectedOfficialPackageNames(
+    baseServiceRegistry,
+    platformFrontend?.service.name,
+  );
   const systemStore = options.systemStore ?? createMemorySystemStore();
   const serviceRegistryStore = resolveServiceRegistryStore(
     compositionOptions.serviceRegistry,
@@ -5027,7 +5058,7 @@ export async function zelavis(
     // shadow identities selected from the immutable distribution.
     const declaredName =
       typeof entry.manifest?.name === "string" ? entry.manifest.name : undefined;
-    if (declaredName && PROTECTED_OFFICIAL_PACKAGE_NAMES.has(declaredName)) {
+    if (declaredName && protectedPackageNames.has(declaredName)) {
       console.warn(
         `Zelavis skipped product service "${declaredName}": that official package identity cannot be shadowed by a mutable package source.`,
       );
@@ -5204,25 +5235,6 @@ export async function zelavis(
   let runtimeConfigServices: readonly ZelavisRuntimeService<any>[] = [];
   // Filled in once mounting resolves them, and read at request time.
   let mountedRoutes: readonly ZelavisResolvedRoute[] | undefined;
-  // Resolved before the management core, which needs the paths this frontend
-  // claims and the design tokens it supplies. The frontend needs the runtime
-  // configuration in return, so it receives a thunk rather than the document —
-  // a frontend reads it when serving a request, long after composition.
-  let runtimeManagement: ZelavisRuntimeManagementCore | undefined;
-  const platformFrontend = await resolvePlatformFrontend(
-    options.frontend,
-    {
-      rootPath,
-      createRuntimeConfig: async () => {
-        if (!runtimeManagement) {
-          throw new Error(
-            "The runtime configuration was requested before composition finished.",
-          );
-        }
-        return runtimeManagement.createRuntimeConfig();
-      },
-    },
-  );
 
   const websiteService = !siteEnabled || projectSiteFrontend
       ? undefined

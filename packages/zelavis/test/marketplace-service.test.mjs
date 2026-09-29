@@ -45,11 +45,11 @@ test("the marketplace reaches the dashboard as an ordinary service", async () =>
   assert.equal(project.sectionLabel, "Extend");
 });
 
-test("a core service's page resolves to a fetchable src", async () => {
+test("a bundled package's page resolves to a fetchable src", async () => {
   const { runtime, service } = await bootWithMarketplace();
 
-  // A core service is not a registry entry. Its menu still has to be
-  // serialized, or the dashboard mounts a frame pointed at nothing.
+  // Each menu page has to be serialized with a src, or the dashboard mounts a
+  // frame pointed at nothing.
   for (const menu of service.menus) {
     assert.ok(menu.page.src, `${menu.page.id} has no src`);
 

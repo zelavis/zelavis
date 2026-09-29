@@ -47,11 +47,10 @@ export type ZelavisServiceMenuDefinition = Omit<
  * - `plugin` — code that extends the Platform. The default, and what
  *   everything else is.
  *
- * `core` used to be a fourth. It described who shipped a service rather than
- * what it is, which is what `scope` already carries — and nothing branched on
- * it. `web-app`, `website`, `dashboard-extension`, `provider`, and `template`
- * were the same: declared, documented, and never read. A provider is
- * discovered by its capability (`@zelavis/auth:credentials`), not by a label.
+ * There is no `core`, `web-app`, `website`, `dashboard-extension`, `provider`
+ * or `template` kind: who shipped a service is what `scope` carries, and a
+ * provider is discovered by its capability (`@zelavis/auth:credentials`), not
+ * by a label.
  *
  * This union is enforced at manifest validation. It drifted out of date once
  * already — it was missing `frontend`, the kind the Platform branches on most —

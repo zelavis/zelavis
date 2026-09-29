@@ -143,7 +143,7 @@ const SEAL_BATCH = 4096;
  * history rather than the only way back to a working index.
  */
 const DERIVED_TAGS = [
-  Tag.Term, Tag.Column, Tag.Measure, Tag.Edge, Tag.EdgeReverse, Tag.Segment, Tag.Tombstone, Tag.Ordered, Tag.Dirty,
+  Tag.Term, Tag.Measure, Tag.Edge, Tag.EdgeReverse, Tag.Segment, Tag.Tombstone, Tag.Ordered, Tag.Dirty,
 ] as const;
 
 /**
@@ -1515,22 +1515,18 @@ export const storeOverKv = (
 };
 
 /**
- * The layout this code writes.
- *
- * 2: equality and order share one sealable scalar lens, and the separate
- * equality lens is gone.
+ * The layout this code writes. A store carries it so a layout change is caught
+ * on open instead of misread.
  */
 const CURRENT_FORMAT = 2;
 const META_FORMAT = "format";
 
 /**
- * Open a store over an engine: claim the writer generation, and bring an
- * older layout current before anything reads it.
+ * Open a store over an engine: claim the writer generation and mark a fresh
+ * store with the layout it holds.
  *
- * The lenses are derived from the manifests, so an older layout needs no
- * migration of its own — it is re-indexed, which drops every derived key,
- * the retired ones included, and writes them again as this code reads them.
- * A store with no events has nothing to re-index and is only marked.
+ * A store written by an older layout is refused, not upgraded. Nothing carries
+ * compatibility for old data; recreate the database.
  */
 export const openStoreOverKv = (
   partition: PartitionKey,
@@ -1540,13 +1536,14 @@ export const openStoreOverKv = (
     const claim = yield* claimGeneration(engine);
     const store = storeOverKv(partition, engine, claim);
     const format = yield* engine.get(metaKey(META_FORMAT));
-    if (format === undefined || readU32(format) < CURRENT_FORMAT) {
-      if ((yield* engine.get(metaKey(META_NEXT_POSITION))) !== undefined) {
-        yield* store.reindexLenses.pipe(
-          Effect.mapError((cause) =>
-            cause._tag === "StoreError" ? cause : new StoreError({ op: "format.upgrade", cause })),
-        );
-      }
+    const holdsData = (yield* engine.get(metaKey(META_NEXT_POSITION))) !== undefined;
+    if (format === undefined ? holdsData : readU32(format) < CURRENT_FORMAT) {
+      return yield* new StoreError({
+        op: "format.open",
+        cause: "This store was written by an older layout, which is not supported. Recreate the database.",
+      });
+    }
+    if (format === undefined) {
       const revision = yield* engine.get(metaKey(META_REVISION));
       const accepted = yield* engine.conditionalWrite!([
         { op: "put", key: metaKey(META_REVISION), value: encoder.encode(crypto.randomUUID()) },
@@ -1557,7 +1554,7 @@ export const openStoreOverKv = (
         { key: metaKey(META_FORMAT), value: format },
         { key: metaKey(META_REVISION), value: revision },
       ]);
-      if (!accepted) return yield* new StoreError({ op: "format.upgrade", cause: "Writer or format changed during upgrade" });
+      if (!accepted) return yield* new StoreError({ op: "format.open", cause: "Writer or format changed while marking the store" });
     }
     return store;
   });

@@ -23,8 +23,7 @@ export const Tag = {
   Payload: 0x01,
   Manifest: 0x02,
   Term: 0x03,
-  /** Retired: equality is answered by `Ordered`. A reindex drops what older stores hold here. */
-  Column: 0x04,
+  // 0x04 is unused: equality is answered by `Ordered`.
   Measure: 0x05,
   Edge: 0x06,
   Identity: 0x07,

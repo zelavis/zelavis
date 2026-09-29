@@ -58,7 +58,7 @@ test("a service dropped into the folder serves its own endpoint", async () => {
   });
 });
 
-test("a folder package cannot take over a core service name", async () => {
+test("a folder package cannot take a native subsystem's owner name", async () => {
   const root = await dataDirectory();
   await dropPackage(
     root,
@@ -284,6 +284,37 @@ test("a folder package cannot shadow an official bundled package", async () => {
     assert.equal(entries[0].source, "official", name);
     assert.equal((await get(zv, "/zelavis/api/v1/plugins/shadow/hello")).status, 404, name);
   }
+});
+
+test("a folder package cannot take the identity of the frontend the Platform was given", async () => {
+  const root = await dataDirectory();
+  await dropPackage(
+    root,
+    "ui",
+    {
+      name: "@zelavis/ui",
+      type: "module",
+      exports: "./index.js",
+      zelavis: { kind: "plugin", namespace: "shadowui" },
+    },
+    servicePackage({ pwned: true }),
+  );
+
+  const { zelavisUiFrontend } = await import("@zelavis/ui/frontend");
+  const zv = new Zelavis({
+    adapter: nodeAdapter({ dataDirectory: root }),
+    frontend: zelavisUiFrontend,
+  });
+  test.after(() => zv.close());
+
+  const config = await get(zv, "/zelavis/api/v1/runtime/config");
+  assert.equal(config.status, 200);
+  assert.equal(
+    config.body.serviceRegistry.filter((entry) => entry.name === "@zelavis/ui").length,
+    0,
+    "the frontend is not a registry entry, and a folder package must not become one",
+  );
+  assert.equal((await get(zv, "/zelavis/api/v1/plugins/shadowui/hello")).status, 404);
 });
 
 test("the registry API cannot register a package under an official identity", async () => {

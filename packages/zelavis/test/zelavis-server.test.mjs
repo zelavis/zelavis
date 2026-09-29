@@ -94,7 +94,7 @@ test("zelavis exposes fetch handlers without requiring a mount adapter", async (
   assert.deepEqual(payload.serviceRegistry, []);
 });
 
-test("zelavis includes core services by default", async (t) => {
+test("zelavis includes its native subsystems by default", async (t) => {
   const runtime = await zelavis({
     frontend: zelavisUiFrontend,
     subsystems: { database: { directory: temporaryDatabaseDirectory(t) } },
@@ -1101,7 +1101,7 @@ test("node adapter installs uploaded ZIP service packages", async () => {
   }
 });
 
-test("zelavis can disable the database core service", async () => {
+test("zelavis can disable the database subsystem", async () => {
   const runtime = await zelavis({
     frontend: zelavisUiFrontend,
     subsystems: {
@@ -1116,7 +1116,7 @@ test("zelavis can disable the database core service", async () => {
   );
 });
 
-test("zelavis can disable the auth core service", async (t) => {
+test("zelavis can disable the auth subsystem", async (t) => {
   const runtime = await zelavis({
     frontend: zelavisUiFrontend,
     subsystems: {

@@ -145,7 +145,7 @@ test("an extension of an installed service can be installed", async () => {
   assert.equal(installed.status, 200);
 });
 
-test("a core service counts as installed for the things extending it", async () => {
+test("a native subsystem counts as installed for the things extending it", async () => {
   const runtime = await platform([
     { service: gitlab, status: "available", source: "community" },
   ]);

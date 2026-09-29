@@ -75,9 +75,8 @@ export function validatePluginPackageManifest(
 
   const kind = (zelavis as Record<string, unknown>).kind!.toString().trim();
 
-  // Checked rather than merely declared. An unrecognised kind used to load
-  // fine and do nothing, so a typo produced a service that silently never
-  // participated in anything.
+  // Checked rather than merely declared: an unrecognised kind would load and do
+  // nothing, so a typo would produce a service that silently never participates.
   if (!ZELAVIS_SERVICE_KINDS.includes(kind as ZelavisServiceKind)) {
     throw new TypeError(
       `Invalid Zelavis service "${name}":\n"zelavis.kind" must be one of ${ZELAVIS_SERVICE_KINDS.join(", ")}, not "${kind}".`,

@@ -63,7 +63,7 @@ test("the page reads the endpoints anyone else could", async () => {
   assert.match(html, /runtime\/extensions\?owner=/u);
 });
 
-test("the catalogue points at the core service, not this package", async () => {
+test("the catalogue points at the Identity subsystem, not this package", async () => {
   const runtime = await platform();
   const [entry] = await authMenuEntries(runtime);
   const html = String((await runtime.plain({ url: entry.menu.page.src })).body);
