@@ -80,10 +80,6 @@
       "types": "./dist/db/engines/libsql.d.ts",
       "import": "./dist/db/engines/libsql.js"
     },
-    "./db/rocksdb": {
-      "types": "./dist/db/engines/rocksdb.d.ts",
-      "import": "./dist/db/engines/rocksdb.js"
-    },
     "./db/lmdb": {
       "types": "./dist/db/engines/lmdb.d.ts",
       "import": "./dist/db/engines/lmdb.js"
@@ -224,7 +220,6 @@
     "h3-js": "^4.5.0",
     "libsql": "^0.5.29",
     "lmdb": "^3.4.3",
-    "rocksdb": "^5.2.1",
     "typescript": "^7.0.2",
     "usearch": "^2.26.2"
   },
@@ -238,18 +233,18 @@
     "node": ">=24"
   },
   "peerDependencies": {
+    "@harperfast/rocksdb-js": "^2.9.1",
     "@libsql/client": "^0.15.0",
     "h3-js": "^4.5.0",
     "libsql": "^0.5.29",
     "lmdb": "^3.4.3",
-    "rocksdb": "^5.2.1",
     "usearch": "^2.15.0"
   },
   "peerDependenciesMeta": {
     "libsql": {
       "optional": true
     },
-    "rocksdb": {
+    "@harperfast/rocksdb-js": {
       "optional": true
     },
     "lmdb": {

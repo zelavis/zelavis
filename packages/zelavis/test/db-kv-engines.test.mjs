@@ -20,16 +20,6 @@ const key = (...parts) => Uint8Array.from(parts);
 const engines = [
   ["memory", () => Effect.succeed(memoryKvEngine()), true],
   ["sqlite", (dir) => makeNodeSqliteEngine("kv", dir), true],
-  // The discontinued `rocksdb` binding is deliberately absent while
-  // `rocksdb-js` is being evaluated. Opening a database with the old one and
-  // then the new one in the same process aborts inside libuv:
-  //
-  //   Assertion failed: (current_fn), function Run, file timer.h, line 203
-  //
-  // Only that order does it — the reverse is fine, and merely importing both
-  // is fine — so it is the old binding leaving timer state behind rather than
-  // anything the new one does wrong. It is a condition of the transition, and
-  // it disappears with the package it belongs to.
   ["lmdb", (dir) => makeLmdbEngine("kv", dir), engineAvailable("lmdb")],
   ["rocksdb-js", (dir) => makeRocksdbJsEngine("kv", dir), engineAvailable("@harperfast/rocksdb-js")],
 ];

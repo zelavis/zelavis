@@ -42,9 +42,10 @@ test("the default engine is sqlite, and needs nothing installed", async (t) => {
 
 // A native engine that is not installed, or installed and not built, is an
 // ordinary state here: the engines are optional peers.
+const specifiers = { rocksdb: "@harperfast/rocksdb-js" };
 const engines = ["sqlite", "libsql", "rocksdb", "lmdb"].map((name) => [
   name,
-  name === "sqlite" || engineAvailable(name),
+  name === "sqlite" || engineAvailable(specifiers[name] ?? name),
 ]);
 
 for (const [name, installed] of engines) {

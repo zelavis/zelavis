@@ -6,7 +6,7 @@ import { makeLibsqlStore } from "./engines/libsql.js";
 import { makeLibsqlRemoteStore } from "./engines/libsql-remote.js";
 import { makeLmdbStore } from "./engines/lmdb.js";
 import { makeNodeSqliteStore } from "./engines/node-sqlite.js";
-import { makeRocksdbStore } from "./engines/rocksdb.js";
+import { makeRocksdbJsStore } from "./engines/rocksdb-js.js";
 import type { PartitionKey } from "./model.js";
 import { runtimeApiFor, type DatabaseRuntimeApi } from "./runtime-api.js";
 import type { ObjectStoreApi } from "./store.js";
@@ -93,7 +93,7 @@ const openShardWith = (
           ...(engine?.authToken === undefined ? {} : { authToken: engine.authToken }),
         });
     case "rocksdb":
-      return (shard) => makeRocksdbStore(shard, directory);
+      return (shard) => makeRocksdbJsStore(shard, directory);
     case "lmdb":
       return (shard) => makeLmdbStore(shard, directory);
     case "sqlite":

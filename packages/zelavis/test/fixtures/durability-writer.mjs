@@ -20,8 +20,6 @@ const open = async () => {
       // libSQL takes an options object; the rest take a bare directory.
       return (await import("../../dist/db/engines/libsql.js"))
         .makeLibsqlStore("acme", { directory });
-    case "rocksdb":
-      return (await import("../../dist/db/engines/rocksdb.js")).makeRocksdbStore("acme", directory);
     case "lmdb":
       return (await import("../../dist/db/engines/lmdb.js")).makeLmdbStore("acme", directory);
     case "rocksdb-js":

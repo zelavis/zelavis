@@ -224,25 +224,3 @@ for (const [name, make] of makers) {
     }
   }))));
 }
-
-test("discontinued RocksDB binding: single-owner conditional commits and stale maintenance", {
-  skip: !engineAvailable("rocksdb") && "optional discontinued binding is unavailable",
-}, () => directory(async dir => {
-  const code = `import assert from 'node:assert/strict';
-    import { Effect, Stream } from 'effect';
-    import { makeRocksdbEngine } from './dist/db/engines/rocksdb.js';
-    import { openStoreOverKv } from './dist/db/kv-store.js';
-    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const engine = yield* makeRocksdbEngine('acme', process.argv[1]);
-      const old = yield* openStoreOverKv('acme', engine);
-      const current = yield* openStoreOverKv('acme', engine);
-      assert.equal(current.generation, 2);
-      const before = yield* Stream.runCollect(engine.scan(new Uint8Array()));
-      const failure = yield* old.nextSeq.pipe(Effect.match({ onSuccess: () => undefined, onFailure: e => e }));
-      assert.equal(failure._tag, 'WriterFenced');
-      assert.deepEqual(yield* Stream.runCollect(engine.scan(new Uint8Array())), before);
-    })));
-    console.log('passed');`;
-  const child = await promisify(execFile)(process.execPath, ["--input-type=module", "-e", code, dir], { cwd: new URL("..", import.meta.url) });
-  assert.equal(child.stdout.trim(), "passed");
-}));
